@@ -146,6 +146,7 @@ def train(args):
     from model import PiscesModel, PiscesConfig
     from trainer.checkpoint import save_ckpt, load_ckpt
     from transformers import get_linear_schedule_with_warmup
+    import subprocess
     # Default configuration
     config = "configs/0.5B.json"
     print("✅ Starting Pisces L1 Training...")
@@ -183,8 +184,16 @@ def train(args):
     )
     print("[DEBUG] Optimizer and scheduler ready.")
 
-    # Load dataset (automatically downloads if needed)
+    # Load dataset (auto download if needed)
     print(f"✅ Loading dataset: {dataset}")
+    cache_path = os.path.join("data_cache", dataset)
+    if not os.path.exists(cache_path):
+        print(f"❌ Local dataset not found: {cache_path}")
+        print("✅ Attempting to download ModelScope dataset via data/download.py ...")
+        subprocess.run([sys.executable, "data/download.py", "--max_samples", "50000"])
+        if not os.path.exists(cache_path):
+            raise RuntimeError(f"❌ Dataset download failed or not found at {cache_path}")
+        print(f"✅ Dataset downloaded to {cache_path}")
     train_ds = PiscesDataset(subset=dataset, split="train", config=cfg)
     print(f"✅ Dataset loaded successfully, size: {len(train_ds)}")
 
