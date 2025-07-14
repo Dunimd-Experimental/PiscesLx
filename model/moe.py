@@ -42,15 +42,19 @@ class MoEGate(nn.Module):
 
 class MoELayer(nn.Module):
     """Mixture of Experts layer (Kimi-K2/Qwen style optimized init)"""
+    _layer_count = 0
     def __init__(self, cfg, device=None, dtype=None, print_every=8):
         super().__init__()
+        MoELayer._layer_count += 1
         self.cfg = cfg
         self.gate = MoEGate(cfg.hidden_size, cfg.moe_num_experts, device=device, dtype=dtype)
         self.experts = nn.ModuleList()
         n = cfg.moe_num_experts
-        print(f"[DEBUG] MoELayer: initializing {n} experts...")
+        print_detail = (MoELayer._layer_count == 1)
+        if print_detail:
+            print(f"[DEBUG] MoELayer: initializing {n} experts...")
         for i in range(n):
-            if (i % print_every == 0) or (i == n-1):
+            if print_detail and ((i % print_every == 0) or (i == n-1)):
                 print(f"[DEBUG] MoELayer: initializing expert {i+1}/{n}")
             expert = nn.Sequential(
                 nn.Linear(cfg.hidden_size, cfg.intermediate_size, bias=False, device=device, dtype=dtype),
@@ -59,16 +63,24 @@ class MoELayer(nn.Module):
             )
             expert.apply(moe_init_weights)
             self.experts.append(expert)
-        print(f"[DEBUG] MoELayer: all {n} experts initialized.")
-        total_params = sum(p.numel() for p in self.parameters())
-        print(f"[DEBUG] MoELayer: total parameters = {total_params/1e6:.2f}M")
+        if print_detail:
+            print(f"[DEBUG] MoELayer: all {n} experts initialized.")
+            total_params = sum(p.numel() for p in self.parameters())
+            print(f"[DEBUG] MoELayer: total parameters = {total_params/1e6:.2f}M")
+        else:
+            print(f"[DEBUG] MoELayer: (layer {MoELayer._layer_count}) {n} experts initialized (log suppressed)")
     
     def forward(self, x):
         b, t, d = x.shape
         h = x.view(-1, d)
-        scores, idx = self.gate(h)
+        scores, idx = self.gate(h)  # [B*T, 2], [B*T, 2]
         y = torch.zeros_like(h)
+        
         for i in range(2):
-            mask = idx[:, i]
-            y += scores[:, i:i+1] * torch.stack([self.experts[m](h) for m in mask])
+            expert_idx = idx[:, i]  # [B*T]
+            expert_scores = scores[:, i]  # [B*T]
+            for e in range(self.cfg.moe_num_experts):
+                mask = (expert_idx == e)
+                if mask.any():
+                    y[mask] += expert_scores[mask, None] * self.experts[e](h[mask])
         return y.view(b, t, d)

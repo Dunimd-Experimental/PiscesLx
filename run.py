@@ -43,43 +43,42 @@ except Exception as e:
     print(f"❌ Patch for datasets.exceptions failed: {e}")
 
 def setup_env():
-    """Auto setup venv and install requirements if needed"""
-    print("🐟 Pisces auto environment setup...")
+    """Auto setup venv and install requirements if needed, then auto-enter venv shell"""
+    print("✅ Pisces auto environment setup...")
     py_exec = sys.executable
     venv_dir = os.path.join(os.getcwd(), "pisces_env")
     is_windows = platform.system().lower().startswith("win")
     
     # Check if in venv
     if sys.prefix == sys.base_prefix:
-        print("🔧 Not in virtual environment. Creating venv...")
+        print("✅ Not in virtual environment. Creating venv...")
         subprocess.check_call([py_exec, "-m", "venv", venv_dir])
         print(f"✅ Virtual environment created at {venv_dir}")
         # Re-run in venv python
         python_bin = os.path.join(venv_dir, "Scripts" if is_windows else "bin", "python" + (".exe" if is_windows else ""))
-        print("🔄 Re-running setup in venv...")
+        print("✅ Re-running setup in venv...")
         os.execv(python_bin, [python_bin] + sys.argv)
         return
     else:
         print("✅ Already in virtual environment.")
     # Upgrade pip
-    print("⬆️ Upgrading pip...")
+    print("✅ Upgrading pip...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
     # Install requirements
-    print("📥 Installing requirements.txt...")
+    print("✅ Installing requirements.txt...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
     print("✅ Pisces environment setup complete!")
-    print("To train: python run.py train\nTo infer: python run.py infer ...")
-    
+    # 自动进入 venv shell
     if is_windows:
         shell = os.environ.get("COMSPEC", "cmd.exe")
         activate = os.path.join(venv_dir, "Scripts", "activate.bat")
-        print("Launching venv shell...")
-        subprocess.call([shell, "/K", activate])
+        print("✅ Auto-entering Pisces venv shell (Windows)...")
+        os.execv(shell, [shell, "/K", activate])
     else:
         shell = os.environ.get("SHELL", "/bin/bash")
         activate = os.path.join(venv_dir, "bin", "activate")
-        print("Launching venv shell...")
-        subprocess.call([shell, "-i", "-c", f"source '{activate}'; exec {shell}"])
+        print("✅ Auto-entering Pisces venv shell (Linux/Mac)...")
+        os.execv(shell, [shell, "-i", "-c", f"source '{activate}'; exec {shell}"])
     sys.exit(0)
 
 def parse_args():
@@ -107,7 +106,7 @@ def setup_device(device_pref):
         print(f"✅ GPU: {torch.cuda.get_device_name(0)}")
         print(f"✅ GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
     else:
-        print("⚠️ No GPU available, using CPU")
+        print("❌ No GPU available, using CPU")
     
     return device
 
@@ -149,10 +148,10 @@ def train(args):
     from transformers import get_linear_schedule_with_warmup
     # Default configuration
     config = "configs/0.5B.json"
-    print("🚀 Starting Pisces L1 Training...")
+    print("✅ Starting Pisces L1 Training...")
     print("[DEBUG] Loading config file:", config)
     dataset = "tiny_stories"
-    batch_size = 4
+    batch_size = 2
     epochs = 1
     lr = 5e-5
     save_dir = "ckpt"
@@ -185,7 +184,7 @@ def train(args):
     print("[DEBUG] Optimizer and scheduler ready.")
 
     # Load dataset (automatically downloads if needed)
-    print(f"📊 Loading dataset: {dataset}")
+    print(f"✅ Loading dataset: {dataset}")
     train_ds = PiscesDataset(subset=dataset, split="train", config=cfg)
     print(f"✅ Dataset loaded successfully, size: {len(train_ds)}")
 
@@ -205,8 +204,9 @@ def train(args):
     os.makedirs(save_dir, exist_ok=True)
 
     # Training loop
-    print("🎯 Starting training loop...")
+    print("✅ Starting training loop...")
     model.train()
+    scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
     for epoch in range(epochs):
         print(f"[DEBUG] Starting epoch {epoch+1}/{epochs}")
         total_loss = 0
@@ -218,27 +218,37 @@ def train(args):
                 for k, v in batch.items()
             }
             print(f"[DEBUG] Batch moved to device.")
-            # Forward pass
-            _, loss, _, _ = model(**device_batch)
-            print(f"[DEBUG] Forward pass done. Loss: {loss.item() if hasattr(loss, 'item') else loss}")
-            # Multi-GPU handling
-            if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-                loss = loss.mean()
-            # Backward pass
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad()
+            
+            if scaler is not None:
+                with torch.cuda.amp.autocast():
+                    _, loss, _, _ = model(**device_batch)
+                print(f"[DEBUG] Forward pass done. Loss: {loss.item() if hasattr(loss, 'item') else loss}")
+                if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                    loss = loss.mean()
+                scaler.scale(loss).backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+                optimizer.zero_grad()
+            else:
+                _, loss, _, _ = model(**device_batch)
+                print(f"[DEBUG] Forward pass done. Loss: {loss.item() if hasattr(loss, 'item') else loss}")
+                if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                    loss = loss.mean()
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
             total_loss += loss.item()
             if step % 50 == 0:
                 avg_loss = total_loss / (step + 1)
-                print(f"📈 Epoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f}")
+                print(f"✅ Epoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f}")
         # Save checkpoint
         checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
         save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
-        print(f"💾 Checkpoint saved: {checkpoint_path}")
-    print("🎉 Training completed!")
+        print(f"✅ Checkpoint saved: {checkpoint_path}")
+    print("✅ Training completed!")
 
 
 def infer(args):
@@ -248,7 +258,7 @@ def infer(args):
     from transformers import LlamaTokenizerFast
     from PIL import Image
     from torchvision.transforms import functional as TF
-    print("🔮 Starting Pisces L1 Inference...")
+    print("✅ Starting Pisces L1 Inference...")
     
     # Setup device
     device = setup_device("auto")
@@ -259,7 +269,7 @@ def infer(args):
     
     # Load checkpoint
     if args.ckpt:
-        print(f"📂 Loading model: {args.ckpt}")
+        print(f"✅ Loading model: {args.ckpt}")
         checkpoint = torch.load(args.ckpt, map_location=device)
         if 'model' in checkpoint:
             model.load_state_dict(checkpoint['model'])
@@ -267,10 +277,10 @@ def infer(args):
             model.load_state_dict(checkpoint)
         print("✅ Model loaded successfully")
     else:
-        print("⚠️ No model file provided, using random weights")
+        print("❌ No model file provided, using random weights")
 
     # Load tokenizer
-    print("🔤 Loading tokenizer...")
+    print("✅ Loading tokenizer...")
     try:
         tokenizer = LlamaTokenizerFast.from_pretrained("hf-internal-testing/llama-tokenizer")
         print("✅ Tokenizer loaded successfully")
@@ -288,13 +298,13 @@ def infer(args):
         )
 
     # Prepare input
-    print(f"📝 Processing prompt: {args.prompt}")
+    print(f"✅ Processing prompt: {args.prompt}")
     input_ids = tokenizer.encode(args.prompt, return_tensors="pt").to(device)
     
     # Process image if provided
     pixel_values = None
     if args.image and os.path.exists(args.image):
-        print(f"🖼️ Processing image: {args.image}")
+        print(f"✅ Processing image: {args.image}")
         try:
             img = Image.open(args.image).convert("RGB").resize((224, 224))
             pixel_values = TF.to_tensor(img).unsqueeze(0).to(device)
@@ -304,7 +314,7 @@ def infer(args):
             pixel_values = None
 
     # Generate
-    print("🚀 Generating response...")
+    print("✅ Generating response...")
     with torch.no_grad():
         outputs = model.generate(
             input_ids=input_ids,
@@ -319,7 +329,7 @@ def infer(args):
     # Decode and print
     generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
     print("\n" + "="*50)
-    print("🤖 Generated Response:")
+    print("✅ Generated Response:")
     print("="*50)
     print(generated_text)
     print("="*50)
