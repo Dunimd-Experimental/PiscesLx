@@ -57,7 +57,7 @@ class RotaryEmbedding(nn.Module):
         return torch.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1).flatten(-2)
 
 class Attention(nn.Module):
-    """Multi-head attention with grouped-query attention, GELU+Dropout"""
+    """Multi-head attention with grouped-query attention"""
     def __init__(self, cfg, device=None, dtype=None):
         super().__init__()
         self.cfg = cfg
@@ -70,7 +70,6 @@ class Attention(nn.Module):
         self.v_proj = nn.Linear(cfg.hidden_size, cfg.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
         self.o_proj = nn.Linear(cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype)
         self.rope = RotaryEmbedding(self.head_dim, cfg.max_position_embeddings, cfg.rope_theta, device=device, dtype=dtype)
-        self.dropout = nn.Dropout(getattr(cfg, 'dropout', 0.1))
         self.apply(pisces_init_weights)
     def forward(self, x, mask):
         b, t, _ = x.shape
@@ -83,49 +82,23 @@ class Attention(nn.Module):
         scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale + mask
         attn = F.softmax(scores, dim=-1)
         out = torch.matmul(attn, v).transpose(1, 2).contiguous().view(b, t, -1)
-        out = self.o_proj(out)
-        out = F.gelu(out)
-        out = self.dropout(out)
-        return out
-
-class MLP(nn.Module):
-    """Feedforward MLP with GELU+Dropout, for dense/experts"""
-    def __init__(self, cfg, device=None, dtype=None):
-        super().__init__()
-        self.fc1 = nn.Linear(cfg.hidden_size, cfg.intermediate_size, bias=False, device=device, dtype=dtype)
-        self.fc2 = nn.Linear(cfg.intermediate_size, cfg.hidden_size, bias=False, device=device, dtype=dtype)
-        self.act = nn.GELU()
-        self.dropout = nn.Dropout(getattr(cfg, 'dropout', 0.1))
-        self.apply(pisces_init_weights)
-    def forward(self, x):
-        x = self.fc1(x)
-        x = self.act(x)
-        x = self.dropout(x)
-        x = self.fc2(x)
-        x = self.dropout(x)
-        return x
+        return self.o_proj(out)
 
 class TransformerBlock(nn.Module):
-    """Transformer block with PreNorm, GELU, Dropout, MoE/MLP"""
+    """Transformer block with attention and MoE MLP"""
     def __init__(self, cfg, device=None, dtype=None):
         super().__init__()
-        self.norm1 = RMSNorm(cfg.hidden_size)
         self.attn = Attention(cfg, device=device, dtype=dtype)
+        self.mlp = MoELayer(cfg, device=device, dtype=dtype)
+        self.norm1 = RMSNorm(cfg.hidden_size)
         self.norm2 = RMSNorm(cfg.hidden_size)
-        # 支持MoE或Dense MLP
-        if hasattr(cfg, 'moe_num_experts') and getattr(cfg, 'moe_num_experts', 0) > 1:
-            self.mlp = MoELayer(cfg, device=device, dtype=dtype)
-        else:
-            self.mlp = MLP(cfg, device=device, dtype=dtype)
-        self.norm3 = RMSNorm(cfg.hidden_size)
     def forward(self, x, mask):
         x = x + self.attn(self.norm1(x), mask)
         x = x + self.mlp(self.norm2(x))
-        x = self.norm3(x)
         return x
 
 class PiscesModel(nn.Module):
-    """Pisces L1 multimodal MoE model (DeepSeek/GPT风格优化)"""
+    """Pisces L1 multimodal MoE model (oneflow style)"""
     def __init__(self, cfg, device=None, dtype=None):
         super().__init__()
         print("[DEBUG] PiscesModel: __init__ start")
