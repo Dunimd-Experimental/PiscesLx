@@ -23,81 +23,36 @@ from transformers import CLIPImageProcessor, ASTFeatureExtractor
 
 
 class VisionEncoder(nn.Module):
-    """Vision encoder using CLIP"""
     def __init__(self, cfg):
         super().__init__()
-        print("[DEBUG] VisionEncoder: __init__ start")
-        try:
-            from transformers import CLIPVisionModel
-            print("[DEBUG] VisionEncoder: loading CLIP model...")
-            self.clip = CLIPVisionModel.from_pretrained("openai/clip-vit-base-patch32")
-            print("[DEBUG] VisionEncoder: CLIP model loaded")
-            self.proj = nn.Linear(768, cfg.hidden_size)
-            self.enabled = True
-        except Exception as e:
-            print(f"❌ Warning: Failed to load CLIP model: {e}")
-            print("❌ Vision encoding will be disabled")
-            self.enabled = False
-            self.proj = nn.Linear(cfg.hidden_size, cfg.hidden_size)  # Placeholder
-        print("[DEBUG] VisionEncoder: __init__ end")
+        print("[DEBUG] VisionEncoder: __init__ start (disabled)")
+        self.enabled = False
+        self.proj = nn.Linear(cfg.hidden_size, cfg.hidden_size)  # Placeholder
+        print("[DEBUG] VisionEncoder: __init__ end (disabled)")
     
     def forward(self, pixel_values):
-        if not self.enabled:
-            # Return zero tensor as placeholder
-            return torch.zeros(pixel_values.shape[0], 1, self.proj.out_features, device=pixel_values.device)
-        h = self.clip(pixel_values=pixel_values).pooler_output
-        return self.proj(h).unsqueeze(1)
+        return torch.zeros(pixel_values.shape[0], 1, self.proj.out_features, device=pixel_values.device)
 
 
 class AudioEncoder(nn.Module):
-    """Audio encoder using AST"""
     def __init__(self, cfg):
         super().__init__()
-        print("[DEBUG] AudioEncoder: __init__ start")
-        try:
-            from transformers import ASTModel
-            print("[DEBUG] AudioEncoder: loading AST model...")
-            self.ast = ASTModel.from_pretrained("MIT/ast-finetuned-audioset-10-10-0.4593")
-            print("[DEBUG] AudioEncoder: AST model loaded")
-            self.proj = nn.Linear(768, cfg.hidden_size)
-            self.enabled = True
-        except Exception as e:
-            print(f"❌ Warning: Failed to load AST model: {e}")
-            print("❌ Audio encoding will be disabled")
-            self.enabled = False
-            self.proj = nn.Linear(cfg.hidden_size, cfg.hidden_size)  # Placeholder
-        print("[DEBUG] AudioEncoder: __init__ end")
+        print("[DEBUG] AudioEncoder: __init__ start (disabled)")
+        self.enabled = False
+        self.proj = nn.Linear(cfg.hidden_size, cfg.hidden_size)  # Placeholder
+        print("[DEBUG] AudioEncoder: __init__ end (disabled)")
     
     def forward(self, audio_input):
-        if not self.enabled:
-            # Return zero tensor as placeholder
-            return torch.zeros(audio_input['input_values'].shape[0], 1, self.proj.out_features, device=audio_input['input_values'].device)
-        h = self.ast(**audio_input).last_hidden_state.mean(1)
-        return self.proj(h).unsqueeze(1)
+        return torch.zeros(audio_input['input_values'].shape[0], 1, self.proj.out_features, device=audio_input['input_values'].device)
 
 
 class DocEncoder(nn.Module):
-    """Document encoder using LayoutLMv3"""
     def __init__(self, cfg):
         super().__init__()
-        print("[DEBUG] DocEncoder: __init__ start")
-        try:
-            from transformers import LayoutLMv3Model
-            print("[DEBUG] DocEncoder: loading LayoutLMv3 model...")
-            self.lm = LayoutLMv3Model.from_pretrained("microsoft/layoutlmv3-base")
-            print("[DEBUG] DocEncoder: LayoutLMv3 model loaded")
-            self.proj = nn.Linear(768, cfg.hidden_size)
-            self.enabled = True
-        except Exception as e:
-            print(f"❌ Warning: Failed to load LayoutLMv3 model: {e}")
-            print("❌ Document encoding will be disabled")
-            self.enabled = False
-            self.proj = nn.Linear(cfg.hidden_size, cfg.hidden_size)  # Placeholder
-        print("[DEBUG] DocEncoder: __init__ end")
+        print("[DEBUG] DocEncoder: __init__ start (disabled)")
+        self.enabled = False
+        self.proj = nn.Linear(cfg.hidden_size, cfg.hidden_size)  # Placeholder
+        print("[DEBUG] DocEncoder: __init__ end (disabled)")
     
     def forward(self, doc_input):
-        if not self.enabled:
-            # Return zero tensor as placeholder
-            return torch.zeros(doc_input['input_ids'].shape[0], 1, self.proj.out_features, device=doc_input['input_ids'].device)
-        h = self.lm(**doc_input).last_hidden_state.mean(1)
-        return self.proj(h).unsqueeze(1)
+        return torch.zeros(doc_input['input_ids'].shape[0], 1, self.proj.out_features, device=doc_input['input_ids'].device)

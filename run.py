@@ -240,15 +240,15 @@ def train(args):
                 scaler.update()
                 optimizer.zero_grad()
             else:
-                _, loss, _, _ = model(**device_batch)
-                print(f"[DEBUG] Forward pass done. Loss: {loss.item() if hasattr(loss, 'item') else loss}")
-                if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-                    loss = loss.mean()
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad()
+            _, loss, _, _ = model(**device_batch)
+            print(f"[DEBUG] Forward pass done. Loss: {loss.item() if hasattr(loss, 'item') else loss}")
+            if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                loss = loss.mean()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+            optimizer.step()
+            scheduler.step()
+            optimizer.zero_grad()
             total_loss += loss.item()
             if step % 50 == 0:
                 avg_loss = total_loss / (step + 1)

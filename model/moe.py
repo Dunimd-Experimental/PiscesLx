@@ -22,6 +22,7 @@ from torch import nn
 import torch.nn.functional as F
 import math
 
+
 def moe_init_weights(m):
     if isinstance(m, nn.Linear):
         nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
@@ -29,58 +30,59 @@ def moe_init_weights(m):
             nn.init.zeros_(m.bias)
 
 class MoEGate(nn.Module):
-    """Expert routing gate for MoE"""
-    def __init__(self, hidden_size, num_experts, device=None, dtype=None):
+    """Expert routing gate for MoE (top-k configurable)"""
+    def __init__(self, hidden_size, num_experts, top_k=2, device=None, dtype=None):
         super().__init__()
         self.gate = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
-    
+        self.top_k = top_k
+
     def forward(self, x):
-        logits = self.gate(x)
-        scores, idx = torch.topk(logits, 2, dim=-1)
-        scores = F.softmax(scores, dim=-1, dtype=torch.float32).type_as(x)
+        logits = self.gate(x)  # [N, num_experts]
+        scores, idx = torch.topk(logits, self.top_k, dim=-1)  # [N, top_k]
+        scores = F.softmax(scores, dim=-1, dtype=torch.float32).type_as(x)  # [N, top_k]
         return scores, idx
 
 class MoELayer(nn.Module):
-    """Mixture of Experts layer (Kimi-K2/Qwen style optimized init)"""
+    """Mixture of Experts layer (高效路由+负载均衡损失)"""
     _layer_count = 0
     def __init__(self, cfg, device=None, dtype=None, print_every=8):
         super().__init__()
         MoELayer._layer_count += 1
         self.cfg = cfg
-        self.gate = MoEGate(cfg.hidden_size, cfg.moe_num_experts, device=device, dtype=dtype)
-        self.experts = nn.ModuleList()
-        n = cfg.moe_num_experts
-        print_detail = (MoELayer._layer_count == 1)
-        if print_detail:
-            print(f"[DEBUG] MoELayer: initializing {n} experts...")
-        for i in range(n):
-            if print_detail and ((i % print_every == 0) or (i == n-1)):
-                print(f"[DEBUG] MoELayer: initializing expert {i+1}/{n}")
-            expert = nn.Sequential(
+        self.top_k = getattr(cfg, 'moe_top_k', 2)
+        self.num_experts = getattr(cfg, 'moe_num_experts', 8)
+        self.gate = MoEGate(cfg.hidden_size, self.num_experts, top_k=self.top_k, device=device, dtype=dtype)
+        self.experts = nn.ModuleList([
+            nn.Sequential(
                 nn.Linear(cfg.hidden_size, cfg.intermediate_size, bias=False, device=device, dtype=dtype),
                 nn.SiLU(),
                 nn.Linear(cfg.intermediate_size, cfg.hidden_size, bias=False, device=device, dtype=dtype)
-            )
+            ) for _ in range(self.num_experts)
+        ])
+        for expert in self.experts:
             expert.apply(moe_init_weights)
-            self.experts.append(expert)
-        if print_detail:
-            print(f"[DEBUG] MoELayer: all {n} experts initialized.")
-            total_params = sum(p.numel() for p in self.parameters())
-            print(f"[DEBUG] MoELayer: total parameters = {total_params/1e6:.2f}M")
-        else:
-            print(f"[DEBUG] MoELayer: (layer {MoELayer._layer_count}) {n} experts initialized (log suppressed)")
-    
+        if MoELayer._layer_count == 1:
+            print(f"[DEBUG] MoELayer: {self.num_experts} experts, top-{self.top_k} routing, efficient implementation.")
+
     def forward(self, x):
         b, t, d = x.shape
-        h = x.view(-1, d)
-        scores, idx = self.gate(h)  # [B*T, 2], [B*T, 2]
+        h = x.view(-1, d)  # [B*T, d]
+        scores, idx = self.gate(h)  # [N, top_k], [N, top_k]
+        N = h.size(0)
+        # 负载均衡损失 (aux_loss)
+        # 统计每个专家被分配的概率
+        mask = torch.zeros(N, self.num_experts, device=h.device)
+        mask.scatter_add_(1, idx, scores)
+        load = mask.sum(0) / mask.sum()
+        aux_loss = (load * load.log()).sum()
+        # 高效专家分配：一次性分组
         y = torch.zeros_like(h)
-        
-        for i in range(2):
-            expert_idx = idx[:, i]  # [B*T]
-            expert_scores = scores[:, i]  # [B*T]
-            for e in range(self.cfg.moe_num_experts):
-                mask = (expert_idx == e)
-                if mask.any():
-                    y[mask] += expert_scores[mask, None] * self.experts[e](h[mask])
-        return y.view(b, t, d)
+        for expert_id in range(self.num_experts):
+            # 找到所有被分配到该专家的 token
+            for k in range(self.top_k):
+                sel = (idx[:, k] == expert_id)
+                if sel.any():
+                    h_sel = h[sel]
+                    s_sel = scores[sel, k]
+                    y[sel] += s_sel.unsqueeze(1) * self.experts[expert_id](h_sel)
+        return y.view(b, t, d), aux_loss
