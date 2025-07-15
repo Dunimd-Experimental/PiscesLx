@@ -1,13 +1,13 @@
 {
   "model_type": "pisces_l1",
   "vocab_size": 100352,
-  "hidden_size": 2048,
+  "hidden_size": 1024,
   "n_layer": 12,
-  "n_head": 16,
+  "n_head": 8,
   "n_kv_head": 4,
-  "moe_num_experts": 8,
+  "moe_num_experts": 4,
   "moe_top_k": 2,
-  "intermediate_size": 5632,
+  "intermediate_size": 2730,
   "max_position_embeddings": 2048,
   "rope_theta": 1000000.0,
   "dropout": 0.0,
@@ -17,4 +17,4 @@
   "audio_tokens": 512,
   "task_classes": 256,
   "eval_dims": 7
-} 
+}

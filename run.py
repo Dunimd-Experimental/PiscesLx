@@ -18,6 +18,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import os
+# os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "max_split_size_mb:32,expandable_segments:True"
 import sys
 import subprocess
 import platform
@@ -27,20 +28,6 @@ from pathlib import Path
 
 # Add project root to path
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-
-# --- Patch for modelscope 1.28.0 + datasets 2.14.7 compatibility ---
-try:
-    from datasets import exceptions as _ds_exceptions
-    if not hasattr(_ds_exceptions, "DataFilesNotFoundError"):
-        class DataFilesNotFoundError(FileNotFoundError):
-            pass
-        _ds_exceptions.DataFilesNotFoundError = DataFilesNotFoundError
-    if not hasattr(_ds_exceptions, "DatasetNotFoundError"):
-        class DatasetNotFoundError(FileNotFoundError):
-            pass
-        _ds_exceptions.DatasetNotFoundError = DatasetNotFoundError
-except Exception as e:
-    print(f"❌ Patch for datasets.exceptions failed: {e}")
 
 def setup_env():
     """Auto setup venv and install requirements if needed, then auto-enter venv shell"""
@@ -114,22 +101,19 @@ def setup_device(device_pref):
 def collate_fn(batch):
     """Custom batch processing for variable length data"""
     import torch
+    MAX_SEQ_LEN = 256  # 更安全的显存友好长度，兼容更多模型结构
     # Text data
     input_ids = [item["input_ids"] for item in batch]
     input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=0)
-
-    # Image data
+    # 长度裁剪
+    if input_ids.shape[1] > MAX_SEQ_LEN:
+        input_ids = input_ids[:, :MAX_SEQ_LEN]
+    # 强制 multimodal 输入为 None（训练时节省显存）
     pixel_values = None
-    if any(item["pixel_values"] is not None for item in batch):
-        pixel_values = torch.cat([item["pixel_values"] for item in batch if item["pixel_values"] is not None])
-
-    # Audio data
     audio_input = None
-    if any(item["audio_input"] is not None for item in batch):
-        audio_input = torch.cat([item["audio_input"] for item in batch if item["audio_input"] is not None])
-
-    labels = input_ids.clone()  # Autoregressive labels
-
+    labels = input_ids.clone()
+    if labels.shape[1] > MAX_SEQ_LEN:
+        labels = labels[:, :MAX_SEQ_LEN]
     return {
         "input_ids": input_ids,
         "labels": labels,
@@ -199,13 +183,14 @@ def train(args):
 
     # Create data loader
     print("[DEBUG] Creating DataLoader...")
-    loader = DataLoader(
+    train_loader = DataLoader(
         train_ds,
-        batch_size=batch_size,
+        batch_size=1,
         shuffle=True,
         num_workers=0,
+        pin_memory=False,
+        drop_last=True,
         collate_fn=collate_fn,
-        pin_memory=True
     )
     print("✅ DataLoader created successfully")
 
@@ -215,49 +200,68 @@ def train(args):
     # Training loop
     print("✅ Starting training loop...")
     model.train()
-    scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
+    scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
+    import torch
+    torch.cuda.empty_cache()
+    torch.cuda.reset_peak_memory_stats()
     for epoch in range(epochs):
         print(f"[DEBUG] Starting epoch {epoch+1}/{epochs}")
         total_loss = 0
-        for step, batch in enumerate(loader):
+        for step, batch in enumerate(train_loader):
             print(f"[DEBUG] Epoch {epoch+1} Step {step} - Batch keys: {list(batch.keys())}")
             # Move to device
+            model_keys = ["input_ids", "labels"]
             device_batch = {
                 k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
-                for k, v in batch.items()
+                for k, v in batch.items() if k in model_keys and v is not None
             }
             print(f"[DEBUG] Batch moved to device.")
             
             if scaler is not None:
-                with torch.cuda.amp.autocast():
-                    _, loss, _, _ = model(**device_batch)
+                with torch.amp.autocast('cuda'):
+                    _, loss, _, _, _ = model(**device_batch)
+                    print(f"[DEBUG] Forward pass done. Loss: {loss.item() if hasattr(loss, 'item') else loss}")
+                    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                        loss = loss.mean()
+                try:
+                    scaler.scale(loss).backward()
+                except RuntimeError as e:
+                    if 'out of memory' in str(e):
+                        print(f"OOM at step {step}, skipping batch...")
+                        torch.cuda.empty_cache()
+                        import gc; gc.collect()
+                        optimizer.zero_grad()
+                        continue
+                    else:
+                        raise
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                optimizer.zero_grad()
+                scheduler.step()
+                scaler.update()
+                del loss, batch, device_batch
+                torch.cuda.empty_cache()  # 清理显存碎片
+            else:
+                _, loss, _, _, _ = model(**device_batch)
                 print(f"[DEBUG] Forward pass done. Loss: {loss.item() if hasattr(loss, 'item') else loss}")
                 if torch.cuda.is_available() and torch.cuda.device_count() > 1:
                     loss = loss.mean()
-                scaler.scale(loss).backward()
+                loss.backward()
                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                scaler.step(optimizer)
-                scaler.update()
+                optimizer.step()
                 optimizer.zero_grad()
-            else:
-            _, loss, _, _ = model(**device_batch)
-            print(f"[DEBUG] Forward pass done. Loss: {loss.item() if hasattr(loss, 'item') else loss}")
-            if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-                loss = loss.mean()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-            optimizer.step()
-            scheduler.step()
-            optimizer.zero_grad()
-            total_loss += loss.item()
-            if step % 50 == 0:
-                avg_loss = total_loss / (step + 1)
-                print(f"✅ Epoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f}")
-        # Save checkpoint
-        checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
-        save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
-        print(f"✅ Checkpoint saved: {checkpoint_path}")
-    print("✅ Training completed!")
+                scheduler.step()
+                del loss, batch, device_batch
+                torch.cuda.empty_cache()  # 清理显存碎片
+                total_loss += loss.item()
+                if step % 50 == 0:
+                    avg_loss = total_loss / (step + 1)
+                    print(f"✅ Epoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f}")
+            # Save checkpoint
+            checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
+            save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
+            print(f"✅ Checkpoint saved: {checkpoint_path}")
+        print("✅ Training completed!")
 
 
 def infer(args):

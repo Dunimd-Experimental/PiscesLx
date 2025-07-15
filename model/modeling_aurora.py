@@ -94,8 +94,9 @@ class TransformerBlock(nn.Module):
         self.norm2 = RMSNorm(cfg.hidden_size)
     def forward(self, x, mask):
         x = x + self.attn(self.norm1(x), mask)
-        x = x + self.mlp(self.norm2(x))
-        return x
+        mlp_out, aux_loss = self.mlp(self.norm2(x))
+        x = x + mlp_out
+        return x, aux_loss
 
 class PiscesModel(nn.Module):
     """Pisces L1 multimodal MoE model (oneflow style)"""
@@ -139,8 +140,10 @@ class PiscesModel(nn.Module):
             t += 1
         mask = torch.full((t, t), float('-inf'), device=x.device, dtype=x.dtype)
         mask = torch.triu(mask, diagonal=1)
+        total_aux_loss = 0.0
         for layer in self.layers:
-            x = layer(x, mask)
+            x, aux_loss = layer(x, mask)
+            total_aux_loss = total_aux_loss + aux_loss if aux_loss is not None else total_aux_loss
         x = self.norm(x)
         logits = self.lm_head(x)
         loss = None
@@ -148,4 +151,4 @@ class PiscesModel(nn.Module):
             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1))
         task_logits = self.task_head(x[:, 0])
         eval_score = self.eval_head(x.mean(1))
-        return logits, loss, task_logits, eval_score
+        return logits, loss, task_logits, eval_score, total_aux_loss
