@@ -50,43 +50,53 @@ def download_datasets(max_samples_per_dataset=50000):
     print("✅ Starting ModelScope dataset download...")
     print(f"Max samples per dataset: {max_samples_per_dataset:,}")
     
-            # Core datasets for Pisces L1 training
+    # Core datasets for Pisces L1 training
     datasets = [
-        # === Text Datasets (Essential) ===
         ("AI-ModelScope/TinyStories", "tiny_stories", "High-quality text stories"),
         ("AI-ModelScope/alpaca-gpt4-data-zh", "alpaca_zh", "Chinese instruction data"),
         ("AI-ModelScope/alpaca-gpt4-data-en", "alpaca_en", "English instruction data"),
-        ("AI-ModelScope/ShareGPT-90k", "sharegpt", "ShareGPT dialogue data"),
-        ("AI-ModelScope/ultrachat-200k", "ultrachat", "UltraChat dialogue data"),
-        # === Image-Text Datasets (Core) ===
+        ("AI-ModelScope/ShareGPT-Chinese-English-90k", "sharegpt", "ShareGPT dialogue data"),
+        ("AI-ModelScope/ultrachat_200k", "ultrachat", "UltraChat dialogue data"),
         ("zacbi2023/coco2017_caption", "coco_caption_2017", "COCO 2017 Captions"),
         ("AI-ModelScope/LLaVA-Instruct-150K", "llava_instruct", "LLaVA instruction data"),
-        ("AI-ModelScope/MMC4", "mmc4", "Multimodal C4 dataset"),
-        # === Audio Datasets (Core) ===
+        ("thomas/MMC", "mmc4", "Multimodal C4 dataset"),
         ("lmms-lab/AudioSetCaps_220k_converted", "audioset_caps_220k", "Audio caption data (220k)"),
-        ("lmms-lab/AudioSetCaps_350k_converted", "audioset_caps_350k", "Audio caption data (350k)"),
         ("AI-ModelScope/ESC-50", "esc50", "Environmental sound classification"),
-        # === Document Datasets ===
         ("AI-ModelScope/DocVQA", "docvqa", "Document Visual Question Answering"),
         ("AI-ModelScope/RVL-CDIP", "rvl_cdip", "Document image classification"),
-        # === Video Datasets ===
-        ("AI-ModelScope/WebVid-10M", "webvid", "Web video dataset"),
-        # === Additional Video Datasets (if available) ===
-        ("AI-ModelScope/ActivityNet-QA", "activitynet_qa", "Video question answering dataset"),
-        ("AI-ModelScope/YouCook2", "youcook2", "Video cooking dataset with captions"),
-        # === Additional Document Datasets (if available) ===
+        # ("AI-ModelScope/webvid-10M", "webvid", "Web video dataset"),
+        # ("AI-ModelScope/ActivityNet-QA", "activitynet_qa", "Video question answering dataset"),
+        # ("AI-ModelScope/YouCook2", "youcook2", "Video cooking dataset with captions"),
         ("AI-ModelScope/DocBank", "docbank", "Document layout analysis dataset"),
         ("AI-ModelScope/FUNSD", "funsd", "Form understanding in noisy scanned documents"),
-        # === OCR Dataset ===
         ("AI-ModelScope/OCR-Receipt-Dataset", "ocr_receipt", "Receipt OCR dataset"),
-        # === Table Understanding Dataset ===
         ("AI-ModelScope/TableBank", "tablebank", "Table structure recognition dataset"),
-        # === Video-Language Dataset ===
         ("AI-ModelScope/TVQA", "tvqa", "TVQA video-language dataset"),
-        # === More Audio Dataset ===
         ("AI-ModelScope/VoxCeleb1", "voxceleb1", "Speaker recognition audio dataset"),
-        # === More Image Dataset ===
-        ("AI-ModelScope/ImageNet-1K", "imagenet1k", "ImageNet 1K classification dataset"),
+        ("cutedataset/imagenet-1k", "imagenet1k", "ImageNet 1K classification dataset"),
+        # ("Data-Juicer/the-pile-philpaper-refined-by-data-juicer", "the_pile", "The Pile (large-scale high-quality English text)"),
+        # ("swift/RedPajama-Data-1T", "redpajama", "RedPajama (1T tokens)"),
+        # ("swift/chinese-c4", "c4", "Colossal Clean Crawled Corpus (C4)"),
+        ("Intelligent-Internet/wikipedia_en", "wikipedia_en", "Wikipedia English"),
+        ("OmniData/Pile-BookCorpus2", "bookcorpus", "BookCorpus English books"),
+        # ("AI-ModelScope/LAION-SG", "laion_400m", "LAION-400M image-text pairs"),
+        # ("wxzhuyeah/laion5b_parquet", "laion_5b", "LAION-5B image-text pairs"),
+        # ("swift/moondream2-coyo-5M-captions", "coyo_700m", "COYO-700M image-text pairs"),
+        ("lmms-lab/LLaVA-ReCap-CC3M", "cc3m", "Conceptual Captions 3M"),
+        ("lmms-lab/LLaVA-ReCap-CC12M", "cc12m", "Conceptual Captions 12M"),
+        ("OmniData/Clotho", "clotho", "Clotho audio captioning"),
+        ("pkufool/LibriSpeech", "librispeech", "LibriSpeech English audiobooks"),
+        ("OpenDataLab/PubLayNet", "publaynet", "PubLayNet scientific paper layout"),
+        ("OmniData/CORD-19", "cord", "CORD receipt OCR"),
+        # ("OmniData/HowTo100M", "howto100m", "HowTo100M video-subtitle pairs"),
+        # ("OpenDataLab/MSR-VTT", "msrvtt", "MSR-VTT video retrieval"),
+        # ("cucl2a/VGGSound4AVQA_small", "vggsound", "VGGSound video audio events"),
+        ("lmms-lab/MMBench", "mmbench", "MMBench multimodal reasoning benchmark"),
+        ("lmms-lab/MMVet", "mmvet", "MMVet multimodal reasoning benchmark"),
+        ("AI-ModelScope/MMMU", "mmmu", "MMMU multimodal understanding"),
+        ("AI-ModelScope/ScienceQA", "scienceqa", "ScienceQA science image-text QA"),
+        ("AI-ModelScope/modelscope/R1-Distill-Math-Test", "mathvista", "MathVista math visual reasoning"),
+        ("AI-ModelScope/M3IT", "m3it", "M3IT multimodal instruction tuning"),
     ]
     
     success_count = 0
