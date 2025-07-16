@@ -22,19 +22,16 @@ import torch
 from torch.utils.data import Dataset
 from datasets import load_from_disk
 from model.tokenizer import get_tokenizer
+from model.multimodal import VisionEncoder, AudioEncoder, DocEncoder
+# Add VideoEncoder import (assume to be implemented in model.multimodal)
 try:
-    from modelscope.msdatasets import MsDataset
-except ImportError as e:
-    print("❌ Current modelscope version requires datasets >=2.14.7. Please upgrade datasets to enable online dataset loading.")
-    MsDataset = None
-except Exception as e:
-    print(f"❌ ModelScope import error: {e}")
-    MsDataset = None
-from model.multimodal import VisionEncoder, AudioEncoder
+    from model.multimodal import VideoEncoder
+except ImportError:
+    VideoEncoder = None
 
 
 class PiscesDataset(Dataset):
-    """Pisces dataset with multimodal support"""
+    """Pisces dataset with multimodal support (text, image, audio, doc, video)"""
     def __init__(self, subset="tiny", split="train", config=None):
         # Try loading from local cache first
         cache_path = os.path.join("data_cache", subset)
@@ -73,10 +70,11 @@ class PiscesDataset(Dataset):
         
         self.tokenizer = get_tokenizer()
         self.config = config
-
         # Initialize preprocessors
         self.vision_encoder = VisionEncoder(config) if config else None
         self.audio_encoder = AudioEncoder(config) if config else None
+        self.doc_encoder = DocEncoder(config) if config else None
+        self.video_encoder = VideoEncoder(config) if (config and VideoEncoder is not None) else None
 
     def __len__(self):
         return len(self.ds)
@@ -84,26 +82,51 @@ class PiscesDataset(Dataset):
     def __getitem__(self, idx):
         item = self.ds[idx]
 
+        # Text
         text = item.get("text", "")
         input_ids = self.tokenizer.encode(text, return_tensors="pt")[0]
 
+        # Image
         pixel_values = None
-        if "image" in item and self.vision_encoder:
+        if "image" in item and self.vision_encoder and self.vision_encoder.enabled:
             try:
                 pixel_values = self.vision_encoder.process_image(item["image"])
+                print(f"[DEBUG] Image processed successfully: {item['image']}")
             except Exception as e:
-                print(f"❌ Image processing error: {e}")
+                print(f" Image processing error: {e}")
 
+        # Audio
         audio_input = None
-        if "audio" in item and self.audio_encoder:
+        if "audio" in item and self.audio_encoder and self.audio_encoder.enabled:
             try:
                 audio_input = self.audio_encoder.process_audio(item["audio"])
+                print(f"[DEBUG] Audio processed successfully: {item['audio']}")
             except Exception as e:
-                print(f"❌ Audio processing error: {e}")
+                print(f" Audio processing error: {e}")
+
+        # Document
+        doc_input = None
+        if "doc" in item and self.doc_encoder and self.doc_encoder.enabled:
+            try:
+                doc_input = self.doc_encoder.process_doc(item["doc"])
+                print(f"[DEBUG] Doc processed successfully: {item['doc']}")
+            except Exception as e:
+                print(f" Doc processing error: {e}")
+
+        # Video
+        video_frames = None
+        if "video" in item and self.video_encoder and getattr(self.video_encoder, 'enabled', True):
+            try:
+                video_frames = self.video_encoder.process_video(item["video"])
+                print(f"[DEBUG] Video processed successfully: {item['video']}")
+            except Exception as e:
+                print(f" Video processing error: {e}")
 
         return {
             "input_ids": input_ids,
             "labels": input_ids.clone(),
             "pixel_values": pixel_values,
-            "audio_input": audio_input
+            "audio_input": audio_input if audio_input is not None else {'input_values': None},
+            "doc_input": doc_input,
+            "video_frames": video_frames
         }

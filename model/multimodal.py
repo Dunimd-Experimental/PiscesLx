@@ -25,34 +25,104 @@ from transformers import CLIPImageProcessor, ASTFeatureExtractor
 class VisionEncoder(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        print("[DEBUG] VisionEncoder: __init__ start (disabled)")
-        self.enabled = False
-        self.proj = nn.Linear(cfg.hidden_size, cfg.hidden_size)  # Placeholder
-        print("[DEBUG] VisionEncoder: __init__ end (disabled)")
+        self.enabled = True
+        self.cfg = cfg
+        print(f"[DEBUG] VisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        
+        self.processor = CLIPImageProcessor()
+        
+        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
+        self.bn1 = nn.BatchNorm2d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
+        
+        self.proj = nn.Sequential(
+            nn.Linear(64 * 56 * 56, cfg.hidden_size),
+            nn.LayerNorm(cfg.hidden_size)
+        )
+        
+        print("[DEBUG] VisionEncoder: __init__ end")
+    
+    def process_image(self, image_path):
+        """Process image data"""
+        print(f"[DEBUG] Processing image: {image_path}")
+        try:
+            image = self.processor(images=image_path, return_tensors="pt")
+            return image['pixel_values'][0]
+        except Exception as e:
+            print(f"❌ Image processing error: {e}")
+            return None
     
     def forward(self, pixel_values):
-        return torch.zeros(pixel_values.shape[0], 1, self.proj.out_features, device=pixel_values.device)
+        if pixel_values is None:
+            return torch.zeros(1, 1, self.cfg.hidden_size, device=pixel_values.device)
+        
+        x = self.conv1(pixel_values)
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.proj(x)
+        return x.unsqueeze(1)
 
 
 class AudioEncoder(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        print("[DEBUG] AudioEncoder: __init__ start (disabled)")
-        self.enabled = False
-        self.proj = nn.Linear(cfg.hidden_size, cfg.hidden_size)  # Placeholder
-        print("[DEBUG] AudioEncoder: __init__ end (disabled)")
+        self.enabled = True
+        self.cfg = cfg
+        print(f"[DEBUG] AudioEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        
+        self.processor = ASTFeatureExtractor()
+        
+        self.conv1 = nn.Conv1d(1, 64, kernel_size=10, stride=5, padding=3)
+        self.bn1 = nn.BatchNorm1d(64)
+        self.relu = nn.ReLU(inplace=True)
+        self.maxpool = nn.MaxPool1d(kernel_size=8, stride=8)
+        
+        self.proj = nn.Sequential(
+            nn.Linear(64 * 128, cfg.hidden_size),
+            nn.LayerNorm(cfg.hidden_size)
+        )
+        
+        print("[DEBUG] AudioEncoder: __init__ end")
+    
+    def process_audio(self, audio_path):
+        print(f"[DEBUG] Processing audio: {audio_path}")
+        try:
+            audio = self.processor(audio=audio_path, return_tensors="pt")
+            return audio['input_values'][0]
+        except Exception as e:
+            print(f"❌ Audio processing error: {e}")
+            return None
     
     def forward(self, audio_input):
-        return torch.zeros(audio_input['input_values'].shape[0], 1, self.proj.out_features, device=audio_input['input_values'].device)
+        if audio_input is None:
+            return torch.zeros(1, 1, self.cfg.hidden_size, device=audio_input.device)
+        
+        x = self.conv1(audio_input['input_values'].unsqueeze(1))
+        x = self.bn1(x)
+        x = self.relu(x)
+        x = self.maxpool(x)
+        x = x.view(x.size(0), -1)
+        x = self.proj(x)
+        return x.unsqueeze(1)
 
 
 class DocEncoder(nn.Module):
     def __init__(self, cfg):
         super().__init__()
-        print("[DEBUG] DocEncoder: __init__ start (disabled)")
-        self.enabled = False
-        self.proj = nn.Linear(cfg.hidden_size, cfg.hidden_size)  # Placeholder
-        print("[DEBUG] DocEncoder: __init__ end (disabled)")
+        self.enabled = True
+        self.cfg = cfg
+        print(f"[DEBUG] DocEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        
+        self.doc_proj = nn.Sequential(
+            nn.Linear(cfg.hidden_size, cfg.hidden_size),
+            nn.LayerNorm(cfg.hidden_size)
+        )
+        
+        print("[DEBUG] DocEncoder: __init__ end")
     
     def forward(self, doc_input):
-        return torch.zeros(doc_input['input_ids'].shape[0], 1, self.proj.out_features, device=doc_input['input_ids'].device)
+        x = self.doc_proj(doc_input['input_ids'])
+        return x.unsqueeze(1)

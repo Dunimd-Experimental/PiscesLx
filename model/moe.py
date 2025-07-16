@@ -35,7 +35,7 @@ class MoEGate(nn.Module):
         super().__init__()
         self.gate = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
         self.top_k = top_k
-
+    
     def forward(self, x):
         logits = self.gate(x)  # [N, num_experts]
         scores, idx = torch.topk(logits, self.top_k, dim=-1)  # [N, top_k]
@@ -62,23 +62,23 @@ class MoELayer(nn.Module):
         for expert in self.experts:
             expert.apply(moe_init_weights)
         if MoELayer._layer_count == 1:
-            print(f"[DEBUG] MoELayer: {self.num_experts} experts, top-{self.top_k} routing, efficient implementation.")
-
+            print(f"✅\tMoELayer: {self.num_experts} experts, top-{self.top_k} routing, efficient implementation.")
+    
     def forward(self, x):
         b, t, d = x.shape
         h = x.view(-1, d)  # [B*T, d]
         scores, idx = self.gate(h)  # [N, top_k], [N, top_k]
         N = h.size(0)
-        # 负载均衡损失 (aux_loss)
-        # 统计每个专家被分配的概率
+        # Load balancing loss (aux_loss)
+        # Count the probability of each expert being assigned
         mask = torch.zeros(N, self.num_experts, device=h.device)
         mask.scatter_add_(1, idx, scores)
         load = mask.sum(0) / mask.sum()
         aux_loss = (load * load.log()).sum()
-        # 高效专家分配：一次性分组
+        # Efficient expert assignment: batch grouping
         y = torch.zeros_like(h)
         for expert_id in range(self.num_experts):
-            # 找到所有被分配到该专家的 token
+            # Find all tokens assigned to this expert
             for k in range(self.top_k):
                 sel = (idx[:, k] == expert_id)
                 if sel.any():

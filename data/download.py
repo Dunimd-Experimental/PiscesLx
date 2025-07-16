@@ -56,22 +56,37 @@ def download_datasets(max_samples_per_dataset=50000):
         ("AI-ModelScope/TinyStories", "tiny_stories", "High-quality text stories"),
         ("AI-ModelScope/alpaca-gpt4-data-zh", "alpaca_zh", "Chinese instruction data"),
         ("AI-ModelScope/alpaca-gpt4-data-en", "alpaca_en", "English instruction data"),
-        
-        # === Image-Text Datasets (Core) ===
-        ("AI-ModelScope/coco-2014-val-30", "coco_val", "COCO validation set"),
-        ("AI-ModelScope/LLaVA-Instruct-150K", "llava_instruct", "LLaVA instruction data"),
-        
-        # === Audio Datasets (Core) ===
-        ("AI-ModelScope/audioset-mini-100", "audioset_mini", "AudioSet mini subset"),
-        ("lmms-lab/AudioSetCaps_350k_converted", "audioset_caps", "Audio caption data"),
-        
-        # === Advanced Datasets (Optional) ===
-        ("AI-ModelScope/ultrachat-200k", "ultrachat", "UltraChat dialogue data"),
         ("AI-ModelScope/ShareGPT-90k", "sharegpt", "ShareGPT dialogue data"),
-        ("AI-ModelScope/coco-2014-train-100", "coco_train", "COCO training subset"),
-        ("AI-ModelScope/ESC-50", "esc50", "Environmental sound classification"),
+        ("AI-ModelScope/ultrachat-200k", "ultrachat", "UltraChat dialogue data"),
+        # === Image-Text Datasets (Core) ===
+        ("zacbi2023/coco2017_caption", "coco_caption_2017", "COCO 2017 Captions"),
+        ("AI-ModelScope/LLaVA-Instruct-150K", "llava_instruct", "LLaVA instruction data"),
         ("AI-ModelScope/MMC4", "mmc4", "Multimodal C4 dataset"),
-        ("AI-ModelScope/WebVid-10M", "webvid", "Web video dataset")
+        # === Audio Datasets (Core) ===
+        ("lmms-lab/AudioSetCaps_220k_converted", "audioset_caps_220k", "Audio caption data (220k)"),
+        ("lmms-lab/AudioSetCaps_350k_converted", "audioset_caps_350k", "Audio caption data (350k)"),
+        ("AI-ModelScope/ESC-50", "esc50", "Environmental sound classification"),
+        # === Document Datasets ===
+        ("AI-ModelScope/DocVQA", "docvqa", "Document Visual Question Answering"),
+        ("AI-ModelScope/RVL-CDIP", "rvl_cdip", "Document image classification"),
+        # === Video Datasets ===
+        ("AI-ModelScope/WebVid-10M", "webvid", "Web video dataset"),
+        # === Additional Video Datasets (if available) ===
+        ("AI-ModelScope/ActivityNet-QA", "activitynet_qa", "Video question answering dataset"),
+        ("AI-ModelScope/YouCook2", "youcook2", "Video cooking dataset with captions"),
+        # === Additional Document Datasets (if available) ===
+        ("AI-ModelScope/DocBank", "docbank", "Document layout analysis dataset"),
+        ("AI-ModelScope/FUNSD", "funsd", "Form understanding in noisy scanned documents"),
+        # === OCR Dataset ===
+        ("AI-ModelScope/OCR-Receipt-Dataset", "ocr_receipt", "Receipt OCR dataset"),
+        # === Table Understanding Dataset ===
+        ("AI-ModelScope/TableBank", "tablebank", "Table structure recognition dataset"),
+        # === Video-Language Dataset ===
+        ("AI-ModelScope/TVQA", "tvqa", "TVQA video-language dataset"),
+        # === More Audio Dataset ===
+        ("AI-ModelScope/VoxCeleb1", "voxceleb1", "Speaker recognition audio dataset"),
+        # === More Image Dataset ===
+        ("AI-ModelScope/ImageNet-1K", "imagenet1k", "ImageNet 1K classification dataset"),
     ]
     
     success_count = 0
@@ -81,20 +96,29 @@ def download_datasets(max_samples_per_dataset=50000):
             continue
         try:
             print(f"✅ Downloading {description} ({dataset_name})...")
-            ds = MsDataset.load(dataset_name, split='train')
+            split_tried = None
+            ds = None
+            for split in ['train', 'validation', 'test']:
+                try:
+                    ds = MsDataset.load(dataset_name, split=split)
+                    split_tried = split
+                    print(f"✅ Using split '{split}' for {dataset_name}")
+                    break
+                except Exception as e:
+                    last_split_error = e
+            if ds is None:
+                print(f"❌ Failed to download {dataset_name}: No available split (tried train/validation/test). Last error: {last_split_error}")
+                continue
             if hasattr(ds, 'to_hf_dataset'):
                 ds = ds.to_hf_dataset()
             original_size = len(ds)
             print(f"✅ Dataset loaded successfully, original samples: {original_size:,}")
-            
             # Limit dataset size if needed
             if original_size > max_samples_per_dataset:
                 print(f"✅ Limiting to {max_samples_per_dataset:,} samples...")
                 ds = ds.select(range(min(max_samples_per_dataset, original_size)))
-            
             if save(ds, save_name):
                 success_count += 1
-                
         except Exception as e:
             print(f"❌ Failed to download {dataset_name}: {e}")
     
