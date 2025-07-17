@@ -190,15 +190,18 @@ def display_stats(stats, last_net_io, last_disk_io, last_time):
 
     return current_net_io, current_disk_io
 
-def main():
-    """Main function to run the monitor."""
-    # Initialize with a first call to get a baseline
+def monitor():
+    print("✅\tStarting Pisces L1 System Monitor...")
+    if not GPU_ENABLED:
+        print("❌\tNVIDIA GPU not detected or 'pynvml' library failed to load.")
+        print("❌\tFor GPU monitoring, ensure you have an NVIDIA GPU and run: pip install pynvml")
+    time.sleep(2)
+    # Main function to run the monitor.
     last_net_io = psutil.net_io_counters()
     last_disk_io = psutil.disk_io_counters()
-    psutil.cpu_percent(percpu=True) # Initial call to clear interval
+    psutil.cpu_percent(percpu=True)
     psutil.cpu_percent(percpu=False)
     last_time = time.time()
-    
     try:
         while True:
             stats = get_system_stats()
@@ -206,17 +209,9 @@ def main():
             last_time = time.time()
             time.sleep(UPDATE_INTERVAL)
     except KeyboardInterrupt:
-        print("\n\nMonitor stopped. Goodbye!")
+        print("\n\n✅\tMonitor stopped. Goodbye!")
     except Exception as e:
-        print(f"\nAn error occurred: {e}")
+        print(f"\n❌\tAn error occurred: {e}")
     finally:
         if GPU_ENABLED:
             pynvml.nvmlShutdown()
-
-if __name__ == "__main__":
-    print("🚀 Starting Pisces L1 System Monitor...")
-    if not GPU_ENABLED:
-        print("⚠️  NVIDIA GPU not detected or 'pynvml' library failed to load.")
-        print("   For GPU monitoring, ensure you have an NVIDIA GPU and run: pip install pynvml")
-    time.sleep(2)
-    main() 

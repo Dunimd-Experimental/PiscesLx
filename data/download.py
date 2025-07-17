@@ -134,13 +134,3 @@ def download_datasets(max_samples_per_dataset=50000):
     
     print(f"✅ Download completed! Success: {success_count}/{len(datasets)}")
     return success_count
-
-
-if __name__ == "__main__":
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--max_samples", type=int, default=50000, 
-                       help="Maximum samples per dataset (default: 50000)")
-    args = parser.parse_args()
-    
-    download_datasets(args.max_samples)

@@ -16,56 +16,41 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
-
 import torch
 import sys
 import os
 
-def check_gpu():
+def check(args=None, extra=None):
     """Check GPU availability and status"""
-    print("🔍 GPU Status Check")
-    print("=" * 50)
-    
-    # Check PyTorch CUDA availability
-    print(f"PyTorch CUDA available: {torch.cuda.is_available()}")
-    
+    print("✅\tGPU Status Check")
+    print("✅\t" + "=" * 50)
+    print(f"✅\tPyTorch CUDA available: {torch.cuda.is_available()}")
     if torch.cuda.is_available():
-        print(f"CUDA version: {torch.version.cuda}")
-        print(f"Number of GPUs: {torch.cuda.device_count()}")
-        
+        print(f"✅\tCUDA version: {torch.version.cuda}")
+        print(f"✅\tNumber of GPUs: {torch.cuda.device_count()}")
         for i in range(torch.cuda.device_count()):
             props = torch.cuda.get_device_properties(i)
-            print(f"\nGPU {i}: {props.name}")
-            print(f"  Memory: {props.total_memory / 1024**3:.1f} GB")
-            print(f"  Compute Capability: {props.major}.{props.minor}")
-            
-            # Check current memory usage
-            if i == 0:  # Only check first GPU
+            print(f"✅\tGPU {i}: {props.name}")
+            print(f"✅\t  Memory: {props.total_memory / 1024**3:.1f} GB")
+            print(f"✅\t  Compute Capability: {props.major}.{props.minor}")
+            if i == 0:
                 torch.cuda.empty_cache()
                 allocated = torch.cuda.memory_allocated(i) / 1024**3
                 cached = torch.cuda.memory_reserved(i) / 1024**3
-                print(f"  Allocated: {allocated:.2f} GB")
-                print(f"  Cached: {cached:.2f} GB")
+                print(f"✅\t  Allocated: {allocated:.2f} GB")
+                print(f"✅\t  Cached: {cached:.2f} GB")
     else:
-        print("❌ No CUDA-capable GPU found")
-        print("💡 Training will use CPU (slower but functional)")
-    
-    print("\n" + "=" * 50)
-    
-    # Test basic tensor operations
-    print("🧪 Testing tensor operations...")
+        print("❌\tNo CUDA-capable GPU found")
+        print("❌\tTraining will use CPU (slower but functional)")
+    print("✅\t" + "=" * 50)
+    print("✅\tTesting tensor operations...")
     try:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         x = torch.randn(1000, 1000).to(device)
         y = torch.randn(1000, 1000).to(device)
         z = torch.mm(x, y)
-        print(f"✅ Tensor operations successful on {device}")
+        print(f"✅\tTensor operations successful on {device}")
     except Exception as e:
-        print(f"❌ Tensor operations failed: {e}")
+        print(f"❌\tTensor operations failed: {e}")
         return False
-    
     return True
-
-if __name__ == "__main__":
-    success = check_gpu()
-    sys.exit(0 if success else 1) 
