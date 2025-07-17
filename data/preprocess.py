@@ -20,12 +20,12 @@
 import os, json
 from datasets import load_from_disk, DatasetDict
 
-SUBSETS = ["tiny", "coco_mini", "audio100"]
+SUBSETS = ["mathvista", "coco_caption_2017", "llava_instruct", "tvqa"]
 
 def build_splits(subset):
     src = f"data/{subset}"
     if not os.path.exists(src):
-        print(f"❌ {src} does not exist, please run download.py first")
+        print(f"❌\t{src} does not exist, please run download.py first")
         return
 
     ds = load_from_disk(src)
@@ -38,7 +38,7 @@ def build_splits(subset):
 
     out = DatasetDict(split)
     out.save_to_disk(f"data/{subset}")
-    print(f"✅ {subset} split completed → data/{subset}")
+    print(f"✅\t{subset} split completed → data/{subset}")
 
 if __name__ == "__main__":
     for s in SUBSETS:

@@ -31,14 +31,14 @@ class BPETokenizer:
             base_tokens = [chr(i) for i in range(32, 127)]
             self.encoder = {tok: i for i, tok in enumerate(base_tokens)}
             self.decoder = {i: tok for tok, i in self.encoder.items()}
-            print("❌ No vocab.json found, using dummy vocab.")
+            print("❌\tNo vocab.json found, using dummy vocab.")
         self.bpe_ranks = {}
         if merges_path and os.path.exists(merges_path):
             with open(merges_path, "r", encoding="utf-8") as f:
                 merges = [tuple(line.strip().split()) for line in f if not line.startswith("#") and line.strip()]
             self.bpe_ranks = {pair: i for i, pair in enumerate(merges)}
         else:
-            print("❌ No merges.txt found, using char-level BPE.")
+            print("❌\tNo merges.txt found, using char-level BPE.")
         self.special_tokens = special_tokens or ["<s>", "</s>", "<unk>", "<pad>"]
         for tok in self.special_tokens:
             if tok not in self.encoder:

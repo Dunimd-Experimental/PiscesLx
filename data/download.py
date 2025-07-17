@@ -19,12 +19,13 @@
 
 import os
 import shutil
+
 try:
     from modelscope.msdatasets import MsDataset
 except ImportError as e:
-    print("❌ Current modelscope version requires datasets >=2.14.7. Please upgrade datasets to enable ModelScope dataset download."); MsDataset = None
+    print("❌\tCurrent modelscope version requires datasets >=2.14.7. Please upgrade datasets to enable ModelScope dataset download."); MsDataset = None
 except Exception as e:
-    print(f"❌ ModelScope import error: {e}"); MsDataset = None
+    print(f"❌\tModelScope import error: {e}"); MsDataset = None
 
 
 ROOT = os.path.dirname(__file__)
@@ -36,60 +37,60 @@ def save(ds, name):
     """Save dataset to local cache"""
     try:
         save_path = os.path.join(DATA, name)
-        print(f"✅ Saving {name} to {save_path}...")
+        print(f"✅\tSaving {name} to {save_path}...")
         ds.save_to_disk(save_path)
-        print(f"✅ {name} saved to {save_path}")
+        print(f"✅\t{name} saved to {save_path}")
         return True
     except Exception as e:
-        print(f"❌ Failed to save {name}: {e}")
+        print(f"❌\tFailed to save {name}: {e}")
         return False
 
 
 def download_datasets(max_samples_per_dataset=50000):
     """Download all datasets with size control"""
-    print("✅ Starting ModelScope dataset download...")
+    print("✅\tStarting ModelScope dataset download...")
     print(f"Max samples per dataset: {max_samples_per_dataset:,}")
     
     # Core datasets for Pisces L1 training
     datasets = [
-        ("AI-ModelScope/modelscope/R1-Distill-Math-Test", "mathvista", "MathVista math visual reasoning, MIT License, 数学视觉推理"),
-        ("zacbi2023/coco2017_caption", "coco_caption_2017", "COCO 2017 Captions, MIT License, 图像描述/看图问答"),
-        ("AI-ModelScope/LLaVA-Instruct-150K", "llava_instruct", "LLaVA instruction data, MIT License, 图文对话/图片生成指令"),
-        ("AI-ModelScope/TVQA", "tvqa", "TVQA video-language dataset, 学术用途为主, 视频理解/视频问答"),
+        ("modelscope/R1-Distill-Math-Test", "mathvista", "MathVista math visual reasoning, MIT License, English"),
+        ("zacbi2023/coco2017_caption", "coco_caption_2017", "COCO 2017 Captions, MIT License, English image captioning"),
+        ("AI-ModelScope/LLaVA-Instruct-150K", "llava_instruct", "LLaVA instruction data, MIT License, English multi-modal dialogue"),
+        ("tonymwt/tvqa", "tvqa", "TVQA video-language dataset, English, video QA"),
     ]
     
     success_count = 0
     for dataset_name, save_name, description in datasets:
         if MsDataset is None:
-            print(f"❌ MsDataset unavailable. Skipping {dataset_name}. Please upgrade modelscope>=1.28.0 and datasets>=2.14.7.")
+            print(f"❌\tMsDataset unavailable. Skipping {dataset_name}. Please upgrade modelscope>=1.28.0 and datasets>=2.14.7.")
             continue
         try:
-            print(f"✅ Downloading {description} ({dataset_name})...")
+            print(f"✅\tDownloading {description} ({dataset_name})...")
             split_tried = None
             ds = None
             for split in ['train', 'validation', 'test']:
                 try:
                     ds = MsDataset.load(dataset_name, split=split)
                     split_tried = split
-                    print(f"✅ Using split '{split}' for {dataset_name}")
+                    print(f"✅\tUsing split '{split}' for {dataset_name}")
                     break
                 except Exception as e:
                     last_split_error = e
             if ds is None:
-                print(f"❌ Failed to download {dataset_name}: No available split (tried train/validation/test). Last error: {last_split_error}")
+                print(f"❌\tFailed to download {dataset_name}: No available split (tried train/validation/test). Last error: {last_split_error}")
                 continue
             if hasattr(ds, 'to_hf_dataset'):
                 ds = ds.to_hf_dataset()
             original_size = len(ds)
-            print(f"✅ Dataset loaded successfully, original samples: {original_size:,}")
+            print(f"✅\tDataset loaded successfully, original samples: {original_size:,}")
             # Limit dataset size if needed
             if original_size > max_samples_per_dataset:
-                print(f"✅ Limiting to {max_samples_per_dataset:,} samples...")
+                print(f"✅\tLimiting to {max_samples_per_dataset:,} samples...")
                 ds = ds.select(range(min(max_samples_per_dataset, original_size)))
             if save(ds, save_name):
                 success_count += 1
         except Exception as e:
-            print(f"❌ Failed to download {dataset_name}: {e}")
+            print(f"❌\tFailed to download {dataset_name}: {e}")
     
-    print(f"✅ Download completed! Success: {success_count}/{len(datasets)}")
+    print(f"✅\tDownload completed! Success: {success_count}/{len(datasets)}")
     return success_count

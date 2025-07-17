@@ -19,15 +19,10 @@
 
 import os
 import torch
-from torch.utils.data import Dataset
 from datasets import load_from_disk
+from torch.utils.data import Dataset
 from model.tokenizer import get_tokenizer
-from model.multimodal import VisionEncoder, AudioEncoder, DocEncoder
-# Add VideoEncoder import (assume to be implemented in model.multimodal)
-try:
-    from model.multimodal import VideoEncoder
-except ImportError:
-    VideoEncoder = None
+from model.multimodal import VisionEncoder, AudioEncoder, DocEncoder,VideoEncoder
 
 
 class PiscesDataset(Dataset):
@@ -38,17 +33,17 @@ class PiscesDataset(Dataset):
         
         try:
             if os.path.exists(cache_path):
-                print(f"✅ Loading dataset from local cache: {cache_path}")
+                print(f"✅\tLoading dataset from local cache: {cache_path}")
                 self.ds = load_from_disk(cache_path)
                 if split == "train" and "train" in self.ds:
                     self.ds = self.ds["train"]
                 elif split == "test" and "test" in self.ds:
                     self.ds = self.ds["test"]
-                print(f"✅ Local dataset loaded successfully: {len(self.ds)} samples")
+                print(f"✅\tLocal dataset loaded successfully: {len(self.ds)} samples")
             else:
-                print(f"❌ Local cache not found, trying online download: {subset}")
+                print(f"❌\tLocal cache not found, trying online download: {subset}")
                 if MsDataset is None:
-                    print("❌ MsDataset unavailable. Cannot load ModelScope dataset online. Please upgrade modelscope>=1.28.0 and datasets>=2.14.7, or use only local datasets.")
+                    print("❌\tMsDataset unavailable. Cannot load ModelScope dataset online. Please upgrade modelscope>=1.28.0 and datasets>=2.14.7, or use only local datasets.")
                     self.ds = [{"text": f"Hello world {i}", "id": i} for i in range(100)]
                 else:
                     try:
@@ -57,14 +52,14 @@ class PiscesDataset(Dataset):
                             self.ds = msds.to_hf_dataset()
                         else:
                             self.ds = msds
-                        print(f"✅ Online dataset loaded successfully: {len(self.ds)} samples")
+                        print(f"✅\tOnline dataset loaded successfully: {len(self.ds)} samples")
                     except Exception as e:
-                        print(f"❌ MsDataset.load failed: {e}")
-                        print("❌ Could not load ModelScope dataset online. Falling back to local test data.")
+                        print(f"❌\tMsDataset.load failed: {e}")
+                        print("❌\tCould not load ModelScope dataset online. Falling back to local test data.")
                         self.ds = [{"text": f"Hello world {i}", "id": i} for i in range(100)]
         except Exception as e:
-            print(f"❌ Dataset loading failed: {e}")
-            print("❌ Creating test dataset...")
+            print(f"❌\tDataset loading failed: {e}")
+            print("❌\tCreating test dataset...")
             # Create simple test dataset
             self.ds = [{"text": f"Hello world {i}", "id": i} for i in range(100)]
         

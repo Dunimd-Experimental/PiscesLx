@@ -33,7 +33,7 @@ def quantize(checkpoint, save_path, bits=8):
                 m.weight = bnb.nn.Params8bit(m.weight)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     torch.save(model.state_dict(), save_path)
-    print("✅ Quantized model saved to", save_path)
+    print("✅\tQuantized model saved to", save_path)
 
 if __name__ == "__main__":
     import argparse

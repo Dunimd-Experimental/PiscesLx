@@ -50,7 +50,7 @@ class VisionEncoder(nn.Module):
             image = self.processor(images=image_path, return_tensors="pt")
             return image['pixel_values'][0]
         except Exception as e:
-            print(f"❌ Image processing error: {e}")
+            print(f"❌\tImage processing error: {e}")
             return None
     
     def forward(self, pixel_values):
@@ -93,7 +93,7 @@ class AudioEncoder(nn.Module):
             audio = self.processor(audio=audio_path, return_tensors="pt")
             return audio['input_values'][0]
         except Exception as e:
-            print(f"❌ Audio processing error: {e}")
+            print(f"❌\tAudio processing error: {e}")
             return None
     
     def forward(self, audio_input):

@@ -31,6 +31,7 @@ COMMANDS = [
     'check',      # Check GPU/deps
     'monitor',    # System monitor
     'download',   # Download datasets
+    'arrow',      # Arrow/JSON conversion
 ]
 
 def main():
@@ -40,6 +41,10 @@ def main():
     parser.add_argument('--prompt', default='Hello, please introduce yourself', help='Prompt (for infer)')
     parser.add_argument('--image', default='', help='Image path (for infer)')
     parser.add_argument('--max_samples', type=int, default=50000, help='Max samples per dataset (for download)')
+    parser.add_argument('--json_dir', default='', help='[arrow] Directory containing .json files to merge into one .arrow')
+    parser.add_argument('--arrow_out', default='', help='[arrow] Output .arrow file path')
+    parser.add_argument('--arrow_in', default='', help='[arrow] Input .arrow file path to convert to .json')
+    parser.add_argument('--json_out', default='', help='[arrow] Output .json file path (single file)')
     args = parser.parse_args()
 
     if args.command == 'setup':
@@ -60,8 +65,11 @@ def main():
     elif args.command == 'download':
         from data.download import download_datasets
         download_datasets(args.max_samples)
+    elif args.command == 'arrow':
+        from tools.arrow import arrow
+        arrow(args)
     else:
-        print(f"❌ Unknown command: {args.command}")
+        print(f"❌\tUnknown command: {args.command}")
         sys.exit(1)
 
 if __name__ == "__main__":

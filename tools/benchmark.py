@@ -23,7 +23,7 @@ from model import PiscesModel, PiscesConfig
 cfg = PiscesConfig.from_json("configs/0.5B.json")
 # Smart device detection
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"✅ Using device: {device}")
+print(f"✅\tUsing device: {device}")
 
 model = PiscesModel(cfg).to(device).eval()
 tok = torch.randint(0, cfg.vocab_size, (1, 8192)).to(device)
