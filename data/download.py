@@ -53,10 +53,7 @@ def download_datasets(max_samples_per_dataset=50000):
     
     # Core datasets for Pisces L1 training
     datasets = [
-        ("modelscope/R1-Distill-Math-Test", "mathvista", "MathVista math visual reasoning, MIT License, English"),
-        ("zacbi2023/coco2017_caption", "coco_caption_2017", "COCO 2017 Captions, MIT License, English image captioning"),
         ("AI-ModelScope/LLaVA-Instruct-150K", "llava_instruct", "LLaVA instruction data, MIT License, English multi-modal dialogue"),
-        ("tonymwt/tvqa", "tvqa", "TVQA video-language dataset, English, video QA"),
     ]
     
     success_count = 0

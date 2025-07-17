@@ -61,7 +61,7 @@ def main():
         check(args)
     elif args.command == 'monitor':
         from tools.monitor import monitor
-        monitor(args)
+        monitor()
     elif args.command == 'download':
         from data.download import download_datasets
         download_datasets(args.max_samples)
