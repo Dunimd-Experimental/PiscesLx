@@ -61,9 +61,9 @@ def train(args):
     from model import PiscesModel, PiscesConfig
     from trainer.checkpoint import save_ckpt, load_ckpt
     from transformers import get_linear_schedule_with_warmup
-    # ========== 自动极限配置 ==========
+    
     AUTO_CONFIG = {
-        "0.5B":  dict(batch_size=8,  accum=4,  seq_len=1024, force_quant=True, force_lora=True),
+        "0.5B":  dict(batch_size=4,  accum=8,  seq_len=512, force_quant=True, force_lora=False),
         "1.5B":  dict(batch_size=4,  accum=8,  seq_len=1024, force_quant=True, force_lora=True),
         "7B":    dict(batch_size=2,  accum=16, seq_len=1024, force_quant=True, force_lora=True),
         "32B":   dict(batch_size=1,  accum=32, seq_len=512,  force_quant=True, force_lora=True),
@@ -164,8 +164,8 @@ def train(args):
             train_ds,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=0,
-            pin_memory=False,
+            num_workers=2,
+            pin_memory=True,
             drop_last=True,
             collate_fn=collate_fn,
         )
@@ -187,6 +187,7 @@ def train(args):
                     k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
                     for k, v in batch.items() if k in model_keys and v is not None
                 }
+                loss = None  # 明确初始化
                 if scaler is not None:
                     with torch.amp.autocast('cuda'):
                         _, loss, _, _, _ = model(**device_batch)
@@ -212,7 +213,7 @@ def train(args):
                         scheduler.step()
                         scaler.update()
                         accum_counter = 0
-                    del loss, batch, device_batch
+                    del batch, device_batch
                     torch.cuda.empty_cache()
                 else:
                     _, loss, _, _, _ = model(**device_batch)
@@ -227,12 +228,13 @@ def train(args):
                         optimizer.zero_grad()
                         scheduler.step()
                         accum_counter = 0
-                    del loss, batch, device_batch
+                    del batch, device_batch
                     torch.cuda.empty_cache()
-                total_loss += loss.item() * accum
-                if step % 50 == 0:
-                    avg_loss = total_loss / (step + 1)
-                    print(f"✅\tEpoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f}")
+                if loss is not None:
+                    total_loss += loss.item() * accum
+                    if step % 50 == 0:
+                        avg_loss = total_loss / (step + 1)
+                        print(f"✅\tEpoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f}")
             checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
             save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
             print(f"✅\tCheckpoint saved: {checkpoint_path}")

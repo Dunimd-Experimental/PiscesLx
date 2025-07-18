@@ -53,7 +53,7 @@ def download_datasets(max_samples_per_dataset=50000):
     
     # Core datasets for Pisces L1 training
     datasets = [
-        ("tinystory", "tinystory", "TinyStories (text generation demo)"),
+        ("AI-ModelScope/TinyStories", "tinystory", "TinyStories (text generation demo)"),
         # ("mfchina2024/PiscesL1", "PiscesData", "PiscesData"),
     ]
     
@@ -89,6 +89,11 @@ def download_datasets(max_samples_per_dataset=50000):
                 success_count += 1
         except Exception as e:
             print(f"❌\tFailed to download {dataset_name}: {e}")
-    
+            
+    model_txt_path = os.path.join(DATA, "model.txt")
+    with open(model_txt_path, "w", encoding="utf-8") as f:
+        for _, save_name, _ in datasets:
+            f.write(f"{save_name}\n")
+    print(f"✅\tUpdated {model_txt_path}")
     print(f"✅\tDownload completed! Success: {success_count}/{len(datasets)}")
     return success_count
