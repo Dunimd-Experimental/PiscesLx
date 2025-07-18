@@ -53,7 +53,7 @@ def download_datasets(max_samples_per_dataset=50000):
     
     # Core datasets for Pisces L1 training
     datasets = [
-        ("AI-ModelScope/LLaVA-Instruct-150K", "llava_instruct", "LLaVA instruction data, MIT License, English multi-modal dialogue"),
+        ("mfchina2024/PiscesL1", "PiscesData", "PiscesData"),
     ]
     
     success_count = 0

@@ -22,7 +22,7 @@ import torch
 from datasets import load_from_disk
 from torch.utils.data import Dataset
 from model.tokenizer import get_tokenizer
-from model.multimodal import VisionEncoder, AudioEncoder, DocEncoder,VideoEncoder
+from model.multimodal import VisionEncoder, AudioEncoder, DocEncoder
 
 
 class PiscesDataset(Dataset):
@@ -69,7 +69,7 @@ class PiscesDataset(Dataset):
         self.vision_encoder = VisionEncoder(config) if config else None
         self.audio_encoder = AudioEncoder(config) if config else None
         self.doc_encoder = DocEncoder(config) if config else None
-        self.video_encoder = VideoEncoder(config) if (config and VideoEncoder is not None) else None
+        # self.video_encoder = VideoEncoder(config) if (config and VideoEncoder is not None) else None
 
     def __len__(self):
         return len(self.ds)
@@ -109,13 +109,13 @@ class PiscesDataset(Dataset):
                 print(f" Doc processing error: {e}")
 
         # Video
-        video_frames = None
-        if "video" in item and self.video_encoder and getattr(self.video_encoder, 'enabled', True):
-            try:
-                video_frames = self.video_encoder.process_video(item["video"])
-                print(f"[DEBUG] Video processed successfully: {item['video']}")
-            except Exception as e:
-                print(f" Video processing error: {e}")
+        # video_frames = None
+        # if "video" in item and self.video_encoder and getattr(self.video_encoder, 'enabled', True):
+        #     try:
+        #         video_frames = self.video_encoder.process_video(item["video"])
+        #         print(f"[DEBUG] Video processed successfully: {item['video']}")
+        #     except Exception as e:
+        #         print(f" Video processing error: {e}")
 
         return {
             "input_ids": input_ids,
@@ -123,5 +123,5 @@ class PiscesDataset(Dataset):
             "pixel_values": pixel_values,
             "audio_input": audio_input if audio_input is not None else {'input_values': None},
             "doc_input": doc_input,
-            "video_frames": video_frames
+            # "video_frames": video_frames
         }
