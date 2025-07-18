@@ -53,7 +53,8 @@ def download_datasets(max_samples_per_dataset=50000):
     
     # Core datasets for Pisces L1 training
     datasets = [
-        ("mfchina2024/PiscesL1", "PiscesData", "PiscesData"),
+        ("tinystory", "tinystory", "TinyStories (text generation demo)"),
+        # ("mfchina2024/PiscesL1", "PiscesData", "PiscesData"),
     ]
     
     success_count = 0

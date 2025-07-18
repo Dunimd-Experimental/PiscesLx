@@ -157,9 +157,13 @@ class PiscesModel(nn.Module):
         print(f"[DEBUG] PiscesModel: total parameters = {total_params/1e6:.2f}M")
         print("[DEBUG] PiscesModel: __init__ end")
 
+    def prepare_inputs_for_generation(self, input_ids, **kwargs):
+        """兼容peft/transformers生成接口，实际可按需扩展"""
+        return {"input_ids": input_ids, **kwargs}
+
     def forward(self, input_ids, images=None, audio=None, docs=None, labels=None):
         import torch.utils.checkpoint as cp
-        from torch.cuda.amp import autocast
+        import torch
         b, t = input_ids.shape
         x = self.embed(input_ids)
         if images is not None:
@@ -177,7 +181,12 @@ class PiscesModel(nn.Module):
         # === 分块+梯度检查点+混合精度 ===
         chunk_size = min(getattr(self.cfg, 'max_position_embeddings', 2048), 512)
         outputs = []
-        with autocast(device_type=x.device.type, dtype=torch.bfloat16 if x.device.type=='cuda' else torch.float32):
+        # 兼容不同PyTorch版本的autocast
+        if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+            autocast_ctx = torch.amp.autocast("cuda", dtype=torch.bfloat16)
+        else:
+            autocast_ctx = torch.cuda.amp.autocast(dtype=torch.bfloat16)
+        with autocast_ctx:
             for i in range(0, x.shape[1], chunk_size):
                 x_chunk = x[:, i:i+chunk_size, ...]
                 mask_chunk = mask[i:i+chunk_size, i:i+chunk_size]
@@ -188,7 +197,7 @@ class PiscesModel(nn.Module):
                         h, aux_loss = layer(h, msk)
                         aux = aux + aux_loss if aux_loss is not None else aux
                     return h, aux
-                h_chunk, aux_chunk = cp.checkpoint(block_fn, x_chunk, mask_chunk)
+                h_chunk, aux_chunk = cp.checkpoint(block_fn, x_chunk, mask_chunk, use_reentrant=False)
                 outputs.append(h_chunk)
                 total_aux_loss = total_aux_loss + aux_chunk
             x = torch.cat(outputs, dim=1)

@@ -35,7 +35,8 @@ def setup_device(device_pref):
 def infer(args):
     import torch
     from model import PiscesModel, PiscesConfig
-    from transformers import BitsAndBytesConfig, LlamaTokenizerFast
+    from model.tokenizer import get_tokenizer
+    from transformers import BitsAndBytesConfig
     from PIL import Image
     from torchvision.transforms import functional as TF
     print("✅\tStarting Pisces L1 Inference ...")
@@ -50,33 +51,37 @@ def infer(args):
         bnb_4bit_quant_type="nf4",
         bnb_4bit_use_double_quant=True
     )
-    model = PiscesModel(cfg, quantization_config=quant_config).to(device).eval()
+    model = PiscesModel(cfg, quantization_config=quant_config)
+    lora_used = False
     if args.ckpt:
         print(f"✅\tLoading model: {args.ckpt}")
         checkpoint = torch.load(args.ckpt, map_location=device)
-        if 'model' in checkpoint:
-            model.load_state_dict(checkpoint['model'])
-        else:
-            model.load_state_dict(checkpoint)
+        state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
+        # 检查是否为LoRA权重
+        lora_keys = [k for k in state_dict.keys() if k.startswith('base_model.model.') or '.lora_A.' in k or '.lora_B.' in k]
+        if lora_keys:
+            from peft import get_peft_model, LoraConfig, TaskType
+            print("✅\tDetected LoRA/QLoRA checkpoint, wrapping PiscesModel with LoRA config...")
+            lora_config = LoraConfig(
+                r=8, lora_alpha=32, target_modules=["q_proj", "v_proj", "o_proj"],
+                lora_dropout=0.05, bias="none", task_type=TaskType.CAUSAL_LM
+            )
+            lora_model = get_peft_model(model, lora_config)
+            # 保证PiscesModel自定义属性/方法不丢失
+            for attr in ["cfg", "quantization_config", "lora_config", "forward", "prepare_inputs_for_generation"]:
+                if hasattr(model, attr):
+                    setattr(lora_model, attr, getattr(model, attr))
+            model = lora_model
+            lora_used = True
+        model = model.to(device).eval()
+        model.load_state_dict(state_dict, strict=False)
         print("✅\tModel loaded successfully")
     else:
+        model = model.to(device).eval()
         print("❌\tNo model file provided, using random weights")
-    print("✅\tLoading tokenizer...")
-    try:
-        tokenizer = LlamaTokenizerFast.from_pretrained("hf-internal-testing/llama-tokenizer")
-        print("✅\tTokenizer loaded successfully")
-    except Exception as e:
-        print(f"❌\tError loading tokenizer: {e}")
-        print("❌\tCreating dummy tokenizer...")
-        from transformers import PreTrainedTokenizerFast
-        tokenizer = PreTrainedTokenizerFast(
-            tokenizer_object=None,
-            bos_token="<s>",
-            eos_token="</s>",
-            unk_token="<unk>",
-            pad_token="<pad>",
-            vocab_size=1000
-        )
+    print("✅\tLoading Pisces BPETokenizer...")
+    tokenizer = get_tokenizer()
+    print("✅\tPisces BPETokenizer loaded successfully")
     print(f"✅\tProcessing prompt: {args.prompt}")
     input_ids = tokenizer.encode(args.prompt, return_tensors="pt").to(device)
     pixel_values = None
@@ -93,14 +98,19 @@ def infer(args):
     max_gen_len = getattr(args, 'max_length', 100)
     chunk_size = min(getattr(cfg, 'max_position_embeddings', 2048), 512)
     generated_ids = []
-    with torch.no_grad(), torch.cuda.amp.autocast():
+    # 兼容不同PyTorch版本的autocast
+    if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
+        autocast_ctx = torch.amp.autocast("cuda", dtype=torch.bfloat16)
+    else:
+        autocast_ctx = torch.cuda.amp.autocast(dtype=torch.bfloat16)
+    with torch.no_grad(), autocast_ctx:
         cur_input = input_ids
         for _ in range(max_gen_len):
             # 自动分块推理，防止OOM
             logits_chunks = []
             for i in range(0, cur_input.shape[1], chunk_size):
                 chunk = cur_input[:, i:i+chunk_size]
-                logits, *_ = model(chunk, pixel_values=pixel_values)
+                logits, *_ = model(chunk, images=pixel_values)
                 logits_chunks.append(logits)
             logits = torch.cat(logits_chunks, dim=1)
             next_token_logits = logits[:, -1, :]

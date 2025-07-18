@@ -124,7 +124,12 @@ def train(args):
                 r=8, lora_alpha=32, target_modules=["q_proj", "v_proj", "o_proj"],
                 lora_dropout=0.05, bias="none", task_type=TaskType.CAUSAL_LM
             )
-            model = get_peft_model(model, lora_config)
+            lora_model = get_peft_model(model, lora_config)
+            # 修复：将PiscesModel的自定义属性/方法赋值回LoRA模型
+            for attr in ["cfg", "quantization_config", "lora_config", "forward", "prepare_inputs_for_generation"]:
+                if hasattr(model, attr):
+                    setattr(lora_model, attr, getattr(model, attr))
+            model = lora_model
             try:
                 model.print_trainable_parameters()
             except Exception:

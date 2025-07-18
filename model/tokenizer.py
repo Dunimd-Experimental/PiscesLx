@@ -20,6 +20,7 @@
 import os
 import json
 import re
+import urllib.request
 
 class BPETokenizer:
     def __init__(self, vocab_path=None, merges_path=None, special_tokens=None):
@@ -123,8 +124,15 @@ class BPETokenizer:
     @property
     def unk_token_id(self): return self.unk_id
 
+def download_if_missing(url, local_path):
+    if not os.path.exists(local_path):
+        print(f"✅\tDownloading {os.path.basename(local_path)} ...")
+        urllib.request.urlretrieve(url, local_path)
+        print(f"✅\tDownloaded {local_path}")
+
 def get_tokenizer():
     vocab_path, merges_path = None, None
+    # 优先本地
     for path in ["tokenizer/vocab.json", "vocab.json", os.environ.get("PISCES_VOCAB_PATH")]:
         if path and os.path.exists(path):
             vocab_path = path
@@ -133,4 +141,9 @@ def get_tokenizer():
         if path and os.path.exists(path):
             merges_path = path
             break
+    if vocab_path is None or merges_path is None:
+        raise FileNotFoundError(
+            "❌ Pisces BPETokenizer: vocab.json or merges.txt not found! "
+            "Please put them in the 'tokenizer/' directory."
+        )
     return BPETokenizer(vocab_path, merges_path)
