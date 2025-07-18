@@ -57,12 +57,12 @@ def collate_fn(batch):
 
 def train(args):
     import torch
-    from torch.utils.data import DataLoader
     from data.dataset import PiscesDataset
+    from torch.utils.data import DataLoader
     from model import PiscesModel, PiscesConfig
     from trainer.checkpoint import save_ckpt, load_ckpt
-    from transformers import get_linear_schedule_with_warmup
     from torch.optim.lr_scheduler import ReduceLROnPlateau
+    from transformers import get_linear_schedule_with_warmup
     
     AUTO_CONFIG = {
         "0.5B":  dict(batch_size=8,  accum=8,  seq_len=1024, force_quant=True, force_lora=False),
