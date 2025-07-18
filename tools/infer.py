@@ -35,13 +35,22 @@ def setup_device(device_pref):
 def infer(args):
     import torch
     from model import PiscesModel, PiscesConfig
-    from transformers import LlamaTokenizerFast
+    from transformers import BitsAndBytesConfig, LlamaTokenizerFast
     from PIL import Image
     from torchvision.transforms import functional as TF
-    print("✅\tStarting Pisces L1 Inference...")
+    print("✅\tStarting Pisces L1 Inference ...")
     device = setup_device("auto")
-    cfg = PiscesConfig.from_json("configs/0.5B.json")
-    model = PiscesModel(cfg).to(device).eval()
+    # 自动检测模型规模
+    model_size = getattr(args, "model_size", "0.5B").upper()
+    cfg = PiscesConfig.from_json(f"configs/{model_size}.json")
+    # 自动4bit/LoRA/混合精度推理
+    quant_config = BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_compute_dtype=torch.bfloat16,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_use_double_quant=True
+    )
+    model = PiscesModel(cfg, quantization_config=quant_config).to(device).eval()
     if args.ckpt:
         print(f"✅\tLoading model: {args.ckpt}")
         checkpoint = torch.load(args.ckpt, map_location=device)
@@ -80,18 +89,28 @@ def infer(args):
         except Exception as e:
             print(f"❌\tError processing image: {e}")
             pixel_values = None
-    print("✅\tGenerating response...")
-    with torch.no_grad():
-        outputs = model.generate(
-            input_ids=input_ids,
-            pixel_values=pixel_values,
-            max_length=input_ids.shape[1] + getattr(args, 'max_length', 100),
-            temperature=getattr(args, 'temperature', 0.7),
-            do_sample=True,
-            pad_token_id=tokenizer.pad_token_id,
-            eos_token_id=tokenizer.eos_token_id
-        )
-    generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    print("✅\tGenerating response (自动分块/混合精度/4bit)...")
+    max_gen_len = getattr(args, 'max_length', 100)
+    chunk_size = min(getattr(cfg, 'max_position_embeddings', 2048), 512)
+    generated_ids = []
+    with torch.no_grad(), torch.cuda.amp.autocast():
+        cur_input = input_ids
+        for _ in range(max_gen_len):
+            # 自动分块推理，防止OOM
+            logits_chunks = []
+            for i in range(0, cur_input.shape[1], chunk_size):
+                chunk = cur_input[:, i:i+chunk_size]
+                logits, *_ = model(chunk, pixel_values=pixel_values)
+                logits_chunks.append(logits)
+            logits = torch.cat(logits_chunks, dim=1)
+            next_token_logits = logits[:, -1, :]
+            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+            if next_token.item() == tokenizer.eos_token_id:
+                break
+            generated_ids.append(next_token.item())
+            cur_input = torch.cat([cur_input, next_token], dim=1)
+    output_ids = input_ids[0].tolist() + generated_ids
+    generated_text = tokenizer.decode(output_ids, skip_special_tokens=True)
     print("\n" + "="*50)
     print("✅\tGenerated Response:")
     print("="*50)

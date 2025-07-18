@@ -19,6 +19,7 @@
 import os
 import sys
 import subprocess
+import argparse
 
 def setup_device(device_pref):
     import torch
@@ -55,51 +56,88 @@ def collate_fn(batch):
 
 def train(args):
     import torch
-    if not torch.cuda.is_available():
-        print("❌\tTraining requires a CUDA-capable GPU. Exiting.")
-        exit(1)
     from torch.utils.data import DataLoader
     from data.dataset import PiscesDataset
     from model import PiscesModel, PiscesConfig
     from trainer.checkpoint import save_ckpt, load_ckpt
     from transformers import get_linear_schedule_with_warmup
-    # Only require model_size
-    if not hasattr(args, 'model_size') or not args.model_size:
-        print("❌\tYou must provide --model_size (e.g. 0.5B, 1.5B, 7B, etc.)")
+    # ========== 自动极限配置 ==========
+    AUTO_CONFIG = {
+        "0.5B":  dict(batch_size=8,  accum=4,  seq_len=1024, force_quant=True, force_lora=True),
+        "1.5B":  dict(batch_size=4,  accum=8,  seq_len=1024, force_quant=True, force_lora=True),
+        "7B":    dict(batch_size=2,  accum=16, seq_len=1024, force_quant=True, force_lora=True),
+        "32B":   dict(batch_size=1,  accum=32, seq_len=512,  force_quant=True, force_lora=True),
+        "64B":   dict(batch_size=1,  accum=32, seq_len=512,  force_quant=True, force_lora=True),
+        "70B":   dict(batch_size=1,  accum=32, seq_len=512,  force_quant=True, force_lora=True),
+    }
+    model_size = getattr(args, 'model_size', '0.5B').upper()
+    if model_size not in AUTO_CONFIG:
+        print(f"❌ Unsupported model_size: {model_size}")
         sys.exit(1)
-    model_size = args.model_size
+    cfg_dict = AUTO_CONFIG[model_size]
+    batch_size = cfg_dict['batch_size']
+    accum = cfg_dict['accum']
+    seq_len = cfg_dict['seq_len']
+    force_quant = cfg_dict['force_quant']
+    force_lora = cfg_dict['force_lora']
+    epochs = 1
+    lr = 5e-5
+    save_dir = "ckpt"
+    
+    data_cache_dir = "data_cache"
+    model_txt = os.path.join(data_cache_dir, "model.txt")
+    if not os.path.exists(model_txt):
+        print(f"❌\t{model_txt} not found! Please create it with one dataset name per line.")
+        sys.exit(1)
+    with open(model_txt, "r", encoding="utf-8") as f:
+        dataset_list = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+    if not dataset_list:
+        print(f"❌\tNo dataset names found in {model_txt}!")
+        sys.exit(1)
+    device = setup_device("auto")
+    print(f"✅\tDevice set: {device}")
+    print("✅\tLoading PiscesConfig...")
     config = f"configs/{model_size}.json"
     if not os.path.exists(config):
         print(f"❌\tConfig file {config} not found. Please provide a valid --model_size.")
         sys.exit(1)
     print(f"✅\tLoading config file: {config}")
-    # Hardcoded training parameters
-    batch_size = 2
-    epochs = 1
-    lr = 5e-5
-    save_dir = "ckpt"
-    # Find all datasets in data_cache
-    data_cache_dir = "data_cache"
-    if not os.path.exists(data_cache_dir):
-        print(f"❌\t{data_cache_dir} directory does not exist!")
-        sys.exit(1)
-    dataset_list = [d for d in os.listdir(data_cache_dir) if os.path.isdir(os.path.join(data_cache_dir, d))]
-    if not dataset_list:
-        print(f"❌\tNo datasets found in {data_cache_dir}!")
-        sys.exit(1)
-    device = setup_device("auto")
-    print(f"✅\tDevice set: {device}")
-    print("✅\tLoading PiscesConfig...")
     cfg = PiscesConfig.from_json(config)
     print("✅\tPiscesConfig loaded.")
     print("✅\tInitializing PiscesModel...")
-    model = PiscesModel(cfg).to(device)
+    
+    model = None
+    if force_quant or force_lora:
+        from transformers import BitsAndBytesConfig
+        from peft import get_peft_model, LoraConfig, TaskType
+        quant_config = None
+        if force_quant:
+            quant_config = BitsAndBytesConfig(
+                load_in_4bit=True,
+                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_quant_type="nf4",
+                bnb_4bit_use_double_quant=True
+            )
+        model = PiscesModel(cfg, quantization_config=quant_config) if quant_config else PiscesModel(cfg)
+        if force_lora:
+            lora_config = LoraConfig(
+                r=8, lora_alpha=32, target_modules=["q_proj", "v_proj", "o_proj"],
+                lora_dropout=0.05, bias="none", task_type=TaskType.CAUSAL_LM
+            )
+            model = get_peft_model(model, lora_config)
+            try:
+                model.print_trainable_parameters()
+            except Exception:
+                pass
+    else:
+        model = PiscesModel(cfg)
+    model = model.to(device)
     print("✅\tPiscesModel initialized.")
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
         print(f"✅\tUsing {torch.cuda.device_count()} GPUs")
         model = torch.nn.DataParallel(model)
     print("✅\tInitializing optimizer and scheduler...")
-    optimizer = torch.optim.AdamW(model.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
     scheduler = get_linear_schedule_with_warmup(
         optimizer,
         num_warmup_steps=1000,
@@ -136,20 +174,20 @@ def train(args):
         for epoch in range(epochs):
             print(f"✅\tStarting epoch {epoch+1}/{epochs}")
             total_loss = 0
+            accum_counter = 0
+            optimizer.zero_grad()
             for step, batch in enumerate(train_loader):
-                print(f"✅\tEpoch {epoch+1} Step {step} - Batch keys: {list(batch.keys())}")
                 model_keys = ["input_ids", "labels"]
                 device_batch = {
                     k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
                     for k, v in batch.items() if k in model_keys and v is not None
                 }
-                print(f"✅\tBatch moved to device.")
                 if scaler is not None:
                     with torch.amp.autocast('cuda'):
                         _, loss, _, _, _ = model(**device_batch)
-                        print(f"✅\tForward pass done. Loss: {loss.item() if hasattr(loss, 'item') else loss}")
                         if torch.cuda.is_available() and torch.cuda.device_count() > 1:
                             loss = loss.mean()
+                        loss = loss / accum
                     try:
                         scaler.scale(loss).backward()
                     except RuntimeError as e:
@@ -161,30 +199,40 @@ def train(args):
                             continue
                         else:
                             raise
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                    scaler.step(optimizer)
-                    optimizer.zero_grad()
-                    scheduler.step()
-                    scaler.update()
+                    accum_counter += 1
+                    if accum_counter % accum == 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                        scaler.step(optimizer)
+                        optimizer.zero_grad()
+                        scheduler.step()
+                        scaler.update()
+                        accum_counter = 0
                     del loss, batch, device_batch
                     torch.cuda.empty_cache()
                 else:
                     _, loss, _, _, _ = model(**device_batch)
-                    print(f"✅\tForward pass done. Loss: {loss.item() if hasattr(loss, 'item') else loss}")
                     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
                         loss = loss.mean()
+                    loss = loss / accum
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                    optimizer.step()
-                    optimizer.zero_grad()
-                    scheduler.step()
+                    accum_counter += 1
+                    if accum_counter % accum == 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                        optimizer.step()
+                        optimizer.zero_grad()
+                        scheduler.step()
+                        accum_counter = 0
                     del loss, batch, device_batch
                     torch.cuda.empty_cache()
-                    total_loss += loss.item()
-                    if step % 50 == 0:
-                        avg_loss = total_loss / (step + 1)
-                        print(f"✅\tEpoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f}")
-                checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
-                save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
-                print(f"✅\tCheckpoint saved: {checkpoint_path}")
-            print("✅\tTraining completed!") 
+                total_loss += loss.item() * accum
+                if step % 50 == 0:
+                    avg_loss = total_loss / (step + 1)
+                    print(f"✅\tEpoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f}")
+            checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
+            save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
+            print(f"✅\tCheckpoint saved: {checkpoint_path}")
+        print("✅\tTraining completed!")
+
+def add_train_args(parser):
+    parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g. 0.5B, 1.5B, 7B, 70B')
+    return parser 

@@ -45,13 +45,11 @@ def main():
     parser.add_argument('--arrow_out', default='', help='[arrow] Output .arrow file path')
     parser.add_argument('--arrow_in', default='', help='[arrow] Input .arrow file path to convert to .json')
     parser.add_argument('--json_out', default='', help='[arrow] Output .json file path (single file)')
-    args = parser.parse_args()
-
-    if args.command == 'setup':
-        from tools.setup import setup
-        setup(args)
-    elif args.command == 'train':
-        from tools.train import train
+    args, extra = parser.parse_known_args()
+    if args.command == 'train':
+        from tools.train import add_train_args, train
+        parser = add_train_args(parser)
+        args = parser.parse_args()
         train(args)
     elif args.command == 'infer':
         from tools.infer import infer

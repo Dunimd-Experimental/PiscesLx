@@ -100,10 +100,32 @@ class TransformerBlock(nn.Module):
 
 class PiscesModel(nn.Module):
     """Pisces L1 multimodal MoE model (oneflow style)"""
-    def __init__(self, cfg, device=None, dtype=None):
+    def __init__(self, cfg, device=None, dtype=None, quantization_config=None, lora_config=None):
         super().__init__()
         print("[DEBUG] PiscesModel: __init__ start")
         self.cfg = cfg
+        self.quantization_config = quantization_config
+        self.lora_config = lora_config
+        # === 4-bit量化自动适配 ===
+        if quantization_config is not None:
+            try:
+                import bitsandbytes as bnb
+                def convert_linear_to_4bit(module):
+                    for name, child in module.named_children():
+                        if isinstance(child, nn.Linear):
+                            new_mod = bnb.nn.Linear4bit(
+                                child.in_features, child.out_features, bias=child.bias is not None,
+                                quant_type=getattr(quantization_config, 'bnb_4bit_quant_type', 'nf4'),
+                                compute_dtype=getattr(quantization_config, 'bnb_4bit_compute_dtype', torch.bfloat16),
+                                compress_statistics=getattr(quantization_config, 'bnb_4bit_use_double_quant', True)
+                            )
+                            setattr(module, name, new_mod)
+                        else:
+                            convert_linear_to_4bit(child)
+                convert_linear_to_4bit(self)
+                print("[DEBUG] PiscesModel: All Linear layers converted to 4bit (bitsandbytes)")
+            except Exception as e:
+                print(f"❌\t4bit quantization failed: {e}")
         print("[DEBUG] PiscesModel: initializing embedding...")
         self.embed = nn.Embedding(cfg.vocab_size, cfg.hidden_size, device=device, dtype=dtype)
         print(f"[DEBUG] PiscesModel: initializing {cfg.n_layer} transformer layers...")
@@ -123,10 +145,21 @@ class PiscesModel(nn.Module):
         self.task_head = nn.Linear(cfg.hidden_size, cfg.task_classes, device=device, dtype=dtype)
         self.eval_head = nn.Linear(cfg.hidden_size, cfg.eval_dims, device=device, dtype=dtype)
         self.apply(pisces_init_weights)
+        # === LoRA自动适配 ===
+        if lora_config is not None:
+            try:
+                from peft import get_peft_model
+                self = get_peft_model(self, lora_config)
+                print("[DEBUG] PiscesModel: LoRA adapters injected (peft)")
+            except Exception as e:
+                print(f"❌\tLoRA injection failed: {e}")
         total_params = sum(p.numel() for p in self.parameters())
         print(f"[DEBUG] PiscesModel: total parameters = {total_params/1e6:.2f}M")
         print("[DEBUG] PiscesModel: __init__ end")
+
     def forward(self, input_ids, images=None, audio=None, docs=None, labels=None):
+        import torch.utils.checkpoint as cp
+        from torch.cuda.amp import autocast
         b, t = input_ids.shape
         x = self.embed(input_ids)
         if images is not None:
@@ -141,14 +174,29 @@ class PiscesModel(nn.Module):
         mask = torch.full((t, t), float('-inf'), device=x.device, dtype=x.dtype)
         mask = torch.triu(mask, diagonal=1)
         total_aux_loss = 0.0
-        for layer in self.layers:
-            x, aux_loss = layer(x, mask)
-            total_aux_loss = total_aux_loss + aux_loss if aux_loss is not None else total_aux_loss
-        x = self.norm(x)
-        logits = self.lm_head(x)
-        loss = None
-        if labels is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1))
-        task_logits = self.task_head(x[:, 0])
-        eval_score = self.eval_head(x.mean(1))
+        # === 分块+梯度检查点+混合精度 ===
+        chunk_size = min(getattr(self.cfg, 'max_position_embeddings', 2048), 512)
+        outputs = []
+        with autocast(device_type=x.device.type, dtype=torch.bfloat16 if x.device.type=='cuda' else torch.float32):
+            for i in range(0, x.shape[1], chunk_size):
+                x_chunk = x[:, i:i+chunk_size, ...]
+                mask_chunk = mask[i:i+chunk_size, i:i+chunk_size]
+                def block_fn(xc, msk):
+                    h = xc
+                    aux = 0.0
+                    for layer in self.layers:
+                        h, aux_loss = layer(h, msk)
+                        aux = aux + aux_loss if aux_loss is not None else aux
+                    return h, aux
+                h_chunk, aux_chunk = cp.checkpoint(block_fn, x_chunk, mask_chunk)
+                outputs.append(h_chunk)
+                total_aux_loss = total_aux_loss + aux_chunk
+            x = torch.cat(outputs, dim=1)
+            x = self.norm(x)
+            logits = self.lm_head(x)
+            loss = None
+            if labels is not None:
+                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1))
+            task_logits = self.task_head(x[:, 0])
+            eval_score = self.eval_head(x.mean(1))
         return logits, loss, task_logits, eval_score, total_aux_loss
