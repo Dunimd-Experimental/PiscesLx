@@ -66,6 +66,9 @@ def main():
     elif args.command == 'arrow':
         from tools.arrow import arrow
         arrow(args)
+    elif args.command == 'setup':
+        from tools.setup import setup
+        setup(args)
     else:
         print(f"❌\tUnknown command: {args.command}")
         sys.exit(1)
