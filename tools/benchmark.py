@@ -33,4 +33,4 @@ with torch.no_grad():
     _ = model(tok)
 torch.cuda.synchronize()
 
-print("8192 tokens forward:", time.time()-t0, "s")
+print("\t8192 tokens forward:", time.time()-t0, "s")

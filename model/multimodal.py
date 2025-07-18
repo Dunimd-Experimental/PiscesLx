@@ -27,7 +27,7 @@ class VisionEncoder(nn.Module):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
-        print(f"[DEBUG] VisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        print(f"🟧\tVisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         self.processor = CLIPImageProcessor()
         
@@ -41,11 +41,11 @@ class VisionEncoder(nn.Module):
             nn.LayerNorm(cfg.hidden_size)
         )
         
-        print("[DEBUG] VisionEncoder: __init__ end")
+        print("🟧\tVisionEncoder: __init__ end")
     
     def process_image(self, image_path):
         """Process image data"""
-        print(f"[DEBUG] Processing image: {image_path}")
+        print(f"🟧\tProcessing image: {image_path}")
         try:
             image = self.processor(images=image_path, return_tensors="pt")
             return image['pixel_values'][0]
@@ -71,7 +71,7 @@ class AudioEncoder(nn.Module):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
-        print(f"[DEBUG] AudioEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        print(f"🟧\tAudioEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         self.processor = ASTFeatureExtractor()
         
@@ -85,10 +85,10 @@ class AudioEncoder(nn.Module):
             nn.LayerNorm(cfg.hidden_size)
         )
         
-        print("[DEBUG] AudioEncoder: __init__ end")
+        print("🟧\tAudioEncoder: __init__ end")
     
     def process_audio(self, audio_path):
-        print(f"[DEBUG] Processing audio: {audio_path}")
+        print(f"🟧\tProcessing audio: {audio_path}")
         try:
             audio = self.processor(audio=audio_path, return_tensors="pt")
             return audio['input_values'][0]
@@ -114,14 +114,14 @@ class DocEncoder(nn.Module):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
-        print(f"[DEBUG] DocEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        print(f"🟧\tDocEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         self.doc_proj = nn.Sequential(
             nn.Linear(cfg.hidden_size, cfg.hidden_size),
             nn.LayerNorm(cfg.hidden_size)
         )
         
-        print("[DEBUG] DocEncoder: __init__ end")
+        print("🟧\tDocEncoder: __init__ end")
     
     def forward(self, doc_input):
         x = self.doc_proj(doc_input['input_ids'])

@@ -16,9 +16,10 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
-import torch
-import sys
+
 import os
+import sys
+import torch
 
 def check(args=None, extra=None):
     """Check GPU availability and status"""

@@ -16,10 +16,11 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
-import sys
+
 import os
-import subprocess
+import sys
 import platform
+import subprocess
 
 def setup(args):
     """Auto setup venv and install requirements if needed, then auto-enter venv shell"""

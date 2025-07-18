@@ -18,8 +18,8 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import os
-import json
 import re
+import json
 import urllib.request
 
 class BPETokenizer:
@@ -132,7 +132,6 @@ def download_if_missing(url, local_path):
 
 def get_tokenizer():
     vocab_path, merges_path = None, None
-    # 优先本地
     for path in ["tokenizer/vocab.json", "vocab.json", os.environ.get("PISCES_VOCAB_PATH")]:
         if path and os.path.exists(path):
             vocab_path = path
@@ -143,7 +142,7 @@ def get_tokenizer():
             break
     if vocab_path is None or merges_path is None:
         raise FileNotFoundError(
-            "❌ Pisces BPETokenizer: vocab.json or merges.txt not found! "
+            "❌\tPisces BPETokenizer: vocab.json or merges.txt not found! "
             "Please put them in the 'tokenizer/' directory."
         )
     return BPETokenizer(vocab_path, merges_path)

@@ -16,10 +16,11 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 import os
 import sys
-import subprocess
 import argparse
+import subprocess
 
 def setup_device(device_pref):
     import torch
@@ -61,14 +62,15 @@ def train(args):
     from model import PiscesModel, PiscesConfig
     from trainer.checkpoint import save_ckpt, load_ckpt
     from transformers import get_linear_schedule_with_warmup
+    from torch.optim.lr_scheduler import ReduceLROnPlateau
     
     AUTO_CONFIG = {
-        "0.5B":  dict(batch_size=4,  accum=8,  seq_len=512, force_quant=True, force_lora=False),
-        "1.5B":  dict(batch_size=4,  accum=8,  seq_len=1024, force_quant=True, force_lora=True),
-        "7B":    dict(batch_size=2,  accum=16, seq_len=1024, force_quant=True, force_lora=True),
+        "0.5B":  dict(batch_size=8,  accum=8,  seq_len=1024, force_quant=True, force_lora=False),
+        "1.5B":  dict(batch_size=4,  accum=16, seq_len=1024, force_quant=True, force_lora=True),
+        "7B":    dict(batch_size=2,  accum=32, seq_len=1024, force_quant=True, force_lora=True),
         "32B":   dict(batch_size=1,  accum=32, seq_len=512,  force_quant=True, force_lora=True),
-        "64B":   dict(batch_size=1,  accum=32, seq_len=512,  force_quant=True, force_lora=True),
-        "70B":   dict(batch_size=1,  accum=32, seq_len=512,  force_quant=True, force_lora=True),
+        "64B":   dict(batch_size=1,  accum=32, seq_len=384,  force_quant=True, force_lora=True),
+        "70B":   dict(batch_size=1,  accum=32, seq_len=256,  force_quant=True, force_lora=True),
     }
     model_size = getattr(args, 'model_size', '0.5B').upper()
     if model_size not in AUTO_CONFIG:
@@ -125,7 +127,7 @@ def train(args):
                 lora_dropout=0.05, bias="none", task_type=TaskType.CAUSAL_LM
             )
             lora_model = get_peft_model(model, lora_config)
-            # 修复：将PiscesModel的自定义属性/方法赋值回LoRA模型
+            # Assign custom properties/methods of PiscesModel back to LoRA model
             for attr in ["cfg", "quantization_config", "lora_config", "forward", "prepare_inputs_for_generation"]:
                 if hasattr(model, attr):
                     setattr(lora_model, attr, getattr(model, attr))
@@ -143,11 +145,7 @@ def train(args):
         model = torch.nn.DataParallel(model)
     print("✅\tInitializing optimizer and scheduler...")
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
-    scheduler = get_linear_schedule_with_warmup(
-        optimizer,
-        num_warmup_steps=1000,
-        num_training_steps=100000
-    )
+    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-6)
     print("✅\tOptimizer and scheduler ready.")
     for dataset in dataset_list:
         print(f"\n==============================")
@@ -187,7 +185,7 @@ def train(args):
                     k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
                     for k, v in batch.items() if k in model_keys and v is not None
                 }
-                loss = None  # 明确初始化
+                loss = None
                 if scaler is not None:
                     with torch.amp.autocast('cuda'):
                         _, loss, _, _, _ = model(**device_batch)
@@ -210,7 +208,7 @@ def train(args):
                         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                         scaler.step(optimizer)
                         optimizer.zero_grad()
-                        scheduler.step()
+                        scheduler.step(loss.item())
                         scaler.update()
                         accum_counter = 0
                     del batch, device_batch
@@ -232,9 +230,10 @@ def train(args):
                     torch.cuda.empty_cache()
                 if loss is not None:
                     total_loss += loss.item() * accum
+                    scheduler.step(loss.item())
                     if step % 50 == 0:
                         avg_loss = total_loss / (step + 1)
-                        print(f"✅\tEpoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f}")
+                        print(f"✅\tEpoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
             checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
             save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
             print(f"✅\tCheckpoint saved: {checkpoint_path}")

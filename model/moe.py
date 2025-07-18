@@ -17,10 +17,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import math
 import torch
 from torch import nn
 import torch.nn.functional as F
-import math
 from collections import OrderedDict
 
 
@@ -44,7 +44,7 @@ class MoEGate(nn.Module):
         return scores, idx
 
 class MoELayer(nn.Module):
-    """Mixture of Experts layer (高效路由+负载均衡损失)"""
+    """Mixture of Experts layer (Efficient routing+load balancing loss)"""
     _layer_count = 0
     def __init__(self, cfg, device=None, dtype=None, print_every=8, max_gpu_experts=4):
         super().__init__()
@@ -64,7 +64,7 @@ class MoELayer(nn.Module):
             expert.apply(moe_init_weights)
         if MoELayer._layer_count == 1:
             print(f"✅\tMoELayer: {self.num_experts} experts, top-{self.top_k} routing, efficient implementation.")
-        # === 动态专家卸载 ===
+
         self.max_gpu_experts = max_gpu_experts
         self._active_experts = OrderedDict()  # expert_id: last_used_step
         self._step = 0
@@ -74,9 +74,8 @@ class MoELayer(nn.Module):
         if next(expert.parameters()).device.type != 'cuda':
             expert.to('cuda')
         self._active_experts[expert_id] = self._step
-        # LRU回收
+        
         if len(self._active_experts) > self.max_gpu_experts:
-            # pop最久未用的专家
             lru_expert_id, _ = self._active_experts.popitem(last=False)
             self._move_expert_to_cpu(lru_expert_id)
 
@@ -95,9 +94,8 @@ class MoELayer(nn.Module):
         mask.scatter_add_(1, idx, scores)
         load = mask.sum(0) / mask.sum()
         aux_loss = (load * load.log()).sum()
-        # === 动态专家迁移 ===
+        
         if self.num_experts > 8 and h.device.type == 'cuda':
-            # 统计本batch需要的专家
             needed_experts = set(idx.cpu().numpy().flatten().tolist())
             for expert_id in needed_experts:
                 self._move_expert_to_gpu(expert_id)
@@ -108,10 +106,8 @@ class MoELayer(nn.Module):
             for k in range(self.top_k):
                 sel = (idx[:, k] == expert_id)
                 if sel.any():
-                    # === 只在GPU上前向活跃专家 ===
                     expert = self.experts[expert_id]
                     if next(expert.parameters()).device.type != h.device.type:
-                        # 若专家还在CPU，迁移到当前device
                         expert.to(h.device)
                     h_sel = h[sel]
                     s_sel = scores[sel, k]

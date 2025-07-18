@@ -32,11 +32,12 @@ COMMANDS = [
     'monitor',    # System monitor
     'download',   # Download datasets
     'arrow',      # Arrow/JSON conversion
+    'help',       # Show help for commands
 ]
 
 def main():
     parser = argparse.ArgumentParser(description="Pisces L1 Management Tool (manage.py)")
-    parser.add_argument('command', choices=COMMANDS, help="Command to execute")
+    parser.add_argument('command', nargs='?', choices=COMMANDS, help="Command to execute")
     parser.add_argument('--ckpt', default='', help='Checkpoint file (for infer)')
     parser.add_argument('--prompt', default='Hello, please introduce yourself', help='Prompt (for infer)')
     parser.add_argument('--image', default='', help='Image path (for infer)')
@@ -46,7 +47,10 @@ def main():
     parser.add_argument('--arrow_in', default='', help='[arrow] Input .arrow file path to convert to .json')
     parser.add_argument('--json_out', default='', help='[arrow] Output .json file path (single file)')
     args, extra = parser.parse_known_args()
-    if args.command == 'train':
+    if args.command is None or args.command == 'help':
+        from tools.help import help
+        help()
+    elif args.command == 'train':
         from tools.train import add_train_args, train
         parser = add_train_args(parser)
         args = parser.parse_args()
@@ -69,6 +73,9 @@ def main():
     elif args.command == 'setup':
         from tools.setup import setup
         setup(args)
+    elif args.command == 'help':
+        from tools.help import help
+        help()
     else:
         print(f"❌\tUnknown command: {args.command}")
         sys.exit(1)

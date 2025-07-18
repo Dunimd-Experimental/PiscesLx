@@ -20,7 +20,13 @@
 import os, json
 from datasets import load_from_disk, DatasetDict
 
-SUBSETS = ["mathvista", "coco_caption_2017", "llava_instruct", "tvqa"]
+def get_subsets_from_model_txt():
+    model_txt = os.path.join("data_cache", "model.txt")
+    if not os.path.exists(model_txt):
+        print(f"❌\t{model_txt} not found! Please create it with one dataset name per line.")
+        return []
+    with open(model_txt, "r", encoding="utf-8") as f:
+        return [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
 
 def build_splits(subset):
     src = f"data/{subset}"
@@ -41,5 +47,6 @@ def build_splits(subset):
     print(f"✅\t{subset} split completed → data/{subset}")
 
 if __name__ == "__main__":
+    SUBSETS = get_subsets_from_model_txt()
     for s in SUBSETS:
         build_splits(s)

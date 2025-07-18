@@ -86,16 +86,16 @@ class PiscesDataset(Dataset):
         if "image" in item and self.vision_encoder and self.vision_encoder.enabled:
             try:
                 pixel_values = self.vision_encoder.process_image(item["image"])
-                print(f"[DEBUG] Image processed successfully: {item['image']}")
+                print(f"🟧\tImage processed successfully: {item['image']}")
             except Exception as e:
-                print(f" Image processing error: {e}")
+                print(f"❌\tImage processing error: {e}")
 
         # Audio
         audio_input = None
         if "audio" in item and self.audio_encoder and self.audio_encoder.enabled:
             try:
                 audio_input = self.audio_encoder.process_audio(item["audio"])
-                print(f"[DEBUG] Audio processed successfully: {item['audio']}")
+                print(f"🟧\tAudio processed successfully: {item['audio']}")
             except Exception as e:
                 print(f" Audio processing error: {e}")
 
@@ -104,18 +104,18 @@ class PiscesDataset(Dataset):
         if "doc" in item and self.doc_encoder and self.doc_encoder.enabled:
             try:
                 doc_input = self.doc_encoder.process_doc(item["doc"])
-                print(f"[DEBUG] Doc processed successfully: {item['doc']}")
+                print(f"🟧\tDoc processed successfully: {item['doc']}")
             except Exception as e:
-                print(f" Doc processing error: {e}")
+                print(f"❌\tDoc processing error: {e}")
 
         # Video
         # video_frames = None
         # if "video" in item and self.video_encoder and getattr(self.video_encoder, 'enabled', True):
         #     try:
         #         video_frames = self.video_encoder.process_video(item["video"])
-        #         print(f"[DEBUG] Video processed successfully: {item['video']}")
+        #         print(f"🟧\tVideo processed successfully: {item['video']}")
         #     except Exception as e:
-        #         print(f" Video processing error: {e}")
+        #         print(f"❌\tVideo processing error: {e}")
 
         return {
             "input_ids": input_ids,

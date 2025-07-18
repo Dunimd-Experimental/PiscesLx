@@ -20,9 +20,9 @@
 import math
 import torch
 from torch import nn
+from .moe import MoELayer
 import torch.nn.functional as F
 from .config import PiscesConfig
-from .moe import MoELayer
 from .multimodal import VisionEncoder, AudioEncoder, DocEncoder
 
 def pisces_init_weights(m):
@@ -102,11 +102,11 @@ class PiscesModel(nn.Module):
     """Pisces L1 multimodal MoE model (oneflow style)"""
     def __init__(self, cfg, device=None, dtype=None, quantization_config=None, lora_config=None):
         super().__init__()
-        print("[DEBUG] PiscesModel: __init__ start")
+        print("🟧\tPiscesModel: __init__ start")
         self.cfg = cfg
         self.quantization_config = quantization_config
         self.lora_config = lora_config
-        # === 4-bit量化自动适配 ===
+        
         if quantization_config is not None:
             try:
                 import bitsandbytes as bnb
@@ -123,42 +123,42 @@ class PiscesModel(nn.Module):
                         else:
                             convert_linear_to_4bit(child)
                 convert_linear_to_4bit(self)
-                print("[DEBUG] PiscesModel: All Linear layers converted to 4bit (bitsandbytes)")
+                print("🟧\tPiscesModel: All Linear layers converted to 4bit (bitsandbytes)")
             except Exception as e:
                 print(f"❌\t4bit quantization failed: {e}")
-        print("[DEBUG] PiscesModel: initializing embedding...")
+        print("🟧\tPiscesModel: initializing embedding...")
         self.embed = nn.Embedding(cfg.vocab_size, cfg.hidden_size, device=device, dtype=dtype)
-        print(f"[DEBUG] PiscesModel: initializing {cfg.n_layer} transformer layers...")
+        print(f"🟧\tPiscesModel: initializing {cfg.n_layer} transformer layers...")
         self.layers = nn.ModuleList([])
         for i in range(cfg.n_layer):
             if (i % 4 == 0) or (i == cfg.n_layer-1):
-                print(f"[DEBUG] PiscesModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
+                print(f"🟧\tPiscesModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
             self.layers.append(TransformerBlock(cfg, device=device, dtype=dtype))
-        print("[DEBUG] PiscesModel: initializing norm...")
+        print("🟧\tPiscesModel: initializing norm...")
         self.norm = RMSNorm(cfg.hidden_size)
-        print("[DEBUG] PiscesModel: initializing multimodal encoders...")
+        print("🟧\tPiscesModel: initializing multimodal encoders...")
         self.vision = VisionEncoder(cfg)
         self.audio = AudioEncoder(cfg)
         self.doc = DocEncoder(cfg)
-        print("[DEBUG] PiscesModel: initializing output heads...")
+        print("🟧\tPiscesModel: initializing output heads...")
         self.lm_head = nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
         self.task_head = nn.Linear(cfg.hidden_size, cfg.task_classes, device=device, dtype=dtype)
         self.eval_head = nn.Linear(cfg.hidden_size, cfg.eval_dims, device=device, dtype=dtype)
         self.apply(pisces_init_weights)
-        # === LoRA自动适配 ===
+        
         if lora_config is not None:
             try:
                 from peft import get_peft_model
                 self = get_peft_model(self, lora_config)
-                print("[DEBUG] PiscesModel: LoRA adapters injected (peft)")
+                print("🟧\tPiscesModel: LoRA adapters injected (peft)")
             except Exception as e:
                 print(f"❌\tLoRA injection failed: {e}")
         total_params = sum(p.numel() for p in self.parameters())
-        print(f"[DEBUG] PiscesModel: total parameters = {total_params/1e6:.2f}M")
-        print("[DEBUG] PiscesModel: __init__ end")
+        print(f"🟧\tPiscesModel: total parameters = {total_params/1e6:.2f}M")
+        print("🟧\tPiscesModel: __init__ end")
 
     def prepare_inputs_for_generation(self, input_ids, **kwargs):
-        """兼容peft/transformers生成接口，实际可按需扩展"""
+        """Compatible with PEF/Transformers generation interface, can be extended as needed in practice"""
         return {"input_ids": input_ids, **kwargs}
 
     def forward(self, input_ids, images=None, audio=None, docs=None, labels=None):
@@ -178,10 +178,10 @@ class PiscesModel(nn.Module):
         mask = torch.full((t, t), float('-inf'), device=x.device, dtype=x.dtype)
         mask = torch.triu(mask, diagonal=1)
         total_aux_loss = 0.0
-        # === 分块+梯度检查点+混合精度 ===
+        
         chunk_size = min(getattr(self.cfg, 'max_position_embeddings', 2048), 512)
         outputs = []
-        # 兼容不同PyTorch版本的autocast
+        
         if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
             autocast_ctx = torch.amp.autocast("cuda", dtype=torch.bfloat16)
         else:

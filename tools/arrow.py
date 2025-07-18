@@ -1,7 +1,26 @@
+#!/usr/bin/env python3
+
+# Copyright © 2025 Wenze Wei
+#
+# This file is part of Pisces.
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published
+# by the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 import os
 import json
-from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
 import pyarrow as pa
+from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
 
 def arrow(args):
     if args.json_dir and args.arrow_out:
@@ -37,5 +56,5 @@ def arrow(args):
     else:
         print("❌\tPlease specify either --json_dir + --arrow_out or --arrow_in + --json_out")
         print("For example：")
-        print("  python manage.py arrow --json_dir ./jsons --arrow_out ./out.arrow")
-        print("  python manage.py arrow --arrow_in ./in.arrow --json_out ./out.json") 
+        print("\tpython manage.py arrow --json_dir ./jsons --arrow_out ./out.arrow")
+        print("\tpython manage.py arrow --arrow_in ./in.arrow --json_out ./out.json") 

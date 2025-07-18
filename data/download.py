@@ -49,12 +49,11 @@ def save(ds, name):
 def download_datasets(max_samples_per_dataset=50000):
     """Download all datasets with size control"""
     print("✅\tStarting ModelScope dataset download...")
-    print(f"Max samples per dataset: {max_samples_per_dataset:,}")
+    print(f"\tMax samples per dataset: {max_samples_per_dataset:,}")
     
     # Core datasets for Pisces L1 training
     datasets = [
         ("AI-ModelScope/TinyStories", "tinystory", "TinyStories (text generation demo)"),
-        # ("mfchina2024/PiscesL1", "PiscesData", "PiscesData"),
     ]
     
     success_count = 0

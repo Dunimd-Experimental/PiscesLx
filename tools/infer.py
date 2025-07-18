@@ -16,6 +16,7 @@
 #
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
+
 import os
 
 def setup_device(device_pref):
@@ -41,10 +42,10 @@ def infer(args):
     from torchvision.transforms import functional as TF
     print("✅\tStarting Pisces L1 Inference ...")
     device = setup_device("auto")
-    # 自动检测模型规模
+    
     model_size = getattr(args, "model_size", "0.5B").upper()
     cfg = PiscesConfig.from_json(f"configs/{model_size}.json")
-    # 自动4bit/LoRA/混合精度推理
+    # Automatic 4-bit/LoRA/mixed precision inference
     quant_config = BitsAndBytesConfig(
         load_in_4bit=True,
         bnb_4bit_compute_dtype=torch.bfloat16,
@@ -57,7 +58,7 @@ def infer(args):
         print(f"✅\tLoading model: {args.ckpt}")
         checkpoint = torch.load(args.ckpt, map_location=device)
         state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
-        # 检查是否为LoRA权重
+
         lora_keys = [k for k in state_dict.keys() if k.startswith('base_model.model.') or '.lora_A.' in k or '.lora_B.' in k]
         if lora_keys:
             from peft import get_peft_model, LoraConfig, TaskType
@@ -67,7 +68,7 @@ def infer(args):
                 lora_dropout=0.05, bias="none", task_type=TaskType.CAUSAL_LM
             )
             lora_model = get_peft_model(model, lora_config)
-            # 保证PiscesModel自定义属性/方法不丢失
+            # Ensure that PiscesModel custom properties/methods are not lost
             for attr in ["cfg", "quantization_config", "lora_config", "forward", "prepare_inputs_for_generation"]:
                 if hasattr(model, attr):
                     setattr(lora_model, attr, getattr(model, attr))
@@ -94,11 +95,11 @@ def infer(args):
         except Exception as e:
             print(f"❌\tError processing image: {e}")
             pixel_values = None
-    print("✅\tGenerating response (自动分块/混合精度/4bit)...")
+    print("✅\tGenerating response (Automatic blocking/Mixed precision/4-bit)...")
     max_gen_len = getattr(args, 'max_length', 100)
     chunk_size = min(getattr(cfg, 'max_position_embeddings', 2048), 512)
     generated_ids = []
-    # 兼容不同PyTorch版本的autocast
+    
     if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
         autocast_ctx = torch.amp.autocast("cuda", dtype=torch.bfloat16)
     else:
@@ -106,7 +107,7 @@ def infer(args):
     with torch.no_grad(), autocast_ctx:
         cur_input = input_ids
         for _ in range(max_gen_len):
-            # 自动分块推理，防止OOM
+            # Automatic block inference to prevent OOM
             logits_chunks = []
             for i in range(0, cur_input.shape[1], chunk_size):
                 chunk = cur_input[:, i:i+chunk_size]
