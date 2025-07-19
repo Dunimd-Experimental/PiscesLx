@@ -65,7 +65,7 @@ def train(args):
     from transformers import get_linear_schedule_with_warmup
     
     AUTO_CONFIG = {
-        "0.5B":  dict(batch_size=32,  accum=2,  seq_len=1024, force_quant=True, force_lora=False),
+        "0.5B":  dict(batch_size=8,  accum=8,  seq_len=512, force_quant=True, force_lora=False),
         "1.5B":  dict(batch_size=4,  accum=16, seq_len=1024, force_quant=True, force_lora=True),
         "7B":    dict(batch_size=2,  accum=32, seq_len=1024, force_quant=True, force_lora=True),
         "32B":   dict(batch_size=1,  accum=32, seq_len=512,  force_quant=True, force_lora=True),
@@ -83,8 +83,11 @@ def train(args):
     force_quant = cfg_dict['force_quant']
     force_lora = cfg_dict['force_lora']
     epochs = 1
-    lr = 5e-5
+    lr = 1e-4
     save_dir = "ckpt"
+    
+    min_plateau_epoch = 5
+    scheduler = None
     
     data_cache_dir = "data_cache"
     model_txt = os.path.join(data_cache_dir, "model.txt")
@@ -140,17 +143,25 @@ def train(args):
         model = PiscesModel(cfg)
     model = model.to(device)
     print("✅\tPiscesModel initialized.")
-    
-    if getattr(args, 'resume_ckpt', ''):
-        print(f"✅\tResuming from checkpoint: {args.resume_ckpt}")
-        load_ckpt(args.resume_ckpt, model, optimizer)
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
         print(f"✅\tUsing {torch.cuda.device_count()} GPUs")
         model = torch.nn.DataParallel(model)
     print("✅\tInitializing optimizer and scheduler...")
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
-    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-6)
+    # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-6) # This line is now handled in the loop
     print("✅\tOptimizer and scheduler ready.")
+    resume_ckpt = getattr(args, 'resume_ckpt', None)
+    start_epoch = 0
+    if resume_ckpt and os.path.exists(resume_ckpt):
+        print(f"✅\tResuming from checkpoint: {resume_ckpt}")
+        start_epoch = load_ckpt(resume_ckpt, model, optimizer)
+        print(f"✅\tResumed at epoch {start_epoch}")
+        
+        min_lr_threshold = lr * 0.5
+        for param_group in optimizer.param_groups:
+            if param_group['lr'] < min_lr_threshold:
+                param_group['lr'] = lr
+                print(f"✅\tLearning rate auto-reset to {lr}")
     for dataset in dataset_list:
         print(f"\n==============================")
         print(f"✅\tTraining dataset: {dataset}")
@@ -179,79 +190,100 @@ def train(args):
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
         stop_training = False
-        epoch = 0
-        while not stop_training:
-            print(f"✅\tStarting epoch {epoch+1}")
-            total_loss = 0
-            accum_counter = 0
-            optimizer.zero_grad()
-            for step, batch in enumerate(train_loader):
-                model_keys = ["input_ids", "labels"]
-                device_batch = {
-                    k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
-                    for k, v in batch.items() if k in model_keys and v is not None
-                }
-                loss = None
-                if scaler is not None:
-                    with torch.amp.autocast('cuda'):
+        epoch = start_epoch
+        try:
+            while not stop_training:
+                print(f"✅\tStarting epoch {epoch+1}")
+                total_loss = 0
+                accum_counter = 0
+                optimizer.zero_grad()
+                for step, batch in enumerate(train_loader):
+                    model_keys = ["input_ids", "labels"]
+                    device_batch = {
+                        k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+                        for k, v in batch.items() if k in model_keys and v is not None
+                    }
+                    loss = None
+                    if scaler is not None:
+                        with torch.amp.autocast('cuda'):
+                            _, loss, _, _, _ = model(**device_batch)
+                            if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                                loss = loss.mean()
+                            loss = loss / accum
+                        try:
+                            scaler.scale(loss).backward()
+                        except RuntimeError as e:
+                            if 'out of memory' in str(e):
+                                print(f"❌\tOOM at step {step}, skipping batch...")
+                                torch.cuda.empty_cache()
+                                import gc; gc.collect()
+                                optimizer.zero_grad()
+                                continue
+                            else:
+                                raise
+                        accum_counter += 1
+                        if accum_counter % accum == 0:
+                            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                            scaler.step(optimizer)
+                            optimizer.zero_grad()
+                            
+                            if epoch+1 > min_plateau_epoch and scheduler is not None:
+                                scheduler.step(loss.item())
+                            scaler.update()
+                            accum_counter = 0
+                        del batch, device_batch
+                        torch.cuda.empty_cache()
+                    else:
                         _, loss, _, _, _ = model(**device_batch)
                         if torch.cuda.is_available() and torch.cuda.device_count() > 1:
                             loss = loss.mean()
                         loss = loss / accum
-                    try:
-                        scaler.scale(loss).backward()
-                    except RuntimeError as e:
-                        if 'out of memory' in str(e):
-                            print(f"❌\tOOM at step {step}, skipping batch...")
-                            torch.cuda.empty_cache()
-                            import gc; gc.collect()
+                        loss.backward()
+                        accum_counter += 1
+                        if accum_counter % accum == 0:
+                            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                            optimizer.step()
                             optimizer.zero_grad()
-                            continue
-                        else:
-                            raise
-                    accum_counter += 1
-                    if accum_counter % accum == 0:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                        scaler.step(optimizer)
-                        optimizer.zero_grad()
-                        scheduler.step(loss.item())
-                        scaler.update()
-                        accum_counter = 0
-                    del batch, device_batch
-                    torch.cuda.empty_cache()
+                            
+                            if epoch+1 > min_plateau_epoch and scheduler is not None:
+                                scheduler.step(loss.item())
+                            accum_counter = 0
+                        del batch, device_batch
+                        torch.cuda.empty_cache()
+                    if loss is not None:
+                        total_loss += loss.item() * accum
+                        
+                        if epoch+1 > min_plateau_epoch and scheduler is not None:
+                            scheduler.step(loss.item())
+                        if step % 10 == 0:
+                            avg_loss = total_loss / (step + 1)
+                            print(f"✅\tEpoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+                avg_loss = total_loss / (step + 1)
+                checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
+                save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
+                print(f"✅\tCheckpoint saved: {checkpoint_path}")
+                
+                if epoch+1 == min_plateau_epoch:
+                    from torch.optim.lr_scheduler import ReduceLROnPlateau
+                    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-6)
+                    print(f"✅\tReduceLROnPlateau scheduler enabled after {min_plateau_epoch} epochs.")
+                if avg_loss < 1.0:
+                    print(f"✅\tLoss < 1.0, stopping training for dataset {dataset}.")
+                    stop_training = True
                 else:
-                    _, loss, _, _, _ = model(**device_batch)
-                    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-                        loss = loss.mean()
-                    loss = loss / accum
-                    loss.backward()
-                    accum_counter += 1
-                    if accum_counter % accum == 0:
-                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                        optimizer.step()
-                        optimizer.zero_grad()
-                        scheduler.step()
-                        accum_counter = 0
-                    del batch, device_batch
-                    torch.cuda.empty_cache()
-                if loss is not None:
-                    total_loss += loss.item() * accum
-                    scheduler.step(loss.item())
-                    if step % 50 == 0:
-                        avg_loss = total_loss / (step + 1)
-                        print(f"✅\tEpoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
-            avg_loss = total_loss / (step + 1)
-            checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
-            save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
-            print(f"✅\tCheckpoint saved: {checkpoint_path}")
-            if avg_loss < 1.0:
-                print(f"✅\tLoss < 1.0, stopping training for dataset {dataset}.")
-                stop_training = True
-            else:
-                epoch += 1
+                    epoch += 1
+        except KeyboardInterrupt:
+            print("❌\tTraining interrupted by user (Ctrl-C). Saving checkpoint...")
+            interrupt_ckpt = f"{save_dir}/latest_interrupt.pt"
+            save_ckpt(model, optimizer, epoch + 1, interrupt_ckpt)
+            print(f"✅\tCheckpoint saved: {interrupt_ckpt}")
+            print(f"✅\tYou can resume training with:")
+            print(f"    python manage.py train --model_size {model_size} --resume_ckpt {interrupt_ckpt}")
+            sys.exit(0)
         print("✅\tTraining completed!")
 
 def add_train_args(parser):
     parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g. 0.5B, 1.5B, 7B, 70B')
     parser.add_argument('--resume_ckpt', default='', type=str, help='Path to checkpoint to resume training')
+    parser.add_argument('--reset_lr', action='store_true', help='Reset learning rate after resuming checkpoint')
     return parser 

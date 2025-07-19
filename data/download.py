@@ -55,6 +55,20 @@ def download_datasets(max_samples_per_dataset=50000):
     # Core datasets for Pisces L1 training
     datasets = [
         ("AI-ModelScope/TinyStories", "tinystory", "TinyStories (text generation demo)"),
+        # ("mapjack/openwebtext_dataset", "openwebtext", "OpenWebText (general text)"),
+        # ("swift/wikipedia", "wikipedia", "Wikipedia (general text)"),
+        # ("FreedomIntelligence/ShareGPT-4o-Image", "sharegpt4o_image", "ShareGPT-4o-Image (multimodal dialogue)"),
+        # ("HuggingFaceH4/ultrachat_200k", "ultrachat_200k", "UltraChat 200k (dialogue)"),
+        # ("HuggingFaceH4/CodeAlpaca_20K", "codealpaca_20k", "CodeAlpaca 20K (code generation)"),
+        # ("jablonkagroup/codeparrot_github-code-chemistry-python", "codeparrot_chem_py", "CodeParrot Chemistry Python (code)"),
+        # ("modelscope/coco_captions_small_slice", "coco_captions", "COCO Captions (image-text)"),
+        # ("AI-ModelScope/LAION-SG", "laion_sg", "LAION-SG (image-text)"),
+        # ("lmms-lab/AudioSetCaps_350k_converted", "audiosetcaps", "AudioSetCaps 350k (audio captions)"),
+        # ("modelscope/Libri2Mix_8k", "libri2mix_8k", "Libri2Mix 8k (speech separation)"),
+        # ("OmniData/Clotho", "clotho", "Clotho (audio captions)"),
+        # ("swift/DocVQA", "docvqa", "DocVQA (document QA)"),
+        # ("OpenDataLab/PubLayNet", "publaynet", "PubLayNet (document layout)"),
+        # ("swift/VQAv2", "vqav2", "VQAv2 (visual question answering)"),
     ]
     
     success_count = 0
