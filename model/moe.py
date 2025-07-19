@@ -76,8 +76,9 @@ class MoELayer(nn.Module):
         self._active_experts[expert_id] = self._step
         
         if len(self._active_experts) > self.max_gpu_experts:
-            lru_expert_id, _ = self._active_experts.popitem(last=False)
+            lru_expert_id = min(self._active_experts, key=self._active_experts.get)
             self._move_expert_to_cpu(lru_expert_id)
+            del self._active_experts[lru_expert_id]
 
     def _move_expert_to_cpu(self, expert_id):
         expert = self.experts[expert_id]
@@ -94,7 +95,7 @@ class MoELayer(nn.Module):
         mask.scatter_add_(1, idx, scores)
         load = mask.sum(0) / mask.sum()
         aux_loss = (load * load.log()).sum()
-        
+        # Dynamic activation: Only load the experts required for this batch onto the GPU
         if self.num_experts > 8 and h.device.type == 'cuda':
             needed_experts = set(idx.cpu().numpy().flatten().tolist())
             for expert_id in needed_experts:

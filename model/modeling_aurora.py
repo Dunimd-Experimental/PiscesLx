@@ -23,7 +23,26 @@ from torch import nn
 from .moe import MoELayer
 import torch.nn.functional as F
 from .config import PiscesConfig
+import torch.nn.utils.prune as prune
 from .multimodal import VisionEncoder, AudioEncoder, DocEncoder
+
+
+# === Efficient Model Optimization Utilities ===
+def apply_pruning(model, amount=0.2):
+    """Apply L1 unstructured pruning to all nn.Linear layers."""
+    for name, module in model.named_modules():
+        if isinstance(module, nn.Linear):
+            prune.l1_unstructured(module, name='weight', amount=amount)
+    print(f"✅\tApplied L1 pruning (amount={amount}) to all Linear layers.")
+
+def apply_dynamic_quantization(model):
+    """Apply dynamic quantization to all nn.Linear layers (int8)."""
+    import torch
+    quantized_model = torch.quantization.quantize_dynamic(
+        model, {nn.Linear}, dtype=torch.qint8
+    )
+    print("✅\tApplied dynamic quantization (int8) to all Linear layers.")
+    return quantized_model
 
 def pisces_init_weights(m):
     if isinstance(m, nn.Linear):
@@ -56,8 +75,20 @@ class RotaryEmbedding(nn.Module):
         x1, x2 = x[..., ::2], x[..., 1::2]
         return torch.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1).flatten(-2)
 
+try:
+    from flash_attn import flash_attn_func
+    FLASH_ATTN_AVAILABLE = True
+except ImportError:
+    FLASH_ATTN_AVAILABLE = False
+
+try:
+    from xformers.ops import memory_efficient_attention
+    XFORMERS_AVAILABLE = True
+except ImportError:
+    XFORMERS_AVAILABLE = False
+
 class Attention(nn.Module):
-    """Multi-head attention with grouped-query attention"""
+    """Multi-head attention with grouped-query attention, auto-selects efficient backend"""
     def __init__(self, cfg, device=None, dtype=None):
         super().__init__()
         self.cfg = cfg
@@ -71,6 +102,15 @@ class Attention(nn.Module):
         self.o_proj = nn.Linear(cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype)
         self.rope = RotaryEmbedding(self.head_dim, cfg.max_position_embeddings, cfg.rope_theta, device=device, dtype=dtype)
         self.apply(pisces_init_weights)
+        self.use_flash = FLASH_ATTN_AVAILABLE
+        self.use_xformers = XFORMERS_AVAILABLE and not self.use_flash
+        if self.use_flash:
+            print("🟧\tAttention: Using FlashAttention backend")
+        elif self.use_xformers:
+            print("🟧\tAttention: Using xformers sparse attention backend")
+        else:
+            print("🟧\tAttention: Using native PyTorch attention")
+
     def forward(self, x, mask):
         b, t, _ = x.shape
         q = self.q_proj(x).view(b, t, self.n_head, self.head_dim).transpose(1, 2)
@@ -79,9 +119,24 @@ class Attention(nn.Module):
         q, k = self.rope(q, t), self.rope(k, t)
         k = k.repeat_interleave(self.n_head // self.n_kv_head, dim=1)
         v = v.repeat_interleave(self.n_head // self.n_kv_head, dim=1)
-        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale + mask
-        attn = F.softmax(scores, dim=-1)
-        out = torch.matmul(attn, v).transpose(1, 2).contiguous().view(b, t, -1)
+        if self.use_flash:
+            # FlashAttention expects [batch, seq, head, dim]
+            q_ = q.transpose(1, 2)
+            k_ = k.transpose(1, 2)
+            v_ = v.transpose(1, 2)
+            out = flash_attn_func(q_, k_, v_, causal=True)
+            out = out.transpose(1, 2).contiguous().view(b, t, -1)
+        elif self.use_xformers:
+            # xformers expects [batch, seq, head, dim]
+            q_ = q.transpose(1, 2)
+            k_ = k.transpose(1, 2)
+            v_ = v.transpose(1, 2)
+            out = memory_efficient_attention(q_, k_, v_, attn_bias=None, p=0.0, scale=self.scale)
+            out = out.transpose(1, 2).contiguous().view(b, t, -1)
+        else:
+            scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale + mask
+            attn = F.softmax(scores, dim=-1)
+            out = torch.matmul(attn, v).transpose(1, 2).contiguous().view(b, t, -1)
         return self.o_proj(out)
 
 class TransformerBlock(nn.Module):
@@ -100,12 +155,16 @@ class TransformerBlock(nn.Module):
 
 class PiscesModel(nn.Module):
     """Pisces L1 multimodal MoE model (oneflow style)"""
-    def __init__(self, cfg, device=None, dtype=None, quantization_config=None, lora_config=None):
+    def __init__(self, cfg, device=None, dtype=None, quantization_config=None, lora_config=None, use_checkpoint=True, use_compile=True, dist_backend=None, dist_config=None):
         super().__init__()
         print("🟧\tPiscesModel: __init__ start")
         self.cfg = cfg
         self.quantization_config = quantization_config
         self.lora_config = lora_config
+        self.use_checkpoint = use_checkpoint
+        self.use_compile = use_compile
+        self.dist_backend = dist_backend
+        self.dist_config = dist_config or {}
         
         if quantization_config is not None:
             try:
@@ -137,9 +196,9 @@ class PiscesModel(nn.Module):
         print("🟧\tPiscesModel: initializing norm...")
         self.norm = RMSNorm(cfg.hidden_size)
         print("🟧\tPiscesModel: initializing multimodal encoders...")
-        self.vision = VisionEncoder(cfg)
-        self.audio = AudioEncoder(cfg)
-        self.doc = DocEncoder(cfg)
+        self.vision = None
+        self.audio = None
+        self.doc = None
         print("🟧\tPiscesModel: initializing output heads...")
         self.lm_head = nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
         self.task_head = nn.Linear(cfg.hidden_size, cfg.task_classes, device=device, dtype=dtype)
@@ -155,7 +214,42 @@ class PiscesModel(nn.Module):
                 print(f"❌\tLoRA injection failed: {e}")
         total_params = sum(p.numel() for p in self.parameters())
         print(f"🟧\tPiscesModel: total parameters = {total_params/1e6:.2f}M")
+        # Torch.compile automatic JIT acceleration
+        if self.use_compile:
+            try:
+                import torch
+                if hasattr(torch, 'compile'):
+                    self = torch.compile(self, mode="default")
+                    print("✅\tPiscesModel: torch.compile JIT enabled!")
+                else:
+                    print("🟧\tPiscesModel: torch.compile not available (PyTorch<2.0)")
+            except Exception as e:
+                print(f"❌\ttorch.compile failed: {e}")
         print("🟧\tPiscesModel: __init__ end")
+        self.ds_engine = None
+        self.fsdp_engine = None
+        if self.dist_backend is not None:
+            self.init_distributed_engine(self.dist_backend, self.dist_config)
+
+    def init_distributed_engine(self, backend, config):
+        """Initialize DeepSpeed or FSDP distributed/partitioned/offload engine"""
+        if backend == 'deepspeed':
+            try:
+                import deepspeed
+                self.ds_engine, _, _, _ = deepspeed.initialize(model=self, **config)
+                print("✅\tPiscesModel: DeepSpeed engine initialized!")
+            except Exception as e:
+                print(f"❌\tDeepSpeed init failed: {e}")
+        elif backend == 'fsdp':
+            try:
+                import torch.distributed as dist
+                from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
+                self.fsdp_engine = FSDP(self, **config)
+                print("✅\tPiscesModel: FSDP engine initialized!")
+            except Exception as e:
+                print(f"❌\tFSDP init failed: {e}")
+        else:
+            print(f"🟧\tPiscesModel: Unknown distributed backend: {backend}")
 
     def prepare_inputs_for_generation(self, input_ids, **kwargs):
         """Compatible with PEF/Transformers generation interface, can be extended as needed in practice"""
@@ -167,12 +261,24 @@ class PiscesModel(nn.Module):
         b, t = input_ids.shape
         x = self.embed(input_ids)
         if images is not None:
+            if self.vision is None:
+                print("🟧\tPiscesModel: lazy init VisionEncoder")
+                from .multimodal import VisionEncoder
+                self.vision = VisionEncoder(self.cfg)
             x = torch.cat([self.vision(images), x], dim=1)
             t += 1
         if audio is not None:
+            if self.audio is None:
+                print("🟧\tPiscesModel: lazy init AudioEncoder")
+                from .multimodal import AudioEncoder
+                self.audio = AudioEncoder(self.cfg)
             x = torch.cat([self.audio(audio), x], dim=1)
             t += 1
         if docs is not None:
+            if self.doc is None:
+                print("🟧\tPiscesModel: lazy init DocEncoder")
+                from .multimodal import DocEncoder
+                self.doc = DocEncoder(self.cfg)
             x = torch.cat([self.doc(docs), x], dim=1)
             t += 1
         mask = torch.full((t, t), float('-inf'), device=x.device, dtype=x.dtype)
@@ -194,10 +300,13 @@ class PiscesModel(nn.Module):
                     h = xc
                     aux = 0.0
                     for layer in self.layers:
-                        h, aux_loss = layer(h, msk)
+                        if self.use_checkpoint:
+                            h, aux_loss = cp.checkpoint(layer, h, msk, use_reentrant=False)
+                        else:
+                            h, aux_loss = layer(h, msk)
                         aux = aux + aux_loss if aux_loss is not None else aux
                     return h, aux
-                h_chunk, aux_chunk = cp.checkpoint(block_fn, x_chunk, mask_chunk, use_reentrant=False)
+                h_chunk, aux_chunk = block_fn(x_chunk, mask_chunk)
                 outputs.append(h_chunk)
                 total_aux_loss = total_aux_loss + aux_chunk
             x = torch.cat(outputs, dim=1)

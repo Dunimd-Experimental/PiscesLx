@@ -20,6 +20,7 @@
 import time, torch
 from model import PiscesModel, PiscesConfig
 
+
 cfg = PiscesConfig.from_json("configs/0.5B.json")
 # Smart device detection
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

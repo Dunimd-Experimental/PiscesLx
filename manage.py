@@ -22,6 +22,7 @@ import sys
 import argparse
 from pathlib import Path
 
+
 ROOT = os.path.abspath(os.path.dirname(__file__))
 
 COMMANDS = [

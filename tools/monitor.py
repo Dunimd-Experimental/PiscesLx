@@ -22,6 +22,7 @@ import time
 import psutil
 import platform
 
+
 UPDATE_INTERVAL = 1
 
 # --- Helper Functions ---

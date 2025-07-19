@@ -19,6 +19,7 @@
 
 import os
 
+
 def setup_device(device_pref):
     import torch
     if device_pref == "auto":
@@ -35,10 +36,10 @@ def setup_device(device_pref):
 
 def infer(args):
     import torch
-    from model import PiscesModel, PiscesConfig
-    from model.tokenizer import get_tokenizer
-    from transformers import BitsAndBytesConfig
     from PIL import Image
+    from model.tokenizer import get_tokenizer
+    from model import PiscesModel, PiscesConfig
+    from transformers import BitsAndBytesConfig
     from torchvision.transforms import functional as TF
     print("✅\tStarting Pisces L1 Inference ...")
     device = setup_device("auto")

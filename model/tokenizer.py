@@ -22,6 +22,7 @@ import re
 import json
 import urllib.request
 
+
 class BPETokenizer:
     def __init__(self, vocab_path=None, merges_path=None, special_tokens=None):
         if vocab_path and os.path.exists(vocab_path):

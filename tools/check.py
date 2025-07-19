@@ -21,6 +21,7 @@ import os
 import sys
 import torch
 
+
 def check(args=None, extra=None):
     """Check GPU availability and status"""
     print("✅\tGPU Status Check")

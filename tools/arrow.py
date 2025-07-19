@@ -22,6 +22,7 @@ import json
 import pyarrow as pa
 from datasets import Dataset, DatasetDict, load_dataset, load_from_disk
 
+
 def arrow(args):
     if args.json_dir and args.arrow_out:
         json_files = [os.path.join(args.json_dir, f) for f in os.listdir(args.json_dir) if f.endswith('.json')]

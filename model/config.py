@@ -20,6 +20,7 @@
 import json
 from dataclasses import dataclass
 
+
 @dataclass
 class PiscesConfig:
     """Pisces L1 model configuration"""
