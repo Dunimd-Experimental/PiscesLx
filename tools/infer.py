@@ -41,6 +41,7 @@ def infer(args):
     from model import PiscesModel, PiscesConfig
     from transformers import BitsAndBytesConfig
     from torchvision.transforms import functional as TF
+    import torch.nn.functional as F
     print("✅\tStarting Pisces L1 Inference ...")
     device = setup_device("auto")
     
@@ -69,7 +70,6 @@ def infer(args):
                 lora_dropout=0.05, bias="none", task_type=TaskType.CAUSAL_LM
             )
             lora_model = get_peft_model(model, lora_config)
-            # Ensure that PiscesModel custom properties/methods are not lost
             for attr in ["cfg", "quantization_config", "lora_config", "forward", "prepare_inputs_for_generation"]:
                 if hasattr(model, attr):
                     setattr(lora_model, attr, getattr(model, attr))
@@ -98,6 +98,14 @@ def infer(args):
             pixel_values = None
     print("✅\tGenerating response (Automatic blocking/Mixed precision/4-bit)...")
     max_gen_len = getattr(args, 'max_length', 100)
+    
+    prompt_len = input_ids.shape[1]
+    if prompt_len < 20:
+        top_k = 40
+        top_p = 0.9
+    else:
+        top_k = 20
+        top_p = 0.8
     chunk_size = min(getattr(cfg, 'max_position_embeddings', 2048), 512)
     generated_ids = []
     
@@ -108,7 +116,6 @@ def infer(args):
     with torch.no_grad(), autocast_ctx:
         cur_input = input_ids
         for _ in range(max_gen_len):
-            # Automatic block inference to prevent OOM
             logits_chunks = []
             for i in range(0, cur_input.shape[1], chunk_size):
                 chunk = cur_input[:, i:i+chunk_size]
@@ -116,7 +123,24 @@ def infer(args):
                 logits_chunks.append(logits)
             logits = torch.cat(logits_chunks, dim=1)
             next_token_logits = logits[:, -1, :]
-            next_token = torch.argmax(next_token_logits, dim=-1, keepdim=True)
+            
+            filtered_logits = next_token_logits.clone()
+            if top_k > 0:
+                top_k = min(top_k, filtered_logits.size(-1))
+                values, _ = torch.topk(filtered_logits, top_k)
+                min_values = values[:, -1].unsqueeze(-1)
+                filtered_logits[filtered_logits < min_values] = -float('Inf')
+            if 0 < top_p < 1.0:
+                sorted_logits, sorted_indices = torch.sort(filtered_logits, descending=True)
+                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                sorted_indices_to_remove = cumulative_probs > top_p
+                if sorted_indices_to_remove[..., 1:].size(-1) > 0:
+                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                sorted_indices_to_remove[..., 0] = 0
+                indices_to_remove = sorted_indices[sorted_indices_to_remove]
+                filtered_logits[0, indices_to_remove] = -float('Inf')
+            probs = F.softmax(filtered_logits, dim=-1)
+            next_token = torch.multinomial(probs, num_samples=1)
             if next_token.item() == tokenizer.eos_token_id:
                 break
             generated_ids.append(next_token.item())

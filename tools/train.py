@@ -65,7 +65,7 @@ def train(args):
     from transformers import get_linear_schedule_with_warmup
     
     AUTO_CONFIG = {
-        "0.5B":  dict(batch_size=8,  accum=8,  seq_len=1024, force_quant=True, force_lora=False),
+        "0.5B":  dict(batch_size=32,  accum=2,  seq_len=1024, force_quant=True, force_lora=False),
         "1.5B":  dict(batch_size=4,  accum=16, seq_len=1024, force_quant=True, force_lora=True),
         "7B":    dict(batch_size=2,  accum=32, seq_len=1024, force_quant=True, force_lora=True),
         "32B":   dict(batch_size=1,  accum=32, seq_len=512,  force_quant=True, force_lora=True),
@@ -140,6 +140,10 @@ def train(args):
         model = PiscesModel(cfg)
     model = model.to(device)
     print("✅\tPiscesModel initialized.")
+    
+    if getattr(args, 'resume_ckpt', ''):
+        print(f"✅\tResuming from checkpoint: {args.resume_ckpt}")
+        load_ckpt(args.resume_ckpt, model, optimizer)
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
         print(f"✅\tUsing {torch.cuda.device_count()} GPUs")
         model = torch.nn.DataParallel(model)
@@ -162,7 +166,7 @@ def train(args):
             train_ds,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=2,
+            num_workers=4,
             pin_memory=True,
             drop_last=True,
             collate_fn=collate_fn,
@@ -174,8 +178,10 @@ def train(args):
         scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
-        for epoch in range(epochs):
-            print(f"✅\tStarting epoch {epoch+1}/{epochs}")
+        stop_training = False
+        epoch = 0
+        while not stop_training:
+            print(f"✅\tStarting epoch {epoch+1}")
             total_loss = 0
             accum_counter = 0
             optimizer.zero_grad()
@@ -233,12 +239,19 @@ def train(args):
                     scheduler.step(loss.item())
                     if step % 50 == 0:
                         avg_loss = total_loss / (step + 1)
-                        print(f"✅\tEpoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+                        print(f"✅\tEpoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+            avg_loss = total_loss / (step + 1)
             checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
             save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
             print(f"✅\tCheckpoint saved: {checkpoint_path}")
+            if avg_loss < 1.0:
+                print(f"✅\tLoss < 1.0, stopping training for dataset {dataset}.")
+                stop_training = True
+            else:
+                epoch += 1
         print("✅\tTraining completed!")
 
 def add_train_args(parser):
     parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g. 0.5B, 1.5B, 7B, 70B')
+    parser.add_argument('--resume_ckpt', default='', type=str, help='Path to checkpoint to resume training')
     return parser 
