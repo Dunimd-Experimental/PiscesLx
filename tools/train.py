@@ -21,7 +21,6 @@ import os
 import sys
 import argparse
 import subprocess
-import time
 
 def setup_device(device_pref):
     import torch
@@ -56,16 +55,6 @@ def collate_fn(batch):
         "audio_input": audio_input
     }
 
-def get_amp_dtype():
-    import torch
-    if torch.cuda.is_available():
-        cap = torch.cuda.get_device_capability()
-        if cap[0] >= 8:
-            return torch.bfloat16
-        else:
-            return torch.float16
-    return torch.float32
-
 def train(args):
     import torch
     from data.dataset import PiscesDataset
@@ -74,14 +63,9 @@ def train(args):
     from trainer.checkpoint import save_ckpt, load_ckpt
     from torch.optim.lr_scheduler import ReduceLROnPlateau
     from transformers import get_linear_schedule_with_warmup
-    import platform
-    import datetime
-    
-    # Memory optimization
-    os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True'
     
     AUTO_CONFIG = {
-        "0.5B":  dict(batch_size=32, accum=2, seq_len=1024, force_quant=True, force_lora=False),
+        "0.5B":  dict(batch_size=8,  accum=8,  seq_len=1024, force_quant=True, force_lora=False),
         "1.5B":  dict(batch_size=4,  accum=16, seq_len=1024, force_quant=True, force_lora=True),
         "7B":    dict(batch_size=2,  accum=32, seq_len=1024, force_quant=True, force_lora=True),
         "32B":   dict(batch_size=1,  accum=32, seq_len=512,  force_quant=True, force_lora=True),
@@ -163,8 +147,6 @@ def train(args):
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-6)
     print("✅\tOptimizer and scheduler ready.")
-    amp_dtype = get_amp_dtype()
-    print(f"✅\tAMP dtype auto-selected: {amp_dtype}")
     for dataset in dataset_list:
         print(f"\n==============================")
         print(f"✅\tTraining dataset: {dataset}")
@@ -180,7 +162,7 @@ def train(args):
             train_ds,
             batch_size=batch_size,
             shuffle=True,
-            num_workers=4,
+            num_workers=2,
             pin_memory=True,
             drop_last=True,
             collate_fn=collate_fn,
@@ -192,17 +174,12 @@ def train(args):
         scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
-        
-        train_start = time.time()
-        step_times = []
-        peak_mem = 0.0
         for epoch in range(epochs):
             print(f"✅\tStarting epoch {epoch+1}/{epochs}")
             total_loss = 0
             accum_counter = 0
             optimizer.zero_grad()
             for step, batch in enumerate(train_loader):
-                step_start = time.time()
                 model_keys = ["input_ids", "labels"]
                 device_batch = {
                     k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
@@ -210,7 +187,7 @@ def train(args):
                 }
                 loss = None
                 if scaler is not None:
-                    with torch.amp.autocast('cuda', dtype=amp_dtype):
+                    with torch.amp.autocast('cuda'):
                         _, loss, _, _, _ = model(**device_batch)
                         if torch.cuda.is_available() and torch.cuda.device_count() > 1:
                             loss = loss.mean()
@@ -219,14 +196,10 @@ def train(args):
                         scaler.scale(loss).backward()
                     except RuntimeError as e:
                         if 'out of memory' in str(e):
-                            print(f"❌\tOOM at step {step}, reducing batch size and retrying...")
+                            print(f"❌\tOOM at step {step}, skipping batch...")
                             torch.cuda.empty_cache()
                             import gc; gc.collect()
                             optimizer.zero_grad()
-                            # Reduce batch size for next iteration
-                            if batch_size > 1:
-                                batch_size = max(1, batch_size // 2)
-                                print(f"🟧\tReduced batch_size to {batch_size}")
                             continue
                         else:
                             raise
@@ -241,11 +214,10 @@ def train(args):
                     del batch, device_batch
                     torch.cuda.empty_cache()
                 else:
-                    with torch.amp.autocast('cpu', dtype=amp_dtype):
-                        _, loss, _, _, _ = model(**device_batch)
-                        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-                            loss = loss.mean()
-                        loss = loss / accum
+                    _, loss, _, _, _ = model(**device_batch)
+                    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                        loss = loss.mean()
+                    loss = loss / accum
                     loss.backward()
                     accum_counter += 1
                     if accum_counter % accum == 0:
@@ -259,50 +231,12 @@ def train(args):
                 if loss is not None:
                     total_loss += loss.item() * accum
                     scheduler.step(loss.item())
-                    if torch.cuda.is_available():
-                        mem_used = torch.cuda.memory_allocated() / 1024**3
-                        if mem_used > peak_mem:
-                            peak_mem = mem_used
                     if step % 50 == 0:
                         avg_loss = total_loss / (step + 1)
-                        if torch.cuda.is_available():
-                            mem_total = torch.cuda.get_device_properties(0).total_memory / 1024**3
-                            print(f"✅\tEpoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e} | GPU: {mem_used:.1f}GB/{mem_total:.1f}GB")
-                        else:
-                            print(f"✅\tEpoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
-                step_end = time.time()
-                step_times.append(step_end - step_start)
+                        print(f"✅\tEpoch {epoch + 1}/{epochs} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
             checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
             save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
             print(f"✅\tCheckpoint saved: {checkpoint_path}")
-        train_end = time.time()
-        
-        total_steps = len(train_loader) * epochs
-        total_time = train_end - train_start
-        avg_step_time = sum(step_times) / len(step_times) if step_times else 0
-        throughput = (batch_size * total_steps) / total_time if total_time > 0 else 0
-        final_loss = total_loss / total_steps if total_steps > 0 else 0
-        gpu_name = torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU'
-        torch_version = torch.__version__
-        report = f"""
-            [ Pisces L1 Training Benchmark Report ]
-            Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
-            Model: {model_size}, MoE: {cfg.moe_num_experts} experts, batch_size: {batch_size}, seq_len: {seq_len}
-            Device: {gpu_name}, CUDA: {torch.version.cuda}, torch: {torch_version}
-            OS: {platform.system()} {platform.release()} ({platform.machine()})
-            Dataset: {dataset}, Samples: {len(train_ds)}
-            Epochs: {epochs}, Steps: {total_steps}
-            Total time: {total_time:.2f}s
-            Avg step time: {avg_step_time:.3f}s
-            Throughput: {throughput:.2f} samples/s
-            Peak GPU memory: {peak_mem:.2f} GB
-            Final loss: {final_loss:.4f}
-            Checkpoint: {checkpoint_path}
-        """
-        print(report)
-        with open('benchmark_train.txt', 'a', encoding='utf-8') as f:
-            f.write(report + '\n')
-        print("✅\tBenchmark report saved to benchmark_train.txt")
         print("✅\tTraining completed!")
 
 def add_train_args(parser):
