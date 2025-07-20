@@ -55,6 +55,9 @@ def download_datasets(max_samples_per_dataset=50000):
     # Core datasets for Pisces L1 training
     datasets = [
         ("AI-ModelScope/TinyStories", "tinystory", "TinyStories (text generation demo)"),
+        ("modelscope/R1-Distill-Math-Test", "Math", "Math"),
+        ("zhuangxialie/Llama3-Chinese-Dataset", "Llama3-Chinese", "Llama3-Chinese"),
+        ("liucong/Chinese-DeepSeek-R1-Distill-data-110k-SFT", "R1-Distill", "R1-Distill"),
         # ("mapjack/openwebtext_dataset", "openwebtext", "OpenWebText (general text)"),
         # ("swift/wikipedia", "wikipedia", "Wikipedia (general text)"),
         # ("FreedomIntelligence/ShareGPT-4o-Image", "sharegpt4o_image", "ShareGPT-4o-Image (multimodal dialogue)"),

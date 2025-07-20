@@ -148,7 +148,6 @@ def train(args):
         model = torch.nn.DataParallel(model)
     print("✅\tInitializing optimizer and scheduler...")
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
-    # scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-6) # This line is now handled in the loop
     print("✅\tOptimizer and scheduler ready.")
     resume_ckpt = getattr(args, 'resume_ckpt', None)
     start_epoch = 0
