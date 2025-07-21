@@ -25,6 +25,8 @@ import urllib.request
 
 class BPETokenizer:
     def __init__(self, vocab_path=None, merges_path=None, special_tokens=None):
+        self.vocab_path = vocab_path
+        self.merges_path = merges_path
         if vocab_path and os.path.exists(vocab_path):
             with open(vocab_path, "r", encoding="utf-8") as f:
                 self.encoder = json.load(f)
@@ -50,6 +52,38 @@ class BPETokenizer:
         self.pad_id = self.encoder["<pad>"]
         self.bos_id = self.encoder["<s>"]
         self.eos_id = self.encoder["</s>"]
+
+    def __len__(self):
+        """Returns the size of the vocabulary."""
+        return len(self.encoder)
+
+    def add_tokens(self, new_tokens):
+        """Adds new tokens to the vocabulary."""
+        added_count = 0
+        for token in new_tokens:
+            if token not in self.encoder:
+                new_id = len(self.encoder)
+                self.encoder[token] = new_id
+                self.decoder[new_id] = token
+                if token not in self.special_tokens:
+                    self.special_tokens.append(token)
+                added_count += 1
+        return added_count
+
+    def save_pretrained(self, save_directory):
+        """Saves tokenizer files (vocab, merges) to a directory."""
+        os.makedirs(save_directory, exist_ok=True)
+        # Save vocabulary
+        vocab_file = os.path.join(save_directory, "vocab.json")
+        with open(vocab_file, "w", encoding="utf-8") as f:
+            json.dump(self.encoder, f, ensure_ascii=False, indent=2)
+
+        # Copy merges file if it exists
+        if self.merges_path and os.path.exists(self.merges_path):
+            import shutil
+            merges_file = os.path.join(save_directory, "merges.txt")
+            shutil.copyfile(self.merges_path, merges_file)
+            
     def bpe(self, token):
         if token in self.special_tokens:
             return [token]

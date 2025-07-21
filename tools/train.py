@@ -63,6 +63,7 @@ def train(args):
     from trainer.checkpoint import save_ckpt, load_ckpt
     from torch.optim.lr_scheduler import ReduceLROnPlateau
     from transformers import get_linear_schedule_with_warmup
+    from model.tokenizer import get_tokenizer
     
     AUTO_CONFIG = {
         "0.5B":  dict(batch_size=8,  accum=8,  seq_len=512, force_quant=True, force_lora=False),
@@ -109,8 +110,14 @@ def train(args):
     print(f"✅\tLoading config file: {config}")
     cfg = PiscesConfig.from_json(config)
     print("✅\tPiscesConfig loaded.")
-    print("✅\tInitializing PiscesModel...")
+
+    print("✅\tInitializing PiscesModel with Reasoner...")
     
+    # Always-on Reasoner: Tokenizer setup
+    tokenizer = get_tokenizer()
+    special_tokens = ["<think>", "</think>"]
+    tokenizer.add_tokens(special_tokens)
+
     model = None
     if force_quant or force_lora:
         from transformers import BitsAndBytesConfig
@@ -141,6 +148,17 @@ def train(args):
                 pass
     else:
         model = PiscesModel(cfg)
+
+    # Always-on Reasoner: Model and Reasoner setup
+    model.resize_token_embeddings(len(tokenizer))
+    start_id = tokenizer.encoder.get("<think>")
+    end_id = tokenizer.encoder.get("</think>")
+    if start_id is None or end_id is None:
+        raise ValueError("Special reasoning tokens could not be added to the tokenizer.")
+    model.reasoner.start_thinking_id = start_id
+    model.reasoner.end_thinking_id = end_id
+    print(f"✅\tReasoner is integral and configured with token IDs: start={start_id}, end={end_id}")
+        
     model = model.to(device)
     print("✅\tPiscesModel initialized.")
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:

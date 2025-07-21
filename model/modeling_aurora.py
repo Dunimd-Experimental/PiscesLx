@@ -24,6 +24,7 @@ from .moe import MoELayer
 import torch.nn.functional as F
 from .config import PiscesConfig
 from .multimodal import VisionEncoder, AudioEncoder, DocEncoder
+from .reasoner import PiscesReasoner
 
 def pisces_init_weights(m):
     if isinstance(m, nn.Linear):
@@ -144,6 +145,10 @@ class PiscesModel(nn.Module):
         self.lm_head = nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
         self.task_head = nn.Linear(cfg.hidden_size, cfg.task_classes, device=device, dtype=dtype)
         self.eval_head = nn.Linear(cfg.hidden_size, cfg.eval_dims, device=device, dtype=dtype)
+        
+        print("🟧\tPiscesModel: initializing reasoner...")
+        self.reasoner = PiscesReasoner(cfg)
+
         self.apply(pisces_init_weights)
         
         if lora_config is not None:
@@ -156,6 +161,32 @@ class PiscesModel(nn.Module):
         total_params = sum(p.numel() for p in self.parameters())
         print(f"🟧\tPiscesModel: total parameters = {total_params/1e6:.2f}M")
         print("🟧\tPiscesModel: __init__ end")
+
+    def resize_token_embeddings(self, new_num_tokens):
+        """
+        Resizes token embeddings and associated heads to accommodate a new vocabulary size.
+        """
+        # 1. Resize main token embedding
+        old_embed = self.embed
+        new_embed = nn.Embedding(new_num_tokens, self.cfg.hidden_size, device=old_embed.weight.device, dtype=old_embed.weight.dtype)
+        
+        # Copy old weights
+        num_to_copy = min(old_embed.num_embeddings, new_num_tokens)
+        new_embed.weight.data[:num_to_copy, :] = old_embed.weight.data[:num_to_copy, :]
+        self.embed = new_embed
+
+        # 2. Resize LM head
+        old_lm_head = self.lm_head
+        new_lm_head = nn.Linear(self.cfg.hidden_size, new_num_tokens, bias=False, device=old_lm_head.weight.device, dtype=old_lm_head.weight.dtype)
+        new_lm_head.weight.data[:num_to_copy, :] = old_lm_head.weight.data[:num_to_copy, :]
+        self.lm_head = new_lm_head
+
+        # 3. Resize reasoner's thinking head
+        self.reasoner.resize_vocab(new_num_tokens)
+        
+        # 4. Update config
+        self.cfg.vocab_size = new_num_tokens
+        print(f"✅\tResized token embeddings to {new_num_tokens}. Remember to update special token IDs in the reasoner.")
 
     def prepare_inputs_for_generation(self, input_ids, **kwargs):
         """Compatible with PEF/Transformers generation interface, can be extended as needed in practice"""
@@ -175,6 +206,10 @@ class PiscesModel(nn.Module):
         if docs is not None:
             x = torch.cat([self.doc(docs), x], dim=1)
             t += 1
+        
+        # Original sequence length for LM loss calculation
+        lm_seq_len = x.shape[1]
+
         mask = torch.full((t, t), float('-inf'), device=x.device, dtype=x.dtype)
         mask = torch.triu(mask, diagonal=1)
         total_aux_loss = 0.0
@@ -202,10 +237,33 @@ class PiscesModel(nn.Module):
                 total_aux_loss = total_aux_loss + aux_chunk
             x = torch.cat(outputs, dim=1)
             x = self.norm(x)
+            
+            # Main model outputs
             logits = self.lm_head(x)
+            
+            # Reasoner outputs
+            reasoner_out = self.reasoner(x, input_ids, labels)
+
             loss = None
             if labels is not None:
-                loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1))
+                # Standard language modeling loss
+                lm_loss = F.cross_entropy(
+                    logits[:, :lm_seq_len, :].reshape(-1, logits.size(-1)), 
+                    labels.view(-1)
+                )
+                
+                # Combine with reasoner loss
+                reasoner_loss = reasoner_out.get("loss", torch.tensor(0.0, device=x.device))
+                loss = lm_loss + reasoner_loss
+
             task_logits = self.task_head(x[:, 0])
             eval_score = self.eval_head(x.mean(1))
-        return logits, loss, task_logits, eval_score, total_aux_loss
+
+        return {
+            "logits": logits,
+            "loss": loss,
+            "task_logits": task_logits,
+            "eval_score": eval_score,
+            "aux_loss": total_aux_loss,
+            "reasoner_out": reasoner_out
+        }
