@@ -223,50 +223,45 @@ def train(args):
                     loss = None
                     if scaler is not None:
                         with torch.amp.autocast('cuda'):
-                            _, loss, _, _, _ = model(**device_batch)
-                            if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+                            outputs = model(**device_batch)
+                            loss = outputs.get("loss")
+
+                        if loss is not None and loss.requires_grad:
+                            if torch.cuda.device_count() > 1:
                                 loss = loss.mean()
                             loss = loss / accum
-                        try:
+                            
                             scaler.scale(loss).backward()
-                        except RuntimeError as e:
-                            if 'out of memory' in str(e):
-                                print(f"❌\tOOM at step {step}, skipping batch...")
-                                torch.cuda.empty_cache()
-                                import gc; gc.collect()
+                            
+                            accum_counter += 1
+                            if accum_counter % accum == 0:
+                                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                                scaler.step(optimizer)
+                                scaler.update()
                                 optimizer.zero_grad()
-                                continue
-                            else:
-                                raise
-                        accum_counter += 1
-                        if accum_counter % accum == 0:
-                            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                            scaler.step(optimizer)
-                            optimizer.zero_grad()
+                                accum_counter = 0
+                        else:
+                            print(f"🟧\tWarning: Skipping step {step} due to invalid loss (None or no grad).")
                             
-                            if epoch+1 > min_plateau_epoch and scheduler is not None:
-                                scheduler.step(loss.item())
-                            scaler.update()
-                            accum_counter = 0
-                        del batch, device_batch
-                        torch.cuda.empty_cache()
-                    else:
-                        _, loss, _, _, _ = model(**device_batch)
-                        if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-                            loss = loss.mean()
-                        loss = loss / accum
-                        loss.backward()
-                        accum_counter += 1
-                        if accum_counter % accum == 0:
-                            torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                            optimizer.step()
-                            optimizer.zero_grad()
-                            
-                            if epoch+1 > min_plateau_epoch and scheduler is not None:
-                                scheduler.step(loss.item())
-                            accum_counter = 0
-                        del batch, device_batch
-                        torch.cuda.empty_cache()
+                    else: # Non-scaler path
+                        outputs = model(**device_batch)
+                        loss = outputs.get("loss")
+                        
+                        if loss is not None and loss.requires_grad:
+                            if torch.cuda.device_count() > 1:
+                                loss = loss.mean()
+                            loss = loss / accum
+                            loss.backward()
+
+                            accum_counter += 1
+                            if accum_counter % accum == 0:
+                                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                                optimizer.step()
+                                optimizer.zero_grad()
+                                accum_counter = 0
+                        else:
+                            print(f"🟧\tWarning: Skipping step {step} due to invalid loss (None or no grad).")
+
                     if loss is not None:
                         total_loss += loss.item() * accum
                         

@@ -235,7 +235,20 @@ class PiscesModel(nn.Module):
                 h_chunk, aux_chunk = cp.checkpoint(block_fn, x_chunk, mask_chunk, use_reentrant=False)
                 outputs.append(h_chunk)
                 total_aux_loss = total_aux_loss + aux_chunk
-            x = torch.cat(outputs, dim=1)
+            if outputs:
+                x = torch.cat(outputs, dim=1)
+            
+            if x.shape[1] == 0:
+                # Handle empty sequences gracefully to prevent indexing errors in heads.
+                return {
+                    "logits": self.lm_head(x),
+                    "loss": torch.tensor(0.0, device=x.device, requires_grad=True),
+                    "task_logits": torch.zeros(x.shape[0], self.cfg.task_classes, device=x.device),
+                    "eval_score": torch.zeros(x.shape[0], self.cfg.eval_dims, device=x.device),
+                    "aux_loss": total_aux_loss,
+                    "reasoner_out": {"loss": torch.tensor(0.0, device=x.device, requires_grad=True)}
+                }
+
             x = self.norm(x)
             
             # Main model outputs

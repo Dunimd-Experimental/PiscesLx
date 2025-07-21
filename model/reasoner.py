@@ -66,7 +66,7 @@ class PiscesReasoner(nn.Module):
         """
         if self.start_thinking_id is None or self.end_thinking_id is None:
             # Not yet configured for reasoning, return no-op
-            return {"loss": torch.tensor(0.0, device=hidden_states.device)}
+            return {"loss": torch.tensor(0.0, device=hidden_states.device, requires_grad=True)}
 
         batch_size, seq_len, _ = hidden_states.shape
 
@@ -93,7 +93,7 @@ class PiscesReasoner(nn.Module):
             if cot_mask.any():
                 thinking_loss = F.cross_entropy(thinking_logits[cot_mask], labels[cot_mask])
             else:
-                thinking_loss = torch.tensor(0.0, device=hidden_states.device)
+                thinking_loss = torch.tensor(0.0, device=hidden_states.device, requires_grad=True)
                 
             # A simple heuristic for reflection loss, assuming the last two tokens
             # determine correctness. This should be refined based on data format.
