@@ -25,6 +25,9 @@ import torch.nn.functional as F
 from .config import PiscesConfig
 from .multimodal import VisionEncoder, AudioEncoder, DocEncoder
 from .reasoner import PiscesReasoner
+from model.vision_native import NativeSiglipVisionEncoder
+from model.moe_dynamic import DynamicMoELayer
+from model.yarn_rope import YaRNRotaryEmbedding
 
 def pisces_init_weights(m):
     if isinstance(m, nn.Linear):
@@ -70,7 +73,7 @@ class Attention(nn.Module):
         self.k_proj = nn.Linear(cfg.hidden_size, cfg.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
         self.v_proj = nn.Linear(cfg.hidden_size, cfg.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
         self.o_proj = nn.Linear(cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype)
-        self.rope = RotaryEmbedding(self.head_dim, cfg.max_position_embeddings, cfg.rope_theta, device=device, dtype=dtype)
+        self.rope = YaRNRotaryEmbedding(self.head_dim, cfg.max_position_embeddings * 8, cfg.rope_theta, scale=8, device=device, dtype=dtype)
         self.apply(pisces_init_weights)
     def forward(self, x, mask):
         b, t, _ = x.shape
@@ -90,7 +93,7 @@ class TransformerBlock(nn.Module):
     def __init__(self, cfg, device=None, dtype=None):
         super().__init__()
         self.attn = Attention(cfg, device=device, dtype=dtype)
-        self.mlp = MoELayer(cfg, device=device, dtype=dtype)
+        self.mlp = DynamicMoELayer(cfg, device=device, dtype=dtype)
         self.norm1 = RMSNorm(cfg.hidden_size)
         self.norm2 = RMSNorm(cfg.hidden_size)
     def forward(self, x, mask):
