@@ -73,7 +73,7 @@ class Attention(nn.Module):
         self.k_proj = nn.Linear(cfg.hidden_size, cfg.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
         self.v_proj = nn.Linear(cfg.hidden_size, cfg.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
         self.o_proj = nn.Linear(cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype)
-        self.rope = YaRNRotaryEmbedding(self.head_dim, cfg.max_position_embeddings * 8, cfg.rope_theta, scale=8, device=device, dtype=dtype)
+        self.rope = YaRNRotaryEmbedding(self.head_dim, cfg.max_position_embeddings * 8, cfg.rope_theta, scale=8, device=device)
         self.apply(pisces_init_weights)
     def forward(self, x, mask):
         b, t, _ = x.shape

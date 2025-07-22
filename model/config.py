@@ -18,7 +18,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 
 
@@ -43,7 +43,7 @@ class PiscesConfig:
     audio_tokens: int = 512
     task_classes: int = 256
     eval_dims: int = 7
-    rope_scaling: Optional[Dict[str, Any]] = {"type": "yarn", "factor": 32, "original_max_position_embeddings": 32768}
+    rope_scaling: dict = field(default_factory=lambda: {"type": "yarn", "factor": 32, "original_max_position_embeddings": 32768})
     
     @classmethod
     def from_json(cls, path):

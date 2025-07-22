@@ -46,11 +46,11 @@ class YaRNRotaryEmbedding(nn.Module):
         self.freq_factors = 1.0 / (base ** (torch.arange(0, dim, 2).float().to(device) / dim))
         
         # 预计算YaRN缩放因子
-        self.scale_factors = self._compute_scale_factors(device)
+        scale_factors = self._compute_scale_factors(device)
         
         # 缓存位置嵌入
         self.register_buffer("inv_freq", self.freq_factors, persistent=False)
-        self.register_buffer("scale_factors", self.scale_factors, persistent=False)
+        self.register_buffer("scale_factors", scale_factors, persistent=False)
         
     def _compute_scale_factors(self, device: Optional[torch.device] = None) -> torch.Tensor:
         # 生成原始位置索引
@@ -62,7 +62,7 @@ class YaRNRotaryEmbedding(nn.Module):
         # 应用YaRN扩展公式
         if self.scale > 1.0:
             # 计算交叉点
-            crossover = math.sqrt(self.original_max_position_embeddings)
+            crossover = int(math.sqrt(self.original_max_position_embeddings))
             # 计算缩放区域
             high_positions = torch.arange(crossover, self.max_position_embeddings, device=device)
             # 应用对数缩放
@@ -82,11 +82,8 @@ class YaRNRotaryEmbedding(nn.Module):
         
         # 计算频率
         freqs = torch.outer(t, self.inv_freq)
-        
-        # 计算cos和sin
-        emb = torch.cat((freqs, freqs), dim=-1)
-        cos = emb.cos()
-        sin = emb.sin()
+        cos = freqs.cos()
+        sin = freqs.sin()
         
         # 应用旋转
         return self._rotate_half(x, cos, sin)
