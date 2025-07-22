@@ -24,6 +24,8 @@ import subprocess
 
 def setup_device(device_pref):
     import torch
+    print(f"\n==============================")
+    print('🟧\tPisces L1 Training Start!')
     if device_pref == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
@@ -66,9 +68,9 @@ def train(args):
     from model.tokenizer import get_tokenizer
     
     AUTO_CONFIG = {
-        "0.5B":  dict(batch_size=8,  accum=8,  seq_len=512, force_quant=True, force_lora=False),
-        "1.5B":  dict(batch_size=4,  accum=16, seq_len=1024, force_quant=True, force_lora=True),
-        "7B":    dict(batch_size=2,  accum=32, seq_len=1024, force_quant=True, force_lora=True),
+        "0.5B":  dict(batch_size=2,  accum=16, seq_len=512,  force_quant=True, force_lora=False),
+        "1.5B":  dict(batch_size=2,  accum=32, seq_len=1024, force_quant=True, force_lora=True),
+        "7B":    dict(batch_size=1,  accum=32, seq_len=1024, force_quant=True, force_lora=True),
         "32B":   dict(batch_size=1,  accum=32, seq_len=512,  force_quant=True, force_lora=True),
         "64B":   dict(batch_size=1,  accum=32, seq_len=384,  force_quant=True, force_lora=True),
         "70B":   dict(batch_size=1,  accum=32, seq_len=256,  force_quant=True, force_lora=True),
@@ -158,6 +160,10 @@ def train(args):
     model.reasoner.start_thinking_id = start_id
     model.reasoner.end_thinking_id = end_id
     print(f"✅\tReasoner is integral and configured with token IDs: start={start_id}, end={end_id}")
+    
+    if hasattr(model, 'gradient_checkpointing_enable'):
+        model.gradient_checkpointing_enable()
+        print(f"✅\tGradient Checkpointing enabled.")
         
     model = model.to(device)
     print("✅\tPiscesModel initialized.")
@@ -188,6 +194,9 @@ def train(args):
             print(f"❌\tLocal dataset not found: {cache_path}")
             continue
         train_ds = PiscesDataset(subset=dataset, split="train", config=cfg)
+        if len(train_ds) == 0:
+            print(f"🟧\tWarning: Dataset '{dataset}' is empty after filtering. Skipping.")
+            continue
         print(f"✅\tDataset loaded successfully, size: {len(train_ds)}")
         print("✅\tCreating DataLoader...")
         train_loader = DataLoader(
@@ -210,7 +219,7 @@ def train(args):
         epoch = start_epoch
         try:
             while not stop_training:
-                print(f"✅\tStarting epoch {epoch+1}")
+                print(f"🟧\tStarting epoch {epoch+1}")
                 total_loss = 0
                 accum_counter = 0
                 optimizer.zero_grad()
@@ -229,9 +238,8 @@ def train(args):
                         if loss is not None and loss.requires_grad:
                             if torch.cuda.device_count() > 1:
                                 loss = loss.mean()
-                            loss = loss / accum
                             
-                            scaler.scale(loss).backward()
+                            scaler.scale(loss / accum).backward()
                             
                             accum_counter += 1
                             if accum_counter % accum == 0:
@@ -250,7 +258,6 @@ def train(args):
                         if loss is not None and loss.requires_grad:
                             if torch.cuda.device_count() > 1:
                                 loss = loss.mean()
-                            loss = loss / accum
                             loss.backward()
 
                             accum_counter += 1
@@ -270,6 +277,11 @@ def train(args):
                         if step % 10 == 0:
                             avg_loss = total_loss / (step + 1)
                             print(f"✅\tEpoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+                
+                if not train_loader:
+                    print(f"🟧\tSkipping epoch end logic for empty loader.")
+                    continue
+
                 avg_loss = total_loss / (step + 1)
                 checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
                 save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
@@ -293,6 +305,13 @@ def train(args):
             print(f"    python manage.py train --model_size {model_size} --resume_ckpt {interrupt_ckpt}")
             sys.exit(0)
         print("✅\tTraining completed!")
+
+    final_weight_path = os.path.join(save_dir, f"pisces-l1-{model_size.lower()}-final.pt")
+    if hasattr(model, "module"):  # DataParallel
+        torch.save(model.module.state_dict(), final_weight_path)
+    else:
+        torch.save(model.state_dict(), final_weight_path)
+    print(f"✅\tAll datasets finished. Final model weights saved to: {final_weight_path}")
 
 def add_train_args(parser):
     parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g. 0.5B, 1.5B, 7B, 70B')

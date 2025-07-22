@@ -61,6 +61,12 @@ def infer(args):
         checkpoint = torch.load(args.ckpt, map_location=device)
         state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
 
+        ckpt_vocab_size = state_dict['embed.weight'].shape[0] if 'embed.weight' in state_dict else None
+        model_vocab_size = model.embed.weight.shape[0]
+        if ckpt_vocab_size and ckpt_vocab_size != model_vocab_size:
+            print(f"🟧\tVocab size mismatch: checkpoint={ckpt_vocab_size}, model={model_vocab_size}. Auto resizing...")
+            model.resize_token_embeddings(ckpt_vocab_size)
+
         lora_keys = [k for k in state_dict.keys() if k.startswith('base_model.model.') or '.lora_A.' in k or '.lora_B.' in k]
         if lora_keys:
             from peft import get_peft_model, LoraConfig, TaskType
@@ -119,7 +125,8 @@ def infer(args):
             logits_chunks = []
             for i in range(0, cur_input.shape[1], chunk_size):
                 chunk = cur_input[:, i:i+chunk_size]
-                logits, *_ = model(chunk, images=pixel_values)
+                outputs = model(chunk, images=pixel_values)
+                logits = outputs["logits"]
                 logits_chunks.append(logits)
             logits = torch.cat(logits_chunks, dim=1)
             next_token_logits = logits[:, -1, :]

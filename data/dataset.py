@@ -24,6 +24,16 @@ from torch.utils.data import Dataset
 from model.tokenizer import get_tokenizer
 from model.multimodal import VisionEncoder, AudioEncoder, DocEncoder
 
+IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
+AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]
+DOC_KEYS = ["doc", "document", "doc_path", "pdf"]
+VIDEO_KEYS = ["video", "video_path", "mp4", "avi"]
+
+def _get_first_valid(item, keys):
+    for k in keys:
+        if k in item and isinstance(item[k], str) and item[k].strip():
+            return item[k]
+    return None
 
 class PiscesDataset(Dataset):
     """Pisces dataset with multimodal support (text, image, audio, doc, video)"""
@@ -39,10 +49,18 @@ class PiscesDataset(Dataset):
                     self.ds = self.ds["train"]
                 elif split == "test" and "test" in self.ds:
                     self.ds = self.ds["test"]
-                print(f"✅\tLocal dataset loaded successfully: {len(self.ds)} samples")
+                
+                # Filter out empty/invalid samples
+                original_size = len(self.ds)
+                print(f"✅\tLocal dataset loaded successfully: {original_size} samples")
+                if original_size > 0:
+                    print("✅\tFiltering dataset to remove samples with no valid content...")
+                    self.ds = self.ds.filter(lambda example: self._get_text(example).strip() != "")
+                    filtered_size = len(self.ds)
+                    print(f"✅\tFiltered out {original_size - filtered_size} samples. {filtered_size}/{original_size} samples remain ({(filtered_size/original_size)*100:.2f}%).")
             else:
                 print(f"❌\tLocal cache not found, trying online download: {subset}")
-                if MsDataset is None:
+                if "MsDataset" not in globals() or MsDataset is None:
                     print("❌\tMsDataset unavailable. Cannot load ModelScope dataset online. Please upgrade modelscope>=1.28.0 and datasets>=2.14.7, or use only local datasets.")
                     self.ds = [{"text": f"Hello world {i}", "id": i} for i in range(100)]
                 else:
@@ -71,6 +89,42 @@ class PiscesDataset(Dataset):
         self.doc_encoder = DocEncoder(config) if config else None
         # self.video_encoder = VideoEncoder(config) if (config and VideoEncoder is not None) else None
 
+    def _get_text(self, item):
+        # Common keys for text content in various datasets
+        possible_keys = [
+            "text", "content", "sentence", "paragraph", "body", "article", "summary", "desc", "description", "title",
+            "instruction", "input", "output", "response", "target", "answer", "question", "reasoning", "explanation",
+            "conversations", "turns", "messages", "dialogue", "history", "utterance",
+            "problem", "solution", "proof", "rationale", "choices", "options",
+            "prompt", "completion", "code", "canonical_solution", "test", "reference_solution", "nl", "pl",
+            "caption", "image_caption", "audio_caption", "video_caption", "label",
+        ]
+        
+        # Look for a direct key match
+        for key in possible_keys:
+            if isinstance(item.get(key), str) and item[key].strip():
+                return item[key]
+
+        # Handle conversational formats (e.g., ShareGPT)
+        if 'conversations' in item and isinstance(item['conversations'], list) and item['conversations']:
+            full_text = []
+            for turn in item['conversations']:
+                if isinstance(turn, dict) and 'from' in turn and 'value' in turn:
+                    full_text.append(f"{turn['from']}: {turn['value']}")
+            if full_text:
+                return "\n".join(full_text)
+
+        # Handle instruction-following formats
+        if 'instruction' in item and 'input' in item:
+            return f"{item['instruction']}\n{item['input']}"
+        
+        # Fallback: concatenate all string values
+        all_strings = [v for v in item.values() if isinstance(v, str)]
+        if all_strings:
+            return " ".join(all_strings)
+            
+        return ""
+
     def __len__(self):
         return len(self.ds)
 
@@ -78,44 +132,49 @@ class PiscesDataset(Dataset):
         item = self.ds[idx]
 
         # Text
-        text = item.get("text", "")
+        text = self._get_text(item)
         input_ids = self.tokenizer.encode(text, return_tensors="pt")[0]
 
         # Image
         pixel_values = None
-        if "image" in item and self.vision_encoder and self.vision_encoder.enabled:
+        image_path = _get_first_valid(item, IMAGE_KEYS)
+        if image_path and self.vision_encoder and self.vision_encoder.enabled:
             try:
-                pixel_values = self.vision_encoder.process_image(item["image"])
-                print(f"🟧\tImage processed successfully: {item['image']}")
+                pixel_values = self.vision_encoder.process_image(image_path)
+                print(f"🟧\tImage processed successfully: {image_path}")
             except Exception as e:
                 print(f"❌\tImage processing error: {e}")
 
         # Audio
         audio_input = None
-        if "audio" in item and self.audio_encoder and self.audio_encoder.enabled:
+        audio_path = _get_first_valid(item, AUDIO_KEYS)
+        if audio_path and self.audio_encoder and self.audio_encoder.enabled:
             try:
-                audio_input = self.audio_encoder.process_audio(item["audio"])
-                print(f"🟧\tAudio processed successfully: {item['audio']}")
+                audio_input = self.audio_encoder.process_audio(audio_path)
+                print(f"🟧\tAudio processed successfully: {audio_path}")
             except Exception as e:
-                print(f" Audio processing error: {e}")
+                print(f"❌\tAudio processing error: {e}")
 
         # Document
         doc_input = None
-        if "doc" in item and self.doc_encoder and self.doc_encoder.enabled:
+        doc_path = _get_first_valid(item, DOC_KEYS)
+        if doc_path and self.doc_encoder and self.doc_encoder.enabled:
             try:
-                doc_input = self.doc_encoder.process_doc(item["doc"])
-                print(f"🟧\tDoc processed successfully: {item['doc']}")
+                doc_input = self.doc_encoder.process_doc(doc_path)
+                print(f"🟧\tDoc processed successfully: {doc_path}")
             except Exception as e:
                 print(f"❌\tDoc processing error: {e}")
 
         # Video
-        # video_frames = None
-        # if "video" in item and self.video_encoder and getattr(self.video_encoder, 'enabled', True):
-        #     try:
-        #         video_frames = self.video_encoder.process_video(item["video"])
-        #         print(f"🟧\tVideo processed successfully: {item['video']}")
-        #     except Exception as e:
-        #         print(f"❌\tVideo processing error: {e}")
+        video_frames = None
+        if hasattr(self, "video_encoder") and self.video_encoder and getattr(self.video_encoder, 'enabled', True):
+            video_path = _get_first_valid(item, VIDEO_KEYS)
+            if video_path:
+                try:
+                    video_frames = self.video_encoder.process_video(video_path)
+                    print(f"🟧\tVideo processed successfully: {video_path}")
+                except Exception as e:
+                    print(f"❌\tVideo processing error: {e}")
 
         return {
             "input_ids": input_ids,
@@ -123,5 +182,5 @@ class PiscesDataset(Dataset):
             "pixel_values": pixel_values,
             "audio_input": audio_input if audio_input is not None else {'input_values': None},
             "doc_input": doc_input,
-            # "video_frames": video_frames
+            "video_frames": video_frames
         }

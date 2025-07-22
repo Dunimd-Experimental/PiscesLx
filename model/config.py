@@ -19,6 +19,7 @@
 
 import json
 from dataclasses import dataclass
+from typing import Optional, Dict, Any
 
 
 @dataclass
@@ -42,6 +43,7 @@ class PiscesConfig:
     audio_tokens: int = 512
     task_classes: int = 256
     eval_dims: int = 7
+    rope_scaling: Optional[Dict[str, Any]] = {"type": "yarn", "factor": 32, "original_max_position_embeddings": 32768}
     
     @classmethod
     def from_json(cls, path):

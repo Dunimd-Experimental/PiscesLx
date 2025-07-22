@@ -19,7 +19,11 @@
 
 import torch
 from torch import nn
-from transformers import CLIPImageProcessor, ASTFeatureExtractor
+from torch import nn
+import torch.nn.functional as F
+import numpy as np
+from PIL import Image
+from transformers import ASTFeatureExtractor
 
 
 class VisionEncoder(nn.Module):
@@ -27,19 +31,54 @@ class VisionEncoder(nn.Module):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
+        self.image_size = 384
+        self.patch_size = 14
+        self.hidden_size = 1152  # 对应400M参数规模
+        self.num_heads = 18
+        self.num_layers = 32
+        
         print(f"🟧\tVisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
-        self.processor = CLIPImageProcessor()
+        # 图像预处理
+        self.register_buffer('mean', torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.Tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
         
-        self.conv1 = nn.Conv2d(3, 64, kernel_size=7, stride=2, padding=3, bias=False)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.relu = nn.ReLU(inplace=True)
-        self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
-        
-        self.proj = nn.Sequential(
-            nn.Linear(64 * 56 * 56, cfg.hidden_size),
-            nn.LayerNorm(cfg.hidden_size)
+        # Patch嵌入
+        self.patch_embed = nn.Conv2d(
+            in_channels=3,
+            out_channels=self.hidden_size,
+            kernel_size=self.patch_size,
+            stride=self.patch_size
         )
+        
+        # 位置嵌入
+        num_patches = (self.image_size // self.patch_size) ** 2
+        self.pos_embed = nn.Parameter(torch.randn(1, num_patches + 1, self.hidden_size))
+        self.cls_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
+        
+        # Transformer编码器
+        self.transformer = nn.ModuleDict({
+            'layers': nn.ModuleList([
+                nn.ModuleDict({
+                    'norm1': nn.LayerNorm(self.hidden_size),
+                    'attn': nn.MultiheadAttention(
+                        embed_dim=self.hidden_size,
+                        num_heads=self.num_heads,
+                        batch_first=True
+                    ),
+                    'norm2': nn.LayerNorm(self.hidden_size),
+                    'mlp': nn.Sequential(
+                        nn.Linear(self.hidden_size, 4 * self.hidden_size),
+                        nn.GELU(),
+                        nn.Linear(4 * self.hidden_size, self.hidden_size)
+                    )
+                }) for _ in range(self.num_layers)
+            ]),
+            'norm': nn.LayerNorm(self.hidden_size)
+        })
+        
+        # 投影层
+        self.proj = nn.Linear(self.hidden_size, cfg.hidden_size)
         
         print("🟧\tVisionEncoder: __init__ end")
     
@@ -47,23 +86,60 @@ class VisionEncoder(nn.Module):
         """Process image data"""
         print(f"🟧\tProcessing image: {image_path}")
         try:
-            image = self.processor(images=image_path, return_tensors="pt")
-            return image['pixel_values'][0]
+            # 使用PIL读取图像并转换为张量
+            image = Image.open(image_path).convert('RGB')
+            image = image.resize((self.image_size, self.image_size))
+            image = torch.tensor(np.array(image)).permute(2, 0, 1).float() / 255.0
+            image = (image - self.mean) / self.std
+            return image
         except Exception as e:
             print(f"❌\tImage processing error: {e}")
             return None
     
     def forward(self, pixel_values):
         if pixel_values is None:
-            return torch.zeros(1, 1, self.cfg.hidden_size, device=pixel_values.device)
+            return torch.zeros(1, 1, self.cfg.hidden_size, device=self.proj.weight.device)
         
-        x = self.conv1(pixel_values)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-        x = x.view(x.size(0), -1)
+        # 标准化输入
+        x = (pixel_values - self.mean) / self.std
+        
+        # 动态分辨率处理 (NaViT风格)
+        B, C, H, W = x.shape
+        patch_size = self.patch_size
+        
+        # 如果输入分辨率不是patch_size的倍数，进行调整
+        if H % patch_size != 0 or W % patch_size != 0:
+            new_H = ((H + patch_size - 1) // patch_size) * patch_size
+            new_W = ((W + patch_size - 1) // patch_size) * patch_size
+            x = F.interpolate(x, size=(new_H, new_W), mode='bilinear', align_corners=False)
+            H, W = new_H, new_W
+        
+        # Patch嵌入
+        x = self.patch_embed(x)
+        x = x.flatten(2).transpose(1, 2)
+        
+        # 添加分类token和位置嵌入
+        cls_tokens = self.cls_token.expand(B, -1, -1)
+        x = torch.cat((cls_tokens, x), dim=1)
+        
+        # 动态位置嵌入
+        num_patches = (H // patch_size) * (W // patch_size)
+        pos_embed = self.pos_embed[:, :num_patches+1]
+        x = x + pos_embed
+        
+        # Transformer编码器
+        for layer in self.transformer['layers']:
+            # 自注意力
+            x = x + layer['attn'](layer['norm1'](x), layer['norm1'](x), layer['norm1'](x))[0]
+            # MLP
+            x = x + layer['mlp'](layer['norm2'](x))
+        
+        # 最终归一化
+        x = self.transformer['norm'](x)
+        
+        # 投影到模型隐藏维度
         x = self.proj(x)
-        return x.unsqueeze(1)
+        return x
 
 
 class AudioEncoder(nn.Module):
