@@ -32,9 +32,6 @@ def moe_init_weights(m):
 
 
 class ExpertChoiceRouter(nn.Module):
-    """动态Expert Choice路由（无外部依赖）
-    参考SigLIP 2的路由优化策略，实现更高效的专家选择机制
-    """
     def __init__(self, hidden_size, num_experts, capacity_factor=1.25, top_k=2):
         super().__init__()
         self.gate = nn.Linear(hidden_size, num_experts, bias=False)
@@ -46,20 +43,20 @@ class ExpertChoiceRouter(nn.Module):
         # x: (batch*seq, hidden_size)
         tokens_per_expert = int(x.shape[0] * self.capacity_factor / self.num_experts)
         
-        # 计算路由分数
+        # Calculate routing score
         logits = self.gate(x)  # (tokens, experts)
         
-        # Expert Choice: 每个专家选择top-k tokens
+        # Expert Choice: Each expert selects top-k tokens
         expert_indices = torch.topk(logits.T, tokens_per_expert, dim=1).indices  # (experts, capacity)
         
-        # 构建路由矩阵
+        # Building a routing matrix
         dispatch_mask = torch.zeros_like(logits)
         dispatch_mask[expert_indices.T.flatten(), torch.arange(self.num_experts).repeat(tokens_per_expert)] = 1
         
-        # 计算专家负载
+        # Calculate expert load
         expert_load = dispatch_mask.sum(dim=0)
         
-        # 计算负载均衡损失
+        # Calculate load balancing loss
         load_balancing_loss = (expert_load * torch.log(expert_load / expert_load.mean())).mean()
         
         return expert_indices, dispatch_mask, load_balancing_loss
@@ -89,7 +86,7 @@ class DynamicMoELayer(nn.Module):
         for expert in self.experts:
             expert.apply(moe_init_weights)
         
-        # 专家设备管理
+        # Expert equipment management
         self.max_gpu_experts = getattr(cfg, 'max_gpu_experts', 4)
         self._active_experts = OrderedDict()  # expert_id: last_used_step
         self._step = 0
@@ -118,10 +115,10 @@ class DynamicMoELayer(nn.Module):
         
         expert_indices, dispatch_mask, load_balancing_loss = self.router(x_flat)
         
-        # 动态路由计算
+        # Dynamic routing calculation
         outputs = torch.zeros_like(x_flat)
         
-        # 专家设备管理
+        # Expert equipment management
         if self.num_experts > 8 and x.device.type == 'cuda':
             needed_experts = set()
             for expert_id in range(self.num_experts):
@@ -130,7 +127,7 @@ class DynamicMoELayer(nn.Module):
             for expert_id in needed_experts:
                 self._move_expert_to_gpu(expert_id)
         
-        # 专家计算
+        # Expert calculation
         for expert_id, expert in enumerate(self.experts):
             tokens = x_flat[expert_indices[expert_id]]
             if tokens.shape[0] > 0:

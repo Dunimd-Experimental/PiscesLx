@@ -18,11 +18,11 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import torch
-from torch import nn
-from torch import nn
-import torch.nn.functional as F
 import numpy as np
+from torch import nn
+from torch import nn
 from PIL import Image
+import torch.nn.functional as F
 from transformers import ASTFeatureExtractor
 
 
@@ -33,17 +33,17 @@ class VisionEncoder(nn.Module):
         self.cfg = cfg
         self.image_size = 384
         self.patch_size = 14
-        self.hidden_size = 1152  # 对应400M参数规模
+        self.hidden_size = 1152
         self.num_heads = 18
         self.num_layers = 32
         
         print(f"🟧\tVisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
-        # 图像预处理
+        # Image preprocessing
         self.register_buffer('mean', torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
         self.register_buffer('std', torch.Tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
         
-        # Patch嵌入
+        # Patch embedding
         self.patch_embed = nn.Conv2d(
             in_channels=3,
             out_channels=self.hidden_size,
@@ -51,12 +51,12 @@ class VisionEncoder(nn.Module):
             stride=self.patch_size
         )
         
-        # 位置嵌入
+        # Position embedding
         num_patches = (self.image_size // self.patch_size) ** 2
         self.pos_embed = nn.Parameter(torch.randn(1, num_patches + 1, self.hidden_size))
         self.cls_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
         
-        # Transformer编码器
+        # Transformer encoder
         self.transformer = nn.ModuleDict({
             'layers': nn.ModuleList([
                 nn.ModuleDict({
@@ -77,7 +77,7 @@ class VisionEncoder(nn.Module):
             'norm': nn.LayerNorm(self.hidden_size)
         })
         
-        # 投影层
+        # Projection layer
         self.proj = nn.Linear(self.hidden_size, cfg.hidden_size)
         
         print("🟧\tVisionEncoder: __init__ end")
@@ -86,7 +86,7 @@ class VisionEncoder(nn.Module):
         """Process image data"""
         print(f"🟧\tProcessing image: {image_path}")
         try:
-            # 使用PIL读取图像并转换为张量
+            # Read images using PIL and convert them into tensors
             image = Image.open(image_path).convert('RGB')
             image = image.resize((self.image_size, self.image_size))
             image = torch.tensor(np.array(image)).permute(2, 0, 1).float() / 255.0
@@ -100,44 +100,44 @@ class VisionEncoder(nn.Module):
         if pixel_values is None:
             return torch.zeros(1, 1, self.cfg.hidden_size, device=self.proj.weight.device)
         
-        # 标准化输入
+        # Image preprocessing
         x = (pixel_values - self.mean) / self.std
         
-        # 动态分辨率处理 (NaViT风格)
+        # Dynamic resolution processing (NaViT style)
         B, C, H, W = x.shape
         patch_size = self.patch_size
         
-        # 如果输入分辨率不是patch_size的倍数，进行调整
+        # If the input resolution is not a multiple of patch_size, adjust it
         if H % patch_size != 0 or W % patch_size != 0:
             new_H = ((H + patch_size - 1) // patch_size) * patch_size
             new_W = ((W + patch_size - 1) // patch_size) * patch_size
             x = F.interpolate(x, size=(new_H, new_W), mode='bilinear', align_corners=False)
             H, W = new_H, new_W
         
-        # Patch嵌入
+        # Patch embedding
         x = self.patch_embed(x)
         x = x.flatten(2).transpose(1, 2)
         
-        # 添加分类token和位置嵌入
+        # Add classification token and position embedding
         cls_tokens = self.cls_token.expand(B, -1, -1)
         x = torch.cat((cls_tokens, x), dim=1)
         
-        # 动态位置嵌入
+        # Dynamic position embedding
         num_patches = (H // patch_size) * (W // patch_size)
         pos_embed = self.pos_embed[:, :num_patches+1]
         x = x + pos_embed
         
-        # Transformer编码器
+        # Transformer encoder
         for layer in self.transformer['layers']:
-            # 自注意力
+            # Self-attention
             x = x + layer['attn'](layer['norm1'](x), layer['norm1'](x), layer['norm1'](x))[0]
             # MLP
             x = x + layer['mlp'](layer['norm2'](x))
         
-        # 最终归一化
+        # Final normalization
         x = self.transformer['norm'](x)
         
-        # 投影到模型隐藏维度
+        # Projection to model hidden dimension
         x = self.proj(x)
         return x
 

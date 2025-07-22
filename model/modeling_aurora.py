@@ -23,11 +23,11 @@ from torch import nn
 from .moe import MoELayer
 import torch.nn.functional as F
 from .config import PiscesConfig
-from .multimodal import VisionEncoder, AudioEncoder, DocEncoder
 from .reasoner import PiscesReasoner
-from model.vision_native import NativeSiglipVisionEncoder
 from model.moe_dynamic import DynamicMoELayer
 from model.yarn_rope import YaRNRotaryEmbedding
+from model.vision_native import NativeSiglipVisionEncoder
+from .multimodal import VisionEncoder, AudioEncoder, DocEncoder
 
 def pisces_init_weights(m):
     if isinstance(m, nn.Linear):
