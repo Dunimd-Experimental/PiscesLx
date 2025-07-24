@@ -68,12 +68,12 @@ def train(args):
     from model.tokenizer import get_tokenizer
     
     AUTO_CONFIG = {
-        "0.5B":  dict(batch_size=2,  accum=16, seq_len=512,  force_quant=True, force_lora=False),
-        "1.5B":  dict(batch_size=2,  accum=32, seq_len=1024, force_quant=True, force_lora=True),
-        "7B":    dict(batch_size=1,  accum=32, seq_len=1024, force_quant=True, force_lora=True),
-        "32B":   dict(batch_size=1,  accum=32, seq_len=512,  force_quant=True, force_lora=True),
-        "64B":   dict(batch_size=1,  accum=32, seq_len=384,  force_quant=True, force_lora=True),
-        "70B":   dict(batch_size=1,  accum=32, seq_len=256,  force_quant=True, force_lora=True),
+        "0.5B":  dict(batch_size=4,  accum=8,  seq_len=384,  force_quant=True, force_lora=False, lr=3e-5),
+        "1.5B":  dict(batch_size=2,  accum=16, seq_len=512,  force_quant=True, force_lora=False, lr=2e-5),
+        "7B":    dict(batch_size=1,  accum=32, seq_len=384,  force_quant=True, force_lora=True,  lr=2e-5),
+        "32B":   dict(batch_size=1,  accum=64, seq_len=256,  force_quant=True, force_lora=True,  lr=1e-5),
+        "64B":   dict(batch_size=1,  accum=64, seq_len=192,  force_quant=True, force_lora=True,  lr=1e-5),
+        "70B":   dict(batch_size=1,  accum=64, seq_len=128,  force_quant=True, force_lora=True,  lr=8e-6),
     }
     model_size = getattr(args, 'model_size', '0.5B').upper()
     if model_size not in AUTO_CONFIG:
@@ -86,7 +86,7 @@ def train(args):
     force_quant = cfg_dict['force_quant']
     force_lora = cfg_dict['force_lora']
     epochs = 1
-    lr = 1e-4
+    lr = cfg_dict['lr']
     save_dir = "ckpt"
     
     min_plateau_epoch = 5
@@ -178,8 +178,11 @@ def train(args):
     if resume_ckpt and os.path.exists(resume_ckpt):
         print(f"✅\tResuming from checkpoint: {resume_ckpt}")
         start_epoch = load_ckpt(resume_ckpt, model, optimizer)
-        print(f"✅\tResumed at epoch {start_epoch}")
-        
+        print(f"✅ Resumed at epoch {start_epoch}")
+
+        for param_group in optimizer.param_groups:
+            param_group['lr'] = lr
+            print(f"✅ Learning rate auto-reset to {lr}")
         min_lr_threshold = lr * 0.5
         for param_group in optimizer.param_groups:
             if param_group['lr'] < min_lr_threshold:
@@ -317,4 +320,4 @@ def add_train_args(parser):
     parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g. 0.5B, 1.5B, 7B, 70B')
     parser.add_argument('--resume_ckpt', default='', type=str, help='Path to checkpoint to resume training')
     parser.add_argument('--reset_lr', action='store_true', help='Reset learning rate after resuming checkpoint')
-    return parser 
+    return parser

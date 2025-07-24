@@ -50,12 +50,18 @@ def setup(args):
     # Auto enter venv shell
     if is_windows:
         shell = os.environ.get("COMSPEC", "cmd.exe")
-        activate = os.path.join(venv_dir, "Scripts", "activate.bat")
-        print("✅\tAuto-entering Pisces venv shell (Windows)...")
-        os.execv(shell, [shell, "/K", activate])
+        # Check if using PowerShell
+        if "powershell.exe" in shell.lower() or "pwsh.exe" in shell.lower():
+            activate = os.path.join(venv_dir, "Scripts", "Activate.ps1")
+            print("✅\tAuto-entering Pisces venv shell (PowerShell)...")
+            os.execv(shell, [shell, "-NoExit", "-Command", f". '{activate}'"])
+        else:
+            activate = os.path.join(venv_dir, "Scripts", "activate.bat")
+            print("✅\tAuto-entering Pisces venv shell (Windows cmd)...")
+            os.execv(shell, [shell, "/K", activate])
     else:
         shell = os.environ.get("SHELL", "/bin/bash")
         activate = os.path.join(venv_dir, "bin", "activate")
         print("✅\tAuto-entering Pisces venv shell (Linux/Mac)...")
         os.execv(shell, [shell, "-i", "-c", f"source '{activate}'; exec {shell}"])
-    sys.exit(0) 
+    sys.exit(0)

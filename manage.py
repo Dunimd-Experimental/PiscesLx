@@ -65,8 +65,9 @@ def main():
         from tools.monitor import monitor
         monitor()
     elif args.command == 'download':
-        from data.download import download_datasets
+        from data.download import download_datasets, optimize_datasets
         download_datasets(args.max_samples)
+        optimize_datasets(max_keep=5000)
     elif args.command == 'arrow':
         from tools.arrow import arrow
         arrow(args)
@@ -81,4 +82,4 @@ def main():
         sys.exit(1)
 
 if __name__ == "__main__":
-    main() 
+    main()

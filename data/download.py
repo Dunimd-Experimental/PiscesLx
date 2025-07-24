@@ -19,6 +19,9 @@
 
 import os
 import shutil
+import shutil, glob
+from clean import DatasetCleaner
+from datasets import load_from_disk
 
 
 try:
@@ -28,6 +31,8 @@ except ImportError as e:
 except Exception as e:
     print(f"❌\tModelScope import error: {e}"); MsDataset = None
 
+
+from clean import DatasetCleaner
 
 ROOT = os.path.dirname(__file__)
 DATA = os.path.join(ROOT, "..", "data_cache")
@@ -57,8 +62,8 @@ def download_datasets(max_samples_per_dataset=50000):
         ("open-r1/OpenR1-Math-220k", "Mat1h", "Math1"),
         ("zhuangxialie/Llama3-Chinese-Dataset", "Chinese1", "Chinese1"),
         ("liucong/Chinese-DeepSeek-R1-Distill-data-110k-SFT", "Chinese2", "Chinese2"),
-        ("mapjack/openwebtext_dataset", "We1b", "Web1"),
-        ("swift/wikipedia", "Wikipedia1", "Wikipedia1"),
+        ("prithivMLmods/OpenWeb888K", "Web1", "Web1"),
+        ("swift/wikipedia", "Wikipedia1", "20220301.zh")
         ("FreedomIntelligence/ShareGPT-4o-Image", "Image1", "Image1"),
         ("HuggingFaceH4/ultrachat_200k", "Chat1", "Chat1"),
         ("HuggingFaceH4/CodeAlpaca_20K", "Code1", "Code1"),
@@ -78,33 +83,44 @@ def download_datasets(max_samples_per_dataset=50000):
         if MsDataset is None:
             print(f"❌\tMsDataset unavailable. Skipping {dataset_name}. Please upgrade modelscope>=1.28.0 and datasets>=2.14.7.")
             continue
-        try:
-            print(f"✅\tDownloading {description} ({dataset_name})...")
-            split_tried = None
-            ds = None
-            for split in ['train', 'validation', 'test']:
-                try:
-                    ds = MsDataset.load(dataset_name, split=split)
-                    split_tried = split
-                    print(f"✅\tUsing split '{split}' for {dataset_name}")
+        max_retries = 3
+        success = False
+        for attempt in range(max_retries):
+            try:
+                print(f"✅\tDownloading {description} ({dataset_name})... (Attempt {attempt+1}/{max_retries})")
+                split_tried = None
+                ds = None
+                for split in ['train', 'validation', 'test']:
+                    try:
+                        ds = MsDataset.load(dataset_name, split=split, trust_remote_code=True)
+                        split_tried = split
+                        print(f"✅\tUsing split '{split}' for {dataset_name}")
+                        break
+                    except Exception as e:
+                        last_split_error = e
+                if ds is None:
+                    print(f"❌\tNo available split (tried train/validation/test). Last error: {last_split_error}")
+                    break  # No need to retry if no splits available
+                if hasattr(ds, 'to_hf_dataset'):
+                    ds = ds.to_hf_dataset()
+                original_size = len(ds)
+                print(f"✅\tDataset loaded successfully, original samples: {original_size:,}")
+                if original_size > max_samples_per_dataset:
+                    print(f"✅\tLimiting to {max_samples_per_dataset:,} samples...")
+                    ds = ds.select(range(min(max_samples_per_dataset, original_size)))
+                if save(ds, save_name):
+                    success_count += 1
+                    success = True
                     break
-                except Exception as e:
-                    last_split_error = e
-            if ds is None:
-                print(f"❌\tFailed to download {dataset_name}: No available split (tried train/validation/test). Last error: {last_split_error}")
-                continue
-            if hasattr(ds, 'to_hf_dataset'):
-                ds = ds.to_hf_dataset()
-            original_size = len(ds)
-            print(f"✅\tDataset loaded successfully, original samples: {original_size:,}")
-            # Limit dataset size if needed
-            if original_size > max_samples_per_dataset:
-                print(f"✅\tLimiting to {max_samples_per_dataset:,} samples...")
-                ds = ds.select(range(min(max_samples_per_dataset, original_size)))
-            if save(ds, save_name):
-                success_count += 1
-        except Exception as e:
-            print(f"❌\tFailed to download {dataset_name}: {e}")
+                else:
+                    print(f"🟧\tSave failed for {dataset_name}, retrying...")
+            except Exception as e:
+                if attempt < max_retries - 1:
+                    print(f"❌\tAttempt {attempt+1} failed: {e}. Retrying...")
+                else:
+                    print(f"❌\tAttempt {attempt+1} failed: {e}. No retries left.")
+        if not success:
+            print(f"❌\tFailed to download {dataset_name} after {max_retries} attempts")
             
     model_txt_path = os.path.join(DATA, "model.txt")
     with open(model_txt_path, "w", encoding="utf-8") as f:
@@ -112,4 +128,39 @@ def download_datasets(max_samples_per_dataset=50000):
             f.write(f"{save_name}\n")
     print(f"✅\tUpdated {model_txt_path}")
     print(f"✅\tDownload completed! Success: {success_count}/{len(datasets)}")
-    return success_count
+    print(f"🔄 Starting automatic dataset cleaning...")
+    try:
+        DatasetCleaner.auto_clean(input_dir=DATA)
+        print(f"✅ Automatic cleaning completed successfully")
+    except Exception as e:
+        print(f"❌ Error during dataset cleaning: {e}")
+    print(f"✅\tDownload and cleaning completed! Success: {success_count}/{len(datasets)}")
+
+
+def optimize_datasets(max_keep=10000):
+    """
+    1. Clean and truncate datasets immediately after downloading.
+    2. Output to the data_clean directory, retaining Chinese and general text.
+    3. Overwrite model.txt to point to the cleaned directory.
+    """
+    for raw_dir in glob.glob("data_cache/*"):
+        if not os.path.isdir(raw_dir) or raw_dir.endswith("_clean"):
+            continue
+        clean_dir = raw_dir + "_clean"
+        if not os.path.exists(clean_dir):
+            DatasetCleaner.auto_clean(
+                input_dir=raw_dir,
+                output_dir=clean_dir,
+                min_length=10,
+                keep_pattern=r'[\u4e00-\u9fff\d\w，。！？]'
+            )
+        # Keep only the first max_keep entries
+        ds = load_from_disk(clean_dir)
+        if len(ds) > max_keep:
+            ds = ds.select(range(max_keep))
+            ds.save_to_disk(clean_dir)
+        print(f"✅ {raw_dir} -> {clean_dir} | {len(ds)} entries")
+    # Rewrite model.txt to point to the cleaned directories
+    with open("data_cache/model.txt", "w") as f:
+        for d in glob.glob("data_cache/*_clean"):
+            f.write(os.path.basename(d) + "\n")
