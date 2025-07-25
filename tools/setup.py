@@ -64,4 +64,3 @@ def setup(args):
         activate = os.path.join(venv_dir, "bin", "activate")
         print("✅\tAuto-entering Pisces venv shell (Linux/Mac)...")
         os.execv(shell, [shell, "-i", "-c", f"source '{activate}'; exec {shell}"])
-    sys.exit(0)

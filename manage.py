@@ -26,6 +26,8 @@ ROOT = os.path.abspath(os.path.dirname(__file__))
 
 COMMANDS = [
     'setup',      # Environment setup
+    'source',     # Activate virtual environment
+    'pull',       # Pull latest code from remote
     'train',      # Train model
     'infer',      # Inference
     'check',      # Check GPU/deps
@@ -74,6 +76,40 @@ def main():
     elif args.command == 'setup':
         from tools.setup import setup
         setup(args)
+    elif args.command == 'source':
+        import os
+        import sys
+        is_windows = os.name == 'nt'
+        venv_dir = os.path.join(os.path.dirname(__file__), 'venv')
+        
+        if is_windows:
+            shell = os.environ.get("COMSPEC", "cmd.exe")
+            # Check if using PowerShell
+            if "powershell.exe" in shell.lower() or "pwsh.exe" in shell.lower():
+                activate = os.path.join(venv_dir, "Scripts", "Activate.ps1")
+                print("✅\tAuto-entering Pisces venv shell (PowerShell)...")
+                os.execv(shell, [shell, "-NoExit", "-Command", f". '{activate}'"])
+            else:
+                activate = os.path.join(venv_dir, "Scripts", "activate.bat")
+                print("✅\tAuto-entering Pisces venv shell (Windows cmd)...")
+                os.execv(shell, [shell, "/K", activate])
+        else:
+            shell = os.environ.get("SHELL", "/bin/bash")
+            activate = os.path.join(venv_dir, "bin", "activate")
+            print("✅\tAuto-entering Pisces venv shell (Linux/Mac)...")
+            os.execv(shell, [shell, "-i", "-c", f"source '{activate}'; exec {shell}"])
+    elif args.command == 'pull':
+        import subprocess
+        import sys
+        remote_url = 'https://gitee.com/dunimd/piscesl1.git'
+        try:
+            print(f"🟧\tPulling latest code from {remote_url}...")
+            subprocess.run(['git', 'fetch', '--all'], check=True)
+            subprocess.run(['git', 'reset', '--hard', 'origin/master'], check=True)
+            print("✅\tCode successfully updated to the latest version")
+        except subprocess.CalledProcessError as e:
+            print(f"❌ Failed to pull code: {e}")
+            sys.exit(1)
     elif args.command == 'help':
         from tools.help import help
         help()
