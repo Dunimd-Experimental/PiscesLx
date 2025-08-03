@@ -19,7 +19,7 @@
 
 # Recursively calls itself, which may cause infinite recursion. The function purpose is to be determined.
 def RIGHT(content):
-    RIGHT(f"{content}")
+    print(f"✅\t{content}")
 
 # Print debug information with an orange emoji prefix.
 def DEBUG(content):

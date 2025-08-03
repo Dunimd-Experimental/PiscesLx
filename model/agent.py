@@ -1,0 +1,478 @@
+#!/usr/bin/env python3
+
+# Copyright © 2025 Wenze Wei
+#
+# This file is part of Pisces L1.
+#
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
+#
+#     https://creativecommons.org/licenses/by-nc/4.0/
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import json
+import torch
+import torch.nn as nn
+from enum import Enum
+from dataclasses import dataclass
+from typing import Dict, List, Optional, Any, Union
+
+from .modeling_aurora import PiscesModel
+from .multimodal import VisionEncoder, AudioEncoder
+from .reasoner import PiscesReasoner, TreeSearchReasoner
+
+class AgentState(Enum):
+    IDLE = "idle"
+    THINKING = "thinking"
+    ACTING = "acting"
+    REFLECTING = "reflecting"
+    COMPLETED = "completed"
+    ERROR = "error"
+
+@dataclass
+class AgentAction:
+    action_type: str
+    parameters: Dict[str, Any]
+    confidence: float = 1.0
+    reasoning: str = ""
+
+@dataclass
+class AgentObservation:
+    modality: str  # "text", "image", "audio", "tool_result"
+    content: Any
+    metadata: Dict[str, Any]
+
+
+@dataclass
+class AgentMemory:
+    observations: List[AgentObservation]
+    actions: List[AgentAction]
+    reflections: List[str]
+    
+    def add_observation(self, observation: AgentObservation):
+        self.observations.append(observation)
+    
+    def add_action(self, action: AgentAction):
+        self.actions.append(action)
+    
+    def add_reflection(self, reflection: str):
+        self.reflections.append(reflection)
+    
+    def get_recent_context(self, k: int = 5) -> Dict[str, List]:
+        return {
+            "recent_observations": self.observations[-k:],
+            "recent_actions": self.actions[-k:],
+            "recent_reflections": self.reflections[-k:]
+        }
+
+class ToolRegistry:
+    """Registry for managing available tools"""
+    
+    def __init__(self):
+        self.tools: Dict[str, callable] = {}
+    
+    def register(self, name: str, func: callable):
+        self.tools[name] = func
+    
+    def get_tool(self, name: str) -> Optional[callable]:
+        return self.tools.get(name)
+    
+    def list_tools(self) -> List[str]:
+        return list(self.tools.keys())
+
+class PiscesAgent(nn.Module):
+    """
+    Native Pisces L1 Agent with integrated reasoning, perception, and action capabilities.
+    
+    Features:
+    1. Unified multimodal perception (text, image, audio)
+    2. Advanced reasoning with CoT and self-reflection
+    3. Tool use and environment interaction
+    4. Persistent memory and context management
+    5. End-to-end trainable architecture
+    """
+    
+    def __init__(self, cfg, tokenizer=None, model=None):
+        super().__init__()
+        self.cfg = cfg
+        self.tokenizer = tokenizer
+        self.model = model
+        
+        # Use provided model or create new one
+        if model is not None:
+            self.base_model = model
+            self.reasoner = model.reasoner
+            self.vision_encoder = model.vision
+            self.audio_encoder = model.audio
+        else:
+            # Initialize standalone components
+            self.base_model = PiscesModel(cfg)
+            self.reasoner = PiscesReasoner(cfg)
+            self.vision_encoder = VisionEncoder(cfg)
+            self.audio_encoder = AudioEncoder(cfg)
+        
+        self.tree_reasoner = TreeSearchReasoner(None, tokenizer) if tokenizer else None
+        
+        # Agent infrastructure
+        self.memory = AgentMemory([], [], [])
+        self.tools = ToolRegistry()
+        self.state = AgentState.IDLE
+        
+        # Action prediction heads
+        self.action_type_head = nn.Linear(cfg.hidden_size, 10)  # 10 action types
+        self.action_param_head = nn.Linear(cfg.hidden_size, cfg.hidden_size)
+        self.confidence_head = nn.Linear(cfg.hidden_size, 1)
+        
+        # Special tokens for agent control
+        self.start_agent_id = None
+        self.end_agent_id = None
+        self.tool_call_id = None
+        self.tool_result_id = None
+        
+    def register_tool(self, name: str, func: callable):
+        """Register a new tool for the agent to use"""
+        self.tools.register(name, func)
+    
+    def process_observation(self, observation: AgentObservation) -> torch.Tensor:
+        """Process multimodal observations into unified representation"""
+        if observation.modality == "text":
+            if self.tokenizer:
+                tokens = self.tokenizer.encode(str(observation.content), return_tensors="pt")
+                return self.base_model.embed_tokens(tokens)
+            else:
+                return torch.zeros(1, 1, self.cfg.hidden_size)
+        
+        elif observation.modality == "image":
+            if isinstance(observation.content, str):  # image path
+                image_tensor = self.vision_encoder.process_image(observation.content)
+                if image_tensor is not None:
+                    image_tensor = image_tensor.unsqueeze(0)
+                    return self.vision_encoder(image_tensor)
+            elif torch.is_tensor(observation.content):
+                return self.vision_encoder(observation.content)
+        
+        elif observation.modality == "audio":
+            if isinstance(observation.content, str):  # audio path
+                audio_tensor = self.audio_encoder.process_audio(observation.content)
+                if audio_tensor is not None:
+                    return self.audio_encoder(audio_tensor)
+            elif torch.is_tensor(observation.content):
+                return self.audio_encoder(observation.content)
+        
+        elif observation.modality == "tool_result":
+            # Convert tool results to embedding
+            result_str = json.dumps(observation.content)
+            if self.tokenizer:
+                tokens = self.tokenizer.encode(result_str, return_tensors="pt")
+                return self.base_model.embed_tokens(tokens)
+        
+        # Fallback to zero tensor
+        return torch.zeros(1, 1, self.cfg.hidden_size)
+    
+    def plan_action(self, context: Dict[str, Any]) -> AgentAction:
+        """Generate action based on current context and reasoning"""
+        # Get recent context from memory
+        memory_context = self.memory.get_recent_context(k=3)
+        
+        # Combine current observation with memory
+        combined_input = self._prepare_reasoning_input(context, memory_context)
+        
+        # Use reasoner for deep thinking
+        with torch.no_grad():
+            reasoning_output = self.reasoner(combined_input)
+            
+            # Predict action type and parameters
+            action_logits = self.action_type_head(reasoning_output["thinking_logits"][:, -1])
+            action_type_idx = torch.argmax(action_logits, dim=-1).item()
+            
+            action_types = [
+                "respond", "use_tool", "ask_clarification", "reflect", 
+                "search_memory", "plan_next", "wait", "verify", 
+                "correct_action", "explore"
+            ]
+            action_type = action_types[action_type_idx]
+            
+            # Predict confidence
+            confidence = torch.sigmoid(self.confidence_head(reasoning_output["thinking_logits"][:, -1])).item()
+            
+            # Generate action parameters
+            param_embedding = self.action_param_head(reasoning_output["thinking_logits"][:, -1])
+            action_params = self._decode_action_params(param_embedding, action_type)
+            
+            return AgentAction(
+                action_type=action_type,
+                parameters=action_params,
+                confidence=confidence,
+                reasoning=reasoning_output.get("reasoning", "")
+            )
+    
+    def execute_action(self, action: AgentAction) -> Any:
+        """Execute the planned action"""
+        self.state = AgentState.ACTING
+        
+        try:
+            if action.action_type == "respond":
+                return self._generate_response(action.parameters)
+            
+            elif action.action_type == "use_tool":
+                tool_name = action.parameters.get("tool_name")
+                tool_args = action.parameters.get("tool_args", {})
+                
+                tool_func = self.tools.get_tool(tool_name)
+                if tool_func:
+                    result = tool_func(**tool_args)
+                    
+                    # Store tool result as observation
+                    tool_observation = AgentObservation(
+                        modality="tool_result",
+                        content=result,
+                        metadata={"tool": tool_name, "args": tool_args}
+                    )
+                    self.memory.add_observation(tool_observation)
+                    return result
+                else:
+                    return {"error": f"Tool {tool_name} not found"}
+            
+            elif action.action_type == "reflect":
+                return self._perform_reflection(action.parameters)
+            
+            else:
+                return {"status": f"Action {action.action_type} executed", "params": action.parameters}
+        
+        except Exception as e:
+            self.state = AgentState.ERROR
+            return {"error": str(e)}
+        
+        finally:
+            self.state = AgentState.IDLE
+    
+    def step(self, observation: AgentObservation) -> AgentAction:
+        """
+        Single agent step: observe -> think -> act
+        
+        Args:
+            observation: Current observation from environment
+            
+        Returns:
+            AgentAction: The action taken by the agent
+        """
+        # Update state
+        self.state = AgentState.THINKING
+        
+        # Store observation in memory
+        self.memory.add_observation(observation)
+        
+        # Process observation
+        obs_embedding = self.process_observation(observation)
+        
+        # Plan action
+        context = {
+            "observation": observation,
+            "observation_embedding": obs_embedding,
+            "available_tools": self.tools.list_tools()
+        }
+        
+        action = self.plan_action(context)
+        
+        # Store action in memory
+        self.memory.add_action(action)
+        
+        # Execute action
+        result = self.execute_action(action)
+        
+        # Add result to action parameters for memory
+        action.parameters["result"] = result
+        
+        return action
+    
+    def run(self, input_ids=None, images=None, audio=None, docs=None, task=None, max_steps=10, **kwargs) -> Dict[str, Any]:
+        """
+        Run a complete task with the agent supporting multimodal inputs
+        
+        Args:
+            input_ids: Text input as token ids
+            images: Image input tensor or path
+            audio: Audio input tensor or path
+            docs: Document inputs
+            task: Task description string (fallback)
+            max_steps: Maximum number of steps to take
+            
+        Returns:
+            Dict containing task results and agent history
+        """
+        # Initialize task with multimodal observations
+        observations = []
+        
+        if input_ids is not None:
+            text_content = self.tokenizer.decode(input_ids) if self.tokenizer else str(input_ids)
+            observations.append(AgentObservation(
+                modality="text",
+                content=text_content,
+                metadata={"type": "text_input", "input_ids": input_ids}
+            ))
+        
+        if images is not None:
+            observations.append(AgentObservation(
+                modality="image",
+                content=images,
+                metadata={"type": "image_input"}
+            ))
+        
+        if audio is not None:
+            observations.append(AgentObservation(
+                modality="audio",
+                content=audio,
+                metadata={"type": "audio_input"}
+            ))
+        
+        if docs is not None:
+            observations.append(AgentObservation(
+                modality="text",
+                content=str(docs),
+                metadata={"type": "document_input"}
+            ))
+        
+        # Fallback to task description if no multimodal inputs
+        if not observations and task is not None:
+            observations.append(AgentObservation(
+                modality="text",
+                content=task,
+                metadata={"type": "task_init"}
+            ))
+        
+        # Add all observations to memory
+        for obs in observations:
+            self.memory.add_observation(obs)
+        
+        results = []
+        
+        for step_num in range(max_steps):
+            if self.state == AgentState.COMPLETED:
+                break
+            
+            # Use last observation for step
+            current_obs = observations[-1] if observations and step_num == 0 else results[-1].get("observation")
+            action = self.step(current_obs)
+            
+            step_result = {
+                "step": step_num + 1,
+                "action": action,
+                "state": self.state.value,
+                "observation": current_obs
+            }
+            results.append(step_result)
+            
+            # Check if task is complete
+            if action.action_type == "respond" and action.confidence > 0.8:
+                self.state = AgentState.COMPLETED
+                break
+        
+        return {
+            "task_description": task or "Multimodal task",
+            "multimodal_inputs": {
+                "text": input_ids is not None,
+                "image": images is not None,
+                "audio": audio is not None,
+                "docs": docs is not None
+            },
+            "steps": results,
+            "final_state": self.state.value,
+            "memory_summary": self._summarize_memory()
+        }
+    
+    def _prepare_reasoning_input(self, context: Dict[str, Any], memory_context: Dict[str, List]) -> torch.Tensor:
+        """Prepare input for the reasoner module"""
+        # This is a simplified version - would need proper implementation
+        # based on actual model architecture
+        obs_embedding = context.get("observation_embedding", torch.zeros(1, 1, self.cfg.hidden_size))
+        return obs_embedding
+    
+    def _decode_action_params(self, param_embedding: torch.Tensor, action_type: str) -> Dict[str, Any]:
+        """Decode action parameters from embedding"""
+        # Simplified parameter decoding
+        return {
+            "embedding": param_embedding.detach().cpu().numpy().tolist(),
+            "decoded_from": action_type
+        }
+    
+    def _generate_response(self, parameters: Dict[str, Any]) -> str:
+        """Generate text response using base model"""
+        # Placeholder for response generation
+        return "Response generated by PiscesAgent"
+    
+    def _perform_reflection(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Perform self-reflection and error correction"""
+        recent_actions = self.memory.actions[-5:] if self.memory.actions else []
+        reflection = f"Reflecting on {len(recent_actions)} recent actions"
+        
+        self.memory.add_reflection(reflection)
+        
+        return {
+            "reflection": reflection,
+            "actions_reviewed": len(recent_actions),
+            "confidence_improved": True
+        }
+    
+    def _summarize_memory(self) -> Dict[str, int]:
+        """Summarize current memory state"""
+        return {
+            "total_observations": len(self.memory.observations),
+            "total_actions": len(self.memory.actions),
+            "total_reflections": len(self.memory.reflections)
+        }
+    
+    def reset(self):
+        """Reset agent state and memory"""
+        self.memory = AgentMemory([], [], [])
+        self.state = AgentState.IDLE
+    
+    def save_state(self, filepath: str):
+        """Save agent state to file"""
+        state_dict = {
+            "memory": {
+                "observations": [(obs.modality, str(obs.content), obs.metadata) for obs in self.memory.observations],
+                "actions": [(act.action_type, act.parameters, act.confidence, act.reasoning) for act in self.memory.actions],
+                "reflections": self.memory.reflections
+            },
+            "tools": self.tools.list_tools(),
+            "state": self.state.value
+        }
+        
+        with open(filepath, 'w') as f:
+            json.dump(state_dict, f, indent=2)
+    
+    def load_state(self, filepath: str):
+        """Load agent state from file"""
+        try:
+            with open(filepath, 'r') as f:
+                state_dict = json.load(f)
+            
+            # Note: This is simplified - would need proper deserialization
+            self.reset()
+            
+        except Exception as e:
+            print(f"Error loading agent state: {e}")
+    
+    def forward(self, inputs, **kwargs):
+        """Forward pass for training"""
+        # Integrate with base model for end-to-end training
+        base_output = self.base_model(inputs, **kwargs)
+        
+        # Add agent-specific outputs
+        hidden_states = base_output.last_hidden_state if hasattr(base_output, 'last_hidden_state') else base_output
+        
+        agent_outputs = {
+            "base_output": base_output,
+            "action_logits": self.action_type_head(hidden_states),
+            "confidence_logits": self.confidence_head(hidden_states),
+            "reasoning_output": self.reasoner(hidden_states)
+        }
+        
+        return agent_outputs

@@ -19,6 +19,7 @@
 
 import os
 import sys
+import json
 import argparse
 from pathlib import Path
 from utils.log import RIGHT, DEBUG, ERROR
@@ -39,6 +40,7 @@ COMMANDS = [
     'arrow',      # Arrow/JSON conversion
     'quantize',   # Model quantization
     'benchmark',  # Model evaluation & benchmarking
+    'agent',      # Native agent interface
     'help',       # Show help for commands
 ]
 
@@ -69,7 +71,10 @@ def main():
     parser.add_argument('--perf', action='store_true', help='[benchmark] Run performance benchmark')
     parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g. 0.5B, 1.5B, 7B, 70B')
     parser.add_argument('--resume_ckpt', default='', type=str, help='Path to checkpoint to resume training')
-    parser.add_argument('--reset_lr', action='store_true', help='Reset learning rate after resuming checkpoint')  
+    parser.add_argument('--reset_lr', action='store_true', help='Reset learning rate after resuming checkpoint')
+    parser.add_argument('--task', default='', help='[agent] Task to execute')
+    parser.add_argument('--interactive', action='store_true', help='[agent] Interactive agent mode')
+    parser.add_argument('--max-steps', type=int, default=5, help='[agent] Maximum agent steps')
     args, extra = parser.parse_known_args()
     
     if args.command is None or args.command == 'help':
@@ -122,6 +127,41 @@ def main():
             run_benchmark(args.benchmark, args.model, args.config)
         else:
             performance_benchmark(args.config, args.seq_len)
+    elif args.command == 'agent':
+        from tools.agent_cli import load_agent, register_example_tools, run_interactive_agent
+        import sys
+        
+        try:
+            print("🐟 Initializing Pisces L1 Native Agent...")
+            model, tokenizer = load_agent(args.config, args.model)
+            
+            # Register example tools
+            register_example_tools(model)
+            
+            print(f"✅ Agent initialized with {len(model.tools.list_tools())} tools")
+            
+            if args.interactive:
+                run_interactive_agent(model, tokenizer)
+            elif args.task:
+                print(f"\n🎯 Running task: {args.task}")
+                input_ids = tokenizer.encode(args.task)
+                input_ids = torch.tensor([input_ids])
+                
+                result = model.forward(
+                    input_ids=input_ids,
+                    agent_mode=True,
+                    task=args.task,
+                    max_steps=args.max_steps
+                )
+                
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            else:
+                print("Use --interactive for interactive mode or --task for single task")
+                
+        except Exception as e:
+            print(f"Error: {e}")
+            sys.exit(1)
+    
     elif args.command == 'help':
         from tools.help import help
         help()

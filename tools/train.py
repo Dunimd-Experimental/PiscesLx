@@ -251,7 +251,7 @@ def train(args):
         os.makedirs(save_dir, exist_ok=True)
         RIGHT("Starting training loop...")
         model.train()
-        scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
+        scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
         stop_training = False

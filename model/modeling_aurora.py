@@ -260,7 +260,11 @@ class PiscesModel(nn.Module):
         
         DEBUG("PiscesModel: initializing reasoner...")
         self.reasoner = PiscesReasoner(cfg)
-
+        
+        DEBUG("PiscesModel: initializing agent...")
+        from .agent import PiscesAgent
+        self.agent = PiscesAgent(cfg, model=self)
+        
         self.apply(pisces_init_weights)
         
         if lora_config is not None:
@@ -338,7 +342,7 @@ class PiscesModel(nn.Module):
         model_inputs.update(kwargs)
         return model_inputs
 
-    def forward(self, input_ids, images=None, audio=None, docs=None, labels=None):
+    def forward(self, input_ids, images=None, audio=None, docs=None, labels=None, agent_mode=False, task=None, max_steps=None):
         """
         Forward pass of the PiscesModel.
 
@@ -348,12 +352,27 @@ class PiscesModel(nn.Module):
             audio (torch.Tensor, optional): Input audio. Defaults to None.
             docs (torch.Tensor, optional): Input documents. Defaults to None.
             labels (torch.Tensor, optional): Ground truth labels. Defaults to None.
+            agent_mode (bool, optional): Enable agent mode. Defaults to False.
+            task (str, optional): Task description for agent mode. Defaults to None.
+            max_steps (int, optional): Maximum steps for agent execution. Defaults to None.
 
         Returns:
-            dict: Dictionary containing model outputs.
+            dict: Dictionary containing model outputs. In agent mode, returns agent execution results.
         """
         import torch.utils.checkpoint as cp
         import torch
+        
+        # Agent mode: delegate to agent
+        if agent_mode:
+            return self.agent.run(
+                input_ids=input_ids,
+                images=images,
+                audio=audio,
+                docs=docs,
+                task=task,
+                max_steps=max_steps
+            )
+            
         b, t = input_ids.shape
         x = self.embed(input_ids)
         if images is not None:
@@ -377,9 +396,9 @@ class PiscesModel(nn.Module):
         outputs = []
         
         if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
-            autocast_ctx = torch.amp.autocast("cuda", dtype=torch.bfloat16)
+            autocast_ctx = torch.amp.autocast("cuda", dtype=torch.float16)
         else:
-            autocast_ctx = torch.cuda.amp.autocast(dtype=torch.bfloat16)
+            autocast_ctx = torch.cuda.amp.autocast(dtype=torch.float16)
         with autocast_ctx:
             for i in range(0, x.shape[1], chunk_size):
                 x_chunk = x[:, i:i+chunk_size, ...]

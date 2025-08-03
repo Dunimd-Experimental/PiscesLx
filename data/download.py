@@ -108,6 +108,13 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
         ("modelscope/coco_captions_small_slice", "Image1", "Image1"),
         ("FreedomIntelligence/ShareGPT-4o-Image", "Image2", "Image2"),
 
+        # Agent
+        ("iic/MSAgent-Bench", "Agent1", "Agent1"),
+        ("iic/MSAgent-MultiRole", "Agent2", "Agent2"),
+        ("AI-ModelScope/orca-agentinstruct-1M-v1", "Agent3", "Agent3"),
+        ("iic/MSAgent-Pro", "Agent4", "Agent4"),
+        ("AI-ModelScope/ms_agent_for_agentfabric", "Agent5", "Agent5"),
+
         # Other
         ("swift/VQAv2", "VQAv2", "VQAv2"),
         ("OmniData/FinQA", "FinQA", "FinQA"),
