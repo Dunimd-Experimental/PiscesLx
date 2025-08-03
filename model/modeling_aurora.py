@@ -73,7 +73,7 @@ class Attention(nn.Module):
         self.k_proj = nn.Linear(cfg.hidden_size, cfg.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
         self.v_proj = nn.Linear(cfg.hidden_size, cfg.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
         self.o_proj = nn.Linear(cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype)
-        self.rope = YaRNRotaryEmbedding(self.head_dim, cfg.max_position_embeddings * 8, cfg.rope_theta, scale=8, device=device)
+        self.rope = YaRNRotaryEmbedding(self.head_dim, cfg.max_position_embeddings, cfg.rope_theta, scale=32, device=device)
         self.apply(pisces_init_weights)
     def forward(self, x, mask):
         b, t, _ = x.shape
@@ -217,7 +217,7 @@ class PiscesModel(nn.Module):
         mask = torch.triu(mask, diagonal=1)
         total_aux_loss = 0.0
         
-        chunk_size = min(getattr(self.cfg, 'max_position_embeddings', 2048), 512)
+        chunk_size = min(getattr(self.cfg, 'max_position_embeddings', 2048), 8192)
         outputs = []
         
         if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):

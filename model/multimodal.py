@@ -198,6 +198,43 @@ class DocEncoder(nn.Module):
         )
         
         print("🟧\tDocEncoder: __init__ end")
+
+
+class VideoEncoder(nn.Module):
+    def __init__(self, cfg):
+        super().__init__()
+        self.enabled = True
+        self.cfg = cfg
+        print(f"🟧\tVideoEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        
+        # Simple video encoding using frame-based approach
+        self.frame_encoder = VisionEncoder(cfg)
+        self.temporal_proj = nn.Sequential(
+            nn.Linear(cfg.hidden_size, cfg.hidden_size),
+            nn.LayerNorm(cfg.hidden_size),
+            nn.ReLU(),
+            nn.Linear(cfg.hidden_size, cfg.hidden_size)
+        )
+        
+        print("🟧\tVideoEncoder: __init__ end")
+    
+    def forward(self, video_frames):
+        if video_frames is None:
+            return torch.zeros(1, 1, self.cfg.hidden_size, device=self.cfg.device)
+        
+        # Process each frame with vision encoder
+        batch_size, num_frames, channels, height, width = video_frames.shape
+        frames_flat = video_frames.view(-1, channels, height, width)
+        frame_features = self.frame_encoder(frames_flat)
+        
+        # Reshape back to temporal sequence
+        frame_features = frame_features.view(batch_size, num_frames, -1, self.cfg.hidden_size)
+        
+        # Temporal pooling (simple average)
+        video_features = frame_features.mean(dim=2)  # Average across spatial dimensions
+        video_features = self.temporal_proj(video_features.mean(dim=1))  # Average across frames
+        
+        return video_features.unsqueeze(1)
     
     def forward(self, doc_input):
         x = self.doc_proj(doc_input['input_ids'])

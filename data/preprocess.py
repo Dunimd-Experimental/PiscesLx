@@ -2,52 +2,91 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-import os, json
+import os
 from datasets import load_from_disk, DatasetDict
 
+"""
+This module provides functions to read dataset subset names from a file and 
+build training and test splits for each dataset subset.
+"""
 
 def get_subsets_from_model_txt():
+    """
+    Retrieve dataset subset names from the model.txt file.
+
+    This function constructs the path to the model.txt file, checks if it exists,
+    and reads all non-empty lines that do not start with '#' as dataset subset names.
+
+    Returns:
+        list: A list of dataset subset names. Returns an empty list if the file does not exist.
+    """
+    # Construct the path to the model.txt file
     model_txt = os.path.join("data_cache", "model.txt")
+    # Check if the model.txt file exists
     if not os.path.exists(model_txt):
         print(f"❌\t{model_txt} not found! Please create it with one dataset name per line.")
         return []
+    # Open the model.txt file and read dataset subset names
     with open(model_txt, "r", encoding="utf-8") as f:
+        # Filter out empty lines and comment lines, then strip whitespace
         return [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
 
 def build_splits(subset):
+    """
+    Build training and test splits for a given dataset subset.
+
+    This function checks if the dataset subset exists. If it does, it attempts to perform a 90/10 train-test split.
+    If the dataset doesn't support the train_test_split method, it uses a simple selection for the test set.
+    The split dataset is then saved back to disk.
+
+    Args:
+        subset (str): The name of the dataset subset.
+
+    Returns:
+        None: Returns None if the dataset subset does not exist.
+    """
+    # Construct the path to the dataset subset
     src = f"data/{subset}"
+    # Check if the dataset subset exists
     if not os.path.exists(src):
         print(f"❌\t{src} does not exist, please run download.py first")
         return
 
+    # Load the dataset from disk
     ds = load_from_disk(src)
 
     # Simple 90/10 split
     if hasattr(ds, "train_test_split"):
+        # Perform a 90/10 train-test split if the dataset supports it
         split = ds.train_test_split(test_size=0.1, seed=42)
     else:
+        # If the dataset doesn't support train_test_split, use a simple selection for test set
         split = {"train": ds, "test": ds.select(range(min(1000, len(ds))))}
 
+    # Convert the split into a DatasetDict object
     out = DatasetDict(split)
+    # Save the split dataset back to disk
     out.save_to_disk(f"data/{subset}")
     print(f"✅\t{subset} split completed → data/{subset}")
 
 if __name__ == "__main__":
+    # Get all dataset subset names
     SUBSETS = get_subsets_from_model_txt()
+    # Build splits for each dataset subset
     for s in SUBSETS:
         build_splits(s)

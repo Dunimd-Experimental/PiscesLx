@@ -24,15 +24,15 @@ from typing import Optional
 
 
 class YaRNRotaryEmbedding(nn.Module):
-    """YaRN长上下文位置编码实现
-    基于RoPE (Rotary Position Embedding) 并扩展YaRN (Yet Another RoPE Extension) 方法
-    支持超长上下文长度，最高可达32768 tokens
+    """Implementation of YaRN long-context positional encoding.
+    Based on RoPE (Rotary Position Embedding) and extended with YaRN (Yet Another RoPE Extension) method.
+    Supports ultra-long context lengths up to 10M tokens.
     """
     def __init__(self,
                  dim: int,
-                 max_position_embeddings: int = 32768,
+                 max_position_embeddings: int = 10485760,
                  base: int = 10000,
-                 scale: float = 8.0,
+                 scale: float = 32.0,
                  original_max_position_embeddings: int = 4096,
                  device: Optional[torch.device] = None):
         super().__init__()
@@ -42,59 +42,59 @@ class YaRNRotaryEmbedding(nn.Module):
         self.scale = scale
         self.original_max_position_embeddings = original_max_position_embeddings
         
-        # 计算频率因子
+        # Calculate frequency factors
         self.freq_factors = 1.0 / (base ** (torch.arange(0, dim, 2).float().to(device) / dim))
         
-        # 预计算YaRN缩放因子
+        # Precompute YaRN scaling factors
         scale_factors = self._compute_scale_factors(device)
         
-        # 缓存位置嵌入
+        # Cache position embeddings
         self.register_buffer("inv_freq", self.freq_factors, persistent=False)
         self.register_buffer("scale_factors", scale_factors, persistent=False)
         
     def _compute_scale_factors(self, device: Optional[torch.device] = None) -> torch.Tensor:
-        # 生成原始位置索引
+        # Generate original position indices
         original_positions = torch.arange(self.original_max_position_embeddings, device=device)
         
-        # 计算YaRN缩放因子
+        # Calculate YaRN scaling factors
         scale_factors = torch.ones(self.max_position_embeddings, device=device)
         
-        # 应用YaRN扩展公式
+        # Apply YaRN extension formula
         if self.scale > 1.0:
-            # 计算交叉点
+            # Calculate crossover point
             crossover = int(math.sqrt(self.original_max_position_embeddings))
-            # 计算缩放区域
+            # Calculate scaling region
             high_positions = torch.arange(crossover, self.max_position_embeddings, device=device)
-            # 应用对数缩放
+            # Apply logarithmic scaling
             scale_factors[crossover:] = crossover * (high_positions / crossover) ** (1.0 / self.scale)
         
         return scale_factors
     
     def forward(self, x: torch.Tensor, seq_len: int) -> torch.Tensor:
-        # 获取设备
+        # Get device
         device = x.device
         
-        # 获取位置索引
+        # Get position indices
         t = torch.arange(seq_len, device=device, dtype=torch.float32)
         
-        # 应用YaRN缩放
+        # Apply YaRN scaling
         t = t * self.scale_factors[:seq_len].to(device)
         
-        # 计算频率
+        # Calculate frequencies
         freqs = torch.outer(t, self.inv_freq)
         cos = freqs.cos()
         sin = freqs.sin()
         
-        # 应用旋转
+        # Apply rotation
         return self._rotate_half(x, cos, sin)
     
     @staticmethod
     def _rotate_half(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        # 将张量分为两半
+        # Split the tensor into two halves
         x1 = x[..., :x.shape[-1] // 2]
         x2 = x[..., x.shape[-1] // 2:]
         
-        # 应用旋转
+        # Apply rotation
         rotated = torch.cat((-x2 * sin + x1 * cos, x1 * sin + x2 * cos), dim=-1)
         
         return rotated
