@@ -2,20 +2,20 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import json
 from typing import Optional, Dict, Any
@@ -23,7 +23,29 @@ from dataclasses import dataclass, field
 
 @dataclass
 class PiscesConfig:
-    """Pisces L1 model configuration"""
+    """Configuration for the Pisces L1 model.
+    
+    Attributes:
+        model_type (str): The type of the model, default is "pisces_l1".
+        vocab_size (int): The size of the vocabulary, default is 100,352.
+        hidden_size (int): The size of the hidden layer, default is 2048.
+        n_layer (int): The number of layers in the model, default is 24.
+        n_head (int): The number of attention heads, default is 16.
+        n_kv_head (int): The number of key-value attention heads, default is 4.
+        moe_num_experts (int): The number of experts in the Mixture of Experts, default is 64.
+        moe_top_k (int): The top-k experts to use in Mixture of Experts, default is 2.
+        intermediate_size (int): The size of the intermediate layer, default is 5632.
+        max_position_embeddings (int): The maximum number of position embeddings, default is 8192.
+        rope_theta (float): The theta value for RoPE, default is 1e6.
+        dropout (float): The dropout rate, default is 0.0.
+        image_res (int): The resolution of the image, default is 224.
+        image_patch (int): The size of the image patch, default is 14.
+        mm_tokens (int): The number of multimodal tokens, default is 256.
+        audio_tokens (int): The number of audio tokens, default is 512.
+        task_classes (int): The number of task classes, default is 256.
+        eval_dims (int): The number of evaluation dimensions, default is 7.
+        rope_scaling (dict): The configuration for RoPE scaling, default is a dict specifying "yarn" type with factor 32 and original max position 32768.
+    """
     model_type: str = "pisces_l1"
     vocab_size: int = 100_352
     hidden_size: int = 2048
@@ -46,5 +68,12 @@ class PiscesConfig:
     
     @classmethod
     def from_json(cls, path):
-        """Load configuration from JSON file"""
+        """Load the model configuration from a JSON file.
+
+        Args:
+            path (str): The path to the JSON file containing the configuration.
+
+        Returns:
+            PiscesConfig: An instance of the PiscesConfig class initialized with the loaded configuration.
+        """
         return cls(**json.load(open(path)))

@@ -2,27 +2,34 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import os
 import torch
 
-
 def save_ckpt(model, optimizer, epoch, path):
-    """Save model checkpoint"""
+    """
+    Save the model checkpoint to the specified path.
+
+    Args:
+        model (torch.nn.Module): The PyTorch model to be saved.
+        optimizer (torch.optim.Optimizer): The optimizer to be saved.
+        epoch (int): The current training epoch.
+        path (str): The path where the checkpoint will be saved.
+    """
     os.makedirs(os.path.dirname(path), exist_ok=True)
     torch.save({
         'model': model.state_dict(), 
@@ -32,7 +39,17 @@ def save_ckpt(model, optimizer, epoch, path):
 
 
 def load_ckpt(path, model, optimizer):
-    """Load model checkpoint"""
+    """
+    Load the model checkpoint from the specified path.
+
+    Args:
+        path (str): The path from which the checkpoint will be loaded.
+        model (torch.nn.Module): The PyTorch model to load the state into.
+        optimizer (torch.optim.Optimizer): The optimizer to load the state into.
+
+    Returns:
+        int: The epoch number stored in the checkpoint.
+    """
     ckpt = torch.load(path, map_location='cpu')
     model.load_state_dict(ckpt['model'])
     optimizer.load_state_dict(ckpt['optimizer'])

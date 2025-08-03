@@ -2,20 +2,20 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import math
 import torch
@@ -24,7 +24,14 @@ from utils.log import RIGHT
 import torch.nn.functional as F
 from collections import OrderedDict
 
+# Initialize weights for MoE (Mixture of Experts) related linear layers
 def moe_init_weights(m):
+    """
+    Initialize weights for linear layers in MoE.
+
+    Args:
+        m (torch.nn.Module): A PyTorch module.
+    """
     if isinstance(m, nn.Linear):
         nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
         if m.bias is not None:
@@ -33,11 +40,30 @@ def moe_init_weights(m):
 class MoEGate(nn.Module):
     """Expert routing gate for MoE (top-k configurable)"""
     def __init__(self, hidden_size, num_experts, top_k=2, device=None, dtype=None):
+        """
+        Initialize the MoE gate module.
+
+        Args:
+            hidden_size (int): Size of the hidden layer.
+            num_experts (int): Number of experts.
+            top_k (int, optional): Number of top experts to select. Defaults to 2.
+            device (torch.device, optional): Device to place the module on. Defaults to None.
+            dtype (torch.dtype, optional): Data type of the module. Defaults to None.
+        """
         super().__init__()
         self.gate = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
         self.top_k = top_k
     
     def forward(self, x):
+        """
+        Forward pass of the MoE gate.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            tuple: A tuple containing scores and indices of the top-k experts.
+        """
         logits = self.gate(x)  # [N, num_experts]
         scores, idx = torch.topk(logits, self.top_k, dim=-1)  # [N, top_k]
         scores = F.softmax(scores, dim=-1, dtype=torch.float32).type_as(x)  # [N, top_k]
@@ -47,6 +73,16 @@ class MoELayer(nn.Module):
     """Mixture of Experts layer (Efficient routing+load balancing loss)"""
     _layer_count = 0
     def __init__(self, cfg, device=None, dtype=None, print_every=8, max_gpu_experts=4):
+        """
+        Initialize the MoE layer.
+
+        Args:
+            cfg: Configuration object.
+            device (torch.device, optional): Device to place the module on. Defaults to None.
+            dtype (torch.dtype, optional): Data type of the module. Defaults to None.
+            print_every (int, optional): Print interval. Defaults to 8.
+            max_gpu_experts (int, optional): Maximum number of experts on GPU. Defaults to 4.
+        """
         super().__init__()
         MoELayer._layer_count += 1
         self.cfg = cfg
@@ -63,13 +99,19 @@ class MoELayer(nn.Module):
         for expert in self.experts:
             expert.apply(moe_init_weights)
         if MoELayer._layer_count == 1:
-            RIGHT("MoELayer: {self.num_experts} experts, top-{self.top_k} routing, efficient implementation.")
+            RIGHT(f"MoELayer: {self.num_experts} experts, top-{self.top_k} routing, efficient implementation.")
 
         self.max_gpu_experts = max_gpu_experts
         self._active_experts = OrderedDict()  # expert_id: last_used_step
         self._step = 0
 
     def _move_expert_to_gpu(self, expert_id):
+        """
+        Move an expert to GPU and manage the LRU cache of active experts.
+
+        Args:
+            expert_id (int): ID of the expert to move to GPU.
+        """
         expert = self.experts[expert_id]
         if next(expert.parameters()).device.type != 'cuda':
             expert.to('cuda')
@@ -80,11 +122,26 @@ class MoELayer(nn.Module):
             self._move_expert_to_cpu(lru_expert_id)
 
     def _move_expert_to_cpu(self, expert_id):
+        """
+        Move an expert to CPU.
+
+        Args:
+            expert_id (int): ID of the expert to move to CPU.
+        """
         expert = self.experts[expert_id]
         if next(expert.parameters()).device.type != 'cpu':
             expert.to('cpu')
 
     def forward(self, x):
+        """
+        Forward pass of the MoE layer.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            tuple: A tuple containing the output tensor and the auxiliary loss.
+        """
         b, t, d = x.shape
         h = x.view(-1, d)  # [B*T, d]
         scores, idx = self.gate(h)  # [N, top_k], [N, top_k]

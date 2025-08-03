@@ -2,20 +2,20 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import os
 import sys
@@ -24,44 +24,67 @@ import subprocess
 from utils.log import RIGHT
 
 def setup(args):
-    """Auto setup venv and install requirements if needed, then auto-enter venv shell"""
+    """
+    Automatically set up a virtual environment and install required packages if necessary,
+    then automatically enter the virtual environment shell.
+
+    Args:
+        args: Command line arguments passed to the function.
+
+    Returns:
+        None
+    """
     RIGHT("Pisces auto environment setup...")
+    # Get the current Python interpreter path
     py_exec = sys.executable
+    # Define the virtual environment directory path
     venv_dir = os.path.join(os.getcwd(), "pisces_env")
+    # Check if the current operating system is Windows
     is_windows = platform.system().lower().startswith("win")
-    # Check if in venv
+
+    # Check if the script is running outside a virtual environment
     if sys.prefix == sys.base_prefix:
         RIGHT("Not in virtual environment. Creating venv...")
+        # Create a new virtual environment
         subprocess.check_call([py_exec, "-m", "venv", venv_dir])
         RIGHT(f"Virtual environment created at {venv_dir}")
-        # Re-run in venv python
+        # Get the Python interpreter path in the virtual environment
         python_bin = os.path.join(venv_dir, "Scripts" if is_windows else "bin", "python" + (".exe" if is_windows else ""))
         RIGHT("Re-running setup in venv...")
+        # Re-run the script using the Python interpreter in the virtual environment
         os.execv(python_bin, [python_bin] + sys.argv)
         return
     else:
         RIGHT("Already in virtual environment.")
-    # Upgrade pip
+
+    # Upgrade the pip package manager
     RIGHT("Upgrading pip...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
-    # Install requirements
+
+    # Install packages from requirements.txt
     RIGHT("Installing requirements.txt...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
     RIGHT("Pisces environment setup complete!")
-    # Auto enter venv shell
+
+    # Automatically enter the virtual environment shell
     if is_windows:
+        # Get the Windows command shell path
         shell = os.environ.get("COMSPEC", "cmd.exe")
-        # Check if using PowerShell
+        # Check if the current shell is PowerShell
         if "powershell.exe" in shell.lower() or "pwsh.exe" in shell.lower():
             activate = os.path.join(venv_dir, "Scripts", "Activate.ps1")
             RIGHT("Auto-entering Pisces venv shell (PowerShell)...")
+            # Enter the virtual environment using PowerShell
             os.execv(shell, [shell, "-NoExit", "-Command", f". '{activate}'"])
         else:
             activate = os.path.join(venv_dir, "Scripts", "activate.bat")
             RIGHT("Auto-entering Pisces venv shell (Windows cmd)...")
+            # Enter the virtual environment using Windows cmd
             os.execv(shell, [shell, "/K", activate])
     else:
+        # Get the Unix-like shell path
         shell = os.environ.get("SHELL", "/bin/bash")
         activate = os.path.join(venv_dir, "bin", "activate")
         RIGHT("Auto-entering Pisces venv shell (Linux/Mac)...")
+        # Enter the virtual environment using Unix-like shell
         os.execv(shell, [shell, "-i", "-c", f"source '{activate}'; exec {shell}"])

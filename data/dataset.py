@@ -21,6 +21,7 @@ import os
 import torch
 from datasets import load_from_disk
 from torch.utils.data import Dataset
+from utils.progress import progress_bar
 from model.tokenizer import get_tokenizer
 from utils.log import RIGHT, DEBUG, ERROR
 from model.multimodal import VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder
@@ -34,36 +35,50 @@ DOC_KEYS = ["doc", "document", "doc_path", "pdf"]
 # Keys used to identify video data in the dataset
 VIDEO_KEYS = ["video", "video_path", "mp4", "avi", "mov", "mkv"]
 
-# Get the value of the first valid key from the given item
-# Args:
-#     item (dict): The dictionary to search in
-#     keys (list): A list of keys to search for
-# Returns:
-#     str: The value of the first valid key, or None if no valid key is found
-def _get_first_valid(item, keys):
+def _get_first_valid(item: dict, keys: list) -> str:
+    """
+    Retrieve the value corresponding to the first valid key from the given dictionary.
+
+    Args:
+        item (dict): The dictionary to search within.
+        keys (list): A list of keys to search for.
+
+    Returns:
+        str: The value of the first valid key, or None if no valid key is found.
+    """
     for k in keys:
         if k in item and isinstance(item[k], str) and item[k].strip():
             return item[k]
     return None
 
 class PiscesDataset(Dataset):
-    """Pisces dataset with multimodal support (text, image, audio, doc, video)"""
-    def __init__(self, subset="tiny", split="train", config=None):
-        # Try loading from local cache first
+    """
+    Pisces dataset with multimodal support for text, image, audio, document, and video data.
+    """
+    def __init__(self, subset: str = "tiny", split: str = "train", config=None):
+        """
+        Initialize the PiscesDataset.
+
+        Args:
+            subset (str, optional): Name of the dataset subset. Defaults to "tiny".
+            split (str, optional): Dataset split type, either "train" or "test". Defaults to "train".
+            config: Configuration object. Defaults to None.
+        """
+        # First attempt to load dataset from local cache
         cache_path = os.path.join("data_cache", subset)
         
         try:
             if os.path.exists(cache_path):
-                print(f"✅\tLoading dataset from local cache: {cache_path}")
+                RIGHT(f"Loading dataset from local cache: {cache_path}")
                 self.ds = load_from_disk(cache_path)
                 if split == "train" and "train" in self.ds:
                     self.ds = self.ds["train"]
                 elif split == "test" and "test" in self.ds:
                     self.ds = self.ds["test"]
                 
-                # Filter out empty/invalid samples with improved cleaning
+                # Filter out empty or invalid samples with improved cleaning
                 original_size = len(self.ds)
-                print(f"✅\tLocal dataset loaded successfully: {original_size} samples")
+                RIGHT(f"Local dataset loaded successfully: {original_size} samples")
                 if original_size > 0:
                     RIGHT("Filtering dataset to remove samples with no valid content...")
                     
@@ -71,7 +86,16 @@ class PiscesDataset(Dataset):
                     from .clean import StreamCleaner
                     cleaner = StreamCleaner(min_len=1, max_len=2048)  # Very permissive
                     
-                    def has_valid_content(example):
+                    def has_valid_content(example: dict) -> bool:
+                        """
+                        Check if an example has valid content after cleaning.
+
+                        Args:
+                            example (dict): A single example from the dataset.
+
+                        Returns:
+                            bool: True if the example has valid content, False otherwise.
+                        """
                         text = self._get_text(example)
                         if text is None:
                             return False
@@ -85,21 +109,30 @@ class PiscesDataset(Dataset):
                     self.ds = self.ds.filter(has_valid_content)
                     filtered_size = len(self.ds)
                     if filtered_size == 0:
-                        DEBUG("Warning: All {original_size} samples were filtered out. Applying emergency cleaning...")
+                        DEBUG(f"Warning: All {original_size} samples were filtered out. Applying emergency cleaning...")
                         # Emergency mode: use original dataset with basic validation
-                        def emergency_filter(example):
+                        def emergency_filter(example: dict) -> bool:
+                            """
+                            Perform basic validation on an example.
+
+                            Args:
+                                example (dict): A single example from the dataset.
+
+                            Returns:
+                                bool: True if the example has non-empty text, False otherwise.
+                            """
                             text = self._get_text(example)
                             return text is not None and len(str(text).strip()) > 0
                         
                         self.ds = self.ds.filter(emergency_filter)
                         filtered_size = len(self.ds)
-                        print(f"✅\tEmergency filter: {filtered_size}/{original_size} samples remain")
+                        RIGHT(f"Emergency filter: {filtered_size}/{original_size} samples remain")
                     else:
-                        print(f"✅\tFiltered out {original_size - filtered_size} samples. {filtered_size}/{original_size} samples remain ({(filtered_size/original_size)*100:.2f}%).")
+                        RIGHT(f"Filtered out {original_size - filtered_size} samples. {filtered_size}/{original_size} samples remain ({(filtered_size/original_size)*100:.2f}%).")
             else:
-                ERROR("Local cache not found, trying online download: {subset}")
-                if "MsDataset" not in globals() or MsDataset is None:
-                    print("❌\tMsDataset unavailable. Cannot load ModelScope dataset online. Please upgrade modelscope>=1.28.0 and datasets>=2.14.7, or use only local datasets.")
+                ERROR(f"Local cache not found, trying online download: {subset}")
+                if "MsDataset" not in globals() or "MsDataset" not in locals():
+                    ERROR("MsDataset unavailable. Cannot load ModelScope dataset online. Please upgrade modelscope>=1.28.0 and datasets>=2.14.7, or use only local datasets.")
                     self.ds = [{"text": f"Hello world {i}", "id": i} for i in range(100)]
                 else:
                     try:
@@ -108,14 +141,14 @@ class PiscesDataset(Dataset):
                             self.ds = msds.to_hf_dataset()
                         else:
                             self.ds = msds
-                        print(f"✅\tOnline dataset loaded successfully: {len(self.ds)} samples")
+                        RIGHT(f"Online dataset loaded successfully: {len(self.ds)} samples")
                     except Exception as e:
-                        ERROR("MsDataset.load failed: {e}")
-                        print("❌\tCould not load ModelScope dataset online. Falling back to local test data.")
+                        ERROR(f"MsDataset.load failed: {str(e)}")
+                        ERROR("Could not load ModelScope dataset online. Falling back to local test data.")
                         self.ds = [{"text": f"Hello world {i}", "id": i} for i in range(100)]
         except Exception as e:
-            ERROR("Dataset loading failed: {e}")
-            print("❌\tCreating test dataset...")
+            ERROR(f"Dataset loading failed: {str(e)}")
+            ERROR("Creating test dataset...")
             # Create simple test dataset
             self.ds = [{"text": f"Hello world {i}", "id": i} for i in range(100)]
         
@@ -127,18 +160,20 @@ class PiscesDataset(Dataset):
         self.doc_encoder = DocEncoder(config) if config else None
         self.video_encoder = VideoEncoder(config) if config else None
         
-        # Validate token IDs across entire dataset
+        # Validate token IDs across the entire dataset
         self._validate_token_ids()
     
     def _validate_token_ids(self):
-        """Validate if the token IDs across the dataset are within the valid range"""
+        """
+        Validate whether the token IDs in the dataset are within the valid range.
+        """
         vocab_size = len(self.tokenizer)
         invalid_samples = []
         
-        # Limit validation to first 1000 samples for performance
+        # Limit validation to the first 1000 samples for performance reasons
         max_samples = min(1000, len(self.ds))
         
-        # Use unified progress bar
+        # Use a unified progress bar
         for i in progress_bar(range(max_samples), desc="🟧\tValidating token IDs"):
             item = self.ds[i]
             text = self._get_text(item)
@@ -156,43 +191,47 @@ class PiscesDataset(Dataset):
             
         RIGHT("Token validation complete!")
         
-        # Print token ID range and vocab size for debugging
-        DEBUG("Vocab size: {vocab_size}")
+        # Print token ID range and vocabulary size for debugging
+        DEBUG(f"Vocab size: {vocab_size}")
         if len(self.ds) > 0:
             sample_text = self._get_text(self.ds[0])
             if sample_text:
                 sample_ids = self.tokenizer.encode(sample_text, return_tensors="pt")[0]
-                DEBUG("Token ID range: {sample_ids.min().item()} - {sample_ids.max().item()}")
+                DEBUG(f"Token ID range: {sample_ids.min().item()} - {sample_ids.max().item()}")
         
         if invalid_samples:
-            DEBUG("Found {len(invalid_samples)} invalid samples in validation set")
+            DEBUG(f"Found {len(invalid_samples)} invalid samples in validation set")
         else:
             RIGHT("All token IDs validated successfully")
             
         if len(self.ds) > max_samples:
-            DEBUG("Validated {max_samples}/{len(self.ds)} samples (performance optimization)")
+            DEBUG(f"Validated {max_samples}/{len(self.ds)} samples (performance optimization)")
 
-    # Extract text content from a dataset item
-    # Args:
-    #     item (dict): A single item from the dataset
-    # Returns:
-    #     str: The extracted text content, or an empty string if no text is found
-    def _get_text(self, item):
-        # Import text field keys from data module
+    def _get_text(self, item: dict) -> str:
+        """
+        Extract text content from a dataset item.
+
+        Args:
+            item (dict): A single item from the dataset.
+
+        Returns:
+            str: The extracted text content, or an empty string if no text is found.
+        """
+        # Import text field keys from the data module
         from .__init__ import TEXT_FIELD_KEYS
         
-        # Debug: print item structure for first few samples
+        # Debug: Print the structure of the first few samples
         if hasattr(self, '_debug_count'):
             self._debug_count = getattr(self, '_debug_count', 0) + 1
             if self._debug_count <= 3:
-                DEBUG("Debug item structure: {type(item)}, keys: {list(item.keys()) if isinstance(item, dict) else 'N/A'}")
+                DEBUG(f"Debug item structure: {type(item)}, keys: {list(item.keys()) if isinstance(item, dict) else 'N/A'}")
         
         # Look for a direct key match
         for key in TEXT_FIELD_KEYS:
             if isinstance(item.get(key), str) and item[key].strip():
                 return item[key]
 
-        # Handle Chinese1 dataset specific formats
+        # Handle formats specific to the Chinese1 dataset
         if isinstance(item, dict):
             # Handle Chinese dataset formats
             for chinese_key in ['chinese', 'content', 'text_cn', 'cn_text', '中文']:
@@ -234,7 +273,7 @@ class PiscesDataset(Dataset):
             elif input_text:
                 return input_text
 
-        # Handle Chinese dataset specific formats
+        # Handle formats specific to Chinese datasets
         if 'prompt' in item and 'response' in item:
             prompt = str(item['prompt']).strip() if item['prompt'] else ""
             response = str(item['response']).strip() if item['response'] else ""
@@ -248,17 +287,17 @@ class PiscesDataset(Dataset):
         # Handle nested dictionary formats
         for key, value in item.items():
             if isinstance(value, dict):
-                # Recursively extract text from nested dict
+                # Recursively extract text from nested dictionaries
                 nested_text = self._get_text(value)
                 if nested_text.strip():
                     return nested_text
             elif isinstance(value, str) and value.strip():
-                # Use any non-empty string field as fallback
+                # Use any non-empty string field as a fallback
                 return value.strip()
 
-        # Handle list formats (like Chinese1 dataset)
+        # Handle list formats (like the Chinese1 dataset)
         if isinstance(item, list) and item:
-            # If item is a list, try to extract text from first element
+            # If the item is a list, try to extract text from the first element
             for sub_item in item:
                 if isinstance(sub_item, dict):
                     text = self._get_text(sub_item)
@@ -267,8 +306,17 @@ class PiscesDataset(Dataset):
                 elif isinstance(sub_item, str) and sub_item.strip():
                     return sub_item.strip()
 
-        # Final fallback: concatenate all string values recursively
-        def extract_all_strings(obj):
+        # Final fallback: Concatenate all non-empty string values recursively
+        def extract_all_strings(obj) -> list:
+            """
+            Recursively extract all non-empty string values from an object.
+
+            Args:
+                obj: The object to extract strings from.
+
+            Returns:
+                list: A list of non-empty string values.
+            """
             strings = []
             if isinstance(obj, dict):
                 for v in obj.values():
@@ -286,57 +334,72 @@ class PiscesDataset(Dataset):
             
         return ""
 
-    def __len__(self):
+    def __len__(self) -> int:
+        """
+        Get the number of samples in the dataset.
+
+        Returns:
+            int: The number of samples in the dataset.
+        """
         return len(self.ds)
 
-    def __getitem__(self, idx):
+    def __getitem__(self, idx: int) -> dict:
+        """
+        Get a sample from the dataset at the specified index.
+
+        Args:
+            idx (int): Index of the sample to retrieve.
+
+        Returns:
+            dict: A dictionary containing the processed sample data.
+        """
         item = self.ds[idx]
 
-        # Text
+        # Text processing
         text = self._get_text(item)
         input_ids = self.tokenizer.encode(text, return_tensors="pt")[0]
         
-        # Ensure token IDs are within vocabulary bounds
+        # Ensure token IDs are within the vocabulary bounds
         vocab_size = len(self.tokenizer)
         max_token_id = input_ids.max().item() if len(input_ids) > 0 else 0
         if max_token_id >= vocab_size:
-            DEBUG("Token ID {max_token_id} exceeds vocab size {vocab_size}, clamping...")
+            DEBUG(f"Token ID {max_token_id} exceeds vocab size {vocab_size}, clamping...")
             input_ids = torch.clamp(input_ids, max=vocab_size - 1)
         
         # Ensure no negative indices
         input_ids = torch.clamp(input_ids, min=0)
 
-        # Image
+        # Image processing
         pixel_values = None
         image_path = _get_first_valid(item, IMAGE_KEYS)
         if image_path and self.vision_encoder and self.vision_encoder.enabled:
             try:
                 pixel_values = self.vision_encoder.process_image(image_path)
-                DEBUG("Image processed successfully: {image_path}")
+                DEBUG(f"Image processed successfully: {image_path}")
             except Exception as e:
-                ERROR("Image processing error: {e}")
+                ERROR(f"Image processing error: {str(e)}")
 
-        # Audio
+        # Audio processing
         audio_input = None
         audio_path = _get_first_valid(item, AUDIO_KEYS)
         if audio_path and self.audio_encoder and self.audio_encoder.enabled:
             try:
                 audio_input = self.audio_encoder.process_audio(audio_path)
-                DEBUG("Audio processed successfully: {audio_path}")
+                DEBUG(f"Audio processed successfully: {audio_path}")
             except Exception as e:
-                ERROR("Audio processing error: {e}")
+                ERROR(f"Audio processing error: {str(e)}")
 
-        # Document
+        # Document processing
         doc_input = None
         doc_path = _get_first_valid(item, DOC_KEYS)
         if doc_path and self.doc_encoder and self.doc_encoder.enabled:
             try:
                 doc_input = self.doc_encoder.process_doc(doc_path)
-                DEBUG("Doc processed successfully: {doc_path}")
+                DEBUG(f"Doc processed successfully: {doc_path}")
             except Exception as e:
-                ERROR("Doc processing error: {e}")
+                ERROR(f"Doc processing error: {str(e)}")
 
-        # Video - with memory optimization warnings
+        # Video processing with memory optimization warnings
         video_frames = None
         video_path = _get_first_valid(item, VIDEO_KEYS)
         if video_path and self.video_encoder and self.video_encoder.enabled:
@@ -349,21 +412,21 @@ class PiscesDataset(Dataset):
                     free = total - reserved
                     
                     if free < 2.0:  # Less than 2GB free
-                        DEBUG("Low GPU memory detected ({free:.1f}GB free). Video processing may fail.")
+                        DEBUG(f"Low GPU memory detected ({free:.1f}GB free). Video processing may fail.")
                         DEBUG("Consider using --memory_efficient flag for training.")
                 
                 video_frames = self.video_encoder.process_video(video_path)
-                print(f"✅\tVideo processed successfully: {video_path}")
+                RIGHT(f"Video processed successfully: {video_path}")
                 
                 # Memory cleanup after video processing
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
                     
             except Exception as e:
-                ERROR("Video processing error: {e}")
+                ERROR(f"Video processing error: {str(e)}")
                 video_frames = None
 
-        # Reasoning correctness label (for training reflection head)
+        # Reasoning correctness label (for training the reflection head)
         correct_label = item.get("correct", 1)  # Default to 1 (correct) if not specified
         correct = torch.tensor(correct_label, dtype=torch.long)
 

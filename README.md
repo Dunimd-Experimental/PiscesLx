@@ -50,7 +50,9 @@ python manage.py help
 | Command    | Description                                                          |
 |------------|----------------------------------------------------------------------|
 | setup      | Environment setup and dependency install                             |
-| train      | Train the model (supports distributed training with `--distributed`) |
+| source     | Activate virtual environment                                         |
+| pull       | Pull latest code from remote repository                              |
+| train      | Train the model                                                      |
 | infer      | Run inference with a trained model                                   |
 | check      | Check GPU and dependencies                                           |
 | monitor    | System monitor (GPU/CPU/memory)                                      |
@@ -87,35 +89,56 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "Hello, Pisces!"
 ## 📦 Datasets[Default ModelScope(https://www.modelscope.cn/)]
 Datasets are automatically downloaded and cached. The following datasets are supported:
 
-### Math & Reasoning
-- **NuminaMath-CoT** (AI-ModelScope/NuminaMath-CoT): Mathematical reasoning with chain-of-thought
-
 ### Chinese Language
-- **Llama3-Chinese-Dataset** (zhuangxialie/Llama3-Chinese-Dataset): Chinese language corpus
-- **Chinese-DeepSeek-R1** (liucong/Chinese-DeepSeek-R1-Distill-data-110k-SFT): Chinese instruction tuning
+- **Chinese1** (baicai003/Llama3-Chinese-dataset): Chinese language corpus
+- **Chinese2** (liucong/Chinese-DeepSeek-R1-Distill-data-110k-SFT): Chinese instruction tuning
+- **Chinese3** (AI-ModelScope/OpenOrca-Chinese): Chinese instruction data
+- **Chinese4** (AI-ModelScope/ultrachat_200k): Chinese dialogue data
+- **Chinese5** (gxlzgdmds/baidu_baike): Baidu encyclopedia corpus
 
-### Web & General Knowledge
-- **OpenWeb888K** (prithivMLmods/OpenWeb888K): Web crawl data
+### English Language
+- **English1** (YorickHe/CoT): Chain-of-thought reasoning data
+- **English2** (Data-Juicer/redpajama-cc-2022-05-refined): Web crawl data
+- **English3** (DAMO_ConvAI/EnDoc2BotDialogue): English dialogue dataset
+- **English4** (Intelligent-Internet/wikipedia_en): Wikipedia English corpus
 
-### Image Understanding
-- **ShareGPT-4o-Image** (FreedomIntelligence/ShareGPT-4o-Image): Image-dialogue pairs
-- **coco_captions_small_slice** (modelscope/coco_captions_small_slice): COCO image captions
-- **LAION-SG** (AI-ModelScope/LAION-SG): Semantic graph dataset
-
-### Audio Processing
-- **AudioSetCaps_350k** (lmms-lab/AudioSetCaps_350k_converted): Audio captioning
-- **Libri2Mix_8k** (modelscope/Libri2Mix_8k): Audio mixing dataset
-- **Clotho** (OmniData/Clotho): Audio captioning
+### Math & Reasoning
+- **Math1** (swift/MetaMathQA): Mathematical reasoning dataset
+- **Math2** (AI-MO/NuminaMath-CoT): Mathematical reasoning with chain-of-thought
+- **Math3** (AI-ModelScope/NuminaMath-CoT): Mathematical problem solving
+- **Math4** (xpengx/EleutherAI-proof-pile-2): Mathematical proof data
+- **Math5** (tastelikefeet/competition_math): Competition mathematics
 
 ### Code & Programming
-- **ultrachat_200k** (HuggingFaceH4/ultrachat_200k): Chat-based instruction tuning
-- **CodeAlpaca_20K** (HuggingFaceH4/CodeAlpaca_20K): Code instruction tuning
-- **codeparrot_github-code** (jablonkagroup/codeparrot_github-code-chemistry-python): Python code corpus
+- **Code1** (HuggingFaceH4/CodeAlpaca_20K): Code instruction tuning
+- **Code2** (jablonkagroup/codeparrot_github-code-chemistry-python): Python code corpus
+- **Code3** (jablonkagroup/codeparrot_github-code-chemistry-python): Additional Python code
+- **Code4** (codefuse-ai/CodeExercise-Python-27k): Python exercise dataset
 
-### Document Understanding
-- **DocVQA** (swift/DocVQA): Document visual question answering
-- **PubLayNet** (OpenDataLab/PubLayNet): Document layout analysis
+### Web & General Knowledge
+- **Web1** (AI-ModelScope/webvid-10M): Web video data
+- **Web2** (prithivMLmods/OpenWeb888K): Web crawl data
+- **Web3** (OmniData/Pile-OpenWebText2): Web text corpus
+
+### Audio Processing
+- **Audio1** (OmniData/Clotho): Audio captioning dataset
+- **Audio2** (modelscope/Libri2Mix_8k): Audio mixing dataset
+- **Audio3** (lmms-lab/AudioSetCaps_350k_converted): Audio captioning
+
+### Image Understanding
+- **Image1** (modelscope/coco_captions_small_slice): COCO image captions
+- **Image2** (FreedomIntelligence/ShareGPT-4o-Image): Image-dialogue pairs
+
+### Document & Visual Understanding
 - **VQAv2** (swift/VQAv2): Visual question answering
+- **FinQA** (OmniData/FinQA): Financial question answering
+- **DocVQA** (swift/DocVQA): Document visual question answering
+- **Exam** (modelscope/ceval-exam): Chinese exam questions
+- **SG1** (AI-ModelScope/LAION-SG): Semantic graph dataset
+- **Chat1** (HuggingFaceH4/ultrachat_200k): Chat-based instruction tuning
+- **PubLayNet1** (OpenDataLab/PubLayNet): Document layout analysis
+- **Medical1** (krisfu/delicate_medical_r1_data): Medical instruction data
+- **Financial1** (BJQW14B/bs_challenge_financial_14b_dataset): Financial dataset
 
 Datasets are auto-downloaded and cached via:
 ```bash
@@ -131,34 +154,10 @@ Pisces L1 supports **training/fine-tuning 70B models on a single 24GB GPU** usin
 
 ##### Single GPU
 ```bash
-python manage.py train \ 
-  --model_size 70B \ 
-  --force_quant \ 
-  --force_lora \ 
-  --batch_size 1 \ 
-  --accum 32 \ 
-  --seq_len 512
+python manage.py train --model_size 70B --resume_ckpt latest.pt
 ```
 
-##### Multi-GPU Distributed Training
-```bash
-python -m torch.distributed.launch --nproc_per_node=4 tools/train.py \ 
-  --model_size 70B \ 
-  --distributed \ 
-  --force_quant \ 
-  --force_lora \ 
-  --batch_size 1 \ 
-  --accum 8
-```
-```bash
-python manage.py train \
-  --model_size 70B \
-  --force_quant \
-  --force_lora \
-  --batch_size 1 \
-  --accum 32 \
-  --seq_len 512
-```
+##### Resume Training
 - 4-bit quantization: Dramatically reduces memory ([QLoRA paper](https://arxiv.org/abs/2305.14314))
 - LoRA adapters: Efficient parameter fine-tuning
 - Gradient accumulation: Simulates large batch size
@@ -168,16 +167,98 @@ python manage.py train \
 ---
 
 ## ⚡ Quick Start
-After installation, try this 3-step workflow:
+After installation, try this 6-step workflow:
 ```bash
-# 1. Download default datasets
+# 1. Environment setup
+python manage.py setup
+
+# 2. Activate environment
+python manage.py source
+
+# 3. Pull latest code (optional)
+python manage.py pull
+
+# 4. Download default datasets
 python manage.py download
 
-# 2. Train a small model (0.5B)
+# 5. Train a small model (0.5B)
 python manage.py train --model_size 0.5B
 
-# 3. Run inference
+# 6. Run inference
 python manage.py infer --prompt "Explain quantum computing in simple terms" --ckpt ckpt/latest.pt
+```
+
+## 🎯 Model Evaluation & Benchmarking
+Pisces L1 includes comprehensive benchmarking support for 26 standardized evaluation benchmarks covering Chinese, English, mathematics, coding, and reasoning tasks.
+
+### Available Benchmarks
+
+#### Core Benchmarks
+| Benchmark | Language | Focus Areas | Questions |
+|-----------|----------|-------------|-----------|
+| **MMLU** | English | 57 disciplines (STEM/Humanities/Social Sciences) | Multi-choice |
+| **C-Eval** | Chinese | 52 Chinese disciplines | Multi-choice |
+| **C-Eval Hard** | Chinese | College/postgraduate entrance exams | Hard |
+| **SuperCLUE** | Chinese | General, reasoning, agent, hard tasks | Mixed |
+| **SuperBench** | Chinese/English | Semantics, alignment, code, agent, safety | 32 tasks |
+| **OpenCompass 2.0** | Chinese/English | Language, knowledge, reasoning, math, code, agent | 15k questions |
+
+#### Code & Programming
+| Benchmark | Language | Focus | Problems |
+|-----------|----------|--------|----------|
+| **HumanEval** | English | Python function completion | 164 |
+| **MBPP** | English | Basic Python programming | 974 |
+| **LiveCodeBench v5** | English | Real-time programming contests | Continuous |
+| **MBPP-Plus** | English | Advanced programming | 974 |
+| **DS-1000** | English | Data science code | 1000 |
+| **CRUXEval** | English | Code execution & reasoning | 800 |
+
+#### Mathematics & Reasoning
+| Benchmark | Language | Focus | Problems |
+|-----------|----------|--------|----------|
+| **GSM8K** | English | Elementary math word problems | 8500 |
+| **AIME 2024-2025** | English | High school math competition | 15 |
+| **CMATH** | Chinese | Chinese math (elementary to high school) | 5800 |
+| **BBH** | English | 23 advanced reasoning tasks | 6500 |
+| **DROP** | English | Reading comprehension + numerical reasoning | 96k |
+
+#### Chinese Language
+| Benchmark | Language | Focus | Problems |
+|-----------|----------|--------|----------|
+| **CMMLU** | Chinese | 67 Chinese disciplines | 11.7k |
+| **AGI-Eval** | Chinese/English | College entrance, postgraduate, law, CPA | 8.1k |
+
+#### Evaluation & Safety
+| Benchmark | Language | Focus | Problems |
+|-----------|----------|--------|----------|
+| **HellaSwag** | English | Commonsense reasoning | Sentence completion |
+| **ARC-Challenge** | English | Scientific reasoning | Multi-choice |
+| **MT-Bench** | Multi-turn | 8-turn conversation evaluation | 80 |
+| **IFEval** | English | Instruction following | 541 |
+| **TruthfulQA** | English | Factuality & hallucination | 817 |
+| **SafetyBench** | Chinese/English | Safety alignment | 11k |
+| **Chatbot Arena** | Multi-turn | Human blind testing (Elo) | Real-time |
+
+### Usage Examples
+
+#### List all benchmarks
+```bash
+python manage.py benchmark --list
+```
+
+#### Get benchmark details
+```bash
+python manage.py benchmark --info mmlu
+```
+
+#### Run performance benchmark
+```bash
+python manage.py benchmark --perf --config configs/7B.json --seq_len 4096
+```
+
+#### Run specific benchmark
+```bash
+python manage.py benchmark --benchmark mmlu --config configs/7B.json
 ```
 
 ## ❓ FAQ
@@ -186,13 +267,15 @@ python manage.py infer --prompt "Explain quantum computing in simple terms" --ck
 - **Q: How do I add a new dataset?**  
   A: Add the dataset name to the `DATASETS` list in `data/download.py` and rerun `python manage.py download`. For custom datasets, the format should be JSONL with a `text` field or Parquet with `input_ids` and `labels` columns.
 - **Q: Getting out-of-memory errors?**  
-  A: Reduce batch size with `--batch_size`, enable quantization with `--force_quant`, or use a smaller model size.
+  A: Use a smaller model size, reduce sequence length, or enable 4-bit quantization via `python manage.py quantize` before training.
 - **Q: How to resume training?**  
   A: Use `--resume_ckpt path/to/checkpoint.pt` to continue from a saved checkpoint.
 - **Q: Where are model configs?**  
   A: See `configs/` directory for all model sizes.
 - **Q: How to run on CPU only?**  
   A: Most features require GPU, but you can try with `--device cpu` (performance will be slow).
+- **Q: How to run model evaluation?**  
+  A: Use `python tools/benchmark.py` with available benchmarks. See the Model Evaluation section above.
 
 ---
 

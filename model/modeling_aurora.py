@@ -2,20 +2,20 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import math
 import torch
@@ -31,6 +31,12 @@ from model.vision_native import NativeSiglipVisionEncoder
 from .multimodal import VisionEncoder, AudioEncoder, DocEncoder
 
 def pisces_init_weights(m):
+    """
+    Initialize weights for PyTorch modules.
+
+    Args:
+        m (torch.nn.Module): PyTorch module to initialize weights for.
+    """
     if isinstance(m, nn.Linear):
         nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
         if m.bias is not None:
@@ -39,31 +45,83 @@ def pisces_init_weights(m):
         nn.init.normal_(m.weight, mean=0, std=0.02)
 
 class RMSNorm(nn.Module):
-    """RMS normalization layer"""
+    """
+    RMS normalization layer. Normalizes the input using Root Mean Square normalization.
+    """
     def __init__(self, dim, eps=1e-6):
+        """
+        Initialize the RMSNorm layer.
+
+        Args:
+            dim (int): Dimension of the input tensor.
+            eps (float, optional): Small value to avoid division by zero. Defaults to 1e-6.
+        """
         super().__init__()
         self.weight = nn.Parameter(torch.ones(dim))
         self.eps = eps
+
     def forward(self, x):
+        """
+        Forward pass of the RMSNorm layer.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Normalized tensor.
+        """
         return self.weight * x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
 
 class RotaryEmbedding(nn.Module):
-    """Rotary positional embedding"""
+    """
+    Rotary positional embedding module. Adds rotary positional embeddings to the input.
+    """
     def __init__(self, dim, max_seq_len=8192, base=1e6, device=None, dtype=None):
+        """
+        Initialize the RotaryEmbedding layer.
+
+        Args:
+            dim (int): Dimension of the input tensor.
+            max_seq_len (int, optional): Maximum sequence length. Defaults to 8192.
+            base (float, optional): Base value for frequency calculation. Defaults to 1e6.
+            device (torch.device, optional): Device to place the tensors on. Defaults to None.
+            dtype (torch.dtype, optional): Data type of the tensors. Defaults to None.
+        """
         super().__init__()
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, device=device, dtype=torch.float32) / dim))
         t = torch.arange(max_seq_len, dtype=torch.float32, device=device)
         freqs = torch.einsum("i,j->ij", t, inv_freq)
         self.register_buffer("cos", freqs.cos())
         self.register_buffer("sin", freqs.sin())
+
     def forward(self, x, seq_len):
+        """
+        Forward pass of the RotaryEmbedding layer.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            seq_len (int): Current sequence length.
+
+        Returns:
+            torch.Tensor: Tensor with rotary positional embeddings applied.
+        """
         cos, sin = self.cos[:seq_len], self.sin[:seq_len]
         x1, x2 = x[..., ::2], x[..., 1::2]
         return torch.stack([x1 * cos - x2 * sin, x1 * sin + x2 * cos], dim=-1).flatten(-2)
 
 class Attention(nn.Module):
-    """Multi-head attention with grouped-query attention"""
+    """
+    Multi-head attention module with grouped-query attention.
+    """
     def __init__(self, cfg, device=None, dtype=None):
+        """
+        Initialize the Attention layer.
+
+        Args:
+            cfg (PiscesConfig): Configuration object.
+            device (torch.device, optional): Device to place the tensors on. Defaults to None.
+            dtype (torch.dtype, optional): Data type of the tensors. Defaults to None.
+        """
         super().__init__()
         self.cfg = cfg
         self.n_head = cfg.n_head
@@ -76,7 +134,18 @@ class Attention(nn.Module):
         self.o_proj = nn.Linear(cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype)
         self.rope = YaRNRotaryEmbedding(self.head_dim, cfg.max_position_embeddings, cfg.rope_theta, scale=32, device=device)
         self.apply(pisces_init_weights)
+
     def forward(self, x, mask):
+        """
+        Forward pass of the Attention layer.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            mask (torch.Tensor): Attention mask.
+
+        Returns:
+            torch.Tensor: Output tensor after attention operation.
+        """
         b, t, _ = x.shape
         q = self.q_proj(x).view(b, t, self.n_head, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
@@ -90,22 +159,55 @@ class Attention(nn.Module):
         return self.o_proj(out)
 
 class TransformerBlock(nn.Module):
-    """Transformer block with attention and MoE MLP"""
+    """
+    Transformer block with attention and MoE MLP.
+    """
     def __init__(self, cfg, device=None, dtype=None):
+        """
+        Initialize the TransformerBlock.
+
+        Args:
+            cfg (PiscesConfig): Configuration object.
+            device (torch.device, optional): Device to place the tensors on. Defaults to None.
+            dtype (torch.dtype, optional): Data type of the tensors. Defaults to None.
+        """
         super().__init__()
         self.attn = Attention(cfg, device=device, dtype=dtype)
         self.mlp = DynamicMoELayer(cfg, device=device, dtype=dtype)
         self.norm1 = RMSNorm(cfg.hidden_size)
         self.norm2 = RMSNorm(cfg.hidden_size)
+
     def forward(self, x, mask):
+        """
+        Forward pass of the TransformerBlock.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            mask (torch.Tensor): Attention mask.
+
+        Returns:
+            tuple: Output tensor and auxiliary loss.
+        """
         x = x + self.attn(self.norm1(x), mask)
         mlp_out, aux_loss = self.mlp(self.norm2(x))
         x = x + mlp_out
         return x, aux_loss
 
 class PiscesModel(nn.Module):
-    """Pisces L1 multimodal MoE model (oneflow style)"""
+    """
+    Pisces L1 multimodal MoE model (oneflow style).
+    """
     def __init__(self, cfg, device=None, dtype=None, quantization_config=None, lora_config=None):
+        """
+        Initialize the PiscesModel.
+
+        Args:
+            cfg (PiscesConfig): Configuration object.
+            device (torch.device, optional): Device to place the tensors on. Defaults to None.
+            dtype (torch.dtype, optional): Data type of the tensors. Defaults to None.
+            quantization_config (object, optional): Configuration for quantization. Defaults to None.
+            lora_config (object, optional): Configuration for LoRA. Defaults to None.
+        """
         super().__init__()
         DEBUG("PiscesModel: __init__ start")
         self.cfg = cfg
@@ -116,6 +218,12 @@ class PiscesModel(nn.Module):
             try:
                 import bitsandbytes as bnb
                 def convert_linear_to_4bit(module):
+                    """
+                    Convert all Linear layers in a module to 4-bit Linear layers.
+
+                    Args:
+                        module (torch.nn.Module): Module to convert.
+                    """
                     for name, child in module.named_children():
                         if isinstance(child, nn.Linear):
                             new_mod = bnb.nn.Linear4bit(
@@ -130,14 +238,14 @@ class PiscesModel(nn.Module):
                 convert_linear_to_4bit(self)
                 DEBUG("PiscesModel: All Linear layers converted to 4bit (bitsandbytes)")
             except Exception as e:
-                ERROR("4bit quantization failed: {e}")
+                ERROR(f"4bit quantization failed: {e}")
         DEBUG("PiscesModel: initializing embedding...")
         self.embed = nn.Embedding(cfg.vocab_size, cfg.hidden_size, device=device, dtype=dtype)
-        DEBUG("PiscesModel: initializing {cfg.n_layer} transformer layers...")
+        DEBUG(f"PiscesModel: initializing {cfg.n_layer} transformer layers...")
         self.layers = nn.ModuleList([])
         for i in range(cfg.n_layer):
             if (i % 4 == 0) or (i == cfg.n_layer-1):
-                DEBUG("PiscesModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
+                DEBUG(f"PiscesModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
             self.layers.append(TransformerBlock(cfg, device=device, dtype=dtype))
         DEBUG("PiscesModel: initializing norm...")
         self.norm = RMSNorm(cfg.hidden_size)
@@ -161,14 +269,17 @@ class PiscesModel(nn.Module):
                 self = get_peft_model(self, lora_config)
                 DEBUG("PiscesModel: LoRA adapters injected (peft)")
             except Exception as e:
-                ERROR("LoRA injection failed: {e}")
+                ERROR(f"LoRA injection failed: {e}")
         total_params = sum(p.numel() for p in self.parameters())
-        DEBUG("PiscesModel: total parameters = {total_params/1e6:.2f}M")
+        DEBUG(f"PiscesModel: total parameters = {total_params/1e6:.2f}M")
         DEBUG("PiscesModel: __init__ end")
 
     def resize_token_embeddings(self, new_num_tokens):
         """
         Resizes token embeddings and associated heads to accommodate a new vocabulary size.
+
+        Args:
+            new_num_tokens (int): New vocabulary size.
         """
         # 1. Resize main token embedding
         old_embed = self.embed
@@ -190,10 +301,26 @@ class PiscesModel(nn.Module):
         
         # 4. Update config
         self.cfg.vocab_size = new_num_tokens
-        print(f"✅\tResized token embeddings to {new_num_tokens}. Remember to update special token IDs in the reasoner.")
+        # Note: The 'RIGHT' function is not defined, assuming it's a logging function
+        try:
+            from utils.log import RIGHT
+            RIGHT(f"Resized token embeddings to {new_num_tokens}. Remember to update special token IDs in the reasoner.")
+        except ImportError:
+            pass
 
     def prepare_inputs_for_generation(self, input_ids, attention_mask=None, position_ids=None, **kwargs):
-        """Compatible with PEF/Transformers generation interface, can be extended as needed in practice"""
+        """
+        Prepare inputs for text generation, compatible with PEF/Transformers generation interface.
+
+        Args:
+            input_ids (torch.Tensor): Input token IDs.
+            attention_mask (torch.Tensor, optional): Attention mask. Defaults to None.
+            position_ids (torch.Tensor, optional): Position IDs. Defaults to None.
+            **kwargs: Additional keyword arguments.
+
+        Returns:
+            dict: Dictionary containing model inputs for generation.
+        """
         model_inputs = {"input_ids": input_ids}
         
         # Add attention_mask if not provided
@@ -212,6 +339,19 @@ class PiscesModel(nn.Module):
         return model_inputs
 
     def forward(self, input_ids, images=None, audio=None, docs=None, labels=None):
+        """
+        Forward pass of the PiscesModel.
+
+        Args:
+            input_ids (torch.Tensor): Input token IDs.
+            images (torch.Tensor, optional): Input images. Defaults to None.
+            audio (torch.Tensor, optional): Input audio. Defaults to None.
+            docs (torch.Tensor, optional): Input documents. Defaults to None.
+            labels (torch.Tensor, optional): Ground truth labels. Defaults to None.
+
+        Returns:
+            dict: Dictionary containing model outputs.
+        """
         import torch.utils.checkpoint as cp
         import torch
         b, t = input_ids.shape
@@ -245,6 +385,16 @@ class PiscesModel(nn.Module):
                 x_chunk = x[:, i:i+chunk_size, ...]
                 mask_chunk = mask[i:i+chunk_size, i:i+chunk_size]
                 def block_fn(xc, msk):
+                    """
+                    Helper function for checkpointing, applies all transformer layers.
+
+                    Args:
+                        xc (torch.Tensor): Input tensor chunk.
+                        msk (torch.Tensor): Attention mask chunk.
+
+                    Returns:
+                        tuple: Output tensor and accumulated auxiliary loss.
+                    """
                     h = xc
                     aux = 0.0
                     for layer in self.layers:

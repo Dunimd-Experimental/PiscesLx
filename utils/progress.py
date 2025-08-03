@@ -2,31 +2,45 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import sys
 import time
 from typing import Optional
 
 class ProgressBar:
-    """统一进度条工具类，基于monitor.py的实现"""
+    """
+    A unified progress bar utility class based on the implementation in monitor.py.
+    """
     
     def __init__(self, total: int, desc: str = "", length: int = 30, 
                  fill_char: str = '█', empty_char: str = '-',
                  show_eta: bool = True, file=None):
+        """
+        Initialize the progress bar.
+
+        Args:
+            total (int): The total number of items to process.
+            desc (str, optional): The description of the progress bar. Defaults to "".
+            length (int, optional): The length of the progress bar. Defaults to 30.
+            fill_char (str, optional): The character used to represent completed progress. Defaults to '█'.
+            empty_char (str, optional): The character used to represent incomplete progress. Defaults to '-'.
+            show_eta (bool, optional): Whether to show the estimated time of arrival (ETA). Defaults to True.
+            file: The file object to write the progress bar to. Defaults to sys.stdout.
+        """
         self.total = total
         self.desc = desc
         self.length = length
@@ -39,7 +53,15 @@ class ProgressBar:
         self.last_print_time = 0
         
     def _format_time(self, seconds: float) -> str:
-        """格式化时间显示"""
+        """
+        Format the time in seconds into a human-readable string.
+
+        Args:
+            seconds (float): The time in seconds.
+
+        Returns:
+            str: The formatted time string.
+        """
         if seconds < 60:
             return f"{seconds:.1f}s"
         elif seconds < 3600:
@@ -48,22 +70,44 @@ class ProgressBar:
             return f"{seconds/3600:.1f}h"
     
     def _get_bar(self, percent: float) -> str:
-        """获取进度条字符串"""
+        """
+        Generate the progress bar string.
+
+        Args:
+            percent (float): The progress percentage.
+
+        Returns:
+            str: The progress bar string.
+        """
         filled_length = int(self.length * percent / 100)
         bar = self.fill_char * filled_length + self.empty_char * (self.length - filled_length)
         return f'|{bar}|'
     
     def update(self, n: int = 1):
-        """更新进度"""
+        """
+        Update the progress bar by a specified number of items.
+
+        Args:
+            n (int, optional): The number of items to update. Defaults to 1.
+        """
         self.current += n
         self._display()
     
     def set_description(self, desc: str):
-        """设置描述"""
+        """
+        Set the description of the progress bar.
+
+        Args:
+            desc (str): The new description.
+        """
         self.desc = desc
     
     def _display(self):
-        """显示进度条"""
+        """
+        Display or update the progress bar on the screen.
+        Skip if total is 0 to avoid division by zero.
+        Prevent overly frequent updates.
+        """
         if self.total == 0:
             return
             
@@ -83,13 +127,17 @@ class ProgressBar:
         
         line = f"\r{desc_str}{bar} {percent:5.1f}% {progress_str}{eta_str}"
         
-        # 防止过于频繁的更新
+        # Prevent overly frequent updates
         if time.time() - self.last_print_time > 0.1:
             print(line, end="", flush=True, file=self.file)
             self.last_print_time = time.time()
     
     def close(self):
-        """完成进度条"""
+        """
+        Complete the progress bar display.
+        If the progress has reached 100%, print the final state with elapsed time.
+        Otherwise, print a newline to end the progress bar.
+        """
         if self.current >= self.total:
             percent = 100.0
             bar = self._get_bar(percent)
@@ -104,15 +152,46 @@ class ProgressBar:
             print(file=self.file)
     
     def __enter__(self):
+        """
+        Support the context manager protocol.
+        Returns the instance itself when entering the context.
+
+        Returns:
+            ProgressBar: The current instance.
+        """
         return self
     
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """
+        Support the context manager protocol.
+        Close the progress bar when exiting the context.
+
+        Args:
+            exc_type: The exception type.
+            exc_val: The exception value.
+            exc_tb: The exception traceback.
+        """
         self.close()
 
 
 def progress_bar(iterable, desc: str = "", total: Optional[int] = None, 
                 length: int = 30, file=None):
-    """迭代器包装器，自动显示进度条"""
+    """
+    Wrap an iterable with a progress bar.
+
+    If the length of the iterable can be determined, use a full progress bar.
+    Otherwise, use a simple counter to show the processing progress.
+
+    Args:
+        iterable: The iterable object to wrap.
+        desc (str, optional): The description of the progress. Defaults to "".
+        total (Optional[int], optional): The total number of items. If None, try to get it from the iterable. Defaults to None.
+        length (int, optional): The length of the progress bar. Defaults to 30.
+        file: The file object to write the progress information to. Defaults to None.
+
+    Yields:
+        The items from the iterable.
+    """
     if total is None:
         try:
             total = len(iterable)
@@ -120,7 +199,7 @@ def progress_bar(iterable, desc: str = "", total: Optional[int] = None,
             total = None
     
     if total is None:
-        # 对于没有长度的迭代器，使用简单的计数器
+        # For iterables without a length, use a simple counter
         count = 0
         for item in iterable:
             yield item
@@ -129,7 +208,7 @@ def progress_bar(iterable, desc: str = "", total: Optional[int] = None,
                 print(f"\r{desc}: {count} items processed", end="", flush=True, file=file)
         print(f"\r{desc}: {count} items processed")
     else:
-        # 使用完整的进度条
+        # Use a full progress bar
         pbar = ProgressBar(total, desc, length, file=file)
         for item in iterable:
             yield item
@@ -138,7 +217,16 @@ def progress_bar(iterable, desc: str = "", total: Optional[int] = None,
 
 
 def get_simple_progress_bar(percent: float, length: int = 30) -> str:
-    """获取简单的进度条字符串，兼容monitor.py"""
+    """
+    Generate a simple progress bar string for compatibility with monitor.py.
+
+    Args:
+        percent (float): The progress percentage.
+        length (int, optional): The length of the progress bar. Defaults to 30.
+
+    Returns:
+        str: The simple progress bar string.
+    """
     try:
         percent = float(percent)
         if not 0 <= percent <= 100:
@@ -151,5 +239,5 @@ def get_simple_progress_bar(percent: float, length: int = 30) -> str:
     return f'|{bar}| {percent:5.1f}%'
 
 
-# 向后兼容monitor.py的函数
+# Function for backward compatibility with monitor.py
 get_progress_bar = get_simple_progress_bar

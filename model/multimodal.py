@@ -2,48 +2,56 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import torch
 import numpy as np
 from torch import nn
-from torch import nn
 from PIL import Image
 import torch.nn.functional as F
-from utils.log import  DEBUG, ERROR
+from utils.log import DEBUG, ERROR
 from transformers import ASTFeatureExtractor
 
 class VisionEncoder(nn.Module):
+    """
+    A vision encoder module that processes image data and encodes it using a Transformer architecture.
+    """
     def __init__(self, cfg):
+        """
+        Initialize the VisionEncoder.
+
+        Args:
+            cfg: Configuration object containing parameters such as image resolution, hidden size, etc.
+        """
         super().__init__()
         self.enabled = True
         self.cfg = cfg
         self.image_size = cfg.image_res
         self.patch_size = 14
         self.hidden_size = cfg.hidden_size
-        self.num_heads = 18
-        self.num_layers = 32
+        self.num_heads = cfg.n_head
+        self.num_layers = cfg.n_layer
         
         DEBUG(f"VisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
-        # Image preprocessing
+        # Image preprocessing: register mean and std for normalization
         self.register_buffer('mean', torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
         self.register_buffer('std', torch.Tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
         
-        # Patch embedding
+        # Patch embedding: convert image patches to embeddings
         self.patch_embed = nn.Conv2d(
             in_channels=3,
             out_channels=self.hidden_size,
@@ -51,12 +59,12 @@ class VisionEncoder(nn.Module):
             stride=self.patch_size
         )
         
-        # Position embedding
+        # Position embedding: add positional information to patches
         num_patches = (self.image_size // self.patch_size) ** 2
         self.pos_embed = nn.Parameter(torch.randn(1, num_patches + 1, self.hidden_size))
         self.cls_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
         
-        # Transformer encoder
+        # Transformer encoder: process patches using multiple Transformer layers
         self.transformer = nn.ModuleDict({
             'layers': nn.ModuleList([
                 nn.ModuleDict({
@@ -77,13 +85,21 @@ class VisionEncoder(nn.Module):
             'norm': nn.LayerNorm(self.hidden_size)
         })
         
-        # Projection layer
+        # Projection layer: project the output to the model's hidden dimension
         self.proj = nn.Linear(self.hidden_size, cfg.hidden_size)
         
         DEBUG("VisionEncoder: __init__ end")
     
     def process_image(self, image_path):
-        """Process image data"""
+        """
+        Process an image from the given path.
+
+        Args:
+            image_path (str): Path to the image file.
+
+        Returns:
+            torch.Tensor: Processed image tensor, or None if an error occurs.
+        """
         DEBUG(f"Processing image: {image_path}")
         try:
             # Read images using PIL and convert them into tensors
@@ -97,10 +113,19 @@ class VisionEncoder(nn.Module):
             return None
     
     def forward(self, pixel_values):
+        """
+        Forward pass of the VisionEncoder.
+
+        Args:
+            pixel_values (torch.Tensor): Input image pixel values.
+
+        Returns:
+            torch.Tensor: Encoded image features.
+        """
         if pixel_values is None:
             return torch.zeros(1, 1, self.cfg.hidden_size, device=self.proj.weight.device)
         
-        # Image preprocessing
+        # Image preprocessing: normalize pixel values
         x = (pixel_values - self.mean) / self.std
         
         # Dynamic resolution processing (NaViT style)
@@ -114,7 +139,7 @@ class VisionEncoder(nn.Module):
             x = F.interpolate(x, size=(new_H, new_W), mode='bilinear', align_corners=False)
             H, W = new_H, new_W
         
-        # Patch embedding
+        # Patch embedding: convert image to patch embeddings
         x = self.patch_embed(x)
         x = x.flatten(2).transpose(1, 2)
         
@@ -127,7 +152,7 @@ class VisionEncoder(nn.Module):
         pos_embed = self.pos_embed[:, :num_patches+1]
         x = x + pos_embed
         
-        # Transformer encoder
+        # Transformer encoder: process patches through Transformer layers
         for layer in self.transformer['layers']:
             # Self-attention
             x = x + layer['attn'](layer['norm1'](x), layer['norm1'](x), layer['norm1'](x))[0]
@@ -143,7 +168,16 @@ class VisionEncoder(nn.Module):
 
 
 class AudioEncoder(nn.Module):
+    """
+    An audio encoder module that processes audio data and encodes it using a convolutional network.
+    """
     def __init__(self, cfg):
+        """
+        Initialize the AudioEncoder.
+
+        Args:
+            cfg: Configuration object containing parameters such as hidden size.
+        """
         super().__init__()
         self.enabled = True
         self.cfg = cfg
@@ -164,6 +198,15 @@ class AudioEncoder(nn.Module):
         DEBUG("AudioEncoder: __init__ end")
     
     def process_audio(self, audio_path):
+        """
+        Process audio from the given path.
+
+        Args:
+            audio_path (str): Path to the audio file.
+
+        Returns:
+            torch.Tensor: Processed audio tensor, or None if an error occurs.
+        """
         DEBUG(f"Processing audio: {audio_path}")
         try:
             audio = self.processor(audio=audio_path, return_tensors="pt")
@@ -173,6 +216,15 @@ class AudioEncoder(nn.Module):
             return None
     
     def forward(self, audio_input):
+        """
+        Forward pass of the AudioEncoder.
+
+        Args:
+            audio_input (dict): Dictionary containing audio input values.
+
+        Returns:
+            torch.Tensor: Encoded audio features.
+        """
         if audio_input is None:
             return torch.zeros(1, 1, self.cfg.hidden_size, device=audio_input.device)
         
@@ -186,7 +238,16 @@ class AudioEncoder(nn.Module):
 
 
 class DocEncoder(nn.Module):
+    """
+    A document encoder module that processes document input and projects it to a hidden dimension.
+    """
     def __init__(self, cfg):
+        """
+        Initialize the DocEncoder.
+
+        Args:
+            cfg: Configuration object containing parameters such as hidden size.
+        """
         super().__init__()
         self.enabled = True
         self.cfg = cfg
@@ -200,12 +261,30 @@ class DocEncoder(nn.Module):
         DEBUG("DocEncoder: __init__ end")
     
     def forward(self, doc_input):
+        """
+        Forward pass of the DocEncoder.
+
+        Args:
+            doc_input (dict): Dictionary containing document input IDs.
+
+        Returns:
+            torch.Tensor: Encoded document features.
+        """
         x = self.doc_proj(doc_input['input_ids'])
         return x.unsqueeze(1)
 
 
 class VideoEncoder(nn.Module):
+    """
+    A video encoder module that processes video frames using a vision encoder and performs temporal pooling.
+    """
     def __init__(self, cfg):
+        """
+        Initialize the VideoEncoder.
+
+        Args:
+            cfg: Configuration object containing parameters such as hidden size.
+        """
         super().__init__()
         self.enabled = True
         self.cfg = cfg
@@ -223,6 +302,15 @@ class VideoEncoder(nn.Module):
         DEBUG("VideoEncoder: __init__ end")
     
     def forward(self, video_frames):
+        """
+        Forward pass of the VideoEncoder.
+
+        Args:
+            video_frames (torch.Tensor): Input video frames.
+
+        Returns:
+            torch.Tensor: Encoded video features.
+        """
         if video_frames is None:
             return torch.zeros(1, 1, self.cfg.hidden_size, device=self.cfg.device)
         

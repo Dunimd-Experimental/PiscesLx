@@ -2,20 +2,20 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import os
 import time
@@ -24,11 +24,20 @@ import platform
 from utils.log import RIGHT, ERROR
 from utils.progress import get_progress_bar
 
+# Define the update interval for system monitoring (in seconds)
 UPDATE_INTERVAL = 1
 
 # --- Helper Functions ---
 def bytes_to_human(n):
-    """Converts bytes to a human-readable format (KB, MB, GB, etc.)."""
+    """
+    Converts bytes to a human-readable format (KB, MB, GB, etc.).
+
+    Args:
+        n (int): The number of bytes to convert.
+
+    Returns:
+        str: A string representing the bytes in a human-readable format.
+    """
     symbols = ('K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y')
     prefix = {}
     for i, s in enumerate(symbols):
@@ -40,49 +49,69 @@ def bytes_to_human(n):
     return f"{n}B"
 
 # --- GPU Monitoring Setup ---
+# Flag indicating whether GPU monitoring is enabled
 GPU_ENABLED = False
+# Number of detected GPUs
 gpu_count = 0
 try:
+    # Try to import the pynvml library
     import pynvml
+    # Initialize the pynvml library
     pynvml.nvmlInit()
+    # Get the number of GPUs
     gpu_count = pynvml.nvmlDeviceGetCount()
     if gpu_count > 0:
         GPU_ENABLED = True
 except Exception:
+    # If an error occurs, disable GPU monitoring
     GPU_ENABLED = False
 
 # --- Main Monitoring Logic ---
 def get_system_stats():
-    """Gathers all system statistics."""
+    """
+    Gathers all system statistics.
+
+    Returns:
+        dict: A dictionary containing various system statistics.
+    """
     stats = {}
 
-    # CPU
+    # CPU Statistics
+    # Get the total CPU usage percentage
     stats['cpu_percent_total'] = psutil.cpu_percent(percpu=False)
+    # Get the CPU usage percentage for each core
     stats['cpu_percent_per_core'] = psutil.cpu_percent(percpu=True)
     try:
         # psutil.cpu_freq() might not be available on all systems or require root
+        # Get the CPU frequency for each core
         stats['cpu_freq'] = psutil.cpu_freq(percpu=True)
     except Exception:
+        # If an error occurs, set an empty list
         stats['cpu_freq'] = []
 
-    # Memory
+    # Memory Statistics
+    # Get virtual memory information
     mem = psutil.virtual_memory()
     stats['mem_total'] = mem.total
     stats['mem_used'] = mem.used
     stats['mem_percent'] = mem.percent
     
-    # Swap Memory
+    # Swap Memory Statistics
+    # Get swap memory information
     swap = psutil.swap_memory()
     stats['swap_total'] = swap.total
     stats['swap_used'] = swap.used
     stats['swap_percent'] = swap.percent
 
-    # GPU
+    # GPU Statistics
     if GPU_ENABLED:
         gpu_stats = []
         for i in range(gpu_count):
+            # Get the handle of the i-th GPU
             handle = pynvml.nvmlDeviceGetHandleByIndex(i)
+            # Get the GPU utilization rate
             util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+            # Get the GPU memory information
             mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
             gpu_stats.append({
                 'name': pynvml.nvmlDeviceGetName(handle).decode('utf-8') if isinstance(pynvml.nvmlDeviceGetName(handle), bytes) else pynvml.nvmlDeviceGetName(handle),
@@ -93,11 +122,13 @@ def get_system_stats():
             })
         stats['gpu'] = gpu_stats
 
-    # Disks
+    # Disk Statistics
+    # Get all disk partitions
     disk_partitions = psutil.disk_partitions()
     disk_usage_stats = []
     for partition in disk_partitions:
         try:
+            # Get the disk usage information for the partition
             usage = psutil.disk_usage(partition.mountpoint)
             disk_usage_stats.append({
                 'device': partition.device,
@@ -114,7 +145,18 @@ def get_system_stats():
     return stats
 
 def display_stats(stats, last_net_io, last_disk_io, last_time):
-    """Clears the screen and displays the formatted statistics."""
+    """
+    Clears the screen and displays the formatted statistics.
+
+    Args:
+        stats (dict): A dictionary containing system statistics.
+        last_net_io (psutil._common.snetio): Last network I/O counters.
+        last_disk_io (psutil._common.sdiskio): Last disk I/O counters.
+        last_time (float): Last monitoring time.
+
+    Returns:
+        tuple: Current network I/O counters and disk I/O counters.
+    """
     # Clear screen
     os.system('cls' if os.name == 'nt' else 'clear')
 
@@ -153,7 +195,7 @@ def display_stats(stats, last_net_io, last_disk_io, last_time):
     current_time = time.time()
     elapsed_time = current_time - last_time
     if elapsed_time == 0:
-        elapsed_time = 1 # Avoid division by zero on the first run
+        elapsed_time = 1  # Avoid division by zero on the first run
 
     # Disk Info
     current_disk_io = psutil.disk_io_counters()
@@ -180,22 +222,33 @@ def display_stats(stats, last_net_io, last_disk_io, last_time):
     return current_net_io, current_disk_io
 
 def monitor():
+    """
+    Main function to run the system monitor.
+    Continuously collects and displays system statistics until interrupted.
+    """
     RIGHT("Starting Pisces L1 System Monitor...")
     if not GPU_ENABLED:
         ERROR("NVIDIA GPU not detected or 'pynvml' library failed to load.")
         ERROR("For GPU monitoring, ensure you have an NVIDIA GPU and run: pip install pynvml")
     time.sleep(2)
-    # Main function to run the monitor.
+    # Initialize the last network I/O counters
     last_net_io = psutil.net_io_counters()
+    # Initialize the last disk I/O counters
     last_disk_io = psutil.disk_io_counters()
+    # Initialize CPU usage statistics
     psutil.cpu_percent(percpu=True)
     psutil.cpu_percent(percpu=False)
+    # Initialize the last monitoring time
     last_time = time.time()
     try:
         while True:
+            # Get system statistics
             stats = get_system_stats()
+            # Display system statistics and update I/O counters
             last_net_io, last_disk_io = display_stats(stats, last_net_io, last_disk_io, last_time)
+            # Update the last monitoring time
             last_time = time.time()
+            # Sleep for the update interval
             time.sleep(UPDATE_INTERVAL)
     except KeyboardInterrupt:
         RIGHT("\n\nMonitor stopped. Goodbye!")
@@ -203,4 +256,5 @@ def monitor():
         ERROR(f"\nAn error occurred: {e}")
     finally:
         if GPU_ENABLED:
+            # Shutdown the pynvml library
             pynvml.nvmlShutdown()

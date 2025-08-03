@@ -2,20 +2,20 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import torch
 import numpy as np
@@ -25,24 +25,24 @@ from einops import rearrange
 from utils.log import  DEBUG, ERROR
 
 class NativeSiglipVisionEncoder(nn.Module):
-    """原生实现的SigLIP级视觉编码器，基于谷歌SigLIP 2架构改进"""
+    """A native implementation of the SigLIP-level vision encoder, improved based on Google's SigLIP 2 architecture."""
     def __init__(self, cfg):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
         self.image_size = 384
         self.patch_size = 14
-        self.hidden_size = 1152  # 对应400M参数规模
+        self.hidden_size = 1152  # Corresponding to a parameter scale of 400M
         self.num_heads = 18
         self.num_layers = 24
         
         DEBUG(f"NativeSiglipVisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
-        # 图像预处理
+        # Image preprocessing
         self.register_buffer('mean', torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
         self.register_buffer('std', torch.Tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
         
-        # Patch嵌入
+        # Patch embedding
         self.patch_embed = nn.Conv2d(
             in_channels=3,
             out_channels=self.hidden_size,
@@ -50,11 +50,11 @@ class NativeSiglipVisionEncoder(nn.Module):
             stride=self.patch_size
         )
         
-        # 位置嵌入
+        # Positional embedding
         num_patches = (self.image_size // self.patch_size) ** 2
         self.pos_embed = nn.Parameter(torch.randn(1, num_patches, self.hidden_size))
         
-        # Transformer编码器
+        # Transformer encoder
         self.transformer = nn.ModuleDict({
             'layers': nn.ModuleList([
                 nn.ModuleDict({
@@ -75,16 +75,24 @@ class NativeSiglipVisionEncoder(nn.Module):
             'norm': nn.LayerNorm(self.hidden_size)
         })
         
-        # 投影层
+        # Projection layer
         self.proj = nn.Linear(self.hidden_size, cfg.hidden_size)
         
         DEBUG("NativeSiglipVisionEncoder: __init__ end")
     
     def process_image(self, image_path):
-        """Process image data"""
+        """
+        Process image data from the given file path.
+
+        Args:
+            image_path (str): Path to the image file.
+
+        Returns:
+            torch.Tensor: Processed image tensor, or None if an error occurs.
+        """
         DEBUG(f"Processing image: {image_path}")
         try:
-            # 使用PIL读取图像并转换为张量
+            # Read the image using PIL and convert it to a tensor
             image = Image.open(image_path).convert('RGB')
             image = image.resize((self.image_size, self.image_size))
             image = torch.tensor(np.array(image)).permute(2, 0, 1).float() / 255.0
@@ -95,31 +103,40 @@ class NativeSiglipVisionEncoder(nn.Module):
             return None
     
     def forward(self, pixel_values):
+        """
+        Forward pass of the NativeSiglipVisionEncoder.
+
+        Args:
+            pixel_values (torch.Tensor): Input pixel values.
+
+        Returns:
+            torch.Tensor: Output tensor with shape (B, 1, hidden_size).
+        """
         if pixel_values is None:
             return torch.zeros(1, 1, self.cfg.hidden_size, device=self.proj.weight.device)
         
-        # 标准化输入
+        # Normalize the input
         x = (pixel_values - self.mean) / self.std
         
-        # Patch嵌入
+        # Patch embedding
         x = self.patch_embed(x)  # (B, 1152, 27, 27)
         x = rearrange(x, 'b c h w -> b (h w) c')
         
-        # 添加位置嵌入
+        # Add positional embedding
         x = x + self.pos_embed
         
-        # Transformer编码器
+        # Transformer encoder
         for layer in self.transformer['layers']:
-            # 自注意力
+            # Self-attention
             attn_out = layer['attn'](layer['norm1'](x), layer['norm1'](x), layer['norm1'](x))[0]
             x = x + attn_out
             # MLP
             mlp_out = layer['mlp'](layer['norm2'](x))
             x = x + mlp_out
         
-        # 最终归一化
+        # Final normalization
         x = self.transformer['norm'](x)
         
-        # 全局平均池化并投影
+        # Global average pooling and projection
         x = self.proj(x.mean(dim=1))
         return x.unsqueeze(1)  # (B, 1, hidden_size)

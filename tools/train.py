@@ -2,26 +2,35 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import os
 import sys
 from utils.log import RIGHT, DEBUG, ERROR
 
 def setup_device(device_pref):
+    """
+    Set up the training device based on the device preference.
+
+    Args:
+        device_pref (str): Device preference, e.g., "auto", "cuda", "cpu".
+
+    Returns:
+        torch.device: The selected device for training.
+    """
     import torch
     DEBUG("Pisces L1 Training Start!")
     if device_pref == "auto":
@@ -37,6 +46,16 @@ def setup_device(device_pref):
     return device
 
 def collate_fn(batch):
+    """
+    Collate a batch of data into a format suitable for training.
+
+    Args:
+        batch (list): A list of data items, each is a dictionary containing model inputs.
+
+    Returns:
+        dict: A dictionary containing collated model inputs, including input_ids, labels, 
+              pixel_values, and audio_input.
+    """
     import torch
     MAX_SEQ_LEN = 256
     input_ids = [item["input_ids"] for item in batch]
@@ -54,9 +73,9 @@ def collate_fn(batch):
     # Handle audio_input for audio modality
     audio_input = None
     if any(item.get("audio_input") is not None for item in batch):
-        audio_input_list = [item["audio_input"] for item in batch if item.get("audio_input") is not None]
+        audio_input_list = [item["audio_input"]['input_values'] for item in batch if item.get("audio_input") is not None and item["audio_input"].get('input_values') is not None]
         if audio_input_list:
-            audio_input = torch.nn.utils.rnn.pad_sequence(audio_input_list, batch_first=True, padding_value=0)
+            audio_input = {'input_values': torch.nn.utils.rnn.pad_sequence(audio_input_list, batch_first=True, padding_value=0)}
     
     labels = input_ids.clone()
     if labels.shape[1] > MAX_SEQ_LEN:
@@ -69,6 +88,12 @@ def collate_fn(batch):
     }
 
 def train(args):
+    """
+    Train the Pisces model based on the given arguments.
+
+    Args:
+        args (argparse.Namespace): Command line arguments containing training configuration.
+    """
     import torch
     from data.dataset import PiscesDataset
     from torch.utils.data import DataLoader
@@ -106,21 +131,21 @@ def train(args):
     data_cache_dir = "data_cache"
     model_txt = os.path.join(data_cache_dir, "model.txt")
     if not os.path.exists(model_txt):
-        ERROR("{model_txt} not found! Please create it with one dataset name per line.")
+        ERROR(f"{model_txt} not found! Please create it with one dataset name per line.")
         sys.exit(1)
     with open(model_txt, "r", encoding="utf-8") as f:
         dataset_list = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
     if not dataset_list:
-        ERROR("No dataset names found in {model_txt}!")
+        ERROR(f"No dataset names found in {model_txt}!")
         sys.exit(1)
     device = setup_device("auto")
     RIGHT(f"Device set: {device}")
     RIGHT("Loading PiscesConfig...")
     config = f"configs/{model_size}.json"
     if not os.path.exists(config):
-        ERROR("Config file {config} not found. Please provide a valid --model_size.")
+        ERROR(f"Config file {config} not found. Please provide a valid --model_size.")
         sys.exit(1)
-    print(f"✅\tLoading config file: {config}")
+    RIGHT(f"Loading config file: {config}")
     cfg = PiscesConfig.from_json(config)
     RIGHT("PiscesConfig loaded.")
 
@@ -205,11 +230,11 @@ def train(args):
         RIGHT(f"Batch size: {batch_size}, Epochs: {epochs}, LR: {lr}")
         cache_path = os.path.join(data_cache_dir, dataset)
         if not os.path.exists(cache_path):
-            ERROR("Local dataset not found: {cache_path}")
+            ERROR(f"Local dataset not found: {cache_path}")
             continue
         train_ds = PiscesDataset(subset=dataset, split="train", config=cfg)
         if len(train_ds) == 0:
-            DEBUG("Warning: Dataset '{dataset}' is empty after filtering. Skipping.")
+            DEBUG(f"Warning: Dataset '{dataset}' is empty after filtering. Skipping.")
             continue
         RIGHT(f"Dataset loaded successfully, size: {len(train_ds)}")
         RIGHT("Creating DataLoader...")
@@ -233,7 +258,7 @@ def train(args):
         epoch = start_epoch
         try:
             while not stop_training:
-                DEBUG("Starting epoch {epoch+1}")
+                DEBUG(f"Starting epoch {epoch+1}")
                 total_loss = 0
                 accum_counter = 0
                 optimizer.zero_grad()
@@ -263,7 +288,7 @@ def train(args):
                                 optimizer.zero_grad()
                                 accum_counter = 0
                         else:
-                            DEBUG("Warning: Skipping step {step} due to invalid loss (None or no grad).")
+                            DEBUG(f"Warning: Skipping step {step} due to invalid loss (None or no grad).")
                             
                     else: # Non-scaler path
                         outputs = model(**device_batch)
@@ -281,7 +306,7 @@ def train(args):
                                 optimizer.zero_grad()
                                 accum_counter = 0
                         else:
-                            DEBUG("Warning: Skipping step {step} due to invalid loss (None or no grad).")
+                            DEBUG(f"Warning: Skipping step {step} due to invalid loss (None or no grad).")
 
                     if loss is not None:
                         total_loss += loss.item() * accum
@@ -325,9 +350,3 @@ def train(args):
     else:
         torch.save(model.state_dict(), final_weight_path)
     RIGHT(f"All datasets finished. Final model weights saved to: {final_weight_path}")
-
-def add_train_args(parser):
-    parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g. 0.5B, 1.5B, 7B, 70B')
-    parser.add_argument('--resume_ckpt', default='', type=str, help='Path to checkpoint to resume training')
-    parser.add_argument('--reset_lr', action='store_true', help='Reset learning rate after resuming checkpoint')
-    return parser

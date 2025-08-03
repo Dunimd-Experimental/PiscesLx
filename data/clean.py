@@ -29,36 +29,71 @@ from typing import Dict, Callable, List, Optional, Tuple
 from datasets import load_from_disk, Dataset, concatenate_datasets
 
 # ========== Plug-in Rule System ==========
+# Define a dictionary of text cleaning rules
 RULES: Dict[str, Callable[[str], str]] = {
+    # Remove control characters from the text
     "ctrl_chars": lambda x: re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', x),
+    # Normalize whitespace in the text
     "whitespace": lambda x: re.sub(r'\s+', ' ', x).strip(),
+    # Remove URLs from the text
     "urls":       lambda x: re.sub(r'http\S+|www\S+', '', x),
+    # Remove email addresses from the text
     "emails":     lambda x: re.sub(r'\S+@\S+', '', x),
+    # Remove HTML tags from the text
     "html_tags":  lambda x: re.sub(r'<[^>]*?>', '', x),
+    # Remove emojis from the text (keep Chinese characters, word characters, whitespace and some punctuation)
     "emoji":      lambda x: re.sub(r'[^\u4e00-\u9fff\w\s.,!?;:]', '', x),
+    # Remove special characters from the text (keep word characters, whitespace, Chinese characters and some punctuation)
     "special_chars": lambda x: re.sub(r'[^\w\s\u4e00-\u9fff.,!?;:()""''-]', '', x),
+    # Replace consecutive punctuation marks with a single period
     "extra_punct": lambda x: re.sub(r'[.,!?;:]{2,}', '.', x),
+    # Remove text that consists only of digits
     "digits_only": lambda x: x if not x.strip().isdigit() else "",
+    # Remove single-character text
     "single_chars": lambda x: x if len(x.strip()) > 1 else "",
 }
 
 # ========== Automatic Discovery of Multimodal Fields ==========
+# Define a dictionary for automatic discovery of multimodal fields
 AUTO_FIELDS = {
+    # Possible field names for image data
     "image": ["image", "img_path", "image_path", "picture", "pic", "img"],
+    # Possible field names for audio data
     "audio": ["audio", "audio_path", "wav", "sound", "mp3"],
+    # Possible field names for document data
     "doc":   ["doc", "document", "doc_path", "pdf", "file_path"],
+    # Possible field names for video data
     "video": ["video", "video_path", "mp4", "avi", "mov", "mkv"],
 }
 
 class StreamCleaner:
-    """Memory-safe cleaner - supports streaming processing"""
+    """
+    A memory-safe cleaner that supports streaming processing.
+    It can clean text and multimedia files.
+    """
     
     def __init__(self, rules=None, min_len=10, max_len=1024):
+        """
+        Initialize the StreamCleaner.
+
+        Args:
+            rules (list, optional): List of cleaning rules. If None, use all rules in RULES.
+            min_len (int, optional): Minimum length of valid text. Defaults to 10.
+            max_len (int, optional): Maximum length of valid text. Defaults to 1024.
+        """
         self.rules = rules or list(RULES.values())
         self.min_len, self.max_len = min_len, max_len
         
     def clean_text(self, text: str) -> str:
-        """Clean text"""
+        """
+        Clean the input text using the defined rules.
+
+        Args:
+            text (str): The text to be cleaned.
+
+        Returns:
+            str: The cleaned text if its length is within the specified range, otherwise an empty string.
+        """
         if not isinstance(text, str):
             return ""
         for rule in self.rules:
@@ -66,7 +101,16 @@ class StreamCleaner:
         return text if self.min_len <= len(text) <= self.max_len else ""
     
     def clean_media(self, path: str, media_type: str) -> Optional[str]:
-        """Clean multimedia files"""
+        """
+        Clean and validate multimedia files.
+
+        Args:
+            path (str): Path to the multimedia file.
+            media_type (str): Type of the multimedia file (e.g., "image", "audio", "video", "doc").
+
+        Returns:
+            Optional[str]: Path to the validated file if valid, None otherwise.
+        """
         if not path or not isinstance(path, str):
             return None
             
@@ -84,7 +128,10 @@ class StreamCleaner:
             return None
 
 class MediaCleaner:
-    """A general-purpose media cleaning utility class that supports cleaning and validation of images, audio, documents, and videos."""
+    """
+    A general-purpose media cleaning utility class that supports cleaning and validation 
+    of images, audio, documents, and videos.
+    """
     
     @staticmethod
     def clean_image(image_path, min_size=(224, 224)):
@@ -189,11 +236,25 @@ class MediaCleaner:
 class DatasetCleaner:
     @staticmethod
     def fast_clean(data_dir: str, max_len: int = 256):
-        """30-second emergency data cleaning"""
+        """
+        Perform 30-second emergency data cleaning on JSON files in the specified directory.
+
+        Args:
+            data_dir (str): Directory containing JSON files to be cleaned.
+            max_len (int, optional): Maximum length of valid text. Defaults to 256.
+        """
         DEBUG("Performing emergency data cleaning...")
         
         def emergency_filter(batch):
-            """Filter out overlong/empty samples"""
+            """
+            Filter out overlong or empty samples from the batch.
+
+            Args:
+                batch (dict): A batch of data with a 'text' key.
+
+            Returns:
+                dict: Filtered batch of data.
+            """
             mask = [len(str(x)) < max_len and len(str(x).strip()) > 0 for x in batch['text']]
             return {k: [v[i] for i,m in enumerate(mask) if m] for k,v in batch.items()}
         
@@ -213,7 +274,7 @@ class DatasetCleaner:
                 
                 RIGHT(f"Cleaning completed: {file}")
             except Exception as e:
-                DEBUG("Skipping file {file}: {e}")
+                DEBUG(f"Skipping file {file}: {e}")
         
         RIGHT("Emergency data cleaning completed!")
     
@@ -315,21 +376,29 @@ class DatasetCleaner:
                     break
             
             if detected_field:
-                DEBUG("Text field '{text_field}' not found, using '{detected_field}' instead")
+                DEBUG(f"Text field '{text_field}' not found, using '{detected_field}' instead")
                 text_field = detected_field
             else:
                 # If no text field found, use the first string column
                 string_cols = df.select_dtypes(include=['object']).columns
                 if len(string_cols) > 0:
                     text_field = string_cols[0]
-                    DEBUG("No standard text field found, using first string column '{text_field}'")
+                    DEBUG(f"No standard text field found, using first string column '{text_field}'")
                 else:
                     raise ValueError(f"No text field found in dataset. Available columns: {list(df.columns)}")
 
         # Handle special formats like conversations, messages, and code
         if text_field in ['conversations', 'messages', 'conversation', 'code']:
             def extract_text_from_dialogue(dialogue_list):
-                """Universal text extraction for conversations, messages, and code formats"""
+                """
+                Perform universal text extraction for conversations, messages, and code formats.
+
+                Args:
+                    dialogue_list (list|str|dict): A list, string, or dictionary representing dialogue data.
+
+                Returns:
+                    str: Extracted text joined by newlines, or an empty string if no text is extracted.
+                """
                 # Handle None/NaN values
                 if dialogue_list is None:
                     return ""
@@ -502,6 +571,15 @@ class DatasetCleaner:
         # Dedicated text cleaning
         import re
         def clean_text_content(text):
+            """
+            Clean text content by removing control characters and normalizing whitespace.
+
+            Args:
+                text (str): The text to be cleaned.
+
+            Returns:
+                str: The cleaned text, or an empty string if the input is not a valid string.
+            """
             if not isinstance(text, str):
                 return ""
             text = str(text).strip()
@@ -565,12 +643,30 @@ class DatasetCleaner:
 
     @staticmethod
     def find_field(item: dict, candidates: List[str]) -> Optional[str]:
-        """Find multimodal fields"""
+        """
+        Find the first existing multimodal field in the item based on the candidate field names.
+
+        Args:
+            item (dict): A dictionary representing a data item.
+            candidates (List[str]): List of candidate field names.
+
+        Returns:
+            Optional[str]: The value of the first existing field, or None if none is found.
+        """
         return next((item[k] for k in candidates if k in item and item[k]), None)
 
     @staticmethod
     def worker(args: Tuple[str, List[Callable], int, int]) -> Optional[Dataset]:
-        """Multiprocessing worker function - clean a single dataset"""
+        """
+        Multiprocessing worker function to clean a single dataset.
+
+        Args:
+            args (Tuple[str, List[Callable], int, int]): A tuple containing dataset path, cleaning rules, 
+                                                         minimum text length, and maximum text length.
+
+        Returns:
+            Optional[Dataset]: The cleaned dataset if successful, None otherwise.
+        """
         ds_path, rules, min_len, max_len = args
         
         try:
@@ -610,7 +706,7 @@ class DatasetCleaner:
             return None
             
         except Exception as e:
-            ERROR("ailed to process dataset {ds_path}: {str(e)}")
+            ERROR(f"Failed to process dataset {ds_path}: {str(e)}")
             return None
 
     @staticmethod
@@ -622,7 +718,20 @@ class DatasetCleaner:
         workers=None,
         rules=None
     ) -> Optional[Dataset]:
-        """One-click merge and clean - supports multiprocessing streaming processing"""
+        """
+        Perform one-click merge and clean on datasets in the input directory, supporting multiprocessing streaming processing.
+
+        Args:
+            input_dir (str, optional): Directory containing datasets to be cleaned. Defaults to "data_cache".
+            output_dir (str, optional): Directory to save the merged and cleaned dataset. Defaults to None.
+            min_len (int, optional): Minimum length of valid text. Defaults to 1.
+            max_len (int, optional): Maximum length of valid text. Defaults to 1024.
+            workers (int, optional): Number of worker processes. Defaults to the minimum of 4 and CPU count.
+            rules (List[Callable], optional): List of cleaning rules. Defaults to all rules in RULES.
+
+        Returns:
+            Optional[Dataset]: The merged and cleaned dataset if successful, None otherwise.
+        """
         
         if not os.path.exists(input_dir):
             raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
@@ -641,7 +750,7 @@ class DatasetCleaner:
             DEBUG("No datasets to be cleaned found")
             return None
         
-        DEBUG("Found {len(raw_paths)} datasets, starting {workers} processes for cleaning...")
+        DEBUG(f"Found {len(raw_paths)} datasets, starting {workers} processes for cleaning...")
         
         # Multiprocessing cleaning
         with mp.Pool(workers) as pool:
@@ -707,7 +816,15 @@ class DatasetCleaner:
 
     @staticmethod
     def _process_single_dataset_wrapper(args):
-        """Wrapper for multiprocessing - unpack arguments and call _process_single_dataset"""
+        """
+        Wrapper for multiprocessing - unpack arguments and call _process_single_dataset.
+
+        Args:
+            args (tuple): A tuple containing dataset name, input path, output path, media fields, and cleaning arguments.
+
+        Returns:
+            tuple: A tuple of (cleaned_count, total_count) returned by _process_single_dataset.
+        """
         dataset_name, input_path, output_path, media_fields, clean_kwargs = args
         return DatasetCleaner._process_single_dataset(
             dataset_name, input_path, output_path, media_fields, **clean_kwargs
@@ -724,18 +841,18 @@ class DatasetCleaner:
         try:
             # Validate dataset exists and is accessible
             if not os.path.exists(input_path):
-                DEBUG("Dataset path does not exist: {input_path}")
+                DEBUG(f"Dataset path does not exist: {input_path}")
                 return (0, 0)
             
             # Check if dataset is empty
             try:
                 dataset = load_from_disk(input_path)
                 if len(dataset) == 0:
-                    DEBUG("Dataset {dataset_name} is empty, skipping processing")
+                    DEBUG(f"Dataset {dataset_name} is empty, skipping processing")
                     return (0, 0)
-                DEBUG("Starting to process dataset: {dataset_name} (Total {len(dataset)} records)")
+                DEBUG(f"Starting to process dataset: {dataset_name} (Total {len(dataset)} records)")
             except Exception as e:
-                ERROR("Failed to load dataset {dataset_name}: {str(e)}")
+                ERROR(f"Failed to load dataset {dataset_name}: {str(e)}")
                 return (0, 0)
             
             # Process the dataset and get the cleaning results
@@ -751,24 +868,10 @@ class DatasetCleaner:
             return (cleaned_count, total_count)
             
         except Exception as e:
-            ERROR("Error cleaning {dataset_name}: {str(e)}")
+            ERROR(f"Error cleaning {dataset_name}: {str(e)}")
             import traceback
-            ERROR("Detailed error information: {traceback.format_exc()}")
+            ERROR(f"Detailed error information: {traceback.format_exc()}")
             return (0, 0)
-
-        # Check if dataset has expected structure
-        try:
-            dataset = load_from_disk(dataset_path)
-            # Check if dataset has data
-            if len(dataset) > 0:
-                # Check if all files are present and accessible
-                for sample in dataset.take(1):
-                    pass
-                return True
-        except Exception:
-            return False
-        
-        return False
 
     @staticmethod
     def fast_clean(
@@ -807,7 +910,7 @@ class DatasetCleaner:
                     min_length=min_len
                 )
         except Exception as e:
-            ERROR("Fast cleaning failed: {str(e)}")
+            ERROR(f"Fast cleaning failed: {str(e)}")
             return None
 
     @staticmethod
@@ -839,7 +942,7 @@ class DatasetCleaner:
                 
                 # Check if download is complete
                 if not DatasetCleaner.is_download_complete(input_path):
-                    DEBUG("Dataset {dataset_name} download not complete, skipping...")
+                    DEBUG(f"Dataset {dataset_name} download not complete, skipping...")
                     continue
                 
                 output_path = os.path.join(output_dir, f"{dataset_name}_clean")
@@ -862,7 +965,7 @@ class DatasetCleaner:
                 )
         else:
             # Multi-process mode
-            DEBUG("Using {workers} processes to clean {len(datasets_to_clean)} datasets...")
+            DEBUG(f"Using {workers} processes to clean {len(datasets_to_clean)} datasets...")
             
             # Prepare arguments for parallel processing
             process_args = [
@@ -883,10 +986,10 @@ class DatasetCleaner:
                     try:
                         cleaned_count, total_count = future.result()
                         if cleaned_count == 0:
-                            DEBUG("Warning: No valid data left after cleaning {dataset_name} (Original {total_count} samples)")
+                            DEBUG(f"Warning: No valid data left after cleaning {dataset_name} (Original {total_count} samples)")
                         else:
                             RIGHT(f"Cleaning completed: {dataset_name} -> {dataset_name}_clean | Samples retained: {cleaned_count}/{total_count}")
                     except Exception as e:
-                        ERROR("Error cleaning {dataset_name}: {str(e)}")
+                        ERROR(f"Error cleaning {dataset_name}: {str(e)}")
         
         return True

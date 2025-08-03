@@ -2,25 +2,34 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import os
 from utils.log import RIGHT, DEBUG, ERROR
 
 def setup_device(device_pref):
+    """
+    Set up the computing device based on the given preference.
+
+    Args:
+        device_pref (str): Device preference, e.g., "auto", "cpu", "cuda".
+
+    Returns:
+        torch.device: The selected computing device.
+    """
     import torch
     if device_pref == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -35,6 +44,15 @@ def setup_device(device_pref):
     return device
 
 def infer(args):
+    """
+    Perform inference using the Pisces model.
+
+    Args:
+        args (argparse.Namespace): Command-line arguments containing configuration parameters.
+
+    Returns:
+        None: The function prints the generated response directly.
+    """
     import torch
     from PIL import Image
     from model.tokenizer import get_tokenizer
@@ -64,7 +82,7 @@ def infer(args):
         ckpt_vocab_size = state_dict['embed.weight'].shape[0] if 'embed.weight' in state_dict else None
         model_vocab_size = model.embed.weight.shape[0]
         if ckpt_vocab_size and ckpt_vocab_size != model_vocab_size:
-            DEBUG("Vocab size mismatch: checkpoint={ckpt_vocab_size}, model={model_vocab_size}. Auto resizing...")
+            DEBUG(f"Vocab size mismatch: checkpoint={ckpt_vocab_size}, model={model_vocab_size}. Auto resizing...")
             model.resize_token_embeddings(ckpt_vocab_size)
 
         lora_keys = [k for k in state_dict.keys() if k.startswith('base_model.model.') or '.lora_A.' in k or '.lora_B.' in k]
@@ -100,7 +118,7 @@ def infer(args):
             pixel_values = TF.to_tensor(img).unsqueeze(0).to(device)
             RIGHT("Image processed successfully")
         except Exception as e:
-            ERROR("Error processing image: {e}")
+            ERROR(f"Error processing image: {e}")
             pixel_values = None
     RIGHT("Generating response (Automatic blocking/Mixed precision/4-bit)...")
     max_gen_len = getattr(args, 'max_length', 100)

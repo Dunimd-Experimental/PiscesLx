@@ -35,7 +35,7 @@ os.makedirs(DATA, exist_ok=True)
 
 def save(ds, name):
     """
-    Save dataset to local cache.
+    Save the dataset to the local cache.
 
     Args:
         ds: The dataset to be saved.
@@ -53,7 +53,7 @@ def save(ds, name):
         RIGHT(f"{name} saved to {save_path}")
         return True
     except Exception as e:
-        ERROR("Failed to save {name}: {e}")
+        ERROR(f"Failed to save {name}: {str(e)}")
         return False
 
 def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
@@ -71,33 +71,44 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
         # Chinese
         ("baicai003/Llama3-Chinese-dataset", "Chinese1", "Chinese1"),
         ("liucong/Chinese-DeepSeek-R1-Distill-data-110k-SFT", "Chinese2", "Chinese2"),
+        ("AI-ModelScope/OpenOrca-Chinese", "Chinese3", "Chinese3"),
+        ("AI-ModelScope/ultrachat_200k", "Chinese4", "Chinese4"),
+        ("gxlzgdmds/baidu_baike", "Chinese5", "Chinese5"),
 
-        #Math
+        # English
+        ("YorickHe/CoT", "English1", "English1"),
+        ("Data-Juicer/redpajama-cc-2022-05-refined", "English2", "English2"),
+        ("DAMO_ConvAI/EnDoc2BotDialogue", "English3", "English3"),
+        ("Intelligent-Internet/wikipedia_en", "English4", "English4"),
+
+        # Math
         ("swift/MetaMathQA", "Math1", "Math1"),
         ("AI-MO/NuminaMath-CoT", "Math2", "Math2"),
         ("AI-ModelScope/NuminaMath-CoT", "Math3", "Math3"),
         ("xpengx/EleutherAI-proof-pile-2", "Math4", "Math4"),
+        ("tastelikefeet/competition_math", "Math5", "Math5"),
 
-        #Code
+        # Code
         ("HuggingFaceH4/CodeAlpaca_20K", "Code1", "Code1"),
         ("jablonkagroup/codeparrot_github-code-chemistry-python", "Code2", "Code2"),
         ("jablonkagroup/codeparrot_github-code-chemistry-python", "Code3", "Code3"),
+        ("codefuse-ai/CodeExercise-Python-27k", "Code4", "Code4"),
         
-        #Web
+        # Web
         ("AI-ModelScope/webvid-10M", "Web1", "Web1"),
         ("prithivMLmods/OpenWeb888K", "Web2", "Web2"),
         ("OmniData/Pile-OpenWebText2", "Web3", "Web3"),
 
-        #Audio
+        # Audio
         ("OmniData/Clotho", "Audio1", "Audio1"),
         ("modelscope/Libri2Mix_8k", "Audio2", "Audio2"),
         ("lmms-lab/AudioSetCaps_350k_converted", "Audio3", "Audio3"),
 
-        #Image
+        # Image
         ("modelscope/coco_captions_small_slice", "Image1", "Image1"),
         ("FreedomIntelligence/ShareGPT-4o-Image", "Image2", "Image2"),
 
-        #Other
+        # Other
         ("swift/VQAv2", "VQAv2", "VQAv2"),
         ("OmniData/FinQA", "FinQA", "FinQA"),
         ("swift/DocVQA", "DocVQ1A", "DocVQA1"),
@@ -106,6 +117,7 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
         ("HuggingFaceH4/ultrachat_200k", "Chat1", "Chat1"),
         ("OpenDataLab/PubLayNet", "Publaynet1", "PubLayNet1"),
         ("krisfu/delicate_medical_r1_data", "Medical1", "Medical1"),
+        ("BJQW14B/bs_challenge_financial_14b_dataset", "Financial1", "Financial1"),
     ]
     
     # Check downloaded datasets
@@ -139,7 +151,7 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
                 success_count += 1
                 successfully_downloaded.add(save_name)
     else:
-        print(f"✅\tAll {total} datasets already downloaded")
+        RIGHT(f"All {total} datasets already downloaded")
             
     # Perform unified cleaning after all datasets are downloaded using auto_clean with multiprocessing
     if post_download_clean and successfully_downloaded:
@@ -154,7 +166,7 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
             )
             RIGHT(f"Unified cleaning completed for all datasets")
         except Exception as e:
-            ERROR("Unified cleaning failed: {e}")
+            ERROR(f"Unified cleaning failed: {str(e)}")
             try:
                 DatasetCleaner.auto_clean(
                     input_dir=DATA,
@@ -164,7 +176,7 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
                 )
                 RIGHT(f"Unified cleaning completed in fallback mode")
             except Exception as e2:
-                ERROR("Unified cleaning in fallback mode failed: {e2}")
+                ERROR(f"Unified cleaning in fallback mode failed: {str(e2)}")
     
         DEBUG("Cleaning up system cache...")
 
@@ -194,7 +206,7 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
         except ImportError:
             pass
         
-        print(f"✅\tDownload completed! Success: {success_count}/{len(datasets)}")
+        RIGHT(f"Download completed! Success: {success_count}/{len(datasets)}")
         
         # Generate model.txt with successfully downloaded datasets
         if successfully_downloaded:
@@ -203,9 +215,9 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
                 with open(model_file, 'w', encoding='utf-8') as f:
                     for dataset_name in sorted(successfully_downloaded):
                         f.write(f"{dataset_name}\n")
-                print(f"✅\tGenerated model.txt with {len(successfully_downloaded)} datasets: {model_file}")
+                RIGHT(f"Generated model.txt with {len(successfully_downloaded)} datasets: {model_file}")
             except Exception as e:
-                ERROR("Failed to generate model.txt: {e}")
+                ERROR(f"Failed to generate model.txt: {str(e)}")
 
 def _download_worker(args):
     """
@@ -216,7 +228,7 @@ def _download_worker(args):
     max_retries = 3
     for attempt in range(max_retries):
         try:
-            print(f"✅\tDownloading {description} ({dataset_name})... (Attempt {attempt+1}/{max_retries})")
+            RIGHT(f"Downloading {description} ({dataset_name})... (Attempt {attempt+1}/{max_retries})")
 
             split_tried = None
             ds = None
@@ -228,14 +240,14 @@ def _download_worker(args):
                         error_msg = str(e).lower()
                         if "trust_remote_code" in error_msg or "remote code" in error_msg:
                             ds = MsDataset.load(dataset_name, split=split, trust_remote_code=True)
-                            DEBUG("Enabling remote code trust mode to load {dataset_name}")
+                            DEBUG(f"Enabling remote code trust mode to load {dataset_name}")
                         elif "oss2" in error_msg or "oss" in error_msg:
                             DEBUG("OSS dependency issue detected, please ensure oss2 is installed")
                             raise
                         else:
                             raise
                     split_tried = split
-                    print(f"✅\tUsing split '{split}' for {dataset_name}")
+                    RIGHT(f"Using split '{split}' for {dataset_name}")
                     break
                 except Exception as e:
                     last_split_error = str(e)
@@ -243,7 +255,7 @@ def _download_worker(args):
                         DEBUG("Dataset generation error, will retry...")
                         continue
             if ds is None:
-                ERROR("No available split (tried train/validation/test). Last error: {last_split_error}")
+                ERROR(f"No available split (tried train/validation/test). Last error: {last_split_error}")
                 if attempt < max_retries - 1:
                     DEBUG("Retrying in 5 seconds...")
                     import time
@@ -253,12 +265,12 @@ def _download_worker(args):
             if hasattr(ds, 'to_hf_dataset'):
                 ds = ds.to_hf_dataset()
             original_size = len(ds)
-            print(f"✅\tDataset loaded successfully, original samples: {original_size:,}")
+            RIGHT(f"Dataset loaded successfully, original samples: {original_size:,}")
             if original_size > 0:
-                print(f"✅\tKeeping all {original_size:,} samples...")
+                RIGHT(f"Keeping all {original_size:,} samples...")
                 ds = ds
             if save(ds, save_name):
-                print(f"✅\tClearing cache after {save_name}...")
+                RIGHT(f"Clearing cache after {save_name}...")
                 if 'ds' in locals():
                     del ds
                 gc.collect()
@@ -269,12 +281,12 @@ def _download_worker(args):
                     pass
                 return save_name
             else:
-                DEBUG("Save failed for {dataset_name}, retrying...")
+                DEBUG(f"Save failed for {dataset_name}, retrying...")
         except Exception as e:
             if attempt < max_retries - 1:
-                ERROR("Attempt {attempt+1} failed: {e}. Retrying...")
+                ERROR(f"Attempt {attempt + 1} failed: {str(e)}. Retrying...")
             else:
-                ERROR("Attempt {attempt+1} failed: {e}. No retries left.")
+                ERROR(f"Attempt {attempt + 1} failed: {str(e)}. No retries left.")
     return None
 
 def optimize_datasets(max_keep=None):
@@ -294,12 +306,12 @@ def optimize_datasets(max_keep=None):
             
         try:
             # Load the original dataset directly
-            DEBUG("Processing {raw_dir}...")
+            DEBUG(f"Processing {raw_dir}...")
             ds = load_from_disk(raw_dir)
             original_len = len(ds)
             
             if original_len == 0:
-                DEBUG("{raw_dir} - Original dataset is empty, skipping")
+                DEBUG(f"{raw_dir} - Original dataset is empty, skipping")
                 continue
             
             # Convert to pandas DataFrame for processing
@@ -318,9 +330,9 @@ def optimize_datasets(max_keep=None):
                 string_cols = df.select_dtypes(include=['object']).columns
                 if len(string_cols) > 0:
                     text_field = string_cols[0]
-                    DEBUG("Using string column '{text_field}' as the text field")
+                    DEBUG(f"Using string column '{text_field}' as the text field")
                 else:
-                    DEBUG("{raw_dir} - No text field found, skipping")
+                    DEBUG(f"{raw_dir} - No text field found, skipping")
                     continue
             
             # Clean text data
@@ -345,7 +357,7 @@ def optimize_datasets(max_keep=None):
             df_cleaned = df[mask]
             
             if len(df_cleaned) == 0:
-                DEBUG("{raw_dir} - No valid data after cleaning, skipping")
+                DEBUG(f"{raw_dir} - No valid data after cleaning, skipping")
                 continue
             
             # No longer limit the data volume, keep all cleaned data
@@ -355,8 +367,8 @@ def optimize_datasets(max_keep=None):
             new_ds = Dataset.from_pandas(df_cleaned, preserve_index=False)
             new_ds.save_to_disk(raw_dir)
             
-            print(f"✅\t{raw_dir} | In-place cleaning completed: {len(df_cleaned)}/{original_len} records")
+            RIGHT(f"{raw_dir} | In-place cleaning completed: {len(df_cleaned)}/{original_len} records")
             
         except Exception as e:
-            ERROR("{raw_dir} - Processing failed: {e}")
+            ERROR(f"{raw_dir} - Processing failed: {str(e)}")
             continue

@@ -2,20 +2,20 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import os
 import re
@@ -24,26 +24,42 @@ import urllib.request
 from utils.log import RIGHT, ERROR
 
 class BPETokenizer:
+    """A Byte Pair Encoding (BPE) tokenizer implementation.
+
+    This tokenizer is used to convert text into a sequence of tokens and vice versa.
+    It supports loading pre-trained vocabulary and merge rules, as well as adding new tokens.
+    """
     def __init__(self, vocab_path=None, merges_path=None, special_tokens=None):
+        """Initialize the BPETokenizer.
+
+        Args:
+            vocab_path (str, optional): Path to the vocabulary file (vocab.json). Defaults to None.
+            merges_path (str, optional): Path to the merges file (merges.txt). Defaults to None.
+            special_tokens (list, optional): List of special tokens. Defaults to ["<s>", "</s>", "<unk>", "<pad>"].
+        """
         self.vocab_path = vocab_path
         self.merges_path = merges_path
         if vocab_path and os.path.exists(vocab_path):
+            # Load vocabulary from file
             with open(vocab_path, "r", encoding="utf-8") as f:
                 self.encoder = json.load(f)
             self.decoder = {v: k for k, v in self.encoder.items()}
         else:
+            # Create a dummy vocabulary with ASCII printable characters
             base_tokens = [chr(i) for i in range(32, 127)]
             self.encoder = {tok: i for i, tok in enumerate(base_tokens)}
             self.decoder = {i: tok for tok, i in self.encoder.items()}
             ERROR("No vocab.json found, using dummy vocab.")
         self.bpe_ranks = {}
         if merges_path and os.path.exists(merges_path):
+            # Load merge rules from file
             with open(merges_path, "r", encoding="utf-8") as f:
                 merges = [tuple(line.strip().split()) for line in f if not line.startswith("#") and line.strip()]
             self.bpe_ranks = {pair: i for i, pair in enumerate(merges)}
         else:
             ERROR("No merges.txt found, using char-level BPE.")
         self.special_tokens = special_tokens or ["<s>", "</s>", "<unk>", "<pad>"]
+        # Add special tokens to the vocabulary
         for tok in self.special_tokens:
             if tok not in self.encoder:
                 self.encoder[tok] = len(self.encoder)
@@ -58,7 +74,14 @@ class BPETokenizer:
         return len(self.encoder)
 
     def add_tokens(self, new_tokens):
-        """Adds new tokens to the vocabulary."""
+        """Adds new tokens to the vocabulary.
+
+        Args:
+            new_tokens (list): List of new tokens to add.
+
+        Returns:
+            int: The number of tokens added to the vocabulary.
+        """
         added_count = 0
         for token in new_tokens:
             if token not in self.encoder:
@@ -71,7 +94,11 @@ class BPETokenizer:
         return added_count
 
     def save_pretrained(self, save_directory):
-        """Saves tokenizer files (vocab, merges) to a directory."""
+        """Saves tokenizer files (vocab, merges) to a directory.
+
+        Args:
+            save_directory (str): Directory to save the tokenizer files.
+        """
         os.makedirs(save_directory, exist_ok=True)
         # Save vocabulary
         vocab_file = os.path.join(save_directory, "vocab.json")
@@ -85,6 +112,14 @@ class BPETokenizer:
             shutil.copyfile(self.merges_path, merges_file)
             
     def bpe(self, token):
+        """Apply Byte Pair Encoding to a single token.
+
+        Args:
+            token (str): The input token to be processed.
+
+        Returns:
+            tuple: A tuple of sub-tokens after BPE processing.
+        """
         if token in self.special_tokens:
             return [token]
         word = tuple(token)
@@ -123,7 +158,17 @@ class BPETokenizer:
                 break
             pairs = set(zip(word, word[1:]))
         return word
+
     def encode(self, text, return_tensors=None):
+        """Encode text into a list of token IDs.
+
+        Args:
+            text (str): The input text to be encoded.
+            return_tensors (str, optional): If "pt", return a PyTorch tensor. Defaults to None.
+
+        Returns:
+            list or torch.Tensor: A list of token IDs or a PyTorch tensor.
+        """
         for tok in self.special_tokens:
             text = text.replace(tok, f" {tok} ")
         tokens = re.findall(r"\w+|[^\w\s]|<[^>]+>", text, re.UNICODE)
@@ -140,9 +185,29 @@ class BPETokenizer:
             import torch
             return torch.tensor([ids], dtype=torch.long)
         return ids
+
     def encode_batch(self, texts, return_tensors=None):
+        """Encode a batch of texts into lists of token IDs.
+
+        Args:
+            texts (list): A list of input texts to be encoded.
+            return_tensors (str, optional): If "pt", return PyTorch tensors. Defaults to None.
+
+        Returns:
+            list: A list of lists of token IDs.
+        """
         return [self.encode(t, return_tensors=None) for t in texts]
+
     def decode(self, ids, skip_special_tokens=True):
+        """Decode a list of token IDs into text.
+
+        Args:
+            ids (list): A list of token IDs to be decoded.
+            skip_special_tokens (bool, optional): Whether to skip special tokens. Defaults to True.
+
+        Returns:
+            str: The decoded text.
+        """
         tokens = [self.decoder.get(i, "<unk>") for i in ids]
         if skip_special_tokens:
             tokens = [t for t in tokens if t not in self.special_tokens]
@@ -150,22 +215,48 @@ class BPETokenizer:
         text = text.replace(" ##", "")
         text = text.replace("Ġ", "")
         return text.strip()
+
     @property
-    def pad_token_id(self): return self.pad_id
+    def pad_token_id(self):
+        """Get the ID of the padding token."""
+        return self.pad_id
+
     @property
-    def eos_token_id(self): return self.eos_id
+    def eos_token_id(self):
+        """Get the ID of the end-of-sequence token."""
+        return self.eos_id
+
     @property
-    def bos_token_id(self): return self.bos_id
+    def bos_token_id(self):
+        """Get the ID of the beginning-of-sequence token."""
+        return self.bos_id
+
     @property
-    def unk_token_id(self): return self.unk_id
+    def unk_token_id(self):
+        """Get the ID of the unknown token."""
+        return self.unk_id
 
 def download_if_missing(url, local_path):
+    """Download a file if it doesn't exist locally.
+
+    Args:
+        url (str): URL of the file to download.
+        local_path (str): Local path to save the file.
+    """
     if not os.path.exists(local_path):
         RIGHT(f"Downloading {os.path.basename(local_path)} ...")
         urllib.request.urlretrieve(url, local_path)
         RIGHT(f"Downloaded {local_path}")
 
 def get_tokenizer():
+    """Get a BPETokenizer instance with pre-trained vocabulary and merge rules.
+
+    Returns:
+        BPETokenizer: A BPETokenizer instance.
+
+    Raises:
+        FileNotFoundError: If vocab.json or merges.txt is not found.
+    """
     vocab_path, merges_path = None, None
     for path in ["tokenizer/vocab.json", "vocab.json", os.environ.get("PISCES_VOCAB_PATH")]:
         if path and os.path.exists(path):

@@ -18,7 +18,7 @@
 # limitations under the License.
 
 import os
-from utils.log import ERROR
+from utils.log import ERROR, RIGHT
 from datasets import load_from_disk, DatasetDict
 
 """
@@ -37,15 +37,17 @@ def get_subsets_from_model_txt():
         list: A list of dataset subset names. Returns an empty list if the file does not exist.
     """
     # Construct the path to the model.txt file
-    model_txt = os.path.join("data_cache", "model.txt")
+    model_txt_path = os.path.join("data_cache", "model.txt")
+    
     # Check if the model.txt file exists
-    if not os.path.exists(model_txt):
-        ERROR("{model_txt} not found! Please create it with one dataset name per line.")
+    if not os.path.exists(model_txt_path):
+        ERROR(f"{model_txt_path} not found! Please create it with one dataset name per line.")
         return []
+    
     # Open the model.txt file and read dataset subset names
-    with open(model_txt, "r", encoding="utf-8") as f:
+    with open(model_txt_path, "r", encoding="utf-8") as file:
         # Filter out empty lines and comment lines, then strip whitespace
-        return [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+        return [line.strip() for line in file if line.strip() and not line.strip().startswith('#')]
 
 def build_splits(subset):
     """
@@ -62,32 +64,35 @@ def build_splits(subset):
         None: Returns None if the dataset subset does not exist.
     """
     # Construct the path to the dataset subset
-    src = f"data/{subset}"
+    subset_path = f"data/{subset}"
+    
     # Check if the dataset subset exists
-    if not os.path.exists(src):
-        ERROR("{src} does not exist, please run download.py first")
+    if not os.path.exists(subset_path):
+        ERROR(f"{subset_path} does not exist, please run download.py first")
         return
-
+    
     # Load the dataset from disk
-    ds = load_from_disk(src)
-
-    # Simple 90/10 split
-    if hasattr(ds, "train_test_split"):
+    dataset = load_from_disk(subset_path)
+    
+    # Perform a simple 90/10 split
+    if hasattr(dataset, "train_test_split"):
         # Perform a 90/10 train-test split if the dataset supports it
-        split = ds.train_test_split(test_size=0.1, seed=42)
+        split_data = dataset.train_test_split(test_size=0.1, seed=42)
     else:
         # If the dataset doesn't support train_test_split, use a simple selection for test set
-        split = {"train": ds, "test": ds.select(range(min(1000, len(ds))))}
-
-    # Convert the split into a DatasetDict object
-    out = DatasetDict(split)
+        split_data = {"train": dataset, "test": dataset.select(range(min(1000, len(dataset))))}
+    
+    # Convert the split data into a DatasetDict object
+    dataset_dict = DatasetDict(split_data)
+    
     # Save the split dataset back to disk
-    out.save_to_disk(f"data/{subset}")
-    print(f"✅\t{subset} split completed → data/{subset}")
+    dataset_dict.save_to_disk(subset_path)
+    RIGHT(f"{subset} split completed → {subset_path}")
 
 if __name__ == "__main__":
     # Get all dataset subset names
     SUBSETS = get_subsets_from_model_txt()
+    
     # Build splits for each dataset subset
-    for s in SUBSETS:
-        build_splits(s)
+    for subset in SUBSETS:
+        build_splits(subset)

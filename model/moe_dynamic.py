@@ -2,20 +2,20 @@
 
 # Copyright © 2025 Wenze Wei
 #
-# This file is part of Pisces.
+# This file is part of Pisces L1.
 #
-# This program is free software: you can redistribute it and/or modify
-# it under the terms of the GNU Affero General Public License as published
-# by the Free Software Foundation, either version 3 of the License, or
-# (at your option) any later version.
+# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Affero General Public License for more details.
+#     https://creativecommons.org/licenses/by-nc/4.0/
 #
-# You should have received a copy of the GNU Affero General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import math
 import torch
@@ -25,14 +25,32 @@ import torch.nn.functional as F
 from collections import OrderedDict
 
 def moe_init_weights(m):
+    """
+    Initialize weights for MoE (Mixture of Experts) layers.
+
+    Args:
+        m (nn.Module): The module to initialize weights for.
+    """
     if isinstance(m, nn.Linear):
         nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
         if m.bias is not None:
             nn.init.zeros_(m.bias)
 
-
 class ExpertChoiceRouter(nn.Module):
+    """
+    A router module that implements expert choice routing strategy for MoE.
+    Each expert selects top-k tokens based on routing scores.
+    """
     def __init__(self, hidden_size, num_experts, capacity_factor=1.25, top_k=2):
+        """
+        Initialize the ExpertChoiceRouter.
+
+        Args:
+            hidden_size (int): The size of the hidden layer.
+            num_experts (int): The number of experts.
+            capacity_factor (float, optional): The capacity factor for experts. Defaults to 1.25.
+            top_k (int, optional): The number of top tokens each expert selects. Defaults to 2.
+        """
         super().__init__()
         self.gate = nn.Linear(hidden_size, num_experts, bias=False)
         self.capacity_factor = capacity_factor
@@ -40,6 +58,15 @@ class ExpertChoiceRouter(nn.Module):
         self.top_k = top_k
         
     def forward(self, x):
+        """
+        Perform forward pass of the expert choice router.
+
+        Args:
+            x (torch.Tensor): Input tensor with shape (batch*seq, hidden_size).
+
+        Returns:
+            tuple: A tuple containing expert indices, dispatch mask, and load balancing loss.
+        """
         # x: (batch*seq, hidden_size)
         tokens_per_expert = int(x.shape[0] * self.capacity_factor / self.num_experts)
         
@@ -61,10 +88,20 @@ class ExpertChoiceRouter(nn.Module):
         
         return expert_indices, dispatch_mask, load_balancing_loss
 
-
 class DynamicMoELayer(nn.Module):
+    """
+    A dynamic Mixture of Experts (MoE) layer with expert device management.
+    """
     _layer_count = 0
     def __init__(self, cfg, device=None, dtype=None):
+        """
+        Initialize the DynamicMoELayer.
+
+        Args:
+            cfg: Configuration object containing parameters for the layer.
+            device (torch.device, optional): The device to place the model on. Defaults to None.
+            dtype (torch.dtype, optional): The data type of the model. Defaults to None.
+        """
         super().__init__()
         DynamicMoELayer._layer_count += 1
         self.cfg = cfg
@@ -95,6 +132,13 @@ class DynamicMoELayer(nn.Module):
             RIGHT(f"DynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
     
     def _move_expert_to_gpu(self, expert_id):
+        """
+        Move an expert to GPU and manage the active experts list.
+        If the number of active experts exceeds the limit, move the least recently used expert to CPU.
+
+        Args:
+            expert_id (int): The ID of the expert to move to GPU.
+        """
         expert = self.experts[expert_id]
         if next(expert.parameters()).device.type != 'cuda':
             expert.to('cuda')
@@ -105,11 +149,26 @@ class DynamicMoELayer(nn.Module):
             self._move_expert_to_cpu(lru_expert_id)
     
     def _move_expert_to_cpu(self, expert_id):
+        """
+        Move an expert to CPU.
+
+        Args:
+            expert_id (int): The ID of the expert to move to CPU.
+        """
         expert = self.experts[expert_id]
         if next(expert.parameters()).device.type != 'cpu':
             expert.to('cpu')
     
     def forward(self, x):
+        """
+        Perform forward pass of the dynamic MoE layer.
+
+        Args:
+            x (torch.Tensor): Input tensor with shape (batch_size, seq_len, hidden_size).
+
+        Returns:
+            tuple: A tuple containing output tensor and load balancing loss.
+        """
         batch_size, seq_len, hidden = x.shape
         x_flat = x.view(-1, hidden)
         
