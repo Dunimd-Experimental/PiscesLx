@@ -21,46 +21,47 @@ import os
 import sys
 import platform
 import subprocess
+from utils.log import RIGHT
 
 def setup(args):
     """Auto setup venv and install requirements if needed, then auto-enter venv shell"""
-    print("✅\tPisces auto environment setup...")
+    RIGHT("Pisces auto environment setup...")
     py_exec = sys.executable
     venv_dir = os.path.join(os.getcwd(), "pisces_env")
     is_windows = platform.system().lower().startswith("win")
     # Check if in venv
     if sys.prefix == sys.base_prefix:
-        print("✅\tNot in virtual environment. Creating venv...")
+        RIGHT("Not in virtual environment. Creating venv...")
         subprocess.check_call([py_exec, "-m", "venv", venv_dir])
-        print(f"✅\tVirtual environment created at {venv_dir}")
+        RIGHT(f"Virtual environment created at {venv_dir}")
         # Re-run in venv python
         python_bin = os.path.join(venv_dir, "Scripts" if is_windows else "bin", "python" + (".exe" if is_windows else ""))
-        print("✅\tRe-running setup in venv...")
+        RIGHT("Re-running setup in venv...")
         os.execv(python_bin, [python_bin] + sys.argv)
         return
     else:
-        print("✅\tAlready in virtual environment.")
+        RIGHT("Already in virtual environment.")
     # Upgrade pip
-    print("✅\tUpgrading pip...")
+    RIGHT("Upgrading pip...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
     # Install requirements
-    print("✅\tInstalling requirements.txt...")
+    RIGHT("Installing requirements.txt...")
     subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
-    print("✅\tPisces environment setup complete!")
+    RIGHT("Pisces environment setup complete!")
     # Auto enter venv shell
     if is_windows:
         shell = os.environ.get("COMSPEC", "cmd.exe")
         # Check if using PowerShell
         if "powershell.exe" in shell.lower() or "pwsh.exe" in shell.lower():
             activate = os.path.join(venv_dir, "Scripts", "Activate.ps1")
-            print("✅\tAuto-entering Pisces venv shell (PowerShell)...")
+            RIGHT("Auto-entering Pisces venv shell (PowerShell)...")
             os.execv(shell, [shell, "-NoExit", "-Command", f". '{activate}'"])
         else:
             activate = os.path.join(venv_dir, "Scripts", "activate.bat")
-            print("✅\tAuto-entering Pisces venv shell (Windows cmd)...")
+            RIGHT("Auto-entering Pisces venv shell (Windows cmd)...")
             os.execv(shell, [shell, "/K", activate])
     else:
         shell = os.environ.get("SHELL", "/bin/bash")
         activate = os.path.join(venv_dir, "bin", "activate")
-        print("✅\tAuto-entering Pisces venv shell (Linux/Mac)...")
+        RIGHT("Auto-entering Pisces venv shell (Linux/Mac)...")
         os.execv(shell, [shell, "-i", "-c", f"source '{activate}'; exec {shell}"])

@@ -18,9 +18,9 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import torch, os
+from utils.log import RIGHT
 from model import PiscesModel, PiscesConfig
 from transformers import BitsAndBytesConfig
-
 
 def quantize(checkpoint, save_path, bits=8):
     cfg = PiscesConfig.from_json("configs/0.5B.json")
@@ -33,7 +33,7 @@ def quantize(checkpoint, save_path, bits=8):
                 m.weight = bnb.nn.Params8bit(m.weight)
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     torch.save(model.state_dict(), save_path)
-    print("✅\tQuantized model saved to", save_path)
+    RIGHT("Quantized model saved to", save_path)
 
 if __name__ == "__main__":
     import argparse

@@ -23,6 +23,7 @@ from torch import nn
 from .moe import MoELayer
 import torch.nn.functional as F
 from .config import PiscesConfig
+from utils.log import  DEBUG, ERROR
 from .reasoner import PiscesReasoner
 from model.moe_dynamic import DynamicMoELayer
 from model.yarn_rope import YaRNRotaryEmbedding
@@ -106,7 +107,7 @@ class PiscesModel(nn.Module):
     """Pisces L1 multimodal MoE model (oneflow style)"""
     def __init__(self, cfg, device=None, dtype=None, quantization_config=None, lora_config=None):
         super().__init__()
-        print("🟧\tPiscesModel: __init__ start")
+        DEBUG("PiscesModel: __init__ start")
         self.cfg = cfg
         self.quantization_config = quantization_config
         self.lora_config = lora_config
@@ -127,29 +128,29 @@ class PiscesModel(nn.Module):
                         else:
                             convert_linear_to_4bit(child)
                 convert_linear_to_4bit(self)
-                print("🟧\tPiscesModel: All Linear layers converted to 4bit (bitsandbytes)")
+                DEBUG("PiscesModel: All Linear layers converted to 4bit (bitsandbytes)")
             except Exception as e:
-                print(f"❌\t4bit quantization failed: {e}")
-        print("🟧\tPiscesModel: initializing embedding...")
+                ERROR("4bit quantization failed: {e}")
+        DEBUG("PiscesModel: initializing embedding...")
         self.embed = nn.Embedding(cfg.vocab_size, cfg.hidden_size, device=device, dtype=dtype)
-        print(f"🟧\tPiscesModel: initializing {cfg.n_layer} transformer layers...")
+        DEBUG("PiscesModel: initializing {cfg.n_layer} transformer layers...")
         self.layers = nn.ModuleList([])
         for i in range(cfg.n_layer):
             if (i % 4 == 0) or (i == cfg.n_layer-1):
-                print(f"🟧\tPiscesModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
+                DEBUG("PiscesModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
             self.layers.append(TransformerBlock(cfg, device=device, dtype=dtype))
-        print("🟧\tPiscesModel: initializing norm...")
+        DEBUG("PiscesModel: initializing norm...")
         self.norm = RMSNorm(cfg.hidden_size)
-        print("🟧\tPiscesModel: initializing multimodal encoders...")
+        DEBUG("PiscesModel: initializing multimodal encoders...")
         self.vision = VisionEncoder(cfg)
         self.audio = AudioEncoder(cfg)
         self.doc = DocEncoder(cfg)
-        print("🟧\tPiscesModel: initializing output heads...")
+        DEBUG("PiscesModel: initializing output heads...")
         self.lm_head = nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
         self.task_head = nn.Linear(cfg.hidden_size, cfg.task_classes, device=device, dtype=dtype)
         self.eval_head = nn.Linear(cfg.hidden_size, cfg.eval_dims, device=device, dtype=dtype)
         
-        print("🟧\tPiscesModel: initializing reasoner...")
+        DEBUG("PiscesModel: initializing reasoner...")
         self.reasoner = PiscesReasoner(cfg)
 
         self.apply(pisces_init_weights)
@@ -158,12 +159,12 @@ class PiscesModel(nn.Module):
             try:
                 from peft import get_peft_model
                 self = get_peft_model(self, lora_config)
-                print("🟧\tPiscesModel: LoRA adapters injected (peft)")
+                DEBUG("PiscesModel: LoRA adapters injected (peft)")
             except Exception as e:
-                print(f"❌\tLoRA injection failed: {e}")
+                ERROR("LoRA injection failed: {e}")
         total_params = sum(p.numel() for p in self.parameters())
-        print(f"🟧\tPiscesModel: total parameters = {total_params/1e6:.2f}M")
-        print("🟧\tPiscesModel: __init__ end")
+        DEBUG("PiscesModel: total parameters = {total_params/1e6:.2f}M")
+        DEBUG("PiscesModel: __init__ end")
 
     def resize_token_embeddings(self, new_num_tokens):
         """
@@ -191,9 +192,24 @@ class PiscesModel(nn.Module):
         self.cfg.vocab_size = new_num_tokens
         print(f"✅\tResized token embeddings to {new_num_tokens}. Remember to update special token IDs in the reasoner.")
 
-    def prepare_inputs_for_generation(self, input_ids, **kwargs):
+    def prepare_inputs_for_generation(self, input_ids, attention_mask=None, position_ids=None, **kwargs):
         """Compatible with PEF/Transformers generation interface, can be extended as needed in practice"""
-        return {"input_ids": input_ids, **kwargs}
+        model_inputs = {"input_ids": input_ids}
+        
+        # Add attention_mask if not provided
+        if attention_mask is None:
+            attention_mask = torch.ones(input_ids.shape, dtype=torch.long, device=input_ids.device)
+        model_inputs["attention_mask"] = attention_mask
+        
+        # Add position_ids if not provided
+        if position_ids is None:
+            position_ids = attention_mask.long().cumsum(-1) - 1
+            position_ids.masked_fill_(attention_mask == 0, 1)
+        model_inputs["position_ids"] = position_ids
+        
+        # Include other kwargs
+        model_inputs.update(kwargs)
+        return model_inputs
 
     def forward(self, input_ids, images=None, audio=None, docs=None, labels=None):
         import torch.utils.checkpoint as cp
@@ -257,8 +273,10 @@ class PiscesModel(nn.Module):
             # Main model outputs
             logits = self.lm_head(x)
             
-            # Reasoner outputs
-            reasoner_out = self.reasoner(x, input_ids, labels)
+            # Reasoner outputs - align input_ids length with x
+            reasoner_input_ids = input_ids[:, :x.shape[1]] if input_ids.shape[1] > x.shape[1] else input_ids
+            reasoner_labels = labels[:, :x.shape[1]] if labels is not None and labels.shape[1] > x.shape[1] else labels
+            reasoner_out = self.reasoner(x, reasoner_input_ids, reasoner_labels)
 
             loss = None
             if labels is not None:

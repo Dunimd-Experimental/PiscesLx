@@ -21,7 +21,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 class PiscesReasoner(nn.Module):
     """
     Pisces Reasoner Module.
@@ -95,9 +94,17 @@ class PiscesReasoner(nn.Module):
             else:
                 thinking_loss = torch.tensor(0.0, device=hidden_states.device, requires_grad=True)
                 
-            # A simple heuristic for reflection loss, assuming the last two tokens
-            # determine correctness. This should be refined based on data format.
-            reflection_labels = (labels[:, -1] == labels[:, -2]).long()
+            # Reflection labels: use token-level accuracy across all valid tokens
+            with torch.no_grad():
+                # Get predictions for all valid tokens (non-padding)
+                predictions = torch.argmax(thinking_logits, dim=-1)
+                # Create mask for valid tokens (non-padding)
+                valid_mask = (labels != 0)  # Assuming 0 is padding token
+                # Calculate token-level accuracy
+                correct_tokens = (predictions == labels) & valid_mask
+                token_accuracy = correct_tokens.float().sum(dim=1) / valid_mask.float().sum(dim=1)
+                # Convert to binary labels: high accuracy (>0.8) = correct, low = incorrect
+                reflection_labels = (token_accuracy > 0.8).long()
             reflection_loss = F.cross_entropy(reflection_logits, reflection_labels)
             
             loss = thinking_loss + reflection_loss
@@ -141,4 +148,4 @@ class TreeSearchReasoner:
         # Simple majority vote
         if not answers:
             return ""
-        return max(set(answers), key=answers.count) 
+        return max(set(answers), key=answers.count)

@@ -17,11 +17,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
+import math
 import torch
 import torch.nn as nn
-import math
 from typing import Optional
-
 
 class YaRNRotaryEmbedding(nn.Module):
     """Implementation of YaRN long-context positional encoding.

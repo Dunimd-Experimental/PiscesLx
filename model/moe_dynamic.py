@@ -20,9 +20,9 @@
 import math
 import torch
 import torch.nn as nn
+from utils.log import RIGHT
 import torch.nn.functional as F
 from collections import OrderedDict
-
 
 def moe_init_weights(m):
     if isinstance(m, nn.Linear):
@@ -92,7 +92,7 @@ class DynamicMoELayer(nn.Module):
         self._step = 0
         
         if DynamicMoELayer._layer_count == 1:
-            print(f"✅	DynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
+            RIGHT(f"DynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
     
     def _move_expert_to_gpu(self, expert_id):
         expert = self.experts[expert_id]

@@ -21,7 +21,6 @@ import json
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 
-
 @dataclass
 class PiscesConfig:
     """Pisces L1 model configuration"""

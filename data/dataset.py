@@ -22,6 +22,7 @@ import torch
 from datasets import load_from_disk
 from torch.utils.data import Dataset
 from model.tokenizer import get_tokenizer
+from utils.log import RIGHT, DEBUG, ERROR
 from model.multimodal import VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder
 
 # Keys used to identify image data in the dataset
@@ -64,7 +65,7 @@ class PiscesDataset(Dataset):
                 original_size = len(self.ds)
                 print(f"✅\tLocal dataset loaded successfully: {original_size} samples")
                 if original_size > 0:
-                    print("✅\tFiltering dataset to remove samples with no valid content...")
+                    RIGHT("Filtering dataset to remove samples with no valid content...")
                     
                     # Import cleaning utilities
                     from .clean import StreamCleaner
@@ -84,7 +85,7 @@ class PiscesDataset(Dataset):
                     self.ds = self.ds.filter(has_valid_content)
                     filtered_size = len(self.ds)
                     if filtered_size == 0:
-                        print(f"🟧\tWarning: All {original_size} samples were filtered out. Applying emergency cleaning...")
+                        DEBUG("Warning: All {original_size} samples were filtered out. Applying emergency cleaning...")
                         # Emergency mode: use original dataset with basic validation
                         def emergency_filter(example):
                             text = self._get_text(example)
@@ -96,7 +97,7 @@ class PiscesDataset(Dataset):
                     else:
                         print(f"✅\tFiltered out {original_size - filtered_size} samples. {filtered_size}/{original_size} samples remain ({(filtered_size/original_size)*100:.2f}%).")
             else:
-                print(f"❌\tLocal cache not found, trying online download: {subset}")
+                ERROR("Local cache not found, trying online download: {subset}")
                 if "MsDataset" not in globals() or MsDataset is None:
                     print("❌\tMsDataset unavailable. Cannot load ModelScope dataset online. Please upgrade modelscope>=1.28.0 and datasets>=2.14.7, or use only local datasets.")
                     self.ds = [{"text": f"Hello world {i}", "id": i} for i in range(100)]
@@ -109,11 +110,11 @@ class PiscesDataset(Dataset):
                             self.ds = msds
                         print(f"✅\tOnline dataset loaded successfully: {len(self.ds)} samples")
                     except Exception as e:
-                        print(f"❌\tMsDataset.load failed: {e}")
+                        ERROR("MsDataset.load failed: {e}")
                         print("❌\tCould not load ModelScope dataset online. Falling back to local test data.")
                         self.ds = [{"text": f"Hello world {i}", "id": i} for i in range(100)]
         except Exception as e:
-            print(f"❌\tDataset loading failed: {e}")
+            ERROR("Dataset loading failed: {e}")
             print("❌\tCreating test dataset...")
             # Create simple test dataset
             self.ds = [{"text": f"Hello world {i}", "id": i} for i in range(100)]
@@ -137,10 +138,8 @@ class PiscesDataset(Dataset):
         # Limit validation to first 1000 samples for performance
         max_samples = min(1000, len(self.ds))
         
-        # Create progress bar-like output
-        print(f"🟧\tValidating token IDs... ", end="", flush=True)
-        
-        for i in range(max_samples):
+        # Use unified progress bar
+        for i in progress_bar(range(max_samples), desc="🟧\tValidating token IDs"):
             item = self.ds[i]
             text = self._get_text(item)
             if text.strip():
@@ -148,39 +147,30 @@ class PiscesDataset(Dataset):
                     input_ids = self.tokenizer.encode(text, return_tensors="pt")[0]
                     max_token_id = input_ids.max().item() if len(input_ids) > 0 else 0
                     min_token_id = input_ids.min().item() if len(input_ids) > 0 else 0
-                    
+                        
                     if max_token_id >= vocab_size or min_token_id < 0:
                         invalid_samples.append(i)
-                        
+                            
                 except Exception as e:
                     invalid_samples.append(i)
             
-            # Progress bar update
-            progress = (i + 1) / max_samples
-            bar_length = 20
-            filled_length = int(bar_length * progress)
-            bar = "█" * filled_length + "░" * (bar_length - filled_length)
-            
-            if i == max_samples - 1 or (i + 1) % 50 == 0:
-                print(f"\r🟧\tValidating token IDs... [{bar}] {int(progress * 100)}%", end="", flush=True)
-        
-        print(f"\r✅\tToken validation complete! {' ' * 30}")
+        RIGHT("Token validation complete!")
         
         # Print token ID range and vocab size for debugging
-        print(f"🟧\tVocab size: {vocab_size}")
+        DEBUG("Vocab size: {vocab_size}")
         if len(self.ds) > 0:
             sample_text = self._get_text(self.ds[0])
             if sample_text:
                 sample_ids = self.tokenizer.encode(sample_text, return_tensors="pt")[0]
-                print(f"🟧\tToken ID range: {sample_ids.min().item()} - {sample_ids.max().item()}")
+                DEBUG("Token ID range: {sample_ids.min().item()} - {sample_ids.max().item()}")
         
         if invalid_samples:
-            print(f"🟧\tFound {len(invalid_samples)} invalid samples in validation set")
+            DEBUG("Found {len(invalid_samples)} invalid samples in validation set")
         else:
-            print("✅\tAll token IDs validated successfully")
+            RIGHT("All token IDs validated successfully")
             
         if len(self.ds) > max_samples:
-            print(f"🟧\tValidated {max_samples}/{len(self.ds)} samples (performance optimization)")
+            DEBUG("Validated {max_samples}/{len(self.ds)} samples (performance optimization)")
 
     # Extract text content from a dataset item
     # Args:
@@ -195,7 +185,7 @@ class PiscesDataset(Dataset):
         if hasattr(self, '_debug_count'):
             self._debug_count = getattr(self, '_debug_count', 0) + 1
             if self._debug_count <= 3:
-                print(f"🟧\tDebug item structure: {type(item)}, keys: {list(item.keys()) if isinstance(item, dict) else 'N/A'}")
+                DEBUG("Debug item structure: {type(item)}, keys: {list(item.keys()) if isinstance(item, dict) else 'N/A'}")
         
         # Look for a direct key match
         for key in TEXT_FIELD_KEYS:
@@ -310,7 +300,7 @@ class PiscesDataset(Dataset):
         vocab_size = len(self.tokenizer)
         max_token_id = input_ids.max().item() if len(input_ids) > 0 else 0
         if max_token_id >= vocab_size:
-            print(f"🟧\tToken ID {max_token_id} exceeds vocab size {vocab_size}, clamping...")
+            DEBUG("Token ID {max_token_id} exceeds vocab size {vocab_size}, clamping...")
             input_ids = torch.clamp(input_ids, max=vocab_size - 1)
         
         # Ensure no negative indices
@@ -322,9 +312,9 @@ class PiscesDataset(Dataset):
         if image_path and self.vision_encoder and self.vision_encoder.enabled:
             try:
                 pixel_values = self.vision_encoder.process_image(image_path)
-                print(f"🟧\tImage processed successfully: {image_path}")
+                DEBUG("Image processed successfully: {image_path}")
             except Exception as e:
-                print(f"❌\tImage processing error: {e}")
+                ERROR("Image processing error: {e}")
 
         # Audio
         audio_input = None
@@ -332,9 +322,9 @@ class PiscesDataset(Dataset):
         if audio_path and self.audio_encoder and self.audio_encoder.enabled:
             try:
                 audio_input = self.audio_encoder.process_audio(audio_path)
-                print(f"🟧\tAudio processed successfully: {audio_path}")
+                DEBUG("Audio processed successfully: {audio_path}")
             except Exception as e:
-                print(f"❌\tAudio processing error: {e}")
+                ERROR("Audio processing error: {e}")
 
         # Document
         doc_input = None
@@ -342,9 +332,9 @@ class PiscesDataset(Dataset):
         if doc_path and self.doc_encoder and self.doc_encoder.enabled:
             try:
                 doc_input = self.doc_encoder.process_doc(doc_path)
-                print(f"🟧\tDoc processed successfully: {doc_path}")
+                DEBUG("Doc processed successfully: {doc_path}")
             except Exception as e:
-                print(f"❌\tDoc processing error: {e}")
+                ERROR("Doc processing error: {e}")
 
         # Video - with memory optimization warnings
         video_frames = None
@@ -359,8 +349,8 @@ class PiscesDataset(Dataset):
                     free = total - reserved
                     
                     if free < 2.0:  # Less than 2GB free
-                        print(f"🟧\tLow GPU memory detected ({free:.1f}GB free). Video processing may fail.")
-                        print(f"🟧\tConsider using --memory_efficient flag for training.")
+                        DEBUG("Low GPU memory detected ({free:.1f}GB free). Video processing may fail.")
+                        DEBUG("Consider using --memory_efficient flag for training.")
                 
                 video_frames = self.video_encoder.process_video(video_path)
                 print(f"✅\tVideo processed successfully: {video_path}")
@@ -370,7 +360,7 @@ class PiscesDataset(Dataset):
                     torch.cuda.empty_cache()
                     
             except Exception as e:
-                print(f"❌\tVideo processing error: {e}")
+                ERROR("Video processing error: {e}")
                 video_frames = None
 
         # Reasoning correctness label (for training reflection head)

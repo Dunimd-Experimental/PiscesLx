@@ -18,13 +18,13 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import time, torch
+from utils.log import RIGHT
 from model import PiscesModel, PiscesConfig
-
 
 cfg = PiscesConfig.from_json("configs/0.5B.json")
 # Smart device detection
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-print(f"✅\tUsing device: {device}")
+RIGHT(f"Using device: {device}")
 
 model = PiscesModel(cfg).to(device).eval()
 tok = torch.randint(0, cfg.vocab_size, (1, 8192)).to(device)
@@ -34,4 +34,4 @@ with torch.no_grad():
     _ = model(tok)
 torch.cuda.synchronize()
 
-print("\t8192 tokens forward:", time.time()-t0, "s")
+RIGHT("8192 tokens forward:", time.time()-t0, "s")

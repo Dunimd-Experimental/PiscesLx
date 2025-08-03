@@ -21,12 +21,9 @@ import os
 import gc
 import glob
 import shutil
-import requests
-import math
 import multiprocessing
-from tqdm import tqdm
 from .clean import DatasetCleaner
-from datasets import load_from_disk
+from utils.log import RIGHT, DEBUG, ERROR
 from modelscope.msdatasets import MsDataset
 
 # Get the root directory of the current script
@@ -50,13 +47,13 @@ def save(ds, name):
     try:
         # Generate the save path for the dataset
         save_path = os.path.join(DATA, name)
-        print(f"✅\tSaving {name} to {save_path}...")
+        RIGHT(f"Saving {name} to {save_path}...")
         # Save the dataset to the specified path
         ds.save_to_disk(save_path)
-        print(f"✅\t{name} saved to {save_path}")
+        RIGHT(f"{name} saved to {save_path}")
         return True
     except Exception as e:
-        print(f"❌\tFailed to save {name}: {e}")
+        ERROR("Failed to save {name}: {e}")
         return False
 
 def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
@@ -67,7 +64,7 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
         max_samples_per_dataset (int, optional): The maximum number of samples per dataset. Defaults to 50000.
         post_download_clean (bool, optional): Whether to perform post-download cleaning. Defaults to True.
     """
-    print("✅\tStarting ModelScope dataset download...")
+    RIGHT("Starting ModelScope dataset download...")
     
     # Core datasets for Pisces L1 training
     datasets = [
@@ -124,10 +121,10 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
     downloaded_count = len(downloaded)
     
     if not to_download:
-        print(f"✅\tAll {total} datasets already downloaded")
+        RIGHT(f"All {total} datasets already downloaded")
         return
     
-    print(f"🟧\tDetected {total} total datasets, {downloaded_count} downloaded, {len(to_download)} need download")
+    DEBUG(f"Detected {total} total datasets, {downloaded_count} downloaded, {len(to_download)} need download")
     success_count = 0
     successfully_downloaded = set()
 
@@ -146,7 +143,7 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
             
     # Perform unified cleaning after all datasets are downloaded using auto_clean with multiprocessing
     if post_download_clean and successfully_downloaded:
-        print(f"\n🟧\tStarting unified cleaning for all {len(successfully_downloaded)} downloaded datasets...")
+        DEBUG(f"Starting unified cleaning for all {len(successfully_downloaded)} downloaded datasets...")
         try:
             DatasetCleaner.auto_clean(
                 input_dir=DATA,
@@ -155,9 +152,9 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
                 text_field=None,
                 workers=None  # Enable multiprocessing support
             )
-            print(f"✅\tUnified cleaning completed for all datasets")
+            RIGHT(f"Unified cleaning completed for all datasets")
         except Exception as e:
-            print(f"❌\tUnified cleaning failed: {e}")
+            ERROR("Unified cleaning failed: {e}")
             try:
                 DatasetCleaner.auto_clean(
                     input_dir=DATA,
@@ -165,11 +162,11 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
                     min_length=1,
                     text_field=None
                 )
-                print(f"✅\tUnified cleaning completed in fallback mode")
+                RIGHT(f"Unified cleaning completed in fallback mode")
             except Exception as e2:
-                print(f"❌\tUnified cleaning in fallback mode failed: {e2}")
+                ERROR("Unified cleaning in fallback mode failed: {e2}")
     
-        print("🟧\tCleaning up system cache...")
+        DEBUG("Cleaning up system cache...")
 
         modelscope_ds_cache = os.path.expanduser("~/.cache/modelscope/hub/datasets")
         cache_dirs = [
@@ -184,16 +181,16 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
         for dir_path in cache_dirs:
             if os.path.exists(dir_path):
                 shutil.rmtree(dir_path)
-                print(f"✅\tRemoved cache directory: {dir_path}")
+                RIGHT(f"Removed cache directory: {dir_path}")
         
         gc.collect()
-        print("✅\tSystem garbage collection completed")
+        RIGHT("System garbage collection completed")
         
         try:
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-                print("✅\tCUDA memory cache cleared")
+                RIGHT("CUDA memory cache cleared")
         except ImportError:
             pass
         
@@ -208,7 +205,7 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
                         f.write(f"{dataset_name}\n")
                 print(f"✅\tGenerated model.txt with {len(successfully_downloaded)} datasets: {model_file}")
             except Exception as e:
-                print(f"❌\tFailed to generate model.txt: {e}")
+                ERROR("Failed to generate model.txt: {e}")
 
 def _download_worker(args):
     """
@@ -231,9 +228,9 @@ def _download_worker(args):
                         error_msg = str(e).lower()
                         if "trust_remote_code" in error_msg or "remote code" in error_msg:
                             ds = MsDataset.load(dataset_name, split=split, trust_remote_code=True)
-                            print(f"🟧\tEnabling remote code trust mode to load {dataset_name}")
+                            DEBUG("Enabling remote code trust mode to load {dataset_name}")
                         elif "oss2" in error_msg or "oss" in error_msg:
-                            print(f"🟧\tOSS dependency issue detected, please ensure oss2 is installed")
+                            DEBUG("OSS dependency issue detected, please ensure oss2 is installed")
                             raise
                         else:
                             raise
@@ -243,12 +240,12 @@ def _download_worker(args):
                 except Exception as e:
                     last_split_error = str(e)
                     if "dataset generation" in str(e).lower():
-                        print(f"🟧\tDataset generation error, will retry...")
+                        DEBUG("Dataset generation error, will retry...")
                         continue
             if ds is None:
-                print(f"❌\tNo available split (tried train/validation/test). Last error: {last_split_error}")
+                ERROR("No available split (tried train/validation/test). Last error: {last_split_error}")
                 if attempt < max_retries - 1:
-                    print(f"🟧\tRetrying in 5 seconds...")
+                    DEBUG("Retrying in 5 seconds...")
                     import time
                     time.sleep(5)
                     continue
@@ -272,12 +269,12 @@ def _download_worker(args):
                     pass
                 return save_name
             else:
-                print(f"🟧\tSave failed for {dataset_name}, retrying...")
+                DEBUG("Save failed for {dataset_name}, retrying...")
         except Exception as e:
             if attempt < max_retries - 1:
-                print(f"❌\tAttempt {attempt+1} failed: {e}. Retrying...")
+                ERROR("Attempt {attempt+1} failed: {e}. Retrying...")
             else:
-                print(f"❌\tAttempt {attempt+1} failed: {e}. No retries left.")
+                ERROR("Attempt {attempt+1} failed: {e}. No retries left.")
     return None
 
 def optimize_datasets(max_keep=None):
@@ -297,12 +294,12 @@ def optimize_datasets(max_keep=None):
             
         try:
             # Load the original dataset directly
-            print(f"🟧\tProcessing {raw_dir}...")
+            DEBUG("Processing {raw_dir}...")
             ds = load_from_disk(raw_dir)
             original_len = len(ds)
             
             if original_len == 0:
-                print(f"🟧\t{raw_dir} - Original dataset is empty, skipping")
+                DEBUG("{raw_dir} - Original dataset is empty, skipping")
                 continue
             
             # Convert to pandas DataFrame for processing
@@ -321,9 +318,9 @@ def optimize_datasets(max_keep=None):
                 string_cols = df.select_dtypes(include=['object']).columns
                 if len(string_cols) > 0:
                     text_field = string_cols[0]
-                    print(f"🟧\tUsing string column '{text_field}' as the text field")
+                    DEBUG("Using string column '{text_field}' as the text field")
                 else:
-                    print(f"🟧\t{raw_dir} - No text field found, skipping")
+                    DEBUG("{raw_dir} - No text field found, skipping")
                     continue
             
             # Clean text data
@@ -348,7 +345,7 @@ def optimize_datasets(max_keep=None):
             df_cleaned = df[mask]
             
             if len(df_cleaned) == 0:
-                print(f"🟧\t{raw_dir} - No valid data after cleaning, skipping")
+                DEBUG("{raw_dir} - No valid data after cleaning, skipping")
                 continue
             
             # No longer limit the data volume, keep all cleaned data
@@ -361,5 +358,5 @@ def optimize_datasets(max_keep=None):
             print(f"✅\t{raw_dir} | In-place cleaning completed: {len(df_cleaned)}/{original_len} records")
             
         except Exception as e:
-            print(f"❌\t{raw_dir} - Processing failed: {e}")
+            ERROR("{raw_dir} - Processing failed: {e}")
             continue

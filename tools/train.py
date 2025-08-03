@@ -19,23 +19,21 @@
 
 import os
 import sys
-import argparse
-import subprocess
+from utils.log import RIGHT, DEBUG, ERROR
 
 def setup_device(device_pref):
     import torch
-    print(f"\n==============================")
-    print('🟧\tPisces L1 Training Start!')
+    DEBUG("Pisces L1 Training Start!")
     if device_pref == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device_pref)
-    print(f"✅\tUsing device: {device}")
+    RIGHT(f"Using device: {device}")
     if torch.cuda.is_available():
-        print(f"✅\tGPU: {torch.cuda.get_device_name(0)}")
-        print(f"✅\tGPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        RIGHT(f"GPU: {torch.cuda.get_device_name(0)}")
+        RIGHT(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
     else:
-        print("❌\tNo GPU available, using CPU")
+        ERROR("No GPU available, using CPU")
     return device
 
 def collate_fn(batch):
@@ -45,8 +43,21 @@ def collate_fn(batch):
     input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=0)
     if input_ids.shape[1] > MAX_SEQ_LEN:
         input_ids = input_ids[:, :MAX_SEQ_LEN]
+    
+    # Handle pixel_values for vision modality
     pixel_values = None
+    if any(item.get("pixel_values") is not None for item in batch):
+        pixel_values_list = [item["pixel_values"] for item in batch if item.get("pixel_values") is not None]
+        if pixel_values_list:
+            pixel_values = torch.stack(pixel_values_list)
+    
+    # Handle audio_input for audio modality
     audio_input = None
+    if any(item.get("audio_input") is not None for item in batch):
+        audio_input_list = [item["audio_input"] for item in batch if item.get("audio_input") is not None]
+        if audio_input_list:
+            audio_input = torch.nn.utils.rnn.pad_sequence(audio_input_list, batch_first=True, padding_value=0)
+    
     labels = input_ids.clone()
     if labels.shape[1] > MAX_SEQ_LEN:
         labels = labels[:, :MAX_SEQ_LEN]
@@ -77,7 +88,7 @@ def train(args):
     }
     model_size = getattr(args, 'model_size', '0.5B').upper()
     if model_size not in AUTO_CONFIG:
-        print(f"❌ Unsupported model_size: {model_size}")
+        ERROR(f"Unsupported model_size: {model_size}")
         sys.exit(1)
     cfg_dict = AUTO_CONFIG[model_size]
     batch_size = cfg_dict['batch_size']
@@ -95,25 +106,25 @@ def train(args):
     data_cache_dir = "data_cache"
     model_txt = os.path.join(data_cache_dir, "model.txt")
     if not os.path.exists(model_txt):
-        print(f"❌\t{model_txt} not found! Please create it with one dataset name per line.")
+        ERROR("{model_txt} not found! Please create it with one dataset name per line.")
         sys.exit(1)
     with open(model_txt, "r", encoding="utf-8") as f:
         dataset_list = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
     if not dataset_list:
-        print(f"❌\tNo dataset names found in {model_txt}!")
+        ERROR("No dataset names found in {model_txt}!")
         sys.exit(1)
     device = setup_device("auto")
-    print(f"✅\tDevice set: {device}")
-    print("✅\tLoading PiscesConfig...")
+    RIGHT(f"Device set: {device}")
+    RIGHT("Loading PiscesConfig...")
     config = f"configs/{model_size}.json"
     if not os.path.exists(config):
-        print(f"❌\tConfig file {config} not found. Please provide a valid --model_size.")
+        ERROR("Config file {config} not found. Please provide a valid --model_size.")
         sys.exit(1)
     print(f"✅\tLoading config file: {config}")
     cfg = PiscesConfig.from_json(config)
-    print("✅\tPiscesConfig loaded.")
+    RIGHT("PiscesConfig loaded.")
 
-    print("✅\tInitializing PiscesModel with Reasoner...")
+    RIGHT("Initializing PiscesModel with Reasoner...")
     
     # Always-on Reasoner: Tokenizer setup
     tokenizer = get_tokenizer()
@@ -159,49 +170,49 @@ def train(args):
         raise ValueError("Special reasoning tokens could not be added to the tokenizer.")
     model.reasoner.start_thinking_id = start_id
     model.reasoner.end_thinking_id = end_id
-    print(f"✅\tReasoner is integral and configured with token IDs: start={start_id}, end={end_id}")
+    RIGHT(f"Reasoner is integral and configured with token IDs: start={start_id}, end={end_id}")
     
     if hasattr(model, 'gradient_checkpointing_enable'):
         model.gradient_checkpointing_enable()
-        print(f"✅\tGradient Checkpointing enabled.")
+        RIGHT(f"Gradient Checkpointing enabled.")
         
     model = model.to(device)
-    print("✅\tPiscesModel initialized.")
+    RIGHT("PiscesModel initialized.")
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-        print(f"✅\tUsing {torch.cuda.device_count()} GPUs")
+        RIGHT(f"Using {torch.cuda.device_count()} GPUs")
         model = torch.nn.DataParallel(model)
-    print("✅\tInitializing optimizer and scheduler...")
+    RIGHT("Initializing optimizer and scheduler...")
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=lr)
-    print("✅\tOptimizer and scheduler ready.")
+    RIGHT("Optimizer and scheduler ready.")
     resume_ckpt = getattr(args, 'resume_ckpt', None)
     start_epoch = 0
     if resume_ckpt and os.path.exists(resume_ckpt):
-        print(f"✅\tResuming from checkpoint: {resume_ckpt}")
+        RIGHT(f"Resuming from checkpoint: {resume_ckpt}")
         start_epoch = load_ckpt(resume_ckpt, model, optimizer)
-        print(f"✅ Resumed at epoch {start_epoch}")
+        RIGHT(f"Resumed at epoch {start_epoch}")
 
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
-            print(f"✅ Learning rate auto-reset to {lr}")
+            RIGHT(f"Learning rate auto-reset to {lr}")
         min_lr_threshold = lr * 0.5
         for param_group in optimizer.param_groups:
             if param_group['lr'] < min_lr_threshold:
                 param_group['lr'] = lr
-                print(f"✅\tLearning rate auto-reset to {lr}")
+                RIGHT(f"Learning rate auto-reset to {lr}")
     for dataset in dataset_list:
-        print(f"\n==============================")
-        print(f"✅\tTraining dataset: {dataset}")
-        print(f"✅\tBatch size: {batch_size}, Epochs: {epochs}, LR: {lr}")
+        DEBUG(f"\n==============================")
+        RIGHT(f"Training dataset: {dataset}")
+        RIGHT(f"Batch size: {batch_size}, Epochs: {epochs}, LR: {lr}")
         cache_path = os.path.join(data_cache_dir, dataset)
         if not os.path.exists(cache_path):
-            print(f"❌\tLocal dataset not found: {cache_path}")
+            ERROR("Local dataset not found: {cache_path}")
             continue
         train_ds = PiscesDataset(subset=dataset, split="train", config=cfg)
         if len(train_ds) == 0:
-            print(f"🟧\tWarning: Dataset '{dataset}' is empty after filtering. Skipping.")
+            DEBUG("Warning: Dataset '{dataset}' is empty after filtering. Skipping.")
             continue
-        print(f"✅\tDataset loaded successfully, size: {len(train_ds)}")
-        print("✅\tCreating DataLoader...")
+        RIGHT(f"Dataset loaded successfully, size: {len(train_ds)}")
+        RIGHT("Creating DataLoader...")
         train_loader = DataLoader(
             train_ds,
             batch_size=batch_size,
@@ -211,9 +222,9 @@ def train(args):
             drop_last=True,
             collate_fn=collate_fn,
         )
-        print("✅\tDataLoader created successfully")
+        RIGHT("DataLoader created successfully")
         os.makedirs(save_dir, exist_ok=True)
-        print("✅\tStarting training loop...")
+        RIGHT("Starting training loop...")
         model.train()
         scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
         torch.cuda.empty_cache()
@@ -222,7 +233,7 @@ def train(args):
         epoch = start_epoch
         try:
             while not stop_training:
-                print(f"🟧\tStarting epoch {epoch+1}")
+                DEBUG("Starting epoch {epoch+1}")
                 total_loss = 0
                 accum_counter = 0
                 optimizer.zero_grad()
@@ -252,7 +263,7 @@ def train(args):
                                 optimizer.zero_grad()
                                 accum_counter = 0
                         else:
-                            print(f"🟧\tWarning: Skipping step {step} due to invalid loss (None or no grad).")
+                            DEBUG("Warning: Skipping step {step} due to invalid loss (None or no grad).")
                             
                     else: # Non-scaler path
                         outputs = model(**device_batch)
@@ -270,7 +281,7 @@ def train(args):
                                 optimizer.zero_grad()
                                 accum_counter = 0
                         else:
-                            print(f"🟧\tWarning: Skipping step {step} due to invalid loss (None or no grad).")
+                            DEBUG("Warning: Skipping step {step} due to invalid loss (None or no grad).")
 
                     if loss is not None:
                         total_loss += loss.item() * accum
@@ -279,42 +290,41 @@ def train(args):
                             scheduler.step(loss.item())
                         if step % 10 == 0:
                             avg_loss = total_loss / (step + 1)
-                            print(f"✅\tEpoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+                            RIGHT(f"Epoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
                 
                 if not train_loader:
-                    print(f"🟧\tSkipping epoch end logic for empty loader.")
+                    DEBUG("Skipping epoch end logic for empty loader.")
                     continue
 
                 avg_loss = total_loss / (step + 1)
                 checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
                 save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
-                print(f"✅\tCheckpoint saved: {checkpoint_path}")
+                RIGHT(f"Checkpoint saved: {checkpoint_path}")
                 
                 if epoch+1 == min_plateau_epoch:
                     from torch.optim.lr_scheduler import ReduceLROnPlateau
-                    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-6)
-                    print(f"✅\tReduceLROnPlateau scheduler enabled after {min_plateau_epoch} epochs.")
+                    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-8)
+                    RIGHT(f"ReduceLROnPlateau scheduler enabled after {min_plateau_epoch} epochs.")
                 if avg_loss < 1.0:
-                    print(f"✅\tLoss < 1.0, stopping training for dataset {dataset}.")
+                    RIGHT(f"Loss < 1.0, stopping training for dataset {dataset}.")
                     stop_training = True
                 else:
                     epoch += 1
         except KeyboardInterrupt:
-            print("❌\tTraining interrupted by user (Ctrl-C). Saving checkpoint...")
+            ERROR("Training interrupted by user (Ctrl-C). Saving checkpoint...")
             interrupt_ckpt = f"{save_dir}/latest_interrupt.pt"
             save_ckpt(model, optimizer, epoch + 1, interrupt_ckpt)
-            print(f"✅\tCheckpoint saved: {interrupt_ckpt}")
-            print(f"✅\tYou can resume training with:")
-            print(f"    python manage.py train --model_size {model_size} --resume_ckpt {interrupt_ckpt}")
+            RIGHT(f"Checkpoint saved: {interrupt_ckpt}")
+            RIGHT(f"You can resume training with: python manage.py train --model_size {model_size} --resume_ckpt {interrupt_ckpt}")
             sys.exit(0)
-        print("✅\tTraining completed!")
+        RIGHT("Training completed!")
 
     final_weight_path = os.path.join(save_dir, f"pisces-l1-{model_size.lower()}-final.pt")
     if hasattr(model, "module"):  # DataParallel
         torch.save(model.module.state_dict(), final_weight_path)
     else:
         torch.save(model.state_dict(), final_weight_path)
-    print(f"✅\tAll datasets finished. Final model weights saved to: {final_weight_path}")
+    RIGHT(f"All datasets finished. Final model weights saved to: {final_weight_path}")
 
 def add_train_args(parser):
     parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g. 0.5B, 1.5B, 7B, 70B')

@@ -21,7 +21,8 @@ import os
 import time
 import psutil
 import platform
-
+from utils.log import RIGHT, ERROR
+from utils.progress import get_progress_bar
 
 UPDATE_INTERVAL = 1
 
@@ -37,19 +38,6 @@ def bytes_to_human(n):
             value = float(n) / prefix[s]
             return f'{value:.2f}{s}B'
     return f"{n}B"
-
-def get_progress_bar(percent, length=30):
-    """Creates a text-based progress bar."""
-    try:
-        percent = float(percent)
-        if not 0 <= percent <= 100:
-            percent = 0
-    except (ValueError, TypeError):
-        percent = 0
-        
-    filled_length = int(length * percent / 100)
-    bar = '█' * filled_length + '-' * (length - filled_length)
-    return f'|{bar}| {percent:5.1f}%'
 
 # --- GPU Monitoring Setup ---
 GPU_ENABLED = False
@@ -192,10 +180,10 @@ def display_stats(stats, last_net_io, last_disk_io, last_time):
     return current_net_io, current_disk_io
 
 def monitor():
-    print("✅\tStarting Pisces L1 System Monitor...")
+    RIGHT("Starting Pisces L1 System Monitor...")
     if not GPU_ENABLED:
-        print("❌\tNVIDIA GPU not detected or 'pynvml' library failed to load.")
-        print("❌\tFor GPU monitoring, ensure you have an NVIDIA GPU and run: pip install pynvml")
+        ERROR("NVIDIA GPU not detected or 'pynvml' library failed to load.")
+        ERROR("For GPU monitoring, ensure you have an NVIDIA GPU and run: pip install pynvml")
     time.sleep(2)
     # Main function to run the monitor.
     last_net_io = psutil.net_io_counters()
@@ -210,9 +198,9 @@ def monitor():
             last_time = time.time()
             time.sleep(UPDATE_INTERVAL)
     except KeyboardInterrupt:
-        print("\n\n✅\tMonitor stopped. Goodbye!")
+        RIGHT("\n\nMonitor stopped. Goodbye!")
     except Exception as e:
-        print(f"\n❌\tAn error occurred: {e}")
+        ERROR(f"\nAn error occurred: {e}")
     finally:
         if GPU_ENABLED:
             pynvml.nvmlShutdown()

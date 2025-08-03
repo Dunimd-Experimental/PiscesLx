@@ -21,7 +21,7 @@ import os
 import re
 import json
 import urllib.request
-
+from utils.log import RIGHT, ERROR
 
 class BPETokenizer:
     def __init__(self, vocab_path=None, merges_path=None, special_tokens=None):
@@ -35,14 +35,14 @@ class BPETokenizer:
             base_tokens = [chr(i) for i in range(32, 127)]
             self.encoder = {tok: i for i, tok in enumerate(base_tokens)}
             self.decoder = {i: tok for tok, i in self.encoder.items()}
-            print("❌\tNo vocab.json found, using dummy vocab.")
+            ERROR("No vocab.json found, using dummy vocab.")
         self.bpe_ranks = {}
         if merges_path and os.path.exists(merges_path):
             with open(merges_path, "r", encoding="utf-8") as f:
                 merges = [tuple(line.strip().split()) for line in f if not line.startswith("#") and line.strip()]
             self.bpe_ranks = {pair: i for i, pair in enumerate(merges)}
         else:
-            print("❌\tNo merges.txt found, using char-level BPE.")
+            ERROR("No merges.txt found, using char-level BPE.")
         self.special_tokens = special_tokens or ["<s>", "</s>", "<unk>", "<pad>"]
         for tok in self.special_tokens:
             if tok not in self.encoder:
@@ -161,9 +161,9 @@ class BPETokenizer:
 
 def download_if_missing(url, local_path):
     if not os.path.exists(local_path):
-        print(f"✅\tDownloading {os.path.basename(local_path)} ...")
+        RIGHT(f"Downloading {os.path.basename(local_path)} ...")
         urllib.request.urlretrieve(url, local_path)
-        print(f"✅\tDownloaded {local_path}")
+        RIGHT(f"Downloaded {local_path}")
 
 def get_tokenizer():
     vocab_path, merges_path = None, None

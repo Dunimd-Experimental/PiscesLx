@@ -18,7 +18,7 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import os
-
+from utils.log import RIGHT, DEBUG, ERROR
 
 def setup_device(device_pref):
     import torch
@@ -26,12 +26,12 @@ def setup_device(device_pref):
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device_pref)
-    print(f"✅\tUsing device: {device}")
+    RIGHT(f"Using device: {device}")
     if torch.cuda.is_available():
-        print(f"✅\tGPU: {torch.cuda.get_device_name(0)}")
-        print(f"✅\tGPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
+        RIGHT(f"GPU: {torch.cuda.get_device_name(0)}")
+        RIGHT(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
     else:
-        print("❌\tNo GPU available, using CPU")
+        ERROR("No GPU available, using CPU")
     return device
 
 def infer(args):
@@ -42,7 +42,7 @@ def infer(args):
     from transformers import BitsAndBytesConfig
     from torchvision.transforms import functional as TF
     import torch.nn.functional as F
-    print("✅\tStarting Pisces L1 Inference ...")
+    RIGHT("Starting Pisces L1 Inference ...")
     device = setup_device("auto")
     
     model_size = getattr(args, "model_size", "0.5B").upper()
@@ -57,20 +57,20 @@ def infer(args):
     model = PiscesModel(cfg, quantization_config=quant_config)
     lora_used = False
     if args.ckpt:
-        print(f"✅\tLoading model: {args.ckpt}")
+        RIGHT(f"Loading model: {args.ckpt}")
         checkpoint = torch.load(args.ckpt, map_location=device)
         state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
 
         ckpt_vocab_size = state_dict['embed.weight'].shape[0] if 'embed.weight' in state_dict else None
         model_vocab_size = model.embed.weight.shape[0]
         if ckpt_vocab_size and ckpt_vocab_size != model_vocab_size:
-            print(f"🟧\tVocab size mismatch: checkpoint={ckpt_vocab_size}, model={model_vocab_size}. Auto resizing...")
+            DEBUG("Vocab size mismatch: checkpoint={ckpt_vocab_size}, model={model_vocab_size}. Auto resizing...")
             model.resize_token_embeddings(ckpt_vocab_size)
 
         lora_keys = [k for k in state_dict.keys() if k.startswith('base_model.model.') or '.lora_A.' in k or '.lora_B.' in k]
         if lora_keys:
             from peft import get_peft_model, LoraConfig, TaskType
-            print("✅\tDetected LoRA/QLoRA checkpoint, wrapping PiscesModel with LoRA config...")
+            RIGHT("Detected LoRA/QLoRA checkpoint, wrapping PiscesModel with LoRA config...")
             lora_config = LoraConfig(
                 r=8, lora_alpha=32, target_modules=["q_proj", "v_proj", "o_proj"],
                 lora_dropout=0.05, bias="none", task_type=TaskType.CAUSAL_LM
@@ -83,26 +83,26 @@ def infer(args):
             lora_used = True
         model = model.to(device).eval()
         model.load_state_dict(state_dict, strict=False)
-        print("✅\tModel loaded successfully")
+        RIGHT("Model loaded successfully")
     else:
         model = model.to(device).eval()
-        print("❌\tNo model file provided, using random weights")
-    print("✅\tLoading Pisces BPETokenizer...")
+        ERROR("No model file provided, using random weights")
+    RIGHT("Loading Pisces BPETokenizer...")
     tokenizer = get_tokenizer()
-    print("✅\tPisces BPETokenizer loaded successfully")
-    print(f"✅\tProcessing prompt: {args.prompt}")
+    RIGHT("Pisces BPETokenizer loaded successfully")
+    RIGHT(f"Processing prompt: {args.prompt}")
     input_ids = tokenizer.encode(args.prompt, return_tensors="pt").to(device)
     pixel_values = None
     if args.image and os.path.exists(args.image):
-        print(f"✅\tProcessing image: {args.image}")
+        RIGHT(f"Processing image: {args.image}")
         try:
             img = Image.open(args.image).convert("RGB").resize((224, 224))
             pixel_values = TF.to_tensor(img).unsqueeze(0).to(device)
-            print("✅\tImage processed successfully")
+            RIGHT("Image processed successfully")
         except Exception as e:
-            print(f"❌\tError processing image: {e}")
+            ERROR("Error processing image: {e}")
             pixel_values = None
-    print("✅\tGenerating response (Automatic blocking/Mixed precision/4-bit)...")
+    RIGHT("Generating response (Automatic blocking/Mixed precision/4-bit)...")
     max_gen_len = getattr(args, 'max_length', 100)
     
     prompt_len = input_ids.shape[1]
@@ -154,8 +154,8 @@ def infer(args):
             cur_input = torch.cat([cur_input, next_token], dim=1)
     output_ids = input_ids[0].tolist() + generated_ids
     generated_text = tokenizer.decode(output_ids, skip_special_tokens=True)
-    print("\n" + "="*50)
-    print("✅\tGenerated Response:")
-    print("="*50)
-    print(generated_text)
-    print("="*50) 
+    DEBUG("\n" + "="*50)
+    RIGHT("Generated Response:")
+    DEBUG("="*50)
+    DEBUG(generated_text)
+    DEBUG("="*50)

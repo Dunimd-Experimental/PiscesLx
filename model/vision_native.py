@@ -18,10 +18,11 @@
 # along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 import torch
-import torch.nn as nn
-from einops import rearrange
 import numpy as np
 from PIL import Image
+import torch.nn as nn
+from einops import rearrange
+from utils.log import  DEBUG, ERROR
 
 class NativeSiglipVisionEncoder(nn.Module):
     """原生实现的SigLIP级视觉编码器，基于谷歌SigLIP 2架构改进"""
@@ -35,7 +36,7 @@ class NativeSiglipVisionEncoder(nn.Module):
         self.num_heads = 18
         self.num_layers = 24
         
-        print(f"🟧	NativeSiglipVisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        DEBUG(f"NativeSiglipVisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         # 图像预处理
         self.register_buffer('mean', torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
@@ -77,11 +78,11 @@ class NativeSiglipVisionEncoder(nn.Module):
         # 投影层
         self.proj = nn.Linear(self.hidden_size, cfg.hidden_size)
         
-        print("🟧	NativeSiglipVisionEncoder: __init__ end")
+        DEBUG("NativeSiglipVisionEncoder: __init__ end")
     
     def process_image(self, image_path):
         """Process image data"""
-        print(f"🟧	Processing image: {image_path}")
+        DEBUG(f"Processing image: {image_path}")
         try:
             # 使用PIL读取图像并转换为张量
             image = Image.open(image_path).convert('RGB')
@@ -90,7 +91,7 @@ class NativeSiglipVisionEncoder(nn.Module):
             image = (image - self.mean) / self.std
             return image
         except Exception as e:
-            print(f"❌	Image processing error: {e}")
+            ERROR(f"Image processing error: {e}")
             return None
     
     def forward(self, pixel_values):

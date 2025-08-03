@@ -21,10 +21,10 @@ import os
 import re
 import gc
 import json
-import logging
 import pandas as pd
-from tqdm import tqdm
 import multiprocessing as mp
+from utils.progress import progress_bar
+from utils.log import RIGHT, DEBUG, ERROR
 from typing import Dict, Callable, List, Optional, Tuple
 from datasets import load_from_disk, Dataset, concatenate_datasets
 
@@ -190,7 +190,7 @@ class DatasetCleaner:
     @staticmethod
     def fast_clean(data_dir: str, max_len: int = 256):
         """30-second emergency data cleaning"""
-        print("🟧\tPerforming emergency data cleaning...")
+        DEBUG("Performing emergency data cleaning...")
         
         def emergency_filter(batch):
             """Filter out overlong/empty samples"""
@@ -211,11 +211,11 @@ class DatasetCleaner:
                     with open(file_path, 'w', encoding='utf-8') as f:
                         json.dump(filtered, f, ensure_ascii=False, indent=2)
                 
-                print(f"✅\tCleaning completed: {file}")
+                RIGHT(f"Cleaning completed: {file}")
             except Exception as e:
-                print(f"🟧\tSkipping file {file}: {e}")
+                DEBUG("Skipping file {file}: {e}")
         
-        print("✅\tEmergency data cleaning completed!")
+        RIGHT("Emergency data cleaning completed!")
     
     @staticmethod
     def clean_text(text, min_length=1):
@@ -315,14 +315,14 @@ class DatasetCleaner:
                     break
             
             if detected_field:
-                print(f"🟧\tText field '{text_field}' not found, using '{detected_field}' instead")
+                DEBUG("Text field '{text_field}' not found, using '{detected_field}' instead")
                 text_field = detected_field
             else:
                 # If no text field found, use the first string column
                 string_cols = df.select_dtypes(include=['object']).columns
                 if len(string_cols) > 0:
                     text_field = string_cols[0]
-                    print(f"🟧\tNo standard text field found, using first string column '{text_field}'")
+                    DEBUG("No standard text field found, using first string column '{text_field}'")
                 else:
                     raise ValueError(f"No text field found in dataset. Available columns: {list(df.columns)}")
 
@@ -610,7 +610,7 @@ class DatasetCleaner:
             return None
             
         except Exception as e:
-            print(f"❌\tailed to process dataset {ds_path}: {str(e)}")
+            ERROR("ailed to process dataset {ds_path}: {str(e)}")
             return None
 
     @staticmethod
@@ -638,10 +638,10 @@ class DatasetCleaner:
         ]
         
         if not raw_paths:
-            print("🟧\tNo datasets to be cleaned found")
+            DEBUG("No datasets to be cleaned found")
             return None
         
-        print(f"🟧\tFound {len(raw_paths)} datasets, starting {workers} processes for cleaning...")
+        DEBUG("Found {len(raw_paths)} datasets, starting {workers} processes for cleaning...")
         
         # Multiprocessing cleaning
         with mp.Pool(workers) as pool:
@@ -657,14 +657,14 @@ class DatasetCleaner:
         if not valid_results:
             return None
         
-        print(f"✅\tMerging {len(valid_results)} cleaned datasets...")
+        RIGHT(f"Merging {len(valid_results)} cleaned datasets...")
         merged = concatenate_datasets(valid_results)
         
         # Remove source column to avoid metadata
         if "source" in merged.column_names:
             merged = merged.remove_columns(["source"])
         
-        print(f"✅\tCleaning and merging completed! Total {len(merged)} records → {output_dir}")
+        RIGHT(f"Cleaning and merging completed! Total {len(merged)} records → {output_dir}")
         return merged
 
     @staticmethod
@@ -724,18 +724,18 @@ class DatasetCleaner:
         try:
             # Validate dataset exists and is accessible
             if not os.path.exists(input_path):
-                print(f"🟧\tDataset path does not exist: {input_path}")
+                DEBUG("Dataset path does not exist: {input_path}")
                 return (0, 0)
             
             # Check if dataset is empty
             try:
                 dataset = load_from_disk(input_path)
                 if len(dataset) == 0:
-                    print(f"🟧\tDataset {dataset_name} is empty, skipping processing")
+                    DEBUG("Dataset {dataset_name} is empty, skipping processing")
                     return (0, 0)
-                print(f"🟧\tStarting to process dataset: {dataset_name} (Total {len(dataset)} records)")
+                DEBUG("Starting to process dataset: {dataset_name} (Total {len(dataset)} records)")
             except Exception as e:
-                print(f"❌\tFailed to load dataset {dataset_name}: {str(e)}")
+                ERROR("Failed to load dataset {dataset_name}: {str(e)}")
                 return (0, 0)
             
             # Process the dataset and get the cleaning results
@@ -751,9 +751,9 @@ class DatasetCleaner:
             return (cleaned_count, total_count)
             
         except Exception as e:
-            print(f"❌\tError cleaning {dataset_name}: {str(e)}")
+            ERROR("Error cleaning {dataset_name}: {str(e)}")
             import traceback
-            print(f"❌\tDetailed error information: {traceback.format_exc()}")
+            ERROR("Detailed error information: {traceback.format_exc()}")
             return (0, 0)
 
         # Check if dataset has expected structure
@@ -807,7 +807,7 @@ class DatasetCleaner:
                     min_length=min_len
                 )
         except Exception as e:
-            print(f"❌\tFast cleaning failed: {str(e)}")
+            ERROR("Fast cleaning failed: {str(e)}")
             return None
 
     @staticmethod
@@ -839,14 +839,14 @@ class DatasetCleaner:
                 
                 # Check if download is complete
                 if not DatasetCleaner.is_download_complete(input_path):
-                    print(f"🟧\tDataset {dataset_name} download not complete, skipping...")
+                    DEBUG("Dataset {dataset_name} download not complete, skipping...")
                     continue
                 
                 output_path = os.path.join(output_dir, f"{dataset_name}_clean")
                 if not os.path.exists(output_path):
                     datasets_to_clean.append((dataset_name, input_path, output_path))
                 else:
-                    print(f"✅\tCleaned dataset already exists: {output_path}, skipping processing")
+                    RIGHT(f"Cleaned dataset already exists: {output_path}, skipping processing")
         
         # Process datasets that are ready
         import multiprocessing as mp
@@ -862,7 +862,7 @@ class DatasetCleaner:
                 )
         else:
             # Multi-process mode
-            print(f"🟧\tUsing {workers} processes to clean {len(datasets_to_clean)} datasets...")
+            DEBUG("Using {workers} processes to clean {len(datasets_to_clean)} datasets...")
             
             # Prepare arguments for parallel processing
             process_args = [
@@ -883,10 +883,10 @@ class DatasetCleaner:
                     try:
                         cleaned_count, total_count = future.result()
                         if cleaned_count == 0:
-                            print(f"🟧\tWarning: No valid data left after cleaning {dataset_name} (Original {total_count} samples)")
+                            DEBUG("Warning: No valid data left after cleaning {dataset_name} (Original {total_count} samples)")
                         else:
-                            print(f"✅\tCleaning completed: {dataset_name} -> {dataset_name}_clean | Samples retained: {cleaned_count}/{total_count}")
+                            RIGHT(f"Cleaning completed: {dataset_name} -> {dataset_name}_clean | Samples retained: {cleaned_count}/{total_count}")
                     except Exception as e:
-                        print(f"❌\tError cleaning {dataset_name}: {str(e)}")
+                        ERROR("Error cleaning {dataset_name}: {str(e)}")
         
         return True

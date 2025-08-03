@@ -20,9 +20,9 @@
 import math
 import torch
 from torch import nn
+from utils.log import RIGHT
 import torch.nn.functional as F
 from collections import OrderedDict
-
 
 def moe_init_weights(m):
     if isinstance(m, nn.Linear):
@@ -63,7 +63,7 @@ class MoELayer(nn.Module):
         for expert in self.experts:
             expert.apply(moe_init_weights)
         if MoELayer._layer_count == 1:
-            print(f"✅\tMoELayer: {self.num_experts} experts, top-{self.top_k} routing, efficient implementation.")
+            RIGHT("MoELayer: {self.num_experts} experts, top-{self.top_k} routing, efficient implementation.")
 
         self.max_gpu_experts = max_gpu_experts
         self._active_experts = OrderedDict()  # expert_id: last_used_step
@@ -93,7 +93,7 @@ class MoELayer(nn.Module):
         mask = torch.zeros(N, self.num_experts, device=h.device)
         mask.scatter_add_(1, idx, scores)
         load = mask.sum(0) / mask.sum()
-        aux_loss = (load * load.log()).sum()
+        aux_loss = (load * (load + 1e-9).log()).sum()
         
         if self.num_experts > 8 and h.device.type == 'cuda':
             needed_experts = set(idx.cpu().numpy().flatten().tolist())

@@ -18,6 +18,7 @@
 # limitations under the License.
 
 import os
+from utils.log import ERROR
 from datasets import load_from_disk, DatasetDict
 
 """
@@ -39,7 +40,7 @@ def get_subsets_from_model_txt():
     model_txt = os.path.join("data_cache", "model.txt")
     # Check if the model.txt file exists
     if not os.path.exists(model_txt):
-        print(f"❌\t{model_txt} not found! Please create it with one dataset name per line.")
+        ERROR("{model_txt} not found! Please create it with one dataset name per line.")
         return []
     # Open the model.txt file and read dataset subset names
     with open(model_txt, "r", encoding="utf-8") as f:
@@ -64,7 +65,7 @@ def build_splits(subset):
     src = f"data/{subset}"
     # Check if the dataset subset exists
     if not os.path.exists(src):
-        print(f"❌\t{src} does not exist, please run download.py first")
+        ERROR("{src} does not exist, please run download.py first")
         return
 
     # Load the dataset from disk

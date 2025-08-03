@@ -23,21 +23,21 @@ from torch import nn
 from torch import nn
 from PIL import Image
 import torch.nn.functional as F
+from utils.log import  DEBUG, ERROR
 from transformers import ASTFeatureExtractor
-
 
 class VisionEncoder(nn.Module):
     def __init__(self, cfg):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
-        self.image_size = 384
+        self.image_size = cfg.image_res
         self.patch_size = 14
-        self.hidden_size = 1152
+        self.hidden_size = cfg.hidden_size
         self.num_heads = 18
         self.num_layers = 32
         
-        print(f"🟧\tVisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        DEBUG(f"VisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         # Image preprocessing
         self.register_buffer('mean', torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
@@ -80,11 +80,11 @@ class VisionEncoder(nn.Module):
         # Projection layer
         self.proj = nn.Linear(self.hidden_size, cfg.hidden_size)
         
-        print("🟧\tVisionEncoder: __init__ end")
+        DEBUG("VisionEncoder: __init__ end")
     
     def process_image(self, image_path):
         """Process image data"""
-        print(f"🟧\tProcessing image: {image_path}")
+        DEBUG(f"Processing image: {image_path}")
         try:
             # Read images using PIL and convert them into tensors
             image = Image.open(image_path).convert('RGB')
@@ -93,7 +93,7 @@ class VisionEncoder(nn.Module):
             image = (image - self.mean) / self.std
             return image
         except Exception as e:
-            print(f"❌\tImage processing error: {e}")
+            ERROR(f"Image processing error: {e}")
             return None
     
     def forward(self, pixel_values):
@@ -147,7 +147,7 @@ class AudioEncoder(nn.Module):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
-        print(f"🟧\tAudioEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        DEBUG(f"AudioEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         self.processor = ASTFeatureExtractor()
         
@@ -161,15 +161,15 @@ class AudioEncoder(nn.Module):
             nn.LayerNorm(cfg.hidden_size)
         )
         
-        print("🟧\tAudioEncoder: __init__ end")
+        DEBUG("AudioEncoder: __init__ end")
     
     def process_audio(self, audio_path):
-        print(f"🟧\tProcessing audio: {audio_path}")
+        DEBUG(f"Processing audio: {audio_path}")
         try:
             audio = self.processor(audio=audio_path, return_tensors="pt")
             return audio['input_values'][0]
         except Exception as e:
-            print(f"❌\tAudio processing error: {e}")
+            ERROR(f"Audio processing error: {e}")
             return None
     
     def forward(self, audio_input):
@@ -190,14 +190,18 @@ class DocEncoder(nn.Module):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
-        print(f"🟧\tDocEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        DEBUG(f"DocEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         self.doc_proj = nn.Sequential(
             nn.Linear(cfg.hidden_size, cfg.hidden_size),
             nn.LayerNorm(cfg.hidden_size)
         )
         
-        print("🟧\tDocEncoder: __init__ end")
+        DEBUG("DocEncoder: __init__ end")
+    
+    def forward(self, doc_input):
+        x = self.doc_proj(doc_input['input_ids'])
+        return x.unsqueeze(1)
 
 
 class VideoEncoder(nn.Module):
@@ -205,7 +209,7 @@ class VideoEncoder(nn.Module):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
-        print(f"🟧\tVideoEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        DEBUG(f"VideoEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         # Simple video encoding using frame-based approach
         self.frame_encoder = VisionEncoder(cfg)
@@ -216,7 +220,7 @@ class VideoEncoder(nn.Module):
             nn.Linear(cfg.hidden_size, cfg.hidden_size)
         )
         
-        print("🟧\tVideoEncoder: __init__ end")
+        DEBUG("VideoEncoder: __init__ end")
     
     def forward(self, video_frames):
         if video_frames is None:
@@ -235,7 +239,3 @@ class VideoEncoder(nn.Module):
         video_features = self.temporal_proj(video_features.mean(dim=1))  # Average across frames
         
         return video_features.unsqueeze(1)
-    
-    def forward(self, doc_input):
-        x = self.doc_proj(doc_input['input_ids'])
-        return x.unsqueeze(1)
