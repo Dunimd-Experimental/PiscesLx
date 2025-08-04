@@ -97,11 +97,11 @@ def train(args):
     import torch
     from data.dataset import PiscesDataset
     from torch.utils.data import DataLoader
+    from model.tokenizer import get_tokenizer
     from model import PiscesModel, PiscesConfig
     from trainer.checkpoint import save_ckpt, load_ckpt
     from torch.optim.lr_scheduler import ReduceLROnPlateau
     from transformers import get_linear_schedule_with_warmup
-    from model.tokenizer import get_tokenizer
     
     AUTO_CONFIG = {
         "0.5B":  dict(batch_size=4,  accum=8,  seq_len=384,  force_quant=False, force_lora=False, lr=3e-5),

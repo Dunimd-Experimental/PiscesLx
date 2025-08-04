@@ -94,7 +94,6 @@ Datasets are automatically downloaded and cached. The following datasets are sup
 - **Chinese2** (liucong/Chinese-DeepSeek-R1-Distill-data-110k-SFT): Chinese instruction tuning
 - **Chinese3** (AI-ModelScope/OpenOrca-Chinese): Chinese instruction data
 - **Chinese4** (AI-ModelScope/ultrachat_200k): Chinese dialogue data
-- **Chinese5** (gxlzgdmds/baidu_baike): Baidu encyclopedia corpus
 
 ### English Language
 - **English1** (YorickHe/CoT): Chain-of-thought reasoning data

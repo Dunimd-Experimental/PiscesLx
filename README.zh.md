@@ -95,7 +95,6 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "你好，Pisces!"
 - **Chinese2** (liucong/Chinese-DeepSeek-R1-Distill-data-110k-SFT): 中文指令微调
 - **Chinese3** (AI-ModelScope/OpenOrca-Chinese): 中文指令数据
 - **Chinese4** (AI-ModelScope/ultrachat_200k): 中文对话数据
-- **Chinese5** (gxlzgdmds/baidu_baike): 百度百科语料库
 
 ### 英文语言
 - **English1** (YorickHe/CoT): 思维链推理数据
