@@ -72,6 +72,8 @@ def main():
     parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g. 0.5B, 1.5B, 7B, 70B')
     parser.add_argument('--resume_ckpt', default='', type=str, help='Path to checkpoint to resume training')
     parser.add_argument('--reset_lr', action='store_true', help='Reset learning rate after resuming checkpoint')
+    parser.add_argument('--quant', action='store_true', help='Force enable quantization (4-bit)')
+    parser.add_argument('--no_quant', action='store_true', help='Force disable quantization')
     parser.add_argument('--task', default='', help='[agent] Task to execute')
     parser.add_argument('--interactive', action='store_true', help='[agent] Interactive agent mode')
     parser.add_argument('--max-steps', type=int, default=5, help='[agent] Maximum agent steps')

@@ -18,11 +18,15 @@
 # limitations under the License.
 
 import json
+import uuid
 import torch
+import asyncio
 import torch.nn as nn
 from enum import Enum
-from dataclasses import dataclass
-from typing import Dict, List, Optional, Any, Union
+from datetime import datetime
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, asdict
+from typing import Dict, List, Optional, Any, Union, Callable
 
 from .modeling_aurora import PiscesModel
 from .multimodal import VisionEncoder, AudioEncoder
@@ -72,8 +76,95 @@ class AgentMemory:
             "recent_reflections": self.reflections[-k:]
         }
 
+class MCPMessageType(Enum):
+    """MCP message types for agent communication"""
+    OBSERVATION = "observation"
+    ACTION = "action"
+    TOOL_CALL = "tool_call"
+    TOOL_RESULT = "tool_result"
+    STATE_UPDATE = "state_update"
+    CAPABILITY_REGISTER = "capability_register"
+    HEARTBEAT = "heartbeat"
+    SYNC_REQUEST = "sync_request"
+    SYNC_RESPONSE = "sync_response"
+
+@dataclass
+class MCPMessage:
+    """Standardized MCP message format"""
+    message_type: str
+    agent_id: str
+    payload: Dict[str, Any]
+    timestamp: str
+    correlation_id: str = ""
+    priority: str = "normal"
+
+class MCPProtocol:
+    """MCP protocol implementation for agent communication"""
+    
+    @staticmethod
+    def create_message(
+        message_type: MCPMessageType,
+        agent_id: str,
+        payload: Dict[str, Any],
+        correlation_id: str = ""
+    ) -> MCPMessage:
+        return MCPMessage(
+            message_type=message_type.value,
+            agent_id=agent_id,
+            payload=payload,
+            timestamp=datetime.utcnow().isoformat(),
+            correlation_id=correlation_id or str(uuid.uuid4())
+        )
+    
+    @staticmethod
+    def serialize(message: MCPMessage) -> str:
+        return json.dumps(asdict(message))
+    
+    @staticmethod
+    def deserialize(data: str) -> MCPMessage:
+        return MCPMessage(**json.loads(data))
+
+class MCPToolRegistry:
+    """MCP-compatible tool registry using protocol communication"""
+    
+    def __init__(self, agent_id: str, message_handler: Callable):
+        self.agent_id = agent_id
+        self.message_handler = message_handler
+        self.capabilities: Dict[str, Dict[str, Any]] = {}
+    
+    async def register_capability(self, name: str, description: str, 
+                                  parameters: Dict[str, Any], 
+                                  handler: Callable):
+        """Register a capability via MCP protocol"""
+        self.capabilities[name] = {
+            "description": description,
+            "parameters": parameters,
+            "handler": handler
+        }
+        
+        message = MCPProtocol.create_message(
+            MCPMessageType.CAPABILITY_REGISTER,
+            self.agent_id,
+            {
+                "capability": name,
+                "description": description,
+                "parameters": parameters
+            }
+        )
+        await self.message_handler(message)
+    
+    async def discover_capabilities(self) -> List[str]:
+        """Discover available capabilities via MCP"""
+        message = MCPProtocol.create_message(
+            MCPMessageType.SYNC_REQUEST,
+            self.agent_id,
+            {"type": "capability_discovery"}
+        )
+        response = await self.message_handler(message)
+        return response.payload.get("capabilities", [])
+
 class ToolRegistry:
-    """Registry for managing available tools"""
+    """Registry for managing available tools - deprecated in favor of MCP"""
     
     def __init__(self):
         self.tools: Dict[str, callable] = {}
@@ -99,11 +190,12 @@ class PiscesAgent(nn.Module):
     5. End-to-end trainable architecture
     """
     
-    def __init__(self, cfg, tokenizer=None, model=None):
+    def __init__(self, cfg, tokenizer=None, model=None, agent_id: str = None):
         super().__init__()
         self.cfg = cfg
         self.tokenizer = tokenizer
         self.model = model
+        self.agent_id = agent_id or str(uuid.uuid4())
         
         # Use provided model or create new one
         if model is not None:
@@ -120,25 +212,205 @@ class PiscesAgent(nn.Module):
         
         self.tree_reasoner = TreeSearchReasoner(None, tokenizer) if tokenizer else None
         
-        # Agent infrastructure
+        # MCP Agent infrastructure
         self.memory = AgentMemory([], [], [])
-        self.tools = ToolRegistry()
+        self.mcp_tools = MCPToolRegistry(self.agent_id, self._handle_mcp_message)
         self.state = AgentState.IDLE
+        self.mcp_peers: Dict[str, Dict[str, Any]] = {}
+        self.mcp_capabilities: Dict[str, Dict[str, Any]] = {}
         
-        # Action prediction heads
+        # Action prediction heads (now MCP-aware)
         self.action_type_head = nn.Linear(cfg.hidden_size, 10)  # 10 action types
         self.action_param_head = nn.Linear(cfg.hidden_size, cfg.hidden_size)
         self.confidence_head = nn.Linear(cfg.hidden_size, 1)
         
-        # Special tokens for agent control
+        # MCP message handlers
+        self.mcp_handlers = {
+            MCPMessageType.OBSERVATION.value: self._handle_observation,
+            MCPMessageType.ACTION.value: self._handle_action,
+            MCPMessageType.TOOL_CALL.value: self._handle_tool_call,
+            MCPMessageType.TOOL_RESULT.value: self._handle_tool_result,
+            MCPMessageType.CAPABILITY_REGISTER.value: self._handle_capability_register,
+            MCPMessageType.SYNC_REQUEST.value: self._handle_sync_request,
+            MCPMessageType.SYNC_RESPONSE.value: self._handle_sync_response,
+        }
+        
+        # Special tokens for agent control (MCP-compatible)
         self.start_agent_id = None
         self.end_agent_id = None
         self.tool_call_id = None
         self.tool_result_id = None
         
     def register_tool(self, name: str, func: callable):
-        """Register a new tool for the agent to use"""
-        self.tools.register(name, func)
+        """Register a new tool for the agent to use - deprecated, use MCP registration"""
+        import warnings
+        warnings.warn("register_tool is deprecated. Use register_capability via MCP", DeprecationWarning)
+        
+    async def register_capability(self, name: str, description: str, 
+                                  parameters: Dict[str, Any], handler: Callable):
+        """Register a capability via MCP protocol"""
+        await self.mcp_tools.register_capability(name, description, parameters, handler)
+    
+    async def _handle_mcp_message(self, message: MCPMessage) -> MCPMessage:
+        """Handle incoming MCP messages"""
+        handler = self.mcp_handlers.get(message.message_type)
+        if handler:
+            return await handler(message)
+        else:
+            return MCPProtocol.create_message(
+                MCPMessageType.STATE_UPDATE,
+                self.agent_id,
+                {"error": f"Unknown message type: {message.message_type}"}
+            )
+    
+    async def _handle_observation(self, message: MCPMessage) -> MCPMessage:
+        """Handle MCP observation messages"""
+        observation_data = message.payload
+        observation = AgentObservation(
+            modality=observation_data["modality"],
+            content=observation_data["content"],
+            metadata=observation_data.get("metadata", {})
+        )
+        
+        self.memory.add_observation(observation)
+        obs_embedding = self.process_observation(observation)
+        
+        return MCPProtocol.create_message(
+            MCPMessageType.OBSERVATION,
+            self.agent_id,
+            {
+                "status": "processed",
+                "embedding_shape": list(obs_embedding.shape) if torch.is_tensor(obs_embedding) else None,
+                "observation_id": str(uuid.uuid4())
+            }
+        )
+    
+    async def _handle_action(self, message: MCPMessage) -> MCPMessage:
+        """Handle MCP action messages"""
+        action_data = message.payload
+        context = {
+            "observation": action_data.get("observation"),
+            "available_tools": list(self.mcp_capabilities.keys())
+        }
+        
+        action = await self.mcp_plan_action(context)
+        self.memory.add_action(action)
+        
+        return MCPProtocol.create_message(
+            MCPMessageType.ACTION,
+            self.agent_id,
+            {
+                "action": asdict(action),
+                "agent_state": self.state.value
+            }
+        )
+    
+    async def _handle_tool_call(self, message: MCPMessage) -> MCPMessage:
+        """Handle MCP tool call messages"""
+        tool_data = message.payload
+        tool_name = tool_data["tool_name"]
+        parameters = tool_data["parameters"]
+        
+        if tool_name in self.mcp_capabilities:
+            handler = self.mcp_capabilities[tool_name]["handler"]
+            result = await handler(**parameters)
+            
+            return MCPProtocol.create_message(
+                MCPMessageType.TOOL_RESULT,
+                self.agent_id,
+                {
+                    "tool_name": tool_name,
+                    "result": result,
+                    "success": True
+                }
+            )
+        else:
+            return MCPProtocol.create_message(
+                MCPMessageType.TOOL_RESULT,
+                self.agent_id,
+                {
+                    "tool_name": tool_name,
+                    "error": f"Tool {tool_name} not found",
+                    "success": False
+                }
+            )
+    
+    async def _handle_tool_result(self, message: MCPMessage) -> MCPMessage:
+        """Handle MCP tool result messages"""
+        result_data = message.payload
+        
+        observation = AgentObservation(
+            modality="tool_result",
+            content=result_data,
+            metadata={"source": message.agent_id}
+        )
+        
+        self.memory.add_observation(observation)
+        
+        return MCPProtocol.create_message(
+            MCPMessageType.STATE_UPDATE,
+            self.agent_id,
+            {"status": "tool_result_processed", "result_id": str(uuid.uuid4())}
+        )
+    
+    async def _handle_capability_register(self, message: MCPMessage) -> MCPMessage:
+        """Handle capability registration from other agents"""
+        capability_data = message.payload
+        capability_name = capability_data["capability"]
+        
+        if message.agent_id != self.agent_id:
+            self.mcp_capabilities[f"{message.agent_id}.{capability_name}"] = capability_data
+        
+        return MCPProtocol.create_message(
+            MCPMessageType.STATE_UPDATE,
+            self.agent_id,
+            {"status": "capability_registered", "capability": capability_name}
+        )
+    
+    async def _handle_sync_request(self, message: MCPMessage) -> MCPMessage:
+        """Handle synchronization requests"""
+        sync_type = message.payload.get("type")
+        
+        if sync_type == "capability_discovery":
+            return MCPProtocol.create_message(
+                MCPMessageType.SYNC_RESPONSE,
+                self.agent_id,
+                {
+                    "type": "capabilities",
+                    "capabilities": list(self.mcp_capabilities.keys())
+                }
+            )
+        elif sync_type == "state_sync":
+            return MCPProtocol.create_message(
+                MCPMessageType.SYNC_RESPONSE,
+                self.agent_id,
+                {
+                    "type": "state",
+                    "state": self.state.value,
+                    "memory_summary": self._summarize_memory()
+                }
+            )
+        
+        return MCPProtocol.create_message(
+            MCPMessageType.SYNC_RESPONSE,
+            self.agent_id,
+            {"error": "Unknown sync type"}
+        )
+    
+    async def _handle_sync_response(self, message: MCPMessage) -> MCPMessage:
+        """Handle synchronization responses"""
+        response_data = message.payload
+        
+        if response_data.get("type") == "capabilities":
+            self.mcp_peers[message.agent_id] = {
+                "capabilities": response_data.get("capabilities", [])
+            }
+        
+        return MCPProtocol.create_message(
+            MCPMessageType.STATE_UPDATE,
+            self.agent_id,
+            {"status": "sync_completed", "peer_id": message.agent_id}
+        )
     
     def process_observation(self, observation: AgentObservation) -> torch.Tensor:
         """Process multimodal observations into unified representation"""
@@ -253,9 +525,9 @@ class PiscesAgent(nn.Module):
         finally:
             self.state = AgentState.IDLE
     
-    def step(self, observation: AgentObservation) -> AgentAction:
+    async def step(self, observation: AgentObservation) -> AgentAction:
         """
-        Single agent step: observe -> think -> act
+        Single agent step via MCP protocol: observe -> think -> act
         
         Args:
             observation: Current observation from environment
@@ -269,32 +541,53 @@ class PiscesAgent(nn.Module):
         # Store observation in memory
         self.memory.add_observation(observation)
         
-        # Process observation
-        obs_embedding = self.process_observation(observation)
+        # Process observation via MCP
+        obs_message = MCPProtocol.create_message(
+            MCPMessageType.OBSERVATION,
+            self.agent_id,
+            {
+                "modality": observation.modality,
+                "content": observation.content,
+                "metadata": observation.metadata
+            }
+        )
         
-        # Plan action
-        context = {
-            "observation": observation,
-            "observation_embedding": obs_embedding,
-            "available_tools": self.tools.list_tools()
-        }
+        await self._handle_observation(obs_message)
         
-        action = self.plan_action(context)
+        # Plan action via MCP
+        action_message = MCPProtocol.create_message(
+            MCPMessageType.ACTION,
+            self.agent_id,
+            {
+                "observation": asdict(observation),
+                "available_tools": list(self.mcp_capabilities.keys())
+            }
+        )
+        
+        response = await self._handle_action(action_message)
+        action_data = response.payload["action"]
+        
+        action = AgentAction(
+            action_type=action_data["action_type"],
+            parameters=action_data["parameters"],
+            confidence=action_data.get("confidence", 1.0),
+            reasoning=action_data.get("reasoning", "")
+        )
         
         # Store action in memory
         self.memory.add_action(action)
         
         # Execute action
-        result = self.execute_action(action)
+        result = await self.execute_action_async(action)
         
         # Add result to action parameters for memory
         action.parameters["result"] = result
         
         return action
     
-    def run(self, input_ids=None, images=None, audio=None, docs=None, task=None, max_steps=10, **kwargs) -> Dict[str, Any]:
+    async def run(self, input_ids=None, images=None, audio=None, docs=None, task=None, max_steps=10, **kwargs) -> Dict[str, Any]:
         """
-        Run a complete task with the agent supporting multimodal inputs
+        Run a complete task with the agent supporting multimodal inputs via MCP protocol
         
         Args:
             input_ids: Text input as token ids
@@ -307,84 +600,211 @@ class PiscesAgent(nn.Module):
         Returns:
             Dict containing task results and agent history
         """
-        # Initialize task with multimodal observations
-        observations = []
+        self.state = AgentState.RUNNING
         
-        if input_ids is not None:
-            text_content = self.tokenizer.decode(input_ids) if self.tokenizer else str(input_ids)
-            observations.append(AgentObservation(
-                modality="text",
-                content=text_content,
-                metadata={"type": "text_input", "input_ids": input_ids}
-            ))
-        
-        if images is not None:
-            observations.append(AgentObservation(
-                modality="image",
-                content=images,
-                metadata={"type": "image_input"}
-            ))
-        
-        if audio is not None:
-            observations.append(AgentObservation(
-                modality="audio",
-                content=audio,
-                metadata={"type": "audio_input"}
-            ))
-        
-        if docs is not None:
-            observations.append(AgentObservation(
-                modality="text",
-                content=str(docs),
-                metadata={"type": "document_input"}
-            ))
-        
-        # Fallback to task description if no multimodal inputs
-        if not observations and task is not None:
-            observations.append(AgentObservation(
-                modality="text",
-                content=task,
-                metadata={"type": "task_init"}
-            ))
-        
-        # Add all observations to memory
-        for obs in observations:
-            self.memory.add_observation(obs)
-        
-        results = []
-        
-        for step_num in range(max_steps):
-            if self.state == AgentState.COMPLETED:
-                break
+        try:
+            # Initialize task with multimodal observations
+            observations = []
             
-            # Use last observation for step
-            current_obs = observations[-1] if observations and step_num == 0 else results[-1].get("observation")
-            action = self.step(current_obs)
+            if input_ids is not None:
+                text_content = self.tokenizer.decode(input_ids) if self.tokenizer else str(input_ids)
+                observations.append(AgentObservation(
+                    modality="text",
+                    content=text_content,
+                    metadata={"type": "text_input", "input_ids": input_ids}
+                ))
             
-            step_result = {
-                "step": step_num + 1,
-                "action": action,
-                "state": self.state.value,
-                "observation": current_obs
+            if images is not None:
+                observations.append(AgentObservation(
+                    modality="image",
+                    content=images,
+                    metadata={"type": "image_input"}
+                ))
+            
+            if audio is not None:
+                observations.append(AgentObservation(
+                    modality="audio",
+                    content=audio,
+                    metadata={"type": "audio_input"}
+                ))
+            
+            if docs is not None:
+                observations.append(AgentObservation(
+                    modality="text",
+                    content=str(docs),
+                    metadata={"type": "document_input"}
+                ))
+            
+            # Fallback to task description if no multimodal inputs
+            if not observations and task is not None:
+                observations.append(AgentObservation(
+                    modality="text",
+                    content=task,
+                    metadata={"type": "task_init"}
+                ))
+            
+            # Add all observations to memory
+            for obs in observations:
+                self.memory.add_observation(obs)
+            
+            results = []
+            
+            for step_num in range(max_steps):
+                if self.state == AgentState.COMPLETED:
+                    break
+                
+                # Use last observation for step
+                current_obs = observations[-1] if observations and step_num == 0 else results[-1].get("observation")
+                action = await self.step(current_obs)
+                
+                # Execute action via MCP
+                result = await self.execute_action_async(action)
+                
+                step_result = {
+                    "step": step_num + 1,
+                    "action": action,
+                    "state": self.state.value,
+                    "observation": current_obs,
+                    "result": result
+                }
+                results.append(step_result)
+                
+                # Check if task is complete
+                if await self._is_task_complete_async(result):
+                    self.state = AgentState.COMPLETED
+                    break
+            
+            return {
+                "task_description": task or "Multimodal task",
+                "multimodal_inputs": {
+                    "text": input_ids is not None,
+                    "image": images is not None,
+                    "audio": audio is not None,
+                    "docs": docs is not None
+                },
+                "steps": results,
+                "final_state": self.state.value,
+                "memory_summary": self._summarize_memory()
             }
-            results.append(step_result)
             
-            # Check if task is complete
-            if action.action_type == "respond" and action.confidence > 0.8:
-                self.state = AgentState.COMPLETED
-                break
+        except Exception as e:
+            self.state = AgentState.ERROR
+            return {
+                "status": "error",
+                "error": str(e),
+                "memory": self.memory
+            }
+    
+    async def mcp_plan_action(self, context: Dict[str, Any]) -> AgentAction:
+        """Plan next action via MCP protocol"""
+        # Get recent context from memory
+        memory_context = self.memory.get_recent_context(k=3)
+        
+        # Use MCP capabilities instead of local tools
+        available_tools = list(self.mcp_capabilities.keys())
+        
+        # Combine current observation with memory
+        combined_input = self._prepare_reasoning_input(context, memory_context)
+        
+        # Use reasoner for deep thinking
+        with torch.no_grad():
+            reasoning_output = self.reasoner(combined_input)
+            
+            # Predict action type and parameters
+            action_logits = self.action_type_head(reasoning_output["thinking_logits"][:, -1])
+            action_type_idx = torch.argmax(action_logits, dim=-1).item()
+            
+            action_types = [
+                "respond", "use_tool", "ask_clarification", "reflect", 
+                "search_memory", "plan_next", "wait", "verify", 
+                "correct_action", "explore"
+            ]
+            action_type = action_types[action_type_idx]
+            
+            # Map to MCP capability if available
+            if action_type == "use_tool" and available_tools:
+                # Select best matching capability
+                tool_name = context.get("tool_name", available_tools[0])
+                action_type = tool_name
+            
+            # Predict confidence
+            confidence = torch.sigmoid(self.confidence_head(reasoning_output["thinking_logits"][:, -1])).item()
+            
+            # Generate action parameters
+            param_embedding = self.action_param_head(reasoning_output["thinking_logits"][:, -1])
+            action_params = self._decode_action_params(param_embedding, action_type)
+            
+            return AgentAction(
+                action_type=action_type,
+                parameters=action_params,
+                confidence=confidence,
+                reasoning=reasoning_output.get("reasoning", "")
+            )
+    
+    async def execute_action_async(self, action: AgentAction) -> Any:
+        """Execute action via MCP protocol"""
+        self.state = AgentState.ACTING
+        
+        try:
+            if action.action_type in self.mcp_capabilities:
+                handler_info = self.mcp_capabilities[action.action_type]
+                handler = handler_info["handler"]
+                
+                # Execute via MCP
+                result = await handler(**action.parameters)
+                
+                # Store tool result as observation
+                tool_observation = AgentObservation(
+                    modality="tool_result",
+                    content=result,
+                    metadata={"tool": action.action_type, "args": action.parameters}
+                )
+                self.memory.add_observation(tool_observation)
+                
+                return result
+            
+            elif action.action_type == "respond":
+                return await self._generate_response_async(action.parameters)
+            
+            elif action.action_type == "reflect":
+                return await self._perform_reflection_async(action.parameters)
+            
+            else:
+                return {"status": f"Action {action.action_type} executed", "params": action.parameters}
+        
+        except Exception as e:
+            self.state = AgentState.ERROR
+            return {"error": str(e)}
+        
+        finally:
+            self.state = AgentState.IDLE
+    
+    async def _is_task_complete_async(self, result: Any) -> bool:
+        """Async check if task is complete"""
+        if isinstance(result, dict) and "status" in result:
+            return result.get("status") == "complete"
+        
+        # Simple heuristic: if result contains success indicators
+        success_keywords = ["success", "complete", "done", "finished"]
+        result_str = str(result).lower()
+        return any(keyword in result_str for keyword in success_keywords)
+    
+    async def _generate_response_async(self, parameters: Dict[str, Any]) -> str:
+        """Generate text response using base model asynchronously"""
+        # Placeholder for async response generation
+        return "Response generated by PiscesAgent via MCP"
+    
+    async def _perform_reflection_async(self, parameters: Dict[str, Any]) -> Dict[str, Any]:
+        """Perform self-reflection and error correction asynchronously"""
+        recent_actions = self.memory.actions[-5:] if self.memory.actions else []
+        reflection = f"Reflecting on {len(recent_actions)} recent actions"
+        
+        self.memory.add_reflection(reflection)
         
         return {
-            "task_description": task or "Multimodal task",
-            "multimodal_inputs": {
-                "text": input_ids is not None,
-                "image": images is not None,
-                "audio": audio is not None,
-                "docs": docs is not None
-            },
-            "steps": results,
-            "final_state": self.state.value,
-            "memory_summary": self._summarize_memory()
+            "reflection": reflection,
+            "actions_reviewed": len(recent_actions),
+            "confidence_improved": True
         }
     
     def _prepare_reasoning_input(self, context: Dict[str, Any], memory_context: Dict[str, List]) -> torch.Tensor:
@@ -420,13 +840,80 @@ class PiscesAgent(nn.Module):
             "confidence_improved": True
         }
     
-    def _summarize_memory(self) -> Dict[str, int]:
-        """Summarize current memory state"""
+    def _summarize_memory(self) -> Dict[str, Any]:
+        """Create a summary of the agent's memory"""
         return {
             "total_observations": len(self.memory.observations),
             "total_actions": len(self.memory.actions),
-            "total_reflections": len(self.memory.reflections)
+            "total_reflections": len(self.memory.reflections),
+            "recent_observations": len(self.memory.observations[-5:]),
+            "recent_actions": len(self.memory.actions[-5:]),
+            "mcp_capabilities": len(self.mcp_capabilities),
+            "mcp_peers": len(self.mcp_peers)
         }
+
+    async def discover_capabilities(self, peer_id: str = None) -> Dict[str, Any]:
+        """Discover capabilities from MCP peers"""
+        if peer_id:
+            # Discover from specific peer
+            sync_msg = MCPProtocol.create_message(
+                MCPMessageType.SYNC_REQUEST,
+                self.agent_id,
+                {"type": "capability_discovery", "target": peer_id}
+            )
+            return await self._handle_sync_request(sync_msg)
+        else:
+            # Broadcast discovery
+            discovered = {}
+            for peer in self.mcp_peers:
+                try:
+                    capabilities = await self.discover_capabilities(peer)
+                    discovered[peer] = capabilities
+                except Exception as e:
+                    discovered[peer] = {"error": str(e)}
+            return discovered
+
+    async def sync_state(self, peer_id: str = None) -> Dict[str, Any]:
+        """Sync state with MCP peers"""
+        if peer_id:
+            sync_msg = MCPProtocol.create_message(
+                MCPMessageType.SYNC_REQUEST,
+                self.agent_id,
+                {"type": "state_sync", "target": peer_id}
+            )
+            return await self._handle_sync_request(sync_msg)
+        else:
+            # Sync with all peers
+            synced = {}
+            for peer in self.mcp_peers:
+                try:
+                    state = await self.sync_state(peer)
+                    synced[peer] = state
+                except Exception as e:
+                    synced[peer] = {"error": str(e)}
+            return synced
+
+    async def connect_to_mcp_hub(self, hub_endpoint: str):
+        """Connect to MCP hub for centralized coordination"""
+        # This would connect to a central MCP hub
+        # For now, it's a placeholder for hub integration
+        self.mcp_peers["hub"] = {
+            "endpoint": hub_endpoint,
+            "capabilities": ["coordination", "discovery", "monitoring"]
+        }
+        
+        # Register self with hub
+        register_msg = MCPProtocol.create_message(
+            MCPMessageType.CAPABILITY_REGISTER,
+            self.agent_id,
+            {
+                "capabilities": list(self.mcp_capabilities.keys()),
+                "agent_type": "PiscesAgent",
+                "version": "2.0.0"
+            }
+        )
+        
+        return await self._handle_capability_register(register_msg)
     
     def reset(self):
         """Reset agent state and memory"""

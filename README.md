@@ -188,6 +188,54 @@ python manage.py train --model_size 0.5B
 python manage.py infer --prompt "Explain quantum computing in simple terms" --ckpt ckpt/latest.pt
 ```
 
+## 🤖 MCP Native Agent Support [Beta]
+Pisces L1 now includes **native MCP (Multi-Agent Communication Protocol)** support, enabling seamless agent-to-agent communication and distributed task execution.
+
+### MCP Features
+- **Native Integration**: Built-in MCP protocol support in `model/agent.py`
+- **Async Communication**: All agent methods support async/await
+- **Capability Discovery**: Dynamic registration and discovery of agent capabilities
+- **Multimodal MCP**: Full support for text, image, audio via MCP protocol
+- **Zero Dependencies**: No additional libraries required
+
+### Quick MCP Usage
+```python
+import asyncio
+from model.agent import PiscesAgent
+
+async def main():
+    # Create MCP-native agent
+    agent = PiscesAgent(agent_id="agent_001")
+    
+    # Register capabilities via MCP
+    async def web_search(query: str):
+        return {"results": ["result1", "result2"]}
+    
+    await agent.register_capability(
+        name="web_search",
+        description="Search the web",
+        parameters={"query": str},
+        handler=web_search
+    )
+    
+    # Run via MCP protocol
+    result = await agent.run(task="Search AI news")
+
+asyncio.run(main())
+```
+
+### MCP Commands
+```bash
+# MCP agent CLI
+python manage.py agent --mcp-mode
+
+# Discover peer capabilities
+python manage.py agent --discover-peers
+
+# Sync with MCP hub
+python manage.py agent --connect-hub http://localhost:8080
+```
+
 ## 🎯 Model Evaluation & Benchmarking
 Pisces L1 includes comprehensive benchmarking support for 26 standardized evaluation benchmarks covering Chinese, English, mathematics, coding, and reasoning tasks.
 

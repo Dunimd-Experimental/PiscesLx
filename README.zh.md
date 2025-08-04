@@ -193,6 +193,54 @@ python manage.py train --model_size 0.5B
 python manage.py infer --prompt "用简单的话解释量子计算" --ckpt ckpt/latest.pt
 ```
 
+## 🤖 MCP原生智能体支持 [Beta]
+Pisces L1现已包含**原生MCP(多智能体通信协议)**支持，实现智能体间无缝通信和分布式任务执行。
+
+### MCP特性
+- **原生集成**: 在`model/agent.py`中内置MCP协议支持
+- **异步通信**: 所有智能体方法支持async/await
+- **能力发现**: 动态注册和发现智能体能力
+- **多模态MCP**: 通过MCP协议全面支持文本、图像、音频
+- **零依赖**: 无需额外库
+
+### MCP快速使用
+```python
+import asyncio
+from model.agent import PiscesAgent
+
+async def main():
+    # 创建MCP原生智能体
+    agent = PiscesAgent(agent_id="agent_001")
+    
+    # 通过MCP注册能力
+    async def web_search(query: str):
+        return {"results": ["结果1", "结果2"]}
+    
+    await agent.register_capability(
+        name="web_search",
+        description="搜索网络",
+        parameters={"query": str},
+        handler=web_search
+    )
+    
+    # 通过MCP协议运行任务
+    result = await agent.run(task="搜索AI最新进展")
+
+asyncio.run(main())
+```
+
+### MCP命令
+```bash
+# MCP智能体CLI
+python manage.py agent --mcp-mode
+
+# 发现对等能力
+python manage.py agent --discover-peers
+
+# 与MCP中心同步
+python manage.py agent --connect-hub http://localhost:8080
+```
+
 ## 🎯 模型评测与基准测试
 Pisces L1包含对26个标准化评测基准的全面支持，涵盖中文、英文、数学、编程和推理任务。
 

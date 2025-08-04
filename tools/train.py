@@ -104,9 +104,9 @@ def train(args):
     from model.tokenizer import get_tokenizer
     
     AUTO_CONFIG = {
-        "0.5B":  dict(batch_size=4,  accum=8,  seq_len=384,  force_quant=True, force_lora=False, lr=3e-5),
-        "1.5B":  dict(batch_size=2,  accum=16, seq_len=512,  force_quant=True, force_lora=False, lr=2e-5),
-        "7B":    dict(batch_size=1,  accum=32, seq_len=384,  force_quant=True, force_lora=True,  lr=2e-5),
+        "0.5B":  dict(batch_size=4,  accum=8,  seq_len=384,  force_quant=False, force_lora=False, lr=3e-5),
+        "1.5B":  dict(batch_size=2,  accum=16, seq_len=512,  force_quant=False, force_lora=False, lr=2e-5),
+        "7B":    dict(batch_size=1,  accum=32, seq_len=384,  force_quant=False, force_lora=True,  lr=2e-5),
         "32B":   dict(batch_size=1,  accum=64, seq_len=256,  force_quant=True, force_lora=True,  lr=1e-5),
         "64B":   dict(batch_size=1,  accum=64, seq_len=192,  force_quant=True, force_lora=True,  lr=1e-5),
         "70B":   dict(batch_size=1,  accum=64, seq_len=128,  force_quant=True, force_lora=True,  lr=8e-6),
@@ -156,15 +156,25 @@ def train(args):
     special_tokens = ["<think>", "</think>"]
     tokenizer.add_tokens(special_tokens)
 
+    # Handle quantization override from command line
+    force_quant_override = None
+    if hasattr(args, 'quant') and args.quant:
+        force_quant_override = True
+    elif hasattr(args, 'no_quant') and args.no_quant:
+        force_quant_override = False
+    
+    # Use override if provided, otherwise use default config
+    use_quant = force_quant_override if force_quant_override is not None else force_quant
+    
     model = None
-    if force_quant or force_lora:
+    if use_quant or force_lora:
         from transformers import BitsAndBytesConfig
         from peft import get_peft_model, LoraConfig, TaskType
         quant_config = None
-        if force_quant:
+        if use_quant:
             quant_config = BitsAndBytesConfig(
                 load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.bfloat16,
+                bnb_4bit_compute_dtype=torch.float16,
                 bnb_4bit_quant_type="nf4",
                 bnb_4bit_use_double_quant=True
             )
