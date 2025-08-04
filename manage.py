@@ -41,6 +41,7 @@ COMMANDS = [
     'quantize',   # Model quantization
     'benchmark',  # Model evaluation & benchmarking
     'agent',      # Native agent interface
+    'rlhf',       # RLHF training
     'help',       # Show help for commands
 ]
 
@@ -129,23 +130,38 @@ def main():
             run_benchmark(args.benchmark, args.model, args.config)
         else:
             performance_benchmark(args.config, args.seq_len)
+    elif args.command == 'rlhf':
+        from tools.rlhf import rlhf_train
+        parser = argparse.ArgumentParser(description="RLHF Training for Pisces L1")
+        parser.add_argument("--model_path", type=str, default="", help="Path to the pretrained model")
+        parser.add_argument("--output_dir", type=str, default=None, help="Directory to save the trained model")
+        parser.add_argument("--learning_rate", type=float, default=1e-5, help="Learning rate for RLHF training")
+        parser.add_argument("--batch_size", type=int, default=4, help="Batch size for RLHF training")
+        parser.add_argument("--mini_batch_size", type=int, default=1, help="Mini batch size for RLHF training")
+        parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="Gradient accumulation steps")
+        parser.add_argument("--log_with_wandb", action="store_true", help="Log training metrics with Weights & Biases")
+        rlhf_args, _ = parser.parse_known_args(extra)
+        if not rlhf_args.model_path:
+            ERROR("rlhf requires --model_path argument")
+            sys.exit(1)
+        rlhf_train(rlhf_args)
     elif args.command == 'agent':
         from tools.agent_cli import load_agent, register_example_tools, run_interactive_agent
         import sys
         
         try:
-            print("🐟 Initializing Pisces L1 Native Agent...")
+            print(" Initializing Pisces L1 Native Agent...")
             model, tokenizer = load_agent(args.config, args.model)
             
             # Register example tools
             register_example_tools(model)
             
-            print(f"✅ Agent initialized with {len(model.tools.list_tools())} tools")
+            print(f" Agent initialized with {len(model.tools.list_tools())} tools")
             
             if args.interactive:
                 run_interactive_agent(model, tokenizer)
             elif args.task:
-                print(f"\n🎯 Running task: {args.task}")
+                print(f"\n Running task: {args.task}")
                 input_ids = tokenizer.encode(args.task)
                 input_ids = torch.tensor([input_ids])
                 
@@ -159,7 +175,6 @@ def main():
                 print(json.dumps(result, indent=2, ensure_ascii=False))
             else:
                 print("Use --interactive for interactive mode or --task for single task")
-                
         except Exception as e:
             print(f"Error: {e}")
             sys.exit(1)

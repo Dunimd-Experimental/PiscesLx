@@ -106,7 +106,7 @@ def train(args):
     AUTO_CONFIG = {
         "0.5B":  dict(batch_size=4,  accum=8,  seq_len=384,  force_quant=False, force_lora=False, lr=3e-5),
         "1.5B":  dict(batch_size=2,  accum=16, seq_len=512,  force_quant=False, force_lora=False, lr=2e-5),
-        "7B":    dict(batch_size=1,  accum=32, seq_len=384,  force_quant=False, force_lora=True,  lr=2e-5),
+        "7B":    dict(batch_size=1,  accum=32, seq_len=384,  force_quant=True, force_lora=True,  lr=2e-5),
         "32B":   dict(batch_size=1,  accum=64, seq_len=256,  force_quant=True, force_lora=True,  lr=1e-5),
         "64B":   dict(batch_size=1,  accum=64, seq_len=192,  force_quant=True, force_lora=True,  lr=1e-5),
         "70B":   dict(batch_size=1,  accum=64, seq_len=128,  force_quant=True, force_lora=True,  lr=8e-6),

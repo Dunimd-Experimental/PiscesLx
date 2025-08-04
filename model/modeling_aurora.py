@@ -111,7 +111,7 @@ class RotaryEmbedding(nn.Module):
 
 class Attention(nn.Module):
     """
-    Multi-head attention module with grouped-query attention.
+    Multi-head attention module with grouped-query attention using flash_attn.
     """
     def __init__(self, cfg, device=None, dtype=None):
         """
@@ -137,7 +137,7 @@ class Attention(nn.Module):
 
     def forward(self, x, mask):
         """
-        Forward pass of the Attention layer.
+        Forward pass of the Attention layer using flash_attn.
 
         Args:
             x (torch.Tensor): Input tensor.
@@ -146,6 +146,7 @@ class Attention(nn.Module):
         Returns:
             torch.Tensor: Output tensor after attention operation.
         """
+        from flash_attn import flash_attn_qkv_packed
         b, t, _ = x.shape
         q = self.q_proj(x).view(b, t, self.n_head, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
@@ -153,9 +154,9 @@ class Attention(nn.Module):
         q, k = self.rope(q, t), self.rope(k, t)
         k = k.repeat_interleave(self.n_head // self.n_kv_head, dim=1)
         v = v.repeat_interleave(self.n_head // self.n_kv_head, dim=1)
-        scores = torch.matmul(q, k.transpose(-2, -1)) * self.scale + mask
-        attn = F.softmax(scores, dim=-1)
-        out = torch.matmul(attn, v).transpose(1, 2).contiguous().view(b, t, -1)
+        qkv = torch.stack((q, k, v), dim=2)
+        out = flash_attn_qkv_packed(qkv, dropout_p=0.0, softmax_scale=self.scale, causal=True)
+        out = out.transpose(1, 2).contiguous().view(b, t, -1)
         return self.o_proj(out)
 
 class TransformerBlock(nn.Module):
