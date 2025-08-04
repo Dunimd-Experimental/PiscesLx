@@ -98,9 +98,8 @@ Datasets are automatically downloaded and cached. The following datasets are sup
 
 ### English Language
 - **English1** (YorickHe/CoT): Chain-of-thought reasoning data
-- **English2** (Data-Juicer/redpajama-cc-2022-05-refined): Web crawl data
-- **English3** (DAMO_ConvAI/EnDoc2BotDialogue): English dialogue dataset
-- **English4** (Intelligent-Internet/wikipedia_en): Wikipedia English corpus
+- **English2** (DAMO_ConvAI/EnDoc2BotDialogue): English dialogue dataset
+- **English3** (Intelligent-Internet/wikipedia_en): Wikipedia English corpus
 
 ### Math & Reasoning
 - **Math1** (swift/MetaMathQA): Mathematical reasoning dataset

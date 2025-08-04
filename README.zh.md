@@ -99,9 +99,8 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "你好，Pisces!"
 
 ### 英文语言
 - **English1** (YorickHe/CoT): 思维链推理数据
-- **English2** (Data-Juicer/redpajama-cc-2022-05-refined): 网络爬取数据
-- **English3** (DAMO_ConvAI/EnDoc2BotDialogue): 英文对话数据集
-- **English4** (Intelligent-Internet/wikipedia_en): 维基百科英文语料库
+- **English2** (DAMO_ConvAI/EnDoc2BotDialogue): 英文对话数据集
+- **English3** (Intelligent-Internet/wikipedia_en): 维基百科英文语料库
 
 ### 数学与推理
 - **Math1** (swift/MetaMathQA): 数学推理数据集

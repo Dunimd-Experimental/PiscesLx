@@ -21,10 +21,18 @@ import os
 import gc
 import glob
 import shutil
+import logging
+import warnings
 import multiprocessing
 from .clean import DatasetCleaner
 from utils.log import RIGHT, DEBUG, ERROR
 from modelscope.msdatasets import MsDataset
+
+warnings.filterwarnings("ignore", message=".*trust_remote_code.*")
+warnings.filterwarnings("ignore", message=".*Will invoke codes.*")
+warnings.filterwarnings("ignore", message=".*Repo.*not exists.*")
+
+logging.getLogger('modelscope').setLevel(logging.ERROR)
 
 # Get the root directory of the current script
 ROOT = os.path.dirname(__file__)
@@ -56,17 +64,20 @@ def save(ds, name):
         ERROR(f"Failed to save {name}: {str(e)}")
         return False
 
-def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
+def download_datasets(max_samples_per_dataset=50000, post_download_clean=True, silent=True):
     """
     Download all datasets with size control.
 
     Args:
         max_samples_per_dataset (int, optional): The maximum number of samples per dataset. Defaults to 50000.
         post_download_clean (bool, optional): Whether to perform post-download cleaning. Defaults to True.
+        silent (bool, optional): Whether to suppress warnings like trust_remote_code. Defaults to True.
     """
-    RIGHT("Starting ModelScope dataset download...")
+    if silent:
+        warnings.filterwarnings("ignore", category=UserWarning, message=".*trust_remote_code.*")
+        warnings.filterwarnings("ignore", category=RuntimeWarning, message=".*trust_remote_code.*")
     
-    # Core datasets for Pisces L1 training
+    # Core datasets for Pisces L1 training - stable working datasets
     datasets = [
         # Chinese
         ("baicai003/Llama3-Chinese-dataset", "Chinese1", "Chinese1"),
@@ -77,9 +88,8 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
 
         # English
         ("YorickHe/CoT", "English1", "English1"),
-        ("Data-Juicer/redpajama-cc-2022-05-refined", "English2", "English2"),
-        ("DAMO_ConvAI/EnDoc2BotDialogue", "English3", "English3"),
-        ("Intelligent-Internet/wikipedia_en", "English4", "English4"),
+        ("DAMO_ConvAI/EnDoc2BotDialogue", "English2", "English2"),
+        ("Intelligent-Internet/wikipedia_en", "English3", "English3"),
 
         # Math
         ("swift/MetaMathQA", "Math1", "Math1"),
@@ -127,38 +137,25 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
         ("BJQW14B/bs_challenge_financial_14b_dataset", "Financial1", "Financial1"),
     ]
     
-    # Check downloaded datasets
-    downloaded = set()
-    for _, save_name, _ in datasets:
-        dataset_path = os.path.join(DATA, save_name)
-        if os.path.exists(dataset_path):
-            downloaded.add(save_name)
-    
-    # Filter datasets to be downloaded
+    downloaded = {s for _, s, _ in datasets if os.path.exists(os.path.join(DATA, s))}
     to_download = [(d, s, desc) for d, s, desc in datasets if s not in downloaded]
-    total = len(datasets)
-    downloaded_count = len(downloaded)
+    total, need = len(datasets), len(to_download)
     
     if not to_download:
         RIGHT(f"All {total} datasets already downloaded")
         return
     
-    DEBUG(f"Detected {total} total datasets, {downloaded_count} downloaded, {len(to_download)} need download")
+    DEBUG(f"Total {total}, downloaded {total - need}, need {need}")
     success_count = 0
     successfully_downloaded = set()
 
-    if to_download:
-        # Smart core allocation: CPU-1 for <8 cores, max 8 for >=8 cores
-        cpu_cores = multiprocessing.cpu_count()
-        workers = max(1, cpu_cores - 1) if cpu_cores < 8 else min(cpu_cores, 8)
-        with multiprocessing.Pool(processes=workers) as pool:
-            results = pool.map(_download_worker, to_download)
+    workers = max(1, multiprocessing.cpu_count() - 1) if multiprocessing.cpu_count() < 8 else min(multiprocessing.cpu_count(), 8)
+    with multiprocessing.Pool(processes=workers) as pool:
+        results = pool.imap_unordered(_download_worker, to_download)
         for save_name in results:
             if save_name:
                 success_count += 1
                 successfully_downloaded.add(save_name)
-    else:
-        RIGHT(f"All {total} datasets already downloaded")
             
     # Perform unified cleaning after all datasets are downloaded using auto_clean with multiprocessing
     if post_download_clean and successfully_downloaded:
@@ -211,9 +208,9 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
                 torch.cuda.empty_cache()
                 RIGHT("CUDA memory cache cleared")
         except ImportError:
-            pass
+            print(f"Downloading {description} ({dataset_name})... ", end='')
         
-        RIGHT(f"Download completed! Success: {success_count}/{len(datasets)}")
+        print(f"Download completed! Success: {success_count}/{len(datasets)}")
         
         # Generate model.txt with successfully downloaded datasets
         if successfully_downloaded:
@@ -226,6 +223,29 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
             except Exception as e:
                 ERROR(f"Failed to generate model.txt: {str(e)}")
 
+def _load_with_hf_fallback(dataset_name):
+    """Fallback to Hugging Face datasets when ModelScope fails."""
+    try:
+        from datasets import load_dataset
+        
+        # Extract dataset name from ModelScope format
+        hf_name = dataset_name.split('/')[-1]
+        
+        # Try common configurations
+        try:
+            ds = load_dataset(hf_name, split='train', streaming=False)
+            return ds
+        except:
+            try:
+                ds = load_dataset(dataset_name, split='train', streaming=False)
+                return ds
+            except:
+                ds = load_dataset(hf_name, streaming=False)
+                return ds[0] if isinstance(ds, tuple) else ds
+    except Exception as e:
+        raise RuntimeError(f"Hugging Face fallback failed: {e}")
+
+
 def _download_worker(args):
     """
     Worker function for multiprocessing dataset downloads.
@@ -233,63 +253,114 @@ def _download_worker(args):
     """
     dataset_name, save_name, description = args
     max_retries = 3
+    
+    # Skip problematic datasets with metadata issues
+    problematic_datasets = [
+        "gxlzgdmds/baidu_baike",  # repo card metadata error
+        "tastelikefeet/competition_math",  # metadata issues
+    ]
+    
+    if dataset_name in problematic_datasets:
+        ERROR(f"Skipping problematic dataset {dataset_name} due to metadata issues")
+        return None
+    
     for attempt in range(max_retries):
         try:
-            RIGHT(f"Downloading {description} ({dataset_name})... (Attempt {attempt+1}/{max_retries})")
+            pass
 
-            split_tried = None
             ds = None
-            for split in ['train', 'validation', 'test']:
-                try:
+            last_error = None
+            
+            from tqdm import tqdm
+            
+            # Robust loading strategies with error handling and smart skip
+            loading_strategies = [
+                # Strategy 1: Default load with trust_remote_code=True to avoid warnings
+                lambda: MsDataset.load(dataset_name, trust_remote_code=True, disable_tqdm=True),
+                # Strategy 2: Fallback without parameters
+                lambda: MsDataset.load(dataset_name, disable_tqdm=True),
+                # Strategy 3: Hugging Face fallback
+                lambda: _load_with_hf_fallback(dataset_name),
+            ]
+            
+            with tqdm(total=len(loading_strategies), desc=f"{description}", unit="step", leave=False, ncols=80) as pbar:
+                for i, load_func in enumerate(loading_strategies):
                     try:
-                        ds = MsDataset.load(dataset_name, split=split, trust_remote_code=False)
-                    except Exception as e:
-                        error_msg = str(e).lower()
-                        if "trust_remote_code" in error_msg or "remote code" in error_msg:
-                            ds = MsDataset.load(dataset_name, split=split, trust_remote_code=True)
-                            DEBUG(f"Enabling remote code trust mode to load {dataset_name}")
-                        elif "oss2" in error_msg or "oss" in error_msg:
-                            DEBUG("OSS dependency issue detected, please ensure oss2 is installed")
-                            raise
+                        ds = load_func()
+                        if ds is not None and len(ds) > 0:
+                            pbar.update(1)
+                            break
                         else:
-                            raise
-                    split_tried = split
-                    RIGHT(f"Using split '{split}' for {dataset_name}")
-                    break
+                            pbar.update(1)
+                    except Exception as e:
+                        pbar.update(1)
+                        last_error = e
+                        error_msg = str(e).lower()
+                        
+                        # Smart skip for known non-critical and data parsing errors
+                        skip_patterns = [
+                            "datasetformations", "csvconfig", "trust_remote_code", 
+                            "unexpected keyword", "split", "namespace", "不存在的数据集",
+                            "repository not found", "404", "permission denied",
+                            "jsondecode", "parse", "schema", "format", "encoding",
+                            "invalid", "corrupt", "malformed", "syntax", "utf-8",
+                            "eof", "inside string", "tokenizing", "csv", "row"
+                        ]
+                        if any(pattern in error_msg for pattern in skip_patterns):
+                            continue
+            
+            if ds is None or len(ds) == 0:
+                # Try Hugging Face datasets as fallback
+                try:
+                    from datasets import load_dataset
+                    hf_name = dataset_name.split('/')[-1]
+                    ds = load_dataset(hf_name, split='train', streaming=False, disable_tqdm=True)
+                    print(f"✅ {dataset_name} (HF fallback)")
                 except Exception as e:
-                    last_split_error = str(e)
-                    if "dataset generation" in str(e).lower():
-                        DEBUG("Dataset generation error, will retry...")
+                    error_msg = str(e).lower()
+                    if any(skip_error in error_msg for skip_error in [
+                        "not found", "does not exist", "no such dataset", "404"
+                    ]):
+                        ERROR(f"Dataset {dataset_name} does not exist in Hugging Face either, skipping...")
+                        return None
+                    
+                    ERROR(f"Failed to load dataset {dataset_name} from all sources. Last error: {str(last_error or e)}")
+                    if attempt < max_retries - 1:
+                        DEBUG("Retrying in 3 seconds...")
+                        import time
+                        time.sleep(3)
                         continue
-            if ds is None:
-                ERROR(f"No available split (tried train/validation/test). Last error: {last_split_error}")
-                if attempt < max_retries - 1:
-                    DEBUG("Retrying in 5 seconds...")
-                    import time
-                    time.sleep(5)
-                    continue
-                return None
+                    return None
+            
+            # Convert to HF dataset format
             if hasattr(ds, 'to_hf_dataset'):
                 ds = ds.to_hf_dataset()
+            
             original_size = len(ds)
-            RIGHT(f"Dataset loaded successfully, original samples: {original_size:,}")
-            if original_size > 0:
-                RIGHT(f"Keeping all {original_size:,} samples...")
-                ds = ds
+            if original_size == 0:
+                ERROR(f"Dataset {dataset_name} is empty, skipping...")
+                return None
+                
             if save(ds, save_name):
-                RIGHT(f"Clearing cache after {save_name}...")
-                if 'ds' in locals():
-                    del ds
-                gc.collect()
-                try:
-                    import torch
-                    torch.cuda.empty_cache()
-                except:
-                    pass
+                model_txt_path = os.path.join('data_cache', 'model.txt')
+                os.makedirs('data_cache', exist_ok=True)
+                with open(model_txt_path, 'a', encoding='utf-8') as f:
+                    f.write(f"{save_name}\n")
                 return save_name
             else:
-                DEBUG(f"Save failed for {dataset_name}, retrying...")
+                return None
+                
         except Exception as e:
+            error_msg = str(e).lower()
+            
+            # Skip retry for non-existent datasets
+            if any(skip_error in error_msg for skip_error in [
+                "不存在的数据集", "not found", "does not exist", "no such dataset",
+                "repository not found", "404", "permission denied"
+            ]):
+                ERROR(f"Dataset {dataset_name} does not exist or is not accessible, skipping...")
+                return None
+                
             if attempt < max_retries - 1:
                 ERROR(f"Attempt {attempt + 1} failed: {str(e)}. Retrying...")
             else:
