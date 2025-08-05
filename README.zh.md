@@ -15,7 +15,7 @@
 
 ## 🚀 特性
 
-- **多模态**: 统一支持文本、图像、音频和文档输入
+- **多模态**: 统一支持文本、图像、音频、视频、文档和智能体输入
 - **MoE架构**: 高效的混合专家模型，参数从0.5B到70B可扩展
 - **轻量级**: 0.5B基础模型可在消费级GPU(24GB VRAM)上运行
 - **现代Transformer**: RMSNorm、RoPE、分组查询注意力等
@@ -82,7 +82,7 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "你好，Pisces!"
 | 32B     | 48   | 6656      | 52        | 64       | ~32B    | 10M               |
 | 64/70B  | 80   | 8192      | 64        | 128      | ~70B    | 10M               |
 
-- **多模态集成**: CLIP ViT-L/14(视觉)、AST Base(音频)、LayoutLMv3(文档)，具有统一的嵌入空间
+- **多模态集成**: CLIP ViT-L/14(视觉)、AST Base(音频)、视频编码器(时序)、LayoutLMv3(文档)，具有统一的嵌入空间
 - **MoE**: Top-2路由，高效专家加载
 
 ---
@@ -134,10 +134,17 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "你好，Pisces!"
 - **DocVQA** (swift/DocVQA): 文档视觉问答
 - **Exam** (modelscope/ceval-exam): 中文考试题
 - **SG1** (AI-ModelScope/LAION-SG): 语义图数据集
-- **Chat1** (HuggingFaceH4/ultrachat_200k): 基于对话的指令微调
+- **Chat1** (HuggingFaceH4/ultrachat_200k): 对话指令微调
 - **PubLayNet1** (OpenDataLab/PubLayNet): 文档布局分析
 - **Medical1** (krisfu/delicate_medical_r1_data): 医疗指令数据
 - **Financial1** (BJQW14B/bs_challenge_financial_14b_dataset): 金融数据集
+
+### 智能体与行为理解
+- **Agent1** (AI-ModelScope/agent-instruct): 智能体指令微调数据集
+- **Agent2** (OmniData/agent-dialogue): 多轮智能体对话数据
+- **Agent3** (swift/agent-reasoning): 智能体推理与规划任务
+- **Agent4** (HuggingFaceH4/agent-tool-use): 工具使用智能体行为数据集
+- **Agent5** (modelscope/agent-environment): 智能体环境交互数据
 
 通过以下命令自动下载和缓存数据集：
 ```bash
@@ -331,12 +338,14 @@ python manage.py benchmark --benchmark mmlu --config configs/7B.json
 ---
 
 ## 📄 许可证
-Pisces L1采用知识共享署名-非商业性使用 4.0 国际许可协议 (CC BY-NC 4.0)。**明确禁止商用。** 详见[LICENSE](./LICENSE)。
+本项目采用 **Apache许可证2.0** 授权 - 详见[LICENSE](LICENSE)文件。
 
-### 许可证概要
-- **署名**：您必须给出适当的署名，提供指向许可证的链接，并标明是否（对原始作品）作了修改。
-- **非商业性使用**：您不得将本作品用于商业目的。
-- **无附加限制**：您不得适用法律术语或者技术措施从而限制其他人做许可协议允许的事情。
+### 许可证摘要
+- **商业使用**: ✅ 允许
+- **修改**: ✅ 允许
+- **分发**: ✅ 允许
+- **署名**: ✅ 需要
+- **专利授权**: ✅ 包含
 
 ---
 

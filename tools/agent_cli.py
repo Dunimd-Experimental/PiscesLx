@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 
-# Copyright © 2025 Wenze Wei
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of Pisces L1.
 #
-# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
 # Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
-#     https://creativecommons.org/licenses/by-nc/4.0/
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -29,7 +29,7 @@ from utils.log import RIGHT, DEBUG, ERROR
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from model import PiscesConfig, PiscesModel
-from model.agent import PiscesAgent
+from model.multimodal import PiscesAgent
 from model.tokenizer import BPETokenizer
 
 def load_agent(config_path: str, model_path: str = None):
@@ -91,10 +91,10 @@ def register_example_tools(agent: PiscesAgent):
             ]
         }
     
-    # Register tools
-    agent.register_tool("calculator", calculator)
-    agent.register_tool("file_reader", file_reader)
-    agent.register_tool("web_search", web_search)
+    # Register tools as capabilities
+    agent.register_capability("calculator", "Basic calculator tool", {"expression": "str"}, calculator)
+    agent.register_capability("file_reader", "Read file contents", {"filepath": "str"}, file_reader)
+    agent.register_capability("web_search", "Simulated web search tool", {"query": "str"}, web_search)
 
 
 def run_interactive_agent(model, tokenizer):

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright © 2025 Wenze Wei
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of LingSi.
 #

@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 
-# Copyright © 2025 Wenze Wei
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of Pisces L1.
 #
-# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
 # Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
-#     https://creativecommons.org/licenses/by-nc/4.0/
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -104,12 +104,12 @@ def train(args):
     from transformers import get_linear_schedule_with_warmup
     
     AUTO_CONFIG = {
-        "0.5B":  dict(batch_size=4,  accum=8,  seq_len=384,  force_quant=False, force_lora=False, lr=3e-5),
-        "1.5B":  dict(batch_size=2,  accum=16, seq_len=512,  force_quant=False, force_lora=False, lr=2e-5),
-        "7B":    dict(batch_size=1,  accum=32, seq_len=384,  force_quant=True, force_lora=True,  lr=2e-5),
-        "32B":   dict(batch_size=1,  accum=64, seq_len=256,  force_quant=True, force_lora=True,  lr=1e-5),
-        "64B":   dict(batch_size=1,  accum=64, seq_len=192,  force_quant=True, force_lora=True,  lr=1e-5),
-        "70B":   dict(batch_size=1,  accum=64, seq_len=128,  force_quant=True, force_lora=True,  lr=8e-6),
+        "0.5B":  dict(batch_size=4,  accum=8,  seq_len=384,  force_quant=False, force_lora=False, lr=3e-5, max_accum=16),
+        "1.5B":  dict(batch_size=2,  accum=16, seq_len=512,  force_quant=False, force_lora=False, lr=2e-5, max_accum=32),
+        "7B":    dict(batch_size=1,  accum=32, seq_len=384,  force_quant=True, force_lora=True,  lr=2e-5, max_accum=64),
+        "32B":   dict(batch_size=1,  accum=64, seq_len=256,  force_quant=True, force_lora=True,  lr=1e-5, max_accum=128),
+        "64B":   dict(batch_size=1,  accum=64, seq_len=192,  force_quant=True, force_lora=True,  lr=1e-5, max_accum=128),
+        "70B":   dict(batch_size=1,  accum=64, seq_len=128,  force_quant=True, force_lora=True,  lr=8e-6, max_accum=256),
     }
     model_size = getattr(args, 'model_size', '0.5B').upper()
     if model_size not in AUTO_CONFIG:
@@ -118,12 +118,59 @@ def train(args):
     cfg_dict = AUTO_CONFIG[model_size]
     batch_size = cfg_dict['batch_size']
     accum = cfg_dict['accum']
+    max_accum = cfg_dict['max_accum']
     seq_len = cfg_dict['seq_len']
     force_quant = cfg_dict['force_quant']
     force_lora = cfg_dict['force_lora']
     epochs = 1
     lr = cfg_dict['lr']
     save_dir = "ckpt"
+    
+    class DynamicGradientAccumulator:
+        """Safe dynamic gradient accumulation based on gradient norm monitoring"""
+        def __init__(self, base_accum, max_accum, target_grad_norm=1.0, safety_factor=0.8):
+            self.base_accum = base_accum
+            self.max_accum = max_accum
+            self.target_grad_norm = target_grad_norm
+            self.safety_factor = safety_factor
+            self.current_accum = base_accum
+            self.grad_norm_history = []
+            self.stable_steps = 0
+            
+        def should_step(self, grad_norm):
+            """Determine if should perform optimizer step based on gradient norm"""
+            self.grad_norm_history.append(grad_norm)
+            if len(self.grad_norm_history) > 10:
+                self.grad_norm_history.pop(0)
+            
+            # Calculate recent average gradient norm
+            if len(self.grad_norm_history) >= 3:
+                recent_avg = sum(self.grad_norm_history[-3:]) / 3
+                
+                # Dynamic adjustment logic
+                if recent_avg < self.target_grad_norm * 0.5 and self.current_accum < self.max_accum:
+                    # Gradients are small, increase accumulation for better efficiency
+                    self.current_accum = min(self.current_accum + 1, self.max_accum)
+                    self.stable_steps = 0
+                elif recent_avg > self.target_grad_norm * 2.0 and self.current_accum > self.base_accum:
+                    # Gradients are large, decrease accumulation to prevent explosion
+                    self.current_accum = max(self.current_accum - 1, self.base_accum)
+                    self.stable_steps = 0
+                else:
+                    self.stable_steps += 1
+            
+            # Safety check: never exceed max_accum
+            return len(self.grad_norm_history) >= self.current_accum
+            
+        def get_current_accum(self):
+            return max(1, int(self.current_accum * self.safety_factor))
+            
+        def reset(self):
+            self.current_accum = self.base_accum
+            self.grad_norm_history.clear()
+            self.stable_steps = 0
+    
+    grad_accumulator = DynamicGradientAccumulator(accum, max_accum)
     
     min_plateau_epoch = 5
     scheduler = None
@@ -270,8 +317,9 @@ def train(args):
             while not stop_training:
                 DEBUG(f"Starting epoch {epoch+1}")
                 total_loss = 0
-                accum_counter = 0
+                step_loss = 0
                 optimizer.zero_grad()
+                grad_accumulator.reset()
                 for step, batch in enumerate(train_loader):
                     model_keys = ["input_ids", "labels"]
                     device_batch = {
@@ -288,15 +336,23 @@ def train(args):
                             if torch.cuda.device_count() > 1:
                                 loss = loss.mean()
                             
-                            scaler.scale(loss / accum).backward()
+                            current_accum = grad_accumulator.get_current_accum()
+                            scaler.scale(loss / current_accum).backward()
+                            step_loss += loss.item()
                             
-                            accum_counter += 1
-                            if accum_counter % accum == 0:
+                            # Calculate gradient norm for dynamic adjustment
+                            grad_norm = 0.0
+                            for param in model.parameters():
+                                if param.grad is not None:
+                                    grad_norm += param.grad.data.norm(2).item() ** 2
+                            grad_norm = grad_norm ** 0.5
+                            
+                            if grad_accumulator.should_step(grad_norm):
                                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                                 scaler.step(optimizer)
                                 scaler.update()
                                 optimizer.zero_grad()
-                                accum_counter = 0
+                                step_loss = 0
                         else:
                             DEBUG(f"Warning: Skipping step {step} due to invalid loss (None or no grad).")
                             
@@ -307,34 +363,56 @@ def train(args):
                         if loss is not None and loss.requires_grad:
                             if torch.cuda.device_count() > 1:
                                 loss = loss.mean()
-                            loss.backward()
-
-                            accum_counter += 1
-                            if accum_counter % accum == 0:
+                            
+                            current_accum = grad_accumulator.get_current_accum()
+                            (loss / current_accum).backward()
+                            step_loss += loss.item()
+                            
+                            # Calculate gradient norm for dynamic adjustment
+                            grad_norm = 0.0
+                            for param in model.parameters():
+                                if param.grad is not None:
+                                    grad_norm += param.grad.data.norm(2).item() ** 2
+                            grad_norm = grad_norm ** 0.5
+                            
+                            if grad_accumulator.should_step(grad_norm):
                                 torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                                 optimizer.step()
                                 optimizer.zero_grad()
-                                accum_counter = 0
+                                step_loss = 0
                         else:
                             DEBUG(f"Warning: Skipping step {step} due to invalid loss (None or no grad).")
 
                     if loss is not None:
-                        total_loss += loss.item() * accum
+                        current_accum = grad_accumulator.get_current_accum()
+                        total_loss += loss.item() * current_accum
                         
                         if epoch+1 > min_plateau_epoch and scheduler is not None:
                             scheduler.step(loss.item())
                         if step % 10 == 0:
+                            effective_batch = batch_size * current_accum
                             avg_loss = total_loss / (step + 1)
-                            RIGHT(f"Epoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e}")
+                            RIGHT(f"Epoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e} | Accum: {current_accum} | Batch: {effective_batch}")
                 
                 if not train_loader:
                     DEBUG("Skipping epoch end logic for empty loader.")
                     continue
 
+                # Handle remaining gradients at epoch end
+                if step_loss > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    if scaler is not None:
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        optimizer.step()
+                    optimizer.zero_grad()
+
                 avg_loss = total_loss / (step + 1)
                 checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
                 save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
                 RIGHT(f"Checkpoint saved: {checkpoint_path}")
+                RIGHT(f"Epoch {epoch + 1} complete | Final accum: {grad_accumulator.get_current_accum()} | Avg grad norm: {sum(grad_accumulator.grad_norm_history[-5:])/min(5, len(grad_accumulator.grad_norm_history)):.4f}")
                 
                 if epoch+1 == min_plateau_epoch:
                     from torch.optim.lr_scheduler import ReduceLROnPlateau

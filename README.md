@@ -14,7 +14,7 @@ A next-generation lightweight multimodal Mixture-of-Experts (MoE) model supporti
 
 ## 🚀 Features
 
-- **Multimodal**: Unified support for text, image, audio, and document inputs
+- **Multimodal**: Unified support for text, image, audio, video, document, and agent behavior inputs
 - **MoE Architecture**: Efficient Mixture-of-Experts, scalable from 0.5B to 70B parameters
 - **Lightweight**: 0.5B base model runs on consumer GPUs (24GB VRAM)
 - **Modern Transformer**: RMSNorm, RoPE, Grouped-Query Attention, and more
@@ -81,7 +81,7 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "Hello, Pisces!"
 | 32B        | 48     | 6656   | 52    | 64          | ~32B     | 10M              |
 | 64/70B     | 80     | 8192   | 64    | 128         | ~70B     | 10M              |
 
-- **Multimodal Integration**: CLIP ViT-L/14 (vision), AST Base (audio), LayoutLMv3 (documents) with unified embedding space
+- **Multimodal Integration**: CLIP ViT-L/14 (vision), AST Base (audio), Video Encoder (temporal), LayoutLMv3 (documents) with unified embedding space
 - **MoE**: Top-2 routing, efficient expert loading
 
 ---
@@ -137,6 +137,13 @@ Datasets are automatically downloaded and cached. The following datasets are sup
 - **PubLayNet1** (OpenDataLab/PubLayNet): Document layout analysis
 - **Medical1** (krisfu/delicate_medical_r1_data): Medical instruction data
 - **Financial1** (BJQW14B/bs_challenge_financial_14b_dataset): Financial dataset
+
+### Agent & Behavior Understanding
+- **Agent1** (AI-ModelScope/agent-instruct): Agent instruction tuning dataset
+- **Agent2** (OmniData/agent-dialogue): Multi-turn agent conversation data
+- **Agent3** (swift/agent-reasoning): Agent reasoning and planning tasks
+- **Agent4** (HuggingFaceH4/agent-tool-use): Tool-using agent behavior dataset
+- **Agent5** (modelscope/agent-environment): Agent-environment interaction data
 
 Datasets are auto-downloaded and cached via:
 ```bash
@@ -326,12 +333,14 @@ python manage.py benchmark --benchmark mmlu --config configs/7B.json
 ---
 
 ## 📄 License
-Pisces L1 is released under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0). **Commercial use is strictly prohibited.** See [LICENSE](./LICENSE) for details.
+This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
 
 ### License Summary
-- **Attribution**: You must give appropriate credit, provide a link to the license, and indicate if changes were made.
-- **Non-Commercial**: You may not use the material for commercial purposes.
-- **No additional restrictions**: You may not apply legal terms or technological measures that legally restrict others from doing anything the license permits.
+- **Commercial Use**: ✅ Permitted
+- **Modification**: ✅ Permitted  
+- **Distribution**: ✅ Permitted
+- **Attribution**: ✅ Required
+- **Patent Grant**: ✅ Included
 
 ---
 

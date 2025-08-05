@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 
-# Copyright © 2025 Wenze Wei
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of Pisces L1.
 #
-# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
 # Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
-#     https://creativecommons.org/licenses/by-nc/4.0/
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -27,8 +27,7 @@ from utils.log import  DEBUG, ERROR
 from .reasoner import PiscesReasoner
 from model.moe_dynamic import DynamicMoELayer
 from model.yarn_rope import YaRNRotaryEmbedding
-from model.vision_native import NativeSiglipVisionEncoder
-from .multimodal import VisionEncoder, AudioEncoder, DocEncoder
+from .multimodal import VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder, AgentEncoder, DynamicModalFusion, CrossModalAttention
 
 def pisces_init_weights(m):
     """
@@ -288,9 +287,16 @@ class PiscesModel(nn.Module):
         DEBUG("PiscesModel: initializing norm...")
         self.norm = RMSNorm(cfg.hidden_size)
         DEBUG("PiscesModel: initializing multimodal encoders...")
+        # Use unified VisionEncoder with NaViT native resolution support
         self.vision = VisionEncoder(cfg)
+        self.video = VideoEncoder(cfg)
         self.audio = AudioEncoder(cfg)
         self.doc = DocEncoder(cfg)
+        
+        # Agent encoder for behavior/policy modality - now using unified AgentEncoder
+        self.agent_encoder = AgentEncoder(cfg)
+        
+        self.modal_fusion = DynamicModalFusion(cfg)
         DEBUG("PiscesModel: initializing output heads...")
         self.lm_head = nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
         self.task_head = nn.Linear(cfg.hidden_size, cfg.task_classes, device=device, dtype=dtype)
@@ -300,7 +306,7 @@ class PiscesModel(nn.Module):
         self.reasoner = PiscesReasoner(cfg)
         
         DEBUG("PiscesModel: initializing agent...")
-        from .agent import PiscesAgent
+        from .multimodal import PiscesAgent
         self.agent = PiscesAgent(cfg, model=self)
         
         # Skipped global weight initialization to avoid lengthy CPU-bound stall.
@@ -382,19 +388,22 @@ class PiscesModel(nn.Module):
         model_inputs.update(kwargs)
         return model_inputs
 
-    def forward(self, input_ids, images=None, audio=None, docs=None, labels=None, agent_mode=False, task=None, max_steps=None):
+    def forward(self, input_ids, images=None, audio=None, video=None, docs=None, labels=None, agent_mode=False, task=None, max_steps=None, agent_obs=None, agent_embed=None):
         """
-        Forward pass of the PiscesModel.
+        Forward pass of the PiscesModel with full multimodal support including Agent.
 
         Args:
-            input_ids (torch.Tensor): Input token IDs.
-            images (torch.Tensor, optional): Input images. Defaults to None.
-            audio (torch.Tensor, optional): Input audio. Defaults to None.
-            docs (torch.Tensor, optional): Input documents. Defaults to None.
+            input_ids (torch.Tensor): Input token IDs [batch_size, seq_len].
+            images (torch.Tensor, optional): Input images [batch_size, channels, height, width]. Defaults to None.
+            audio (torch.Tensor, optional): Input audio [batch_size, channels, time_steps]. Defaults to None.
+            video (torch.Tensor, optional): Input video [batch_size, channels, frames, height, width]. Defaults to None.
+            docs (torch.Tensor, optional): Input documents [batch_size, seq_len, hidden_size]. Defaults to None.
             labels (torch.Tensor, optional): Ground truth labels. Defaults to None.
             agent_mode (bool, optional): Enable agent mode. Defaults to False.
             task (str, optional): Task description for agent mode. Defaults to None.
             max_steps (int, optional): Maximum steps for agent execution. Defaults to None.
+            agent_obs (torch.Tensor, optional): Agent observations [batch_size, seq_len, hidden_size]. Defaults to None.
+            agent_embed (torch.Tensor, optional): Pre-computed agent embeddings [batch_size, seq_len, hidden_size]. Defaults to None.
 
         Returns:
             dict: Dictionary containing model outputs. In agent mode, returns agent execution results.
@@ -414,16 +423,57 @@ class PiscesModel(nn.Module):
             )
             
         b, t = input_ids.shape
-        x = self.embed(input_ids)
+        
+        # Process text embeddings
+        text_emb = self.embed(input_ids)
+        
+        # Process multimodal features
+        modal_features = {}
+        modal_features['text'] = text_emb
+        
         if images is not None:
-            x = torch.cat([self.vision(images), x], dim=1)
-            t += 1
+            modal_features['image'] = self.vision(images)
         if audio is not None:
-            x = torch.cat([self.audio(audio), x], dim=1)
-            t += 1
+            modal_features['audio'] = self.audio(audio)
+        if video is not None:
+            modal_features['video'] = self.video(video)
         if docs is not None:
-            x = torch.cat([self.doc(docs), x], dim=1)
-            t += 1
+            modal_features['doc'] = self.doc(docs)
+            
+        # Process Agent modality if provided
+        if agent_embed is not None:
+            # Prepare comprehensive agent input for AgentEncoder
+            agent_input = {
+                'observations': agent_embed.get('observations', []),
+                'actions': agent_embed.get('actions', []),
+                'reflections': agent_embed.get('reflections', []),
+                'current_state': agent_embed.get('current_state', None),
+                'task_context': agent_embed.get('task_context', None)
+            }
+            modal_features['agent'] = self.agent_encoder(agent_input)
+            
+        if agent_obs is not None:
+            # Prepare comprehensive agent observation input
+            agent_obs_input = {
+                'observations': agent_obs.get('observations', []),
+                'actions': agent_obs.get('actions', []),
+                'reflections': agent_obs.get('reflections', []),
+                'current_state': agent_obs.get('current_state', None),
+                'task_context': agent_obs.get('task_context', None)
+            }
+            agent_feat = self.agent_encoder(agent_obs_input)
+            modal_features['agent'] = agent_feat
+
+        # Enhanced multimodal fusion
+        if len(modal_features) > 1:
+            # Use dynamic fusion for multiple modalities
+            fused_features = self.modal_fusion(modal_features)
+            x = torch.cat([fused_features, text_emb], dim=1)
+        else:
+            # Single modality, use text only
+            x = text_emb
+            
+        t = x.shape[1]
         
         # Original sequence length for LM loss calculation
         lm_seq_len = x.shape[1]
