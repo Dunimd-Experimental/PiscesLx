@@ -146,14 +146,14 @@ python manage.py download
 
 ---
 
-## 🏆 在24GB GPU上训练70B模型[Beta]
-Pisces L1支持**在单个24GB GPU上训练/微调70B模型**，使用QLoRA、4位量化、LoRA适配器和梯度累积技术。
+## 🏆 在24GB GPU上训练7B模型 [Beta]
+Pisces L1支持**在单个24GB GPU上训练/微调7B模型**，使用QLoRA、4位量化、LoRA适配器和梯度累积技术。
 
-#### 70B QLoRA训练示例
+#### 7B QLoRA训练示例
 
 ##### 单GPU训练
 ```bash
-python manage.py train --model_size 70B --resume_ckpt latest.pt
+python manage.py train --model_size 7B --resume_ckpt latest.pt
 ```
 
 ##### 继续训练

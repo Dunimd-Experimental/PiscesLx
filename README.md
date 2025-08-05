@@ -145,14 +145,14 @@ python manage.py download
 
 ---
 
-## 🏆 Extreme 70B Training on 24GB GPU[Beta]
-Pisces L1 supports **training/fine-tuning 70B models on a single 24GB GPU** using QLoRA, 4-bit quantization, LoRA adapters, and gradient accumulation.
+## 🏆 Training 7B Model on 24GB GPU [Beta]
+Pisces L1 supports **training/fine-tuning 7B models on a single 24GB GPU** using QLoRA, 4-bit quantization, LoRA adapters, and gradient accumulation.
 
-#### 70B QLoRA Training Example
+#### 7B QLoRA Training Example
 
 ##### Single GPU
 ```bash
-python manage.py train --model_size 70B --resume_ckpt latest.pt
+python manage.py train --model_size 7B --resume_ckpt latest.pt
 ```
 
 ##### Resume Training

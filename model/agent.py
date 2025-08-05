@@ -194,23 +194,48 @@ class PiscesAgent(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.tokenizer = tokenizer
-        self.model = model
+        import weakref
+        self._model_ref = None  # weak reference placeholder
         self.agent_id = agent_id or str(uuid.uuid4())
         
         # Use provided model or create new one
+        import weakref
         if model is not None:
-            self.base_model = model
-            self.reasoner = model.reasoner
-            self.vision_encoder = model.vision
-            self.audio_encoder = model.audio
+            # Store a weak reference (callable) to avoid registering model as a submodule.
+            self._base_model_ref = weakref.ref(model)
+            self._model_ref = self._base_model_ref
         else:
-            # Initialize standalone components
-            self.base_model = PiscesModel(cfg)
-            self.reasoner = PiscesReasoner(cfg)
-            self.vision_encoder = VisionEncoder(cfg)
-            self.audio_encoder = AudioEncoder(cfg)
+            # Stand-alone agent: no linked PiscesModel to avoid cycles.
+            self._base_model_ref = None
+            self._model_ref = None
+            self._reasoner = PiscesReasoner(cfg)
+            self._vision_encoder = VisionEncoder(cfg)
+            self._audio_encoder = AudioEncoder(cfg)
         
         self.tree_reasoner = TreeSearchReasoner(None, tokenizer) if tokenizer else None
+
+        # Expose base_model via a property for compatibility
+    @property
+    def base_model(self):
+        return self._base_model_ref() if self._base_model_ref else None
+
+    @property
+    def reasoner(self):
+        if self._base_model_ref:
+            return self._base_model_ref().reasoner
+        return self._reasoner
+
+    @property
+    def vision_encoder(self):
+        if self._base_model_ref:
+            return self._base_model_ref().vision
+        return self._vision_encoder
+
+    @property
+    def audio_encoder(self):
+        if self._base_model_ref:
+            return self._base_model_ref().audio
+        return self._audio_encoder
         
         # MCP Agent infrastructure
         self.memory = AgentMemory([], [], [])

@@ -146,24 +146,52 @@ class Attention(nn.Module):
         Returns:
             torch.Tensor: Output tensor after attention operation.
         """
-        from flash_attn import flash_attn_qkv_packed
+        # Prefer xformers' memory_efficient_attention; fallback to PyTorch SDPA (>=2.0)
+        try:
+            from xformers.ops import memory_efficient_attention  # type: ignore
+            _use_xformers = True
+        except ImportError:
+            _use_xformers = False
+
         b, t, _ = x.shape
+        # Project to QKV and reshape to (B, n_head, T, head_dim)
         q = self.q_proj(x).view(b, t, self.n_head, self.head_dim).transpose(1, 2)
         k = self.k_proj(x).view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
         v = self.v_proj(x).view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
+
+        # Rotary positional embeddings
         q, k = self.rope(q, t), self.rope(k, t)
-        k = k.repeat_interleave(self.n_head // self.n_kv_head, dim=1)
-        v = v.repeat_interleave(self.n_head // self.n_kv_head, dim=1)
-        qkv = torch.stack((q, k, v), dim=2)
-        out = flash_attn_qkv_packed(qkv, dropout_p=0.0, softmax_scale=self.scale, causal=True)
-        out = out.transpose(1, 2).contiguous().view(b, t, -1)
+
+        # Broadcast KV heads if using GQA
+        if self.n_kv_head != self.n_head:
+            repeat = self.n_head // self.n_kv_head
+            k = k.repeat_interleave(repeat, dim=1)
+            v = v.repeat_interleave(repeat, dim=1)
+
+        # Ensure dtype consistency for xformers (all must match)
+        if v.dtype != q.dtype:
+            v = v.to(q.dtype)
+
+        if _use_xformers:
+            # xformers expects shape (B, n_head, T, head_dim)
+            out = memory_efficient_attention(q, k, v)  # (B, n_head, T, head_dim)
+            out = out.transpose(1, 2).contiguous().view(b, t, -1)
+        else:
+            # Fallback: torch scaled_dot_product_attention expects (B*n_head, T, head_dim)
+            import torch.nn.functional as F
+            q_ = q.reshape(b * self.n_head, t, self.head_dim)
+            k_ = k.reshape(b * self.n_head, t, self.head_dim)
+            v_ = v.reshape(b * self.n_head, t, self.head_dim)
+            out_ = F.scaled_dot_product_attention(q_, k_, v_, attn_mask=None, dropout_p=0.0, is_causal=True)
+            out = out_.reshape(b, self.n_head, t, self.head_dim).transpose(1, 2).contiguous().view(b, t, -1)
+
         return self.o_proj(out)
 
 class TransformerBlock(nn.Module):
     """
     Transformer block with attention and MoE MLP.
     """
-    def __init__(self, cfg, device=None, dtype=None):
+    def __init__(self, cfg, device=None, dtype=None, quantization_config=None):
         """
         Initialize the TransformerBlock.
 
@@ -177,6 +205,31 @@ class TransformerBlock(nn.Module):
         self.mlp = DynamicMoELayer(cfg, device=device, dtype=dtype)
         self.norm1 = RMSNorm(cfg.hidden_size)
         self.norm2 = RMSNorm(cfg.hidden_size)
+        # store quant config
+        self.quantization_config = quantization_config
+
+        # Apply 4-bit quantization to this block only (saves memory)
+        if self.quantization_config is not None:
+            try:
+                import bitsandbytes as bnb
+
+                def convert_linear_to_4bit(module):
+                    for name, child in module.named_children():
+                        if isinstance(child, nn.Linear):
+                            new_mod = bnb.nn.Linear4bit(
+                                child.in_features,
+                                child.out_features,
+                                bias=child.bias is not None,
+                                quant_type=getattr(self.quantization_config, 'bnb_4bit_quant_type', 'nf4'),
+                                compute_dtype=getattr(self.quantization_config, 'bnb_4bit_compute_dtype', torch.bfloat16),
+                                compress_statistics=getattr(self.quantization_config, 'bnb_4bit_use_double_quant', True),
+                            )
+                            setattr(module, name, new_mod)
+                        else:
+                            convert_linear_to_4bit(child)
+                convert_linear_to_4bit(self)
+            except Exception as e:
+                ERROR(f"Block 4bit quantization failed: {e}")
 
     def forward(self, x, mask):
         """
@@ -195,6 +248,15 @@ class TransformerBlock(nn.Module):
         return x, aux_loss
 
 class PiscesModel(nn.Module):
+    """Main Pisces L1 multimodal model (Aurora architecture)."""
+
+    # Exclude the nested PiscesAgent from PyTorch module traversal to avoid
+    # infinite recursion when calling `.to()`, `.cuda()`, `.state_dict()`, etc.
+    def named_children(self):
+        for name, module in super().named_children():
+            if name == "agent":
+                continue
+            yield name, module
     """
     Pisces L1 multimodal MoE model (oneflow style).
     """
@@ -215,31 +277,6 @@ class PiscesModel(nn.Module):
         self.quantization_config = quantization_config
         self.lora_config = lora_config
         
-        if quantization_config is not None:
-            try:
-                import bitsandbytes as bnb
-                def convert_linear_to_4bit(module):
-                    """
-                    Convert all Linear layers in a module to 4-bit Linear layers.
-
-                    Args:
-                        module (torch.nn.Module): Module to convert.
-                    """
-                    for name, child in module.named_children():
-                        if isinstance(child, nn.Linear):
-                            new_mod = bnb.nn.Linear4bit(
-                                child.in_features, child.out_features, bias=child.bias is not None,
-                                quant_type=getattr(quantization_config, 'bnb_4bit_quant_type', 'nf4'),
-                                compute_dtype=getattr(quantization_config, 'bnb_4bit_compute_dtype', torch.bfloat16),
-                                compress_statistics=getattr(quantization_config, 'bnb_4bit_use_double_quant', True)
-                            )
-                            setattr(module, name, new_mod)
-                        else:
-                            convert_linear_to_4bit(child)
-                convert_linear_to_4bit(self)
-                DEBUG("PiscesModel: All Linear layers converted to 4bit (bitsandbytes)")
-            except Exception as e:
-                ERROR(f"4bit quantization failed: {e}")
         DEBUG("PiscesModel: initializing embedding...")
         self.embed = nn.Embedding(cfg.vocab_size, cfg.hidden_size, device=device, dtype=dtype)
         DEBUG(f"PiscesModel: initializing {cfg.n_layer} transformer layers...")
@@ -247,7 +284,7 @@ class PiscesModel(nn.Module):
         for i in range(cfg.n_layer):
             if (i % 4 == 0) or (i == cfg.n_layer-1):
                 DEBUG(f"PiscesModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
-            self.layers.append(TransformerBlock(cfg, device=device, dtype=dtype))
+            self.layers.append(TransformerBlock(cfg, device=device, dtype=dtype, quantization_config=self.quantization_config))
         DEBUG("PiscesModel: initializing norm...")
         self.norm = RMSNorm(cfg.hidden_size)
         DEBUG("PiscesModel: initializing multimodal encoders...")
@@ -266,7 +303,9 @@ class PiscesModel(nn.Module):
         from .agent import PiscesAgent
         self.agent = PiscesAgent(cfg, model=self)
         
-        self.apply(pisces_init_weights)
+        # Skipped global weight initialization to avoid lengthy CPU-bound stall.
+        # self.apply(pisces_init_weights)
+        DEBUG("PiscesModel: skipped duplicate global weight initialization")
         
         if lora_config is not None:
             try:
