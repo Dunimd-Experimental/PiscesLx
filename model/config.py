@@ -66,6 +66,12 @@ class PiscesConfig:
     eval_dims: int = 7
     rope_scaling: dict = field(default_factory=lambda: {"type": "yarn", "factor": 32, "original_max_position_embeddings": 32768})
     
+    # Stability configurations
+    residual_dropout_p: float = 0.1  # Dropout rate for residual connections
+    use_gradient_checkpointing: bool = True  # Enable gradient checkpointing for memory efficiency
+    use_pre_norm: bool = True  # Use Pre-Norm architecture for stability
+    attention_dropout: float = 0.0  # Dropout rate for attention layers
+    
     @classmethod
     def from_json(cls, path):
         """Load the model configuration from a JSON file.

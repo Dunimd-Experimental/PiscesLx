@@ -30,7 +30,14 @@ import multiprocessing
 from .clean import DatasetCleaner
 from datasets import load_from_disk
 from utils.log import RIGHT, DEBUG, ERROR
-from modelscope.msdatasets import MsDataset
+
+# Handle modelscope import gracefully
+try:
+    from modelscope.msdatasets import MsDataset
+    MODELSCOPE_AVAILABLE = True
+except ImportError as e:
+    DEBUG(f"Modelscope not available, falling back to datasets: {e}")
+    MODELSCOPE_AVAILABLE = False
 
 logging.getLogger('modelscope').setLevel(logging.ERROR)
 warnings.filterwarnings('ignore', category=UserWarning, module='modelscope')
@@ -49,7 +56,11 @@ def detect_available_splits(dataset_name, trust_remote_code=True):
     
     for split in split_candidates:
         try:
-            MsDataset.load(dataset_name, split=split, trust_remote_code=trust_remote_code)
+            if MODELSCOPE_AVAILABLE:
+                MsDataset.load(dataset_name, split=split, trust_remote_code=trust_remote_code)
+            else:
+                from datasets import load_dataset
+                load_dataset(dataset_name, split=split, trust_remote_code=True)
             available_splits.append(split)
         except Exception as e:
             DEBUG(f"Split {split} not available for {dataset_name}: {str(e)[:200]}...")
@@ -58,7 +69,11 @@ def detect_available_splits(dataset_name, trust_remote_code=True):
     # If no splits are found, try loading without specifying a split
     if not available_splits:
         try:
-            MsDataset.load(dataset_name, trust_remote_code=trust_remote_code)
+            if MODELSCOPE_AVAILABLE:
+                MsDataset.load(dataset_name, trust_remote_code=trust_remote_code)
+            else:
+                from datasets import load_dataset
+                load_dataset(dataset_name, trust_remote_code=True)
             available_splits.append('default')
         except Exception as e:
             DEBUG(f"No default split found for {dataset_name}: {str(e)[:200]}...")
@@ -280,7 +295,7 @@ def _download_worker(args):
             ds = None
             last_error = None
             
-            # Try different loading methods
+            # Try different loading methods with compatibility fixes
             load_methods = [
                 # Method 1: Direct load without specifying a split
                 {'kwargs': {'trust_remote_code': True}, 'desc': 'direct load with trust_remote_code=True'},
@@ -294,19 +309,71 @@ def _download_worker(args):
             
             for method in load_methods:
                 try:
-                    ds = MsDataset.load(dataset_name, **method['kwargs'])
-                    if ds is not None:
-                        break
+                    if MODELSCOPE_AVAILABLE:
+                        # Use try-except to handle DatasetFormations error
+                        ds = MsDataset.load(dataset_name, **method['kwargs'])
+                        if ds is not None and len(ds) > 0:
+                            break
+                    else:
+                        # Fallback to datasets library
+                        from datasets import load_dataset
+                        split = method['kwargs'].get('split')
+                        if split and split != 'default':
+                            ds = load_dataset(dataset_name, split=split, trust_remote_code=True)
+                        else:
+                            ds = load_dataset(dataset_name, trust_remote_code=True)
+                        if ds is not None and len(ds) > 0:
+                            break
+                            
+                except ValueError as e:
+                    if "DatasetFormations" in str(e) or "not a valid DatasetFormations" in str(e) or "cannot import" in str(e):
+                        # Handle DatasetFormations enum error by trying simpler approach
+                        try:
+                            from datasets import load_dataset
+                            split = method['kwargs'].get('split')
+                            if split and split != 'default':
+                                ds = load_dataset(dataset_name, split=split, trust_remote_code=True)
+                            else:
+                                ds = load_dataset(dataset_name, trust_remote_code=True)
+                            if ds is not None and len(ds) > 0:
+                                break
+                        except Exception as e2:
+                            last_error = str(e2)
+                            continue
+                    else:
+                        last_error = str(e)
+                        continue
                 except Exception as e:
-                    last_error = str(e)
-                    continue
+                    # Try datasets library as fallback for any other error
+                    try:
+                        from datasets import load_dataset
+                        split = method['kwargs'].get('split')
+                        if split and split != 'default':
+                            ds = load_dataset(dataset_name, split=split, trust_remote_code=True)
+                        else:
+                            ds = load_dataset(dataset_name, trust_remote_code=True)
+                        if ds is not None and len(ds) > 0:
+                            break
+                    except Exception as e2:
+                        last_error = str(e2)
+                        continue
                 
-            if ds is not None:
+            if ds is not None and len(ds) > 0:
                 RIGHT(f"Successfully loaded {dataset_name}")
             else:
-                ERROR(f"Failed to load {dataset_name} after all attempts")
+                # Final fallback: try using datasets library directly
+                try:
+                    from datasets import load_dataset
+                    ds = load_dataset(dataset_name, trust_remote_code=True)
+                    if ds is not None and len(ds) > 0:
+                        RIGHT(f"Successfully loaded {dataset_name} via fallback")
+                    else:
+                        ERROR(f"Failed to load {dataset_name} after all attempts")
+                except Exception as e:
+                    ERROR(f"Failed to load {dataset_name} after all attempts")
+                    last_error = str(e)
             
-            if ds is None:
+            if ds is None or (hasattr(ds, '__len__') and len(ds) == 0):
                 ERROR(f"Failed to load dataset {dataset_name} after trying all methods. Last error: {last_error}")
                 if attempt < max_retries - 1:
                     DEBUG(f"Retrying in 5 seconds...")
@@ -315,9 +382,24 @@ def _download_worker(args):
                     continue
                 return None
                 
-            # Convert to Hugging Face format if not already
+            # Convert to Hugging Face format if needed
             if hasattr(ds, 'to_hf_dataset'):
                 ds = ds.to_hf_dataset()
+            # Handle different dataset formats
+            elif hasattr(ds, 'data') and hasattr(ds, 'info'):
+                # Already in HF format
+                pass
+            elif hasattr(ds, '__iter__') and not hasattr(ds, 'save_to_disk'):
+                # Convert from modelscope format to HF format
+                try:
+                    from datasets import Dataset
+                    if hasattr(ds, 'to_pandas'):
+                        ds = Dataset.from_pandas(ds.to_pandas())
+                    else:
+                        # Assume it's already compatible
+                        pass
+                except Exception:
+                    pass
             
             original_size = len(ds)
             RIGHT(f"Dataset loaded successfully, samples: {original_size:,}")

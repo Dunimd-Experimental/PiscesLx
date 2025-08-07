@@ -132,18 +132,23 @@ class Attention(nn.Module):
         self.v_proj = nn.Linear(cfg.hidden_size, cfg.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
         self.o_proj = nn.Linear(cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype)
         self.rope = YaRNRotaryEmbedding(self.head_dim, cfg.max_position_embeddings, cfg.rope_theta, scale=32, device=device)
+        # Attention dropout
+        self.attn_dropout = nn.Dropout(getattr(cfg, 'attention_dropout', 0.0))
         self.apply(pisces_init_weights)
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, past_key_values=None, use_cache=False):
         """
-        Forward pass of the Attention layer using flash_attn.
+        Forward pass of the Attention layer with KV-Cache support.
 
         Args:
             x (torch.Tensor): Input tensor.
             mask (torch.Tensor): Attention mask.
+            past_key_values (tuple, optional): Cached key and value tensors from previous steps.
+            use_cache (bool, optional): Whether to return cached key and value tensors. Defaults to False.
 
         Returns:
             torch.Tensor: Output tensor after attention operation.
+            tuple: Cached key and value tensors (if use_cache=True).
         """
         # Prefer xformers' memory_efficient_attention; fallback to PyTorch SDPA (>=2.0)
         try:
@@ -160,6 +165,16 @@ class Attention(nn.Module):
 
         # Rotary positional embeddings
         q, k = self.rope(q, t), self.rope(k, t)
+
+        # Handle KV-Cache
+        if past_key_values is not None:
+            past_k, past_v = past_key_values
+            # Concatenate cached keys and values
+            k = torch.cat([past_k, k], dim=-2)
+            v = torch.cat([past_v, v], dim=-2)
+            
+        # Update sequence length after cache
+        seq_len = k.size(-2)
 
         # Broadcast KV heads if using GQA
         if self.n_kv_head != self.n_head:
@@ -179,16 +194,34 @@ class Attention(nn.Module):
             # Fallback: torch scaled_dot_product_attention expects (B*n_head, T, head_dim)
             import torch.nn.functional as F
             q_ = q.reshape(b * self.n_head, t, self.head_dim)
-            k_ = k.reshape(b * self.n_head, t, self.head_dim)
-            v_ = v.reshape(b * self.n_head, t, self.head_dim)
-            out_ = F.scaled_dot_product_attention(q_, k_, v_, attn_mask=None, dropout_p=0.0, is_causal=True)
+            k_ = k.reshape(b * self.n_head, seq_len, self.head_dim)
+            v_ = v.reshape(b * self.n_head, seq_len, self.head_dim)
+            
+            # Create causal mask for the full sequence length
+            causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=q.device, dtype=torch.bool), diagonal=1)
+            out_ = F.scaled_dot_product_attention(
+                q_, k_, v_, 
+                attn_mask=~causal_mask[-t:, :], 
+                dropout_p=self.attn_dropout.p if self.training else 0.0, 
+                is_causal=False
+            )
             out = out_.reshape(b, self.n_head, t, self.head_dim).transpose(1, 2).contiguous().view(b, t, -1)
 
-        return self.o_proj(out)
+        # Apply attention dropout
+        out = self.attn_dropout(out)
+        out = self.o_proj(out)
+        
+        if use_cache:
+            # Return cached key and value tensors (before broadcasting)
+            k_cache = k[:, :self.n_kv_head] if self.n_kv_head != self.n_head else k
+            v_cache = v[:, :self.n_kv_head] if self.n_kv_head != self.n_head else v
+            return out, (k_cache, v_cache)
+        
+        return out
 
 class TransformerBlock(nn.Module):
     """
-    Transformer block with attention and MoE MLP.
+    Transformer block with attention and MoE MLP, featuring Pre-Norm and residual scaling.
     """
     def __init__(self, cfg, device=None, dtype=None, quantization_config=None):
         """
@@ -204,6 +237,15 @@ class TransformerBlock(nn.Module):
         self.mlp = DynamicMoELayer(cfg, device=device, dtype=dtype)
         self.norm1 = RMSNorm(cfg.hidden_size)
         self.norm2 = RMSNorm(cfg.hidden_size)
+        # Pre-Norm layers for stability
+        self.pre_norm1 = RMSNorm(cfg.hidden_size)
+        self.pre_norm2 = RMSNorm(cfg.hidden_size)
+        # Residual scaling for deep networks
+        self.residual_scale = nn.Parameter(torch.ones(1) * (2.0 * cfg.n_layer) ** -0.5)
+        # Dropout for residual connections
+        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout_p', 0.1))
+        # Gradient checkpointing flag
+        self.use_checkpoint = getattr(cfg, 'use_gradient_checkpointing', True)
         # store quant config
         self.quantization_config = quantization_config
 
@@ -230,24 +272,72 @@ class TransformerBlock(nn.Module):
             except Exception as e:
                 ERROR(f"Block 4bit quantization failed: {e}")
 
-    def forward(self, x, mask):
+    def forward(self, x, mask, past_key_values=None, use_cache=False):
         """
-        Forward pass of the TransformerBlock.
+        Forward pass of the TransformerBlock with Pre-Norm, residual scaling, gradient checkpointing, and KV-Cache.
 
         Args:
             x (torch.Tensor): Input tensor.
             mask (torch.Tensor): Attention mask.
+            past_key_values (tuple, optional): Cached key and value tensors from previous steps.
+            use_cache (bool, optional): Whether to return cached key and value tensors. Defaults to False.
 
         Returns:
-            tuple: Output tensor and auxiliary loss.
+            tuple: Output tensor, auxiliary loss, and cached key and value tensors (if use_cache=True).
         """
-        x = x + self.attn(self.norm1(x), mask)
-        mlp_out, aux_loss = self.mlp(self.norm2(x))
-        x = x + mlp_out
-        return x, aux_loss
+        import torch.utils.checkpoint as cp
+        
+        def _forward_pass(x_input, attn_past_key_values=None):
+            # Pre-Norm attention with residual scaling and dropout
+            residual = x_input
+            x_norm = self.pre_norm1(x_input)
+            
+            if use_cache:
+                attn_out, attn_cache = self.attn(x_norm, mask, past_key_values=attn_past_key_values, use_cache=True)
+            else:
+                attn_out = self.attn(x_norm, mask, past_key_values=attn_past_key_values, use_cache=False)
+                attn_cache = None
+                
+            x_out = residual + self.residual_dropout(self.residual_scale * attn_out)
+            
+            # Post-norm for stability (dual norm approach)
+            x_out = self.norm1(x_out)
+            
+            # Pre-Norm MLP with residual scaling and dropout
+            residual = x_out
+            x_norm = self.pre_norm2(x_out)
+            mlp_out, aux_loss = self.mlp(x_norm)
+            x_out = residual + self.residual_dropout(self.residual_scale * mlp_out)
+            
+            # Post-norm for stability
+            x_out = self.norm2(x_out)
+            return x_out, aux_loss, attn_cache
+        
+        # Apply gradient checkpointing if enabled
+        if past_key_values is not None:
+            attn_past_key_values = past_key_values
+        else:
+            attn_past_key_values = None
+            
+        if self.use_checkpoint and self.training:
+            x_out, aux_loss, attn_cache = cp.checkpoint(_forward_pass, x, attn_past_key_values, use_reentrant=False)
+        else:
+            x_out, aux_loss, attn_cache = _forward_pass(x, attn_past_key_values)
+        
+        if use_cache:
+            return x_out, aux_loss, attn_cache
+        return x_out, aux_loss
 
 class PiscesModel(nn.Module):
-    """Main Pisces L1 multimodal model (Aurora architecture)."""
+    """Main Pisces L1 multimodal model (Aurora architecture) with enhanced stability mechanisms.
+    
+    Features:
+    - Pre-Norm architecture for improved training stability
+    - Residual scaling for deep networks
+    - Gradient checkpointing for memory efficiency
+    - Attention dropout and residual dropout
+    - Dual normalization approach (Pre-Norm + Post-Norm)
+    """
 
     # Exclude the nested PiscesAgent from PyTorch module traversal to avoid
     # infinite recursion when calling `.to()`, `.cuda()`, `.state_dict()`, etc.
@@ -257,7 +347,7 @@ class PiscesModel(nn.Module):
                 continue
             yield name, module
     """
-    Pisces L1 multimodal MoE model (oneflow style).
+    Pisces L1 multimodal MoE model (oneflow style) with stability enhancements.
     """
     def __init__(self, cfg, device=None, dtype=None, quantization_config=None, lora_config=None):
         """
@@ -324,6 +414,16 @@ class PiscesModel(nn.Module):
         DEBUG(f"PiscesModel: total parameters = {total_params/1e6:.2f}M")
         DEBUG("PiscesModel: __init__ end")
 
+    def set_gradient_checkpointing(self, enabled: bool = True):
+        """
+        Enable or disable gradient checkpointing for memory efficiency.
+        
+        Args:
+            enabled (bool): Whether to enable gradient checkpointing. Defaults to True.
+        """
+        for layer in self.layers:
+            layer.use_checkpoint = enabled
+        
     def resize_token_embeddings(self, new_num_tokens):
         """
         Resizes token embeddings and associated heads to accommodate a new vocabulary size.
@@ -358,18 +458,20 @@ class PiscesModel(nn.Module):
         except ImportError:
             pass
 
-    def prepare_inputs_for_generation(self, input_ids, attention_mask=None, position_ids=None, **kwargs):
+    def prepare_inputs_for_generation(self, input_ids, attention_mask=None, position_ids=None, past_key_values=None, use_cache=True, **kwargs):
         """
-        Prepare inputs for text generation, compatible with PEF/Transformers generation interface.
+        Prepare inputs for text generation with KV-Cache support, compatible with PEF/Transformers generation interface.
 
         Args:
             input_ids (torch.Tensor): Input token IDs.
             attention_mask (torch.Tensor, optional): Attention mask. Defaults to None.
             position_ids (torch.Tensor, optional): Position IDs. Defaults to None.
+            past_key_values (list, optional): Cached key and value tensors from previous steps.
+            use_cache (bool, optional): Whether to use and return KV-Cache. Defaults to True.
             **kwargs: Additional keyword arguments.
 
         Returns:
-            dict: Dictionary containing model inputs for generation.
+            dict: Dictionary containing model inputs for generation with KV-Cache support.
         """
         model_inputs = {"input_ids": input_ids}
         
@@ -384,13 +486,19 @@ class PiscesModel(nn.Module):
             position_ids.masked_fill_(attention_mask == 0, 1)
         model_inputs["position_ids"] = position_ids
         
+        # Add KV-Cache support
+        if past_key_values is not None:
+            model_inputs["past_key_values"] = past_key_values
+            
+        model_inputs["use_cache"] = use_cache
+        
         # Include other kwargs
         model_inputs.update(kwargs)
         return model_inputs
 
-    def forward(self, input_ids, images=None, audio=None, video=None, docs=None, labels=None, agent_mode=False, task=None, max_steps=None, agent_obs=None, agent_embed=None):
+    def forward(self, input_ids, images=None, audio=None, video=None, docs=None, labels=None, agent_mode=False, task=None, max_steps=None, agent_obs=None, agent_embed=None, past_key_values=None, use_cache=False):
         """
-        Forward pass of the PiscesModel with full multimodal support including Agent.
+        Forward pass of the PiscesModel with full multimodal support including Agent and KV-Cache.
 
         Args:
             input_ids (torch.Tensor): Input token IDs [batch_size, seq_len].
@@ -404,9 +512,11 @@ class PiscesModel(nn.Module):
             max_steps (int, optional): Maximum steps for agent execution. Defaults to None.
             agent_obs (torch.Tensor, optional): Agent observations [batch_size, seq_len, hidden_size]. Defaults to None.
             agent_embed (torch.Tensor, optional): Pre-computed agent embeddings [batch_size, seq_len, hidden_size]. Defaults to None.
+            past_key_values (list, optional): List of cached key and value tensors for each layer. Defaults to None.
+            use_cache (bool, optional): Whether to return cached key and value tensors. Defaults to False.
 
         Returns:
-            dict: Dictionary containing model outputs. In agent mode, returns agent execution results.
+            dict: Dictionary containing model outputs and optionally cached key and value tensors.
         """
         import torch.utils.checkpoint as cp
         import torch
@@ -490,27 +600,51 @@ class PiscesModel(nn.Module):
         else:
             autocast_ctx = torch.cuda.amp.autocast(dtype=torch.float16)
         with autocast_ctx:
+            # Initialize KV-Cache storage
+            next_cache = [] if use_cache else None
+            
             for i in range(0, x.shape[1], chunk_size):
                 x_chunk = x[:, i:i+chunk_size, ...]
                 mask_chunk = mask[i:i+chunk_size, i:i+chunk_size]
-                def block_fn(xc, msk):
+                
+                def block_fn(xc, msk, layer_past_key_values=None):
                     """
-                    Helper function for checkpointing, applies all transformer layers.
+                    Helper function for checkpointing, applies all transformer layers with KV-Cache.
 
                     Args:
                         xc (torch.Tensor): Input tensor chunk.
                         msk (torch.Tensor): Attention mask chunk.
+                        layer_past_key_values (list, optional): List of KV-Cache for each layer.
 
                     Returns:
-                        tuple: Output tensor and accumulated auxiliary loss.
+                        tuple: Output tensor, accumulated auxiliary loss, and updated KV-Cache.
                     """
                     h = xc
                     aux = 0.0
-                    for layer in self.layers:
-                        h, aux_loss = layer(h, msk)
+                    new_caches = []
+                    
+                    for layer_idx, layer in enumerate(self.layers):
+                        past_kv = layer_past_key_values[layer_idx] if layer_past_key_values is not None else None
+                        
+                        if use_cache:
+                            h, aux_loss, cache = layer(h, msk, past_key_values=past_kv, use_cache=True)
+                            new_caches.append(cache)
+                        else:
+                            h, aux_loss = layer(h, msk, past_key_values=past_kv, use_cache=False)
+                            
                         aux = aux + aux_loss if aux_loss is not None else aux
-                    return h, aux
-                h_chunk, aux_chunk = cp.checkpoint(block_fn, x_chunk, mask_chunk, use_reentrant=False)
+                    
+                    if use_cache:
+                        return h, aux, new_caches
+                    return h, aux, None
+                
+                if use_cache:
+                    h_chunk, aux_chunk, cache_chunk = cp.checkpoint(block_fn, x_chunk, mask_chunk, past_key_values, use_reentrant=False)
+                    if next_cache is not None:
+                        next_cache.extend(cache_chunk)
+                else:
+                    h_chunk, aux_chunk, _ = cp.checkpoint(block_fn, x_chunk, mask_chunk, past_key_values, use_reentrant=False)
+                    
                 outputs.append(h_chunk)
                 total_aux_loss = total_aux_loss + aux_chunk
             if outputs:
@@ -552,7 +686,7 @@ class PiscesModel(nn.Module):
             task_logits = self.task_head(x[:, 0])
             eval_score = self.eval_head(x.mean(1))
 
-        return {
+        result = {
             "logits": logits,
             "loss": loss,
             "task_logits": task_logits,
@@ -560,3 +694,8 @@ class PiscesModel(nn.Module):
             "aux_loss": total_aux_loss,
             "reasoner_out": reasoner_out
         }
+        
+        if use_cache:
+            result["past_key_values"] = next_cache
+            
+        return result
