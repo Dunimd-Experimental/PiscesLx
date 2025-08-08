@@ -84,15 +84,19 @@ class PiscesDataset(Dataset):
                     
                     # Import cleaning utilities
                     from .clean import StreamCleaner
+                    import multiprocessing as mp
+                    from functools import partial
+                    
                     cleaner = StreamCleaner(min_len=1, max_len=2048)  # Very permissive
                     
-                    def has_valid_content(example: dict) -> bool:
+                    def _check_single_example(example: dict, cleaner_instance) -> bool:
                         """
-                        Check if an example has valid content after cleaning.
-
+                        Check if a single example has valid content after cleaning.
+                        
                         Args:
                             example (dict): A single example from the dataset.
-
+                            cleaner_instance: StreamCleaner instance for text cleaning.
+                            
                         Returns:
                             bool: True if the example has valid content, False otherwise.
                         """
@@ -101,12 +105,24 @@ class PiscesDataset(Dataset):
                             return False
                         
                         # Apply gentle cleaning
-                        cleaned_text = cleaner.clean_text(text)
+                        cleaned_text = cleaner_instance.clean_text(text)
                         
                         # Accept any non-empty content after cleaning
                         return cleaned_text is not None and len(cleaned_text.strip()) > 0
                     
-                    self.ds = self.ds.filter(has_valid_content)
+                    # Use multiprocessing for faster filtering
+                    num_workers = min(mp.cpu_count(), 8)  # Limit to 8 workers to avoid memory issues
+                    DEBUG(f"Using {num_workers} processes for dataset filtering...")
+                    
+                    # Create partial function with cleaner instance
+                    check_func = partial(_check_single_example, cleaner_instance=cleaner)
+                    
+                    # Apply multiprocessing filter
+                    self.ds = self.ds.filter(
+                        check_func,
+                        num_proc=num_workers,
+                        desc="Filtering dataset"
+                    )
                     filtered_size = len(self.ds)
                     if filtered_size == 0:
                         DEBUG(f"Warning: All {original_size} samples were filtered out. Applying emergency cleaning...")
@@ -168,27 +184,107 @@ class PiscesDataset(Dataset):
         Validate whether the token IDs in the dataset are within the valid range.
         """
         vocab_size = len(self.tokenizer)
-        invalid_samples = []
         
         # Limit validation to the first 1000 samples for performance reasons
         max_samples = min(1000, len(self.ds))
         
-        # Use a unified progress bar
-        for i in progress_bar(range(max_samples), desc="🟧\tValidating token IDs"):
-            item = self.ds[i]
-            text = self._get_text(item)
-            if text.strip():
+        if max_samples == 0:
+            RIGHT("No samples to validate")
+            return
+            
+        DEBUG(f"Validating token IDs for {max_samples} samples using multiprocessing...")
+        
+        # Use multiprocessing for token validation
+        import multiprocessing as mp
+        from functools import partial
+        
+        def _validate_single_sample(item, tokenizer_instance, vocab_size_instance):
+            """
+            Validate a single sample's token IDs.
+            
+            Args:
+                item: Dataset item
+                tokenizer_instance: Tokenizer instance
+                vocab_size_instance: Vocabulary size
+                
+            Returns:
+                tuple: (index, is_valid, error_message)
+            """
+            try:
+                text = self._get_text(item)
+                if not text or not text.strip():
+                    return (0, True, "empty_text")
+                    
+                input_ids = tokenizer_instance.encode(text, return_tensors="pt")[0]
+                max_token_id = input_ids.max().item() if len(input_ids) > 0 else 0
+                min_token_id = input_ids.min().item() if len(input_ids) > 0 else 0
+                
+                is_valid = max_token_id < vocab_size_instance and min_token_id >= 0
+                return (0, is_valid, None)
+                
+            except Exception as e:
+                return (0, False, str(e))
+        
+        # Prepare samples for validation
+        samples_to_validate = [self.ds[i] for i in range(max_samples)]
+        
+        # Use multiprocessing with limited workers
+        num_workers = min(mp.cpu_count(), 4)  # Use fewer workers for token validation
+        
+        if len(samples_to_validate) < 100:  # Small datasets, use single process
+            invalid_samples = []
+            for i in progress_bar(range(max_samples), desc="🟧\tValidating token IDs"):
+                item = self.ds[i]
+                text = self._get_text(item)
+                if text.strip():
+                    try:
+                        input_ids = self.tokenizer.encode(text, return_tensors="pt")[0]
+                        max_token_id = input_ids.max().item() if len(input_ids) > 0 else 0
+                        min_token_id = input_ids.min().item() if len(input_ids) > 0 else 0
+                            
+                        if max_token_id >= vocab_size or min_token_id < 0:
+                            invalid_samples.append(i)
+                                
+                    except Exception as e:
+                        invalid_samples.append(i)
+        else:
+            # Use multiprocessing for larger datasets
+            from datasets import Dataset
+            
+            # Create a small dataset slice for validation
+            validation_ds = self.ds.select(range(max_samples))
+            
+            def _map_validate(example, idx):
+                """Map function for validation"""
                 try:
+                    text = self._get_text(example)
+                    if not text or not text.strip():
+                        return {"valid": True, "error": "empty_text"}
+                    
                     input_ids = self.tokenizer.encode(text, return_tensors="pt")[0]
                     max_token_id = input_ids.max().item() if len(input_ids) > 0 else 0
                     min_token_id = input_ids.min().item() if len(input_ids) > 0 else 0
-                        
-                    if max_token_id >= vocab_size or min_token_id < 0:
-                        invalid_samples.append(i)
-                            
+                    
+                    is_valid = max_token_id < vocab_size and min_token_id >= 0
+                    return {"valid": is_valid, "error": None}
+                    
                 except Exception as e:
-                    invalid_samples.append(i)
+                    return {"valid": False, "error": str(e)}
             
+            # Use datasets' built-in multiprocessing
+            validated_ds = validation_ds.map(
+                _map_validate,
+                with_indices=True,
+                num_proc=num_workers,
+                desc="Validating token IDs"
+            )
+            
+            # Count invalid samples
+            invalid_samples = [
+                i for i, valid in enumerate(validated_ds["valid"]) 
+                if not valid
+            ]
+        
         RIGHT("Token validation complete!")
         
         # Print token ID range and vocabulary size for debugging

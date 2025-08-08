@@ -75,11 +75,11 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "Hello, Pisces!"
 
 | Model Size | Layers | Hidden | Heads | MoE Experts | Params   | Context (tokens) |
 |------------|--------|--------|-------|-------------|----------|------------------|
-| 0.5B       | 12     | 1024   | 8     | 4           | ~0.5B    | 1M              |
-| 1.5B       | 24     | 3072   | 32    | 16          | ~1.5B    | 1M              |
-| 7B         | 32     | 4096   | 32    | 32          | ~7B      | 1M              |
-| 32B        | 48     | 6656   | 52    | 64          | ~32B     | 10M              |
-| 64/70B     | 80     | 8192   | 64    | 128         | ~70B     | 10M              |
+| 0.5B       | 10     | 896    | 8     | 4           | ~0.5B    | 256K            |
+| 1.5B       | 14     | 1536   | 24    | 8           | ~1.5B    | 256K            |
+| 7B         | 28     | 3584   | 32    | 16          | ~7B      | 1M              |
+| 32B        | 40     | 5120   | 64    | 32          | ~32B     | 1M              |
+| 64/70B     | 48     | 8192   | 64    | 64          | ~70B     | 10M             |
 
 - **Multimodal Integration**: CLIP ViT-L/14 (vision), AST Base (audio), Video Encoder (temporal), LayoutLMv3 (documents) with unified embedding space
 - **MoE**: Top-2 routing, efficient expert loading

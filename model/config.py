@@ -47,19 +47,23 @@ class PiscesConfig:
         rope_scaling (dict): The configuration for RoPE scaling, default is a dict specifying "yarn" type with factor 32 and original max position 32768.
     """
     model_type: str = "pisces_l1"
-    vocab_size: int = 100_352
+    vocab_size: int = 71164
     hidden_size: int = 2048
     n_layer: int = 24
     n_head: int = 16
     n_kv_head: int = 4
     moe_num_experts: int = 64
     moe_top_k: int = 2
+    moe_capacity_factor: float = 1.25
     intermediate_size: int = 5632
     max_position_embeddings: int = 8192
     rope_theta: float = 1e6
     dropout: float = 0.0
     image_res: int = 224
+    max_image_res: int = 1024
     image_patch: int = 14
+    use_native_resolution: bool = True
+    enable_patch_pack: bool = True
     mm_tokens: int = 256
     audio_tokens: int = 512
     task_classes: int = 256
@@ -82,4 +86,10 @@ class PiscesConfig:
         Returns:
             PiscesConfig: An instance of the PiscesConfig class initialized with the loaded configuration.
         """
-        return cls(**json.load(open(path)))
+        with open(path, 'r') as f:
+            config_data = json.load(f)
+        
+        model_fields = {f.name for f in cls.__dataclass_fields__.values()}
+        filtered_config = {k: v for k, v in config_data.items() if k in model_fields}
+        
+        return cls(**filtered_config)

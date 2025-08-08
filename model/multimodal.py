@@ -17,6 +17,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import math
 import uuid
 import json
@@ -377,7 +378,13 @@ class AudioEncoder(nn.Module):
         self.cfg = cfg
         DEBUG(f"AudioEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
-        self.processor = ASTFeatureExtractor()
+        self.processor = ASTFeatureExtractor(
+            num_mel_filters=32,
+            num_frequency_bins=257,
+            fmin=0.0,
+            fmax=8000.0,
+            sampling_rate=16000
+        )
         
         self.conv1 = nn.Conv1d(1, 64, kernel_size=10, stride=5, padding=3)
         self.bn1 = nn.BatchNorm1d(64)

@@ -72,7 +72,7 @@ class StreamCleaner:
     It can clean text and multimedia files.
     """
     
-    def __init__(self, rules=None, min_len=10, max_len=1024):
+    def __init__(self, rules=None, min_len=5, max_len=512):
         """
         Initialize the StreamCleaner.
 

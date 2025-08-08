@@ -1,15 +1,15 @@
 {
   "model_type": "pisces_l1_7b",
-  "vocab_size": 100352,
-  "hidden_size": 4096,
+  "vocab_size": 71164,
+  "hidden_size": 3584,
   "n_layer": 32,
-  "n_head": 32,
-  "n_kv_head": 8,
+  "n_head": 28,
+  "n_kv_head": 4,
   "moe_num_experts": 8,
   "moe_top_k": 2,
   "moe_capacity_factor": 1.25,
-  "intermediate_size": 11008,
-  "max_position_embeddings": 1048576,
+  "intermediate_size": 18944,
+  "max_position_embeddings": 262144,
   "rope_theta": 10000000.0,
   "dropout": 0.0,
   "image_res": -1,
@@ -24,5 +24,14 @@
   "residual_dropout_p": 0.1,
   "use_gradient_checkpointing": true,
   "use_pre_norm": true,
-  "attention_dropout": 0.0
+  "attention_dropout": 0.0,
+  "training_config": {
+    "batch_size": 1,
+    "accum": 32,
+    "max_accum": 64,
+    "seq_len": 384,
+    "force_quant": true,
+    "force_lora": true,
+    "lr": 2e-05
+  }
 }

@@ -19,6 +19,7 @@
 
 import os
 import sys
+import warnings
 from utils.log import RIGHT, DEBUG, ERROR
 
 def setup_device(device_pref):
@@ -103,27 +104,29 @@ def train(args):
     from torch.optim.lr_scheduler import ReduceLROnPlateau
     from transformers import get_linear_schedule_with_warmup
     
-    AUTO_CONFIG = {
-        "0.5B":  dict(batch_size=4,  accum=8,  seq_len=384,  force_quant=False, force_lora=False, lr=3e-5, max_accum=16),
-        "1.5B":  dict(batch_size=2,  accum=16, seq_len=512,  force_quant=False, force_lora=False, lr=2e-5, max_accum=32),
-        "7B":    dict(batch_size=1,  accum=32, seq_len=384,  force_quant=True, force_lora=True,  lr=2e-5, max_accum=64),
-        "32B":   dict(batch_size=1,  accum=64, seq_len=256,  force_quant=True, force_lora=True,  lr=1e-5, max_accum=128),
-        "64B":   dict(batch_size=1,  accum=64, seq_len=192,  force_quant=True, force_lora=True,  lr=1e-5, max_accum=128),
-        "70B":   dict(batch_size=1,  accum=64, seq_len=128,  force_quant=True, force_lora=True,  lr=8e-6, max_accum=256),
-    }
     model_size = getattr(args, 'model_size', '0.5B').upper()
-    if model_size not in AUTO_CONFIG:
-        ERROR(f"Unsupported model_size: {model_size}")
+    config_path = f"configs/{model_size}.json"
+    if not os.path.exists(config_path):
+        ERROR(f"Config file {config_path} not found. Please provide a valid --model_size.")
         sys.exit(1)
-    cfg_dict = AUTO_CONFIG[model_size]
-    batch_size = cfg_dict['batch_size']
-    accum = cfg_dict['accum']
-    max_accum = cfg_dict['max_accum']
-    seq_len = cfg_dict['seq_len']
-    force_quant = cfg_dict['force_quant']
-    force_lora = cfg_dict['force_lora']
+
+    with open(config_path, 'r') as f:
+        full_config = json.load(f)
+    
+    if 'training_config' not in full_config:
+        ERROR(f"training_config not found in {config_path}")
+        sys.exit(1)
+    
+    training_config = full_config['training_config']
+    batch_size = training_config['batch_size']
+    accum = training_config['accum']
+    max_accum = training_config['max_accum']
+    seq_len = training_config['seq_len']
+    force_quant = training_config['force_quant']
+    force_lora = training_config['force_lora']
+    lr = training_config['lr']
+    
     epochs = 1
-    lr = cfg_dict['lr']
     save_dir = "ckpt"
     
     class DynamicGradientAccumulator:
@@ -308,7 +311,7 @@ def train(args):
         os.makedirs(save_dir, exist_ok=True)
         RIGHT("Starting training loop...")
         model.train()
-        scaler = torch.amp.GradScaler(device_type='cuda') if torch.cuda.is_available() else None
+        scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
         stop_training = False
@@ -418,8 +421,8 @@ def train(args):
                     from torch.optim.lr_scheduler import ReduceLROnPlateau
                     scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-8)
                     RIGHT(f"ReduceLROnPlateau scheduler enabled after {min_plateau_epoch} epochs.")
-                if avg_loss < 1.0:
-                    RIGHT(f"Loss < 1.0, stopping training for dataset {dataset}.")
+                if avg_loss < 2.8 or epoch+1 >= 6:
+                    RIGHT(f"Dataset {dataset} training complete (loss={avg_loss:.4f}, epochs={epoch+1}).")
                     stop_training = True
                 else:
                     epoch += 1

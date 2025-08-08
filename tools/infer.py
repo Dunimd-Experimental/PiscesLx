@@ -66,13 +66,18 @@ def infer(args):
     model_size = getattr(args, "model_size", "0.5B").upper()
     cfg = PiscesConfig.from_json(f"configs/{model_size}.json")
     # Automatic 4-bit/LoRA/mixed precision inference
-    quant_config = BitsAndBytesConfig(
-        load_in_4bit=True,
-        bnb_4bit_compute_dtype=torch.bfloat16,
-        bnb_4bit_quant_type="nf4",
-        bnb_4bit_use_double_quant=True
-    )
-    model = PiscesModel(cfg, quantization_config=quant_config)
+    use_quantization = cfg.force_quant if hasattr(cfg, 'force_quant') else False
+    
+    if use_quantization:
+        quant_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_use_double_quant=True
+        )
+        model = PiscesModel(cfg, quantization_config=quant_config)
+    else:
+        model = PiscesModel(cfg)
     lora_used = False
     if args.ckpt:
         RIGHT(f"Loading model: {args.ckpt}")
@@ -258,8 +263,9 @@ def infer(args):
                 cur_input = torch.cat([cur_input, next_token], dim=1)
     output_ids = input_ids[0].tolist() + generated_ids
     generated_text = tokenizer.decode(output_ids, skip_special_tokens=True)
-    DEBUG("\n" + "="*50)
+    
+    RIGHT("\n" + "="*50)
     RIGHT("Generated Response:")
-    DEBUG("="*50)
-    DEBUG(generated_text)
-    DEBUG("="*50)
+    RIGHT("="*50)
+    RIGHT(generated_text)
+    RIGHT("="*50)
