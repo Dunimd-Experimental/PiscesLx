@@ -19,28 +19,40 @@
 
 import os
 from utils.log import RIGHT, DEBUG, ERROR
+from utils.gpu_manager import GPUManager
 
-def setup_device(device_pref):
+def setup_inference_device(device_pref):
     """
-    Set up the computing device based on the given preference.
+    Set up the inference device, supporting automatic selection of single-GPU/multi-GPU.
 
     Args:
         device_pref (str): Device preference, e.g., "auto", "cpu", "cuda".
 
     Returns:
-        torch.device: The selected computing device.
+        torch.device: The selected device.
     """
     import torch
+
     if device_pref == "auto":
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        gpu_manager = GPUManager()
+        gpu_manager.print_summary()
+        strategy = gpu_manager.get_inference_strategy()
+
+        if strategy['mode'] == 'cpu':
+            device = torch.device("cpu")
+            RIGHT("CPU inference mode")
+        elif strategy['mode'] == 'single_gpu':
+            device = torch.device(f"cuda:{strategy['gpu_ids'][0]}")
+            torch.cuda.set_device(strategy['gpu_ids'][0])
+        else:
+            # Multi-GPU inference, use the first GPU or DataParallel
+            device = torch.device("cuda")
+
+        RIGHT(f"Inference mode: {strategy['mode']}")
     else:
         device = torch.device(device_pref)
+
     RIGHT(f"Using device: {device}")
-    if torch.cuda.is_available():
-        RIGHT(f"GPU: {torch.cuda.get_device_name(0)}")
-        RIGHT(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.1f} GB")
-    else:
-        ERROR("No GPU available, using CPU")
     return device
 
 def infer(args):
@@ -61,11 +73,12 @@ def infer(args):
     from torchvision.transforms import functional as TF
     import torch.nn.functional as F
     RIGHT("Starting Pisces L1 Inference ...")
-    device = setup_device("auto")
+    device = setup_inference_device("auto")
     
+    # Get the model size from arguments, default to "0.5B"
     model_size = getattr(args, "model_size", "0.5B").upper()
     cfg = PiscesConfig.from_json(f"configs/{model_size}.json")
-    # Automatic 4-bit/LoRA/mixed precision inference
+    # Enable automatic 4-bit/LoRA/mixed precision inference
     use_quantization = cfg.force_quant if hasattr(cfg, 'force_quant') else False
     
     if use_quantization:
@@ -78,6 +91,12 @@ def infer(args):
         model = PiscesModel(cfg, quantization_config=quant_config)
     else:
         model = PiscesModel(cfg)
+    
+    # Support multi-GPU inference
+    if torch.cuda.device_count() > 1 and device.type == 'cuda':
+        RIGHT(f"Detected {torch.cuda.device_count()} GPUs, enabling DataParallel inference")
+        model = torch.nn.DataParallel(model)
+    
     lora_used = False
     if args.ckpt:
         RIGHT(f"Loading model: {args.ckpt}")
@@ -85,10 +104,13 @@ def infer(args):
         state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
 
         ckpt_vocab_size = state_dict['embed.weight'].shape[0] if 'embed.weight' in state_dict else None
-        model_vocab_size = model.embed.weight.shape[0]
+        model_vocab_size = model.module.embed.weight.shape[0] if hasattr(model, 'module') else model.embed.weight.shape[0]
         if ckpt_vocab_size and ckpt_vocab_size != model_vocab_size:
             DEBUG(f"Vocab size mismatch: checkpoint={ckpt_vocab_size}, model={model_vocab_size}. Auto resizing...")
-            model.resize_token_embeddings(ckpt_vocab_size)
+            if hasattr(model, 'module'):
+                model.module.resize_token_embeddings(ckpt_vocab_size)
+            else:
+                model.resize_token_embeddings(ckpt_vocab_size)
 
         lora_keys = [k for k in state_dict.keys() if k.startswith('base_model.model.') or '.lora_A.' in k or '.lora_B.' in k]
         if lora_keys:
@@ -98,14 +120,32 @@ def infer(args):
                 r=8, lora_alpha=32, target_modules=["q_proj", "v_proj", "o_proj"],
                 lora_dropout=0.05, bias="none", task_type=TaskType.CAUSAL_LM
             )
-            lora_model = get_peft_model(model, lora_config)
+            
+            # Handle DataParallel wrapping
+            if hasattr(model, 'module'):
+                base_model = model.module
+            else:
+                base_model = model
+                
+            lora_model = get_peft_model(base_model, lora_config)
             for attr in ["cfg", "quantization_config", "lora_config", "forward", "prepare_inputs_for_generation"]:
-                if hasattr(model, attr):
-                    setattr(lora_model, attr, getattr(model, attr))
-            model = lora_model
+                if hasattr(base_model, attr):
+                    setattr(lora_model, attr, getattr(base_model, attr))
+            
+            if hasattr(model, 'module'):
+                model.module = lora_model
+            else:
+                model = lora_model
             lora_used = True
+            
         model = model.to(device).eval()
-        model.load_state_dict(state_dict, strict=False)
+        
+        # Handle DataParallel's state_dict
+        if hasattr(model, 'module'):
+            model.module.load_state_dict(state_dict, strict=False)
+        else:
+            model.load_state_dict(state_dict, strict=False)
+            
         RIGHT("Model loaded successfully")
     else:
         model = model.to(device).eval()
@@ -137,7 +177,7 @@ def infer(args):
         top_p = 0.8
     chunk_size = min(getattr(cfg, 'max_position_embeddings', 2048), 512)
     
-    # Speculative decoding support
+    # Support speculative decoding
     draft_model = None
     if getattr(args, 'speculative', False) and getattr(args, 'draft_model', None):
         try:
@@ -159,13 +199,21 @@ def infer(args):
     
     generated_ids = []
     
-    if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
-        autocast_ctx = torch.amp.autocast("cuda", dtype=torch.bfloat16)
-    else:
-        autocast_ctx = torch.cuda.amp.autocast(dtype=torch.bfloat16)
+    autocast_ctx = torch.amp.autocast("cuda", dtype=torch.bfloat16)
     
     def greedy_generate(model, input_ids, max_new_tokens, images=None):
-        """Greedy generation for speculative decoding."""
+        """
+        Perform greedy generation for speculative decoding.
+
+        Args:
+            model: The model used for generation.
+            input_ids (torch.Tensor): Input token IDs.
+            max_new_tokens (int): Maximum number of new tokens to generate.
+            images (torch.Tensor, optional): Input images. Defaults to None.
+
+        Returns:
+            list: Generated token IDs.
+        """
         cur_input = input_ids
         new_tokens = []
         
@@ -174,7 +222,8 @@ def infer(args):
                 logits_chunks = []
                 for i in range(0, cur_input.shape[1], chunk_size):
                     chunk = cur_input[:, i:i+chunk_size]
-                    outputs = model(chunk, images=images)
+                    actual_model = model.module if hasattr(model, 'module') else model
+                    outputs = actual_model(chunk, images=images)
                     logits = outputs["logits"]
                     logits_chunks.append(logits)
                 logits = torch.cat(logits_chunks, dim=1)
@@ -189,26 +238,27 @@ def infer(args):
         cur_input = input_ids
         
         if draft_model is not None:
-            # Speculative decoding
+            # Perform speculative decoding
             RIGHT("Using speculative decoding with draft model...")
             gamma = getattr(args, 'spec_gamma', 4)
             
             while len(generated_ids) < max_gen_len:
-                # Draft model generates gamma tokens
+                # The draft model generates gamma tokens
                 draft_tokens = greedy_generate(draft_model, cur_input, gamma, pixel_values)
                 
-                # Verify with target model
+                # Verify with the target model
                 verify_input = torch.cat([cur_input, torch.tensor([draft_tokens], device=device)], dim=1)
                 
                 logits_chunks = []
                 for i in range(0, verify_input.shape[1], chunk_size):
                     chunk = verify_input[:, i:i+chunk_size]
-                    outputs = model(chunk, images=pixel_values)
+                    actual_model = model.module if hasattr(model, 'module') else model
+                    outputs = actual_model(chunk, images=pixel_values)
                     logits = outputs["logits"]
                     logits_chunks.append(logits)
                 target_logits = torch.cat(logits_chunks, dim=1)
                 
-                # Find first mismatch
+                # Find the first mismatch
                 accepted = 0
                 for i, draft_token in enumerate(draft_tokens):
                     target_token = torch.argmax(target_logits[0, cur_input.shape[1] + i, :])
@@ -220,7 +270,7 @@ def infer(args):
                         break
                 
                 if accepted == len(draft_tokens):
-                    # All tokens accepted, add last token from target
+                    # All tokens are accepted, add the last token from the target
                     last_token = torch.argmax(target_logits[0, -1, :])
                     generated_ids.append(last_token.item())
                 
@@ -229,12 +279,13 @@ def infer(args):
                 if any(t == tokenizer.eos_token_id for t in generated_ids[-len(draft_tokens)-1:]):
                     break
         else:
-            # Standard generation
+            # Perform standard generation
             for _ in range(max_gen_len):
                 logits_chunks = []
                 for i in range(0, cur_input.shape[1], chunk_size):
                     chunk = cur_input[:, i:i+chunk_size]
-                    outputs = model(chunk, images=pixel_values)
+                    actual_model = model.module if hasattr(model, 'module') else model
+                    outputs = actual_model(chunk, images=pixel_values)
                     logits = outputs["logits"]
                     logits_chunks.append(logits)
                 logits = torch.cat(logits_chunks, dim=1)

@@ -594,11 +594,23 @@ class PiscesModel(nn.Module):
         
         chunk_size = min(getattr(self.cfg, 'max_position_embeddings', 2048), 8192)
         outputs = []
-        
-        if hasattr(torch, "amp") and hasattr(torch.amp, "autocast"):
-            autocast_ctx = torch.amp.autocast("cuda", dtype=torch.float16)
+        if use_cache and past_key_values is not None:
+            # Dynamically quantize KV-Cache: automatically select precision based on sequence length
+            seq_len = x.shape[1]
+            if seq_len > 1024:  # Use 4-bit quantization for long sequences
+                cache_dtype = torch.float16
+                cache_quant_bits = 4
+            elif seq_len > 512:  # Use 8-bit quantization for medium sequences
+                cache_dtype = torch.float16  
+                cache_quant_bits = 8
+            else:  # Use full precision for short sequences
+                cache_dtype = torch.float32
+                cache_quant_bits = 16
         else:
-            autocast_ctx = torch.cuda.amp.autocast(dtype=torch.float16)
+            cache_dtype = torch.float32
+            cache_quant_bits = 16
+            
+        autocast_ctx = torch.amp.autocast("cuda", dtype=cache_dtype)
         with autocast_ctx:
             # Initialize KV-Cache storage
             next_cache = [] if use_cache else None
@@ -609,12 +621,12 @@ class PiscesModel(nn.Module):
                 
                 def block_fn(xc, msk, layer_past_key_values=None):
                     """
-                    Helper function for checkpointing, applies all transformer layers with KV-Cache.
+                    Helper function for gradient checkpointing. Applies all transformer layers with KV-Cache support.
 
                     Args:
-                        xc (torch.Tensor): Input tensor chunk.
-                        msk (torch.Tensor): Attention mask chunk.
-                        layer_past_key_values (list, optional): List of KV-Cache for each layer.
+                        xc (torch.Tensor): Chunk of the input tensor.
+                        msk (torch.Tensor): Chunk of the attention mask.
+                        layer_past_key_values (list, optional): List of KV-Cache for each transformer layer.
 
                     Returns:
                         tuple: Output tensor, accumulated auxiliary loss, and updated KV-Cache.
@@ -626,8 +638,21 @@ class PiscesModel(nn.Module):
                     for layer_idx, layer in enumerate(self.layers):
                         past_kv = layer_past_key_values[layer_idx] if layer_past_key_values is not None else None
                         
+                        # Dynamically dequantize past_key_value
+                        if past_kv is not None and cache_quant_bits < 16:
+                            past_kv = tuple(
+                                tensor.to(cache_dtype) if tensor is not None else None 
+                                for tensor in past_kv
+                            )
+                        
                         if use_cache:
                             h, aux_loss, cache = layer(h, msk, past_key_values=past_kv, use_cache=True)
+                            # Dynamically quantize the new KV-Cache
+                            if cache is not None and cache_quant_bits < 16:
+                                cache = tuple(
+                                    tensor.to(torch.float16) if tensor is not None else None
+                                    for tensor in cache
+                                )
                             new_caches.append(cache)
                         else:
                             h, aux_loss = layer(h, msk, past_key_values=past_kv, use_cache=False)

@@ -28,52 +28,104 @@ def arrow(args):
     Convert between JSON files and Arrow format datasets.
 
     Args:
-        args (object): An object containing command-line arguments with the following attributes:
-            - json_dir (str): Directory path containing JSON files.
-            - arrow_out (str): Output path for the Arrow format dataset.
-            - arrow_in (str): Input path for the Arrow format dataset.
-            - json_out (str): Output path for the JSON file.
-
-    Returns:
-        None: The function saves the converted data to the specified path and returns None.
+        args (object): An object containing command-line arguments
     """
+    
+    def convert_single_arrow_file(arrow_file, json_out):
+        """Convert a single .arrow file to JSON."""
+        try:
+            # Open the arrow file using memory mapping
+            with pa.memory_map(arrow_file, 'rb') as source:
+                # Create a RecordBatchStreamReader to read the arrow data
+                reader = pa.RecordBatchStreamReader(source)
+                # Read all data into a table
+                table = reader.read_all()
+            
+            # Convert the arrow table to a dataset
+            dataset = Dataset.from_arrow(table)
+            
+            # Write each item in the dataset to the JSON output file
+            with open(json_out, 'w', encoding='utf-8') as f:
+                for item in dataset:
+                    f.write(json.dumps(item, ensure_ascii=False) + '\n')
+            
+            RIGHT(f"Successfully converted {len(dataset)} records to {json_out}")
+            return True
+            
+        except Exception as e:
+            ERROR(f"Failed to convert single Arrow file: {e}")
+            return False
+    
+    def convert_arrow_directory(arrow_dir, json_out):
+        """Convert an Arrow dataset directory to JSON."""
+        try:
+            # Load the dataset from the specified directory
+            dataset = load_from_disk(arrow_dir)
+            
+            # Write each item in the dataset to the JSON output file
+            with open(json_out, 'w', encoding='utf-8') as f:
+                for item in dataset:
+                    f.write(json.dumps(item, ensure_ascii=False) + '\n')
+            
+            RIGHT(f"Successfully converted {len(dataset)} records to {json_out}")
+            return True
+            
+        except Exception as e:
+            ERROR(f"Failed to convert Arrow directory: {e}")
+            return False
+    
+    # Convert JSON directory to Arrow format
     if args.json_dir and args.arrow_out:
         # Get all JSON files in the specified directory
         json_files = [os.path.join(args.json_dir, f) for f in os.listdir(args.json_dir) if f.endswith('.json')]
         if not json_files:
             ERROR(f"No .json files found in {args.json_dir}")
             return
+        
         all_data = []
-        # Load data from each JSON file
+        # Read and parse each JSON file
         for jf in json_files:
             with open(jf, 'r', encoding='utf-8') as f:
                 for line in f:
-                    try:
-                        all_data.append(json.loads(line))
-                    except Exception as e:
-                        ERROR(f"Error parsing {jf}: {e}")
+                    line = line.strip()
+                    if line:
+                        try:
+                            all_data.append(json.loads(line))
+                        except Exception as e:
+                            ERROR(f"Error parsing {jf}: {e}")
+        
         if not all_data:
-            ERROR("No data loaded from json files.")
+            ERROR("No data loaded from JSON files")
             return
-        # Convert data list to Dataset and save to disk
+        
+        # Convert the list of data to a dataset
         ds = Dataset.from_list(all_data)
+        # Save the dataset to disk in Arrow format
         ds.save_to_disk(args.arrow_out)
         RIGHT(f"Saved {len(ds)} samples to {args.arrow_out}")
         return
+    
+    # Convert Arrow file or directory to JSON
     elif args.arrow_in and args.json_out:
-        # Check if the input Arrow file exists
         if not os.path.exists(args.arrow_in):
-            ERROR(f"Arrow file not found: {args.arrow_in}")
+            ERROR(f"Input file/directory does not exist: {args.arrow_in}")
             return
-        # Load the Arrow dataset from disk
-        ds = load_from_disk(args.arrow_in)
-        with open(args.json_out, 'w', encoding='utf-8') as f:
-            for item in ds:
-                f.write(json.dumps(item, ensure_ascii=False) + '\n')
-        RIGHT(f"Saved {len(ds)} samples to {args.json_out}")
+        
+        if os.path.isfile(args.arrow_in) and args.arrow_in.endswith('.arrow'):
+            # Process a single .arrow file
+            convert_single_arrow_file(args.arrow_in, args.json_out)
+        elif os.path.isdir(args.arrow_in):
+            # Process an Arrow dataset directory
+            convert_arrow_directory(args.arrow_in, args.json_out)
+        else:
+            ERROR(f"Unsupported input type: {args.arrow_in}")
         return
+    
     else:
-        ERROR("Please specify either --json_dir + --arrow_out or --arrow_in + --json_out")
-        DEBUG("For example:")
-        print("\tpython manage.py arrow --json_dir ./jsons --arrow_out ./out.arrow")
-        print("\tpython manage.py arrow --arrow_in ./in.arrow --json_out ./out.json")
+        ERROR("Please specify one of the following parameter combinations:")
+        ERROR("  --json_dir directory --arrow_out output.arrow")
+        ERROR("  --arrow_in file_or_directory --json_out output.json")
+        DEBUG("Examples:")
+        print("\tpython manage.py arrow --json_dir ./jsons --arrow_out ./dataset")
+        print("\tpython manage.py arrow --arrow_in ./data_cache/Chinese1 --json_out ./chinese.json")
+        print("\tpython manage.py arrow --arrow_in data-00000-of-00002.arrow --json_out ./output.json")

@@ -19,63 +19,163 @@
 
 import os
 import torch
-import argparse
 from transformers import AutoModelForCausalLM, AutoTokenizer
 from trl import PPOTrainer, PPOConfig
 from utils.log import RIGHT, DEBUG, ERROR
 
 def rlhf_train(args):
     """
-    Train the model using RLHF (Reinforcement Learning from Human Feedback).
-    
+    Perform a complete RLHF (Reinforcement Learning with Human Feedback) training process.
+    Called from manage.py.
+
     Args:
-        args: Command line arguments containing model path, dataset path, and training parameters.
+        args (Namespace): A namespace object containing all training parameters.
+
+    Returns:
+        None
     """
-    RIGHT("Starting RLHF training...")
+    RIGHT("Starting RLHF training with PPO...")
     
-    # Load model and tokenizer
-    model = AutoModelForCausalLM.from_pretrained(args.model_path, torch_dtype=torch.float16, device_map="auto")
+    # Validate the input arguments
+    if not hasattr(args, 'model_path') or not args.model_path:
+        ERROR("Model path --model_path must be specified")
+        return
+    
+    # Load the pre-trained model and tokenizer
+    model = AutoModelForCausalLM.from_pretrained(
+        args.model_path, 
+        torch_dtype=torch.float16, 
+        device_map="auto"
+    )
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     
-    # Configure PPO
+    # Configure the PPO training
     ppo_config = PPOConfig(
         model_name=args.model_path,
-        learning_rate=args.learning_rate,
-        batch_size=args.batch_size,
-        mini_batch_size=args.mini_batch_size,
-        gradient_accumulation_steps=args.gradient_accumulation_steps,
+        learning_rate=args.rlhf_lr,
+        batch_size=args.rlhf_batch_size,
+        mini_batch_size=args.rlhf_mini_batch_size,
+        gradient_accumulation_steps=args.rlhf_accum_steps,
         optimize_cuda_cache=True,
         log_with="wandb" if args.log_with_wandb else None,
     )
     
-    # Initialize PPO trainer
+    # Initialize the PPO trainer
     ppo_trainer = PPOTrainer(
         model=model,
         config=ppo_config,
         tokenizer=tokenizer,
-        dataset=None,  # Dataset will be loaded dynamically or passed via args if needed
+        dataset=None,
     )
     
-    # Placeholder for RLHF training loop
-    # In a real implementation, you would load a dataset of human feedback and iterate over it
-    RIGHT("RLHF training loop placeholder")
+    # Load the human feedback dataset
+    try:
+        from datasets import load_dataset
+        dataset = load_dataset(args.rlhf_dataset, split="train")
+        RIGHT(f"Loaded RLHF dataset: {args.rlhf_dataset}")
+    except Exception as e:
+        ERROR(f"Failed to load RLHF dataset: {e}")
+        return
     
-    # Save the model after training
-    if args.output_dir:
-        model.save_pretrained(args.output_dir)
-        tokenizer.save_pretrained(args.output_dir)
-        RIGHT(f"Model saved to {args.output_dir}")
-    
-    RIGHT("RLHF training completed.")
+    def compute_reward(completions, human_feedback, ai_feedback=None, safety_score=None):
+        """
+        GPT-4 level hybrid feedback system: Dual evaluation with human and AI feedback.
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="RLHF Training for Pisces L1")
-    parser.add_argument("--model_path", type=str, required=True, help="Path to the pretrained model")
-    parser.add_argument("--output_dir", type=str, default=None, help="Directory to save the trained model")
-    parser.add_argument("--learning_rate", type=float, default=1e-5, help="Learning rate for RLHF training")
-    parser.add_argument("--batch_size", type=int, default=4, help="Batch size for RLHF training")
-    parser.add_argument("--mini_batch_size", type=int, default=1, help="Mini batch size for RLHF training")
-    parser.add_argument("--gradient_accumulation_steps", type=int, default=4, help="Gradient accumulation steps")
-    parser.add_argument("--log_with_wandb", action="store_true", help="Log training metrics with Weights & Biases")
-    args = parser.parse_args()
-    rlhf_train(args)
+        Args:
+            completions (torch.Tensor): Model-generated responses.
+            human_feedback (list): List of human scores.
+            ai_feedback (list, optional): AI-generated quality scores. Defaults to None.
+            safety_score (list, optional): Safety/harmlessness scores. Defaults to None.
+
+        Returns:
+            torch.Tensor: Tensor containing weighted reward scores.
+        """
+        # Convert human feedback scores to tensor
+        human_rewards = torch.tensor([float(score) for score in human_feedback])
+        
+        # AI-assisted evaluation (rule-based quality check)
+        if ai_feedback is None:
+            ai_feedback = []
+            for completion in completions:
+                # Decode the completion to text
+                response_text = tokenizer.decode(completion, skip_special_tokens=True)
+                
+                # Quality evaluation rules
+                quality_score = 1.0
+                if len(response_text.split()) > 10:  # Sufficiently detailed
+                    quality_score += 0.2
+                if any(keyword in response_text.lower() for keyword in ["explain", "because", "therefore"]):
+                    quality_score += 0.3  # Complete reasoning chain
+                if response_text.count(".") > 2:  # Structured response
+                    quality_score += 0.1
+                    
+                ai_feedback.append(min(quality_score, 2.0))
+        
+        # Convert AI feedback scores to tensor
+        ai_rewards = torch.tensor([float(score) for score in ai_feedback])
+        
+        # Safety check
+        if safety_score is None:
+            safety_rewards = torch.ones_like(human_rewards)
+            for i, completion in enumerate(completions):
+                response_text = tokenizer.decode(completion, skip_special_tokens=True)
+                if any(harm_word in response_text.lower() for harm_word in ["harm", "danger", "illegal"]):
+                    safety_rewards[i] = 0.1  # Significantly reduce reward for harmful content
+        else:
+            # Convert safety scores to tensor
+            safety_rewards = torch.tensor([float(score) for score in safety_score])
+        
+        # Hybrid weights: 70% human + 20% AI + 10% safety
+        final_rewards = 0.7 * human_rewards + 0.2 * ai_rewards + 0.1 * safety_rewards
+        return torch.clamp(final_rewards, 0.0, 2.0)
+    
+    # RLHF training loop
+    total_steps = 0
+    for epoch in range(args.rlhf_epochs):
+        epoch_rewards = []
+        
+        for batch_idx, batch in enumerate(dataset.select(range(min(len(dataset), args.rlhf_max_samples)))):
+            try:
+                # Prepare the input tensors
+                inputs = tokenizer(batch["prompt"], return_tensors="pt", padding=True, truncation=True)
+                query_tensors = inputs["input_ids"]
+                
+                # Generate responses
+                response_tensors = ppo_trainer.generate(
+                    query_tensors,
+                    max_new_tokens=args.rlhf_max_length,
+                    do_sample=True,
+                    temperature=0.7
+                )
+                
+                # Get GPT-4 level hybrid feedback
+                human_feedback = batch.get("human_score", [1.0] * len(response_tensors))
+                ai_feedback = batch.get("ai_score", None)  # Optional AI quality evaluation
+                safety_score = batch.get("safety_score", None)  # Optional safety evaluation
+                
+                # Compute rewards
+                rewards = compute_reward(response_tensors, human_feedback, ai_feedback, safety_score)
+                
+                # Perform PPO update
+                stats = ppo_trainer.step(query_tensors, response_tensors, rewards)
+                epoch_rewards.append(rewards.mean().item())
+                
+                total_steps += 1
+                if total_steps % 10 == 0:
+                    DEBUG(f"Step {total_steps}, Reward: {rewards.mean():.4f}")
+                    
+            except Exception as e:
+                ERROR(f"Error in batch {batch_idx}: {e}")
+                continue
+        
+        avg_reward = sum(epoch_rewards) / len(epoch_rewards) if epoch_rewards else 0
+        RIGHT(f"Epoch {epoch+1}/{args.rlhf_epochs} completed, Avg Reward: {avg_reward:.4f}")
+    
+    # Save the trained model
+    if args.output_dir:
+        output_path = os.path.join(args.output_dir, f"rlhf_model_{args.rlhf_epochs}epochs")
+        model.save_pretrained(output_path)
+        tokenizer.save_pretrained(output_path)
+        RIGHT(f"RLHF model saved to: {output_path}")
+    
+    RIGHT("RLHF training completed successfully!")

@@ -120,24 +120,8 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
     """
     RIGHT("Starting ModelScope dataset download...")
     
-    identity_dir = os.path.join(DATA, "identity")
-    os.makedirs(identity_dir, exist_ok=True)
-    
-    identity_src = os.path.join(ROOT, "identity.json")
-    identity_dst = os.path.join(identity_dir, "identity.json")
-    if os.path.exists(identity_src) and not os.path.exists(identity_dst):
-        shutil.move(identity_src, identity_dst)
-        RIGHT(f"Moved identity.json to {identity_dir}")
-    
-    model_txt_path = os.path.join(ROOT, "..", "model.txt")
-    with open(model_txt_path, "a") as f:
-        f.write("identity\n")
-    
     # Core datasets for Pisces L1 training
     datasets = [
-        # Identity
-        (None, "identity", "identity"),
-        
         # Chinese
         ("baicai003/Llama3-Chinese-dataset", "Chinese1", "Chinese1"),
         ("liucong/Chinese-DeepSeek-R1-Distill-data-110k-SFT", "Chinese2", "Chinese2"),

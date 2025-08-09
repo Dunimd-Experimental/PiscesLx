@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of Pisces L1.
@@ -55,14 +54,16 @@ class PiscesDataset(Dataset):
     """
     Pisces dataset with multimodal support for text, image, audio, document, and video data.
     """
-    def __init__(self, subset: str = "tiny", split: str = "train", config=None):
+    def __init__(self, subset: str = "tiny", split: str = "train", config=None, data_ratio: dict = None):
         """
-        Initialize the PiscesDataset.
-
+        Initialize the PiscesDataset with DeepSeek-level data ratio optimization.
+        
         Args:
             subset (str, optional): Name of the dataset subset. Defaults to "tiny".
             split (str, optional): Dataset split type, either "train" or "test". Defaults to "train".
             config: Configuration object. Defaults to None.
+            data_ratio (dict, optional): Custom data ratio configuration for different domains.
+                Example: {"math": 0.3, "code": 0.25, "general": 0.3, "multimodal": 0.15}
         """
         # First attempt to load dataset from local cache
         cache_path = os.path.join("data_cache", subset)
@@ -176,9 +177,82 @@ class PiscesDataset(Dataset):
         self.doc_encoder = DocEncoder(config) if config else None
         self.video_encoder = VideoEncoder(config) if config else None
         
+        # DeepSeek-level data ratio optimization
+        self.data_ratio = data_ratio or {
+            "math": 0.30,      # 30% Mathematical reasoning data
+            "code": 0.25,      # 25% Programming code data
+            "general": 0.30,   # 30% General dialogue data
+            "multimodal": 0.15  # 15% Multimodal image-text data
+        }
+        
+        # Apply intelligent data sampling based on domain ratios
+        self._apply_data_ratio_optimization()
+        
         # Validate token IDs across the entire dataset
         self._validate_token_ids()
     
+    def _apply_data_ratio_optimization(self):
+        """
+        Apply DeepSeek-level data ratio optimization with domain-aware sampling.
+        """
+        if len(self.ds) == 0:
+            return
+            
+        RIGHT("Applying DeepSeek-level data ratio optimization...")
+        
+        # Domain classification based on content patterns
+        def classify_domain(example):
+            """Classify sample domain based on content analysis."""
+            text = str(self._get_text(example) or "").lower()
+            
+            # Math patterns
+            math_patterns = ["math", "equation", "solve", "calculate", "algebra", "geometry", "theorem", "proof"]
+            if any(pattern in text for pattern in math_patterns):
+                return "math"
+            
+            # Code patterns  
+            code_patterns = ["def ", "class ", "import ", "function", "variable", "code", "programming", "python", "java", "c++"]
+            if any(pattern in text for pattern in code_patterns):
+                return "code"
+                
+            # Multimodal patterns
+            if any(key in example for key in IMAGE_KEYS + AUDIO_KEYS + DOC_KEYS + VIDEO_KEYS):
+                return "multimodal"
+                
+            return "general"
+        
+        # Classify all samples
+        domains = [classify_domain(example) for example in self.ds]
+        
+        # Calculate target sample counts per domain
+        total_samples = len(self.ds)
+        target_counts = {
+            domain: int(ratio * total_samples) 
+            for domain, ratio in self.data_ratio.items()
+        }
+        
+        # Apply stratified sampling to achieve target ratios
+        domain_indices = {domain: [] for domain in self.data_ratio.keys()}
+        for idx, domain in enumerate(domains):
+            domain_indices[domain].append(idx)
+        
+        # Sample indices for each domain
+        sampled_indices = []
+        for domain, indices in domain_indices.items():
+            target_count = target_counts[domain]
+            if len(indices) >= target_count:
+                # Downsample to target ratio
+                sampled_indices.extend(torch.randperm(len(indices))[:target_count].tolist())
+            else:
+                # Upsample by repeating (with slight randomness)
+                repeats = target_count // len(indices) + 1
+                extended = (indices * repeats)[:target_count]
+                sampled_indices.extend(extended)
+        
+        # Apply sampling to dataset
+        self.ds = self.ds.select(sampled_indices)
+        RIGHT(f"Data ratio optimization complete: {len(self.ds)} samples with optimized domain distribution")
+
     def _validate_token_ids(self):
         """
         Validate whether the token IDs in the dataset are within the valid range.

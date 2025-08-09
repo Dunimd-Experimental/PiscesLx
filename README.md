@@ -8,14 +8,14 @@
 
 English | [简体中文](README.zh.md)
 
-A next-generation lightweight multimodal Mixture-of-Experts (MoE) model supporting text, image, audio, and document understanding. Designed for both research and practical applications, Pisces L1 can run on a single RTX 4090 and scale up to 70B parameters with advanced memory optimization.
+A next-generation lightweight multimodal Mixture-of-Experts (MoE) model supporting text, image, audio, and document understanding. Designed for both research and practical applications, Pisces L1 can run on a single RTX 4090 and scale up to 128B parameters with advanced memory optimization.
 
 ---
 
 ## 🚀 Features
 
 - **Multimodal**: Unified support for text, image, audio, video, document, and agent behavior inputs
-- **MoE Architecture**: Efficient Mixture-of-Experts, scalable from 0.5B to 70B parameters
+- **MoE Architecture**: Efficient Mixture-of-Experts, scalable from 0.5B to 128B parameters
 - **Lightweight**: 0.5B base model runs on consumer GPUs (24GB VRAM)
 - **Modern Transformer**: RMSNorm, RoPE, Grouped-Query Attention, and more
 - **Extreme Adaptability**: QLoRA, 4-bit quantization, LoRA adapters, gradient accumulation
@@ -80,6 +80,7 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "Hello, Pisces!"
 | 7B         | 28     | 3584   | 32    | 16          | ~7B      | 1M              |
 | 32B        | 40     | 5120   | 64    | 32          | ~32B     | 1M              |
 | 64/70B     | 48     | 8192   | 64    | 64          | ~70B     | 10M             |
+| 128B       | 120    | 10240  | 80    | 64          | ~128B    | 10M             |
 
 - **Multimodal Integration**: CLIP ViT-L/14 (vision), AST Base (audio), Video Encoder (temporal), LayoutLMv3 (documents) with unified embedding space
 - **MoE**: Top-2 routing, efficient expert loading
