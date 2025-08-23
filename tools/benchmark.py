@@ -3,6 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of Pisces L1.
+# The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -18,8 +19,8 @@
 # limitations under the License.
 
 import time, torch, json, os
+from utils.log import RIGHT, ERROR
 from typing import Dict, List, Any
-from utils.log import RIGHT, WARN
 from model import PiscesModel, PiscesConfig
 
 # Benchmark configurations
@@ -205,7 +206,7 @@ def list_benchmarks():
 def benchmark_info(benchmark_name: str):
     """Get detailed information about a specific benchmark."""
     if benchmark_name not in BENCHMARKS:
-        WARN(f"Benchmark '{benchmark_name}' not found")
+        ERROR(f"Benchmark '{benchmark_name}' not found")
         return
     
     info = BENCHMARKS[benchmark_name]
@@ -243,7 +244,7 @@ def performance_benchmark(config_path="configs/0.5B.json", seq_len=8192, model_p
         load_ckpt(model_path, model, dummy_optimizer)
         RIGHT(f"Loaded model weights from: {model_path}")
     elif model_path:
-        WARN(f"Model path not found: {model_path}")
+        ERROR(f"Model path not found: {model_path}")
 
     # Generate random tokens for benchmarking
     tok = torch.randint(0, cfg.vocab_size, (1, seq_len)).to(device)
@@ -278,7 +279,7 @@ def run_benchmark(benchmark_name: str, model_path: str = None, config_path: str 
         config_path: Path to model configuration JSON file
     """
     if benchmark_name not in BENCHMARKS:
-        WARN(f"Benchmark '{benchmark_name}' not found. Use --list to see available benchmarks.")
+        ERROR(f"Benchmark '{benchmark_name}' not found. Use --list to see available benchmarks.")
         return
     
     RIGHT(f"Running {BENCHMARKS[benchmark_name]['name']} benchmark...")
@@ -302,7 +303,7 @@ def run_benchmark(benchmark_name: str, model_path: str = None, config_path: str 
         load_ckpt(model_path, model, dummy_optimizer)
         RIGHT(f"Loaded model weights from: {model_path}")
     elif model_path:
-        WARN(f"Model path not found: {model_path}")
+        ERROR(f"Model path not found: {model_path}")
     
     benchmark_info = BENCHMARKS[benchmark_name]
     RIGHT(f"Benchmark: {benchmark_info['name']}")

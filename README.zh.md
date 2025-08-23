@@ -52,13 +52,13 @@ python manage.py help
 |-------------|----------------------------------------------|
 | setup       | 环境设置和依赖安装                              |
 | source      | 激活虚拟环境                                   |
-| pull        | 从远程仓库拉取最新代码                           |
+| update      | 从远程仓库拉取最新代码                           |
 | train       | 训练模型                                       |
 | infer       | 使用训练好的模型进行推理                         |
 | check       | 检查GPU和依赖项                                |
 | monitor     | 系统监控(GPU/CPU/内存)                         |
 | download    | 下载训练数据集                                 |
-| arrow       | Arrow/JSON数据集转换                           |
+| dataset     | Dataset management tool                        |
 | quantize    | 将模型量化为4/8位以提高效率                      |
 | benchmark   | 运行性能基准测试                                |
 | help        | 显示帮助信息                                   |
@@ -154,19 +154,19 @@ python manage.py download
 
 ---
 
-## 🏆 在24GB GPU上训练7B模型 [Beta]
-Pisces L1支持**在单个24GB GPU上训练/微调7B模型**，使用QLoRA、4位量化、LoRA适配器和梯度累积技术。
+## 🏆 在24GB GPU上训练1.5B模型 [Beta]
+Pisces L1支持**在单个24GB GPU上训练/微调1.5B模型**，使用QLoRA、4位量化、LoRA适配器和梯度累积技术。
 
-#### 7B QLoRA训练示例
+#### 1.5B QLoRA训练示例
 
 ##### 单GPU训练
 ```bash
-python manage.py train --model_size 7B --resume_ckpt latest.pt
+python manage.py train --model_size 1.5B --resume_ckpt latest.pt
 ```
 
 ##### 继续训练
 ```bash
-python manage.py train --model_size 70B --resume_ckpt checkpoint.pt --reset_lr
+python manage.py train --model_size 1.5B --resume_ckpt checkpoint.pt --reset_lr
 ```
 - 4位量化：显著减少内存占用([QLoRA论文](https://arxiv.org/abs/2305.14314))
 - LoRA适配器：高效参数微调
@@ -356,6 +356,7 @@ python manage.py benchmark --benchmark mmlu --config configs/7B.json
 - [PiscesL1 in GitHub](https://github.com/mf2023/PiscesL1.git)
 - [PiscesL1 in ModelScope](https://www.modelscope.cn/models/mfchina2024/PiscesL1)
 
----
+<h3 align="center">以直觉航行数据之深邃</h3>
+<h3 align="center">以共情赋予智能形态</h3>
 
-*祝您使用Pisces L1实验愉快！*
+![summary](./icons/PD.png)

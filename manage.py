@@ -3,6 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of Pisces L1.
+# The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -32,18 +33,18 @@ ROOT = os.path.abspath(os.path.dirname(__file__))
 COMMANDS = [
     'setup',      # Environment setup
     'source',     # Activate virtual environment
-    'pull',       # Pull latest code from remote
+    'update',       # Pull latest code from remote
     'train',      # Train model
     'infer',      # Inference
     'check',      # Check GPU/deps
     'monitor',    # System monitor
     'download',   # Download datasets
-    'arrow',      # Arrow/JSON conversion
     'quantize',   # Model quantization
     'benchmark',  # Model evaluation & benchmarking
     'agent',      # Native agent interface
     'rlhf',       # RLHF training
     'help',       # Show help for commands
+    'dataset',    # Dataset management tool
 ]
 
 def main():
@@ -61,10 +62,6 @@ def main():
     parser.add_argument('--speculative', action='store_true', help='Enable speculative decoding for faster inference')
     parser.add_argument('--draft_model', type=str, default='', help='Path to draft model for speculative decoding')
     parser.add_argument('--spec_gamma', type=int, default=4, help='Number of speculative tokens per step (default: 4)')
-    parser.add_argument('--json_dir', default='', help='[arrow] Directory containing .json files to merge into one .arrow')
-    parser.add_argument('--arrow_out', default='', help='[arrow] Output .arrow file path')
-    parser.add_argument('--arrow_in', default='', help='[arrow] Input .arrow file path to convert to .json')
-    parser.add_argument('--json_out', default='', help='[arrow] Output .json file path (single file)')
     parser.add_argument('--save', default='', help='[quantize] Output path for quantized model')
     parser.add_argument('--bits', type=int, default=8, help='[quantize] Quantization bits (4 or 8)')
     parser.add_argument('--config', default='configs/0.5B.json', help='[benchmark] Model config path')
@@ -91,7 +88,7 @@ def main():
     parser.add_argument('--rlhf_epochs', type=int, default=3, help='RLHF training epochs')
     parser.add_argument('--rlhf_max_samples', type=int, default=1000, help='RLHF maximum number of samples')
     parser.add_argument('--rlhf_max_length', type=int, default=512, help='RLHF maximum sequence length')
-    args, extra = parser.parse_known_args()
+    args = parser.parse_args()
     
     RIGHT("Versione del modello PiscesL1: " + VERSION)
     
@@ -114,18 +111,18 @@ def main():
         from data.download import download_datasets, optimize_datasets
         download_datasets(args.max_samples)
         optimize_datasets(max_keep=5000)
-    elif args.command == 'arrow':
-        from tools.arrow import arrow
-        arrow(args)
+    elif args.command == 'dataset':
+        from tools.dataset import dataset
+        dataset(args)
     elif args.command == 'setup':
         from tools.setup import setup
         setup(args)
     elif args.command == 'source':
         from tools.source import source
         source()
-    elif args.command == 'pull':
-        from tools.pull import pull
-        pull()
+    elif args.command == 'update':
+        from tools.update import update
+        update()
     elif args.command == 'quantize':
         from tools.quantize import quantize
         if not args.ckpt or not args.save:
@@ -145,7 +142,7 @@ def main():
             run_benchmark(args.benchmark, args.model, args.config)
         else:
             performance_benchmark(args.config, args.seq_len)
-    elif args.rlhf:
+    elif args.command == 'rlhf':
         from tools.rlhf import rlhf_train
 
         if not hasattr(args, 'model_path') or not args.model_path:

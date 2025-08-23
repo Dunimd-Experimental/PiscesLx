@@ -3,6 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of Pisces L1.
+# The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -20,6 +21,7 @@
 import os
 import re
 import json
+import unicodedata
 import urllib.request
 from utils.log import RIGHT, ERROR
 
@@ -28,8 +30,12 @@ class BPETokenizer:
 
     This tokenizer is used to convert text into a sequence of tokens and vice versa.
     It supports loading pre-trained vocabulary and merge rules, as well as adding new tokens.
+
+    With the byte-level fallback enabled, it robustly supports multilingual text
+    including the six United Nations languages (Arabic, Chinese, English, French,
+    Russian, Spanish) by encoding out-of-vocabulary segments as UTF-8 byte tokens.
     """
-    def __init__(self, vocab_path=None, merges_path=None, special_tokens=None):
+    def __init__(self, vocab_path=None, merges_path=None, special_tokens=None, byte_fallback=True):
         """Initialize the BPETokenizer.
 
         Args:
@@ -39,6 +45,8 @@ class BPETokenizer:
         """
         self.vocab_path = vocab_path
         self.merges_path = merges_path
+        self.byte_fallback = byte_fallback
+
         if vocab_path and os.path.exists(vocab_path):
             # Load vocabulary from file
             with open(vocab_path, "r", encoding="utf-8") as f:
@@ -50,7 +58,6 @@ class BPETokenizer:
             self.encoder = {tok: i for i, tok in enumerate(base_tokens)}
             self.decoder = {i: tok for tok, i in self.encoder.items()}
             ERROR("No vocab.json found, using dummy vocab.")
-        self.bpe_ranks = {}
         if merges_path and os.path.exists(merges_path):
             # Load merge rules from file
             with open(merges_path, "r", encoding="utf-8") as f:
@@ -64,6 +71,15 @@ class BPETokenizer:
             if tok not in self.encoder:
                 self.encoder[tok] = len(self.encoder)
                 self.decoder[self.encoder[tok]] = tok
+        # Install UTF-8 byte tokens for fallback to ensure multilingual coverage
+        # e.g., <0x00> ... <0xFF>
+        self.byte_tokens = [f"<0x{b:02X}>" for b in range(256)]
+        for tok in self.byte_tokens:
+            if tok not in self.encoder:
+                self.encoder[tok] = len(self.encoder)
+                self.decoder[self.encoder[tok]] = tok
+        self.byte_to_id = {b: self.encoder[f"<0x{b:02X}>"] for b in range(256)}
+        self.id_to_byte = {tid: b for (b, tid) in self.byte_to_id.items()}
         self.unk_id = self.encoder["<unk>"]
         self.pad_id = self.encoder["<pad>"]
         self.bos_id = self.encoder["<s>"]
@@ -110,7 +126,7 @@ class BPETokenizer:
             import shutil
             merges_file = os.path.join(save_directory, "merges.txt")
             shutil.copyfile(self.merges_path, merges_file)
-            
+
     def bpe(self, token):
         """Apply Byte Pair Encoding to a single token.
 
@@ -169,6 +185,8 @@ class BPETokenizer:
         Returns:
             list or torch.Tensor: A list of token IDs or a PyTorch tensor.
         """
+        # Normalize to NFC for stable Unicode processing
+        text = unicodedata.normalize("NFC", text)
         for tok in self.special_tokens:
             text = text.replace(tok, f" {tok} ")
         tokens = re.findall(r"\w+|[^\w\s]|<[^>]+>", text, re.UNICODE)
@@ -179,7 +197,11 @@ class BPETokenizer:
                 if bpe_tok in self.encoder:
                     ids.append(self.encoder[bpe_tok])
                 else:
-                    ids.append(self.unk_id)
+                    if self.byte_fallback:
+                        for b in bpe_tok.encode("utf-8"):
+                            ids.append(self.byte_to_id[b])
+                    else:
+                        ids.append(self.unk_id)
                     # print(f"[Tokenizer] OOV token: {bpe_tok}")
         if return_tensors == "pt":
             import torch
@@ -208,10 +230,30 @@ class BPETokenizer:
         Returns:
             str: The decoded text.
         """
-        tokens = [self.decoder.get(i, "<unk>") for i in ids]
+        # Reconstruct bytes sequences produced by byte_fallback
+        out_tokens = []
+        bytes_buf = []
+        for i in ids:
+            if i in self.id_to_byte:
+                bytes_buf.append(self.id_to_byte[i])
+            else:
+                if bytes_buf:
+                    try:
+                        out_tokens.append(bytes(bytes_buf).decode("utf-8"))
+                    except Exception:
+                        out_tokens.append("".join(f"<0x{b:02X}>" for b in bytes_buf))
+                    bytes_buf = []
+                out_tokens.append(self.decoder.get(i, "<unk>"))
+        if bytes_buf:
+            try:
+                out_tokens.append(bytes(bytes_buf).decode("utf-8"))
+            except Exception:
+                out_tokens.append("".join(f"<0x{b:02X}>" for b in bytes_buf))
+
         if skip_special_tokens:
-            tokens = [t for t in tokens if t not in self.special_tokens]
-        text = " ".join(tokens)
+            out_tokens = [t for t in out_tokens if t not in self.special_tokens]
+
+        text = " ".join(out_tokens)
         text = text.replace(" ##", "")
         text = text.replace("Ġ", "")
         return text.strip()

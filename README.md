@@ -51,13 +51,13 @@ python manage.py help
 |------------|----------------------------------------------------------------------|
 | setup      | Environment setup and dependency install                             |
 | source     | Activate virtual environment                                         |
-| pull       | Pull latest code from remote repository                              |
+| update       | Pull latest code from remote repository                              |
 | train      | Train the model                                                      |
 | infer      | Run inference with a trained model                                   |
 | check      | Check GPU and dependencies                                           |
 | monitor    | System monitor (GPU/CPU/memory)                                      |
 | download   | Download datasets for training                                       |
-| arrow      | Arrow/JSON dataset conversion                                        |
+| dataset    | Arrow/JSON dataset conversion                                        |
 | quantize   | Quantize model to 4/8-bit for efficiency                             |
 | benchmark  | Run performance benchmarking                                         |
 | help       | Show help message                                                    |
@@ -153,14 +153,14 @@ python manage.py download
 
 ---
 
-## 🏆 Training 7B Model on 24GB GPU [Beta]
-Pisces L1 supports **training/fine-tuning 7B models on a single 24GB GPU** using QLoRA, 4-bit quantization, LoRA adapters, and gradient accumulation.
+## 🏆 Training 1.5B Model on 24GB GPU [Beta]
+Pisces L1 supports **training/fine-tuning 1.5B models on a single 24GB GPU** using QLoRA, 4-bit quantization, LoRA adapters, and gradient accumulation.
 
-#### 7B QLoRA Training Example
+#### 1.5B QLoRA Training Example
 
 ##### Single GPU
 ```bash
-python manage.py train --model_size 7B --resume_ckpt latest.pt
+python manage.py train --model_size 1.5B --resume_ckpt checkpoint.pt --reset_lr
 ```
 
 ##### Resume Training
@@ -351,6 +351,7 @@ This project is licensed under the **Apache License 2.0** - see the [LICENSE](LI
 - [PiscesL1 in GitHub](https://github.com/mf2023/PiscesL1.git)
 - [PiscesL1 in ModelScope](https://www.modelscope.cn/models/mfchina2024/PiscesL1)
 
----
+<h3 align="center">Where intuition navigates the depths of data</h3>
+<h3 align="center">And empathy gives form to intelligence</h3>
 
-*Happy experimenting with Pisces L1!*
+![summary](./icons/PD.png)

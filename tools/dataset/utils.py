@@ -3,6 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of Pisces L1.
+# The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -17,20 +18,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-import subprocess
-from utils.log import RIGHT, DEBUG, ERROR
+import re
 
-def pull():
+def natural_sort_key(text):
     """
-    Pull latest code from remote repository.
+    Generate a key for natural sorting, which can handle numeric parts in the text.
+
+    Args:
+        text (str): The input text to generate the sorting key for.
+
+    Returns:
+        list: A list containing integers or lowercase strings, used as the sorting key.
     """
-    remote_url = 'https://gitee.com/dunimd/piscesl1.git'
-    try:
-        DEBUG(f"Pulling latest code from {remote_url}...")
-        subprocess.run(['git', 'fetch', '--all'], check=True)
-        subprocess.run(['git', 'reset', '--hard', 'origin/master'], check=True)
-        RIGHT("Code successfully updated to the latest version")
-    except subprocess.CalledProcessError as e:
-        ERROR(f"Failed to pull code: {e}")
-        sys.exit(1)
+    return [int(s) if s.isdigit() else s.lower() for s in re.split(r'(\d+)', text)]
+
+def modal_of(name: str) -> str:
+    # You may need to define the content of PREFIX2MODAL here
+    PREFIX2MODAL = {}  
+    for p, m in PREFIX2MODAL.items():
+        if name.startswith(p):
+            return m
+    return "other"
