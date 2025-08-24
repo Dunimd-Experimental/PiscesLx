@@ -20,6 +20,7 @@
 
 import streamlit as st
 import ast, json, os
+from tools.dataset.i18n import t
 
 def init_field_rules(info):
     """
@@ -31,10 +32,27 @@ def init_field_rules(info):
     Returns:
         dict: The field rules stored in the session state.
     """
-    # Initialize field order if it hasn't been set yet
-    if "field_order" not in st.session_state:
-        st.session_state["field_order"] = list(info["fields"].keys())
-    # Get the rules from session state, default to an empty dict if not present
+    # Initialize or repair the field order for the current file
+    base_fields = list(info["fields"].keys())
+    # Existing order (may come from a previous file)
+    fo = st.session_state.get("field_order") or []
+    # If there's no overlap at all, or the order is empty, reset to the current fields
+    if not fo or not any(f in info["fields"] for f in fo):
+        st.session_state["field_order"] = base_fields
+    else:
+        # Unify the field order: preserve the existing order, then append all missing current fields
+        seen = set()
+        unified = []
+        for k in fo:
+            if k not in seen:
+                unified.append(k)
+                seen.add(k)
+        for k in base_fields:
+            if k not in seen:
+                unified.append(k)
+                seen.add(k)
+        st.session_state["field_order"] = unified
+    # Get the rules from the session state, default to an empty dictionary if not present
     rules = st.session_state.get("rules", {})
     return rules
 
@@ -46,7 +64,7 @@ def _parse_default(s):
         s (str): The input string representing the default value.
 
     Returns:
-        Any: The parsed value. Returns None if input is empty, 
+        Any: The parsed value. Returns None if the input is empty, 
              otherwise returns the parsed Python type or the original string.
     """
     if s is None or s == "":
@@ -70,36 +88,36 @@ def add_new_field(rules, info):
         info (dict): A dictionary containing field information.
     """
     # Display the title for adding a new field
-    st.sidebar.markdown("#### Add New Field")
+    st.sidebar.markdown(t("sidebar.add_new_field_title"))
     # Create two columns in the sidebar
     col1, col2 = st.sidebar.columns(2)
     with col1:
         # Input field for the new field name
-        new_field_name = st.text_input("Field Name", key="new_field_name", placeholder="Enter new field name")
+        new_field_name = st.text_input(t("sidebar.field_name"), key="new_field_name", placeholder=t("ph.new_field_name"))
     with col2:
         # Input field for the default value of the new field
-        new_field_value = st.text_input("Default Value", key="new_field_value", placeholder="Default value")
+        new_field_value = st.text_input(t("sidebar.default_value"), key="new_field_value", placeholder=t("ph.default_value"))
     # Check if the add field button is clicked
-    if st.sidebar.button("➕ Add Field", key="add_field"):
+    if st.sidebar.button(t("sidebar.add_field_btn"), key="add_field"):
         if new_field_name and new_field_name not in rules:
-            # Add the new field to rules
+            # Add the new field to the rules
             rules[new_field_name] = new_field_name
-            # Initialize new_fields in session state if not present
+            # Initialize the new_fields in the session state if it's not present
             if "new_fields" not in st.session_state:
                 st.session_state["new_fields"] = {}
             # Parse the default value to the best-effort Python type
             parsed_default = _parse_default(new_field_value)
-            # Store the new field and its default value in session state
+            # Store the new field and its default value in the session state
             st.session_state["new_fields"][new_field_name] = parsed_default
-            # Initialize field order if it hasn't been set yet
+            # Initialize the field order if it hasn't been set yet
             if "field_order" not in st.session_state:
                 st.session_state["field_order"] = list(info["fields"].keys())
             # Add the new field to the field order
             st.session_state["field_order"].append(new_field_name)
-            # Update the rules in session state
+            # Update the rules in the session state
             st.session_state["rules"] = rules
 
-            # Auto-apply the new field to loaded data and persist to file
+            # Auto-apply the new field to the loaded data and persist it to the file
             try:
                 if st.session_state.get('loaded_data') and st.session_state.get('current_file'):
                     updated = []
@@ -120,18 +138,18 @@ def add_new_field(rules, info):
                             json.dump(updated, f, ensure_ascii=False, indent=2)
                     os.replace(temp_path, src_path)
                     st.session_state.loaded_data = updated
-                    st.sidebar.success("✅ New field has been written to all records and saved")
+                    st.sidebar.success(t("sidebar.add_field_written"))
             except Exception as e:
-                st.sidebar.error(f"❌ Failed to write: {str(e)}")
+                st.sidebar.error(t("sidebar.add_field_failed").format(err=str(e)))
 
             # Rerun the app to reflect the changes
             st.rerun()
         elif new_field_name in rules:
             # Show a warning if the field already exists
-            st.sidebar.warning(f"Field '{new_field_name}' already exists")
+            st.sidebar.warning(t("sidebar.field_exists").format(name=new_field_name))
         else:
             # Show a warning if no field name is entered
-            st.sidebar.warning("Please enter a field name")
+            st.sidebar.warning(t("sidebar.enter_field_name"))
 
 def manage_fields(info, modal_of):
     """
@@ -142,8 +160,8 @@ def manage_fields(info, modal_of):
         modal_of (function): A function to get the modal information of a field.
     """
     # Display the title for managing existing fields
-    st.sidebar.markdown("#### Manage Existing Fields")
-    # Initialize field order if it hasn't been set yet
+    st.sidebar.markdown(t("sidebar.manage_fields_title"))
+    # Initialize the field order if it hasn't been set yet
     if "field_order" not in st.session_state:
         st.session_state["field_order"] = list(info["fields"].keys())
     # Create a copy of the field information
@@ -155,7 +173,7 @@ def manage_fields(info, modal_of):
             tname = type(default_val).__name__ if default_val is not None else "None"
             example = "" if default_val is None else str(default_val)[:80]
             all_field_info[field_name] = {"missing": 0, "types": [tname], "example": example}
-    # Get the rules from session state, default to an empty dict if not present
+    # Get the rules from the session state, default to an empty dictionary if not present
     rules = st.session_state.get("rules", {})
     # Iterate through the field order
     for idx, name in enumerate(st.session_state["field_order"]):
@@ -166,7 +184,7 @@ def manage_fields(info, modal_of):
         # Create an expander for each field
         with st.sidebar.expander(f"{mod}:{name}", expanded=False):
             # Input field for renaming the field
-            new = st.text_input("Rename", value=name, key=f"n_{name}")
+            new = st.text_input(t("sidebar.rename"), value=name, key=f"n_{name}")
             rules[name] = new
             # Create three columns for the action buttons
             col1, col2, col3 = st.columns([1, 1, 1])
@@ -207,9 +225,9 @@ def manage_fields(info, modal_of):
                                         json.dump(updated, f, ensure_ascii=False, indent=2)
                                 os.replace(temp_path, current_file)
                                 st.session_state.loaded_data = updated
-                                st.sidebar.success("✅ Successfully written back to file in new order")
+                                st.sidebar.success(t("sidebar.reorder_success"))
                         except Exception as e:
-                            st.sidebar.error(f"❌ Failed to write back in order: {str(e)}")
+                            st.sidebar.error(t("sidebar.reorder_failed").format(err=str(e)))
                         st.rerun()
                 else:
                     # Disabled button if the field is already at the top
@@ -281,9 +299,9 @@ def manage_fields(info, modal_of):
                                     json.dump(updated, f, ensure_ascii=False, indent=2)
                             os.replace(temp_path, src_path)
                             st.session_state.loaded_data = updated
-                            st.sidebar.success(f"✅ Successfully deleted field and saved: {name}")
+                            st.sidebar.success(t("sidebar.delete_success").format(name=name))
                     except Exception as e:
-                        st.sidebar.error(f"❌ Failed to delete and save: {str(e)}")
+                        st.sidebar.error(t("sidebar.delete_failed").format(err=str(e)))
                     st.rerun()
 
     # Detect renames, auto-apply them to the file, and persist the metadata
@@ -323,8 +341,8 @@ def manage_fields(info, modal_of):
             for i, fname in enumerate(st.session_state.get('field_order', [])):
                 if fname in renames:
                     st.session_state['field_order'][i] = renames[fname]
-            st.sidebar.success("✅ Renames have been automatically applied and saved")
+            st.sidebar.success(t("sidebar.rename_applied"))
         # Take a snapshot of the current rules
         st.session_state['_last_rules'] = dict(rules)
     except Exception as e:
-        st.sidebar.error(f"❌ Failed to persist renames: {str(e)}")
+        st.sidebar.error(t("sidebar.rename_persist_failed").format(err=str(e)))

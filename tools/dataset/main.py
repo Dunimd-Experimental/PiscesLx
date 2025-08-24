@@ -23,19 +23,27 @@ import pandas as pd
 from data import TEXT_FIELD_KEYS
 from typing import Dict, List, Any
 from collections import defaultdict
+from tools.dataset.func import eval_expr_safe
 from tools.dataset.arrow import arrow as arrow_to_json
 from tools.dataset.utils import natural_sort_key, modal_of
 from tools.dataset.preview import get_all_fields, process_preview_data
 from tools.dataset.loader import parse_nested_strings, robust_json_load
 from tools.dataset.scan import collect_json_files, scan_fields, sort_json_files
 from tools.dataset.field_manager import init_field_rules, add_new_field, manage_fields
-import streamlit as st, pyarrow as pa, pyarrow.json as paj, json, os, jsonlines, ast, ijson
+import streamlit as st, pyarrow as pa, pyarrow.json as paj, json, os, jsonlines, ast, ijson, html, time, shutil
+from tools.dataset.settings import get_settings, set_settings, AppSettings, SettingsStore, render_settings_page
+from tools.dataset.i18n import t, set_lang
 
 # Define the chunk size for processing
 CHUNK_SIZE = 2000
 
+# Apply language before setting page config so title is localized at first paint
+try:
+    set_lang(get_settings().language)
+except Exception:
+    pass
 # Set the page configuration for the Streamlit app
-st.set_page_config("PiscesData Control Center", layout="wide")
+st.set_page_config(t("app.title"), layout="wide")
 
 def dataset(args=None):
     """
@@ -53,9 +61,41 @@ def dataset(args=None):
     if 'loaded_data' not in st.session_state:
         st.session_state.loaded_data = []
 
+    # Early: Settings subpage should fully replace main page
+    # Load current settings and apply session override to drive Settings UI defaults
+    _early_settings = get_settings()
+    try:
+        set_lang(_early_settings.language)
+    except Exception:
+        pass
+    _ov = st.session_state.get("settings_override")
+    if isinstance(_ov, dict):
+        try:
+            _early_settings.dev_mode = bool(_ov.get("dev_mode", _early_settings.dev_mode))
+            _early_settings.func_preview_default = bool(_ov.get("func_preview_default", _early_settings.func_preview_default))
+            _early_settings.remember_func_per_file = bool(_ov.get("remember_func_per_file", _early_settings.remember_func_per_file))
+        except Exception:
+            pass
+    # Settings page toggle is handled via a sidebar button (see bottom). Remove top-row button for stability.
+    if st.session_state.get("show_settings_page", False):
+        render_settings_page(_early_settings)
+        return
+
     # Step 1: File selection
-    # First row: path input
-    path_input = st.text_input("Enter file path or directory path", "data_cache")
+    # First row: path input (use settings default or recent)
+    _default_path = None
+    try:
+        _default_path = (
+            st.session_state.get('last_path')
+            if _early_settings.remember_recent_path and st.session_state.get('last_path')
+            else _early_settings.default_open_path
+        )
+    except Exception:
+        _default_path = _early_settings.default_open_path or "data_cache"
+    path_input = st.text_input(t("input.path_label"), _default_path, placeholder=t("ph.path_input"))
+    # remember recent path
+    if path_input and path_input != st.session_state.get('last_path') and _early_settings.remember_recent_path:
+        st.session_state['last_path'] = path_input
     # Second row: action buttons (rescan, convert) — tighten spacing
     try:
         c_rescan, c_arrow = st.columns([1, 1], gap="small")
@@ -63,15 +103,15 @@ def dataset(args=None):
         # Fallback for older Streamlit versions without 'gap' parameter
         c_rescan, c_arrow = st.columns([1, 1])
     with c_rescan:
-        if st.button("🔄 Rescan Directory"):
+        if st.button(t("btn.rescan")):
             st.cache_data.clear()
             st.rerun()
     with c_arrow:
-        if st.button("🧭 Convert Arrow→JSON"):
+        if st.button(t("btn.convert_arrow")):
             if not os.path.exists(path_input):
-                st.warning("⚠️ Path does not exist")
+                st.warning(t("warn.path_missing"))
             else:
-                log_box = st.expander("Conversion Log", expanded=True)
+                log_box = st.expander(t("exp.convert_log"), expanded=True)
                 def _progress_cb(level: str, message: str):
                     if level == "error":
                         log_box.error(message)
@@ -81,29 +121,29 @@ def dataset(args=None):
                         log_box.write(message)
                     else:
                         log_box.info(message)
-                with st.spinner("Converting Arrow dataset under the selected path..."):
+                with st.spinner(t("spinner.converting_arrow")):
                     old_cwd = os.getcwd()
                     try:
                         os.chdir(path_input)
                         arrow_to_json(progress_cb=_progress_cb)
-                        st.success("✅ Arrow→JSON conversion completed")
+                        st.success(t("success.arrow_done"))
                     except Exception as e:
-                        st.error(f"❌ Conversion failed: {str(e)}")
+                        st.error(t("error.convert_failed").format(err=str(e)))
                     finally:
                         os.chdir(old_cwd)
 
     # Collect all JSON/JSONL files in the input path
     json_files = collect_json_files(path_input)
     if not json_files:
-        st.warning(f"📁 No json/jsonl files found in {path_input}")
-        st.info("Please place your json/jsonl files in the specified directory")
+        st.warning(t("warn.no_files").format(path=path_input))
+        st.info(t("info.place_files"))
         st.stop()
 
     # File selection logic
     src_path = None
     if len(json_files) == 1:
         src_path = json_files[0]
-        st.info(f"📄 Auto-selected file: {os.path.relpath(src_path, path_input)}")
+        st.info(t("info.auto_selected").format(file=os.path.relpath(src_path, path_input)))
         if st.session_state.get('current_file') != src_path:
             current_file = st.session_state.get('current_file')
             if current_file and 'field_order' in st.session_state:
@@ -119,7 +159,7 @@ def dataset(args=None):
     else:
         sorted_files, default_index = sort_json_files(json_files, path_input, st.session_state.get('current_file'))
         selected_file = st.selectbox(
-            "Please select the file to process (sorted A-Z):",
+            t("select.file_label"),
             sorted_files,
             format_func=lambda x: os.path.relpath(x, path_input),
             key="file_selector",
@@ -139,25 +179,67 @@ def dataset(args=None):
             st.rerun()
         src_path = selected_file
 
+    # Derive a stable per-file UI key suffix
+    base_key = hash(src_path) % 100000
+
+    # Load settings once and react to changes (including manual YAML edits)
+    settings = get_settings()
+    # Allow session-level override (Apply without saving)
+    _ov = st.session_state.get("settings_override")
+    if isinstance(_ov, dict):
+        try:
+            settings.dev_mode = bool(_ov.get("dev_mode", settings.dev_mode))
+            settings.func_preview_default = bool(_ov.get("func_preview_default", settings.func_preview_default))
+            settings.remember_func_per_file = bool(_ov.get("remember_func_per_file", settings.remember_func_per_file))
+        except Exception:
+            pass
+    settings_sig = (settings.dev_mode, settings.func_preview_default, settings.remember_func_per_file)
+    prev_sig = st.session_state.get("settings_sig")
+    if prev_sig != settings_sig:
+        try:
+            # Clear keys so new defaults and scoping take effect immediately
+            for k in list(st.session_state.keys()):
+                if k.startswith("func_input_") or k.startswith("func_preview_enabled_"):
+                    st.session_state.pop(k, None)
+            # Also clear possible globals
+            st.session_state.pop("func_input_global", None)
+            st.session_state.pop("func_preview_enabled_global", None)
+        except Exception:
+            pass
+        st.session_state["settings_sig"] = settings_sig
+
+
     # Step 2: Scan fields
-    with st.spinner("🔍 Scanning fields..."):
+    with st.spinner(t("spinner.scan_fields")):
         try:
             data, info = scan_fields(src_path)
             st.session_state.loaded_data = data
         except Exception as e:
-            st.error(f"❌ Failed to load data: {str(e)}")
+            st.error(t("error.load_failed").format(err=str(e)))
             info = {"fields": {}, "total": 0}
     total = info["total"]
-    st.success(f"Total {total} samples, {len(info['fields'])} fields")
+    st.success(t("info.scan_summary").format(total=total, fields=len(info['fields'])))
 
     # Intelligent file size detection
     file_size_mb = os.path.getsize(src_path) / (1024 * 1024)
     if file_size_mb > 100:  # Larger than 100MB
-        st.warning(f"⚠️ Large file detected ({file_size_mb:.1f} MB). It is recommended to reduce the number of preview entries.")
+        st.warning(t("warn.large_file").format(mb=file_size_mb))
     st.divider()
 
     # Step 3: Sidebar: Field renaming/deletion
-    st.sidebar.markdown("### Field Rules")
+    st.sidebar.markdown(t("sidebar.field_rules"))
+    # Debug: show scanned fields (only in dev mode)
+    if settings.dev_mode:
+        with st.sidebar.expander(t("sidebar.scanned_fields"), expanded=False):
+            try:
+                st.write(t("dev.count").format(n=len(info['fields'])))
+                preview_fields = list(info["fields"].items())[:100]
+                for k, meta in preview_fields:
+                    miss = meta.get("missing")
+                    types = ",".join(meta.get("types", []))
+                    st.write(f"- {k}  [{t('dev.missing')}={miss}, {t('dev.types')}={types}]")
+            except Exception:
+                pass
     rules = init_field_rules(info)
     add_new_field(rules, info)
     manage_fields(info, modal_of)
@@ -167,14 +249,23 @@ def dataset(args=None):
 
     # Preview settings
     default_limit = 1000
-    load_col1, load_col2 = st.columns([3, 1])
-    # Consistent with 1.py: Checkbox and function input in two columns of the same row
+    # Top row: Load-all (narrow) | Preview dropdown (wide) | Function input (medium)
+    load_col1, load_col2, load_col3 = st.columns([1, 5, 2])
     with load_col1:
-        load_all = st.checkbox("🚀 Load All Data" if file_size_mb <= 100 else "🚀 Load All Data (Proceed with Caution)", value=False)
+        load_all = st.checkbox(t("chk.load_all") if file_size_mb <= 100 else t("chk.load_all_caution"), value=False)
     with load_col2:
+        # Middle wide container for f(x) preview (fixed height, scrollable)
+        fx_preview_container = st.container()
+    with load_col3:
         # Avoid empty label warning: Provide a non-empty but hidden label
-        func_input = st.text_input("Function Input", placeholder="f(x)", key="func_input", label_visibility="collapsed")
-    preview_limit = st.number_input("Number of Preview Entries", min_value=10, max_value=100000, value=1000, step=100, disabled=load_all)
+        func_key = f"func_input_{base_key}" if settings.remember_func_per_file else "func_input_global"
+        func_input = st.text_input(
+            t("input.function"),
+            placeholder="f(x)",
+            key=func_key,
+            label_visibility="collapsed",
+        )
+    preview_limit = st.number_input(t("input.preview_limit"), min_value=10, max_value=100000, value=1000, step=100, disabled=load_all)
 
     # Data processing and DataFrame generation
     if st.session_state.loaded_data:
@@ -206,17 +297,95 @@ def dataset(args=None):
             else:
                 clean_data.append({"data": str(item)})
         df = pd.DataFrame(clean_data)
+        # Preview toggle for function result column now controlled by Settings only
+        preview_enabled = settings.func_preview_default
+
+        # Bind function box: evaluate expression per record and show results below in a fixed-height scrollable container (no table column)
+        fx = st.session_state.get(func_key)
+        if preview_enabled and isinstance(fx, str) and fx.strip():
+            try:
+                results: list[str] = []
+                for i, rec in enumerate(preview_data):
+                    r = rec if isinstance(rec, dict) else {"data": rec}
+                    try:
+                        val = eval_expr_safe(fx, r, i)
+                    except Exception as e:
+                        val = t("fx.per_record_error").format(err=str(e))
+                    # Normalize to displayable string
+                    try:
+                        if isinstance(val, (list, dict)):
+                            import json as _json
+                            val = _json.dumps(val, ensure_ascii=False)
+                        elif hasattr(val, 'isoformat') and callable(getattr(val, 'isoformat')):
+                            val = str(val)
+                        elif not isinstance(val, (str, int, float, bool)) and val is not None:
+                            val = str(val)
+                    except Exception:
+                        try:
+                            val = str(val)
+                        except Exception:
+                            val = t("fx.unrepresentable")
+                    results.append(val)
+
+                # Deduplicate while preserving order
+                seen: set[str] = set()
+                options: list[str] = []
+                for s in results:
+                    if s not in seen:
+                        seen.add(s)
+                        options.append(s)
+                if not options:
+                    options = [t("dev.no_result")]
+
+                # Render single-line, horizontally scrollable container (no wrapping)
+                with fx_preview_container:
+                    # Join all unique results into one line with separators
+                    content = "  |  ".join(str(x).replace("\n", " ") for x in options)
+                    html_content = (
+                        "<div style=\"height:40px; max-height:40px; overflow-x:auto; overflow-y:hidden;"
+                        " border:1px solid #ddd; border-radius:6px; padding:0 8px;"
+                        " font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; line-height:40px;"
+                        " white-space: nowrap; word-break: keep-all; background-color: #fafafa;\""
+                        f" title=\"{html.escape(content)}\">"
+                        f"{html.escape(content)}"
+                        "</div>"
+                    )
+                    st.markdown(html_content, unsafe_allow_html=True)
+            except Exception as e:
+                st.warning(t("fx.eval_error").format(err=str(e)))
         st.session_state['df'] = df
 
     # Display data
     if st.session_state.get('df') is not None:
         df = st.session_state['df']
+        # Apply date_format (Plan A): format datetime-like columns as strings for display
+        try:
+            date_fmt = get_settings().date_format
+            for col in list(df.columns):
+                col_data = df[col]
+                # Detect datetime-like content heuristically
+                if pd.api.types.is_datetime64_any_dtype(col_data):
+                    try:
+                        df[col] = pd.to_datetime(col_data, errors='coerce').dt.strftime(date_fmt)
+                    except Exception:
+                        pass
+                else:
+                    # Try best-effort conversion for object columns that might be ISO date strings
+                    if pd.api.types.is_object_dtype(col_data):
+                        try:
+                            parsed = pd.to_datetime(col_data, errors='coerce', utc=False)
+                            if parsed.notna().any():
+                                df[col] = parsed.dt.strftime(date_fmt)
+                        except Exception:
+                            pass
+        except Exception:
+            pass
         col1, col2 = st.columns(2)
         with col1:
-            st.metric("Total Rows", len(df))
+            st.metric(t("metric.total_rows"), len(df))
         with col2:
-            st.metric("Total Columns", len(df.columns))
-        base_key = hash(src_path) % 100000
+            st.metric(t("metric.total_cols"), len(df.columns))
+        # base_key already defined for this file's UI elements
         column_config = {}
         for col in df.columns:
             try:
@@ -225,11 +394,10 @@ def dataset(args=None):
                     column_config[col] = st.column_config.CheckboxColumn(col)
                 elif pd.api.types.is_numeric_dtype(col_data):
                     if not pd.api.types.is_bool_dtype(col_data):
-                        column_config[col] = st.column_config.NumberColumn(col, format="%.2f")
+                        column_config[col] = st.column_config.NumberColumn(col, format=get_settings().number_format)
                     else:
                         column_config[col] = st.column_config.CheckboxColumn(col)
-                elif pd.api.types.is_datetime64_any_dtype(col_data):
-                    column_config[col] = st.column_config.DateColumn(col)
+                # Datetime columns have been formatted as strings above; treat as text for display consistency
                 else:
                     column_config[col] = st.column_config.TextColumn(col)
             except Exception:
@@ -246,7 +414,7 @@ def dataset(args=None):
     # Note: The auto-save logic for field addition/renaming/deletion has been moved to field_manager
 
     # Save modifications
-    if st.button("💾 Save Changes", key="save_edited_data"):
+    if st.button(t("btn.save_changes"), key="save_edited_data"):
         if st.session_state.get('current_file'):
             try:
                 src_path = st.session_state['current_file']
@@ -256,8 +424,16 @@ def dataset(args=None):
                 else:
                     save_data = df.to_dict('records')
                 if not save_data:
-                    st.warning("⚠️ No data to save")
+                    st.warning(t("warn.no_data_to_save"))
                     st.stop()
+                backup_file = None
+                settings_now = get_settings()
+                try:
+                    if settings_now.backup_before_save and os.path.exists(src_path):
+                        backup_file = src_path + '.backup'
+                        shutil.copyfile(src_path, backup_file)
+                except Exception:
+                    backup_file = None
                 if src_path.endswith('.jsonl'):
                     with open(src_path, 'w', encoding='utf-8') as f:
                         for rec in save_data:
@@ -271,50 +447,55 @@ def dataset(args=None):
                         st.session_state['file_field_orders'] = {}
                     st.session_state['file_field_orders'][src_path] = st.session_state['field_order']
                 st.session_state.loaded_data = save_data
-                st.success("✅ Changes saved to the original file!")
+                st.success(t("success.changes_saved"))
                 st.session_state.pop('df', None)
                 st.rerun()
             except Exception as e:
-                st.error(f"❌ Save failed: {str(e)}")
+                try:
+                    if get_settings().rollback_on_failure and 'backup_file' in locals() and backup_file and os.path.exists(backup_file):
+                        shutil.copyfile(backup_file, src_path)
+                except Exception:
+                    pass
+                st.error(t("error.save_failed").format(err=str(e)))
         else:
-            st.warning("⚠️ Please load a file first")
+            st.warning(t("warn.load_file_first"))
 
     st.divider()
 
     # Export options
     col1, col2, col3 = st.columns(3)
     with col1:
-        dst_arrow = st.text_input("Output Arrow Path", src_path.replace(".json", ".arrow").replace(".jsonl", ".arrow"))
-        if st.button("🚀 Generate Arrow"):
+        dst_arrow = st.text_input(t("label.output_arrow"), src_path.replace(".json", ".arrow").replace(".jsonl", ".arrow"))
+        if st.button(t("btn.gen_arrow")):
             if st.session_state.loaded_data:
                 try:
                     table = pa.Table.from_pylist(st.session_state.loaded_data)
                     import pyarrow.feather as feather
                     feather.write_feather(table, dst_arrow, compression='zstd')
-                    st.success(f"✅ Arrow export completed! Total {len(st.session_state.loaded_data)} samples → {dst_arrow}")
+                    st.success(t("success.arrow_export").format(n=len(st.session_state.loaded_data), path=dst_arrow))
                 except Exception as e:
-                    st.error(f"❌ Arrow conversion error: {str(e)}")
+                    st.error(t("error.arrow_export").format(err=str(e)))
             else:
-                st.warning("⚠️ No data to export")
+                st.warning(t("warn.no_data_to_export"))
 
     with col2:
-        dst_json = st.text_input("Output JSON Path", src_path.replace(".json","_clean.json").replace(".jsonl","_clean.json"))
-        if st.button("📝 Generate JSON"):
+        dst_json = st.text_input(t("label.output_json"), src_path.replace(".json","_clean.json").replace(".jsonl","_clean.json"))
+        if st.button(t("btn.gen_json")):
             if st.session_state.loaded_data:
                 try:
                     with open(dst_json, 'w', encoding='utf-8') as f:
                         json.dump(st.session_state.loaded_data, f, ensure_ascii=False, indent=2)
-                    st.success(f"✅ JSON export completed! Total {len(st.session_state.loaded_data)} samples → {dst_json}")
+                    st.success(t("success.json_export").format(n=len(st.session_state.loaded_data), path=dst_json))
                 except Exception as e:
-                    st.error(f"❌ JSON conversion error: {str(e)}")
+                    st.error(t("error.json_export").format(err=str(e)))
             else:
-                st.warning("⚠️ No data to export")
+                st.warning(t("warn.no_data_to_export"))
 
     with col3:
-        st.markdown("### 🔥 Replace Original File")
-        confirm_replace = st.checkbox("⚠️ Confirm to replace the original file (This operation is irreversible)", value=False)
+        st.markdown(t("section.replace_original"))
+        confirm_replace = st.checkbox(t("chk.confirm_replace_original"), value=False)
         if confirm_replace:
-            if st.button("💾 Replace Original File Directly", type="primary"):
+            if st.button(t("btn.replace_original"), type="primary"):
                 try:
                     edited_df = st.session_state.get('df')
                     if edited_df is not None:
@@ -322,9 +503,17 @@ def dataset(args=None):
                     else:
                         save_data = df.to_dict('records')
                     if not save_data:
-                        st.warning("⚠️ No data to replace")
+                        st.warning(t("warn.no_data_to_export"))
                         st.stop()
                     temp_path = src_path + ".tmp"
+                    backup_file = None
+                    settings_now = get_settings()
+                    try:
+                        if settings_now.backup_before_save and os.path.exists(src_path):
+                            backup_file = src_path + '.backup'
+                            shutil.copyfile(src_path, backup_file)
+                    except Exception:
+                        backup_file = None
                     if src_path.endswith('.jsonl'):
                         with open(temp_path, 'w', encoding='utf-8') as f:
                             for rec in save_data:
@@ -335,11 +524,16 @@ def dataset(args=None):
                             json.dump(save_data, f, ensure_ascii=False, indent=2)
                     os.replace(temp_path, src_path)
                     st.session_state.loaded_data = save_data
-                    st.success(f"✅ Original file replaced! Total {len(save_data)} samples")
+                    st.success(t("success.replace_original").format(n=len(save_data)))
                     st.session_state.pop('df', None)
                     st.rerun()
                 except Exception as e:
-                    st.error(f"❌ Error replacing file: {str(e)}")
+                    try:
+                        if get_settings().rollback_on_failure and 'backup_file' in locals() and backup_file and os.path.exists(backup_file):
+                            shutil.copyfile(backup_file, src_path)
+                    except Exception:
+                        pass
+                    st.error(t("error.replace_original").format(err=str(e)))
                     try:
                         os.remove(temp_path)
                     except:
@@ -348,13 +542,12 @@ def dataset(args=None):
     # Text replacement function (sidebar)
     # Add a divider between "Field Rules" and "Text Content Replacement"
     st.sidebar.divider()
-    st.sidebar.markdown("### Text Content Replacement")
-    search_text = st.sidebar.text_input("Search Text", placeholder="Enter text to search...")
-    replace_text = st.sidebar.text_input("Replace With", placeholder="Enter replacement content...")
-    confirm_text_replace = st.sidebar.checkbox("Confirm Replacement", value=False)
-    if st.sidebar.button("Apply Replacement") and confirm_text_replace and st.session_state.get('current_file'):
+    st.sidebar.markdown(t("sidebar.text_replace"))
+    search_text = st.sidebar.text_input(t("sidebar.search_text"), placeholder=t("ph.search_text"))
+    replace_text = st.sidebar.text_input(t("sidebar.replace_with"), placeholder=t("ph.replace_with"))
+    if st.sidebar.button(t("sidebar.apply_replace")) and st.session_state.get('current_file'):
         if not search_text:
-            st.sidebar.warning("Please enter search text")
+            st.sidebar.warning(t("sidebar.search_text"))
         else:
             try:
                 with open(st.session_state.current_file, 'r', encoding='utf-8') as f:
@@ -384,11 +577,11 @@ def dataset(args=None):
                                 clean_data.append({"data": str(item)})
                         df = pd.DataFrame(clean_data)
                         st.session_state['df'] = df
-                        st.sidebar.success(f"✅ Text replacement completed! Total {matches} replacements")
-                        st.sidebar.info(f"Backup created: {backup_file}")
+                        st.sidebar.success(t("sidebar.replace_completed").format(n=matches))
+                        st.sidebar.info(t("sidebar.backup_created").format(path=backup_file))
                         st.rerun()
                     else:
-                        st.sidebar.info("No matching text found")
+                        st.sidebar.info(t("sidebar.no_match"))
                 except re.error:
                     if search_text in file_content:
                         new_content = file_content.replace(search_text, replace_text)
@@ -413,13 +606,13 @@ def dataset(args=None):
                         df = pd.DataFrame(clean_data)
                         st.session_state['df'] = df
                         count = file_content.count(search_text)
-                        st.sidebar.success(f"✅ Text replacement completed! Total {count} replacements")
-                        st.sidebar.info(f"Backup created: {backup_file}")
+                        st.sidebar.success(t("sidebar.replace_completed").format(n=count))
+                        st.sidebar.info(t("sidebar.backup_created").format(path=backup_file))
                         st.rerun()
                     else:
-                        st.sidebar.info("No matching text found")
+                        st.sidebar.info(t("sidebar.no_match"))
             except Exception as e:
-                st.sidebar.error(f"Error in text replacement: {str(e)}")
+                st.sidebar.error(t("sidebar.error").format(err=str(e)))
 
     # Copyright information at the bottom of the main page
     st.divider()
@@ -427,6 +620,42 @@ def dataset(args=None):
         "<div style='text-align:center;color:gray;'>© 2025 Wenze Wei · Pisces L1 / Dunimd Project Team. All Rights Reserved.</div>",
         unsafe_allow_html=True,
     )
+
+    # Simple autosave draft based on interval
+    try:
+        settings_now = get_settings()
+        if settings_now.autosave_enabled and st.session_state.get('current_file') and st.session_state.get('df') is not None:
+            now = time.time()
+            last = st.session_state.get('last_autosave_ts', 0)
+            if now - last >= max(10, int(settings_now.autosave_interval_sec)):
+                src_path = st.session_state['current_file']
+                draft_path = src_path + '.autosave'
+                data_to_save = st.session_state['df'].to_dict('records')
+                with open(draft_path, 'w', encoding='utf-8') as f:
+                    # Save as JSON array draft regardless of original format to keep it simple
+                    json.dump(data_to_save, f, ensure_ascii=False, indent=2)
+                st.session_state['last_autosave_ts'] = now
+    except Exception:
+        pass
+
+    # Sidebar settings button at the very bottom (circular, no divider above)
+    # Style only the last sidebar button to look circular
+    st.sidebar.markdown(
+        """
+        <style>
+        div[data-testid="stSidebar"] div.stButton:last-of-type > button {
+            border-radius: 50% !important;
+            width: 40px; height: 40px; padding: 0 !important;
+            line-height: 40px; text-align: center;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    # Toggle main-page settings view
+    if st.sidebar.button("⚙", help=t("sidebar.settings_hint"), key="btn_settings_min"):
+        st.session_state["show_settings_page"] = True
+        st.rerun()
 
 if __name__ == '__main__':
     dataset()

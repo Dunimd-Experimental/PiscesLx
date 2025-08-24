@@ -22,7 +22,7 @@ import ijson
 import os, json
 from collections import defaultdict
 from .utils import natural_sort_key
-from .loader import robust_json_load
+from .loader import robust_json_load, parse_nested_strings
 
 def collect_json_files(path_input):
     """
@@ -70,9 +70,89 @@ def scan_fields(src_path):
     stats = defaultdict(lambda: {"cnt": 0, "type": set(), "ex": None})
     total = 0
 
+    def _add_stat(key_path: str, v):
+        s = stats[key_path]
+        s["cnt"] += 1
+        s["type"].add(type(v).__name__ if v is not None else "None")
+        if s["ex"] is None:
+            if isinstance(v, (list, dict)):
+                try:
+                    ln = len(v)
+                except Exception:
+                    ln = "?"
+                s["ex"] = f"{type(v).__name__}({ln} items)"
+            else:
+                try:
+                    s["ex"] = str(v)[:120]
+                except Exception:
+                    s["ex"] = "?"
+
+    def _normalize_role(role_raw: str) -> str:
+        r = (role_raw or "").strip().lower()
+        if r in ("user", "human", "teacher"):
+            return "human"
+        if r in ("assistant", "bot", "gpt", "model"):
+            return "assistant"
+        if r in ("system", "sys"):
+            return "system"
+        return r or "unknown"
+
+    def _maybe_chat_aggregate(it: dict):
+        # Detect role/content pairs and aggregate into synthetic chat fields
+        role_key = None
+        content_key = None
+        for rk in ("role", "from", "speaker", "author"):
+            if rk in it:
+                role_key = rk
+                break
+        for ck in ("content", "value", "text", "message", "parts"):
+            if ck in it:
+                content_key = ck
+                break
+        if role_key and content_key:
+            role = _normalize_role(str(it.get(role_key, "")))
+            content_val = it.get(content_key)
+            # Flatten common variants
+            if isinstance(content_val, list):
+                try:
+                    content_val = " ".join(x for x in content_val if isinstance(x, str))
+                except Exception:
+                    pass
+            _add_stat(f"[chat].{role}", content_val)
+
+        # Tools/functions (count presence)
+        if any(k in it for k in ("tool_calls", "tool_call", "function_call")):
+            _add_stat("[chat].tool_call", it.get("tool_calls") or it.get("tool_call") or it.get("function_call"))
+
+    def _walk(obj, prefix: str = ""):
+        # Collect stats for current object
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                path = k if not prefix else f"{prefix}.{k}"
+                _add_stat(path, v)
+                # Recurse
+                if isinstance(v, dict):
+                    _walk(v, path)
+                elif isinstance(v, list):
+                    _add_stat(path, v)
+                    if v and all(isinstance(e, dict) for e in v):
+                        # Chat-style detection inside lists of dicts
+                        for it in v:
+                            _maybe_chat_aggregate(it)
+                            _walk(it, path + "[]")
+                    else:
+                        # Primitive list or mixed; still record elements' type examples
+                        for e in v[:3]:  # sample a few
+                            _add_stat(path + "[]", e)
+        elif isinstance(obj, list):
+            _add_stat(prefix or "[]", obj)
+            for e in obj:
+                _walk(e, (prefix or "[]") + "[]")
+
     def update_stats(rec: dict):
         """
-        Update the statistics based on the given record.
+        Update the statistics based on the given record. Recursively traverses nested structures
+        and aggregates chat-style role/content messages into synthetic fields under [chat].
 
         Args:
             rec (dict): A dictionary representing a record.
@@ -81,19 +161,7 @@ def scan_fields(src_path):
         if not isinstance(rec, dict):
             return
         total += 1
-        for k, v in rec.items():
-            s = stats[k]
-            s["cnt"] += 1
-            s["type"].add(type(v).__name__ if v is not None else "None")
-            if s["ex"] is None:
-                if isinstance(v, (list, dict)):
-                    try:
-                        ln = len(v)
-                    except Exception:
-                        ln = "?"
-                    s["ex"] = f"{type(v).__name__}({ln} items)"
-                else:
-                    s["ex"] = str(v)[:80]
+        _walk(rec)
 
     try:
         if src_path.endswith('.jsonl'):
@@ -105,8 +173,22 @@ def scan_fields(src_path):
                         continue
                     try:
                         obj = json.loads(line)
+                        # Parse nested JSON strings before updating stats
+                        obj = parse_nested_strings(obj)
                         update_stats(obj)
                     except Exception:
+                        # Try to fix common issues: trim trailing garbage like robust_json_load
+                        try:
+                            fixed_line = line.rstrip()
+                            while fixed_line and fixed_line[-1] not in '}]")':
+                                fixed_line = fixed_line[:-1]
+                            if fixed_line and len(fixed_line) > 10:
+                                obj = json.loads(fixed_line)
+                                obj = parse_nested_strings(obj)
+                                update_stats(obj)
+                                continue
+                        except Exception:
+                            pass
                         # Skip bad lines to ensure the overall scanning is not interrupted.
                         continue
         else:
@@ -114,6 +196,7 @@ def scan_fields(src_path):
             with open(src_path, 'r', encoding='utf-8') as f:
                 try:
                     for obj in ijson.items(f, 'item'):
+                        obj = parse_nested_strings(obj)
                         update_stats(obj)
                 except Exception:
                     # If it's not an array structure, try to load it as a whole object.
@@ -121,9 +204,11 @@ def scan_fields(src_path):
                     try:
                         obj = json.load(f)
                         if isinstance(obj, dict):
+                            obj = parse_nested_strings(obj)
                             update_stats(obj)
                         elif isinstance(obj, list):
                             for o in obj:
+                                o = parse_nested_strings(o)
                                 update_stats(o)
                     except Exception:
                         pass
