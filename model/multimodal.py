@@ -3147,8 +3147,10 @@ class DynamicModalFusion(nn.Module):
         })
         
         # Advanced Temporal Consistency Enforcer with Memory
+        # Register memory_bank parameter separately
+        self.memory_bank = nn.Parameter(torch.randn(100, self.num_modalities))  # Temporal memory
+        
         self.temporal_consistency = nn.ModuleDict({
-            'memory_bank': nn.Parameter(torch.randn(100, self.num_modalities)),  # Temporal memory
             'consistency_lstm': nn.LSTM(
                 input_size=self.num_modalities,
                 hidden_size=self.num_modalities * 2,
@@ -3333,11 +3335,10 @@ class DynamicModalFusion(nn.Module):
         )
         
         # Gradient Safety and Monitoring
-        self.gradient_safety = nn.ModuleDict({
-            'gradient_monitor': nn.Parameter(torch.tensor(0.0)),
-            'scale_factor': nn.Parameter(torch.tensor(1.0)),
-            'hardware_scale': nn.Parameter(torch.tensor(self.hw_config.adaptive_config['bond_dim'] / 64.0))  # Adaptive scaling
-        })
+        # Register parameters separately (cannot be in ModuleDict)
+        self.gradient_monitor = nn.Parameter(torch.tensor(0.0))
+        self.scale_factor = nn.Parameter(torch.tensor(1.0))
+        self.hardware_scale = nn.Parameter(torch.tensor(self.hw_config.adaptive_config['bond_dim'] / 64.0))  # Adaptive scaling
         
         # Simplified projection matrices with gradient stability
         self.modal_projections = nn.ModuleDict({
@@ -3512,7 +3513,7 @@ class DynamicModalFusion(nn.Module):
         })
         
         # Fusion mode selection
-        self.fusion_mode = cfg.get('fusion_mode', 'quantum')  # 'quantum' or 'traditional'
+        self.fusion_mode = getattr(cfg, 'fusion_mode', 'quantum')  # 'quantum' or 'traditional'
         
         self.norm = nn.LayerNorm(self.hidden_size)
         self.dropout = nn.Dropout(0.1)
@@ -3606,7 +3607,7 @@ class DynamicModalFusion(nn.Module):
         if temporal_context is not None:
             # Add temporal dimension and apply LSTM
             temporal_input = refined_weights.unsqueeze(1)  # Add sequence dimension
-            consistent_weights, _ = self.temporal_consistency(temporal_input)
+            consistent_weights, _ = self.temporal_consistency['consistency_lstm'](temporal_input)
             refined_weights = consistent_weights.squeeze(1)
         
         # Final normalization
@@ -3841,7 +3842,7 @@ class DynamicModalFusion(nn.Module):
         # Hardware-adaptive gradient safety pre-check
         if self.training:
             # Apply hardware-specific gradient monitoring
-            self.gradient_safety['gradient_monitor'].grad = None
+            self.gradient_monitor.grad = None
             
             # Adaptive mixed precision based on hardware
             if self.gradient_config['use_mixed_precision']:
@@ -3869,7 +3870,7 @@ class DynamicModalFusion(nn.Module):
         
         # Hardware-adaptive feature normalization
         normalized_features = {}
-        hardware_scale = self.gradient_safety['hardware_scale']
+        hardware_scale = self.hardware_scale
         
         for modal in modal_names:
             feat = modal_features.get(modal)
@@ -3879,7 +3880,7 @@ class DynamicModalFusion(nn.Module):
                 # Adaptive clipping based on hardware capacity
                 max_norm = 5.0 * hardware_scale  # Scale clipping threshold
                 feat_norm = torch.clamp(feat_norm, min=1e-8, max=max_norm)
-                normalized_features[modal] = feat / feat_norm * self.gradient_safety['scale_factor']
+                normalized_features[modal] = feat / feat_norm * self.scale_factor
             else:
                 normalized_features[modal] = torch.zeros(batch_size, 1, self.hidden_size, device=device)
         

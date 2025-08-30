@@ -158,7 +158,7 @@ class PiscesReasoner(nn.Module):
 
     def forward(self, hidden_states, input_ids=None, labels=None):
         """
-        Quantum reasoning forward pass with hierarchical abstraction.
+        Quantum reasoning forward pass with hierarchical abstraction and memory optimization.
         
         Args:
             hidden_states (torch.Tensor): [batch, seq_len, hidden_size]
@@ -170,55 +170,164 @@ class PiscesReasoner(nn.Module):
         """
         # Check if quantum tokens are properly initialized
         if any(v is None for v in self.quantum_tokens.values()):
-            # Try to initialize with default values if not already done
             self.initialize_quantum_tokens(None)
             
-        # If still not initialized, return minimal output
-        if any(v is None for v in self.quantum_tokens.values()):
-            device = hidden_states.device
-            batch_size, seq_len, _ = hidden_states.shape
-            
-            # Generate basic thinking output using thinking_head
-            thinking_output = self.thinking_head(hidden_states)
-            
-            return {
-                "thinking_logits": thinking_output,
-                "loss": torch.tensor(0.0, device=device, requires_grad=True),
-                "uncertainty_scores": torch.ones(batch_size, seq_len, 1, device=device) * 0.5,
-                "fact_consistency": torch.ones(batch_size, seq_len, 1, device=device) * 0.5
-            }
-
+        device = hidden_states.device
         batch_size, seq_len, _ = hidden_states.shape
         
-        # 1. Hierarchical abstraction processing
-        abstract_states = []
-        current_states = hidden_states
-        for layer in self.abstraction_layers:
-            current_states = layer(current_states)
-            abstract_states.append(current_states)
+        # Adaptive processing based on configuration
+        enable_full_quantum = getattr(self.cfg, 'enable_dynamic_fusion', True)
         
-        # 2. Quantum superposition - parallel hypothesis generation
-        quantum_states, _ = self.quantum_superposition(
-            hidden_states, hidden_states, hidden_states
-        )
+        if enable_full_quantum:
+            # Full quantum reasoning for enhanced models
+            with torch.amp.autocast('cuda'):
+                # 1. Hierarchical abstraction processing
+                abstract_states = []
+                current_states = hidden_states
+                for layer in self.abstraction_layers:
+                    current_states = layer(current_states)
+                    abstract_states.append(current_states)
+                
+                # 2. Quantum superposition - parallel hypothesis generation
+                quantum_states, _ = self.quantum_superposition(
+                    hidden_states, hidden_states, hidden_states
+                )
+                
+                # 3. Multi-stream reasoning
+                reasoning_outputs = {}
+                for stream_name, head in self.reasoning_streams.items():
+                    if stream_name != 'reflection':
+                        reasoning_outputs[stream_name] = head(quantum_states)
+                
+                # 4. Dynamic fact verification
+                hypothesis_tokens = reasoning_outputs.get('hypothesis', hidden_states)
+                evidence_tokens = reasoning_outputs.get('evidence', hidden_states)
+                fact_consistency = self.fact_verifier(
+                    torch.cat([hypothesis_tokens, evidence_tokens], dim=-1)
+                )
+                
+                # 5. Meta-cognitive reflection
+                meta_input = quantum_states.mean(dim=1, keepdim=True)  # Global context
+                meta_output, _ = self.meta_cognitive(meta_input)
+                reflection_logits = self.reasoning_streams['reflection'](meta_output.squeeze(1))
+                
+                # 6. Uncertainty quantification
+                uncertainty_scores = self.uncertainty_head(quantum_states)
+                
+                # Main thinking output
+                thinking_output = self.thinking_head(quantum_states)
+        else:
+            # Simplified processing for standard models
+            with torch.amp.autocast('cuda'):
+                # Reduced hierarchical abstraction - only use 2 layers to save memory
+                current_states = hidden_states
+                for i in range(min(2, len(self.abstraction_layers))):
+                    current_states = self.abstraction_layers[i](current_states)
+                
+                # Simplified quantum processing - reuse hidden_states
+                quantum_states, _ = self.quantum_superposition(
+                    current_states, current_states, current_states
+                )
+                
+                # Memory-efficient reasoning streams - process one at a time
+                thinking_output = self.thinking_head(quantum_states)
+                
+                # Simplified fact verification using pooled representations
+                pooled_quantum = quantum_states.mean(dim=1, keepdim=True)
+                pooled_input = current_states.mean(dim=1, keepdim=True)
+                
+                fact_input = torch.cat([pooled_quantum, pooled_input], dim=-1)
+                fact_consistency = self.fact_verifier(fact_input)
+                
+                # Lightweight uncertainty quantification
+                uncertainty_scores = self.uncertainty_head(pooled_quantum)
         
-        # 3. Multi-stream reasoning
-        reasoning_outputs = {}
-        for stream_name, head in self.reasoning_streams.items():
-            if stream_name != 'reflection':
-                reasoning_outputs[stream_name] = head(quantum_states)
+        # Calculate loss if labels are provided
+        loss = torch.tensor(0.0, device=device, requires_grad=True)
+        if labels is not None and thinking_output is not None:
+            # Only compute loss on valid positions
+            shift_logits = thinking_output[..., :-1, :].contiguous()
+            shift_labels = labels[..., 1:].contiguous()
+            
+            # Ultra memory-efficient loss calculation with small chunks
+            flat_logits = shift_logits.view(-1, shift_logits.size(-1))
+            flat_labels = shift_labels.view(-1)
+            
+            # Ignore padding tokens (assuming -100 or similar)
+            valid_mask = (flat_labels != -100)
+            if valid_mask.any():
+                # Ultra small chunk size for 14GB GPU
+                valid_indices = valid_mask.nonzero(as_tuple=True)[0]
+                chunk_size = min(1024, valid_indices.size(0))  # Ultra small chunk size
+                
+                reasoning_losses = []
+                for i in range(0, valid_indices.size(0), chunk_size):
+                    end_idx = min(i + chunk_size, valid_indices.size(0))
+                    chunk_indices = valid_indices[i:end_idx]
+                    
+                    # Process in even smaller sub-chunks if still too large
+                    if chunk_indices.size(0) > 512:
+                        sub_losses = []
+                        for j in range(0, chunk_indices.size(0), 512):
+                            sub_end = min(j + 512, chunk_indices.size(0))
+                            sub_indices = chunk_indices[j:sub_end]
+                            
+                            sub_loss = F.cross_entropy(
+                                flat_logits[sub_indices], 
+                                flat_labels[sub_indices],
+                                reduction='mean'
+                            )
+                            sub_losses.append(sub_loss)
+                            
+                            # Immediate cleanup
+                            del sub_indices
+                            torch.cuda.empty_cache()
+                            
+                        chunk_loss = torch.stack(sub_losses).mean()
+                        del sub_losses
+                    else:
+                        chunk_loss = F.cross_entropy(
+                            flat_logits[chunk_indices], 
+                            flat_labels[chunk_indices],
+                            reduction='mean'
+                        )
+                    
+                    reasoning_losses.append(chunk_loss)
+                    
+                    # Immediate cleanup
+                    del chunk_indices, chunk_loss
+                    torch.cuda.empty_cache()
+                    
+                if reasoning_losses:
+                    reasoning_loss = torch.stack(reasoning_losses).mean()
+                    loss_weight = 0.1 if enable_full_quantum else 0.02  # Further reduced loss weight
+                    loss = loss + loss_weight * reasoning_loss
+                    
+                # Clean up
+                del reasoning_losses, valid_indices
+                torch.cuda.empty_cache()
+            
+            # Clean up intermediate tensors
+            del flat_logits, flat_labels, valid_mask
+            torch.cuda.empty_cache()
         
-        # 4. Dynamic fact verification
-        hypothesis_tokens = reasoning_outputs.get('hypothesis', hidden_states)
-        evidence_tokens = reasoning_outputs.get('evidence', hidden_states)
-        fact_consistency = self.fact_verifier(
-            torch.cat([hypothesis_tokens, evidence_tokens], dim=-1)
-        )
-        
-        # 5. Meta-cognitive reflection
-        meta_input = quantum_states.mean(dim=1, keepdim=True)  # Global context
-        meta_output, _ = self.meta_cognitive(meta_input)
-        reflection_logits = self.reasoning_streams['reflection'](meta_output.squeeze(1))
+        # Ensure proper output dimensions
+        if enable_full_quantum:
+            return {
+                "thinking_logits": thinking_output,
+                "loss": loss,
+                "uncertainty_scores": uncertainty_scores,
+                "fact_consistency": fact_consistency.expand(batch_size, seq_len, 1),
+                "reasoning_outputs": reasoning_outputs,
+                "reflection_logits": reflection_logits
+            }
+        else:
+            return {
+                "thinking_logits": thinking_output,
+                "loss": loss,
+                "uncertainty_scores": uncertainty_scores.expand(batch_size, seq_len, 1),
+                "fact_consistency": fact_consistency.expand(batch_size, seq_len, 1)
+            }
         
         # 6. Uncertainty quantification
         uncertainty_scores = self.uncertainty_head(quantum_states)
@@ -1025,7 +1134,7 @@ class MultiModalReasoningEnhancer(nn.Module):
                 batch_first=True,
                 dropout=0.1
             )
-        })\n        
+        })        
         # Reasoning step progression
         self.reasoning_layers = nn.ModuleList([
             nn.Sequential(
@@ -1052,7 +1161,7 @@ class MultiModalReasoningEnhancer(nn.Module):
             nn.SiLU(),
             nn.Linear(self.hidden_size // 2, 1),
             nn.Sigmoid()
-        )\n    
+        )    
     def forward(self, text_features, visual_features=None, audio_features=None, temporal_context=None):
         """
         Enhanced multi-modal reasoning with Arctic architecture.

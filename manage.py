@@ -34,6 +34,8 @@ COMMANDS = [
     'setup',      # Environment setup
     'source',     # Activate virtual environment
     'update',       # Pull latest code from remote
+    'version',    # Show current version and changelog
+    'changelog',  # Show version history and specific version changelog
     'train',      # Train model
     'infer',      # Inference
     'check',      # Check GPU/deps
@@ -72,10 +74,14 @@ def main():
     parser.add_argument('--model', type=str, help='[benchmark] Model checkpoint path')
     parser.add_argument('--perf', action='store_true', help='[benchmark] Run performance benchmark')
     parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g. 0.5B, 1.5B, 7B, 70B, 128B')
+    parser.add_argument('--dataset', default='Chinese2', type=str, help='Dataset name for training')
     parser.add_argument('--resume_ckpt', default='', type=str, help='Path to checkpoint to resume training')
     parser.add_argument('--reset_lr', action='store_true', help='Reset learning rate after resuming checkpoint')
     parser.add_argument('--quant', action='store_true', help='Force enable quantization (4-bit)')
     parser.add_argument('--no_quant', action='store_true', help='Force disable quantization')
+    parser.add_argument('--force_quant', action='store_true', help='Override config to force enable quantization')
+    parser.add_argument('--force_lora', action='store_true', help='Override config to force enable LoRA')
+    parser.add_argument('--quant_bits', type=int, choices=[2, 4, 8], default=4, help='Quantization bits: 2, 4, or 8 (default: 4)')
     parser.add_argument('--task', default='', help='[agent] Task to execute')
     parser.add_argument('--interactive', action='store_true', help='[agent] Interactive agent mode')
     parser.add_argument('--max-steps', type=int, default=5, help='[agent] Maximum agent steps')
@@ -88,9 +94,11 @@ def main():
     parser.add_argument('--rlhf_epochs', type=int, default=3, help='RLHF training epochs')
     parser.add_argument('--rlhf_max_samples', type=int, default=1000, help='RLHF maximum number of samples')
     parser.add_argument('--rlhf_max_length', type=int, default=512, help='RLHF maximum sequence length')
-    args = parser.parse_args()
+    args, unknown = parser.parse_known_args()
     
-    RIGHT("Versione del modello PiscesL1: " + VERSION)
+    # Only show version info if not running version or changelog command
+    if args.command not in ['version', 'changelog']:
+        RIGHT("PiscesL1 Model Version: " + VERSION)
     
     if args.command is None or args.command == 'help':
         from tools.help import help
@@ -123,6 +131,21 @@ def main():
     elif args.command == 'update':
         from tools.update import update
         update()
+    elif args.command == 'version':
+        from tools.version import show_version
+        show_version()
+    elif args.command == 'changelog':
+        from tools.changelog import show_changelog, parse_changelog_args
+        
+        # Parse changelog-specific arguments from unknown args
+        changelog_parser = parse_changelog_args()
+        
+        try:
+            changelog_args = changelog_parser.parse_args(unknown)
+            show_changelog(changelog_args)
+        except SystemExit:
+            # argparse calls sys.exit() on help or error
+            pass
     elif args.command == 'quantize':
         from tools.quantize import quantize
         if not args.ckpt or not args.save:

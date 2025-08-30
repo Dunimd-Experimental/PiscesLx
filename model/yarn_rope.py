@@ -127,15 +127,24 @@ class YaRNRotaryEmbedding(nn.Module):
         """Forward pass of the YaRNRotaryEmbedding module with dynamic NTK.
 
         Args:
-            x (torch.Tensor): Input tensor with shape [batch, seq_len, dim].
-            seq_len (int, optional): Length of the sequence. If None, uses x.shape[1].
+            x (torch.Tensor): Input tensor with shape [batch, n_head, seq_len, head_dim] or [batch, seq_len, dim].
+            seq_len (int, optional): Length of the sequence. If None, uses x.shape[-2].
 
         Returns:
             torch.Tensor: Tensor with YaRN rotary embeddings applied with dynamic NTK scaling.
         """
-        # Get device and sequence length
+        # Get device and determine dimensions based on input shape
         device = x.device
-        actual_seq_len = seq_len or x.shape[1]
+        
+        if x.dim() == 4:  # [batch, n_head, seq_len, head_dim]
+            actual_seq_len = seq_len or x.shape[2]
+            head_dim = x.shape[3]
+            embedding_dim = head_dim  # Use head_dim for 4D tensor
+        elif x.dim() == 3:  # [batch, seq_len, dim]
+            actual_seq_len = seq_len or x.shape[1]
+            embedding_dim = x.shape[2]
+        else:
+            raise ValueError(f"Input tensor must be 3D or 4D, got {x.dim()}D")
         
         # Compute dynamic scale factors based on current sequence length
         scale_factors = self._compute_scale_factors(actual_seq_len, device)
@@ -146,13 +155,22 @@ class YaRNRotaryEmbedding(nn.Module):
         # Apply dynamic YaRN + NTK scaling
         t = t * scale_factors
         
-        # Calculate frequencies with dynamic base adjustment
-        dynamic_freq = 1.0 / (self.dynamic_base ** (torch.arange(0, self.dim, 2).float().to(device) / self.dim))
+        # Calculate frequencies for the appropriate dimension
+        # Use embedding_dim instead of self.dim for proper dimension matching
+        dynamic_freq = 1.0 / (self.dynamic_base ** (torch.arange(0, embedding_dim, 2).float().to(device) / embedding_dim))
         freqs = torch.outer(t, dynamic_freq)
         
-        # Get cos and sin for the actual input length
-        cos = freqs.cos()[:x.shape[1], :]  # [seq_len, dim//2]
-        sin = freqs.sin()[:x.shape[1], :]  # [seq_len, dim//2]
+        # Get cos and sin for the actual input length and dimension
+        cos = freqs.cos()  # [actual_seq_len, embedding_dim//2]
+        sin = freqs.sin()  # [actual_seq_len, embedding_dim//2]
+        
+        # Trim to actual sequence length of input
+        if x.dim() == 4:
+            cos = cos[:x.shape[2], :]
+            sin = sin[:x.shape[2], :]
+        else:
+            cos = cos[:x.shape[1], :]
+            sin = sin[:x.shape[1], :]
         
         # Apply rotation
         return self._rotate_half(x, cos, sin)
@@ -162,18 +180,29 @@ class YaRNRotaryEmbedding(nn.Module):
         """Rotate the input tensor by half.
 
         Args:
-            x (torch.Tensor): Input tensor.
-            cos (torch.Tensor): Cosine values.
-            sin (torch.Tensor): Sine values.
+            x (torch.Tensor): Input tensor with shape [batch, n_head, seq_len, head_dim] or [batch, seq_len, dim].
+            cos (torch.Tensor): Cosine values with shape [seq_len, embedding_dim//2].
+            sin (torch.Tensor): Sine values with shape [seq_len, embedding_dim//2].
 
         Returns:
             torch.Tensor: Rotated tensor.
         """
+        # Handle different input shapes
+        if x.dim() == 4:  # [batch, n_head, seq_len, head_dim]
+            # Add batch and head dimensions for broadcasting: [1, 1, seq_len, head_dim//2]
+            cos = cos.unsqueeze(0).unsqueeze(0)
+            sin = sin.unsqueeze(0).unsqueeze(0)
+            
+        elif x.dim() == 3:  # [batch, seq_len, dim]
+            # Add batch dimension for broadcasting: [1, seq_len, dim//2]
+            cos = cos.unsqueeze(0)
+            sin = sin.unsqueeze(0)
+        
         # Split the tensor into two halves
         x1 = x[..., :x.shape[-1] // 2]
         x2 = x[..., x.shape[-1] // 2:]
         
-        # Apply rotation - cos/sin are already properly shaped
+        # Apply rotation with proper broadcasting
         rotated = torch.cat((-x2 * sin + x1 * cos, x1 * sin + x2 * cos), dim=-1)
         
         return rotated

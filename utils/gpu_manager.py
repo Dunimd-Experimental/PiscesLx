@@ -225,3 +225,82 @@ class GPUManager:
         strategy = self.strategy.copy()
         strategy['batch_size'] = max(1, strategy['batch_size'] // 4)
         return strategy
+
+    def recommend_batch_size(self, model_size: str, seq_len: int) -> int:
+        """
+        Recommend batch size based on model size and sequence length.
+        
+        Args:
+            model_size (str): Model size like '0.5B', '1.5B', '7B', '70B', '314B'
+            seq_len (int): Sequence length
+            
+        Returns:
+            int: Recommended batch size
+        """
+        if not self.gpu_info:
+            return 1  # CPU fallback
+        
+        # Extract numeric value from model size
+        size_map = {
+            '0.5B': 0.5, '1.5B': 1.5, '7B': 7, '32B': 32, 
+            '70B': 70, '128B': 128, '314B': 314
+        }
+        
+        model_params = size_map.get(model_size, 7)  # Default to 7B
+        
+        # Get available memory (GB) - use free_memory from gpu_info
+        if self.strategy['mode'] == 'single_gpu':
+            # For single GPU, use the free memory of the selected GPU
+            selected_gpu_ids = self.strategy['gpu_ids']
+            available_memory_mb = max(gpu['free_memory'] for gpu in self.gpu_info if gpu['index'] in selected_gpu_ids)
+            available_memory_gb = available_memory_mb / 1024
+        else:
+            # For multi-GPU, use minimum memory across selected GPUs
+            selected_gpu_ids = self.strategy['gpu_ids']
+            available_memory_mb = min(gpu['free_memory'] for gpu in self.gpu_info if gpu['index'] in selected_gpu_ids)
+            available_memory_gb = available_memory_mb / 1024
+        
+        # Apply conservative memory usage (reserve 20% for safety)
+        available_memory_gb = available_memory_gb * 0.8
+        
+        # Memory estimation formula (rough approximation)
+        # Model memory = params * 4 bytes (FP32) or 2 bytes (FP16)
+        # Activation memory depends on seq_len and batch_size
+        
+        # Use mixed precision (FP16) by default
+        model_memory_gb = model_params * 2 / 1000  # Convert to GB
+        
+        # Reserve memory for activations and gradients (conservative estimate)
+        overhead_factor = 3.0  # Model + gradients + activations
+        total_model_memory = model_memory_gb * overhead_factor
+        
+        # Sequence length impact on memory
+        seq_memory_factor = max(1.0, seq_len / 512)  # Base: 512 tokens
+        
+        # Available memory for batch processing
+        available_for_batch = available_memory_gb - total_model_memory
+        
+        if available_for_batch <= 0:
+            return 1  # Minimum batch size
+        
+        # Estimate batch size
+        # Each sample memory ≈ seq_len * hidden_size * 4 bytes (rough estimate)
+        estimated_sample_memory_mb = seq_len * 4096 * 4 / (1024 * 1024)  # Assume hidden_size=4096
+        max_batch_samples = int((available_for_batch * 1024) / (estimated_sample_memory_mb * seq_memory_factor))
+        
+        # Apply constraints based on model size
+        if model_params >= 70:  # Large models (70B+)
+            max_batch_size = min(max_batch_samples, 4)
+        elif model_params >= 7:  # Medium models (7B-70B)
+            max_batch_size = min(max_batch_samples, 16)
+        else:  # Small models (<7B)
+            max_batch_size = min(max_batch_samples, 32)
+        
+        # Ensure minimum viable batch size
+        recommended_batch = max(1, max_batch_size)
+        
+        # For Arctic architecture (314B), use very conservative settings
+        if model_params >= 300:
+            recommended_batch = min(recommended_batch, 2)
+        
+        return recommended_batch

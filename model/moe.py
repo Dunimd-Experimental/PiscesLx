@@ -126,7 +126,8 @@ class StableMoEGate(nn.Module):
     """Stable MoE routing gate to prevent routing collapse with load prediction"""
     
     def __init__(self, hidden_size, num_experts, top_k=2, device=None, dtype=None,
-                 capacity_factor=1.0, min_capacity=4, prediction_horizon=10):
+                 capacity_factor=1.0, min_capacity=4, prediction_horizon=10, 
+                 fixed_shape_mode=False):
         super().__init__()
         self.gate = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
         self.top_k = top_k
@@ -134,6 +135,7 @@ class StableMoEGate(nn.Module):
         self.capacity_factor = capacity_factor
         self.min_capacity = min_capacity
         self.prediction_horizon = prediction_horizon
+        self.fixed_shape_mode = fixed_shape_mode  # For gradient checkpointing compatibility
         
         # Routing stability parameters
         self.register_buffer('routing_history', torch.zeros(100, num_experts))
@@ -176,6 +178,19 @@ class StableMoEGate(nn.Module):
         batch_size, seq_len, hidden_size = x.shape
         x_flat = x.view(-1, hidden_size)
         
+        # Fixed shape mode for gradient checkpointing compatibility
+        if self.fixed_shape_mode:
+            # Simple Top-K routing without capacity limitations
+            logits = self.gate(x_flat)
+            scores = F.softmax(logits, dim=-1)
+            top_scores, top_idx = torch.topk(scores, self.top_k, dim=-1)
+            
+            # Normalize scores
+            top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
+            
+            return top_scores, top_idx, torch.tensor(0.0, device=x.device)
+        
+        # Original dynamic routing logic
         # Calculate expert capacity
         tokens_per_expert = max(
             int(x_flat.size(0) * self.capacity_factor / self.num_experts),
@@ -271,12 +286,15 @@ class MoELayer(nn.Module):
         
         # Use stable routing gate
         if use_stable_gate:
+            # Enable fixed shape mode for 0.5B model to avoid gradient checkpointing issues
+            fixed_shape_mode = (cfg.hidden_size <= 768)  # 0.5B and smaller models
             self.gate = StableMoEGate(
                 cfg.hidden_size, self.num_experts, top_k=self.top_k,
                 device=device, dtype=dtype,
                 capacity_factor=getattr(cfg, 'moe_capacity_factor', 1.0),
                 min_capacity=getattr(cfg, 'moe_min_capacity', 4),
-                prediction_horizon=getattr(cfg, 'moe_prediction_horizon', 10)
+                prediction_horizon=getattr(cfg, 'moe_prediction_horizon', 10),
+                fixed_shape_mode=fixed_shape_mode
             )
         else:
             self.gate = MoEGate(
@@ -334,6 +352,10 @@ class MoELayer(nn.Module):
         Monitor expert load balance.
         """
         if self.training:
+            # Ensure expert_indices is integer type for bincount
+            if expert_indices.dtype != torch.long:
+                expert_indices = expert_indices.long()
+            
             # Calculate the usage frequency of each expert
             expert_counts = torch.bincount(expert_indices.flatten(), minlength=self.num_experts)
             expert_load = expert_counts.float() / expert_indices.numel()
@@ -363,24 +385,72 @@ class MoELayer(nn.Module):
         h = x.view(-1, d)  # [B*T, d]
         
         # Use the new routing mechanism
-        if hasattr(self.gate, 'forward'):
-            if isinstance(self.gate, StableMoEGate):
-                scores, idx, aux_loss = self.gate(x)
-                # Process the output format of StableMoEGate
-                scores = scores.view(-1, 1)
-                idx = idx.view(-1, 1)
+        if isinstance(self.gate, StableMoEGate) and hasattr(self.gate, 'fixed_shape_mode') and self.gate.fixed_shape_mode:
+            # Fixed shape mode: simpler processing
+            scores, idx, aux_loss = self.gate(x)
+            self._monitor_expert_balance(idx)
+            
+            # Simple expert computation for fixed shape mode
+            y = torch.zeros_like(h)
+            for k in range(self.top_k):
+                for expert_id in range(self.num_experts):
+                    mask = (idx[:, k] == expert_id)
+                    if mask.any():
+                        expert = self.experts[expert_id]
+                        if next(expert.parameters()).device.type != h.device.type:
+                            expert.to(h.device)
+                        
+                        s_sel = scores[mask, k]
+                        h_sel = h[mask]
+                        y[mask] += s_sel.unsqueeze(1) * expert(h_sel)
+            
+            return y.view(b, t, d), aux_loss
+        elif isinstance(self.gate, StableMoEGate):
+            scores, idx, aux_loss = self.gate(x)
+            # StableMoEGate returns concatenated scores and indices from capacity limitation
+            # scores and idx may have different sizes than h due to capacity constraints
+            # We need to handle this carefully
+            
+            # Create a mapping from original indices to expert assignments
+            if len(scores) == 0 or len(idx) == 0:
+                # Fallback: uniform expert assignment
+                uniform_scores = torch.ones(h.size(0), device=h.device) / self.num_experts
+                uniform_idx = torch.randint(0, self.num_experts, (h.size(0),), device=h.device)
+                expert_assignment = [(uniform_scores, uniform_idx)]
             else:
-                scores, idx, aux_loss = self.gate(x)
+                # Group scores and indices by expert
+                expert_assignment = []
+                current_pos = 0
+                for expert_id in range(self.num_experts):
+                    expert_mask = (idx == expert_id)
+                    if expert_mask.any():
+                        expert_scores = scores[expert_mask]
+                        expert_indices = torch.full((expert_scores.size(0),), expert_id, device=h.device)
+                        expert_assignment.append((expert_scores, expert_indices, expert_mask.nonzero().squeeze(-1)))
         else:
-            scores, idx = self.gate(h)
-            aux_loss = torch.tensor(0.0, device=x.device)
+            # Standard MoEGate
+            scores, idx, aux_loss = self.gate(x)
+            expert_assignment = [(scores, idx)]
         
         # Monitor expert load
-        self._monitor_expert_balance(idx)
+        if isinstance(self.gate, StableMoEGate):
+            # For stable gate, create a representative idx for monitoring
+            monitor_idx = torch.zeros(h.size(0), dtype=torch.long, device=h.device)
+            for expert_id in range(self.num_experts):
+                if len(expert_assignment) > expert_id and len(expert_assignment[expert_id]) > 2:
+                    _, _, indices = expert_assignment[expert_id]
+                    if len(indices) > 0:
+                        monitor_idx[indices] = expert_id
+            self._monitor_expert_balance(monitor_idx)
+        else:
+            self._monitor_expert_balance(idx)
         
         # GPU expert management
         if self.num_experts > 8 and h.device.type == 'cuda':
-            needed_experts = set(idx.cpu().numpy().flatten().tolist())
+            if isinstance(self.gate, StableMoEGate):
+                needed_experts = set(range(len(expert_assignment)))
+            else:
+                needed_experts = set(idx.cpu().numpy().flatten().tolist())
             for expert_id in needed_experts:
                 self._move_expert_to_gpu(expert_id)
         
@@ -388,38 +458,61 @@ class MoELayer(nn.Module):
         y = torch.zeros_like(h)
         expert_counts = torch.zeros(self.num_experts, device=h.device)
         
-        for expert_id in range(self.num_experts):
-            # Find all tokens assigned to this expert
-            mask = (idx == expert_id).any(dim=-1)
-            if mask.any():
-                expert = self.experts[expert_id]
-                if next(expert.parameters()).device.type != h.device.type:
-                    expert.to(h.device)
+        if isinstance(self.gate, StableMoEGate):
+            # Handle StableMoEGate output
+            for expert_id in range(self.num_experts):
+                # Find assignments for this expert
+                expert_found = False
+                for assignment in expert_assignment:
+                    if len(assignment) == 3:
+                        expert_scores, expert_indices, original_indices = assignment
+                        if len(expert_indices) > 0 and expert_indices[0].item() == expert_id:
+                            expert = self.experts[expert_id]
+                            if next(expert.parameters()).device.type != h.device.type:
+                                expert.to(h.device)
+                            
+                            # Ensure indices are within bounds
+                            valid_indices = original_indices[original_indices < h.size(0)]
+                            if len(valid_indices) > 0:
+                                h_sel = h[valid_indices]
+                                expert_output = expert(h_sel)
+                                
+                                # Apply scores if available and matching size
+                                if len(expert_scores) == len(valid_indices):
+                                    expert_output = expert_scores.unsqueeze(1) * expert_output
+                                
+                                y[valid_indices] += expert_output
+                                expert_counts[expert_id] = len(valid_indices)
+                                expert_found = True
+                            break
                 
-                h_sel = h[mask]
-                if isinstance(self.gate, MoEGate):
-                    # Standard MoEGate
+                if not expert_found:
+                    # No tokens assigned to this expert
+                    expert_counts[expert_id] = 0
+        else:
+            # Handle standard MoEGate output
+            for expert_id in range(self.num_experts):
+                mask = (idx == expert_id).any(dim=-1)
+                if mask.any():
+                    expert = self.experts[expert_id]
+                    if next(expert.parameters()).device.type != h.device.type:
+                        expert.to(h.device)
+                    
+                    # Process each top-k selection
                     for k in range(self.top_k):
                         sel_k = (idx[:, k] == expert_id)
                         if sel_k.any():
                             s_sel = scores[sel_k, k]
                             h_k = h[sel_k]
                             y[sel_k] += s_sel.unsqueeze(1) * expert(h_k)
-                else:
-                    # StableMoEGate
-                    sel_mask = (idx.flatten() == expert_id)
-                    if sel_mask.any():
-                        selected_scores = scores[sel_mask]
-                        selected_h = h[mask]
-                        y[mask] += selected_scores.unsqueeze(1) * expert(selected_h)
-                
-                expert_counts[expert_id] = mask.sum()
+                    
+                    expert_counts[expert_id] = mask.sum()
         
         self._step += 1
         
         # Add additional load balancing loss
         if self.training:
-            expert_distribution = expert_counts / expert_counts.sum()
+            expert_distribution = expert_counts / (expert_counts.sum() + 1e-8)
             uniform_distribution = torch.ones_like(expert_distribution) / self.num_experts
             distribution_loss = 0.01 * torch.sum((expert_distribution - uniform_distribution) ** 2)
             aux_loss = aux_loss + distribution_loss

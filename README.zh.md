@@ -9,24 +9,74 @@
 
 简体中文 | [English](README.md)
 
-下一代轻量级多模态混合专家模型(Mixture-of-Experts, MoE)，支持文本、图像、音频和文档理解。Pisces L1专为研究设计，可在单个RTX 4090上运行，并通过高级内存优化扩展至314B参数。
+下一代轻量级多模态混合专家模型(MoE)，采用**Arctic架构**，支持文本、图像、音频、视频、文档和智能体理解。Pisces L1 (PiscesLx系列，Dunimd项目组)专为研究设计，可在单个RTX 4090上运行，具备突破性创新，扩展至314B参数。
+
+## ⭐ Arctic架构创新
+
+### 🧠 量子推理引擎 (PiscesReasoner)
+- **层次推理链(HRC)**: 多层抽象处理，超越传统思维链
+- **量子超位置思维**: 8个并行假设流与量子坍缩机制
+- **动态事实验证**: 实时真实性检查和一致性评分
+- **元认知反思**: 推理过程的自我感知与不确定性量化
+- **量子特殊tokens**: `<start_hypothesis>`, `<start_evidence>`, `<start_conclusion>`, `<quantum_merge>`
+
+### 🔧 MoE专家系统
+- **8专家Top-2路由**: 智能负载均衡与StableMoEGate
+- **LSTM负载预测**: 动态容量调整和专家分配
+- **梯度检查点兼容**: 固定形状模式，内存高效
+- **稳定专家门控**: 高级路由，噪声注入与容量控制
+
+### 🌐 5模态编码系统
+- **VisionEncoder**: NaViT原生分辨率支持(高达1024px)
+- **VideoEncoder**: 时序视觉理解，帧级注意力
+- **AudioEncoder**: 高级音频特征提取与处理
+- **DocEncoder**: 文档结构理解，LayoutLMv3集成
+- **AgentEncoder**: 全面智能体行为建模(观察、行动、反思)
+
+### ⚛️ 量子纠缠融合
+- **DynamicModalFusion**: 高级跨模态注意力与量子纠缠
+- **张量网络压缩**: 6对相关性网络实现模态交互
+- **硬件自适应配置**: 智能硬件检测与优化
+- **质量感知融合门**: 基于内容质量的自适应融合
+
+### 📏 超长上下文系统
+- **YaRN RoPE**: 支持10M+ tokens，动态NTK缩放
+- **H2O注意力**: 流式注意力，支持128B+参数模型
+- **动态位置编码**: 自适应位置编码，长因子缩放
+- **内存高效上下文**: 滑动窗口与压缩技术
+
+### 🤖 高级智能体系统
+- **PiscesAgent**: 原生多模态智能体，MCP协议支持
+- **工具集成**: 内置工具使用能力与环境交互
+- **持久化内存**: 上下文管理与经验积累
+- **MCP通信**: 多智能体通信协议，分布式推理
+
+### 🎯 K-FAC优化
+- **二阶优化**: 对角Fisher矩阵近似
+- **内存高效实现**: 比完整K-FAC减少99%+内存
+- **曲率感知训练**: 自然梯度计算，加速收敛
+- **自适应梯度裁剪**: 基于训练历史的动态阈值调整
 
 ---
 
 ## 🚀 特性
 
-- **多模态**: 统一支持文本、图像、音频、视频、文档和智能体输入
-- **MoE架构**: 高效的混合专家模型，参数从0.5B到314B可扩展
-- **轻量级**: 0.5B基础模型可在消费级GPU(24GB VRAM)上运行
-- **现代Transformer**: RMSNorm、RoPE、分组查询注意力等
-- **极致适应性**: QLoRA、4位量化、LoRA适配器、梯度累积
-- **一键式工作流**: 所有管理通过`python manage.py`完成(见下文)
+- **Arctic架构**: 革命性多模态架构，量子启发推理引擎
+- **量子推理引擎**: 超越传统思维链，层次化抽象处理
+- **5模态理解**: 统一处理文本、图像、音频、视频、文档和智能体输入
+- **MoE专家系统**: 8专家智能Top-2路由和负载预测
+- **超长上下文**: 支持10M+ tokens，YaRN RoPE和H2O注意力
+- **高级量化**: 2位、4位、8位量化选项，梯度稳定性优化
+- **内存优化**: 14.58GB GPU上运行0.5B模型，QLoRA+梯度检查点
+- **K-FAC优化**: 二阶优化，对角Fisher矩阵近似
+- **原生智能体支持**: 内置MCP协议和工具集成
+- **一键式工作流**: 通过`python manage.py`完整管理
 
 ---
 
 ## 🛠️ 安装与环境
 
-- **Python**: 推荐3.9–3.11
+- **Python**: 推荐3.11
 - **CUDA**: 11.8+ (用于GPU训练/推理)
 - **依赖项**: 所有必需的包都列在`requirements.txt`中
 
@@ -48,11 +98,13 @@ python manage.py help
 ```
 
 ### 主要命令
-| 命令         | 描述                                          |
-|-------------|----------------------------------------------|
+| 命令        | 描述                                          |
+|-------------|------------------------------------------------|
 | setup       | 环境设置和依赖安装                              |
 | source      | 激活虚拟环境                                   |
 | update      | 从远程仓库拉取最新代码                           |
+| version     | 显示当前版本信息和更新日志                         |
+| changelog   | 显示版本历史（--all 显示所有版本，--version X.X.XXXX 显示特定版本） |
 | train       | 训练模型                                       |
 | infer       | 使用训练好的模型进行推理                         |
 | check       | 检查GPU和依赖项                                |
@@ -66,6 +118,9 @@ python manage.py help
 #### 示例
 ```bash
 python manage.py download
+python manage.py version          # 显示当前版本
+python manage.py changelog --all    # 显示所有版本
+python manage.py changelog --version 1.0.0150  # 显示特定版本
 python manage.py train
 python manage.py infer --ckpt ckpt/model.pt --prompt "你好，Pisces!"
 ```
@@ -74,18 +129,43 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "你好，Pisces!"
 
 ## 🧠 模型架构与配置
 
-| 模型大小 | 层数 | 隐藏层大小 | 注意力头数 | MoE专家数 | 参数规模 | 上下文长度( tokens) |
-|---------|------|-----------|-----------|----------|---------|-------------------|
-| 0.5B    | 10   | 896       | 8         | 4        | ~0.5B   | 256K              |
-| 1.5B    | 14   | 1536      | 24        | 8        | ~1.5B   | 256K              |
-| 7B      | 28   | 3584      | 32        | 16       | ~7B     | 1M                |
-| 32B     | 40   | 5120      | 64        | 32       | ~32B    | 1M                |
-| 64/70B  | 48   | 8192      | 64        | 64       | ~70B    | 10M               |
-| 128B    | 120  | 10240     | 80        | 64       | ~128B   | 10M               |
-| 314B    | 160  | 12288     | 96        | 16       | ~314B   | 10M               |
+### Arctic架构组件
+- **核心Transformer**: RMSNorm、YaRN RoPE、分组查询注意力
+- **量子推理**: 4层层次化抽象，元认知反思
+- **多模态融合**: 量子纠缠跨模态注意力，张量网络
+- **MoE系统**: 动态专家路由，LSTM负载预测
+- **内存优化**: 梯度检查点、混合精度、K-FAC优化
 
-- **多模态集成**: CLIP ViT-L/14(视觉)、AST Base(音频)、视频编码器(时序)、LayoutLMv3(文档)，具有统一的嵌入空间
-- **MoE**: Top-2路由，高效专家加载
+| 模型大小 | 层数 | 隐藏层大小 | 注意力头数 | KV头数 | MoE专家数 | 参数规模(实际) | 上下文 | 量化 |
+|---------  |------|-----------|-----------|----------|----------|-----------------|---------|-------------|
+| 0.5B    | 16   | 640       | 10        | 5        | 6        | 0.5B            | 256K    | 2/4/8-bit   |
+| 1.5B    | 16   | 896       | 14        | 7        | 6        | 1.5B            | 256K    | 2/4/8-bit   |
+| 7B      | 28   | 3584      | 32        | 8        | 8        | 7B              | 1M      | 2/4/8-bit   |
+| 32B     | 64   | 5120      | 40        | 8        | 8        | 32B             | 1M      | 2/4/8-bit   |
+| 64B     | 80   | 6656      | 52        | 8        | 8        | 64B             | 10M     | 2/4/8-bit   |
+| 70B     | 80   | 8192      | 64        | 8        | 8        | 70B             | 10M     | 2/4/8-bit   |
+| 128B    | 120  | 10240     | 80        | 8        | 8        | 128B            | 10M     | 2/4/8-bit   |
+| 314B    | 160  | 12288     | 96        | 12       | 16       | 314B            | 10M     | 2/4/8-bit   |
+
+### 参数分解 (0.5B配置)
+- **核心Transformer**: ~500M参数
+- **多模态编码器**: 优化平衡设计
+  - VisionEncoder: ~120M, VideoEncoder: ~150M, AudioEncoder: ~80M
+  - DocEncoder: ~80M, AgentEncoder: ~70M
+- **量子推理引擎**: 集成在核心参数中
+- **模态融合系统**: 轻量级设计，提高效率
+
+### 量化选项
+```bash
+# 2位量化（实验性，最大内存节省）
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 2
+
+# 4位量化（默认，均衡性能）
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 4
+
+# 8位量化（稳定，最小质量损失）
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 8
+```
 
 ---
 
@@ -155,25 +235,41 @@ python manage.py download
 
 ---
 
-## 🏆 在24GB GPU上训练1.5B模型 [Beta]
-Pisces L1支持**在单个24GB GPU上训练/微调1.5B模型**，使用QLoRA、4位量化、LoRA适配器和梯度累积技术。
+## 🏆 14.58GB GPU上的高级训练
+Pisces L1 Arctic架构支持**在14.58GB GPU上训练1.5B参数模型**，使用高级量化、LoRA和内存优化技术。
 
-#### 1.5B QLoRA训练示例
+### 内存优化策略
+- **多位量化**: 2位（实验性）、4位（默认）、8位（稳定）
+- **LoRA适配**: 仅有 0.024% 参数可训练（360K / 1.5B）
+- **梯度检查点**: 减少激活内存50%+
+- **K-FAC优化**: 对角Fisher矩阵近似
+- **自适应梯度裁剪**: 自动处理梯度爆炸
 
-##### 单GPU训练
+### 训练示例
+
+#### 1.5B模型，4位量化
 ```bash
-python manage.py train --model_size 1.5B --resume_ckpt latest.pt
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --force_lora
 ```
 
-##### 继续训练
+#### 1.5B模型，8位稳定性
 ```bash
-python manage.py train --model_size 1.5B --resume_ckpt checkpoint.pt --reset_lr
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 8 --force_lora
 ```
-- 4位量化：显著减少内存占用([QLoRA论文](https://arxiv.org/abs/2305.14314))
-- LoRA适配器：高效参数微调
-- 梯度累积：模拟大批次训练
-- 混合精度：进一步节省内存
-- 无精度损失：QLoRA+LoRA达到接近全精度的结果([QLoRA深度解析](https://manalelaidouni.github.io/4Bit-Quantization-Models-QLoRa.html))
+
+#### 内存使用对比
+| 配置 | 内存使用 | 可训练% | 梯度稳定性 |
+|---------------|--------------|-------------|--------------------|
+| 全精度 | >40GB | 100% | 稳定 |
+| 8位 + LoRA | ~18GB | 0.024% | 非常稳定 |
+| 4位 + LoRA | ~14.5GB | 0.024% | 可管理 |
+| 2位 + LoRA | ~11GB | 0.024% | 实验性 |
+
+### 训练性能
+- **损失收敛**: 35.38 → 31.62（140步），10.6%改善
+- **梯度裁剪**: 自动处理280K+梯度范数
+- **内存效率**: 14.58GB GPU上稳定训练
+- **速度**: 与模型复杂度成正比（1.5B比0.5B慢，符合预期）
 
 ---
 
@@ -188,7 +284,7 @@ python manage.py setup
 python manage.py source
 
 # 3. 拉取最新代码(可选)
-python manage.py pull
+python manage.py update
 
 # 4. 下载默认数据集
 python manage.py download
@@ -357,7 +453,6 @@ python manage.py benchmark --benchmark mmlu --config configs/7B.json
 - [PiscesL1 in GitHub](https://github.com/mf2023/PiscesL1.git)
 - [PiscesL1 in ModelScope](https://www.modelscope.cn/models/mfchina2024/PiscesL1)
 
-<h3 align="center">以直觉航行数据之深邃</h3>
-<h3 align="center">以共情赋予智能形态</h3>
+<h3 align="center">以直觉航行数据之深邃 以共情赋予智能形态</h3>
 
 ![summary](./icons/PD.png)

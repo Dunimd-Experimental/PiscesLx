@@ -19,26 +19,26 @@
 # limitations under the License.
 
 import os
-import torch
-import json
-import hashlib
 import gc
+import time
 import mmap
+import json
+import torch
+import psutil
+import hashlib
 import threading
+import multiprocessing as mp
 from datetime import datetime
-from datasets import load_from_disk, Dataset as HFDataset
-from torch.utils.data import Dataset, DataLoader, IterableDataset
+from queue import Queue, Empty
+from dataclasses import dataclass
 from utils.progress import progress_bar
 from model.tokenizer import get_tokenizer
 from utils.log import RIGHT, DEBUG, ERROR
-from model.multimodal import VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder
-from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-from queue import Queue, Empty
-import multiprocessing as mp
-import psutil
-import time
+from datasets import load_from_disk, Dataset as HFDataset
 from typing import Iterator, Optional, Union, Dict, List, Any
-from dataclasses import dataclass
+from torch.utils.data import Dataset, DataLoader, IterableDataset
+from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
+from model.multimodal import VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder
 
 # Keys used to identify image data in the dataset
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
@@ -437,7 +437,7 @@ def _get_first_valid(item: dict, keys: list) -> str:
 
 class OptimizedDataLoader:
     """Optimized data loader for 5TB datasets"""
-    def __init__(self, dataset: Union[PiscesDataset, LargeScaleStreamingDataset], 
+    def __init__(self, dataset: Union['PiscesDataset', 'LargeScaleStreamingDataset'], 
                  batch_config: Optional[BatchConfig] = None, 
                  memory_monitor: Optional[MemoryMonitor] = None):
         self.dataset = dataset
@@ -447,7 +447,7 @@ class OptimizedDataLoader:
     def get_dataloader(self) -> DataLoader:
         """Get optimized DataLoader"""
         # Adjust parameters based on dataset type
-        if isinstance(self.dataset, LargeScaleStreamingDataset):
+        if hasattr(self.dataset, '__class__') and 'LargeScaleStreamingDataset' in str(type(self.dataset)):
             # Streaming dataset optimization
             return DataLoader(
                 self.dataset,
@@ -512,6 +512,8 @@ class OptimizedDataLoader:
                     memory_size += sample['audio_input']['input_values'].numel() * 4
                     
         return memory_size
+
+def _get_first_valid_key(item: dict, keys: list) -> str:
     """
     Retrieve the value corresponding to the first valid key from the given dictionary.
 
@@ -551,9 +553,6 @@ class PiscesDataset(Dataset):
         self.enable_large_scale = True
         self.batch_config = BatchConfig()
         self.memory_monitor = MemoryMonitor(MEMORY_THRESHOLD_GB)
-        
-        # Apply large-scale optimizations by default
-        self._apply_large_scale_optimizations()
             
         # First attempt to load dataset from local cache
         cache_path = os.path.join("data_cache", subset)
@@ -749,6 +748,9 @@ class PiscesDataset(Dataset):
         if max_samples and len(self.ds) > max_samples:
             self.ds = self.ds.select(range(max_samples))
             RIGHT(f"Dataset size limited to {max_samples} samples for testing")
+        
+        # Apply large-scale optimizations after ds is initialized
+        self._apply_large_scale_optimizations()
     
     def _apply_data_ratio_optimization(self):
         """
@@ -1213,12 +1215,17 @@ class PiscesDataset(Dataset):
         self.memory_monitor.cleanup()
             
         # Optimize data loading parameters
-        if hasattr(self.ds, 'set_format'):
-            # Use memory mapping for large datasets
-            self.ds.set_format(type='torch', 
-                             columns=list(self.ds.features.keys()),
-                             output_all_columns=False)
-            DEBUG("Memory mapping enabled for dataset")
+        if hasattr(self.ds, 'set_format') and hasattr(self.ds, 'features'):
+            # Use memory mapping for large datasets (only for HuggingFace datasets)
+            try:
+                self.ds.set_format(type='torch', 
+                                 columns=list(self.ds.features.keys()),
+                                 output_all_columns=False)
+                DEBUG("Memory mapping enabled for dataset")
+            except Exception as e:
+                DEBUG(f"Memory mapping failed, continuing without: {e}")
+        else:
+            DEBUG("Dataset is not a HuggingFace dataset, skipping memory mapping")
             
         # Pre-calculate optimal batch size
         self.optimal_batch_size = self._calculate_optimal_batch_size()

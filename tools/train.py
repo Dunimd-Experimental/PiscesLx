@@ -21,6 +21,7 @@
 import os
 import sys
 import json
+import torch
 import warnings
 from utils.gpu_manager import GPUManager
 from utils.log import RIGHT, DEBUG, ERROR
@@ -136,6 +137,7 @@ def create_dataloader(dataset, batch_size, is_distributed, world_size=1, rank=0,
     Returns:
         torch.utils.data.DataLoader: The created data loader.
     """
+    import torch
     from torch.utils.data import DistributedSampler
     
     # Handle empty dataset to avoid deadlock
@@ -169,7 +171,7 @@ def create_dataloader(dataset, batch_size, is_distributed, world_size=1, rank=0,
 
 def collate_fn(batch):
     """
-    Collate a batch of data into a format suitable for training.
+    Memory-optimized collate function for Arctic architecture.
 
     Args:
         batch (list): A list of data items, each is a dictionary containing model inputs.
@@ -179,14 +181,16 @@ def collate_fn(batch):
               pixel_values, and audio_input.
     """
     import torch
-    MAX_SEQ_LEN = 256
+    # Ultra-conservative sequence length for 14GB GPU with 1.5B model
+    MAX_SEQ_LEN = 96  # Reduced from 128 to 96 for critical memory efficiency
+    
     # Extract and pad input_ids
     input_ids = [item["input_ids"] for item in batch]
     input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=0)
     if input_ids.shape[1] > MAX_SEQ_LEN:
         input_ids = input_ids[:, :MAX_SEQ_LEN]
     
-    # Handle pixel_values for vision modality
+    # Handle pixel_values for vision modality - limit size for memory
     pixel_values = None
     if any(item.get("pixel_values") is not None for item in batch):
         pixel_values_list = [item["pixel_values"] for item in batch if item.get("pixel_values") is not None]
@@ -217,6 +221,24 @@ def train(args):
     Args:
         args (argparse.Namespace): Command line arguments containing training configuration.
     """
+    try:
+        _train_impl(args)
+    except torch.cuda.OutOfMemoryError as e:
+        # CUDA out of memory error handler with quantization suggestion
+        model_size = getattr(args, 'model_size', '0.5B').upper()
+        dataset = getattr(args, 'dataset', 'Chinese2')
+
+        ERROR("CUDA OUT OF MEMORY ERROR DETECTED!")
+        DEBUG(f"python manage.py train --config configs/{model_size}.json --dataset {dataset} --force_quant --force_lora")
+
+        sys.exit(1)
+    except Exception as e:
+        ERROR(f"Training failed with error: {str(e)}")
+        import traceback
+        ERROR(traceback.format_exc())
+        sys.exit(1)
+
+def _train_impl(args):
     import torch
     from data.dataset import PiscesDataset
     from torch.utils.data import DataLoader
@@ -247,6 +269,24 @@ def train(args):
     force_quant = training_config['force_quant']
     force_lora = training_config['force_lora']
     lr = training_config['lr']
+    
+    # Override quantization and LoRA settings from command line arguments
+    quant_bits = 4  # Default quantization bits
+    if hasattr(args, 'quant_bits'):
+        quant_bits = args.quant_bits
+        
+    if hasattr(args, 'force_quant') and args.force_quant:
+        force_quant = True
+        RIGHT(f"Command line override: force_quant = true ({quant_bits}-bit)")
+    if hasattr(args, 'force_lora') and args.force_lora:
+        force_lora = True
+        RIGHT("Command line override: force_lora = true")
+    if hasattr(args, 'quant') and args.quant:
+        force_quant = True
+        RIGHT(f"Command line override: quant = true ({quant_bits}-bit)")
+    if hasattr(args, 'no_quant') and args.no_quant:
+        force_quant = False
+        RIGHT("Command line override: force_quant = false")
     
     epochs = 1
     save_dir = "ckpt"
@@ -326,16 +366,24 @@ def train(args):
     min_plateau_epoch = 5
     scheduler = None
     
-    data_cache_dir = "data_cache"
-    model_txt = os.path.join(data_cache_dir, "model.txt")
-    if not os.path.exists(model_txt):
-        ERROR(f"{model_txt} not found! Please create it with one dataset name per line.")
-        sys.exit(1)
-    with open(model_txt, "r", encoding="utf-8") as f:
-        dataset_list = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
-    if not dataset_list:
-        ERROR(f"No dataset names found in {model_txt}!")
-        sys.exit(1)
+    # Handle dataset selection: command line takes priority over model.txt
+    dataset_list = []
+    if hasattr(args, 'dataset') and args.dataset:
+        # Use command line dataset
+        dataset_list = [args.dataset]
+        RIGHT(f"Using command line dataset: {args.dataset}")
+    else:
+        # Fallback to model.txt file
+        data_cache_dir = "data_cache"
+        model_txt = os.path.join(data_cache_dir, "model.txt")
+        if not os.path.exists(model_txt):
+            ERROR(f"{model_txt} not found! Please create it with one dataset name per line, or use --dataset argument.")
+            sys.exit(1)
+        with open(model_txt, "r", encoding="utf-8") as f:
+            dataset_list = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
+        if not dataset_list:
+            ERROR(f"No dataset names found in {model_txt}! Please use --dataset argument instead.")
+            sys.exit(1)
     # Set up distributed training
     device, is_distributed, local_rank, world_size, _ = setup_distributed_training()
     
@@ -351,6 +399,15 @@ def train(args):
         # Single-GPU mode, optimize using GPU manager
         gpu_manager = GPUManager()
         recommended_batch = gpu_manager.recommend_batch_size(model_size, seq_len)
+        
+        # Special handling for 1.9B Arctic architecture
+        # The model has grown from 0.5B to 1.9B, need conservative batch size
+        if "0.5B" in model_size and recommended_batch > 8:
+            # For Arctic 1.9B architecture, limit batch size to avoid OOM
+            conservative_batch = min(8, recommended_batch)  # Max 8 for 1.9B model
+            RIGHT(f"Arctic 1.9B memory optimization: {recommended_batch} -> {conservative_batch}")
+            recommended_batch = conservative_batch
+            
         if batch_size != recommended_batch:
             RIGHT(f"Adjust batch_size based on hardware: {batch_size} -> {recommended_batch}")
             batch_size = recommended_batch
@@ -393,12 +450,37 @@ def train(args):
         from peft import get_peft_model, LoraConfig, TaskType
         quant_config = None
         if use_quant:
-            quant_config = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_use_double_quant=True
-            )
+            # Configure quantization based on bits
+            if quant_bits == 2:
+                # 2-bit quantization (experimental)
+                quant_config = BitsAndBytesConfig(
+                    load_in_4bit=True,  # Use 4bit as base, will be further compressed
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True,
+                    # Additional compression for 2-bit simulation
+                    llm_int8_enable_fp32_cpu_offload=True
+                )
+                RIGHT(f"Using 2-bit quantization (experimental, based on 4-bit+compression)")
+            elif quant_bits == 4:
+                # Standard 4-bit quantization
+                quant_config = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_use_double_quant=True
+                )
+                RIGHT(f"Using 4-bit quantization (NF4)")
+            elif quant_bits == 8:
+                # 8-bit quantization
+                quant_config = BitsAndBytesConfig(
+                    load_in_8bit=True,
+                    llm_int8_enable_fp32_cpu_offload=False
+                )
+                RIGHT(f"Using 8-bit quantization (INT8)")
+            else:
+                ERROR(f"Unsupported quantization bits: {quant_bits}. Supported: 2, 4, 8")
+                sys.exit(1)
         model = PiscesModel(cfg, quantization_config=quant_config) if quant_config else PiscesModel(cfg)
         if force_lora:
             lora_config = LoraConfig(
@@ -438,11 +520,19 @@ def train(args):
         RIGHT(f"Using {torch.cuda.device_count()} GPUs")
         model = torch.nn.DataParallel(model)
     RIGHT("Initializing optimizer and scheduler...")
+    # Memory-optimized AdamW configuration for 14GB GPU
     optimizer = torch.optim.AdamW(
         filter(lambda p: p.requires_grad, model.parameters() if not hasattr(model, 'module') else model.module.parameters()),
         lr=lr,
         weight_decay=0.01,
-        betas=(0.9, 0.999)
+        betas=(0.9, 0.999),
+        eps=1e-8,
+        amsgrad=False,  # Disable amsgrad to save memory
+        maximize=False,
+        foreach=False,  # Disable foreach to save memory
+        capturable=False,  # Disable capturable to save memory
+        differentiable=False,  # Disable differentiable to save memory
+        fused=False  # Disable fused implementation which can use more memory
     )
     RIGHT("Optimizer and scheduler ready.")
     # Initialize the adaptive gradient clipper with K-FAC support
@@ -476,6 +566,7 @@ def train(args):
         DEBUG(f"\n==============================")
         RIGHT(f"Training dataset: {dataset}")
         RIGHT(f"Batch size: {batch_size}, Epochs: {epochs}, LR: {lr}")
+        data_cache_dir = "data_cache"  # Define data_cache_dir here
         cache_path = os.path.join(data_cache_dir, dataset)
         if not os.path.exists(cache_path):
             ERROR(f"Local dataset not found: {cache_path}")
@@ -501,159 +592,173 @@ def train(args):
         model.train()
         scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
         torch.cuda.empty_cache()
-    torch.cuda.reset_peak_memory_stats()
-    stop_training = False
-    epoch = start_epoch
-    
-    # Set epoch sampler for distributed training
-    if is_distributed:
-        train_loader.sampler.set_epoch(epoch)
-    
-    try:
-        while not stop_training:
-            if is_distributed:
-                train_loader.sampler.set_epoch(epoch)
-            
-            DEBUG(f"Starting epoch {epoch+1}")
-            total_loss = 0
-            step_loss = 0
-            optimizer.zero_grad()
-            grad_accumulator.reset()
-            grad_clipper.reset()
-            
-            for step, batch in enumerate(train_loader):
-                model_keys = ["input_ids", "labels", "pixel_values", "audio_input"]
-                device_batch = {
-                    k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
-                    for k, v in batch.items() if k in model_keys and v is not None
-                }
+        torch.cuda.reset_peak_memory_stats()
+        stop_training = False
+        epoch = start_epoch
+        
+        # Set epoch sampler for distributed training
+        if is_distributed:
+            train_loader.sampler.set_epoch(epoch)
+        
+        try:
+            while not stop_training:
+                if is_distributed:
+                    train_loader.sampler.set_epoch(epoch)
                 
-                # Handle multi-modal inputs
-                pixel_values = device_batch.get("pixel_values")
-                audio_input = device_batch.get("audio_input")
-                if audio_input is not None and isinstance(audio_input, dict):
-                    audio_input = {k: v.to(device) for k, v in audio_input.items()}
+                DEBUG(f"Starting epoch {epoch+1}")
+                total_loss = 0
+                step_loss = 0
+                optimizer.zero_grad()
+                grad_accumulator.reset()
+                grad_clipper.reset()
                 
-                loss = None
-                with torch.amp.autocast('cuda', enabled=scaler is not None):
-                    outputs = model(
-                        input_ids=device_batch["input_ids"],
-                        labels=device_batch["labels"],
-                        pixel_values=pixel_values,
-                        audio_input=audio_input
-                    )
-                    loss = outputs.get("loss")
+                for step, batch in enumerate(train_loader):
+                    model_keys = ["input_ids", "labels", "pixel_values", "audio_input"]
+                    device_batch = {
+                        k: v.to(device, non_blocking=True) if isinstance(v, torch.Tensor) else v
+                        for k, v in batch.items() if k in model_keys and v is not None
+                    }
+                    
+                    # Handle multi-modal inputs
+                    pixel_values = device_batch.get("pixel_values")
+                    audio_input = device_batch.get("audio_input")
+                    if audio_input is not None and isinstance(audio_input, dict):
+                        audio_input = {k: v.to(device) for k, v in audio_input.items()}
+                    
+                    loss = None
+                    with torch.amp.autocast('cuda', enabled=scaler is not None):
+                        outputs = model(
+                            input_ids=device_batch["input_ids"],
+                            labels=device_batch["labels"],
+                            images=pixel_values,
+                            audio=audio_input
+                        )
+                        loss = outputs.get("loss")
 
-                if loss is not None and loss.requires_grad:
-                    if is_distributed or torch.cuda.device_count() > 1:
-                        loss = loss.mean()
-                    
-                    current_accum = grad_accumulator.get_current_accum()
-                    
-                    if scaler is not None:
-                        scaler.scale(loss / current_accum).backward()
-                    else:
-                        (loss / current_accum).backward()
-                    
-                    step_loss += loss.item()
-                    
-                    # Calculate gradient norm
-                    grad_norm = 0.0
-                    params = model.parameters() if not hasattr(model, 'module') else model.module.parameters()
-                    for param in params:
-                        if param.grad is not None:
-                            grad_norm += param.grad.data.norm(2).item() ** 2
-                    grad_norm = grad_norm ** 0.5
-                    
-                    if grad_accumulator.should_step(grad_norm):
-                        params = model.parameters() if not hasattr(model, 'module') else model.module.parameters()
+                    if loss is not None and loss.requires_grad:
+                        if is_distributed or torch.cuda.device_count() > 1:
+                            loss = loss.mean()
                         
-                        # Use the adaptive gradient clipper
-                        total_norm, clip_coef, was_clipped = grad_clipper.update_and_clip(params, scaler)
+                        current_accum = grad_accumulator.get_current_accum()
                         
                         if scaler is not None:
-                            scaler.step(optimizer)
-                            scaler.update()
+                            scaler.scale(loss / current_accum).backward()
                         else:
-                            optimizer.step()
-                        optimizer.zero_grad()
-                        step_loss = 0
+                            (loss / current_accum).backward()
                         
-                        # Record gradient clipping information
+                        step_loss += loss.item()
+                        
+                        # Calculate gradient norm
+                        grad_norm = 0.0
+                        params = model.parameters() if not hasattr(model, 'module') else model.module.parameters()
+                        for param in params:
+                            if param.grad is not None:
+                                grad_norm += param.grad.data.norm(2).item() ** 2
+                        grad_norm = grad_norm ** 0.5
+                        
+                        if grad_accumulator.should_step(grad_norm):
+                            params = model.parameters() if not hasattr(model, 'module') else model.module.parameters()
+                            
+                            # Use the adaptive gradient clipper
+                            total_norm, clip_coef, was_clipped = grad_clipper.update_and_clip(params, optimizer, scaler)
+                            
+                            # Critical memory optimization for 14GB GPU
+                            torch.cuda.empty_cache()  # Clear unused memory before optimizer step
+                            
+                            if scaler is not None:
+                                scaler.step(optimizer)
+                                scaler.update()
+                            else:
+                                optimizer.step()
+                            
+                            # Additional memory cleanup after optimizer step
+                            optimizer.zero_grad(set_to_none=True)  # More aggressive gradient cleanup
+                            torch.cuda.empty_cache()  # Clear cache again after step
+                            step_loss = 0
+                            
+                            # Record gradient clipping information
+                            if not is_distributed or local_rank == 0:
+                                if step % 50 == 0:  # Record clipping information every 50 steps
+                                    current_threshold = grad_clipper.get_current_threshold()
+                                    clip_ratio = (1.0 - clip_coef) * 100 if was_clipped else 0.0
+                                    RIGHT(f"GradClip: norm={total_norm:.4f}, threshold={current_threshold:.4f}, clipped={was_clipped}, clip_ratio={clip_ratio:.1f}%")
+                    else:
+                        DEBUG(f"Warning: Skipping step {step} due to invalid loss (None or no grad).")
+                        continue
+
+                    if loss is not None:
+                        current_accum = grad_accumulator.get_current_accum()
+                        total_loss += loss.item() * current_accum
+                        
+                        if epoch+1 > min_plateau_epoch and scheduler is not None:
+                            scheduler.step(loss.item())
+                        
+                        # Print logs only on the main process
                         if not is_distributed or local_rank == 0:
-                            if step % 50 == 0:  # Record clipping information every 50 steps
-                                current_threshold = grad_clipper.get_current_threshold()
-                                clip_ratio = (1.0 - clip_coef) * 100 if was_clipped else 0.0
-                                RIGHT(f"GradClip: norm={total_norm:.4f}, threshold={current_threshold:.4f}, clipped={was_clipped}, clip_ratio={clip_ratio:.1f}%")
-                else:
-                    DEBUG(f"Warning: Skipping step {step} due to invalid loss (None or no grad).")
+                            if step % 10 == 0:
+                                effective_batch = batch_size * current_accum
+                                avg_loss = total_loss / (step + 1)
+                                RIGHT(f"Epoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e} | Accum: {current_accum} | Batch: {effective_batch}")
+                
+                if not train_loader:
+                    DEBUG("Skipping epoch end logic for empty loader.")
                     continue
 
-                if loss is not None:
-                    current_accum = grad_accumulator.get_current_accum()
-                    total_loss += loss.item() * current_accum
+                # Handle remaining gradients
+                if step_loss > 0:
+                    params = model.parameters() if not hasattr(model, 'module') else model.module.parameters()
                     
-                    if epoch+1 > min_plateau_epoch and scheduler is not None:
-                        scheduler.step(loss.item())
+                    # Use the adaptive gradient clipper to handle remaining gradients
+                    total_norm, clip_coef, was_clipped = grad_clipper.update_and_clip(params, optimizer, scaler)
                     
-                    # Print logs only on the main process
+                    # Critical memory optimization for 14GB GPU
+                    torch.cuda.empty_cache()  # Clear unused memory before optimizer step
+                    
+                    if scaler is not None:
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        optimizer.step()
+                    
+                    # Additional memory cleanup after optimizer step
+                    optimizer.zero_grad(set_to_none=True)  # More aggressive gradient cleanup
+                    torch.cuda.empty_cache()  # Clear cache again after step
+                    
+                    # Record the final gradient clipping information
                     if not is_distributed or local_rank == 0:
-                        if step % 10 == 0:
-                            effective_batch = batch_size * current_accum
-                            avg_loss = total_loss / (step + 1)
-                            RIGHT(f"Epoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e} | Accum: {current_accum} | Batch: {effective_batch}")
-            
-            if not train_loader:
-                DEBUG("Skipping epoch end logic for empty loader.")
-                continue
+                        current_threshold = grad_clipper.get_current_threshold()
+                        clip_ratio = (1.0 - clip_coef) * 100 if was_clipped else 0.0
+                        RIGHT(f"Final GradClip: norm={total_norm:.4f}, threshold={current_threshold:.4f}, clipped={was_clipped}, clip_ratio={clip_ratio:.1f}%")
 
-            # Handle remaining gradients
-            if step_loss > 0:
-                params = model.parameters() if not hasattr(model, 'module') else model.module.parameters()
+                avg_loss = total_loss / (step + 1)
                 
-                # Use the adaptive gradient clipper to handle remaining gradients
-                total_norm, clip_coef, was_clipped = grad_clipper.update_and_clip(params, scaler)
-                
-                if scaler is not None:
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    optimizer.step()
-                optimizer.zero_grad()
-                
-                # Record the final gradient clipping information
+                # Save checkpoints only on the main process
                 if not is_distributed or local_rank == 0:
-                    current_threshold = grad_clipper.get_current_threshold()
-                    clip_ratio = (1.0 - clip_coef) * 100 if was_clipped else 0.0
-                    RIGHT(f"Final GradClip: norm={total_norm:.4f}, threshold={current_threshold:.4f}, clipped={was_clipped}, clip_ratio={clip_ratio:.1f}%")
+                    checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
+                    save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
+                    RIGHT(f"Checkpoint saved: {checkpoint_path}")
+                    RIGHT(f"Epoch {epoch + 1} complete | Final accum: {grad_accumulator.get_current_accum()} | Avg grad norm: {sum(grad_accumulator.grad_norm_history[-5:])/min(5, len(grad_accumulator.grad_norm_history)):.4f}")
+                    
+                    if epoch+1 == min_plateau_epoch:
+                        from torch.optim.lr_scheduler import ReduceLROnPlateau
+                        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-8)
+                        RIGHT(f"ReduceLROnPlateau scheduler enabled after {min_plateau_epoch} epochs.")
+                    
+                    if avg_loss < 2.8 or epoch+1 >= 6:
+                        RIGHT(f"Dataset {dataset} training complete (loss={avg_loss:.4f}, epochs={epoch+1}).")
+                        stop_training = True
+                    else:
+                        epoch += 1
+        except KeyboardInterrupt:
+            ERROR("Training interrupted by user (Ctrl-C). Saving checkpoint...")
+            interrupt_ckpt = f"{save_dir}/latest_interrupt.pt"
+            save_ckpt(model, optimizer, epoch + 1, interrupt_ckpt)
+            RIGHT(f"Checkpoint saved: {interrupt_ckpt}")
+            RIGHT(f"You can resume training with: python manage.py train --model_size {model_size} --resume_ckpt {interrupt_ckpt}")
+            sys.exit(0)
+        RIGHT(f"Dataset {dataset} training completed!")
 
-            avg_loss = total_loss / (step + 1)
-            
-            # Save checkpoints only on the main process
-            if not is_distributed or local_rank == 0:
-                checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
-                save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
-                RIGHT(f"Checkpoint saved: {checkpoint_path}")
-                RIGHT(f"Epoch {epoch + 1} complete | Final accum: {grad_accumulator.get_current_accum()} | Avg grad norm: {sum(grad_accumulator.grad_norm_history[-5:])/min(5, len(grad_accumulator.grad_norm_history)):.4f}")
-                
-                if epoch+1 == min_plateau_epoch:
-                    from torch.optim.lr_scheduler import ReduceLROnPlateau
-                    scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-8)
-                    RIGHT(f"ReduceLROnPlateau scheduler enabled after {min_plateau_epoch} epochs.")
-                
-                if avg_loss < 2.8 or epoch+1 >= 6:
-                    RIGHT(f"Dataset {dataset} training complete (loss={avg_loss:.4f}, epochs={epoch+1}).")
-                    stop_training = True
-                else:
-                    epoch += 1
-    except KeyboardInterrupt:
-        ERROR("Training interrupted by user (Ctrl-C). Saving checkpoint...")
-        interrupt_ckpt = f"{save_dir}/latest_interrupt.pt"
-        save_ckpt(model, optimizer, epoch + 1, interrupt_ckpt)
-        RIGHT(f"Checkpoint saved: {interrupt_ckpt}")
-        RIGHT(f"You can resume training with: python manage.py train --model_size {model_size} --resume_ckpt {interrupt_ckpt}")
-        sys.exit(0)
-    RIGHT("Training completed!")
+    RIGHT("All datasets finished. Saving final model weights...")
 
     final_weight_path = os.path.join(save_dir, f"pisces-l1-{model_size.lower()}-final.pt")
     if hasattr(model, "module"):  # DataParallel
@@ -700,12 +805,13 @@ class AdaptiveGradientClipper:
         self.grad_momentum = {}
         self.kfac_step = 0
         
-    def update_and_clip(self, parameters, scaler=None):
+    def update_and_clip(self, parameters, optimizer=None, scaler=None):
         """
         Update the gradient clipping threshold and perform gradient clipping with K-FAC support.
         
         Args:
             parameters (Iterable[torch.Tensor]): Model parameters.
+            optimizer (torch.optim.Optimizer, optional): Optimizer object for scaler.unscale_.
             scaler (torch.cuda.amp.GradScaler, optional): Gradient scaler (for mixed precision training).
         
         Returns:
@@ -777,9 +883,9 @@ class AdaptiveGradientClipper:
             clip_coef = max_norm / (total_norm + 1e-6)
             was_clipped = clip_coef < 1.0
             
-            if scaler is not None:
+            if scaler is not None and optimizer is not None:
                 # Mixed precision training requires unscaling first
-                scaler.unscale_(None)
+                scaler.unscale_(optimizer)
             
             clip_coef_clamped = min(clip_coef, 1.0)
             for param in parameters:
@@ -791,7 +897,7 @@ class AdaptiveGradientClipper:
         return total_norm, 1.0, False
     
     def _calculate_natural_gradient_norm(self, parameters):
-        """Calculate natural gradient norm using K-FAC approximation."""
+        """Calculate natural gradient norm using diagonal K-FAC approximation."""
         natural_norm = 0.0
         
         for param in parameters:
@@ -803,14 +909,13 @@ class AdaptiveGradientClipper:
                 if param_id in self.fisher_matrices:
                     fisher = self.fisher_matrices[param_id]
                     
-                    # Apply Fisher matrix to gradient
+                    # Apply diagonal Fisher matrix to gradient
                     if len(grad.shape) == 2:  # Weight matrix
-                        # Approximate natural gradient: F^{-1}g ≈ g / (diag(F) + damping)
-                        fisher_diag = torch.abs(fisher).mean(dim=1, keepdim=True)
+                        # fisher is [out_features, 1], broadcast to match grad shape
+                        fisher_diag = fisher.expand_as(grad)
                         natural_grad = grad / (fisher_diag + self.kfac_damping)
                     elif len(grad.shape) == 1:  # Bias vector
-                        fisher_diag = torch.abs(fisher)
-                        natural_grad = grad / (fisher_diag + self.kfac_damping)
+                        natural_grad = grad / (fisher + self.kfac_damping)
                     else:
                         natural_grad = grad
                     
@@ -821,18 +926,18 @@ class AdaptiveGradientClipper:
         return natural_norm ** 0.5
     
     def _update_kfac_matrices(self, parameters):
-        """Update K-FAC Fisher matrix approximations."""
+        """Update K-FAC Fisher matrix approximations with memory optimization."""
         for param in parameters:
             if param.grad is not None:
                 param_id = id(param)
                 grad = param.grad.data
                 
-                # Simple Fisher matrix approximation: outer product of gradients
+                # Memory-efficient Fisher matrix approximation using diagonal elements only
                 if len(grad.shape) == 2:  # Weight matrix
-                    # Approximate Fisher as outer product
-                    fisher_approx = torch.matmul(grad, grad.t()) / grad.numel()
+                    # Use element-wise squares instead of full outer product to save memory
+                    fisher_approx = (grad * grad).mean(dim=1, keepdim=True)  # [out_features, 1]
                 elif len(grad.shape) == 1:  # Bias vector
-                    fisher_approx = grad * grad
+                    fisher_approx = grad * grad  # Element-wise squares
                 else:
                     continue
                 
@@ -873,7 +978,7 @@ class AdaptiveGradientClipper:
         return max(0.5, min(2.0, curvature_factor))
     
     def _apply_kfac_preconditioning(self, parameters):
-        """Apply K-FAC preconditioning to gradients."""
+        """Apply diagonal K-FAC preconditioning to gradients."""
         for param in parameters:
             if param.grad is not None and param.requires_grad:
                 param_id = id(param)
@@ -882,13 +987,13 @@ class AdaptiveGradientClipper:
                 if param_id in self.fisher_matrices:
                     fisher = self.fisher_matrices[param_id]
                     
-                    # Apply Fisher preconditioning
+                    # Apply diagonal Fisher preconditioning
                     if len(grad.shape) == 2:  # Weight matrix
-                        fisher_diag = torch.abs(fisher).mean(dim=1, keepdim=True)
+                        # fisher is [out_features, 1], broadcast to match grad shape
+                        fisher_diag = fisher.expand_as(grad)
                         preconditioned_grad = grad / (fisher_diag + self.kfac_damping)
                     elif len(grad.shape) == 1:  # Bias vector
-                        fisher_diag = torch.abs(fisher)
-                        preconditioned_grad = grad / (fisher_diag + self.kfac_damping)
+                        preconditioned_grad = grad / (fisher + self.kfac_damping)
                     else:
                         continue
                     

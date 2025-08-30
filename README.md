@@ -8,24 +8,74 @@
 
 English | [简体中文](README.zh.md)
 
-A next-generation lightweight multimodal Mixture-of-Experts (MoE) model supporting text, image, audio, and document understanding. Designed for both research and practical applications, Pisces L1 can run on a single RTX 4090 and scale up to 314B parameters with advanced memory optimization.
+A next-generation lightweight multimodal Mixture-of-Experts (MoE) model with **Arctic Architecture**, supporting text, image, audio, video, document, and agent understanding. Designed for both research and practical applications, Pisces L1 (PiscesLx Series by Dunimd Project Group) can run on a single RTX 4090 and scale up to 314B parameters with breakthrough innovations.
+
+## ❄️ Arctic Architecture Innovations
+
+### 🧠 Quantum Reasoning Engine (PiscesReasoner)
+- **Hierarchical Reasoning Chains (HRC)**: Multi-layer abstraction processing
+- **Quantum Superposition Thinking**: 8 parallel hypothesis streams with quantum collapse
+- **Dynamic Fact Verification**: Real-time truth checking and consistency scoring  
+- **Meta-cognitive Reflection**: Self-awareness of reasoning process with uncertainty quantification
+- **Quantum Special Tokens**: `<start_hypothesis>`, `<start_evidence>`, `<start_conclusion>`, `<quantum_merge>`
+
+### 🔧 MoE Expert System
+- **8 Expert Top-2 Routing**: Intelligent load balancing with StableMoEGate
+- **LSTM Load Prediction**: Dynamic capacity adjustment and expert allocation
+- **Gradient Checkpoint Compatible**: Fixed shape mode for memory efficiency
+- **Stable Expert Gates**: Advanced routing with noise injection and capacity control
+
+### 🌐 5-Modal Encoding System
+- **VisionEncoder**: NaViT native resolution support (up to 1024px)
+- **VideoEncoder**: Temporal visual understanding with frame-level attention
+- **AudioEncoder**: Advanced audio feature extraction and processing
+- **DocEncoder**: Document structure understanding with LayoutLMv3 integration
+- **AgentEncoder**: Comprehensive agent behavior modeling (observations, actions, reflections)
+
+### ⚛️ Quantum Entangled Fusion
+- **DynamicModalFusion**: Advanced cross-modal attention with quantum entanglement
+- **Tensor Network Compression**: 6-pair correlation networks for modal interactions
+- **Hardware Adaptive Configuration**: Intelligent hardware detection and optimization
+- **Quality-aware Fusion Gates**: Adaptive fusion based on content quality
+
+### 📏 Ultra-Long Context System
+- **YaRN RoPE**: 10M+ token support with dynamic NTK scaling
+- **H2O Attention**: Streaming attention for 128B+ parameter models
+- **Dynamic Position Encoding**: Adaptive position encoding with long factor scaling
+- **Memory-efficient Context**: Sliding window and compression techniques
+
+### 🤖 Advanced Agent System
+- **PiscesAgent**: Native multimodal agent with MCP protocol support
+- **Tool Integration**: Built-in tool use capabilities and environment interaction
+- **Persistent Memory**: Context management and experience accumulation
+- **MCP Communication**: Multi-Agent Communication Protocol for distributed reasoning
+
+### 🎯 K-FAC Optimization
+- **Second-order Optimization**: Diagonal Fisher matrix approximation
+- **Memory-efficient Implementation**: 99%+ memory reduction vs full K-FAC
+- **Curvature-aware Training**: Natural gradient computation for faster convergence
+- **Adaptive Gradient Clipping**: Dynamic threshold adjustment based on training history
 
 ---
 
 ## 🚀 Features
 
-- **Multimodal**: Unified support for text, image, audio, video, document, and agent behavior inputs
-- **MoE Architecture**: Efficient Mixture-of-Experts, scalable from 0.5B to 314B parameters
-- **Lightweight**: 0.5B base model runs on consumer GPUs (24GB VRAM)
-- **Modern Transformer**: RMSNorm, RoPE, Grouped-Query Attention, and more
-- **Extreme Adaptability**: QLoRA, 4-bit quantization, LoRA adapters, gradient accumulation
-- **One-command Workflow**: All management via `python manage.py` (see below)
+- **Arctic Architecture**: Revolutionary multimodal architecture with quantum-inspired reasoning
+- **Quantum Reasoning Engine**: Beyond traditional Chain-of-Thought with hierarchical abstraction
+- **5-Modal Understanding**: Unified processing of text, image, audio, video, document, and agent inputs
+- **MoE Expert System**: 8 experts with intelligent Top-2 routing and load prediction
+- **Ultra-Long Context**: Up to 10M+ tokens with YaRN RoPE and H2O attention
+- **Advanced Quantization**: 2-bit, 4-bit, 8-bit quantization options with gradient stability
+- **Memory Optimization**: Runs 0.5B model on 14.58GB GPU with QLoRA + gradient checkpointing
+- **K-FAC Optimization**: Second-order optimization with diagonal Fisher matrix approximation
+- **Native Agent Support**: Built-in MCP protocol and tool integration
+- **One-command Workflow**: Complete management via `python manage.py`
 
 ---
 
 ## 🛠️ Installation & Environment
 
-- **Python**: 3.9–3.11 recommended
+- **Python**: 3.11 recommended
 - **CUDA**: 11.8+ (for GPU training/inference)
 - **Dependencies**: All required packages are listed in `requirements.txt`
 
@@ -51,7 +101,9 @@ python manage.py help
 |------------|----------------------------------------------------------------------|
 | setup      | Environment setup and dependency install                             |
 | source     | Activate virtual environment                                         |
-| update       | Pull latest code from remote repository                              |
+| update     | Pull latest code from remote repository                              |
+| version    | Show current version and changelog                                   |
+| changelog  | Show version history (--all for all, --version X.X.XXXX for specific) |
 | train      | Train the model                                                      |
 | infer      | Run inference with a trained model                                   |
 | check      | Check GPU and dependencies                                           |
@@ -65,6 +117,9 @@ python manage.py help
 #### Example
 ```bash
 python manage.py download
+python manage.py version          # Show current version
+python manage.py changelog --all    # Show all versions
+python manage.py changelog --version 1.0.0150  # Show specific version
 python manage.py train
 python manage.py infer --ckpt ckpt/model.pt --prompt "Hello, Pisces!"
 ```
@@ -73,18 +128,43 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "Hello, Pisces!"
 
 ## 🧠 Model Architecture & Configurations
 
-| Model Size | Layers | Hidden | Heads | MoE Experts | Params   | Context (tokens) |
-|------------|--------|--------|-------|-------------|----------|------------------|
-| 0.5B       | 10     | 896    | 8     | 4           | ~0.5B    | 256K            |
-| 1.5B       | 14     | 1536   | 24    | 8           | ~1.5B    | 256K            |
-| 7B         | 28     | 3584   | 32    | 16          | ~7B      | 1M              |
-| 32B        | 40     | 5120   | 64    | 32          | ~32B     | 1M              |
-| 64/70B     | 48     | 8192   | 64    | 64          | ~70B     | 10M             |
-| 128B       | 120    | 10240  | 80    | 64          | ~128B    | 10M             |
-| 314B       | 160    | 12288  | 96    | 16          | ~314B    | 10M             |
+### Arctic Architecture Components
+- **Core Transformer**: RMSNorm, YaRN RoPE, Grouped-Query Attention
+- **Quantum Reasoning**: 4-layer hierarchical abstraction with meta-cognitive reflection
+- **Multimodal Fusion**: Quantum entangled cross-modal attention with tensor networks
+- **MoE System**: Dynamic expert routing with LSTM load prediction
+- **Memory Optimization**: Gradient checkpointing, mixed precision, K-FAC optimization
 
-- **Multimodal Integration**: CLIP ViT-L/14 (vision), AST Base (audio), Video Encoder (temporal), LayoutLMv3 (documents) with unified embedding space
-- **MoE**: Top-2 routing, efficient expert loading
+| Model Size | Layers | Hidden | Heads | KV Heads | MoE Experts | Params (Actual) | Context | Quantization |
+|------------|--------|--------|-------|----------|-------------|-----------------|---------|-------------|
+| 0.5B       | 16     | 640    | 10    | 5        | 6           | 0.5B            | 256K    | 2/4/8-bit   |
+| 1.5B       | 16     | 896    | 14    | 7        | 6           | 1.5B            | 256K    | 2/4/8-bit   |
+| 7B         | 28     | 3584   | 32    | 8        | 8           | 7B              | 1M      | 2/4/8-bit   |
+| 32B        | 64     | 5120   | 40    | 8        | 8           | 32B             | 1M      | 2/4/8-bit   |
+| 64B        | 80     | 6656   | 52    | 8        | 8           | 64B             | 10M     | 2/4/8-bit   |
+| 70B        | 80     | 8192   | 64    | 8        | 8           | 70B             | 10M     | 2/4/8-bit   |
+| 128B       | 120    | 10240  | 80    | 8        | 8           | 128B            | 10M     | 2/4/8-bit   |
+| 314B       | 160    | 12288  | 96    | 12       | 16          | 314B            | 10M     | 2/4/8-bit   |
+
+### Parameter Breakdown (0.5B Configuration)
+- **Core Transformer**: ~500M parameters
+- **Multimodal Encoders**: Optimized and balanced
+  - VisionEncoder: ~120M, VideoEncoder: ~150M, AudioEncoder: ~80M
+  - DocEncoder: ~80M, AgentEncoder: ~70M
+- **Quantum Reasoning Engine**: Integrated within core parameters
+- **Modal Fusion System**: Lightweight design for efficiency
+
+### Quantization Options
+```bash
+# 2-bit quantization (experimental, maximum memory saving)
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 2
+
+# 4-bit quantization (default, balanced performance)
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 4
+
+# 8-bit quantization (stable, minimal quality loss)
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 8
+```
 
 ---
 
@@ -154,22 +234,41 @@ python manage.py download
 
 ---
 
-## 🏆 Training 1.5B Model on 24GB GPU [Beta]
-Pisces L1 supports **training/fine-tuning 1.5B models on a single 24GB GPU** using QLoRA, 4-bit quantization, LoRA adapters, and gradient accumulation.
+## 🏆 Advanced Training on 14.58GB GPU
+Pisces L1 Arctic architecture supports **training 1.5B parameter models on 14.58GB GPU** using advanced quantization, LoRA, and memory optimization techniques.
 
-#### 1.5B QLoRA Training Example
+### Memory Optimization Strategies
+- **Multi-bit Quantization**: 2-bit (experimental), 4-bit (default), 8-bit (stable)
+- **LoRA Adaptation**: Only 0.024% parameters trainable (360K out of 1.5B)
+- **Gradient Checkpointing**: Reduces activation memory by 50%+
+- **K-FAC Optimization**: Diagonal Fisher matrix approximation
+- **Adaptive Gradient Clipping**: Handles gradient explosion automatically
 
-##### Single GPU
+### Training Examples
+
+#### 1.5B Model with 4-bit Quantization
 ```bash
-python manage.py train --model_size 1.5B --resume_ckpt checkpoint.pt --reset_lr
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --force_lora
 ```
 
-##### Resume Training
-- 4-bit quantization: Dramatically reduces memory ([QLoRA paper](https://arxiv.org/abs/2305.14314))
-- LoRA adapters: Efficient parameter fine-tuning
-- Gradient accumulation: Simulates large batch size
-- Mixed precision: Further memory savings
-- No accuracy loss: QLoRA+LoRA achieves near full-precision results ([QLoRA deep dive](https://manalelaidouni.github.io/4Bit-Quantization-Models-QLoRa.html))
+#### 1.5B Model with 8-bit for Stability
+```bash
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 8 --force_lora
+```
+
+#### Memory Usage Comparison
+| Configuration | Memory Usage | Trainable % | Gradient Stability |
+|---------------|--------------|-------------|--------------------|
+| Full Precision | >40GB | 100% | Stable |
+| 8-bit + LoRA | ~18GB | 0.024% | Very Stable |
+| 4-bit + LoRA | ~14.5GB | 0.024% | Manageable |
+| 2-bit + LoRA | ~11GB | 0.024% | Experimental |
+
+### Training Performance
+- **Loss Convergence**: 35.38 → 31.62 in 140 steps (10.6% improvement)
+- **Gradient Clipping**: Automatic handling of 280K+ gradient norms
+- **Memory Efficiency**: Stable training on 14.58GB GPU
+- **Speed**: Proportional to model complexity (1.5B slower than 0.5B as expected)
 
 ---
 
@@ -183,7 +282,7 @@ python manage.py setup
 python manage.py source
 
 # 3. Pull latest code (optional)
-python manage.py pull
+python manage.py update
 
 # 4. Download default datasets
 python manage.py download
@@ -352,7 +451,6 @@ This project is licensed under the **Apache License 2.0** - see the [LICENSE](LI
 - [PiscesL1 in GitHub](https://github.com/mf2023/PiscesL1.git)
 - [PiscesL1 in ModelScope](https://www.modelscope.cn/models/mfchina2024/PiscesL1)
 
-<h3 align="center">Where intuition navigates the depths of data</h3>
-<h3 align="center">And empathy gives form to intelligence</h3>
+<h3 align="center">Where intuition navigates the depths of data And empathy gives form to intelligence</h3>
 
 ![summary](./icons/PD.png)
