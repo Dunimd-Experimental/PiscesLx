@@ -538,48 +538,87 @@ class DatasetCleaner:
             
             text_field = temp_text_field
 
-        # Handle structured data issues (missing values, outliers, etc.)
-        # Note: datacleaner package is deprecated/unavailable, using basic pandas operations
+        # Advanced data cleaning with multiple strategies
+        from sklearn.preprocessing import StandardScaler, RobustScaler
+        from sklearn.ensemble import IsolationForest
+        
         numeric_cols = df.select_dtypes(include=['number']).columns
         categorical_cols = df.select_dtypes(include=['object', 'category']).columns
         
-        # Basic data cleaning for numeric columns
+        # Advanced outlier detection and handling
         for col in numeric_cols:
-            if col != text_field:
-                # Remove outliers using IQR method for numeric columns
-                Q1 = df[col].quantile(0.25)
-                Q3 = df[col].quantile(0.75)
-                IQR = Q3 - Q1
-                lower_bound = Q1 - 1.5 * IQR
-                upper_bound = Q3 + 1.5 * IQR
-                df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
+            if col != text_field and len(df[col].dropna()) > 10:
+                try:
+                    # Robust outlier detection using Isolation Forest
+                    valid_data = df[col].dropna().values.reshape(-1, 1)
+                    if len(valid_data) > 0:
+                        iso_forest = IsolationForest(contamination=0.1, random_state=42)
+                        outliers = iso_forest.fit_predict(valid_data)
+                        
+                        # Get outlier indices and replace with median
+                        outlier_indices = np.where(outliers == -1)[0]
+                        median_value = np.median(valid_data)
+                        
+                        # Create mask for outliers in original dataframe
+                        col_values = df[col].values
+                        outlier_mask = np.isin(np.arange(len(col_values)), outlier_indices)
+                        df.loc[outlier_mask, col] = median_value
+                    
+                    # Robust scaling for normalization
+                    scaler = RobustScaler()
+                    valid_mask = df[col].notna()
+                    if valid_mask.sum() > 0:
+                        df.loc[valid_mask, col] = scaler.fit_transform(
+                            df.loc[valid_mask, col].values.reshape(-1, 1)
+                        ).flatten()
+                        
+                except Exception as e:
+                    # Fallback to IQR method
+                    Q1 = df[col].quantile(0.25)
+                    Q3 = df[col].quantile(0.75)
+                    IQR = Q3 - Q1
+                    lower_bound = Q1 - 1.5 * IQR
+                    upper_bound = Q3 + 1.5 * IQR
+                    df[col] = df[col].clip(lower=lower_bound, upper=upper_bound)
         
-        # Basic cleaning for categorical columns
+        # Advanced categorical cleaning with encoding and validation
         for col in categorical_cols:
             if col != text_field:
-                # Skip non-string/object columns to avoid array comparison issues
-                if df[col].dtype == 'object' or str(df[col].dtype).startswith('string'):
-                    try:
-                        # Remove empty strings and None values
-                        df[col] = df[col].replace('', None)
-                        # Trim whitespace
-                        df[col] = df[col].str.strip() if hasattr(df[col], 'str') else df[col]
-                    except (ValueError, TypeError):
-                        # Handle cases where replace fails due to array-like data
-                        mask = df[col].apply(lambda x: isinstance(x, str) and x.strip() == '')
-                        df.loc[mask, col] = None
+                try:
+                    # Convert to string and handle complex types
+                    df[col] = df[col].astype(str)
+                    
+                    # Advanced cleaning pipeline
+                    df[col] = df[col].apply(lambda x: x.strip() if isinstance(x, str) else str(x).strip())
+                    df[col] = df[col].replace(['None', 'nan', 'NaN', 'null', 'NULL'], None)
+                    
+                    # Frequency-based filtering for rare categories
+                    value_counts = df[col].value_counts()
+                    rare_categories = value_counts[value_counts < 3].index
+                    df[col] = df[col].replace(rare_categories, 'OTHER')
+                    
+                    # Handle empty strings
+                    df[col] = df[col].replace('', None)
+                    
+                except Exception:
+                    # Basic fallback cleaning
+                    df[col] = df[col].astype(str).str.strip()
+                    df[col] = df[col].replace('', None)
         
-        # Dedicated text cleaning
+        # Advanced text cleaning with NLP processing
         import re
+        import spacy
+        from textblob import TextBlob
+        
         def clean_text_content(text):
             """
-            Clean text content by removing control characters and normalizing whitespace.
-
+            Advanced text cleaning with NLP processing and quality enhancement.
+            
             Args:
                 text (str): The text to be cleaned.
 
             Returns:
-                str: The cleaned text, or an empty string if the input is not a valid string.
+                str: The cleaned and enhanced text.
             """
             if not isinstance(text, str):
                 return ""
@@ -587,11 +626,61 @@ class DatasetCleaner:
             if not text:
                 return ""
             
-            # Remove control characters
-            text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
-            # Normalize whitespace
-            text = re.sub(r'\s+', ' ', text).strip()
-            return text
+            try:
+                # Load spaCy model for advanced cleaning
+                try:
+                    nlp = spacy.load("en_core_web_sm")
+                except OSError:
+                    # Fallback to basic regex if spaCy not available
+                    nlp = None
+                
+                # Multi-stage cleaning pipeline
+                
+                # Stage 1: Character-level cleaning
+                text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)  # Control chars
+                text = re.sub(r'[^\w\s\.,!?;:\-\(\)\[\]\{\}"\'@#$%&*+=<>/?\\|`~]', '', text)  # Special chars
+                
+                # Stage 2: Structural cleaning
+                text = re.sub(r'\s+', ' ', text)  # Normalize whitespace
+                text = re.sub(r'([.!?])\1+', r'\1', text)  # Remove repeated punctuation
+                text = re.sub(r'(.)\1{3,}', r'\1\1', text)  # Limit character repetition
+                
+                # Stage 3: NLP-enhanced cleaning
+                if nlp:
+                    doc = nlp(text)
+                    
+                    # Remove sentences with low quality (too short or malformed)
+                    quality_sentences = []
+                    for sent in doc.sents:
+                        sent_text = sent.text.strip()
+                        if len(sent_text.split()) >= 3:  # Minimum 3 words per sentence
+                            # Check for reasonable sentence structure
+                            has_verb = any(token.pos_ == "VERB" for token in sent)
+                            has_noun = any(token.pos_ in ["NOUN", "PROPN"] for token in sent)
+                            if has_verb and has_noun:
+                                quality_sentences.append(sent_text)
+                    
+                    text = ' '.join(quality_sentences) if quality_sentences else text
+                
+                # Stage 4: Quality enhancement
+                # Correct common spelling issues
+                try:
+                    blob = TextBlob(text)
+                    text = str(blob.correct())
+                except:
+                    pass  # Skip if TextBlob fails
+                
+                # Final normalization
+                text = text.strip()
+                text = re.sub(r'\s+', ' ', text)  # Final whitespace cleanup
+                
+                return text
+                
+            except Exception:
+                # Ultimate fallback cleaning
+                text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+                text = re.sub(r'\s+', ' ', text).strip()
+                return text
         
         df[text_field] = df[text_field].apply(clean_text_content)
         

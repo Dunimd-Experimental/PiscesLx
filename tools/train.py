@@ -138,6 +138,10 @@ def create_dataloader(dataset, batch_size, is_distributed, world_size=1, rank=0,
     """
     from torch.utils.data import DistributedSampler
     
+    # Handle empty dataset to avoid deadlock
+    if len(dataset) == 0:
+        return torch.utils.data.DataLoader([], batch_size=1)  # Return empty loader to avoid deadlock
+    
     if is_distributed:
         # Create a distributed sampler for distributed training
         sampler = DistributedSampler(
@@ -441,6 +445,18 @@ def train(args):
         betas=(0.9, 0.999)
     )
     RIGHT("Optimizer and scheduler ready.")
+    # Initialize the adaptive gradient clipper with K-FAC support
+    grad_clipper = AdaptiveGradientClipper(
+        initial_max_norm=1.0,
+        history_length=100,
+        percentile=95,
+        min_clip=0.1,
+        max_clip=10.0,
+        warmup_steps=10,
+        use_kfac=True,
+        kfac_update_freq=100,
+        kfac_damping=0.001
+    )
     resume_ckpt = getattr(args, 'resume_ckpt', None)
     start_epoch = 0
     if resume_ckpt and os.path.exists(resume_ckpt):
@@ -503,6 +519,7 @@ def train(args):
             step_loss = 0
             optimizer.zero_grad()
             grad_accumulator.reset()
+            grad_clipper.reset()
             
             for step, batch in enumerate(train_loader):
                 model_keys = ["input_ids", "labels", "pixel_values", "audio_input"]
@@ -551,16 +568,23 @@ def train(args):
                     if grad_accumulator.should_step(grad_norm):
                         params = model.parameters() if not hasattr(model, 'module') else model.module.parameters()
                         
+                        # Use the adaptive gradient clipper
+                        total_norm, clip_coef, was_clipped = grad_clipper.update_and_clip(params, scaler)
+                        
                         if scaler is not None:
-                            scaler.unscale_(optimizer)
-                            torch.nn.utils.clip_grad_norm_(params, 1.0)
                             scaler.step(optimizer)
                             scaler.update()
                         else:
-                            torch.nn.utils.clip_grad_norm_(params, 1.0)
                             optimizer.step()
                         optimizer.zero_grad()
                         step_loss = 0
+                        
+                        # Record gradient clipping information
+                        if not is_distributed or local_rank == 0:
+                            if step % 50 == 0:  # Record clipping information every 50 steps
+                                current_threshold = grad_clipper.get_current_threshold()
+                                clip_ratio = (1.0 - clip_coef) * 100 if was_clipped else 0.0
+                                RIGHT(f"GradClip: norm={total_norm:.4f}, threshold={current_threshold:.4f}, clipped={was_clipped}, clip_ratio={clip_ratio:.1f}%")
                 else:
                     DEBUG(f"Warning: Skipping step {step} due to invalid loss (None or no grad).")
                     continue
@@ -586,15 +610,22 @@ def train(args):
             # Handle remaining gradients
             if step_loss > 0:
                 params = model.parameters() if not hasattr(model, 'module') else model.module.parameters()
+                
+                # Use the adaptive gradient clipper to handle remaining gradients
+                total_norm, clip_coef, was_clipped = grad_clipper.update_and_clip(params, scaler)
+                
                 if scaler is not None:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(params, 1.0)
                     scaler.step(optimizer)
                     scaler.update()
                 else:
-                    torch.nn.utils.clip_grad_norm_(params, 1.0)
                     optimizer.step()
                 optimizer.zero_grad()
+                
+                # Record the final gradient clipping information
+                if not is_distributed or local_rank == 0:
+                    current_threshold = grad_clipper.get_current_threshold()
+                    clip_ratio = (1.0 - clip_coef) * 100 if was_clipped else 0.0
+                    RIGHT(f"Final GradClip: norm={total_norm:.4f}, threshold={current_threshold:.4f}, clipped={was_clipped}, clip_ratio={clip_ratio:.1f}%")
 
             avg_loss = total_loss / (step + 1)
             
@@ -630,3 +661,246 @@ def train(args):
     else:
         torch.save(model.state_dict(), final_weight_path)
     RIGHT(f"All datasets finished. Final model weights saved to: {final_weight_path}")
+
+class AdaptiveGradientClipper:
+    """Adaptive gradient clipper with K-FAC Hessian approximation for second-order optimization."""
+    
+    def __init__(self, initial_max_norm=1.0, history_length=100, percentile=95, 
+                 min_clip=0.1, max_clip=10.0, warmup_steps=10, use_kfac=True, 
+                 kfac_update_freq=100, kfac_damping=0.001):
+        """
+        Initialize the adaptive gradient clipper with K-FAC support.
+        
+        Args:
+            initial_max_norm (float): Initial maximum gradient norm.
+            history_length (int): Length of gradient history used to calculate statistics.
+            percentile (int): Percentile used to calculate the adaptive threshold.
+            min_clip (float): Minimum clipping threshold.
+            max_clip (float): Maximum clipping threshold.
+            warmup_steps (int): Warm-up steps during which a fixed threshold is used.
+            use_kfac (bool): Whether to use K-FAC Hessian approximation.
+            kfac_update_freq (int): Frequency of K-FAC Fisher matrix updates.
+            kfac_damping (float): Damping parameter for K-FAC.
+        """
+        self.initial_max_norm = initial_max_norm
+        self.current_max_norm = initial_max_norm
+        self.history_length = history_length
+        self.percentile = percentile
+        self.min_clip = min_clip
+        self.max_clip = max_clip
+        self.warmup_steps = warmup_steps
+        self.use_kfac = use_kfac
+        self.kfac_update_freq = kfac_update_freq
+        self.kfac_damping = kfac_damping
+        
+        self.grad_norm_history = []
+        self.step_count = 0
+        self.kfac_state = {}
+        self.fisher_matrices = {}
+        self.grad_momentum = {}
+        self.kfac_step = 0
+        
+    def update_and_clip(self, parameters, scaler=None):
+        """
+        Update the gradient clipping threshold and perform gradient clipping with K-FAC support.
+        
+        Args:
+            parameters (Iterable[torch.Tensor]): Model parameters.
+            scaler (torch.cuda.amp.GradScaler, optional): Gradient scaler (for mixed precision training).
+        
+        Returns:
+            tuple: (total_norm, clip_coef, was_clipped)
+        """
+        self.step_count += 1
+        self.kfac_step += 1
+        
+        parameters = list(parameters)
+        
+        # Calculate natural gradient norm using K-FAC if enabled
+        if self.use_kfac and self.step_count > self.warmup_steps:
+            total_norm = self._calculate_natural_gradient_norm(parameters)
+        else:
+            # Standard gradient norm calculation
+            total_norm = 0.0
+            for param in parameters:
+                if param.grad is not None:
+                    param_norm = param.grad.data.norm(2).item()
+                    total_norm += param_norm ** 2
+            total_norm = total_norm ** 0.5
+        
+        # Update K-FAC Fisher matrices periodically
+        if self.use_kfac and self.kfac_step % self.kfac_update_freq == 0:
+            self._update_kfac_matrices(parameters)
+        
+        # Use a fixed threshold during the warm-up period
+        if self.step_count <= self.warmup_steps:
+            max_norm = self.initial_max_norm
+        else:
+            # Update the gradient history
+            self.grad_norm_history.append(total_norm)
+            if len(self.grad_norm_history) > self.history_length:
+                self.grad_norm_history.pop(0)
+            
+            # Calculate the adaptive threshold with K-FAC adjustment
+            if len(self.grad_norm_history) >= 10:
+                try:
+                    import numpy as np
+                    percentile_value = np.percentile(self.grad_norm_history, self.percentile)
+                    
+                    # Adjust target norm based on K-FAC curvature information
+                    curvature_factor = self._get_curvature_factor()
+                    adjusted_percentile = percentile_value * curvature_factor
+                    
+                    # Smoothly update the threshold
+                    target_norm = max(self.min_clip, min(self.max_clip, adjusted_percentile * 1.2))
+                    
+                    # Use exponential moving average to smooth threshold changes
+                    alpha = 0.1
+                    self.current_max_norm = (1 - alpha) * self.current_max_norm + alpha * target_norm
+                except ImportError:
+                    # If numpy is not available, use a simple average
+                    avg_norm = sum(self.grad_norm_history) / len(self.grad_norm_history)
+                    curvature_factor = self._get_curvature_factor()
+                    adjusted_avg = avg_norm * curvature_factor
+                    self.current_max_norm = max(self.min_clip, min(self.max_clip, adjusted_avg * 1.5))
+            else:
+                max_norm = self.initial_max_norm
+        
+        max_norm = self.current_max_norm
+        
+        # Perform gradient clipping with K-FAC preconditioning
+        if total_norm > 0:
+            if self.use_kfac and self.step_count > self.warmup_steps:
+                # Apply K-FAC preconditioning
+                self._apply_kfac_preconditioning(parameters)
+            
+            clip_coef = max_norm / (total_norm + 1e-6)
+            was_clipped = clip_coef < 1.0
+            
+            if scaler is not None:
+                # Mixed precision training requires unscaling first
+                scaler.unscale_(None)
+            
+            clip_coef_clamped = min(clip_coef, 1.0)
+            for param in parameters:
+                if param.grad is not None:
+                    param.grad.data.mul_(clip_coef_clamped)
+                    
+            return total_norm, clip_coef_clamped, was_clipped
+        
+        return total_norm, 1.0, False
+    
+    def _calculate_natural_gradient_norm(self, parameters):
+        """Calculate natural gradient norm using K-FAC approximation."""
+        natural_norm = 0.0
+        
+        for param in parameters:
+            if param.grad is not None:
+                grad = param.grad.data
+                
+                # Get Fisher matrix for this parameter
+                param_id = id(param)
+                if param_id in self.fisher_matrices:
+                    fisher = self.fisher_matrices[param_id]
+                    
+                    # Apply Fisher matrix to gradient
+                    if len(grad.shape) == 2:  # Weight matrix
+                        # Approximate natural gradient: F^{-1}g ≈ g / (diag(F) + damping)
+                        fisher_diag = torch.abs(fisher).mean(dim=1, keepdim=True)
+                        natural_grad = grad / (fisher_diag + self.kfac_damping)
+                    elif len(grad.shape) == 1:  # Bias vector
+                        fisher_diag = torch.abs(fisher)
+                        natural_grad = grad / (fisher_diag + self.kfac_damping)
+                    else:
+                        natural_grad = grad
+                    
+                    natural_norm += natural_grad.norm(2).item() ** 2
+                else:
+                    natural_norm += grad.norm(2).item() ** 2
+        
+        return natural_norm ** 0.5
+    
+    def _update_kfac_matrices(self, parameters):
+        """Update K-FAC Fisher matrix approximations."""
+        for param in parameters:
+            if param.grad is not None:
+                param_id = id(param)
+                grad = param.grad.data
+                
+                # Simple Fisher matrix approximation: outer product of gradients
+                if len(grad.shape) == 2:  # Weight matrix
+                    # Approximate Fisher as outer product
+                    fisher_approx = torch.matmul(grad, grad.t()) / grad.numel()
+                elif len(grad.shape) == 1:  # Bias vector
+                    fisher_approx = grad * grad
+                else:
+                    continue
+                
+                # Update Fisher matrix with exponential moving average
+                if param_id in self.fisher_matrices:
+                    alpha = 0.01  # Slow update rate for stability
+                    self.fisher_matrices[param_id] = (
+                        (1 - alpha) * self.fisher_matrices[param_id] + 
+                        alpha * fisher_approx.detach()
+                    )
+                else:
+                    self.fisher_matrices[param_id] = fisher_approx.detach()
+    
+    def _get_curvature_factor(self):
+        """Get curvature factor based on K-FAC Fisher matrices."""
+        if not self.fisher_matrices:
+            return 1.0
+        
+        # Calculate average curvature across all layers
+        total_curvature = 0.0
+        count = 0
+        
+        for fisher in self.fisher_matrices.values():
+            if isinstance(fisher, torch.Tensor):
+                avg_curvature = torch.abs(fisher).mean().item()
+                total_curvature += avg_curvature
+                count += 1
+        
+        if count == 0:
+            return 1.0
+        
+        avg_curvature = total_curvature / count
+        
+        # Adjust factor based on curvature (higher curvature -> more conservative clipping)
+        base_curvature = 1.0
+        curvature_factor = base_curvature / (1.0 + avg_curvature * 0.1)
+        
+        return max(0.5, min(2.0, curvature_factor))
+    
+    def _apply_kfac_preconditioning(self, parameters):
+        """Apply K-FAC preconditioning to gradients."""
+        for param in parameters:
+            if param.grad is not None and param.requires_grad:
+                param_id = id(param)
+                grad = param.grad.data
+                
+                if param_id in self.fisher_matrices:
+                    fisher = self.fisher_matrices[param_id]
+                    
+                    # Apply Fisher preconditioning
+                    if len(grad.shape) == 2:  # Weight matrix
+                        fisher_diag = torch.abs(fisher).mean(dim=1, keepdim=True)
+                        preconditioned_grad = grad / (fisher_diag + self.kfac_damping)
+                    elif len(grad.shape) == 1:  # Bias vector
+                        fisher_diag = torch.abs(fisher)
+                        preconditioned_grad = grad / (fisher_diag + self.kfac_damping)
+                    else:
+                        continue
+                    
+                    # Update gradient with preconditioning
+                    param.grad.data = preconditioned_grad
+        
+    def get_current_threshold(self):
+        """Get the current clipping threshold."""
+        return self.current_max_norm
+        
+    def reset(self):
+        """Reset the clipper state."""
+        self.grad_norm_history.clear()
+        self.step_count = 0
+        self.current_max_norm = self.initial_max_norm

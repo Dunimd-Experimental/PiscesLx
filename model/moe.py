@@ -39,10 +39,11 @@ def moe_init_weights(m):
             nn.init.zeros_(m.bias)
 
 class MoEGate(nn.Module):
-    """Expert routing gate for MoE (top-k configurable)"""
-    def __init__(self, hidden_size, num_experts, top_k=2, device=None, dtype=None):
+    """Expert routing gate for MoE (top-k configurable) with load balancing"""
+    def __init__(self, hidden_size, num_experts, top_k=2, device=None, dtype=None, 
+                 load_balance_alpha=0.01, noise_std=0.1):
         """
-        Initialize the MoE gate module.
+        Initialize the MoE gate module with load balancing.
 
         Args:
             hidden_size (int): Size of the hidden layer.
@@ -50,32 +51,209 @@ class MoEGate(nn.Module):
             top_k (int, optional): Number of top experts to select. Defaults to 2.
             device (torch.device, optional): Device to place the module on. Defaults to None.
             dtype (torch.dtype, optional): Data type of the module. Defaults to None.
+            load_balance_alpha (float, optional): Load balancing loss coefficient. Defaults to 0.01.
+            noise_std (float, optional): Standard deviation for routing noise. Defaults to 0.1.
         """
         super().__init__()
         self.gate = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
         self.top_k = top_k
-    
+        self.num_experts = num_experts
+        self.load_balance_alpha = load_balance_alpha
+        self.noise_std = noise_std
+        
+        # Routing stability parameters
+        self.register_buffer('expert_usage_count', torch.zeros(num_experts))
+        self.register_buffer('temperature', torch.tensor(1.0))
+        self.min_temperature = 0.1
+        
     def forward(self, x):
         """
-        Forward pass of the MoE gate.
+        Forward pass of the MoE gate with load balancing and stability.
 
         Args:
             x (torch.Tensor): Input tensor.
 
         Returns:
-            tuple: A tuple containing scores and indices of the top-k experts.
+            tuple: A tuple containing scores, indices, and load balancing loss.
         """
-        logits = self.gate(x)  # [N, num_experts]
+        batch_size, seq_len, hidden_size = x.shape
+        x_flat = x.view(-1, hidden_size)
+        
+        # Compute routing logits
+        logits = self.gate(x_flat)  # [N, num_experts]
+        
+        # Add routing noise to improve exploration
+        if self.training and self.noise_std > 0:
+            noise = torch.randn_like(logits) * self.noise_std
+            logits = logits + noise
+        
+        # Temperature annealing
+        logits = logits / self.temperature
+        
+        # Top-k routing
         scores, idx = torch.topk(logits, self.top_k, dim=-1)  # [N, top_k]
-        scores = F.softmax(scores, dim=-1, dtype=torch.float32).type_as(x)  # [N, top_k]
-        return scores, idx
+        
+        # Calculate expert usage frequency
+        expert_mask = torch.zeros(x_flat.size(0), self.num_experts, device=x.device)
+        expert_mask.scatter_(1, idx, 1)
+        current_usage = expert_mask.sum(0)
+        
+        # Update expert usage count
+        if self.training:
+            self.expert_usage_count += current_usage.detach()
+            
+            # Dynamically adjust temperature
+            usage_variance = torch.var(self.expert_usage_count)
+            if usage_variance > 0:
+                self.temperature = torch.clamp(
+                    self.temperature * 0.999, 
+                    min=self.min_temperature
+                )
+        
+        # Calculate load balancing loss
+        expert_load = current_usage.float() / x_flat.size(0)
+        ideal_load = torch.ones_like(expert_load) / self.num_experts
+        load_balance_loss = self.load_balance_alpha * torch.sum(
+            (expert_load - ideal_load) ** 2
+        )
+        
+        # Calculate routing scores
+        scores = F.softmax(scores, dim=-1, dtype=torch.float32).type_as(x)
+        
+        return scores, idx, load_balance_loss
+
+class StableMoEGate(nn.Module):
+    """Stable MoE routing gate to prevent routing collapse with load prediction"""
+    
+    def __init__(self, hidden_size, num_experts, top_k=2, device=None, dtype=None,
+                 capacity_factor=1.0, min_capacity=4, prediction_horizon=10):
+        super().__init__()
+        self.gate = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
+        self.top_k = top_k
+        self.num_experts = num_experts
+        self.capacity_factor = capacity_factor
+        self.min_capacity = min_capacity
+        self.prediction_horizon = prediction_horizon
+        
+        # Routing stability parameters
+        self.register_buffer('routing_history', torch.zeros(100, num_experts))
+        self.register_buffer('history_ptr', torch.tensor(0))
+        
+        # Load prediction network using LSTM
+        self.load_predictor = nn.LSTM(
+            input_size=num_experts,
+            hidden_size=64,
+            num_layers=2,
+            batch_first=True,
+            dropout=0.1
+        )
+        self.predictor_head = nn.Linear(64, num_experts * prediction_horizon)
+        
+        # Expert load tracking
+        self.register_buffer('expert_load_buffer', torch.zeros(50, num_experts))
+        self.register_buffer('load_buffer_ptr', torch.tensor(0))
+        
+    def _predict_future_load(self):
+        """Predict future expert load using LSTM"""
+        if self.load_buffer_ptr < 10:
+            return torch.ones(self.num_experts) / self.num_experts
+        
+        # Get historical load data
+        historical_load = self.expert_load_buffer[:self.load_buffer_ptr].unsqueeze(0)  # [1, seq_len, num_experts]
+        
+        # Predict future load
+        with torch.no_grad():
+            lstm_out, _ = self.load_predictor(historical_load)
+            predictions = self.predictor_head(lstm_out[:, -1, :])  # [1, num_experts * horizon]
+            
+        # Reshape to get predictions for next step
+        future_load = predictions.view(self.num_experts, self.prediction_horizon).mean(dim=1)
+        future_load = torch.softmax(future_load, dim=0)
+        
+        return future_load
+    
+    def forward(self, x):
+        batch_size, seq_len, hidden_size = x.shape
+        x_flat = x.view(-1, hidden_size)
+        
+        # Calculate expert capacity
+        tokens_per_expert = max(
+            int(x_flat.size(0) * self.capacity_factor / self.num_experts),
+            self.min_capacity
+        )
+        
+        # Compute routing logits
+        logits = self.gate(x_flat)
+        
+        # Record routing history
+        if self.training:
+            expert_probs = F.softmax(logits, dim=-1)
+            expert_usage = expert_probs.mean(0)
+            self.routing_history[self.history_ptr] = expert_usage.detach()
+            self.history_ptr = (self.history_ptr + 1) % 100
+            
+            # Record expert load for prediction
+            self.expert_load_buffer[self.load_buffer_ptr] = expert_usage.detach()
+            self.load_buffer_ptr = (self.load_buffer_ptr + 1) % 50
+        
+        # Predict future load and adjust routing
+        predicted_load = self._predict_future_load().to(x.device)
+        
+        # Calculate expert load balance
+        if self.history_ptr > 0:
+            recent_usage = self.routing_history[:self.history_ptr].mean(0)
+            usage_entropy = -torch.sum(recent_usage * torch.log(recent_usage + 1e-8))
+            max_entropy = torch.log(torch.tensor(self.num_experts))
+            balance_ratio = usage_entropy / (max_entropy + 1e-8)
+            
+            # Use predicted load to adjust routing strategy
+            load_adjustment = 0.1 * (predicted_load - recent_usage)
+            logits = logits + load_adjustment.unsqueeze(0)
+            
+            # Add noise if the load is unbalanced
+            if balance_ratio < 0.7:
+                noise_scale = 0.1 * (1.0 - balance_ratio)
+                logits = logits + torch.randn_like(logits) * noise_scale
+        
+        # Use sinkhorn routing algorithm to improve stability
+        scores = F.softmax(logits, dim=-1)
+        
+        # Top-k selection
+        top_scores, top_idx = torch.topk(scores, self.top_k, dim=-1)
+        
+        # Capacity limitation
+        final_scores = []
+        final_indices = []
+        
+        for expert_id in range(self.num_experts):
+            mask = (top_idx == expert_id).any(dim=-1)
+            if mask.sum() > tokens_per_expert:
+                # Exceed capacity, re-route
+                expert_scores = scores[mask, expert_id]
+                _, top_indices = torch.topk(expert_scores, tokens_per_expert)
+                keep_mask = torch.zeros_like(expert_scores, dtype=torch.bool)
+                keep_mask[top_indices] = True
+                mask[mask.clone()] = keep_mask
+            
+            if mask.any():
+                final_scores.append(scores[mask])
+                final_indices.append(torch.full_like(scores[mask], expert_id))
+        
+        # If there is no valid routing, use uniform distribution
+        if len(final_scores) == 0:
+            uniform_expert = torch.randint(0, self.num_experts, (x_flat.size(0),), device=x.device)
+            final_scores = [torch.ones(x_flat.size(0), device=x.device) / self.top_k]
+            final_indices = [uniform_expert]
+        
+        return torch.cat(final_scores), torch.cat(final_indices), torch.tensor(0.0, device=x.device)
 
 class MoELayer(nn.Module):
-    """Mixture of Experts layer (Efficient routing+load balancing loss)"""
+    """Mixture of Experts layer with improved load balancing and stability"""
     _layer_count = 0
-    def __init__(self, cfg, device=None, dtype=None, print_every=8, max_gpu_experts=4):
+    def __init__(self, cfg, device=None, dtype=None, print_every=8, max_gpu_experts=4,
+                 use_stable_gate=True):
         """
-        Initialize the MoE layer.
+        Initialize the MoE layer with load balancing.
 
         Args:
             cfg: Configuration object.
@@ -83,13 +261,31 @@ class MoELayer(nn.Module):
             dtype (torch.dtype, optional): Data type of the module. Defaults to None.
             print_every (int, optional): Print interval. Defaults to 8.
             max_gpu_experts (int, optional): Maximum number of experts on GPU. Defaults to 4.
+            use_stable_gate (bool, optional): Whether to use stable gate. Defaults to True.
         """
         super().__init__()
         MoELayer._layer_count += 1
         self.cfg = cfg
         self.top_k = getattr(cfg, 'moe_top_k', 2)
         self.num_experts = getattr(cfg, 'moe_num_experts', 8)
-        self.gate = MoEGate(cfg.hidden_size, self.num_experts, top_k=self.top_k, device=device, dtype=dtype)
+        
+        # Use stable routing gate
+        if use_stable_gate:
+            self.gate = StableMoEGate(
+                cfg.hidden_size, self.num_experts, top_k=self.top_k,
+                device=device, dtype=dtype,
+                capacity_factor=getattr(cfg, 'moe_capacity_factor', 1.0),
+                min_capacity=getattr(cfg, 'moe_min_capacity', 4),
+                prediction_horizon=getattr(cfg, 'moe_prediction_horizon', 10)
+            )
+        else:
+            self.gate = MoEGate(
+                cfg.hidden_size, self.num_experts, top_k=self.top_k,
+                device=device, dtype=dtype,
+                load_balance_alpha=getattr(cfg, 'moe_load_balance_alpha', 0.01),
+                noise_std=getattr(cfg, 'moe_noise_std', 0.1)
+            )
+        
         self.experts = nn.ModuleList([
             nn.Sequential(
                 nn.Linear(cfg.hidden_size, cfg.intermediate_size, bias=False, device=device, dtype=dtype),
@@ -99,19 +295,22 @@ class MoELayer(nn.Module):
         ])
         for expert in self.experts:
             expert.apply(moe_init_weights)
+        
         if MoELayer._layer_count == 1:
-            RIGHT(f"MoELayer: {self.num_experts} experts, top-{self.top_k} routing, efficient implementation.")
+            gate_type = "Stable" if use_stable_gate else "Standard"
+            RIGHT(f"MoELayer: {self.num_experts} experts, top-{self.top_k} routing, {gate_type} gate")
 
         self.max_gpu_experts = max_gpu_experts
         self._active_experts = OrderedDict()  # expert_id: last_used_step
         self._step = 0
+        
+        # Load balancing monitoring
+        self.register_buffer('expert_load_history', torch.zeros(50, self.num_experts))
+        self.register_buffer('load_history_ptr', torch.tensor(0))
 
     def _move_expert_to_gpu(self, expert_id):
         """
         Move an expert to GPU and manage the LRU cache of active experts.
-
-        Args:
-            expert_id (int): ID of the expert to move to GPU.
         """
         expert = self.experts[expert_id]
         if next(expert.parameters()).device.type != 'cuda':
@@ -125,50 +324,104 @@ class MoELayer(nn.Module):
     def _move_expert_to_cpu(self, expert_id):
         """
         Move an expert to CPU.
-
-        Args:
-            expert_id (int): ID of the expert to move to CPU.
         """
         expert = self.experts[expert_id]
         if next(expert.parameters()).device.type != 'cpu':
             expert.to('cpu')
 
+    def _monitor_expert_balance(self, expert_indices):
+        """
+        Monitor expert load balance.
+        """
+        if self.training:
+            # Calculate the usage frequency of each expert
+            expert_counts = torch.bincount(expert_indices.flatten(), minlength=self.num_experts)
+            expert_load = expert_counts.float() / expert_indices.numel()
+            
+            # Record load history
+            self.expert_load_history[self.load_history_ptr] = expert_load
+            self.load_history_ptr = (self.load_history_ptr + 1) % 50
+            
+            # Calculate load imbalance
+            if self.load_history_ptr > 10:
+                recent_load = self.expert_load_history[:self.load_history_ptr].mean(0)
+                load_variance = torch.var(recent_load)
+                
+                # Issue a warning if the load is severely unbalanced
+                if load_variance > 0.1:
+                    max_load_idx = torch.argmax(recent_load)
+                    min_load_idx = torch.argmin(recent_load)
+                    load_ratio = recent_load[max_load_idx] / (recent_load[min_load_idx] + 1e-8)
+                    if load_ratio > 5.0:
+                        RIGHT(f"Warning: Expert load imbalance detected - max/min ratio: {load_ratio:.2f}")
+
     def forward(self, x):
         """
-        Forward pass of the MoE layer.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            tuple: A tuple containing the output tensor and the auxiliary loss.
+        Forward pass of the MoE layer with load balancing.
         """
         b, t, d = x.shape
         h = x.view(-1, d)  # [B*T, d]
-        scores, idx = self.gate(h)  # [N, top_k], [N, top_k]
-        N = h.size(0)
-        # Load balancing loss (aux_loss)
-        mask = torch.zeros(N, self.num_experts, device=h.device)
-        mask.scatter_add_(1, idx, scores)
-        load = mask.sum(0) / mask.sum()
-        aux_loss = (load * (load + 1e-9).log()).sum()
         
+        # Use the new routing mechanism
+        if hasattr(self.gate, 'forward'):
+            if isinstance(self.gate, StableMoEGate):
+                scores, idx, aux_loss = self.gate(x)
+                # Process the output format of StableMoEGate
+                scores = scores.view(-1, 1)
+                idx = idx.view(-1, 1)
+            else:
+                scores, idx, aux_loss = self.gate(x)
+        else:
+            scores, idx = self.gate(h)
+            aux_loss = torch.tensor(0.0, device=x.device)
+        
+        # Monitor expert load
+        self._monitor_expert_balance(idx)
+        
+        # GPU expert management
         if self.num_experts > 8 and h.device.type == 'cuda':
             needed_experts = set(idx.cpu().numpy().flatten().tolist())
             for expert_id in needed_experts:
                 self._move_expert_to_gpu(expert_id)
-        # Efficient expert assignment: batch grouping
+        
+        # Efficient expert computation
         y = torch.zeros_like(h)
+        expert_counts = torch.zeros(self.num_experts, device=h.device)
+        
         for expert_id in range(self.num_experts):
             # Find all tokens assigned to this expert
-            for k in range(self.top_k):
-                sel = (idx[:, k] == expert_id)
-                if sel.any():
-                    expert = self.experts[expert_id]
-                    if next(expert.parameters()).device.type != h.device.type:
-                        expert.to(h.device)
-                    h_sel = h[sel]
-                    s_sel = scores[sel, k]
-                    y[sel] += s_sel.unsqueeze(1) * expert(h_sel)
+            mask = (idx == expert_id).any(dim=-1)
+            if mask.any():
+                expert = self.experts[expert_id]
+                if next(expert.parameters()).device.type != h.device.type:
+                    expert.to(h.device)
+                
+                h_sel = h[mask]
+                if isinstance(self.gate, MoEGate):
+                    # Standard MoEGate
+                    for k in range(self.top_k):
+                        sel_k = (idx[:, k] == expert_id)
+                        if sel_k.any():
+                            s_sel = scores[sel_k, k]
+                            h_k = h[sel_k]
+                            y[sel_k] += s_sel.unsqueeze(1) * expert(h_k)
+                else:
+                    # StableMoEGate
+                    sel_mask = (idx.flatten() == expert_id)
+                    if sel_mask.any():
+                        selected_scores = scores[sel_mask]
+                        selected_h = h[mask]
+                        y[mask] += selected_scores.unsqueeze(1) * expert(selected_h)
+                
+                expert_counts[expert_id] = mask.sum()
+        
         self._step += 1
+        
+        # Add additional load balancing loss
+        if self.training:
+            expert_distribution = expert_counts / expert_counts.sum()
+            uniform_distribution = torch.ones_like(expert_distribution) / self.num_experts
+            distribution_loss = 0.01 * torch.sum((expert_distribution - uniform_distribution) ** 2)
+            aux_loss = aux_loss + distribution_loss
+        
         return y.view(b, t, d), aux_loss

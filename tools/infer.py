@@ -279,6 +279,12 @@ def infer(args):
                 
                 if any(t == tokenizer.eos_token_id for t in generated_ids[-len(draft_tokens)-1:]):
                     break
+                
+                # Clear cache after each iteration to prevent memory explosion
+                if torch.cuda.is_available():
+                    del draft_tokens
+                    torch.cuda.empty_cache()
+                    
         else:
             # Perform standard generation
             for _ in range(max_gen_len):
@@ -313,6 +319,10 @@ def infer(args):
                     break
                 generated_ids.append(next_token.item())
                 cur_input = torch.cat([cur_input, next_token], dim=1)
+                
+                # Clear cache after each iteration to prevent memory explosion
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
     output_ids = input_ids[0].tolist() + generated_ids
     generated_text = tokenizer.decode(output_ids, skip_special_tokens=True)
     

@@ -36,6 +36,15 @@ def setup(args):
         None
     """
     RIGHT("Pisces auto environment setup...")
+    
+    # Create modelscope cache directory if not exists
+    modelscope_dir = os.path.join(os.getcwd(), "modelscope")
+    if not os.path.exists(modelscope_dir):
+        os.makedirs(modelscope_dir, exist_ok=True)
+        RIGHT(f"Created ModelScope cache directory: {modelscope_dir}")
+    else:
+        RIGHT(f"ModelScope cache directory already exists: {modelscope_dir}")
+    
     # Get the current Python interpreter path
     py_exec = sys.executable
     # Define the virtual environment directory path

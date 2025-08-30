@@ -104,39 +104,104 @@ def dataset(args=None):
         c_rescan, c_arrow = st.columns([1, 1])
     with c_rescan:
         if st.button(t("btn.rescan")):
-            st.cache_data.clear()
-            st.rerun()
+            try:
+                st.cache_data.clear()
+                if "file_cache" in st.session_state:
+                    del st.session_state.file_cache
+                scan_keys = [k for k in list(st.session_state.keys()) if k.startswith("scan_")]
+                for key in scan_keys:
+                    del st.session_state[key]
+                st.rerun()
+            except Exception as rescan_error:
+                st.error(f"Re-scan failed: {str(rescan_error)}")
+                st.info("Please refresh the page manually")
     with c_arrow:
         if st.button(t("btn.convert_arrow")):
             if not os.path.exists(path_input):
                 st.warning(t("warn.path_missing"))
             else:
                 log_box = st.expander(t("exp.convert_log"), expanded=True)
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                conversion_log = []
                 def _progress_cb(level: str, message: str):
                     if level == "error":
                         log_box.error(message)
                     elif level == "success":
                         log_box.success(message)
+                        progress_bar.progress(1.0)
+                        status_text.text("Conversion complete")
                     elif level == "debug":
                         log_box.write(message)
                     else:
                         log_box.info(message)
+                        if "Converting" in message:
+                            try:
+                                parts = message.split(" ")
+                                current = int(parts[1])
+                                total = int(parts[3])
+                                progress = current / max(total, 1)
+                                progress_bar.progress(progress)
+                                status_text.text(message)
+                                conversion_log.append({"step": current, "total": total, "file": "unknown"})
+                            except:
+                                pass
                 with st.spinner(t("spinner.converting_arrow")):
                     old_cwd = os.getcwd()
                     try:
                         os.chdir(path_input)
                         arrow_to_json(progress_cb=_progress_cb)
                         st.success(t("success.arrow_done"))
+                        with st.expander("Conversion Details"):
+                            st.json(conversion_log)
+                        if "arrow_cache" in st.session_state:
+                            del st.session_state.arrow_cache
                     except Exception as e:
                         st.error(t("error.convert_failed").format(err=str(e)))
+                        if "memory" in str(e).lower():
+                            st.warning("Memory issue detected. Try converting smaller batches.")
+                        elif "permission" in str(e).lower():
+                            st.warning("Permission denied. Check file access rights.")
                     finally:
                         os.chdir(old_cwd)
 
-    # Collect all JSON/JSONL files in the input path
-    json_files = collect_json_files(path_input)
+    # Advanced file collection with multi-format support and error recovery
+    json_files = []
+    try:
+        json_files = collect_json_files(path_input)
+    except Exception as e:
+        st.error(f"File collection failed: {str(e)}")
+        
+        # Enhanced file discovery with fallback patterns
+        try:
+            import glob
+            patterns = [
+                "**/*.json", "**/*.jsonl", "**/*.ndjson",
+                "**/*.csv", "**/*.tsv", "**/*.parquet"
+            ]
+            
+            for pattern in patterns:
+                files = glob.glob(os.path.join(path_input, pattern), recursive=True)
+                json_files.extend(files)
+            
+            # Remove duplicates and sort
+            json_files = sorted(list(set(json_files)))
+            
+        except Exception as fallback_error:
+            st.error(f"Fallback file discovery failed: {str(fallback_error)}")
+            json_files = []
+    
     if not json_files:
         st.warning(t("warn.no_files").format(path=path_input))
         st.info(t("info.place_files"))
+        
+        # Enhanced guidance with path validation
+        if os.path.exists(path_input):
+            files_found = os.listdir(path_input)
+            st.info(f"Directory contains: {files_found[:10]}..." if len(files_found) > 10 else f"Directory contains: {files_found}")
+        else:
+            st.error(f"Path does not exist: {path_input}")
+        
         st.stop()
 
     # File selection logic
@@ -182,30 +247,62 @@ def dataset(args=None):
     # Derive a stable per-file UI key suffix
     base_key = hash(src_path) % 100000
 
-    # Load settings once and react to changes (including manual YAML edits)
+    # Advanced settings management with validation and recovery
     settings = get_settings()
-    # Allow session-level override (Apply without saving)
-    _ov = st.session_state.get("settings_override")
-    if isinstance(_ov, dict):
+    
+    # Enhanced settings validation and repair
+    try:
+        # Validate settings integrity
+        if not hasattr(settings, 'dev_mode'):
+            settings.dev_mode = False
+        if not hasattr(settings, 'func_preview_default'):
+            settings.func_preview_default = True
+        if not hasattr(settings, 'remember_func_per_file'):
+            settings.remember_func_per_file = False
+            
+        # Allow session-level override with validation
+        _ov = st.session_state.get("settings_override")
+        if isinstance(_ov, dict):
+            try:
+                settings.dev_mode = bool(_ov.get("dev_mode", settings.dev_mode))
+                settings.func_preview_default = bool(_ov.get("func_preview_default", settings.func_preview_default))
+                settings.remember_func_per_file = bool(_ov.get("remember_func_per_file", settings.remember_func_per_file))
+            except Exception as override_error:
+                st.error(f"Settings override failed: {str(override_error)}")
+                
+    except Exception as settings_error:
+        st.error(f"Settings system error: {str(settings_error)}")
+        
+        # Emergency settings reset
         try:
-            settings.dev_mode = bool(_ov.get("dev_mode", settings.dev_mode))
-            settings.func_preview_default = bool(_ov.get("func_preview_default", settings.func_preview_default))
-            settings.remember_func_per_file = bool(_ov.get("remember_func_per_file", settings.remember_func_per_file))
-        except Exception:
-            pass
+            default_settings = AppSettings()
+            settings = default_settings
+            st.warning("Settings reset to defaults due to corruption")
+        except Exception as reset_error:
+            st.error(f"Settings reset failed: {str(reset_error)}")
+            settings = type('EmergencySettings', (), {
+                'dev_mode': False,
+                'func_preview_default': True,
+                'remember_func_per_file': False
+            })()
+    
     settings_sig = (settings.dev_mode, settings.func_preview_default, settings.remember_func_per_file)
     prev_sig = st.session_state.get("settings_sig")
     if prev_sig != settings_sig:
         try:
-            # Clear keys so new defaults and scoping take effect immediately
-            for k in list(st.session_state.keys()):
-                if k.startswith("func_input_") or k.startswith("func_preview_enabled_"):
-                    st.session_state.pop(k, None)
+            # Enhanced cache clearing with error handling
+            keys_to_clear = [key for key in list(st.session_state.keys()) 
+                           if key.startswith(("func_input_", "func_preview_enabled_"))]
+            for key in keys_to_clear:
+                try:
+                    st.session_state.pop(key, None)
+                except KeyError:
+                    pass  # Already removed
             # Also clear possible globals
             st.session_state.pop("func_input_global", None)
             st.session_state.pop("func_preview_enabled_global", None)
-        except Exception:
-            pass
+        except Exception as clear_error:
+            st.error(f"Cache clearing failed: {str(clear_error)}")
         st.session_state["settings_sig"] = settings_sig
 
 

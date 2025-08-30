@@ -32,6 +32,13 @@ from .clean import DatasetCleaner
 from datasets import load_from_disk
 from utils.log import RIGHT, DEBUG, ERROR
 
+# Configure ModelScope cache to use separate directory from data_cache
+MODELSCOPE_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "modelscope")
+os.environ['MODELSCOPE_CACHE'] = MODELSCOPE_CACHE_DIR
+os.environ['MODELSCOPE_HUB_CACHE'] = MODELSCOPE_CACHE_DIR
+os.environ['MODELSCOPE_DATASETS_CACHE'] = os.path.join(MODELSCOPE_CACHE_DIR, "datasets")
+RIGHT(f"ModelScope cache configured to: {MODELSCOPE_CACHE_DIR}")
+
 # Handle modelscope import gracefully
 try:
     from modelscope.msdatasets import MsDataset
@@ -239,14 +246,16 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
     
         DEBUG("Cleaning up system cache...")
 
-        modelscope_ds_cache = os.path.expanduser("~/.cache/modelscope/hub/datasets")
+        # Use the configured ModelScope cache directory
         cache_dirs = [
             os.path.join(DATA, ".cache"),
             os.path.join(DATA, "tmp"),
             os.path.join(DATA, "temp"),
             os.path.join(DATA, "cache"),
             os.path.join(DATA, "downloads"),
-            modelscope_ds_cache
+            MODELSCOPE_CACHE_DIR,  # Use the configured ModelScope cache
+            os.path.join(MODELSCOPE_CACHE_DIR, "datasets"),
+            os.path.join(MODELSCOPE_CACHE_DIR, "hub")
         ]
         # Remove all available cache directories
         for dir_path in cache_dirs:

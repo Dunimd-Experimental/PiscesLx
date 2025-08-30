@@ -25,9 +25,10 @@ from .moe import MoELayer
 import torch.nn.functional as F
 from .config import PiscesConfig
 from utils.log import  DEBUG, ERROR
-from .reasoner import PiscesReasoner
+from model.h2o_attention import H2OAttention
 from model.moe_dynamic import DynamicMoELayer
 from model.yarn_rope import YaRNRotaryEmbedding
+from .reasoner import PiscesReasoner, MultiModalReasoningEnhancer
 from .multimodal import VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder, AgentEncoder, DynamicModalFusion, CrossModalAttention
 
 def pisces_init_weights(m):
@@ -111,11 +112,12 @@ class RotaryEmbedding(nn.Module):
 
 class Attention(nn.Module):
     """
-    Multi-head attention module with grouped-query attention using flash_attn.
+    Multi-head attention module with H2O support for ultra-long contexts.
+    Supports both standard attention and H2O attention based on sequence length.
     """
     def __init__(self, cfg, device=None, dtype=None):
         """
-        Initialize the Attention layer.
+        Initialize the Attention layer with H2O support.
 
         Args:
             cfg (PiscesConfig): Configuration object.
@@ -128,18 +130,33 @@ class Attention(nn.Module):
         self.n_kv_head = cfg.n_kv_head
         self.head_dim = cfg.hidden_size // cfg.n_head
         self.scale = self.head_dim ** -0.5
-        self.q_proj = nn.Linear(cfg.hidden_size, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype)
-        self.k_proj = nn.Linear(cfg.hidden_size, cfg.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
-        self.v_proj = nn.Linear(cfg.hidden_size, cfg.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
-        self.o_proj = nn.Linear(cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype)
-        self.rope = YaRNRotaryEmbedding(self.head_dim, cfg.max_position_embeddings, cfg.rope_theta, scale=32, device=device)
-        # Attention dropout
-        self.attn_dropout = nn.Dropout(getattr(cfg, 'attention_dropout', 0.0))
+        
+        # Use H2O attention for ultra-long contexts
+        self.use_h2o = cfg.max_position_embeddings > 1000000  # Enable for 1M+ contexts
+        
+        if self.use_h2o:
+            self.h2o_attention = H2OAttention(
+                hidden_size=cfg.hidden_size,
+                num_attention_heads=cfg.n_head,
+                max_position_embeddings=cfg.max_position_embeddings,
+                compression_ratio=getattr(cfg, 'compression_ratio', 8),
+                streaming_window=getattr(cfg, 'streaming_window', 16384),
+                dropout=getattr(cfg, 'attention_dropout', 0.0)
+            )
+        else:
+            # Standard attention components
+            self.q_proj = nn.Linear(cfg.hidden_size, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype)
+            self.k_proj = nn.Linear(cfg.hidden_size, cfg.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
+            self.v_proj = nn.Linear(cfg.hidden_size, cfg.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
+            self.o_proj = nn.Linear(cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype)
+            self.rope = YaRNRotaryEmbedding(self.head_dim, cfg.max_position_embeddings, cfg.rope_theta, scale=32, device=device)
+            self.attn_dropout = nn.Dropout(getattr(cfg, 'attention_dropout', 0.0))
+            
         self.apply(pisces_init_weights)
 
     def forward(self, x, mask, past_key_values=None, use_cache=False):
         """
-        Forward pass of the Attention layer with KV-Cache support.
+        Forward pass of the Attention layer with H2O support.
 
         Args:
             x (torch.Tensor): Input tensor.
@@ -151,7 +168,11 @@ class Attention(nn.Module):
             torch.Tensor: Output tensor after attention operation.
             tuple: Cached key and value tensors (if use_cache=True).
         """
-        # Prefer xformers' memory_efficient_attention; fallback to PyTorch SDPA (>=2.0)
+        if self.use_h2o:
+            # Use H2O attention for ultra-long contexts
+            return self.h2o_attention(x, mask, past_key_values, output_attentions=False, use_cache=use_cache)
+        
+        # Standard attention for shorter contexts
         try:
             from xformers.ops import memory_efficient_attention  # type: ignore
             _use_xformers = True
@@ -235,7 +256,22 @@ class TransformerBlock(nn.Module):
         """
         super().__init__()
         self.attn = Attention(cfg, device=device, dtype=dtype)
-        self.mlp = DynamicMoELayer(cfg, device=device, dtype=dtype)
+        
+        # Use the new stable MoE configuration
+        use_stable_gate = getattr(cfg, 'moe_use_stable_gate', True)
+        if use_stable_gate:
+            # Use the stable routing gate
+            from .moe import MoELayer
+            self.mlp = MoELayer(
+                cfg, device=device, dtype=dtype, 
+                max_gpu_experts=getattr(cfg, 'max_gpu_experts', 4),
+                use_stable_gate=True
+            )
+        else:
+            # Fall back to the dynamic MoE layer
+            from model.moe_dynamic import DynamicMoELayer
+            self.mlp = DynamicMoELayer(cfg, device=device, dtype=dtype)
+            
         self.norm1 = RMSNorm(cfg.hidden_size)
         self.norm2 = RMSNorm(cfg.hidden_size)
         # Pre-Norm layers for stability
@@ -330,7 +366,7 @@ class TransformerBlock(nn.Module):
         return x_out, aux_loss
 
 class PiscesModel(nn.Module):
-    """Main Pisces L1 multimodal model (Aurora architecture) with enhanced stability mechanisms.
+    """Main Pisces L1 multimodal model (Arctic architecture) with enhanced stability mechanisms.
     
     Features:
     - Pre-Norm architecture for improved training stability
@@ -395,6 +431,12 @@ class PiscesModel(nn.Module):
         
         DEBUG("PiscesModel: initializing reasoner...")
         self.reasoner = PiscesReasoner(cfg)
+        # Initialize quantum tokens for reasoning
+        self.reasoner.initialize_quantum_tokens(None)
+        
+        # Multi-modal reasoning enhancer for Arctic architecture
+        DEBUG("PiscesModel: initializing multi-modal reasoning enhancer...")
+        self.mm_reasoning_enhancer = MultiModalReasoningEnhancer(cfg)
         
         DEBUG("PiscesModel: initializing agent...")
         from .multimodal import PiscesAgent
@@ -452,6 +494,10 @@ class PiscesModel(nn.Module):
         
         # 4. Update config
         self.cfg.vocab_size = new_num_tokens
+        
+        # 5. Reinitialize reasoner quantum tokens with new vocabulary size
+        self.reasoner.initialize_quantum_tokens(None)
+        
         # Note: The 'RIGHT' function is not defined, assuming it's a logging function
         try:
             from utils.log import RIGHT

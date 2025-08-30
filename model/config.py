@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 
 @dataclass
 class PiscesConfig:
-    """Configuration for the Pisces L1 model.
+    """Configuration for the Pisces L1 model with MoE load balancing improvements.
     
     Attributes:
         model_type (str): The type of the model, default is "pisces_l1".
@@ -35,6 +35,10 @@ class PiscesConfig:
         n_kv_head (int): The number of key-value attention heads, default is 4.
         moe_num_experts (int): The number of experts in the Mixture of Experts, default is 64.
         moe_top_k (int): The top-k experts to use in Mixture of Experts, default is 2.
+        moe_capacity_factor (float): Capacity factor for expert routing, default is 1.25.
+        moe_load_balance_alpha (float): Load balancing loss coefficient, default is 0.01.
+        moe_noise_std (float): Routing noise standard deviation, default is 0.1.
+        moe_use_stable_gate (bool): Whether to use stable routing gate, default is True.
         intermediate_size (int): The size of the intermediate layer, default is 5632.
         max_position_embeddings (int): The maximum number of position embeddings, default is 8192.
         rope_theta (float): The theta value for RoPE, default is 1e6.
@@ -53,9 +57,16 @@ class PiscesConfig:
     n_layer: int = 24
     n_head: int = 16
     n_kv_head: int = 4
-    moe_num_experts: int = 64
-    moe_top_k: int = 2
-    moe_capacity_factor: float = 1.25
+    
+    # MoE-related configurations
+    moe_num_experts: int = 64  # Number of experts in the Mixture of Experts
+    moe_top_k: int = 2  # Top-k experts to use in Mixture of Experts
+    moe_capacity_factor: float = 1.25  # Capacity factor for expert routing
+    moe_load_balance_alpha: float = 0.01  # Load balancing loss coefficient
+    moe_noise_std: float = 0.1  # Routing noise standard deviation
+    moe_use_stable_gate: bool = True  # Whether to use stable routing gate
+    moe_min_capacity: int = 4  # Minimum capacity
+    
     intermediate_size: int = 5632
     max_position_embeddings: int = 8192
     rope_theta: float = 1e6
@@ -76,6 +87,22 @@ class PiscesConfig:
     use_gradient_checkpointing: bool = True  # Enable gradient checkpointing for memory efficiency
     use_pre_norm: bool = True  # Use Pre-Norm architecture for stability
     attention_dropout: float = 0.0  # Dropout rate for attention layers
+    
+    # Dynamic multimodal fusion configurations
+    enable_dynamic_fusion: bool = True  # Enable dynamic content-based modality weighting
+    fusion_quality_threshold: float = 0.3  # Quality threshold for modality inclusion
+    fusion_dropout: float = 0.1  # Dropout for fusion layers
+    
+    # 3D Spatio-Temporal RoPE configurations for video understanding
+    use_3d_spatio_temporal_rope: bool = False  # Enable 3D spatio-temporal RoPE for video frames
+    max_temporal_frames: int = 64  # Maximum number of temporal frames for 3D RoPE
+    
+    # Long context configurations
+    attention_type: str = "standard"  # Type of attention: standard, streaming_llm, h2o_attention
+    streaming_window: int = 4096  # Window size for streaming attention
+    compression_ratio: int = 4  # Compression ratio for H2O attention
+    use_sliding_window: bool = False  # Enable sliding window attention for long contexts
+    long_factor: int = 32  # Long context scaling factor
     
     @classmethod
     def from_json(cls, path):
