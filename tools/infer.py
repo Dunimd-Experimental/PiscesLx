@@ -19,8 +19,12 @@
 # limitations under the License.
 
 import os
-from utils.log import RIGHT, DEBUG, ERROR
+import asyncio
+import argparse
 from utils.gpu_manager import GPUManager
+from utils.log import RIGHT, DEBUG, ERROR
+from model.mcp.translator import MCPTranslationLayer
+from tools.mcp import start_mcp_server, check_mcp_server_status
 
 def setup_inference_device(device_pref):
     """
@@ -56,9 +60,66 @@ def setup_inference_device(device_pref):
     RIGHT(f"Using device: {device}")
     return device
 
+class VLLMEngine:
+    """VLLM-based high-performance inference engine for Pisces L1 models."""
+    
+    def __init__(self, model_path, dtype="auto", gpu_memory_utilization=0.9, tensor_parallel_size=1):
+        """
+        Initialize the VLLMEngine instance.
+        
+        Args:
+            model_path (str): Path to the model to be loaded.
+            dtype (str, optional): Data type for the model. Defaults to "auto".
+            gpu_memory_utilization (float, optional): Proportion of GPU memory to use. Defaults to 0.9.
+            tensor_parallel_size (int, optional): Number of GPUs for tensor parallelism. Defaults to 1.
+        """
+        try:
+            from vllm import LLM, SamplingParams
+            self.vllm_available = True
+            self.LLM = LLM
+            self.SamplingParams = SamplingParams
+        except ImportError:
+            self.vllm_available = False
+            ERROR("VLLM not available, falling back to native inference")
+            return
+            
+        self.model_path = model_path
+        self.llm = self.LLM(
+            model=model_path,
+            dtype=dtype,
+            gpu_memory_utilization=gpu_memory_utilization,
+            tensor_parallel_size=tensor_parallel_size
+        )
+
+    def infer(self, prompt, temperature=0.7, max_tokens=512, top_p=0.95, stop=None):
+        """
+        Generate text using VLLM engine.
+        
+        Args:
+            prompt (str): Input prompt for text generation.
+            temperature (float, optional): Sampling temperature. Defaults to 0.7.
+            max_tokens (int, optional): Maximum tokens to generate. Defaults to 512.
+            top_p (float, optional): Nucleus sampling probability. Defaults to 0.95.
+            stop (list, optional): Stop sequences. Defaults to None.
+            
+        Returns:
+            str: Generated text or None if VLLM unavailable.
+        """
+        if not self.vllm_available:
+            return None
+            
+        sampling_params = self.SamplingParams(
+            temperature=temperature,
+            max_tokens=max_tokens,
+            top_p=top_p,
+            stop=stop
+        )
+        outputs = self.llm.generate([prompt], sampling_params)
+        return outputs[0].outputs[0].text
+
 def infer(args):
     """
-    Perform inference using the Pisces model.
+    Perform inference using the Pisces model with integrated MCP server.
 
     Args:
         args (argparse.Namespace): Command-line arguments containing configuration parameters.
@@ -73,7 +134,22 @@ def infer(args):
     from transformers import BitsAndBytesConfig
     from torchvision.transforms import functional as TF
     import torch.nn.functional as F
-    RIGHT("Starting Pisces L1 Inference ...")
+    
+    RIGHT("Starting Pisces L1 Inference with MCP Integration...")
+    
+    # Step 1: Auto-start MCP server if not running
+    mcp_host = getattr(args, 'mcp_host', 'localhost')
+    mcp_port = getattr(args, 'mcp_port', 8080)
+    
+    mcp_status = check_mcp_server_status(mcp_host, mcp_port)
+    if not mcp_status["running"]:
+        RIGHT("Starting MCP server for tool calls...")
+        start_success = start_mcp_server(mcp_host, mcp_port, background=True)
+        if not start_success:
+            ERROR("Failed to start MCP server, continuing without tool support")
+    else:
+        RIGHT(f"MCP server already running: {mcp_status['message']}")
+    
     device = setup_inference_device("auto")
     
     # Get the model size from arguments, default to "0.5B"
@@ -151,6 +227,73 @@ def infer(args):
     else:
         model = model.to(device).eval()
         ERROR("No model file provided, using random weights")
+    # Check if VLLM mode is requested
+    use_vllm = getattr(args, 'use_vllm', False) and args.ckpt and os.path.exists(args.ckpt)
+    vllm_engine = None
+    
+    if use_vllm:
+        try:
+            RIGHT("Initializing VLLM engine...")
+            vllm_engine = VLLMEngine(
+                model_path=args.ckpt,
+                dtype=getattr(args, 'vllm_dtype', 'auto'),
+                gpu_memory_utilization=getattr(args, 'vllm_gpu_mem', 0.9),
+                tensor_parallel_size=getattr(args, 'vllm_tp_size', 1)
+            )
+            if vllm_engine.vllm_available:
+                RIGHT("VLLM engine initialized successfully")
+            else:
+                use_vllm = False
+                RIGHT("VLLM not available, using native inference")
+        except Exception as e:
+            ERROR(f"Failed to initialize VLLM: {e}, using native inference")
+            use_vllm = False
+    
+    if use_vllm:
+        # VLLM inference path
+        RIGHT("Using VLLM for high-performance inference...")
+        generated_text = vllm_engine.infer(
+            prompt=args.prompt,
+            temperature=getattr(args, 'temperature', 0.7),
+            max_tokens=getattr(args, 'max_length', 512),
+            top_p=getattr(args, 'top_p', 0.95),
+            stop=getattr(args, 'stop', None)
+        )
+        
+        if generated_text:
+            # Process agent calls via MCP if present
+            try:
+                mcp_status = check_mcp_server_status(mcp_host, mcp_port)
+                if mcp_status["running"] and "<agent>" in generated_text:
+                    RIGHT("\n" + "="*50)
+                    RIGHT("Processing Agent Calls via MCP...")
+                    RIGHT("="*50)
+                    
+                    async def process_mcp_output():
+                        async with MCPTranslationLayer(f"http://{mcp_host}:{mcp_port}") as translator:
+                            return await translator.process_model_output(generated_text)
+                    
+                    processed_text = asyncio.run(process_mcp_output())
+                    RIGHT("\n" + "="*50)
+                    RIGHT("Final Response (with Tool Results):")
+                    RIGHT("="*50)
+                    RIGHT(processed_text)
+                    return
+                else:
+                    RIGHT("\n" + "="*50)
+                    RIGHT("Generated Response:")
+                    RIGHT("="*50)
+                    RIGHT(generated_text)
+                    return
+            except Exception as e:
+                ERROR(f"Error processing MCP calls: {e}")
+                RIGHT("\n" + "="*50)
+                RIGHT("Generated Response (MCP processing failed):")
+                RIGHT("="*50)
+                RIGHT(generated_text)
+                return
+    
+    # Native Pisces inference path
     RIGHT("Loading Pisces BPETokenizer...")
     tokenizer = get_tokenizer()
     RIGHT("Pisces BPETokenizer loaded successfully")
@@ -326,8 +469,72 @@ def infer(args):
     output_ids = input_ids[0].tolist() + generated_ids
     generated_text = tokenizer.decode(output_ids, skip_special_tokens=True)
     
-    RIGHT("\n" + "="*50)
-    RIGHT("Generated Response:")
-    RIGHT("="*50)
-    RIGHT(generated_text)
-    RIGHT("="*50)
+    # Step 2: Process agent calls via MCP if present
+    try:
+        # Check if MCP server is still running
+        mcp_status = check_mcp_server_status(mcp_host, mcp_port)
+        if mcp_status["running"] and "<agent>" in generated_text:
+            RIGHT("\n" + "="*50)
+            RIGHT("Processing Agent Calls via MCP...")
+            RIGHT("="*50)
+            
+            # Use async MCP translation layer
+            import asyncio
+            
+            async def process_mcp_output():
+                async with MCPTranslationLayer(f"http://{mcp_host}:{mcp_port}") as translator:
+                    processed_text = await translator.process_model_output(generated_text)
+                    return processed_text
+            
+            # Run async processing
+            processed_text = asyncio.run(process_mcp_output())
+            
+            RIGHT("\n" + "="*50)
+            RIGHT("Final Response (with Tool Results):")
+            RIGHT("="*50)
+            RIGHT(processed_text)
+            RIGHT("="*50)
+        else:
+            if "<agent>" in generated_text:
+                ERROR("Agent calls detected but MCP server not available")
+            RIGHT("\n" + "="*50)
+            RIGHT("Generated Response:")
+            RIGHT("="*50)
+            RIGHT(generated_text)
+            RIGHT("="*50)
+    except Exception as e:
+        ERROR(f"Error processing MCP calls: {e}")
+        RIGHT("\n" + "="*50)
+        RIGHT("Generated Response (MCP processing failed):")
+        RIGHT("="*50)
+        RIGHT(generated_text)
+        RIGHT("="*50)
+
+
+def main():
+    """Main entry point with argument parsing."""
+    parser = argparse.ArgumentParser(description="Pisces L1 Unified Inference Engine")
+    parser.add_argument("--prompt", type=str, required=True, help="Input prompt for generation")
+    parser.add_argument("--ckpt", type=str, help="Path to model checkpoint")
+    parser.add_argument("--model-size", type=str, default="0.5B", help="Model size (0.5B, 1.5B, 7B, etc.)")
+    parser.add_argument("--image", type=str, help="Path to input image for multimodal inference")
+    parser.add_argument("--max-length", type=int, default=512, help="Maximum tokens to generate")
+    parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
+    parser.add_argument("--top-p", type=float, default=0.95, help="Nucleus sampling probability")
+    parser.add_argument("--use-vllm", action="store_true", help="Use VLLM for high-performance inference")
+    parser.add_argument("--vllm-dtype", type=str, default="auto", help="VLLM data type")
+    parser.add_argument("--vllm-gpu-mem", type=float, default=0.9, help="VLLM GPU memory utilization")
+    parser.add_argument("--vllm-tp-size", type=int, default=1, help="VLLM tensor parallel size")
+    parser.add_argument("--mcp-host", type=str, default="localhost", help="MCP server host")
+    parser.add_argument("--mcp-port", type=int, default=8080, help="MCP server port")
+    parser.add_argument("--stop", nargs="*", help="Stop sequences for generation")
+    parser.add_argument("--speculative", action="store_true", help="Enable speculative decoding")
+    parser.add_argument("--draft-model", type=str, help="Draft model for speculative decoding")
+    parser.add_argument("--spec-gamma", type=int, default=4, help="Speculative decoding gamma value")
+    
+    args = parser.parse_args()
+    infer(args)
+
+
+if __name__ == "__main__":
+    main()

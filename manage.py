@@ -37,13 +37,13 @@ COMMANDS = [
     'version',    # Show current version and changelog
     'changelog',  # Show version history and specific version changelog
     'train',      # Train model
-    'infer',      # Inference
+    'infer',      # Inference with MCP integration
     'check',      # Check GPU/deps
     'monitor',    # System monitor
     'download',   # Download datasets
     'quantize',   # Model quantization
     'benchmark',  # Model evaluation & benchmarking
-    'agent',      # Native agent interface
+    'mcp',        # MCP server operations
     'rlhf',       # RLHF training
     'help',       # Show help for commands
     'dataset',    # Dataset management tool
@@ -82,9 +82,6 @@ def main():
     parser.add_argument('--force_quant', action='store_true', help='Override config to force enable quantization')
     parser.add_argument('--force_lora', action='store_true', help='Override config to force enable LoRA')
     parser.add_argument('--quant_bits', type=int, choices=[2, 4, 8], default=4, help='Quantization bits: 2, 4, or 8 (default: 4)')
-    parser.add_argument('--task', default='', help='[agent] Task to execute')
-    parser.add_argument('--interactive', action='store_true', help='[agent] Interactive agent mode')
-    parser.add_argument('--max-steps', type=int, default=5, help='[agent] Maximum agent steps')
     parser.add_argument('--rlhf', action='store_true', help='Enable RLHF (Reinforcement Learning from Human Feedback)')
     parser.add_argument('--rlhf_dataset', type=str, default='dunimd/human_feedback', help='RLHF human feedback dataset')
     parser.add_argument('--rlhf_lr', type=float, default=1e-5, help='RLHF learning rate')
@@ -94,6 +91,9 @@ def main():
     parser.add_argument('--rlhf_epochs', type=int, default=3, help='RLHF training epochs')
     parser.add_argument('--rlhf_max_samples', type=int, default=1000, help='RLHF maximum number of samples')
     parser.add_argument('--rlhf_max_length', type=int, default=512, help='RLHF maximum sequence length')
+    parser.add_argument('--mcp_host', type=str, default='localhost', help='[mcp] MCP server host')
+    parser.add_argument('--mcp_port', type=int, default=8080, help='[mcp] MCP server port')
+    parser.add_argument('--mcp_action', type=str, choices=['start', 'stop', 'status', 'test'], default='start', help='[mcp] MCP server action')
     args, unknown = parser.parse_known_args()
     
     # Only show version info if not running version or changelog command
@@ -165,6 +165,9 @@ def main():
             run_benchmark(args.benchmark, args.model, args.config)
         else:
             performance_benchmark(args.config, args.seq_len)
+    elif args.command == 'mcp':
+        from tools.mcp import mcp_command
+        mcp_command(args)
     elif args.command == 'rlhf':
         from tools.rlhf import rlhf_train
 
