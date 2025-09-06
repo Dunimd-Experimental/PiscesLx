@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -18,4 +18,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-VERSION = "1.0.0170"
+VERSION = "1.0.0180"

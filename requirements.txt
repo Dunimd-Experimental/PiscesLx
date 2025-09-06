@@ -1,6 +1,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of Pisces L1.
+# The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
 # You may not use this file except in compliance with the License.

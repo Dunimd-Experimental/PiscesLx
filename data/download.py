@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -293,7 +293,7 @@ def _download_worker(args):
     Must be at module level to be picklable by multiprocessing.
     
     Args:
-        args: 包含 (dataset_name, save_name, description) 的元�?
+        args: 包含 (dataset_name, save_name, description) 的元�?
     """
     dataset_name, save_name, description = args
     max_retries = 3

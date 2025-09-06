@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -231,7 +231,7 @@ class MCPTranslationLayer:
                 translated_text = result.get('translated_text', '')
                 source_lang = result.get('source_language', '')
                 target_lang = result.get('target_language', '')
-                return f"🟧\tTranslation completed ({source_lang} �?{target_lang}): {translated_text}"
+                return f"🟧\tTranslation completed ({source_lang} �?{target_lang}): {translated_text}"
             elif operation == "sentiment":
                 sentiment = result.get('sentiment', '')
                 confidence = result.get('confidence', 0)
