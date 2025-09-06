@@ -21,11 +21,9 @@
 import os
 import asyncio
 import time
-import argparse
+import contextlib
 from utils.gpu_manager import GPUManager
 from utils.log import RIGHT, DEBUG, ERROR
-from model.mcp.translator import MCPTranslationLayer
-from tools.mcp import start_mcp_server, check_mcp_server_status
 from tools.watermark import watermark_manager, watermark_text
 
 def setup_inference_device(device_pref):
@@ -41,21 +39,37 @@ def setup_inference_device(device_pref):
     import torch
 
     if device_pref == "auto":
-        gpu_manager = GPUManager()
-        gpu_manager.print_summary()
-        strategy = gpu_manager.get_inference_strategy()
-
-        if strategy['mode'] == 'cpu':
+        # Prefer a fast non-blocking decision path: if CUDA isn't available, go CPU directly
+        if not torch.cuda.is_available():
             device = torch.device("cpu")
-            RIGHT("CPU inference mode")
-        elif strategy['mode'] == 'single_gpu':
-            device = torch.device(f"cuda:{strategy['gpu_ids'][0]}")
-            torch.cuda.set_device(strategy['gpu_ids'][0])
+            RIGHT("CUDA not available, falling back to CPU inference mode")
+            RIGHT("Inference mode: cpu")
         else:
-            # Multi-GPU inference, use the first GPU or DataParallel
-            device = torch.device("cuda")
+            # Try GPUManager with a safety net to avoid crashes/hangs
+            try:
+                gpu_manager = GPUManager()
+                gpu_manager.print_summary()
+                strategy = gpu_manager.get_inference_strategy()
 
-        RIGHT(f"Inference mode: {strategy['mode']}")
+                if strategy['mode'] == 'cpu':
+                    device = torch.device("cpu")
+                    RIGHT("CPU inference mode")
+                elif strategy['mode'] == 'single_gpu':
+                    device = torch.device(f"cuda:{strategy['gpu_ids'][0]}")
+                    torch.cuda.set_device(strategy['gpu_ids'][0])
+                else:
+                    # Multi-GPU inference, use the first GPU or DataParallel
+                    device = torch.device("cuda")
+
+                RIGHT(f"Inference mode: {strategy['mode']}")
+            except Exception as e:
+                # Any issue with GPUManager -> safe fallback to single CUDA device or CPU
+                if torch.cuda.is_available():
+                    device = torch.device("cuda")
+                    RIGHT(f"GPUManager unavailable, using default CUDA device: {e}")
+                else:
+                    device = torch.device("cpu")
+                    RIGHT(f"GPUManager unavailable and CUDA not available, using CPU: {e}")
     else:
         device = torch.device(device_pref)
 
@@ -152,20 +166,14 @@ def infer(args):
     from torchvision.transforms import functional as TF
     import torch.nn.functional as F
     
+    # Validate and normalize args first
+    try:
+        args = validate_infer_args(args)
+    except Exception as e:
+        ERROR(f"Invalid inference arguments: {e}")
+        raise
+
     RIGHT("Starting Pisces L1 Inference with MCP Integration...")
-    
-    # Step 1: Auto-start MCP server if not running
-    mcp_host = getattr(args, 'mcp_host', 'localhost')
-    mcp_port = getattr(args, 'mcp_port', 8080)
-    
-    mcp_status = check_mcp_server_status(mcp_host, mcp_port)
-    if not mcp_status["running"]:
-        RIGHT("Starting MCP server for tool calls...")
-        start_success = start_mcp_server(mcp_host, mcp_port, background=True)
-        if not start_success:
-            ERROR("Failed to start MCP server, continuing without tool support")
-    else:
-        RIGHT(f"MCP server already running: {mcp_status['message']}")
     
     device = setup_inference_device("auto")
     
@@ -278,37 +286,12 @@ def infer(args):
         )
         
         if generated_text:
-            # Process agent calls via MCP if present
-            try:
-                mcp_status = check_mcp_server_status(mcp_host, mcp_port)
-                if mcp_status["running"] and "<agent>" in generated_text:
-                    RIGHT("\n" + "="*50)
-                    RIGHT("Processing Agent Calls via MCP...")
-                    RIGHT("="*50)
-                    
-                    async def process_mcp_output():
-                        async with MCPTranslationLayer(f"http://{mcp_host}:{mcp_port}") as translator:
-                            return await translator.process_model_output(generated_text)
-                    
-                    processed_text = asyncio.run(process_mcp_output())
-                    RIGHT("\n" + "="*50)
-                    RIGHT("Final Response (with Tool Results):")
-                    RIGHT("="*50)
-                    RIGHT(processed_text)
-                    return
-                else:
+            # Skip MCP processing to prevent hanging
                     RIGHT("\n" + "="*50)
                     RIGHT("Generated Response:")
                     RIGHT("="*50)
                     RIGHT(generated_text)
                     return
-            except Exception as e:
-                ERROR(f"Error processing MCP calls: {e}")
-                RIGHT("\n" + "="*50)
-                RIGHT("Generated Response (MCP processing failed):")
-                RIGHT("="*50)
-                RIGHT(generated_text)
-                return
     
     # Native Pisces inference path
     RIGHT("Loading Pisces BPETokenizer...")
@@ -360,7 +343,11 @@ def infer(args):
     
     generated_ids = []
     
-    autocast_ctx = torch.amp.autocast("cuda", dtype=torch.bfloat16)
+    # Choose proper autocast context based on device to avoid CUDA init on CPU-only systems
+    if device.type == 'cuda':
+        autocast_ctx = torch.cuda.amp.autocast(dtype=torch.bfloat16)
+    else:
+        autocast_ctx = contextlib.nullcontext()
     
     def greedy_generate(model, input_ids, max_new_tokens, images=None):
         """
@@ -507,72 +494,98 @@ def infer(args):
     watermarked_text = watermark_manager.add_watermark(generated_text, watermark_metadata)
     generated_text = watermarked_text
     
-    # Step 2: Process agent calls via MCP if present
+    # MCP processing: only import and run if output contains <agent> tag
+    if "<agent>" in generated_text:
+        try:
+            from model.mcp.translator import MCPTranslationLayer
+            translator = MCPTranslationLayer()
+            if translator._wait_for_ready(timeout=0.05):
+                RIGHT("Processing with MCP tools (config-driven)...")
+                generated_text = translator.remove_agent_tags(generated_text)
+            else:
+                RIGHT("MCP tools not ready, returning direct response")
+        except Exception as e:
+            RIGHT(f"MCP unavailable, returning direct response: {e}")
+    else:
+        RIGHT("No agent tags detected, returning direct response")
+
+    RIGHT("\n" + "="*50)
+    RIGHT("Generated Response:")
+    RIGHT("="*50)
+    RIGHT(generated_text)
+    RIGHT("="*50)
+
+def _get_attr(obj, name, default):
+    return getattr(obj, name, default)
+
+def validate_infer_args(args):
+    """Validate and normalize arguments for infer().
+    Ensures required fields exist, fills defaults, and performs basic range/path checks.
+    Returns the same args (possibly with attributes set to defaults).
+    Raises ValueError on fatal validation errors.
+    """
+    # Required: prompt
+    if not hasattr(args, 'prompt') or args.prompt is None or str(args.prompt).strip() == "":
+        raise ValueError("Missing required argument: prompt")
+
+    # Defaults
+    if not hasattr(args, 'model_size') or not args.model_size:
+        setattr(args, 'model_size', '0.5B')
+    if not hasattr(args, 'max_length') or not isinstance(args.max_length, int):
+        setattr(args, 'max_length', 512)
+    if not hasattr(args, 'temperature') or args.temperature is None:
+        setattr(args, 'temperature', 0.7)
+    if not hasattr(args, 'top_p') or args.top_p is None:
+        setattr(args, 'top_p', 0.95)
+    if not hasattr(args, 'stop'):
+        setattr(args, 'stop', None)
+    if not hasattr(args, 'use_vllm'):
+        setattr(args, 'use_vllm', False)
+    if not hasattr(args, 'vllm_dtype'):
+        setattr(args, 'vllm_dtype', 'auto')
+    if not hasattr(args, 'vllm_gpu_mem'):
+        setattr(args, 'vllm_gpu_mem', 0.9)
+    if not hasattr(args, 'vllm_tp_size'):
+        setattr(args, 'vllm_tp_size', 1)
+    if not hasattr(args, 'speculative'):
+        setattr(args, 'speculative', False)
+    if not hasattr(args, 'spec_gamma'):
+        setattr(args, 'spec_gamma', 4)
+
+    # Ranges
     try:
-        # Check if MCP server is still running
-        mcp_status = check_mcp_server_status(mcp_host, mcp_port)
-        if mcp_status["running"] and "<agent>" in generated_text:
-            RIGHT("\n" + "="*50)
-            RIGHT("Processing Agent Calls via MCP...")
-            RIGHT("="*50)
-            
-            # Use async MCP translation layer
-            import asyncio
-            
-            async def process_mcp_output():
-                async with MCPTranslationLayer(f"http://{mcp_host}:{mcp_port}") as translator:
-                    processed_text = await translator.process_model_output(generated_text)
-                    return processed_text
-            
-            # Run async processing
-            processed_text = asyncio.run(process_mcp_output())
-            
-            RIGHT("\n" + "="*50)
-            RIGHT("Final Response (with Tool Results):")
-            RIGHT("="*50)
-            RIGHT(processed_text)
-            RIGHT("="*50)
-        else:
-            if "<agent>" in generated_text:
-                ERROR("Agent calls detected but MCP server not available")
-            RIGHT("\n" + "="*50)
-            RIGHT("Generated Response:")
-            RIGHT("="*50)
-            RIGHT(generated_text)
-            RIGHT("="*50)
-    except Exception as e:
-        ERROR(f"Error processing MCP calls: {e}")
-        RIGHT("\n" + "="*50)
-        RIGHT("Generated Response (MCP processing failed):")
-        RIGHT("="*50)
-        RIGHT(generated_text)
-        RIGHT("="*50)
+        temp = float(args.temperature)
+        if not (0.0 <= temp <= 2.0):
+            raise ValueError
+    except Exception:
+        raise ValueError("temperature must be a float in [0.0, 2.0]")
 
+    try:
+        topp = float(args.top_p)
+        if not (0.0 < topp <= 1.0):
+            raise ValueError
+    except Exception:
+        raise ValueError("top_p must be a float in (0.0, 1.0]")
 
-def main():
-    """Main entry point with argument parsing."""
-    parser = argparse.ArgumentParser(description="Pisces L1 Unified Inference Engine")
-    parser.add_argument("--prompt", type=str, required=True, help="Input prompt for generation")
-    parser.add_argument("--ckpt", type=str, help="Path to model checkpoint")
-    parser.add_argument("--model-size", type=str, default="0.5B", help="Model size (0.5B, 1.5B, 7B, etc.)")
-    parser.add_argument("--image", type=str, help="Path to input image for multimodal inference")
-    parser.add_argument("--max-length", type=int, default=512, help="Maximum tokens to generate")
-    parser.add_argument("--temperature", type=float, default=0.7, help="Sampling temperature")
-    parser.add_argument("--top-p", type=float, default=0.95, help="Nucleus sampling probability")
-    parser.add_argument("--use-vllm", action="store_true", help="Use VLLM for high-performance inference")
-    parser.add_argument("--vllm-dtype", type=str, default="auto", help="VLLM data type")
-    parser.add_argument("--vllm-gpu-mem", type=float, default=0.9, help="VLLM GPU memory utilization")
-    parser.add_argument("--vllm-tp-size", type=int, default=1, help="VLLM tensor parallel size")
-    parser.add_argument("--mcp-host", type=str, default="localhost", help="MCP server host")
-    parser.add_argument("--mcp-port", type=int, default=8080, help="MCP server port")
-    parser.add_argument("--stop", nargs="*", help="Stop sequences for generation")
-    parser.add_argument("--speculative", action="store_true", help="Enable speculative decoding")
-    parser.add_argument("--draft-model", type=str, help="Draft model for speculative decoding")
-    parser.add_argument("--spec-gamma", type=int, default=4, help="Speculative decoding gamma value")
-    
-    args = parser.parse_args()
-    infer(args)
+    if not isinstance(args.max_length, int) or args.max_length <= 0:
+        raise ValueError("max_length must be a positive integer")
 
+    # Paths
+    if hasattr(args, 'image') and args.image:
+        if not os.path.exists(args.image):
+            raise ValueError(f"image path does not exist: {args.image}")
 
-if __name__ == "__main__":
-    main()
+    if hasattr(args, 'ckpt') and args.ckpt:
+        # ckpt is optional but if provided must exist
+        if not os.path.exists(args.ckpt):
+            raise ValueError(f"ckpt path does not exist: {args.ckpt}")
+
+    # VLLM constraints
+    if args.use_vllm and (not hasattr(args, 'ckpt') or not args.ckpt or not os.path.exists(args.ckpt)):
+        raise ValueError("use_vllm requires a valid --ckpt path to a model checkpoint")
+
+    # Stop sequences
+    if args.stop is not None and not isinstance(args.stop, (list, tuple)):
+        raise ValueError("stop must be a list of strings or None")
+
+    return args

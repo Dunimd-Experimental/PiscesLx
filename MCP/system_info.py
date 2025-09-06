@@ -20,6 +20,7 @@
 
 import socket
 import platform
+import psutil
 from MCP import mcp
 from typing import Dict, Any
 

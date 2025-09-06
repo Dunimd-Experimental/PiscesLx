@@ -35,6 +35,9 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
     Returns:
         A dictionary containing detection results.
     """
+    # Validate inputs
+    _validate_detect_args(text, verbose)
+
     result = {
         "watermark_detected": False,
         "watermark_info": None,
@@ -51,7 +54,7 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
             result["compliance_status"] = "compliant"
 
             if verbose:
-                RIGHTt("Valid watermark detected")
+                RIGHT("Valid watermark detected")
                 print(f"\tModel: {watermark_info.get('model', 'unknown')}")
                 print(f"\tVersion: {watermark_info.get('version', 'unknown')}")
                 print(f"\tGeneration Time: {watermark_info.get('timestamp', 'unknown')}")
@@ -84,6 +87,8 @@ def batch_detect(file_path: str, verbose: bool = False) -> Dict[str, Any]:
     Returns:
         A dictionary containing batch detection results.
     """
+    # Validate inputs
+    _validate_batch_detect_args(file_path, verbose)
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -126,3 +131,20 @@ def batch_detect(file_path: str, verbose: bool = False) -> Dict[str, Any]:
             "error": str(e),
             "compliance_status": "error"
         }
+
+
+def _validate_detect_args(text: str, verbose: bool):
+    if not isinstance(text, str) or text.strip() == "":
+        raise ValueError("text must be a non-empty string")
+    if not isinstance(verbose, bool):
+        raise ValueError("verbose must be a boolean")
+
+
+def _validate_batch_detect_args(file_path: str, verbose: bool):
+    if not isinstance(file_path, str) or file_path.strip() == "":
+        raise ValueError("file_path must be a non-empty string")
+    import os
+    if not os.path.exists(file_path):
+        raise ValueError(f"file_path not found: {file_path}")
+    if not isinstance(verbose, bool):
+        raise ValueError("verbose must be a boolean")

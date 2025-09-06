@@ -221,6 +221,12 @@ def train(args):
     Args:
         args (argparse.Namespace): Command line arguments containing training configuration.
     """
+    # Validate/normalize arguments before training
+    try:
+        args = validate_train_args(args)
+    except Exception as e:
+        ERROR(f"Invalid training arguments: {e}")
+        raise
     try:
         _train_impl(args)
     except torch.cuda.OutOfMemoryError as e:
@@ -1009,3 +1015,43 @@ class AdaptiveGradientClipper:
         self.grad_norm_history.clear()
         self.step_count = 0
         self.current_max_norm = self.initial_max_norm
+
+def validate_train_args(args):
+    """Validate and normalize arguments for tools.train.train().
+    Fills defaults for optional args and checks basic constraints.
+    """
+    # model_size default
+    if not hasattr(args, 'model_size') or not args.model_size:
+        setattr(args, 'model_size', '0.5B')
+
+    # dataset presence: either args.dataset provided or data_cache/model.txt exists
+    if not getattr(args, 'dataset', None):
+        data_cache_dir = "data_cache"
+        model_txt = os.path.join(data_cache_dir, "model.txt")
+        if not os.path.exists(model_txt):
+            raise ValueError("dataset not provided and data_cache/model.txt not found")
+
+    # boolean flags defaults
+    for flag in ("force_quant", "force_lora", "quant", "no_quant"):
+        if not hasattr(args, flag):
+            setattr(args, flag, False)
+
+    # quant bits validation (if provided)
+    if hasattr(args, 'quant_bits') and args.quant_bits is not None:
+        try:
+            qb = int(args.quant_bits)
+        except Exception:
+            raise ValueError("quant_bits must be integer")
+        if qb not in (2, 4, 8):
+            raise ValueError("quant_bits must be one of {2,4,8}")
+
+    # resume checkpoint path (if provided)
+    if getattr(args, 'resume_ckpt', None):
+        if not os.path.exists(args.resume_ckpt):
+            raise ValueError(f"resume_ckpt not found: {args.resume_ckpt}")
+
+    # save_dir default
+    if not getattr(args, 'save_dir', None):
+        setattr(args, 'save_dir', 'ckpt')
+
+    return args

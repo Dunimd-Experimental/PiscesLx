@@ -24,6 +24,8 @@ from model import PiscesModel, PiscesConfig
 from transformers import BitsAndBytesConfig
 
 def quantize(checkpoint, save_path, bits=8):
+    # Validate arguments
+    _validate_quantize_args(checkpoint, save_path, bits)
     cfg = PiscesConfig.from_json("configs/0.5B.json")
     model = PiscesModel(cfg)
     model.load_state_dict(torch.load(checkpoint, map_location='cpu')['model'])
@@ -35,3 +37,17 @@ def quantize(checkpoint, save_path, bits=8):
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     torch.save(model.state_dict(), save_path)
     RIGHT("Quantized model saved to", save_path)
+
+
+def _validate_quantize_args(checkpoint: str, save_path: str, bits: int):
+    """Validate and normalize arguments for quantize()."""
+    if not checkpoint or not os.path.exists(checkpoint):
+        raise ValueError(f"checkpoint not found: {checkpoint}")
+    if not save_path:
+        raise ValueError("save_path is required")
+    try:
+        b = int(bits)
+    except Exception:
+        raise ValueError("bits must be integer")
+    if b not in (4, 8):
+        raise ValueError("bits must be one of {4, 8}")

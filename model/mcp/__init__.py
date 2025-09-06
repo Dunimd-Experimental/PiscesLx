@@ -18,8 +18,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .server import MCPServer, MCPRequest, MCPResponse, ToolCapability
-from .translator import MCPTranslationLayer, AgentCall, process_text_with_mcp, extract_agent_calls_sync
+# Skip MCP loading to prevent hanging
+MCPServer = None
+MCPRequest = None
+MCPResponse = None
+ToolCapability = None
+MCPTranslationLayer = None
+AgentCall = None
+process_text_with_mcp = None
+extract_agent_calls_sync = None
 
 # Define the public API of this module. 
 # Objects listed here are the ones that will be imported when `from . import *` is used.

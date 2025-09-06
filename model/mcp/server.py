@@ -166,6 +166,26 @@ class OptimizedMCPServer:
 # Global optimized server instance
 optimized_server = OptimizedMCPServer()
 
+# Background tool discovery with timeout
+import threading
+import time
+
+def _async_tool_discovery():
+    """Run tool discovery in background thread"""
+    try:
+        optimized_server.auto_discover_tools()
+    except Exception as e:
+        ERROR(f"Background tool discovery failed: {e}")
+
+# Start background discovery
+discovery_thread = threading.Thread(target=_async_tool_discovery, daemon=True)
+discovery_thread.start()
+
+def wait_for_tools(timeout=5):
+    """Wait for tool discovery to complete"""
+    discovery_thread.join(timeout=timeout)
+    return discovery_thread.is_alive()
+
 # Backward compatibility function
 def auto_discover_tools():
     """
@@ -174,9 +194,6 @@ def auto_discover_tools():
     optimized_server.auto_discover_tools()
 
 mcp_server = optimized_server.mcp_server
-
-# Auto - discover tools on import
-auto_discover_tools()
 
 # Additional server configuration
 @mcp_server.resource("status://server")

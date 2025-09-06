@@ -1,0 +1,291 @@
+{
+  "version": "1.0",
+  "tools": {
+    "crypto_price": {
+      "module": "MCP.crypto",
+      "func": "crypto_price",
+      "description": "Get current cryptocurrency price for a given symbol.",
+      "enabled": true
+    },
+    "crypto_trending": {
+      "module": "MCP.crypto",
+      "func": "crypto_trending",
+      "description": "Get trending cryptocurrencies from CoinGecko.",
+      "enabled": true
+    },
+
+    "search_everything": {
+      "module": "MCP.everything",
+      "func": "search_everything",
+      "description": "Search files using Everything on Windows.",
+      "enabled": true
+    },
+    "get_file_details": {
+      "module": "MCP.everything",
+      "func": "get_file_details",
+      "description": "Get detailed file information.",
+      "enabled": true
+    },
+    "list_drives": {
+      "module": "MCP.everything",
+      "func": "list_drives",
+      "description": "List available drive letters on Windows.",
+      "enabled": true
+    },
+    "get_recent_files": {
+      "module": "MCP.everything",
+      "func": "get_recent_files",
+      "description": "Get recently modified files in a directory.",
+      "enabled": true
+    },
+    "find_large_files": {
+      "module": "MCP.everything",
+      "func": "find_large_files",
+      "description": "Find large files in a directory.",
+      "enabled": true
+    },
+    "search_by_extension": {
+      "module": "MCP.everything",
+      "func": "search_by_extension",
+      "description": "Search files by extension in a directory.",
+      "enabled": true
+    },
+
+    "fetch_url": {
+      "module": "MCP.fetch",
+      "func": "fetch_url",
+      "description": "Fetch and extract content from a web URL.",
+      "enabled": true
+    },
+
+    "web_search": {
+      "module": "MCP.web_search",
+      "func": "web_search",
+      "description": "Perform a web search (DuckDuckGo) and return top results.",
+      "enabled": true
+    },
+
+    "read_file": {
+      "module": "MCP.filesystem",
+      "func": "read_file",
+      "description": "Read content from a file.",
+      "enabled": true
+    },
+    "write_file": {
+      "module": "MCP.filesystem",
+      "func": "write_file",
+      "description": "Write content to a file.",
+      "enabled": true
+    },
+    "list_directory": {
+      "module": "MCP.filesystem",
+      "func": "list_directory",
+      "description": "List contents of a directory.",
+      "enabled": true
+    },
+    "create_directory": {
+      "module": "MCP.filesystem",
+      "func": "create_directory",
+      "description": "Create a directory.",
+      "enabled": true
+    },
+    "delete_path": {
+      "module": "MCP.filesystem",
+      "func": "delete_path",
+      "description": "Delete a file or directory.",
+      "enabled": true
+    },
+    "file_info": {
+      "module": "MCP.filesystem",
+      "func": "file_info",
+      "description": "Get detailed information about a file or directory.",
+      "enabled": true
+    },
+
+    "git_status": {
+      "module": "MCP.git",
+      "func": "git_status",
+      "description": "Get the current git status of a repository.",
+      "enabled": true
+    },
+    "git_log": {
+      "module": "MCP.git",
+      "func": "git_log",
+      "description": "Get the git commit history.",
+      "enabled": true
+    },
+    "git_branch": {
+      "module": "MCP.git",
+      "func": "git_branch",
+      "description": "Get the list of branches in a repository.",
+      "enabled": true
+    },
+    "git_remote": {
+      "module": "MCP.git",
+      "func": "git_remote",
+      "description": "Get the list of remote repositories.",
+      "enabled": true
+    },
+    "git_diff": {
+      "module": "MCP.git",
+      "func": "git_diff",
+      "description": "Show changes between commits or working tree.",
+      "enabled": true
+    },
+
+    "store_memory": {
+      "module": "MCP.memory",
+      "func": "store_memory",
+      "description": "Store a value in memory with a given key.",
+      "enabled": true
+    },
+    "retrieve_memory": {
+      "module": "MCP.memory",
+      "func": "retrieve_memory",
+      "description": "Retrieve a value from memory by key.",
+      "enabled": true
+    },
+    "list_memory": {
+      "module": "MCP.memory",
+      "func": "list_memory",
+      "description": "List all keys stored in memory.",
+      "enabled": true
+    },
+    "delete_memory": {
+      "module": "MCP.memory",
+      "func": "delete_memory",
+      "description": "Delete a key from memory.",
+      "enabled": true
+    },
+    "clear_memory": {
+      "module": "MCP.memory",
+      "func": "clear_memory",
+      "description": "Clear all memory by deleting the memory file.",
+      "enabled": true
+    },
+    "append_to_memory": {
+      "module": "MCP.memory",
+      "func": "append_to_memory",
+      "description": "Append a value to an existing memory key.",
+      "enabled": true
+    },
+    "get_memory_stats": {
+      "module": "MCP.memory",
+      "func": "get_memory_stats",
+      "description": "Get statistics about the memory file.",
+      "enabled": true
+    },
+
+    "create_thinking_session": {
+      "module": "MCP.sequentialthinking",
+      "func": "create_thinking_session",
+      "description": "Create a new sequential thinking session.",
+      "enabled": true
+    },
+    "add_sequential_thought": {
+      "module": "MCP.sequentialthinking",
+      "func": "add_sequential_thought",
+      "description": "Add a thought to an existing sequential thinking session.",
+      "enabled": true
+    },
+    "get_thinking_session": {
+      "module": "MCP.sequentialthinking",
+      "func": "get_thinking_session",
+      "description": "Get a complete sequential thinking session with all thoughts.",
+      "enabled": true
+    },
+    "list_thinking_sessions": {
+      "module": "MCP.sequentialthinking",
+      "func": "list_thinking_sessions",
+      "description": "List all active sequential thinking sessions.",
+      "enabled": true
+    },
+    "delete_thinking_session": {
+      "module": "MCP.sequentialthinking",
+      "func": "delete_thinking_session",
+      "description": "Delete a sequential thinking session.",
+      "enabled": true
+    },
+    "get_thought_path": {
+      "module": "MCP.sequentialthinking",
+      "func": "get_thought_path",
+      "description": "Get the path from root to a specific thought.",
+      "enabled": true
+    },
+    "get_thinking_summary": {
+      "module": "MCP.sequentialthinking",
+      "func": "get_thinking_summary",
+      "description": "Get a summary of a thinking session.",
+      "enabled": true
+    },
+
+    "system_info": {
+      "module": "MCP.system_info",
+      "func": "system_info",
+      "description": "Get comprehensive system information.",
+      "enabled": true
+    },
+    "system_health": {
+      "module": "MCP.system_info",
+      "func": "system_health",
+      "description": "Get system health status with warnings and recommendations.",
+      "enabled": true
+    },
+
+    "your_tool_name": {
+      "module": "MCP.template",
+      "func": "your_tool_name",
+      "description": "Template tool function.",
+      "enabled": false
+    },
+    "helper_function": {
+      "module": "MCP.template",
+      "func": "helper_function",
+      "description": "Template helper function.",
+      "enabled": false
+    },
+
+    "get_current_time": {
+      "module": "MCP.time",
+      "func": "get_current_time",
+      "description": "Get the current time in a specific timezone.",
+      "enabled": true
+    },
+    "parse_time": {
+      "module": "MCP.time",
+      "func": "parse_time",
+      "description": "Parse a time string into a structured format.",
+      "enabled": true
+    },
+    "time_difference": {
+      "module": "MCP.time",
+      "func": "time_difference",
+      "description": "Calculate the difference between two times.",
+      "enabled": true
+    },
+    "format_time": {
+      "module": "MCP.time",
+      "func": "format_time",
+      "description": "Format an ISO time string to a custom format.",
+      "enabled": true
+    },
+    "add_duration": {
+      "module": "MCP.time",
+      "func": "add_duration",
+      "description": "Add a duration to a base time.",
+      "enabled": true
+    },
+    "list_timezones": {
+      "module": "MCP.time",
+      "func": "list_timezones",
+      "description": "List all available timezones.",
+      "enabled": true
+    }
+  },
+  "meta": {
+    "discovery": {
+      "source_dir": "MCP/",
+      "note": "This file is generated once from current MCP modules and can be edited manually. No auto-discovery is required at runtime."
+    }
+  }
+}

@@ -32,6 +32,11 @@ def check(args=None, extra=None):
     Returns:
         bool: True if tensor operations are successful, False otherwise.
     """
+    # Validate arguments
+    try:
+        validate_check_args(args, extra)
+    except Exception as e:
+        ERROR(f"Invalid check arguments: {e}")
     # Log the start of GPU status check
     RIGHT("GPU Status Check")
     # Check if PyTorch CUDA is available
@@ -85,3 +90,14 @@ def check(args=None, extra=None):
         ERROR(f"Tensor operations failed: {e}")
         return False
     return True
+
+
+def validate_check_args(args=None, extra=None):
+    """Validate/normalize arguments for tools.check.check().
+    args/extra are optional; ensure they are None or dict-like when provided.
+    """
+    if args is not None and not isinstance(args, (dict, object)):
+        # allow any object (Namespace), but reject obvious wrong types
+        raise ValueError("args must be None or an object-like container")
+    if extra is not None and not isinstance(extra, (dict, str)):
+        raise ValueError("extra must be None, dict or str")

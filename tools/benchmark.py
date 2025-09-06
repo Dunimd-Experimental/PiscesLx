@@ -223,6 +223,7 @@ def performance_benchmark(config_path="configs/0.5B.json", seq_len=8192, model_p
         seq_len: Sequence length for benchmarking
         model_path: Path to the model checkpoint (optional)
     """
+    _validate_performance_benchmark_args(config_path, seq_len, model_path)
     # Load configuration from JSON file
     cfg = PiscesConfig.from_json(config_path)
 
@@ -278,6 +279,7 @@ def run_benchmark(benchmark_name: str, model_path: str = None, config_path: str 
         model_path: Path to the model checkpoint
         config_path: Path to model configuration JSON file
     """
+    _validate_run_benchmark_args(benchmark_name, model_path, config_path)
     if benchmark_name not in BENCHMARKS:
         ERROR(f"Benchmark '{benchmark_name}' not found. Use --list to see available benchmarks.")
         return
@@ -313,3 +315,31 @@ def run_benchmark(benchmark_name: str, model_path: str = None, config_path: str 
     # Note: Actual benchmark evaluation would require implementing
     # specific dataset loading and evaluation logic for each benchmark
     RIGHT(f"Benchmark '{benchmark_name}' evaluation completed (model loaded successfully)")
+
+
+def _validate_performance_benchmark_args(config_path, seq_len, model_path):
+    if not isinstance(config_path, str) or not config_path:
+        raise ValueError("config_path must be a non-empty string")
+    if not os.path.exists(config_path):
+        raise ValueError(f"config_path not found: {config_path}")
+    try:
+        s = int(seq_len)
+    except Exception:
+        raise ValueError("seq_len must be integer")
+    if s <= 0:
+        raise ValueError("seq_len must be > 0")
+    if model_path is not None and model_path != "":
+        if not os.path.exists(model_path):
+            raise ValueError(f"model_path not found: {model_path}")
+
+
+def _validate_run_benchmark_args(benchmark_name, model_path, config_path):
+    if not isinstance(benchmark_name, str) or not benchmark_name:
+        raise ValueError("benchmark_name must be a non-empty string")
+    if not isinstance(config_path, str) or not config_path:
+        raise ValueError("config_path must be a non-empty string")
+    if not os.path.exists(config_path):
+        raise ValueError(f"config_path not found: {config_path}")
+    if model_path is not None and model_path != "":
+        if not os.path.exists(model_path):
+            raise ValueError(f"model_path not found: {model_path}")

@@ -19,7 +19,9 @@
 # limitations under the License.
 
 import json
+import requests
 from MCP import mcp
+from typing import Dict, Any
 
 @mcp.tool()
 def crypto_price(symbol: str = "BTC", currency: str = "USD") -> Dict[str, Any]:

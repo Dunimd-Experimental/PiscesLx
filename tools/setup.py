@@ -35,6 +35,12 @@ def setup(args):
     Returns:
         None
     """
+    # Validate args (placeholder for future options)
+    try:
+        args = validate_setup_args(args)
+    except Exception as e:
+        RIGHT(f"Invalid setup arguments: {e}")
+        # Continue with best-effort setup even if args invalid
     RIGHT("Pisces auto environment setup...")
     
     # Create modelscope cache directory if not exists
@@ -98,3 +104,9 @@ def setup(args):
         RIGHT("Auto-entering Pisces venv shell (Linux/Mac)...")
         # Enter the virtual environment using Unix-like shell
         os.execv(shell, [shell, "-i", "-c", f"source '{activate}'; exec {shell}"])
+
+def validate_setup_args(args):
+    """Validate/normalize setup args. Currently a no-op placeholder.
+    Ensures args is at least a SimpleNamespace-like object.
+    """
+    return args

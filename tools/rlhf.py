@@ -36,6 +36,12 @@ def rlhf_train(args):
         None
     """
     RIGHT("Starting RLHF training with PPO...")
+    # Validate/normalize arguments
+    try:
+        args = validate_rlhf_args(args)
+    except Exception as e:
+        ERROR(f"Invalid RLHF arguments: {e}")
+        return
     
     # Validate the input arguments
     if not hasattr(args, 'model_path') or not args.model_path:
@@ -180,3 +186,39 @@ def rlhf_train(args):
         RIGHT(f"RLHF model saved to: {output_path}")
     
     RIGHT("RLHF training completed successfully!")
+
+def validate_rlhf_args(args):
+    """Validate and normalize arguments for RLHF training."""
+    # Required: model_path
+    if not hasattr(args, 'model_path') or not args.model_path:
+        raise ValueError("--model_path is required")
+
+    # Defaults for RLHF hyperparameters if missing
+    defaults = {
+        'rlhf_lr': 1e-5,
+        'rlhf_batch_size': 4,
+        'rlhf_mini_batch_size': 1,
+        'rlhf_accum_steps': 4,
+        'rlhf_epochs': 3,
+        'rlhf_max_samples': 1000,
+        'rlhf_max_length': 512,
+        'rlhf_dataset': 'dunimd/human_feedback',
+        'log_with_wandb': False,
+        'output_dir': None,
+    }
+    for k, v in defaults.items():
+        if not hasattr(args, k):
+            setattr(args, k, v)
+
+    # Ranges and types
+    if float(args.rlhf_lr) <= 0:
+        raise ValueError("rlhf_lr must be > 0")
+    for name in ['rlhf_batch_size', 'rlhf_mini_batch_size', 'rlhf_accum_steps', 'rlhf_epochs', 'rlhf_max_samples', 'rlhf_max_length']:
+        try:
+            val = int(getattr(args, name))
+            if val <= 0:
+                raise ValueError
+        except Exception:
+            raise ValueError(f"{name} must be a positive integer")
+
+    return args

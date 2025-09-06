@@ -31,12 +31,17 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(
 
 from utils.log import RIGHT, DEBUG, ERROR
 
-try:
-    from .server import mcp_server
-    MCP_SDK_AVAILABLE = True
-except ImportError:
-    ERROR("Official MCP SDK not available. Please install: pip install 'mcp[cli]'")
-    MCP_SDK_AVAILABLE = False
+# Config-driven MCP: load tools from configuration, no import-time discovery
+from tools.mcp import read_config
+import importlib
+
+_mcp_available = False
+_tools_cache: Dict[str, Any] = {}
+
+def _load_tools_from_config() -> Dict[str, Any]:
+    cfg = read_config()
+    tools = cfg.get("tools", {})
+    return {k: v for k, v in tools.items() if isinstance(v, dict) and v.get("enabled", True)}
 
 @dataclass
 class AgentCall:
@@ -57,7 +62,21 @@ class MCPTranslationLayer:
     """
     
     def __init__(self):
-        self.mcp_server = mcp_server if MCP_SDK_AVAILABLE else None
+        global _mcp_available, _tools_cache
+        self._ready = False
+        # Load once from config without any blocking
+        try:
+            _tools_cache = _load_tools_from_config()
+            _mcp_available = len(_tools_cache) > 0
+        except Exception as e:
+            ERROR(f"Failed to load MCP tools config: {e}")
+            _mcp_available = False
+        
+    def _wait_for_ready(self, timeout=0.0):
+        """Non-blocking readiness check: ready if tools cache is non-empty."""
+        if not self._ready:
+            self._ready = _mcp_available and bool(_tools_cache)
+        return self._ready
         
     async def __aenter__(self):
         """Async context manager entry"""
@@ -231,7 +250,7 @@ class MCPTranslationLayer:
                 translated_text = result.get('translated_text', '')
                 source_lang = result.get('source_language', '')
                 target_lang = result.get('target_language', '')
-                return f"🟧\tTranslation completed ({source_lang} �?{target_lang}): {translated_text}"
+                return f"🟧\tTranslation completed ({source_lang} → {target_lang}): {translated_text}"
             elif operation == "sentiment":
                 sentiment = result.get('sentiment', '')
                 confidence = result.get('confidence', 0)
@@ -243,65 +262,57 @@ class MCPTranslationLayer:
     async def execute_agent_calls(self, agent_calls: List[AgentCall], 
                                 session_id: str = "default", 
                                 agent_id: str = "pisces_model") -> List[Dict[str, Any]]:
-        """
-        Execute multiple agent calls via MCP server
-        
-        Args:
-            agent_calls (List[AgentCall]): List of agent calls to execute
-            session_id (str): Session identifier
-            agent_id (str): Agent identifier
-            
-        Returns:
-            List[Dict]: List of execution results
-        """
-        if not self.session:
-            raise RuntimeError("MCPTranslationLayer must be used as async context manager")
-        
+        """Execute multiple agent calls using config-registered local tools."""
         results = []
         
         for call in agent_calls:
             try:
-                # Prepare MCP request
-                mcp_request = {
-                    "tool_name": call.tool_name,
-                    "parameters": call.parameters,
-                    "agent_id": agent_id,
-                    "session_id": session_id,
-                    "correlation_id": str(uuid.uuid4())
-                }
+                converted_params = self._convert_parameters(call.tool_name, call.parameters)
                 
-                # Send request to MCP server
-                async with self.session.post(
-                    f"{self.mcp_server_url}/mcp/execute",
-                    json=mcp_request,
-                    timeout=aiohttp.ClientTimeout(total=30)
-                ) as response:
-                    
-                    if response.status == 200:
-                        result = await response.json()
-                        results.append(result)
-                        DEBUG(f"Tool {call.tool_name} executed successfully")
-                    else:
-                        error_text = await response.text()
-                        ERROR(f"MCP server error {response.status}: {error_text}")
-                        results.append({
-                            "success": False,
-                            "error_code": f"HTTP_{response.status}",
-                            "error_message": f"Server returned {response.status}: {error_text}",
-                            "tool_name": call.tool_name
-                        })
-                        
-            except asyncio.TimeoutError:
-                ERROR(f"Timeout executing tool: {call.tool_name}")
+                tool_meta = _tools_cache.get(call.tool_name)
+                if not tool_meta:
+                    results.append({
+                        "success": False,
+                        "error_code": "TOOL_NOT_FOUND",
+                        "error_message": f"Tool '{call.tool_name}' not found in config",
+                        "tool_name": call.tool_name
+                    })
+                    continue
+                
+                module_name = tool_meta.get("module")
+                func_name = tool_meta.get("func")
+                if not module_name or not func_name:
+                    results.append({
+                        "success": False,
+                        "error_code": "INVALID_CONFIG",
+                        "error_message": f"Tool '{call.tool_name}' missing module/func in config",
+                        "tool_name": call.tool_name
+                    })
+                    continue
+                
+                mod = importlib.import_module(module_name)
+                tool_func = getattr(mod, func_name, None)
+                if tool_func is None:
+                    results.append({
+                        "success": False,
+                        "error_code": "FUNC_NOT_FOUND",
+                        "error_message": f"Function '{func_name}' not found in module '{module_name}'",
+                        "tool_name": call.tool_name
+                    })
+                    continue
+                
+                if asyncio.iscoroutinefunction(tool_func):
+                    tool_result = await tool_func(**converted_params)
+                else:
+                    tool_result = tool_func(**converted_params)
+                
                 results.append({
-                    "success": False,
-                    "error_code": "TIMEOUT",
-                    "error_message": "Tool execution timed out",
+                    "success": True,
+                    "result": tool_result,
                     "tool_name": call.tool_name
                 })
                 
             except Exception as e:
-                ERROR(f"Error executing tool {call.tool_name}: {e}")
                 results.append({
                     "success": False,
                     "error_code": "EXECUTION_ERROR",
@@ -334,7 +345,7 @@ class MCPTranslationLayer:
         DEBUG(f"Found {len(agent_calls)} agent calls in model output")
         
         # Convert to official MCP requests and execute
-        results = await self.execute_mcp_calls(agent_calls, session_id, agent_id)
+        results = await self.execute_agent_calls(agent_calls, session_id, agent_id)
         
         # Replace agent tags with results
         processed_output = self.replace_agent_tags_with_status(model_output, results)
@@ -344,71 +355,15 @@ class MCPTranslationLayer:
     async def execute_mcp_calls(self, agent_calls: List[AgentCall], 
                                session_id: str = "default", 
                                agent_id: str = "pisces_model") -> List[Dict[str, Any]]:
-        """
-        Execute agent calls using official MCP SDK
-        """
-        if not MCP_SDK_AVAILABLE or not self.mcp_server:
+        """Execute agent calls using config-registered local tools (non-blocking)."""
+        if not self._wait_for_ready(timeout=0.0):
             return [{
                 "success": False,
-                "error_code": "SDK_UNAVAILABLE",
-                "error_message": "Official MCP SDK not available",
+                "error_code": "MCP_NOT_READY",
+                "error_message": "No MCP tools configured",
                 "tool_name": call.tool_name
             } for call in agent_calls]
-        
-        results = []
-        
-        for call in agent_calls:
-            try:
-                # Convert parameters from ap1/ap2 format to standard names
-                converted_params = self._convert_parameters(call.tool_name, call.parameters)
-                
-                # Find the tool in the official SDK server
-                tool_func = None
-                for tool_name, tool_info in self.mcp_server.tools.items():
-                    if tool_name == call.tool_name:
-                        tool_func = tool_info.get('func')
-                        break
-                
-                if not tool_func:
-                    results.append({
-                        "success": False,
-                        "error_code": "TOOL_NOT_FOUND",
-                        "error_message": f"Tool '{call.tool_name}' not found",
-                        "tool_name": call.tool_name
-                    })
-                    continue
-                
-                # Execute tool directly using official SDK
-                try:
-                    if asyncio.iscoroutinefunction(tool_func):
-                        tool_result = await tool_func(**converted_params)
-                    else:
-                        tool_result = tool_func(**converted_params)
-                    
-                    results.append({
-                        "success": True,
-                        "result": tool_result,
-                        "tool_name": call.tool_name
-                    })
-                    
-                except Exception as e:
-                    results.append({
-                        "success": False,
-                        "error_code": "EXECUTION_ERROR",
-                        "error_message": str(e),
-                        "tool_name": call.tool_name
-                    })
-                
-            except Exception as e:
-                ERROR(f"Error executing tool {call.tool_name}: {e}")
-                results.append({
-                    "success": False,
-                    "error_code": "EXECUTION_ERROR",
-                    "error_message": str(e),
-                    "tool_name": call.tool_name
-                })
-        
-        return results
+        return await self.execute_agent_calls(agent_calls, session_id, agent_id)
     
     def _convert_parameters(self, tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -462,19 +417,13 @@ class MCPTranslationLayer:
         return converted
     
     async def get_available_tools(self) -> List[Dict[str, Any]]:
-        """Get list of available tools from official MCP SDK"""
-        if not MCP_SDK_AVAILABLE or not self.mcp_server:
-            return []
-        
+        """Get list of available tools from config."""
         try:
-            tools = []
-            for tool_name, tool_info in self.mcp_server.tools.items():
-                tools.append({
-                    "name": tool_name,
-                    "description": tool_info.get('description', 'No description'),
-                    "category": "mcp_sdk_tool"
-                })
-            return tools
+            return [{
+                "name": name,
+                "description": meta.get('description', 'No description'),
+                "category": "config_tool"
+            } for name, meta in _tools_cache.items()]
         except Exception as e:
             ERROR(f"Error getting available tools: {e}")
             return []

@@ -94,7 +94,7 @@ def main():
     parser.add_argument('--rlhf_max_length', type=int, default=512, help='RLHF maximum sequence length')
     parser.add_argument('--mcp_host', type=str, default='localhost', help='[mcp] MCP server host')
     parser.add_argument('--mcp_port', type=int, default=8080, help='[mcp] MCP server port')
-    parser.add_argument('--mcp_action', type=str, choices=['start', 'stop', 'status', 'test'], default='start', help='[mcp] MCP server action')
+    parser.add_argument('--mcp_action', type=str, choices=['status', 'warmup', 'refresh-cache'], default='status', help='[mcp] MCP action')
     parser.add_argument('--text', type=str, help='[watermark] Text content to check for watermark')
     parser.add_argument('--file', type=str, help='[watermark] File path to check for watermark')
     parser.add_argument('--batch', action='store_true', help='[watermark] Batch mode for directory processing')
@@ -172,21 +172,24 @@ def main():
         else:
             performance_benchmark(args.config, args.seq_len)
     elif args.command == 'mcp':
-        from MCP import get_system_status, plaza
+        from tools.mcp import status as mcp_status, background_refresh, read_config, write_config, discover_tools, merge_to_config
         import json
         
-        if args.mcp_action == 'start':
-            RIGHT("Starting enhanced MCP server...")
-            status = plaza.get_system_status()
-            print(json.dumps(status, indent=2, ensure_ascii=False))
-        elif args.mcp_action == 'status':
-            status = plaza.get_system_status()
-            print(json.dumps(status, indent=2, ensure_ascii=False))
-        elif args.mcp_action == 'test':
-            tools = plaza.get_available_tools()
-            RIGHT(f"Available tools: {len(tools)}")
-            for name, info in tools.items():
-                print(f"  - {name}: {info.get('description', 'No description')}")
+        if args.mcp_action == 'status':
+            RIGHT("MCP config status")
+            s = mcp_status()
+            print(json.dumps(s, indent=2, ensure_ascii=False))
+        elif args.mcp_action == 'warmup':
+            RIGHT("Starting MCP background discovery (non-blocking)...")
+            background_refresh()
+            RIGHT("MCP background discovery started")
+        elif args.mcp_action == 'refresh-cache':
+            RIGHT("Refreshing MCP tools cache (blocking)...")
+            cfg = read_config()
+            discovered = discover_tools()
+            merged = merge_to_config(cfg, discovered)
+            write_config(merged)
+            RIGHT("MCP tools cache refreshed")
     elif args.command == 'rlhf':
         from tools.rlhf import rlhf_train
 

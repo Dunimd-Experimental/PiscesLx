@@ -22,11 +22,6 @@ import os
 from utils.log import ERROR, RIGHT
 from datasets import load_from_disk, DatasetDict
 
-"""
-This module provides functions to read dataset subset names from a file and 
-build training and test splits for each dataset subset.
-"""
-
 def get_subsets_from_model_txt():
     """
     Retrieve dataset subset names from the model.txt file.
