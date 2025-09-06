@@ -37,7 +37,7 @@ class ProgressBar:
             total (int): The total number of items to process.
             desc (str, optional): The description of the progress bar. Defaults to "".
             length (int, optional): The length of the progress bar. Defaults to 30.
-            fill_char (str, optional): The character used to represent completed progress. Defaults to '█'.
+            fill_char (str, optional): The character used to represent completed progress. Defaults to '�?.
             empty_char (str, optional): The character used to represent incomplete progress. Defaults to '-'.
             show_eta (bool, optional): Whether to show the estimated time of arrival (ETA). Defaults to True.
             file: The file object to write the progress bar to. Defaults to sys.stdout.

@@ -62,3 +62,8 @@ def help():
     print("  python manage.py infer --prompt 'Analyze this image <agent><an>image_analysis</an><ap1>path/to/image.jpg</ap1><ap2>description</ap2></agent>' --image path/to/image.jpg")
     print("\nRLHF examples:")
     print("  python manage.py rlhf --model_size 1.5B --rlhf_dataset dunimd/human_feedback")
+    print("\nWatermark detection examples:")
+    print("  python manage.py watermark --text 'Check if this text contains a watermark'")
+    print("  python manage.py watermark --file output.txt")
+    print("  python manage.py watermark --file ./outputs/ --batch --verbose")
+    print("  python manage.py watermark --text 'Test text' --json")

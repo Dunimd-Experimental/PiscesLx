@@ -21,13 +21,10 @@
 import os
 import json
 import shutil
-import logging
 import mimetypes
+from MCP import mcp
 from pathlib import Path
-from .simple_mcp import register_tool
 from typing import Dict, Any, List, Optional
-
-logger = logging.getLogger(__name__)
 
 class FilesystemTool:
     """
@@ -734,11 +731,166 @@ class FilesystemTool:
                 "error": f"Unexpected error: {str(e)}"
             }
 
-# Register the FilesystemTool with the MCP system
-filesystem_tool = FilesystemTool()
-register_tool(
-    filesystem_tool.name,
-    filesystem_tool.description,
-    filesystem_tool.get_schema(),
-    filesystem_tool.execute
-)
+
+
+
+@mcp.tool()
+def read_file(file_path: str, encoding: str = "utf-8") -> Dict[str, Any]:
+    """Read content from a file."""
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            return {"success": False, "error": f"File not found: {file_path}"}
+        
+        if not path.is_file():
+            return {"success": False, "error": f"Path is not a file: {file_path}"}
+        
+        content = path.read_text(encoding=encoding)
+        
+        return {
+            "success": True,
+            "content": content,
+            "size": len(content),
+            "file_path": str(path.absolute())
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
+def write_file(file_path: str, content: str, encoding: str = "utf-8") -> Dict[str, Any]:
+    """Write content to a file."""
+    try:
+        path = Path(file_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        path.write_text(content, encoding=encoding)
+        
+        return {
+            "success": True,
+            "file_path": str(path.absolute()),
+            "size": len(content),
+            "message": f"File written successfully: {file_path}"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
+def list_directory(directory_path: str = ".") -> Dict[str, Any]:
+    """List contents of a directory."""
+    try:
+        path = Path(directory_path)
+        if not path.exists():
+            return {"success": False, "error": f"Directory not found: {directory_path}"}
+        
+        if not path.is_dir():
+            return {"success": False, "error": f"Path is not a directory: {directory_path}"}
+        
+        items = []
+        for item in path.iterdir():
+            items.append({
+                "name": item.name,
+                "type": "directory" if item.is_dir() else "file",
+                "size": item.stat().st_size if item.is_file() else 0,
+                "modified": item.stat().st_mtime
+            })
+        
+        return {
+            "success": True,
+            "directory": str(path.absolute()),
+            "items": items,
+            "count": len(items)
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
+def create_directory(directory_path: str, parents: bool = True) -> Dict[str, Any]:
+    """Create a directory."""
+    try:
+        path = Path(directory_path)
+        path.mkdir(parents=parents, exist_ok=True)
+        
+        return {
+            "success": True,
+            "directory": str(path.absolute()),
+            "message": f"Directory created: {directory_path}"
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
+def delete_path(file_path: str) -> Dict[str, Any]:
+    """Delete a file or directory."""
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            return {"success": False, "error": f"Path not found: {file_path}"}
+        
+        if path.is_dir():
+            shutil.rmtree(path)
+            message = f"Directory deleted: {file_path}"
+        else:
+            path.unlink()
+            message = f"File deleted: {file_path}"
+        
+        return {
+            "success": True,
+            "message": message
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
+def file_info(file_path: str) -> Dict[str, Any]:
+    """Get detailed information about a file or directory."""
+    try:
+        path = Path(file_path)
+        if not path.exists():
+            return {"success": False, "error": f"Path not found: {file_path}"}
+        
+        stat = path.stat()
+        
+        return {
+            "success": True,
+            "path": str(path.absolute()),
+            "name": path.name,
+            "type": "directory" if path.is_dir() else "file",
+            "size": stat.st_size,
+            "modified": stat.st_mtime,
+            "created": stat.st_ctime,
+            "is_directory": path.is_dir(),
+            "is_file": path.is_file(),
+            "extension": path.suffix if path.is_file() else None
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }

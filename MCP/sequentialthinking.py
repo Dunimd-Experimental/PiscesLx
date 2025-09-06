@@ -19,299 +19,220 @@
 # limitations under the License.
 
 import json
-import logging
+import uuid
+from MCP import mcp
 from datetime import datetime
-from .simple_mcp import register_tool
 from typing import Dict, Any, List, Optional
 
-logger = logging.getLogger(__name__)
+class ThoughtNode:
+    """Represents a single thought in the thinking sequence."""
+    
+    def __init__(self, content: str, parent_id: str = None):
+        self.id = str(uuid.uuid4())
+        self.content = content
+        self.parent_id = parent_id
+        self.timestamp = datetime.now().isoformat()
+        self.children = []
 
-class SequentialThinkingTool:
-    """
-    A tool for dynamic problem-solving through structured thinking.
-    It supports revision of thoughts and branching of thought processes.
-    """
+class SequentialThinking:
+    """Manages sequential thinking sessions."""
     
     def __init__(self):
-        """
-        Initialize the SequentialThinkingTool instance.
-        Sets up the tool's name, description, and initializes thought history and branches.
-        """
-        self.name = "sequentialthinking"
-        self.description = "Dynamic problem-solving through structured thinking with revision and branching support"
-        self.thought_history = []
-        self.branches = {}
-        
-    def get_schema(self) -> Dict[str, Any]:
-        """
-        Get the schema for thought data.
-        
-        Returns:
-            Dict[str, Any]: A dictionary representing the JSON schema for thought data.
-        """
-        return {
-            "type": "object",
-            "properties": {
-                "thought": {
-                    "type": "string",
-                    "description": "Your current thinking step. This can include regular analytical steps, revisions of previous thoughts, questions about previous decisions, realizations about needing more analysis, changes in approach, hypothesis generation, or hypothesis verification."
-                },
-                "thought_number": {
-                    "type": "number",
-                    "description": "Current number in sequence (can go beyond initial total if needed)"
-                },
-                "total_thoughts": {
-                    "type": "number",
-                    "description": "Current estimate of thoughts needed (can be adjusted up/down)"
-                },
-                "next_thought_needed": {
-                    "type": "boolean",
-                    "description": "True if you need more thinking, even if at what seemed like the end"
-                },
-                "is_revision": {
-                    "type": "boolean",
-                    "description": "A boolean indicating if this thought revises previous thinking",
-                    "default": False
-                },
-                "revises_thought": {
-                    "type": "number",
-                    "description": "If is_revision is true, which thought number is being reconsidered"
-                },
-                "branch_from_thought": {
-                    "type": "number",
-                    "description": "If branching, which thought number is the branching point"
-                },
-                "branch_id": {
-                    "type": "string",
-                    "description": "Identifier for the current branch (if any)"
-                },
-                "needs_more_thoughts": {
-                    "type": "boolean",
-                    "description": "If reaching end but realizing more thoughts needed"
-                }
-            },
-            "required": ["thought", "thought_number", "total_thoughts", "next_thought_needed"]
-        }
-    
-    def _validate_thought_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Validate the thought data against the required fields and constraints.
-        
-        Args:
-            data (Dict[str, Any]): The raw thought data to be validated.
-            
-        Returns:
-            Dict[str, Any]: The validated and formatted thought data.
-            
-        Raises:
-            ValueError: If any required field is missing or if the values violate constraints.
-        """
-        required_fields = ["thought", "thought_number", "total_thoughts", "next_thought_needed"]
-        for field in required_fields:
-            if field not in data:
-                raise ValueError(f"Missing required field: {field}")
-        
-        thought = str(data["thought"])
-        thought_number = int(data["thought_number"])
-        total_thoughts = int(data["total_thoughts"])
-        next_thought_needed = bool(data["next_thought_needed"])
-        
-        if thought_number <= 0:
-            raise ValueError("thought_number must be positive")
-        
-        if total_thoughts <= 0:
-            raise ValueError("total_thoughts must be positive")
-        
-        # Adjust total_thoughts if thought_number exceeds it
-        if thought_number > total_thoughts:
-            total_thoughts = thought_number
-        
-        validated_data = {
-            "thought": thought,
-            "thoughtNumber": thought_number,
-            "totalThoughts": total_thoughts,
-            "nextThoughtNeeded": next_thought_needed,
-            "created": datetime.now().isoformat()
-        }
-        
-        # Optional fields
-        optional_fields = ["is_revision", "revises_thought", "branch_from_thought", "branch_id", "needs_more_thoughts"]
-        for field in optional_fields:
-            if field in data and data[field] is not None:
-                key_mapping = {
-                    "is_revision": "isRevision",
-                    "revises_thought": "revisesThought",
-                    "branch_from_thought": "branchFromThought",
-                    "branch_id": "branchId",
-                    "needs_more_thoughts": "needsMoreThoughts"
-                }
-                validated_data[key_mapping.get(field, field)] = data[field]
-        
-        return validated_data
-    
-    def _format_thought(self, thought_data: Dict[str, Any]) -> str:
-        """
-        Format a single thought for display purposes.
-        
-        Args:
-            thought_data (Dict[str, Any]): The validated thought data to be formatted.
-            
-        Returns:
-            str: A formatted string representing the thought in a box-like structure.
-        """
-        thought = thought_data["thought"]
-        thought_num = thought_data["thoughtNumber"]
-        total_thoughts = thought_data["totalThoughts"]
-        
-        prefix = "💭 Thought"
-        context = ""
-        
-        if thought_data.get("isRevision"):
-            prefix = "🔄 Revision"
-            revises = thought_data.get("revisesThought")
-            context = f" (revising thought {revises})"
-        elif thought_data.get("branchFromThought"):
-            prefix = "🌿 Branch"
-            branch_id = thought_data.get("branchId")
-            branch_from = thought_data.get("branchFromThought")
-            context = f" (from thought {branch_from}, ID: {branch_id})"
-        
-        header = f"{prefix} {thought_num}/{total_thoughts}{context}"
-        
-        # Create a simple box format
-        border = "─" * max(len(header) + 2, 40)
-        formatted = f"┌{border}┐\n"
-        formatted += f"│ {header.ljust(len(border))} │\n"
-        formatted += f"├{border}┤\n"
-        formatted += f"│ {thought.ljust(len(border))} │\n"
-        formatted += f"└{border}┘"
-        
-        return formatted
-    
-    def _process_thought(self, thought_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Process a thought, validate it, add it to the history, and handle branching.
-        
-        Args:
-            thought_data (Dict[str, Any]): The raw thought data to be processed.
-            
-        Returns:
-            Dict[str, Any]: A dictionary containing the processing result, 
-                            including success status and relevant data.
-        """
-        try:
-            validated_data = self._validate_thought_data(thought_data)
-            
-            # Add to history
-            self.thought_history.append(validated_data)
-            
-            # Handle branching
-            branch_id = validated_data.get("branchId")
-            branch_from = validated_data.get("branchFromThought")
-            
-            if branch_from and branch_id:
-                if branch_id not in self.branches:
-                    self.branches[branch_id] = []
-                self.branches[branch_id].append(validated_data)
-            
-            # Log the formatted thought
-            formatted_thought = self._format_thought(validated_data)
-            logger.info("\n" + formatted_thought)
-            
-            return {
-                "success": True,
-                "data": {
-                    "thoughtNumber": validated_data["thoughtNumber"],
-                    "totalThoughts": validated_data["totalThoughts"],
-                    "nextThoughtNeeded": validated_data["nextThoughtNeeded"],
-                    "branches": list(self.branches.keys()),
-                    "thoughtHistoryLength": len(self.thought_history),
-                    "isRevision": validated_data.get("isRevision", False),
-                    "revisesThought": validated_data.get("revisesThought"),
-                    "branchId": validated_data.get("branchId"),
-                    "created": validated_data["created"]
-                }
-            }
-            
-        except ValueError as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": f"Unexpected error: {str(e)}"
-            }
-    
-    def _get_thought_history(self) -> Dict[str, Any]:
-        """
-        Get the complete thought history and branch information.
-        
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status and thought history data.
-        """
-        return {
-            "success": True,
-            "data": {
-                "thoughts": self.thought_history,
-                "branches": self.branches,
-                "total_thoughts": len(self.thought_history),
-                "active_branches": len(self.branches)
-            }
-        }
-    
-    def _clear_history(self) -> Dict[str, Any]:
-        """
-        Clear the thought history and all branches.
-        
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status and confirmation message.
-        """
-        self.thought_history.clear()
-        self.branches.clear()
-        
-        return {
-            "success": True,
-            "data": {
-                "message": "Thought history cleared",
-                "total_thoughts": 0,
-                "branches": 0
-            }
-        }
-    
-    def execute(self, **kwargs) -> Dict[str, Any]:
-        """
-        Execute a sequential thinking operation based on the specified operation type.
-        
-        Args:
-            **kwargs: Keyword arguments containing the operation type and thought data.
-                      The 'operation' key specifies the operation type, defaulting to 'process_thought'.
-            
-        Returns:
-            Dict[str, Any]: A dictionary containing the result of the operation, 
-                            including success status and relevant data.
-        """
-        # Check for special operations
-        operation = kwargs.pop("operation", "process_thought")
-        
-        if operation == "get_history":
-            return self._get_thought_history()
-        elif operation == "clear":
-            return self._clear_history()
-        elif operation == "process_thought":
-            return self._process_thought(kwargs)
-        else:
-            return {
-                "success": False,
-                "error": f"Unknown operation: {operation}"
-            }
+        self.sessions = {}
 
-# Register the tool
-thinking_tool = SequentialThinkingTool()
-register_tool(
-    thinking_tool.name,
-    thinking_tool.description,
-    thinking_tool.get_schema(),
-    thinking_tool.execute
-)
+    def create_session(self, initial_thought: str) -> str:
+        """Create a new thinking session with an initial thought."""
+        session_id = str(uuid.uuid4())
+        root_thought = ThoughtNode(initial_thought)
+        self.sessions[session_id] = {
+            'root': root_thought,
+            'thoughts': {root_thought.id: root_thought},
+            'current_focus': root_thought.id,
+            'created_at': datetime.now().isoformat()
+        }
+        return session_id
+
+    def add_thought(self, session_id: str, content: str, parent_id: str = None) -> Dict[str, Any]:
+        """Add a new thought to a session."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Session not found"}
+        
+        session = self.sessions[session_id]
+        
+        if parent_id is None:
+            parent_id = session['current_focus']
+        
+        if parent_id not in session['thoughts']:
+            return {"success": False, "error": "Parent thought not found"}
+        
+        new_thought = ThoughtNode(content, parent_id)
+        session['thoughts'][new_thought.id] = new_thought
+        session['thoughts'][parent_id].children.append(new_thought.id)
+        session['current_focus'] = new_thought.id
+        
+        return {
+            "success": True,
+            "thought_id": new_thought.id,
+            "parent_id": parent_id,
+            "timestamp": new_thought.timestamp
+        }
+
+    def get_session(self, session_id: str) -> Dict[str, Any]:
+        """Get a complete session with all thoughts."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Session not found"}
+        
+        session = self.sessions[session_id]
+        thoughts_data = {}
+        
+        for thought_id, thought in session['thoughts'].items():
+            thoughts_data[thought_id] = {
+                "id": thought.id,
+                "content": thought.content,
+                "parent_id": thought.parent_id,
+                "timestamp": thought.timestamp,
+                "children": thought.children
+            }
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "created_at": session['created_at'],
+            "current_focus": session['current_focus'],
+            "thoughts": thoughts_data
+        }
+
+    def list_sessions(self) -> List[str]:
+        """List all active session IDs."""
+        return list(self.sessions.keys())
+
+    def delete_session(self, session_id: str) -> Dict[str, Any]:
+        """Delete a thinking session."""
+        if session_id not in self.sessions:
+            return {"success": False, "error": "Session not found"}
+        
+        del self.sessions[session_id]
+        return {"success": True}
+
+# Global instance
+thinking_manager = SequentialThinking()
+
+@mcp.tool()
+def create_thinking_session(initial_thought: str) -> Dict[str, Any]:
+    """Create a new sequential thinking session."""
+    try:
+        session_id = thinking_manager.create_session(initial_thought)
+        return {
+            "success": True,
+            "session_id": session_id,
+            "initial_thought": initial_thought
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@mcp.tool()
+def add_sequential_thought(session_id: str, content: str, parent_id: str = None) -> Dict[str, Any]:
+    """Add a thought to an existing sequential thinking session."""
+    try:
+        return thinking_manager.add_thought(session_id, content, parent_id)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@mcp.tool()
+def get_thinking_session(session_id: str) -> Dict[str, Any]:
+    """Get a complete sequential thinking session with all thoughts."""
+    try:
+        return thinking_manager.get_session(session_id)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@mcp.tool()
+def list_thinking_sessions() -> Dict[str, Any]:
+    """List all active sequential thinking sessions."""
+    try:
+        sessions = thinking_manager.list_sessions()
+        return {
+            "success": True,
+            "sessions": sessions,
+            "count": len(sessions)
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@mcp.tool()
+def delete_thinking_session(session_id: str) -> Dict[str, Any]:
+    """Delete a sequential thinking session."""
+    try:
+        return thinking_manager.delete_session(session_id)
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@mcp.tool()
+def get_thought_path(session_id: str, thought_id: str) -> Dict[str, Any]:
+    """Get the path from root to a specific thought."""
+    try:
+        if session_id not in thinking_manager.sessions:
+            return {"success": False, "error": "Session not found"}
+        
+        session = thinking_manager.sessions[session_id]
+        if thought_id not in session['thoughts']:
+            return {"success": False, "error": "Thought not found"}
+        
+        path = []
+        current_id = thought_id
+        
+        while current_id:
+            thought = session['thoughts'][current_id]
+            path.insert(0, {
+                "id": thought.id,
+                "content": thought.content,
+                "timestamp": thought.timestamp
+            })
+            current_id = thought.parent_id
+        
+        return {
+            "success": True,
+            "path": path,
+            "depth": len(path)
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
+@mcp.tool()
+def get_thinking_summary(session_id: str) -> Dict[str, Any]:
+    """Get a summary of a thinking session."""
+    try:
+        if session_id not in thinking_manager.sessions:
+            return {"success": False, "error": "Session not found"}
+        
+        session = thinking_manager.sessions[session_id]
+        thoughts = session['thoughts']
+        
+        total_thoughts = len(thoughts)
+        root_thought = session['root']
+        
+        # Count leaf thoughts (thoughts with no children)
+        leaf_thoughts = [t for t in thoughts.values() if not t.children]
+        
+        # Calculate depth
+        max_depth = 0
+        for thought in thoughts.values():
+            depth = 0
+            current = thought
+            while current.parent_id:
+                depth += 1
+                current = thoughts[current.parent_id]
+            max_depth = max(max_depth, depth)
+        
+        return {
+            "success": True,
+            "session_id": session_id,
+            "total_thoughts": total_thoughts,
+            "leaf_thoughts": len(leaf_thoughts),
+            "max_depth": max_depth,
+            "root_content": root_thought.content,
+            "created_at": session['created_at'],
+            "current_focus": session['current_focus']
+        }
+    except Exception as e:
+        return {"success": False, "error": str(e)}

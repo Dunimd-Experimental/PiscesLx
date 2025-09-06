@@ -21,8 +21,8 @@
 import os
 import sys
 from pathlib import Path
-from utils.log import RIGHT, DEBUG, ERROR
 from utils.ul import display_update_log
+from utils.log import RIGHT, DEBUG, ERROR
 
 try:
     from git import Repo, InvalidGitRepositoryError, GitCommandError
@@ -37,7 +37,7 @@ def update():
     Falls back to subprocess if GitPython is not available.
     """
     remote_url = 'https://gitee.com/dunimd/piscesl1.git'
-    backup_url = 'https://github.com/mf2023/PiscesL1.git'
+    backup_url = 'https://github.com/mf2023/piscesl1.git'
     
     # Get current working directory (project root)
     project_root = Path().cwd()

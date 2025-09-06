@@ -284,7 +284,7 @@ class GPUManager:
             return 1  # Minimum batch size
         
         # Estimate batch size
-        # Each sample memory ≈ seq_len * hidden_size * 4 bytes (rough estimate)
+        # Each sample memory = seq_len * hidden_size * 4 bytes (rough estimate)
         estimated_sample_memory_mb = seq_len * 4096 * 4 / (1024 * 1024)  # Assume hidden_size=4096
         max_batch_samples = int((available_for_batch * 1024) / (estimated_sample_memory_mb * seq_memory_factor))
         

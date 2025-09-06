@@ -154,14 +154,14 @@ class OptimizedMCPServer:
         successful = [s for s in self.tool_stats if s.status == "success"]
         total_tools = sum(s.tool_count for s in successful)
         
-        RIGHT(f"🚀 Optimized auto-discovery: {total_tools} tools from {len(successful)}/{len(py_files)} modules")
+        RIGHT(f"Optimized auto-discovery: {total_tools} tools from {len(successful)}/{len(py_files)} modules")
         
         # Log detailed loading statistics
         for stats in sorted(self.tool_stats, key=lambda x: x.load_time, reverse=True):
             if stats.status == "success":
-                DEBUG(f"✅ {stats.name}: {stats.tool_count} tools ({stats.load_time:.3f}s)")
+                DEBUG(f"{stats.name}: {stats.tool_count} tools ({stats.load_time:.3f}s)")
             elif stats.error:
-                ERROR(f"❌ {stats.name}: {stats.error}")
+                ERROR(f"{stats.name}: {stats.error}")
 
 # Global optimized server instance
 optimized_server = OptimizedMCPServer()

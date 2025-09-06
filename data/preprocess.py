@@ -88,7 +88,7 @@ def build_splits(subset):
     
     # Save the split dataset back to disk
     dataset_dict.save_to_disk(subset_path)
-    RIGHT(f"{subset} split completed â†’ {subset_path}")
+    RIGHT(f"{subset} split completed â†?{subset_path}")
 
 if __name__ == "__main__":
     # Get all dataset subset names

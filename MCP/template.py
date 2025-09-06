@@ -18,52 +18,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Any, List
-from mcp.server.fastmcp import FastMCP
+from MCP import mcp
+from typing import Dict, Any
 
-mcp = FastMCP("Your Tool Name")
-
-def get_tool_definition() -> 'MCPTool':
+@mcp.tool()
+def your_tool_name(param1: str, param2: int = 0) -> Dict[str, Any]:
     """
-    Generate the official MCP tool definition for auto-discovery.
-
-    Returns:
-        MCPTool: An instance of MCPTool containing the tool's metadata and input schema.
-    """
-    from MCP import MCPTool
-    return MCPTool(
-        name="your_tool_name",  # Tool name used by the model to call
-        description="Brief description of what this tool does",
-        input_schema={
-            "type": "object",
-            "properties": {
-                "param1": {
-                    "type": "string",
-                    "description": "Description of parameter 1"
-                },
-                "param2": {
-                    "type": "number", 
-                    "description": "Description of parameter 2"
-                }
-            },
-            "required": ["param1"]  # List of required parameters
-        }
-    )
-
-def execute_tool(arguments: Dict[str, Any]) -> Any:
-    """
-    Execute the tool with the provided arguments.
-
+    Brief description of what this tool does.
+    
     Args:
-        arguments (Dict[str, Any]): A dictionary containing the input parameters for the tool.
-
+        param1 (str): Description of parameter 1
+        param2 (int, optional): Description of parameter 2. Defaults to 0.
+        
     Returns:
-        Any: A dictionary representing the execution result, including success status, data, or error information.
+        Dict[str, Any]: A dictionary containing the execution result, including success status and data.
     """
     try:
-        param1 = arguments.get("param1")
-        param2 = arguments.get("param2", 0)
-        
         # Implement your tool logic here
         result = {
             "success": True,
@@ -96,14 +66,3 @@ def helper_function(arg1: str, arg2: int = 42) -> Dict[str, Any]:
         "helper_result": f"Helper processed {arg1} and {arg2}",
         "success": True
     }
-
-if __name__ == "__main__":
-    # Test the tool's basic functionality
-    print("Testing tool...")
-    definition = get_tool_definition()
-    print(f"Tool: {definition.name}")
-    print(f"Description: {definition.description}")
-    
-    # Test the tool's execution
-    test_result = execute_tool({"param1": "test", "param2": 123})
-    print(f"Result: {test_result}")

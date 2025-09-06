@@ -1,0 +1,73 @@
+{
+  "watermark_2025": {
+    "compliance_version": "2025.09.01",
+    "force_enabled": true,
+    "text": {
+      "zero_width": {
+        "force_density": 0.33,
+        "characters": ["\u200B", "\u200C", "\u200D", "\uFEFF", "\u2060", "\u2061", "\u2062", "\u2063"],
+        "layers": ["user_id", "timestamp", "model_hash", "session_id", "content_hash"],
+        "redundancy": 3,
+        "tamper_proof": true
+      },
+      "visible_prefix": null
+    },
+    "image": {
+      "hidden": {
+        "force_enabled": true,
+        "dct_strength": 0.08,
+        "channels": ["Y", "U", "V"],
+        "resistance": ["jpeg", "crop", "noise"],
+        "key": "pisces2025"
+      },
+      "visible": {
+        "force_enabled": true,
+        "text": "AI-Generated",
+        "position": "bottom_right",
+        "opacity": 0.8,
+        "font_size": 24,
+        "color": "rgba(255,255,255,0.9)"
+      }
+    },
+    "video": {
+      "frame_interval": 5,
+      "keyframe_boost": 2.0,
+      "audio_sync": true,
+      "visible_overlay": {
+        "text": "AI-Generated",
+        "position": "bottom_right",
+        "duration": "full",
+        "opacity": 0.7
+      }
+    },
+    "audio": {
+      "hidden": {
+        "lsb_bits": 6,
+        "frequency_range": [18000, 20000],
+        "spread_spectrum": true,
+        "key": "pisces2025_audio"
+      },
+      "visible": null
+    },
+    "metadata": {
+      "mandatory_fields": [
+        "generator", "model_version", "user_id", "timestamp", 
+        "content_hash", "session_id", "ip_hash", "device_id"
+      ],
+      "lock_after_generation": true,
+      "encryption": "AES-256"
+    },
+    "detection": {
+      "threshold": 0.95,
+      "batch_size": 1000,
+      "method": "local",
+      "response_time": "<100ms"
+    },
+    "traceability": {
+      "chain_enabled": true,
+      "forward_tracking": true,
+      "modification_detection": true,
+      "regulatory_reporting": true
+    }
+  }
+}

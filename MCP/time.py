@@ -18,311 +18,246 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-import logging
-from typing import Dict, Any
-from zoneinfo import ZoneInfo
-from datetime import datetime, timedelta
+import pytz
+import datetime
+from MCP import mcp
+from typing import Dict, Any, Optional
 
-try:
-    # Try to import get_localzone_name from tzlocal
-    from tzlocal import get_localzone_name
-    def get_local_timezone():
-        """
-        Get the local timezone name.
-
-        Attempts to get the local timezone name using tzlocal.
-        If an error occurs, falls back to "UTC".
-
-        Returns:
-            str: The local timezone name or "UTC" if an error occurs.
-        """
-        try:
-            return get_localzone_name()
-        except:
-            return "UTC"
-except ImportError:
-    def get_local_timezone():
-        """
-        Fallback function to get the timezone name.
-
-        Returns "UTC" when tzlocal module is not available.
-
-        Returns:
-            str: "UTC" as the default timezone.
-        """
-        return "UTC"
-
-# Import register_tool from simple_mcp module
-from .simple_mcp import register_tool
-
-# Initialize logger for the current module
-logger = logging.getLogger(__name__)
-
-class TimeTool:
-    """
-    A tool for time and timezone conversion operations.
-
-    This class provides functionality to get the current time, convert time between timezones,
-    and list common timezones.
-    """
-    
-    def __init__(self):
-        """
-        Initialize the TimeTool instance.
-
-        Sets the tool name, description, and determines the local timezone.
-        """
-        self.name = "time"
-        self.description = "Time and timezone conversion functionality"
-        self.local_timezone = get_local_timezone()
+@mcp.tool()
+def get_current_time(timezone: str = "UTC") -> Dict[str, Any]:
+    """Get the current time in a specific timezone."""
+    try:
+        if timezone not in pytz.all_timezones:
+            return {
+                "success": False,
+                "error": f"Invalid timezone: {timezone}",
+                "available_timezones": pytz.all_timezones[:10]  # Return first 10 as example
+            }
         
-    def get_schema(self) -> Dict[str, Any]:
-        """
-        Get the schema for the time tool operations.
-
-        Defines the structure and requirements for the input parameters of the time operations.
-
-        Returns:
-            Dict[str, Any]: A dictionary representing the JSON schema for the tool.
-        """
-        return {
-            "type": "object",
-            "properties": {
-                "operation": {
-                    "type": "string",
-                    "description": "Time operation to perform",
-                    "enum": ["get_current_time", "convert_time", "list_timezones"]
-                },
-                "timezone": {
-                    "type": "string",
-                    "description": f"IANA timezone name (e.g., 'America/New_York', 'Europe/London'). Use '{self.local_timezone}' as local timezone."
-                },
-                "source_timezone": {
-                    "type": "string",
-                    "description": "Source IANA timezone name for conversion"
-                },
-                "target_timezone": {
-                    "type": "string",
-                    "description": "Target IANA timezone name for conversion"
-                },
-                "time": {
-                    "type": "string",
-                    "description": "Time to convert in 24-hour format (HH:MM)"
-                }
-            },
-            "required": ["operation"]
-        }
-    
-    def _get_zoneinfo(self, timezone_name: str) -> ZoneInfo:
-        """
-        Get the ZoneInfo object for a given timezone name.
-
-        Args:
-            timezone_name (str): The IANA timezone name.
-
-        Returns:
-            ZoneInfo: The ZoneInfo object corresponding to the given timezone name.
-
-        Raises:
-            ValueError: If the provided timezone name is invalid.
-        """
-        try:
-            return ZoneInfo(timezone_name)
-        except Exception as e:
-            raise ValueError(f"Invalid timezone '{timezone_name}': {str(e)}")
-    
-    def _get_current_time(self, timezone_name: str) -> Dict[str, Any]:
-        """
-        Get the current time in the specified timezone.
-
-        Args:
-            timezone_name (str): The IANA timezone name.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing the current time information or an error message.
-        """
-        try:
-            timezone = self._get_zoneinfo(timezone_name)
-            current_time = datetime.now(timezone)
-            
-            return {
-                "success": True,
-                "data": {
-                    "timezone": timezone_name,
-                    "datetime": current_time.isoformat(timespec="seconds"),
-                    "time": current_time.strftime("%H:%M:%S"),
-                    "date": current_time.strftime("%Y-%m-%d"),
-                    "day_of_week": current_time.strftime("%A"),
-                    "is_dst": bool(current_time.dst()),
-                    "utc_offset": str(current_time.utcoffset() or timedelta()),
-                    "epoch": int(current_time.timestamp())
-                }
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
-    
-    def _convert_time(self, source_tz: str, time_str: str, target_tz: str) -> Dict[str, Any]:
-        """
-        Convert a given time from a source timezone to a target timezone.
-
-        Args:
-            source_tz (str): The source IANA timezone name.
-            time_str (str): The time to convert in 24-hour format (HH:MM).
-            target_tz (str): The target IANA timezone name.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing the conversion result or an error message.
-        """
-        try:
-            source_timezone = self._get_zoneinfo(source_tz)
-            target_timezone = self._get_zoneinfo(target_tz)
-            
-            # Parse the input time string
-            try:
-                parsed_time = datetime.strptime(time_str, "%H:%M").time()
-            except ValueError:
-                return {
-                    "success": False,
-                    "error": "Invalid time format. Expected HH:MM [24-hour format]"
-                }
-            
-            # Create a datetime object with today's date in the source timezone
-            now = datetime.now(source_timezone)
-            source_time = datetime(
-                now.year, now.month, now.day,
-                parsed_time.hour, parsed_time.minute,
-                tzinfo=source_timezone
-            )
-            
-            # Convert the source time to the target timezone
-            target_time = source_time.astimezone(target_timezone)
-            
-            # Calculate the difference in hours between the two timezones
-            source_offset = source_time.utcoffset() or timedelta()
-            target_offset = target_time.utcoffset() or timedelta()
-            hours_difference = (target_offset - source_offset).total_seconds() / 3600
-            
-            if hours_difference.is_integer():
-                time_diff_str = f"{hours_difference:+.1f}h"
-            else:
-                time_diff_str = f"{hours_difference:+.2f}h"
-            
-            return {
-                "success": True,
-                "data": {
-                    "source": {
-                        "timezone": source_tz,
-                        "datetime": source_time.isoformat(timespec="seconds"),
-                        "time": source_time.strftime("%H:%M"),
-                        "is_dst": bool(source_time.dst())
-                    },
-                    "target": {
-                        "timezone": target_tz,
-                        "datetime": target_time.isoformat(timespec="seconds"),
-                        "time": target_time.strftime("%H:%M"),
-                        "is_dst": bool(target_time.dst())
-                    },
-                    "time_difference": time_diff_str,
-                    "hours_difference": hours_difference
-                }
-            }
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e)
-            }
-    
-    def _list_timezones(self) -> Dict[str, Any]:
-        """
-        List common IANA timezone names.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing the local timezone, common timezones, and their count.
-        """
-        common_timezones = [
-            "UTC",
-            "America/New_York",
-            "America/Chicago", 
-            "America/Denver",
-            "America/Los_Angeles",
-            "America/Sao_Paulo",
-            "Europe/London",
-            "Europe/Paris",
-            "Europe/Berlin",
-            "Europe/Moscow",
-            "Asia/Tokyo",
-            "Asia/Shanghai",
-            "Asia/Kolkata",
-            "Asia/Dubai",
-            "Australia/Sydney",
-            "Australia/Melbourne",
-            "Pacific/Auckland",
-            "Africa/Cairo",
-            "Africa/Johannesburg",
-            "America/Mexico_City"
-        ]
+        tz = pytz.timezone(timezone)
+        now = datetime.datetime.now(tz)
         
         return {
             "success": True,
-            "data": {
-                "local_timezone": self.local_timezone,
-                "common_timezones": common_timezones,
-                "count": len(common_timezones)
-            }
+            "datetime": now.isoformat(),
+            "timezone": timezone,
+            "year": now.year,
+            "month": now.month,
+            "day": now.day,
+            "hour": now.hour,
+            "minute": now.minute,
+            "second": now.second,
+            "microsecond": now.microsecond,
+            "weekday": now.strftime("%A"),
+            "formatted": now.strftime("%Y-%m-%d %H:%M:%S %Z")
         }
-    
-    def execute(self, operation: str, **kwargs) -> Dict[str, Any]:
-        """
-        Execute a time operation based on the provided operation name and parameters.
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
 
-        Args:
-            operation (str): The name of the operation to perform.
-            **kwargs: Additional parameters required by the operation.
-
-        Returns:
-            Dict[str, Any]: The result of the operation or an error message.
-        """
-        if operation == "get_current_time":
-            timezone = kwargs.get("timezone", self.local_timezone)
-            return self._get_current_time(timezone)
-            
-        elif operation == "convert_time":
-            source_tz = kwargs.get("source_timezone", self.local_timezone)
-            time_str = kwargs.get("time")
-            target_tz = kwargs.get("target_timezone")
-            
-            if not time_str:
-                return {
-                    "success": False,
-                    "error": "Missing required parameter: time"
-                }
-            
-            if not target_tz:
-                return {
-                    "success": False,
-                    "error": "Missing required parameter: target_timezone"
-                }
-            
-            return self._convert_time(source_tz, time_str, target_tz)
-            
-        elif operation == "list_timezones":
-            return self._list_timezones()
-            
-        else:
+@mcp.tool()
+def parse_time(time_string: str, input_format: str = "%Y-%m-%d %H:%M:%S", timezone: str = "UTC") -> Dict[str, Any]:
+    """Parse a time string into a structured format."""
+    try:
+        if timezone not in pytz.all_timezones:
             return {
                 "success": False,
-                "error": f"Unknown operation: {operation}"
+                "error": f"Invalid timezone: {timezone}"
             }
+        
+        tz = pytz.timezone(timezone)
+        dt = datetime.datetime.strptime(time_string, input_format)
+        dt = tz.localize(dt)
+        
+        return {
+            "success": True,
+            "datetime": dt.isoformat(),
+            "timezone": timezone,
+            "year": dt.year,
+            "month": dt.month,
+            "day": dt.day,
+            "hour": dt.hour,
+            "minute": dt.minute,
+            "second": dt.second,
+            "weekday": dt.strftime("%A"),
+            "formatted": dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+        }
+        
+    except ValueError as e:
+        return {
+            "success": False,
+            "error": f"Invalid time format: {str(e)}",
+            "example_format": "2024-01-15 14:30:00"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
 
-# Register the TimeTool instance as a tool
-time_tool = TimeTool()
-register_tool(
-    time_tool.name,
-    time_tool.description,
-    time_tool.get_schema(),
-    time_tool.execute
-)
+@mcp.tool()
+def time_difference(start_time: str, end_time: str, timezone: str = "UTC") -> Dict[str, Any]:
+    """Calculate the difference between two times."""
+    try:
+        if timezone not in pytz.all_timezones:
+            return {
+                "success": False,
+                "error": f"Invalid timezone: {timezone}"
+            }
+        
+        tz = pytz.timezone(timezone)
+        
+        # Parse ISO format times
+        start_dt = datetime.datetime.fromisoformat(start_time.replace('Z', '+00:00'))
+        end_dt = datetime.datetime.fromisoformat(end_time.replace('Z', '+00:00'))
+        
+        # Convert to specified timezone
+        if start_dt.tzinfo is None:
+            start_dt = tz.localize(start_dt)
+        else:
+            start_dt = start_dt.astimezone(tz)
+            
+        if end_dt.tzinfo is None:
+            end_dt = tz.localize(end_dt)
+        else:
+            end_dt = end_dt.astimezone(tz)
+        
+        delta = end_dt - start_dt
+        
+        return {
+            "success": True,
+            "difference_seconds": delta.total_seconds(),
+            "difference_days": delta.days,
+            "difference_hours": delta.total_seconds() / 3600,
+            "difference_minutes": delta.total_seconds() / 60,
+            "start_time": start_dt.isoformat(),
+            "end_time": end_dt.isoformat(),
+            "human_readable": str(delta)
+        }
+        
+    except ValueError as e:
+        return {
+            "success": False,
+            "error": f"Invalid time format: {str(e)}",
+            "expected_format": "ISO format (YYYY-MM-DDTHH:MM:SS)"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
+def format_time(iso_time: str, output_format: str = "%Y-%m-%d %H:%M:%S", timezone: str = "UTC") -> Dict[str, Any]:
+    """Format an ISO time string to a custom format."""
+    try:
+        if timezone not in pytz.all_timezones:
+            return {
+                "success": False,
+                "error": f"Invalid timezone: {timezone}"
+            }
+        
+        tz = pytz.timezone(timezone)
+        dt = datetime.datetime.fromisoformat(iso_time.replace('Z', '+00:00'))
+        
+        if dt.tzinfo is None:
+            dt = tz.localize(dt)
+        else:
+            dt = dt.astimezone(tz)
+        
+        formatted = dt.strftime(output_format)
+        
+        return {
+            "success": True,
+            "formatted_time": formatted,
+            "timezone": timezone,
+            "iso_time": dt.isoformat(),
+            "format_used": output_format
+        }
+        
+    except ValueError as e:
+        return {
+            "success": False,
+            "error": f"Invalid time format: {str(e)}"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
+def add_duration(base_time: str, days: int = 0, hours: int = 0, minutes: int = 0, seconds: int = 0, timezone: str = "UTC") -> Dict[str, Any]:
+    """Add a duration to a base time."""
+    try:
+        if timezone not in pytz.all_timezones:
+            return {
+                "success": False,
+                "error": f"Invalid timezone: {timezone}"
+            }
+        
+        tz = pytz.timezone(timezone)
+        base_dt = datetime.datetime.fromisoformat(base_time.replace('Z', '+00:00'))
+        
+        if base_dt.tzinfo is None:
+            base_dt = tz.localize(base_dt)
+        else:
+            base_dt = base_dt.astimezone(tz)
+        
+        delta = datetime.timedelta(days=days, hours=hours, minutes=minutes, seconds=seconds)
+        new_dt = base_dt + delta
+        
+        return {
+            "success": True,
+            "original_time": base_dt.isoformat(),
+            "new_time": new_dt.isoformat(),
+            "duration_added": {
+                "days": days,
+                "hours": hours,
+                "minutes": minutes,
+                "seconds": seconds
+            },
+            "formatted": new_dt.strftime("%Y-%m-%d %H:%M:%S %Z")
+        }
+        
+    except ValueError as e:
+        return {
+            "success": False,
+            "error": f"Invalid time format: {str(e)}"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
+def list_timezones() -> Dict[str, Any]:
+    """List all available timezones."""
+    try:
+        timezones = pytz.all_timezones
+        
+        return {
+            "success": True,
+            "timezones": timezones,
+            "count": len(timezones),
+            "common_timezones": [
+                "UTC", "US/Eastern", "US/Central", "US/Mountain", "US/Pacific",
+                "Europe/London", "Europe/Paris", "Asia/Tokyo", "Asia/Shanghai", "Australia/Sydney"
+            ]
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }

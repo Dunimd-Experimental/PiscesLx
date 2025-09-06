@@ -23,498 +23,334 @@ import json
 import time
 import random
 import asyncio
+import subprocess
+from MCP import mcp
 from pathlib import Path
 from datetime import datetime
-from .simple_mcp import register_tool
 from typing import Dict, Any, List, Optional
 
-class EverythingTool:
-    """
-    A comprehensive example tool that provides multiple utilities.
-    This tool supports various operations such as echo, math calculations, 
-    long-running tasks, and more.
-    """
+# Everything search tool for Windows file system
+class EverythingSearch:
+    """Everything search tool for Windows file system."""
     
     def __init__(self):
-        """
-        Initialize the EverythingTool instance.
-        Sets up basic attributes including the tool name, description, 
-        resource counter, and subscription set.
-        """
-        self.name = "everything"
-        self.description = "Comprehensive example tool with echo, math, operations, and more utilities"
-        self.resource_counter = 1
-        self.subscriptions = set()
-        
-    def get_schema(self) -> Dict[str, Any]:
-        """
-        Get the schema definition for the tool's input parameters.
-        
-        Returns:
-            Dict[str, Any]: A dictionary containing the JSON schema for the tool's input.
-        """
-        return {
-            "type": "object",
-            "properties": {
-                "operation": {
-                    "type": "string",
-                    "description": "Operation to perform",
-                    "enum": [
-                        "echo", "add", "long_operation", "print_env", "sample_llm",
-                        "get_image", "annotated_message", "get_resource_ref", "elicit",
-                        "get_resource_links", "structured_content"
-                    ]
-                },
-                "message": {
-                    "type": "string",
-                    "description": "Message to echo (for echo operation)"
-                },
-                "a": {
-                    "type": "number",
-                    "description": "First number (for add operation)"
-                },
-                "b": {
-                    "type": "number",
-                    "description": "Second number (for add operation)"
-                },
-                "duration": {
-                    "type": "number",
-                    "description": "Duration in seconds (for long_operation)",
-                    "default": 10
-                },
-                "steps": {
-                    "type": "number",
-                    "description": "Number of steps (for long_operation)",
-                    "default": 5
-                },
-                "prompt": {
-                    "type": "string",
-                    "description": "Prompt for LLM (for sample_llm)"
-                },
-                "max_tokens": {
-                    "type": "number",
-                    "description": "Max tokens for LLM (for sample_llm)",
-                    "default": 100
-                },
-                "message_type": {
-                    "type": "string",
-                    "description": "Type of annotated message",
-                    "enum": ["error", "success", "debug"]
-                },
-                "include_image": {
-                    "type": "boolean",
-                    "description": "Include image in annotated message",
-                    "default": False
-                },
-                "resource_id": {
-                    "type": "number",
-                    "description": "Resource ID (1-100) for resource reference",
-                    "minimum": 1,
-                    "maximum": 100
-                },
-                "count": {
-                    "type": "number",
-                    "description": "Number of resource links to return (1-10)",
-                    "default": 3,
-                    "minimum": 1,
-                    "maximum": 10
-                },
-                "location": {
-                    "type": "string",
-                    "description": "City name or zip code (for structured_content)"
-                }
-            },
-            "required": ["operation"]
-        }
+        self.es_path = None
+        self._find_es_path()
     
-    def _echo(self, message: str) -> Dict[str, Any]:
-        """
-        Echo a message back with additional metadata.
-        
-        Args:
-            message (str): The message to be echoed.
-            
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status, echoed message, 
-                           its length, and a timestamp.
-        """
-        return {
-            "success": True,
-            "data": {
-                "message": message,
-                "length": len(message),
-                "timestamp": datetime.now().isoformat()
-            }
-        }
-    
-    def _add(self, a: float, b: float) -> Dict[str, Any]:
-        """
-        Add two numbers and return the result.
-        
-        Args:
-            a (float): The first number to add.
-            b (float): The second number to add.
-            
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status, input numbers, 
-                           their sum, and the operation type.
-        """
-        return {
-            "success": True,
-            "data": {
-                "a": a,
-                "b": b,
-                "sum": a + b,
-                "operation": "addition"
-            }
-        }
-    
-    def _long_operation(self, duration: int = 10, steps: int = 5) -> Dict[str, Any]:
-        """
-        Simulate a long-running operation by sleeping in steps and recording progress.
-        
-        Args:
-            duration (int, optional): Total duration of the operation in seconds. Defaults to 10.
-            steps (int, optional): Number of steps to divide the operation into. Defaults to 5.
-            
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status, operation details, 
-                           and progress results.
-        """
-        step_duration = duration / steps
-        results = []
-        
-        for i in range(steps):
-            step_num = i + 1
-            progress = (step_num / steps) * 100
-            
-            # Simulate work by sleeping for the calculated step duration
-            time.sleep(step_duration)
-            
-            results.append({
-                "step": step_num,
-                "progress": f"{progress:.1f}%",
-                "timestamp": datetime.now().isoformat()
-            })
-        
-        return {
-            "success": True,
-            "data": {
-                "duration": duration,
-                "steps": steps,
-                "results": results,
-                "completed": True
-            }
-        }
-    
-    def _print_env(self) -> Dict[str, Any]:
-        """
-        Print environment variables with sensitive information redacted.
-        
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status, filtered environment variables, 
-                           their count, hostname, and username.
-        """
-        env_vars = dict(os.environ)
-        
-        # Define sensitive keywords to filter sensitive environment variables
-        sensitive_keys = {'password', 'secret', 'token', 'key', 'auth'}
-        filtered_env = {}
-        
-        for key, value in env_vars.items():
-            key_lower = key.lower()
-            if any(sensitive in key_lower for sensitive in sensitive_keys):
-                filtered_env[key] = "[REDACTED]"
-            else:
-                filtered_env[key] = value
-        
-        return {
-            "success": True,
-            "data": {
-                "environment": filtered_env,
-                "count": len(filtered_env),
-                "hostname": os.getenv('COMPUTERNAME', 'unknown'),
-                "user": os.getenv('USERNAME', 'unknown')
-            }
-        }
-    
-    def _sample_llm(self, prompt: str, max_tokens: int = 100) -> Dict[str, Any]:
-        """
-        Simulate a response from a large language model (LLM).
-        
-        Args:
-            prompt (str): The input prompt for the simulated LLM.
-            max_tokens (int, optional): Maximum number of tokens for the response. Defaults to 100.
-            
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status, prompt, max tokens, 
-                           simulated response, tokens used, and model name.
-        """
-        responses = [
-            "That's a great question! Let me think about that...",
-            "Based on my analysis, here's what I found:",
-            "This is an interesting topic. Here's my perspective:",
-            "Let me break this down for you:",
-            "From what I understand, the key points are:"
+    def _find_es_path(self):
+        """Find Everything command line tool path."""
+        possible_paths = [
+            "C:\\Program Files\\Everything\\es.exe",
+            "C:\\Program Files (x86)\\Everything\\es.exe",
+            "C:\\Windows\\es.exe",
+            "es.exe"
         ]
         
-        # Generate a mock response using a random starting phrase and the input prompt
-        response_start = random.choice(responses)
-        mock_content = f"{response_start} {prompt[:50]}... This would be the LLM's detailed response based on your prompt. The response is limited to {max_tokens} tokens as requested."
-        
-        return {
-            "success": True,
-            "data": {
-                "prompt": prompt,
-                "max_tokens": max_tokens,
-                "response": mock_content,
-                "tokens_used": min(max_tokens, len(mock_content.split())),
-                "model": "mock-llm-v1"
-            }
-        }
+        for path in possible_paths:
+            if os.path.exists(path):
+                self.es_path = path
+                break
     
-    def _get_image(self) -> Dict[str, Any]:
-        """
-        Get a tiny 1x1 pixel PNG image in base64 format.
-        
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status, image data, 
-                           format, dimensions, and size.
-        """
-        # Base64-encoded 1x1 pixel PNG image
-        tiny_png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg=="
-        
-        return {
-            "success": True,
-            "data": {
-                "image_data": tiny_png,
-                "format": "png",
-                "width": 1,
-                "height": 1,
-                "size_bytes": len(tiny_png)
-            }
-        }
+    def is_available(self) -> bool:
+        """Check if Everything is available."""
+        return self.es_path is not None
     
-    def _annotated_message(self, message_type: str = "success", include_image: bool = False) -> Dict[str, Any]:
-        """
-        Generate an annotated message with different types (success, error, debug).
-        
-        Args:
-            message_type (str, optional): Type of the message. Defaults to "success".
-            include_image (bool, optional): Whether to include an image in the message. Defaults to False.
-            
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status and the annotated message data.
-        """
-        messages = {
-            "success": {
-                "title": "Operation Successful",
-                "content": "The operation completed successfully without any issues.",
-                "icon": "✅"
-            },
-            "error": {
-                "title": "Operation Failed",
-                "content": "There was an error while processing the operation.",
-                "icon": "❌"
-            },
-            "debug": {
-                "title": "Debug Information",
-                "content": "Here is some debug information for troubleshooting.",
-                "icon": "🐛"
-            }
-        }
-        
-        message = messages.get(message_type, messages["success"])
-        
-        result = {
-            "title": message["title"],
-            "content": message["content"],
-            "type": message_type,
-            "icon": message["icon"],
-            "timestamp": datetime.now().isoformat()
-        }
-        
-        if include_image:
-            result["image"] = "sample_image_data_here"
-        
-        return {
-            "success": True,
-            "data": result
-        }
-    
-    def _get_resource_ref(self, resource_id: int) -> Dict[str, Any]:
-        """
-        Get a reference to a resource based on the given resource ID.
-        
-        Args:
-            resource_id (int): The ID of the resource (must be between 1 and 100).
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status and resource reference data, 
-                           or an error message if the ID is invalid.
-        """
-        if not 1 <= resource_id <= 100:
-            return {
-                "success": False,
-                "error": "Resource ID must be between 1 and 100"
-            }
-        
-        return {
-            "success": True,
-            "data": {
-                "resource_id": resource_id,
-                "uri": f"resource://example/{resource_id}",
-                "title": f"Example Resource {resource_id}",
-                "description": f"This is example resource number {resource_id}",
-                "created": datetime.now().isoformat(),
-                "content": f"Content for resource {resource_id}"
-            }
-        }
-    
-    def _elicit(self) -> Dict[str, Any]:
-        """
-        Start an elicitation process by providing a set of questions.
-        
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status, process information, 
-                           questions, total question count, and guidance.
-        """
-        questions = [
-            "What specific problem are you trying to solve?",
-            "What is the current state of your system?",
-            "What are the key requirements?",
-            "What constraints do you have?",
-            "What is your expected outcome?"
-        ]
-        
-        return {
-            "success": True,
-            "data": {
-                "process": "elicitation_started",
-                "questions": questions,
-                "total_questions": len(questions),
-                "guidance": "Please answer these questions to help clarify your needs"
-            }
-        }
-    
-    def _get_resource_links(self, count: int = 3) -> Dict[str, Any]:
-        """
-        Get sample resource links.
-        
-        Args:
-            count (int, optional): Number of resource links to return (1-10). Defaults to 3.
-            
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status and a list of resource links.
-        """
-        links = []
-        for i in range(1, count + 1):
-            links.append({
-                "title": f"Resource {i}",
-                "uri": f"resource://example/{i}",
-                "description": f"Description for resource {i}",
-                "type": "example"
-            })
-        
-        return {
-            "success": True,
-            "data": {
-                "links": links,
-                "count": len(links)
-            }
-        }
-    
-    def _structured_content(self, location: str) -> Dict[str, Any]:
-        """
-        Get structured weather-like content based on the given location.
-        
-        Args:
-            location (str): The city name or zip code to get weather data for.
-            
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status and structured weather data.
-        """
-        # Mock weather conditions
-        weather_conditions = ["Sunny", "Cloudy", "Rainy", "Snowy", "Windy"]
-        
-        # Use a simple hash to ensure consistent weather for the same location
-        location_hash = sum(ord(c) for c in location) % len(weather_conditions)
-        condition = weather_conditions[location_hash]
-        
-        # Generate mock temperature and humidity data
-        temperature = random.randint(-10, 35)
-        humidity = random.randint(20, 90)
-        
-        return {
-            "success": True,
-            "data": {
-                "location": location,
-                "temperature": temperature,
-                "conditions": condition,
-                "humidity": humidity,
-                "timestamp": datetime.now().isoformat()
-            }
-        }
-    
-    def execute(self, operation: str, **kwargs) -> Dict[str, Any]:
-        """
-        Execute the requested operation with the provided keyword arguments.
-        
-        Args:
-            operation (str): The name of the operation to execute.
-            **kwargs: Additional keyword arguments required by the operation.
-            
-        Returns:
-            Dict[str, Any]: A dictionary containing the success status and operation result, 
-                           or an error message if the operation is unknown or fails.
-        """
-        operations = {
-            "echo": lambda: self._echo(kwargs.get("message", "Hello World")),
-            "add": lambda: self._add(kwargs.get("a", 0), kwargs.get("b", 0)),
-            "long_operation": lambda: self._long_operation(
-                kwargs.get("duration", 10),
-                kwargs.get("steps", 5)
-            ),
-            "print_env": self._print_env,
-            "sample_llm": lambda: self._sample_llm(
-                kwargs.get("prompt", "Hello"),
-                kwargs.get("max_tokens", 100)
-            ),
-            "get_image": self._get_image,
-            "annotated_message": lambda: self._annotated_message(
-                kwargs.get("message_type", "success"),
-                kwargs.get("include_image", False)
-            ),
-            "get_resource_ref": lambda: self._get_resource_ref(
-                kwargs.get("resource_id", 1)
-            ),
-            "elicit": self._elicit,
-            "get_resource_links": lambda: self._get_resource_links(
-                kwargs.get("count", 3)
-            ),
-            "structured_content": lambda: self._structured_content(
-                kwargs.get("location", "New York")
-            )
-        }
-        
-        if operation not in operations:
-            return {
-                "success": False,
-                "error": f"Unknown operation: {operation}"
-            }
+    def search_files(self, query: str, max_results: int = 100, sort: str = "name") -> List[str]:
+        """Search files using Everything."""
+        if not self.is_available():
+            return []
         
         try:
-            return operations[operation]()
+            cmd = [self.es_path, query, f"-n{max_results}", f"-sort-{sort}"]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+            
+            if result.returncode == 0:
+                files = result.stdout.strip().split('\n')
+                return [f for f in files if f.strip()]
+        except Exception:
+            pass
+        
+        return []
+    
+    def get_file_info(self, file_path: str) -> Dict[str, Any]:
+        """Get detailed file information."""
+        try:
+            stat = os.stat(file_path)
+            return {
+                "path": file_path,
+                "size": stat.st_size,
+                "modified": os.path.getmtime(file_path),
+                "is_directory": os.path.isdir(file_path),
+                "exists": os.path.exists(file_path)
+            }
         except Exception as e:
+            return {"error": str(e)}
+
+# Global instance
+everything_search = EverythingSearch()
+
+@mcp.tool()
+def search_everything(query: str, max_results: int = 50, sort_by: str = "name") -> Dict[str, Any]:
+    """Search files using Everything search engine on Windows."""
+    try:
+        if not everything_search.is_available():
             return {
                 "success": False,
-                "error": str(e)
+                "error": "Everything search tool is not available. Please install Everything with es.exe",
+                "available_paths": [
+                    "C:\\Program Files\\Everything\\es.exe",
+                    "C:\\Program Files (x86)\\Everything\\es.exe"
+                ]
             }
+        
+        files = everything_search.search_files(query, max_results, sort_by)
+        
+        return {
+            "success": True,
+            "query": query,
+            "results": files,
+            "count": len(files),
+            "sort_by": sort_by,
+            "max_results": max_results
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
 
-# Register the EverythingTool with the MCP system
-everything_tool = EverythingTool()
-register_tool(
-    everything_tool.name,
-    everything_tool.description,
-    everything_tool.get_schema(),
-    everything_tool.execute
-)
+@mcp.tool()
+def get_file_details(file_path: str) -> Dict[str, Any]:
+    """Get detailed information about a specific file or directory."""
+    try:
+        info = everything_search.get_file_info(file_path)
+        
+        if "error" in info:
+            return {
+                "success": False,
+                "error": info["error"]
+            }
+        
+        return {
+            "success": True,
+            "file_info": info
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
+def list_drives() -> Dict[str, Any]:
+    """List all available drive letters on Windows."""
+    try:
+        import string
+        import win32api
+        
+        drives = win32api.GetLogicalDriveStrings().split('\x00')[:-1]
+        
+        drive_info = []
+        for drive in drives:
+            drive_letter = drive[0]
+            try:
+                total, used, free = win32api.GetDiskFreeSpaceEx(drive)
+                drive_info.append({
+                    "drive": drive_letter,
+                    "path": drive,
+                    "total_bytes": total,
+                    "used_bytes": used,
+                    "free_bytes": free,
+                    "total_gb": round(total / (1024**3), 2),
+                    "used_gb": round(used / (1024**3), 2),
+                    "free_gb": round(free / (1024**3), 2)
+                })
+            except:
+                drive_info.append({
+                    "drive": drive_letter,
+                    "path": drive,
+                    "error": "Unable to access drive"
+                })
+        
+        return {
+            "success": True,
+            "drives": drive_info,
+            "count": len(drive_info)
+        }
+        
+    except ImportError:
+        return {
+            "success": False,
+            "error": "win32api not available. This function requires pywin32."
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
+def get_recent_files(directory: str = None, limit: int = 20) -> Dict[str, Any]:
+    """Get recently modified files in a directory."""
+    try:
+        if directory is None:
+            directory = os.getcwd()
+        
+        if not os.path.exists(directory):
+            return {
+                "success": False,
+                "error": f"Directory not found: {directory}"
+            }
+        
+        files = []
+        for root, dirs, filenames in os.walk(directory):
+            for filename in filenames:
+                filepath = os.path.join(root, filename)
+                try:
+                    stat = os.stat(filepath)
+                    files.append({
+                        "path": filepath,
+                        "modified": stat.st_mtime,
+                        "size": stat.st_size,
+                        "extension": os.path.splitext(filename)[1],
+                        "directory": os.path.dirname(filepath)
+                    })
+                except (OSError, PermissionError):
+                    continue
+        
+        # Sort by modification time, most recent first
+        files.sort(key=lambda x: x["modified"], reverse=True)
+        recent_files = files[:limit]
+        
+        # Convert timestamps to readable format
+        for file in recent_files:
+            file["modified_readable"] = datetime.fromtimestamp(file["modified"]).strftime("%Y-%m-%d %H:%M:%S")
+        
+        return {
+            "success": True,
+            "directory": directory,
+            "files": recent_files,
+            "count": len(recent_files)
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
+def find_large_files(directory: str = None, min_size_mb: int = 100, limit: int = 50) -> Dict[str, Any]:
+    """Find large files in a directory."""
+    try:
+        if directory is None:
+            directory = os.getcwd()
+        
+        if not os.path.exists(directory):
+            return {
+                "success": False,
+                "error": f"Directory not found: {directory}"
+            }
+        
+        min_size_bytes = min_size_mb * 1024 * 1024
+        large_files = []
+        
+        for root, dirs, filenames in os.walk(directory):
+            for filename in filenames:
+                filepath = os.path.join(root, filename)
+                try:
+                    stat = os.stat(filepath)
+                    if stat.st_size >= min_size_bytes:
+                        large_files.append({
+                            "path": filepath,
+                            "size_bytes": stat.st_size,
+                            "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                            "modified": stat.st_mtime,
+                            "extension": os.path.splitext(filename)[1]
+                        })
+                except (OSError, PermissionError):
+                    continue
+        
+        # Sort by size, largest first
+        large_files.sort(key=lambda x: x["size_bytes"], reverse=True)
+        large_files = large_files[:limit]
+        
+        for file in large_files:
+            file["modified_readable"] = datetime.fromtimestamp(file["modified"]).strftime("%Y-%m-%d %H:%M:%S")
+        
+        return {
+            "success": True,
+            "directory": directory,
+            "files": large_files,
+            "count": len(large_files),
+            "min_size_mb": min_size_mb
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+@mcp.tool()
+def search_by_extension(extension: str, directory: str = None, limit: int = 100) -> Dict[str, Any]:
+    """Search files by extension in a directory."""
+    try:
+        if directory is None:
+            directory = os.getcwd()
+        
+        if not os.path.exists(directory):
+            return {
+                "success": False,
+                "error": f"Directory not found: {directory}"
+            }
+        
+        # Ensure extension starts with a dot
+        if not extension.startswith('.'):
+            extension = '.' + extension
+        
+        files = []
+        for root, dirs, filenames in os.walk(directory):
+            for filename in filenames:
+                if filename.lower().endswith(extension.lower()):
+                    filepath = os.path.join(root, filename)
+                    try:
+                        stat = os.stat(filepath)
+                        files.append({
+                            "path": filepath,
+                            "size": stat.st_size,
+                            "size_mb": round(stat.st_size / (1024 * 1024), 2),
+                            "modified": stat.st_mtime,
+                            "directory": os.path.dirname(filepath)
+                        })
+                    except (OSError, PermissionError):
+                        continue
+        
+        # Sort by modification time, most recent first
+        files.sort(key=lambda x: x["modified"], reverse=True)
+        files = files[:limit]
+        
+        for file in files:
+            file["modified_readable"] = datetime.fromtimestamp(file["modified"]).strftime("%Y-%m-%d %H:%M:%S")
+        
+        return {
+            "success": True,
+            "directory": directory,
+            "extension": extension,
+            "files": files,
+            "count": len(files)
+        }
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }

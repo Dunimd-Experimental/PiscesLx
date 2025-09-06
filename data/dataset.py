@@ -141,13 +141,13 @@ class StreamingDataBuffer:
         self._stop_event.set()
 
 class LargeScaleStreamingDataset(IterableDataset):
-    """5TB规模数据集流式处理器 - Arctic架构专用
+    """Streaming processor for 5TB-scale datasets - Exclusive for Arctic architecture
     
-    支持内存高效的大规模数据集处理，具备：
-    - 自适应批次大小调整
-    - 多进程数据预处理 
-    - 智能内存监控
-    - 启智平台优化
+    Supports memory-efficient large-scale dataset processing with the following features:
+    - Adaptive batch size adjustment
+    - Multi-process data preprocessing
+    - Intelligent memory monitoring
+    - Qizhi Platform optimization
     """
     def __init__(self, 
                  data_sources: List[str], 
@@ -160,7 +160,7 @@ class LargeScaleStreamingDataset(IterableDataset):
         self.batch_config = batch_config or BatchConfig()
         self.enable_prefetch = enable_prefetch
         
-        # 初始化组件
+        # Initialize components
         self.tokenizer = get_tokenizer()
         self.memory_monitor = MemoryMonitor(MEMORY_THRESHOLD_GB)
         self.streaming_buffer = StreamingDataBuffer(

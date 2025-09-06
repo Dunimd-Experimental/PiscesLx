@@ -18,150 +18,156 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import socket
 import platform
+from MCP import mcp
 from typing import Dict, Any
 
-def system_info(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Retrieve system information based on the specified type.
-
-    Args:
-        arguments (Dict[str, Any]): A dictionary containing the information type. 
-                                   The key 'type' can be 'cpu', 'memory', 'disk', 'gpu', or 'all'. 
-                                   Defaults to 'all' if not specified.
-
-    Returns:
-        Dict[str, Any]: A dictionary containing the operation status and system information.
-                       If successful, 'success' is True and 'data' contains the requested information.
-                       If failed, 'success' is False and 'error' contains the error message.
-    """
-    info_type = arguments.get("type", "all")
-    
+@mcp.tool()
+def system_info() -> Dict[str, Any]:
+    """Get comprehensive system information including CPU, memory, disk, and network."""
     try:
-        if info_type == "cpu":
-            return {
-                "success": True,
-                "data": {
-                    "cpu_count": 8,
-                    "cpu_percent": 23.5,
-                    "architecture": platform.machine(),
-                    "processor": platform.processor()
-                }
+        # CPU information
+        cpu_percent = psutil.cpu_percent(interval=1)
+        cpu_count = psutil.cpu_count()
+        cpu_freq = psutil.cpu_freq()
+        
+        # Memory information
+        memory = psutil.virtual_memory()
+        
+        # Disk information
+        disk_usage = psutil.disk_usage('/')
+        
+        # Network information
+        hostname = socket.gethostname()
+        ip_address = socket.gethostbyname(hostname)
+        
+        # Platform information
+        system = platform.system()
+        release = platform.release()
+        version = platform.version()
+        machine = platform.machine()
+        processor = platform.processor()
+        
+        return {
+            "success": True,
+            "cpu": {
+                "usage_percent": cpu_percent,
+                "cores": cpu_count,
+                "frequency_mhz": cpu_freq.current if cpu_freq else None,
+                "max_frequency_mhz": cpu_freq.max if cpu_freq else None
+            },
+            "memory": {
+                "total_gb": round(memory.total / (1024**3), 2),
+                "available_gb": round(memory.available / (1024**3), 2),
+                "used_gb": round(memory.used / (1024**3), 2),
+                "usage_percent": memory.percent
+            },
+            "disk": {
+                "total_gb": round(disk_usage.total / (1024**3), 2),
+                "used_gb": round(disk_usage.used / (1024**3), 2),
+                "free_gb": round(disk_usage.free / (1024**3), 2),
+                "usage_percent": round((disk_usage.used / disk_usage.total) * 100, 2)
+            },
+            "network": {
+                "hostname": hostname,
+                "ip_address": ip_address
+            },
+            "platform": {
+                "system": system,
+                "release": release,
+                "version": version,
+                "machine": machine,
+                "processor": processor
             }
-        elif info_type == "memory":
-            return {
-                "success": True,
-                "data": {
-                    "total_gb": 16.0,
-                    "available_gb": 12.3,
-                    "percent": 23.1,
-                    "unit": "GB"
-                }
-            }
-        elif info_type == "disk":
-            return {
-                "success": True,
-                "data": {
-                    "total_gb": 512.0,
-                    "used_gb": 245.7,
-                    "free_gb": 266.3,
-                    "percent": 48.0,
-                    "unit": "GB"
-                }
-            }
-        elif info_type == "gpu":
-            return {
-                "success": True,
-                "data": {
-                    "gpu_count": 1,
-                    "gpu_name": "NVIDIA RTX 3080",
-                    "memory_gb": 10.0,
-                    "driver_version": "546.33"
-                }
-            }
-        elif info_type == "all":
-            return {
-                "success": True,
-                "data": {
-                    "platform": platform.platform(),
-                    "python_version": platform.python_version(),
-                    "hostname": platform.node(),
-                    "system": platform.system(),
-                    "cpu": {
-                        "count": 8,
-                        "architecture": platform.machine()
-                    },
-                    "memory": {
-                        "total_gb": 16.0,
-                        "available_gb": 12.3,
-                        "percent": 23.1
-                    },
-                    "disk": {
-                        "total_gb": 512.0,
-                        "used_gb": 245.7,
-                        "free_gb": 266.3,
-                        "percent": 48.0
-                    }
-                }
-            }
-        else:
-            return {"success": False, "error": f"Unknown type: {info_type}"}
-            
+        }
+        
     except Exception as e:
-        return {"success": False, "error": str(e)}
-
-def system_health(arguments: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Perform a quick system health check.
-
-    Args:
-        arguments (Dict[str, Any]): Currently unused, can be an empty dictionary.
-
-    Returns:
-        Dict[str, Any]: A dictionary containing the operation status and system health information.
-                       'success' is always True, and 'data' contains the health status and recommendations.
-    """
-    return {
-        "success": True,
-        "data": {
-            "status": "healthy",
-            "cpu_usage": "normal",
-            "memory_usage": "normal",
-            "disk_usage": "normal",
-            "recommendations": ["System running smoothly"]
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
         }
-    }
 
-# Integrate with Pisces L1 MCP Square
-from . import register_custom_tool
-
-# Register the system information tool
-register_custom_tool(
-    name="system_info",
-    description="Retrieve system hardware and performance information.",
-    parameters={
-        "type": "object",
-        "properties": {
-            "type": {
-                "type": "string",
-                "enum": ["cpu", "memory", "disk", "gpu", "all"],
-                "default": "all",
-                "description": "Type of system information."
+@mcp.tool()
+def system_health() -> Dict[str, Any]:
+    """Get system health status with warnings and recommendations."""
+    try:
+        # Get system info
+        info = system_info()
+        if not info["success"]:
+            return info
+        
+        data = info
+        warnings = []
+        recommendations = []
+        
+        # CPU health check
+        cpu_usage = data["cpu"]["usage_percent"]
+        if cpu_usage > 80:
+            warnings.append(f"High CPU usage: {cpu_usage}%")
+            recommendations.append("Consider closing unnecessary applications")
+        elif cpu_usage > 90:
+            warnings.append(f"Critical CPU usage: {cpu_usage}%")
+            recommendations.append("Immediate action required: check running processes")
+        
+        # Memory health check
+        memory_usage = data["memory"]["usage_percent"]
+        if memory_usage > 80:
+            warnings.append(f"High memory usage: {memory_usage}%")
+            recommendations.append("Consider restarting applications or system")
+        elif memory_usage > 90:
+            warnings.append(f"Critical memory usage: {memory_usage}%")
+            recommendations.append("Immediate action: free up memory")
+        
+        # Disk health check
+        disk_usage = data["disk"]["usage_percent"]
+        if disk_usage > 85:
+            warnings.append(f"High disk usage: {disk_usage}%")
+            recommendations.append("Consider cleaning up disk space")
+        elif disk_usage > 95:
+            warnings.append(f"Critical disk usage: {disk_usage}%")
+            recommendations.append("Urgent: free up disk space immediately")
+        
+        # Overall health score
+        health_score = 100
+        if warnings:
+            health_score -= len(warnings) * 10
+        if cpu_usage > 70:
+            health_score -= 10
+        if memory_usage > 70:
+            health_score -= 10
+        if disk_usage > 70:
+            health_score -= 10
+        
+        health_score = max(0, min(100, health_score))
+        
+        status = "healthy"
+        if health_score < 50:
+            status = "critical"
+        elif health_score < 70:
+            status = "warning"
+        elif health_score < 90:
+            status = "good"
+        
+        return {
+            "success": True,
+            "health": {
+                "score": health_score,
+                "status": status,
+                "warnings": warnings,
+                "recommendations": recommendations
+            },
+            "system": {
+                "cpu_usage": data["cpu"]["usage_percent"],
+                "memory_usage": data["memory"]["usage_percent"],
+                "disk_usage": data["disk"]["usage_percent"]
             }
         }
-    },
-    function=system_info,
-    category="System"
-)
-
-# Register the system health check tool
-register_custom_tool(
-    name="system_health",
-    description="Perform a quick system health check.",
-    parameters={
-        "type": "object",
-        "properties": {}
-    },
-    function=system_health,
-    category="System"
-)
+        
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }

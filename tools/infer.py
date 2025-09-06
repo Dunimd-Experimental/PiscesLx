@@ -20,11 +20,13 @@
 
 import os
 import asyncio
+import time
 import argparse
 from utils.gpu_manager import GPUManager
 from utils.log import RIGHT, DEBUG, ERROR
 from model.mcp.translator import MCPTranslationLayer
 from tools.mcp import start_mcp_server, check_mcp_server_status
+from tools.watermark import watermark_manager, watermark_text
 
 def setup_inference_device(device_pref):
     """
@@ -115,7 +117,22 @@ class VLLMEngine:
             stop=stop
         )
         outputs = self.llm.generate([prompt], sampling_params)
-        return outputs[0].outputs[0].text
+        generated_text = outputs[0].outputs[0].text
+        
+        # Add hidden watermark for VLLM generated content
+        watermark_metadata = {
+            "prompt": prompt,
+            "params": {
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "top_p": top_p,
+                "use_vllm": True
+            },
+            "user_id": "vllm_user",
+            "timestamp": str(int(time.time()))
+        }
+        
+        return watermark_text(generated_text, prompt, watermark_metadata)
 
 def infer(args):
     """
@@ -468,6 +485,27 @@ def infer(args):
                     torch.cuda.empty_cache()
     output_ids = input_ids[0].tolist() + generated_ids
     generated_text = tokenizer.decode(output_ids, skip_special_tokens=True)
+    
+    # Add hidden watermark to generated content with 2025 mandatory standard
+    watermark_metadata = {
+        "prompt": args.prompt,
+        "params": {
+            "temperature": getattr(args, 'temperature', 0.7),
+            "max_tokens": getattr(args, 'max_length', 512),
+            "top_p": getattr(args, 'top_p', 0.95),
+            "model_size": getattr(args, 'model_size', '1.5B'),
+            "use_vllm": getattr(args, 'use_vllm', False),
+            "use_speculative": getattr(args, 'use_speculative', False)
+        },
+        "user_id": getattr(args, 'user_id', 'anonymous'),
+        "timestamp": str(int(time.time())),
+        "generation_method": "text_inference",
+        
+    }
+    
+    from tools.watermark import watermark_manager
+    watermarked_text = watermark_manager.add_watermark(generated_text, watermark_metadata)
+    generated_text = watermarked_text
     
     # Step 2: Process agent calls via MCP if present
     try:

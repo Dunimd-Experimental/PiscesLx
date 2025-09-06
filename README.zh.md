@@ -1,15 +1,14 @@
 # ⚠️ 合规提示
 
-**如果你在中国境内使用本模型，包括但不限于训练、微调、商用测试等，凡是向社会公众提供任何服务的，请先按照相关法律法规完成备案手续。**
+**如果你在中国境内使用本模型，包括但不限于训练、微调、商用测试等，凡是向社会公众提供任何服务的，请先按照相关法律法规完成手续。**
 
 ---
-
 
 # Pisces L1
 
 简体中文 | [English](README.md)
 
-下一代轻量级多模态混合专家模型(MoE)，采用**Arctic架构**，支持文本、图像、音频、视频、文档和智能体理解。Pisces L1 (PiscesLx系列，Dunimd项目组)专为研究设计，可在单个RTX 4090上运行，具备突破性创新，扩展至314B参数。
+采用**Arctic架构**的下一代轻量级多模态混合专家模型(MoE)，支持文本、图像、音频、视频、文档和智能体理解。Pisces L1 (PiscesLx系列，Dunimd项目组)专为研究和实际应用而设计，可在单个RTX 4090上运行，具备突破性创新，扩展至314B参数。
 
 ## ⭐ Arctic架构创新
 
@@ -61,7 +60,7 @@
 
 ## 🚀 特性
 
-- **Arctic架构**: 革命性多模态架构，量子启发推理引擎
+- **Arctic架构**: 革命性多模态架构，量子启发推理
 - **量子推理引擎**: 超越传统思维链，层次化抽象处理
 - **5模态理解**: 统一处理文本、图像、音频、视频、文档和智能体输入
 - **MoE专家系统**: 8专家智能Top-2路由和负载预测
@@ -76,13 +75,13 @@
 
 ## 🛠️ 安装与环境
 
-- **Python**: 推荐3.11
+- **Python**: 3.11推荐
 - **CUDA**: 11.8+ (用于GPU训练/推理)
-- **依赖项**: 所有必需的包都列在`requirements.txt`中
+- **依赖项**: 所有必需包列在`requirements.txt`中
 
 ### 快速设置
 ```bash
-git clone https://gitee.com/dunimd/piscesl1.git or git clone https://github.com/mf2023/PiscesL1.git
+git clone https://gitee.com/dunimd/piscesl1.git or git clone https://github.com/mf2023/piscesl1.git
 cd piscesl1
 python manage.py setup
 ```
@@ -98,22 +97,24 @@ python manage.py help
 ```
 
 ### 主要命令
-| 命令        | 描述                                          |
-|-------------|------------------------------------------------|
-| setup       | 环境设置和依赖安装                              |
-| source      | 激活虚拟环境                                   |
-| update      | 从远程仓库拉取最新代码                           |
-| version     | 显示当前版本信息和更新日志                         |
-| changelog   | 显示版本历史（--all 显示所有版本，--version X.X.XXXX 显示特定版本） |
-| train       | 训练模型                                       |
-| infer       | 使用训练好的模型进行推理                         |
-| check       | 检查GPU和依赖项                                |
-| monitor     | 系统监控(GPU/CPU/内存)                         |
-| download    | 下载训练数据集                                 |
-| dataset     | Dataset management tool                        |
-| quantize    | 将模型量化为4/8位以提高效率                      |
-| benchmark   | 运行性能基准测试                                |
-| help        | 显示帮助信息                                   |
+| 命令       | 描述                                                          |
+|------------|---------------------------------------------------------------|
+| setup      | 环境设置和依赖安装                                            |
+| source     | 激活虚拟环境                                                  |
+| update     | 从远程仓库拉取最新代码                                        |
+| version    | 显示当前版本和更新日志                                        |
+| changelog  | 显示版本历史(--all显示所有，--version X.X.XXXX显示特定版本)   |
+| rlhf       | 来自人类反馈的强化学习训练                                     |
+| watermark  | 检测是否为PiscesLx系列模型生成                                |
+| train      | 训练模型                                                      |
+| infer      | 使用训练好的模型进行推理                                      |
+| check      | 检查GPU和依赖项                                               |
+| monitor    | 系统监控(GPU/CPU/内存)                                        |
+| download   | 下载训练数据集                                                |
+| dataset    | 数据集管理工具                                                |
+| quantize   | 将模型量化为4/8位以提高效率                                   |
+| benchmark  | 运行性能基准测试                                               |
+| help       | 显示帮助信息                                                  |
 
 #### 示例
 ```bash
@@ -136,16 +137,16 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "你好，Pisces!"
 - **MoE系统**: 动态专家路由，LSTM负载预测
 - **内存优化**: 梯度检查点、混合精度、K-FAC优化
 
-| 模型大小 | 层数 | 隐藏层大小 | 注意力头数 | KV头数 | MoE专家数 | 参数规模(实际) | 上下文 | 量化 |
-|---------  |------|-----------|-----------|----------|----------|-----------------|---------|-------------|
-| 0.5B    | 16   | 640       | 10        | 5        | 6        | 0.5B            | 256K    | 2/4/8-bit   |
-| 1.5B    | 16   | 896       | 14        | 7        | 6        | 1.5B            | 256K    | 2/4/8-bit   |
-| 7B      | 28   | 3584      | 32        | 8        | 8        | 7B              | 1M      | 2/4/8-bit   |
-| 32B     | 64   | 5120      | 40        | 8        | 8        | 32B             | 1M      | 2/4/8-bit   |
-| 64B     | 80   | 6656      | 52        | 8        | 8        | 64B             | 10M     | 2/4/8-bit   |
-| 70B     | 80   | 8192      | 64        | 8        | 8        | 70B             | 10M     | 2/4/8-bit   |
-| 128B    | 120  | 10240     | 80        | 8        | 8        | 128B            | 10M     | 2/4/8-bit   |
-| 314B    | 160  | 12288     | 96        | 12       | 16       | 314B            | 10M     | 2/4/8-bit   |
+| 模型大小 | 层数 | 隐藏层 | 注意力头数 | KV头数 | MoE专家数 | 参数(实际) | 上下文 | 量化 |
+|----------|------|--------|------------|--------|-----------|------------|---------|-------------|
+| 0.5B     | 16   | 640    | 10         | 5      | 6         | 0.5B       | 256K    | 2/4/8-bit   |
+| 1.5B     | 16   | 896    | 14         | 7      | 6         | 1.5B       | 256K    | 2/4/8-bit   |
+| 7B       | 28   | 3584   | 32         | 8      | 8         | 7B         | 1M      | 2/4/8-bit   |
+| 32B      | 64   | 5120   | 40         | 8      | 8         | 32B        | 1M      | 2/4/8-bit   |
+| 64B      | 80   | 6656   | 52         | 8      | 8         | 64B        | 10M     | 2/4/8-bit   |
+| 70B      | 80   | 8192   | 64         | 8      | 8         | 70B        | 10M     | 2/4/8-bit   |
+| 128B     | 120  | 10240  | 80         | 8      | 8         | 128B       | 10M     | 2/4/8-bit   |
+| 314B     | 160  | 12288  | 96         | 12     | 16        | 314B       | 10M     | 2/4/8-bit   |
 
 ### 参数分解 (0.5B配置)
 - **核心Transformer**: ~500M参数
@@ -170,7 +171,7 @@ python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quan
 ---
 
 ## 📦 数据集[默认魔塔社区(https://www.modelscope.cn/)]
-数据集会自动下载并缓存。支持以下数据集：
+数据集自动下载并缓存。支持以下数据集：
 
 ### 中文语言
 - **Chinese1** (baicai003/Llama3-Chinese-dataset): 中文语料库
@@ -228,7 +229,7 @@ python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quan
 - **Agent4** (HuggingFaceH4/agent-tool-use): 工具使用智能体行为数据集
 - **Agent5** (modelscope/agent-environment): 智能体环境交互数据
 
-通过以下命令自动下载和缓存数据集：
+数据集通过以下命令自动下载并缓存：
 ```bash
 python manage.py download
 ```
@@ -240,7 +241,7 @@ Pisces L1 Arctic架构支持**在14.58GB GPU上训练1.5B参数模型**，使用
 
 ### 内存优化策略
 - **多位量化**: 2位（实验性）、4位（默认）、8位（稳定）
-- **LoRA适配**: 仅有 0.024% 参数可训练（360K / 1.5B）
+- **LoRA适配**: 仅0.024%参数可训练（360K / 1.5B）
 - **梯度检查点**: 减少激活内存50%+
 - **K-FAC优化**: 对角Fisher矩阵近似
 - **自适应梯度裁剪**: 自动处理梯度爆炸
@@ -297,7 +298,7 @@ python manage.py infer --prompt "用简单的话解释量子计算" --ckpt ckpt/
 ```
 
 ## 🤖 MCP原生智能体支持 [Beta]
-Pisces L1现已包含**原生MCP(多智能体通信协议)**支持，实现智能体间无缝通信和分布式任务执行。
+Pisces L1现已包含**原生MCP(Model Context Protocol)**支持，实现智能体间无缝通信和分布式任务执行。
 
 ### MCP特性
 - **原生集成**: 在`model/agent.py`中内置MCP协议支持
@@ -350,8 +351,8 @@ Pisces L1包含对26个标准化评测基准的全面支持，涵盖中文、英
 ### 可用基准测试
 
 #### 核心基准
-| 基准测试 | 语言 | 关注领域 | 题目数量 |
-|----------|------|----------|----------|
+| 基准测试 | 语言 | 关注领域 | 题型 |
+|----------|------|----------|------|
 | **MMLU** | 英文 | 57个学科(STEM/人文/社会科学) | 多选题 |
 | **C-Eval** | 中文 | 52个中文学科 | 多选题 |
 | **C-Eval Hard** | 中文 | 高考/研究生入学考试 | 高难度 |
@@ -431,7 +432,7 @@ python manage.py benchmark --benchmark mmlu --config configs/7B.json
 - **问：如何仅在CPU上运行？**
   答：大多数功能需要GPU，但可以尝试使用`--device cpu`(性能会很慢)。
 - **问：如何运行模型评测？**
-  答：使用`python tools/benchmark.py`配合可用基准测试。参见上方的模型评测部分。
+  答：使用`python manage.py benchmark`配合可用基准测试。参见上方的模型评测部分。
 
 ---
 
@@ -450,7 +451,7 @@ python manage.py benchmark --benchmark mmlu --config configs/7B.json
 ## 🌏 社区与引用
 - 欢迎提交issues和PR！
 - [PiscesL1 in Gitee](https://gitee.com/dunimd/piscesl1.git)
-- [PiscesL1 in GitHub](https://github.com/mf2023/PiscesL1.git)
+- [PiscesL1 in GitHub](https://github.com/mf2023/piscesl1.git)
 - [PiscesL1 in ModelScope](https://www.modelscope.cn/models/mfchina2024/PiscesL1)
 
 <h3 align="center">以直觉航行数据之深邃 以共情赋予智能形态</h3>

@@ -23,7 +23,9 @@ import math
 import uuid
 import json
 import torch
+import asyncio
 import numpy as np
+import pandas as pd
 from torch import nn
 from PIL import Image
 from enum import Enum
@@ -4128,8 +4130,1011 @@ class DynamicModalFusion(nn.Module):
         
         return final_output
 
+class DocumentEncoder(nn.Module):
+    """
+    Document encoder for text processing and understanding
+    Supports both plain text and structured documents
+    """
+    
+    def __init__(self, cfg):
+        super().__init__()
+        self.cfg = cfg
+        self.hidden_size = cfg.hidden_size
+        self.vocab_size = 50000
+        self.max_length = 8192
+        
+        # Token embedding
+        self.token_embedding = nn.Embedding(self.vocab_size, self.hidden_size)
+        self.position_embedding = nn.Embedding(self.max_length, self.hidden_size)
+        
+        # Document structure encoder
+        self.structure_encoder = nn.TransformerEncoder(
+            nn.TransformerEncoderLayer(
+                d_model=self.hidden_size,
+                nhead=cfg.n_head,
+                dim_feedforward=self.hidden_size * 4,
+                dropout=0.1,
+                batch_first=True
+            ),
+            num_layers=cfg.n_layer // 2
+        )
+        
+        # Document style encoder
+        self.style_encoder = nn.Sequential(
+            nn.Linear(self.hidden_size, self.hidden_size // 2),
+            nn.LayerNorm(self.hidden_size // 2),
+            nn.ReLU(),
+            nn.Linear(self.hidden_size // 2, 128)  # Style embedding
+        )
+        
+        # Content encoder
+        self.content_encoder = nn.Sequential(
+            nn.Linear(self.hidden_size, self.hidden_size),
+            nn.LayerNorm(self.hidden_size),
+            nn.ReLU(),
+            nn.Linear(self.hidden_size, self.hidden_size)
+        )
+        
+    def forward(self, input_ids, attention_mask=None):
+        """
+        Forward pass for document encoding
+        
+        Args:
+            input_ids: Token indices [batch_size, seq_len]
+            attention_mask: Attention mask [batch_size, seq_len]
+            
+        Returns:
+            Document embeddings and features
+        """
+        batch_size, seq_len = input_ids.shape
+        
+        # Token and position embeddings
+        token_embeds = self.token_embedding(input_ids)
+        positions = torch.arange(seq_len, device=input_ids.device).unsqueeze(0)
+        pos_embeds = self.position_embedding(positions)
+        
+        # Combine embeddings
+        embeddings = token_embeds + pos_embeds
+        
+        # Structure encoding
+        if attention_mask is not None:
+            attention_mask = attention_mask.bool()
+        
+        structure_output = self.structure_encoder(embeddings, src_key_padding_mask=attention_mask)
+        
+        # Global pooling
+        if attention_mask is not None:
+            mask_expanded = attention_mask.unsqueeze(-1).expand_as(structure_output)
+            structure_output = structure_output.masked_fill(~mask_expanded, 0)
+            lengths = attention_mask.sum(dim=1, keepdim=True)
+            pooled = structure_output.sum(dim=1) / lengths
+        else:
+            pooled = structure_output.mean(dim=1)
+        
+        # Content and style features
+        content_features = self.content_encoder(pooled)
+        style_features = self.style_encoder(pooled)
+        
+        return {
+            'embeddings': structure_output,
+            'content': content_features,
+            'style': style_features,
+            'pooled': pooled
+        }
 
 
+class DocumentProcessor:
+    """
+    Document processor for handling various text formats
+    """
+    
+    def __init__(self):
+        self.tokenizer = None  # Will be initialized with actual tokenizer
+        
+    def process_text(self, text, max_length=8192):
+        """
+        Process text input
+        
+        Args:
+            text: Input text string
+            max_length: Maximum sequence length
+            
+        Returns:
+            Processed document data
+        """
+        # Simple tokenization for now
+        tokens = text.split()[:max_length]
+        token_ids = [hash(token) % 50000 for token in tokens]
+        
+        return {
+            'input_ids': torch.tensor(token_ids, dtype=torch.long).unsqueeze(0),
+            'attention_mask': torch.ones(len(token_ids), dtype=torch.long).unsqueeze(0)
+        }
+        
+    def process_file(self, file_path):
+        """
+        Process document file
+        
+        Args:
+            file_path: Path to document file
+            
+        Returns:
+            Processed document data
+        """
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                text = f.read()
+            return self.process_text(text)
+        except Exception as e:
+            ERROR(f"Error processing document file: {e}")
+            return None
+
+
+class GenerationCondition:
+    """Generation conditions for unified multi-modal generation"""
+    def __init__(self):
+        self.text_prompt: Optional[str] = None
+        self.emotion_vector: Optional[torch.Tensor] = None
+        self.image_reference: Optional[torch.Tensor] = None
+        self.audio_reference: Optional[torch.Tensor] = None
+        self.video_reference: Optional[torch.Tensor] = None
+        self.style_weights: Dict[str, float] = {}
+        self.generation_params: Dict[str, Any] = {}
+
+
+class UnifiedGeneration(nn.Module):
+    """
+    Unified multi-modal generation system integrated into multimodal.py
+    Supports image, video, audio, document generation with full multimodal alignment
+    """
+    
+    def __init__(self, cfg):
+        super().__init__()
+        self.cfg = cfg
+        self.hidden_size = cfg.hidden_size
+        
+        # Generation decoders (inverse of existing encoders)
+        self.image_decoder = self._build_image_decoder()
+        self.video_decoder = self._build_video_decoder()
+        self.audio_decoder = self._build_audio_decoder()
+        self.document_decoder = self._build_document_decoder()  # NEW: Document generation
+        
+        # Cross-modal conditioning with quantum entanglement
+        self.condition_encoder = nn.Sequential(
+            nn.Linear(self.hidden_size * 6, self.hidden_size * 3),  # Expanded for document
+            nn.LayerNorm(self.hidden_size * 3),
+            nn.SiLU(),
+            nn.Linear(self.hidden_size * 3, self.hidden_size * 2),
+            nn.LayerNorm(self.hidden_size * 2),
+            nn.SiLU(),
+            nn.Linear(self.hidden_size * 2, self.hidden_size)
+        )
+        
+        # Emotional conditioning (enhanced with valence/arousal)
+        self.emotion_projector = nn.Sequential(
+            nn.Linear(10, self.hidden_size),  # 7 emotions + valence + arousal + intensity
+            nn.LayerNorm(self.hidden_size),
+            nn.SiLU(),
+            nn.Linear(self.hidden_size, self.hidden_size)
+        )
+        
+        # Multimodal fusion for generation
+        self.multimodal_fusion = nn.ModuleDict({
+            'text': nn.Linear(self.hidden_size, self.hidden_size),
+            'image': nn.Linear(self.hidden_size, self.hidden_size),
+            'audio': nn.Linear(self.hidden_size, self.hidden_size),
+            'video': nn.Linear(self.hidden_size, self.hidden_size),
+            'document': nn.Linear(self.hidden_size, self.hidden_size),  # NEW
+            'emotion': nn.Linear(self.hidden_size, self.hidden_size)
+        })
+        
+        # Advanced diffusion timestep embedding
+        self.time_embedding = nn.Sequential(
+            nn.Linear(self.hidden_size, self.hidden_size * 4),
+            nn.SiLU(),
+            nn.Dropout(0.1),
+            nn.Linear(self.hidden_size * 4, self.hidden_size * 2),
+            nn.SiLU(),
+            nn.Linear(self.hidden_size * 2, self.hidden_size)
+        )
+        
+        # Comprehensive style control
+        self.style_controller = nn.ModuleDict({
+            # Visual styles
+            'brightness': nn.Linear(self.hidden_size, 1),
+            'contrast': nn.Linear(self.hidden_size, 1),
+            'saturation': nn.Linear(self.hidden_size, 1),
+            'sharpness': nn.Linear(self.hidden_size, 1),
+            'hue': nn.Linear(self.hidden_size, 1),
+            
+            # Audio styles  
+            'pitch': nn.Linear(self.hidden_size, 1),
+            'tempo': nn.Linear(self.hidden_size, 1),
+            'volume': nn.Linear(self.hidden_size, 1),
+            'timbre': nn.Linear(self.hidden_size, 64),
+            
+            # Document styles
+            'formality': nn.Linear(self.hidden_size, 1),
+            'tone': nn.Linear(self.hidden_size, 5),  # 5 tone categories
+            'structure': nn.Linear(self.hidden_size, 3)  # narrative/expository/persuasive
+        })
+        
+        # Quantum entanglement for cross-modal consistency
+        self.quantum_bridge = nn.ModuleDict({
+            'image_audio': nn.MultiheadAttention(self.hidden_size, 8, batch_first=True),
+            'video_emotion': nn.MultiheadAttention(self.hidden_size, 8, batch_first=True),
+            'document_multimodal': nn.MultiheadAttention(self.hidden_size, 8, batch_first=True)
+        })
+        
+        # Spatio-temporal consistency for video
+        self.temporal_consistency = nn.LSTM(self.hidden_size, self.hidden_size, num_layers=2, batch_first=True)
+        
+        # Advanced feature extraction for references
+        self.feature_extractors = nn.ModuleDict({
+            'image_style': nn.Sequential(
+                nn.Conv2d(3, 64, 3, padding=1),
+                nn.AdaptiveAvgPool2d((8, 8)),
+                nn.Flatten(),
+                nn.Linear(64 * 8 * 8, self.hidden_size)
+            ),
+            'audio_style': nn.Sequential(
+                nn.Conv1d(1, 64, 3, padding=1),
+                nn.AdaptiveAvgPool1d(128),
+                nn.Flatten(),
+                nn.Linear(64 * 128, self.hidden_size)
+            ),
+            'document_style': nn.Sequential(
+                nn.Linear(1000, 512),  # Document token embedding
+                nn.ReLU(),
+                nn.Linear(512, self.hidden_size)
+            )
+        })
+        
+    def _build_image_decoder(self):
+        """Build image decoder (inverse of VisionEncoder)"""
+        return nn.Sequential(
+            nn.Linear(self.hidden_size, 512 * 8 * 8),
+            nn.Unflatten(1, (512, 8, 8)),
+            nn.ConvTranspose2d(512, 256, 4, stride=2, padding=1),
+            nn.BatchNorm2d(256),
+            nn.SiLU(),
+            nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1),
+            nn.BatchNorm2d(128),
+            nn.SiLU(),
+            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1),
+            nn.BatchNorm2d(64),
+            nn.SiLU(),
+            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1),
+            nn.BatchNorm2d(32),
+            nn.SiLU(),
+            nn.ConvTranspose2d(32, 3, 3, padding=1),
+            nn.Tanh()
+        )
+    
+    def _build_video_decoder(self):
+        """Build video decoder (3D version)"""
+        return nn.Sequential(
+            nn.Linear(self.hidden_size, 512 * 4 * 4 * 4),
+            nn.Unflatten(1, (512, 4, 4, 4)),
+            nn.ConvTranspose3d(512, 256, 4, stride=2, padding=1),
+            nn.BatchNorm3d(256),
+            nn.SiLU(),
+            nn.ConvTranspose3d(256, 128, 4, stride=2, padding=1),
+            nn.BatchNorm3d(128),
+            nn.SiLU(),
+            nn.ConvTranspose3d(128, 64, 4, stride=2, padding=1),
+            nn.BatchNorm3d(64),
+            nn.SiLU(),
+            nn.ConvTranspose3d(64, 3, 3, padding=1),
+            nn.Tanh()
+        )
+    
+    def _build_audio_decoder(self):
+        """Build audio decoder (1D version)"""
+        return nn.Sequential(
+            nn.Linear(self.hidden_size, 512 * 64),
+            nn.Unflatten(1, (512, 64)),
+            nn.ConvTranspose1d(512, 256, 4, stride=2, padding=1),
+            nn.BatchNorm1d(256),
+            nn.SiLU(),
+            nn.ConvTranspose1d(256, 128, 4, stride=2, padding=1),
+            nn.BatchNorm1d(128),
+            nn.SiLU(),
+            nn.ConvTranspose1d(128, 64, 4, stride=2, padding=1),
+            nn.BatchNorm1d(64),
+            nn.SiLU(),
+            nn.ConvTranspose1d(64, 1, 3, padding=1),
+            nn.Tanh()
+        )
+    
+    def _build_document_decoder(self):
+        """Build document decoder for structured generation"""
+        return nn.ModuleDict({
+            'content': nn.Sequential(
+                nn.Linear(self.hidden_size, 2048),
+                nn.LayerNorm(2048),
+                nn.Dropout(0.1),
+                nn.SiLU(),
+                nn.Linear(2048, 4096),
+                nn.LayerNorm(4096),
+                nn.Dropout(0.1),
+                nn.Linear(4096, 8192),  # Document token space
+                nn.Tanh()
+            ),
+            'structure': nn.Sequential(
+                nn.Linear(self.hidden_size, 512),
+                nn.LayerNorm(512),
+                nn.SiLU(),
+                nn.Linear(512, 256),
+                nn.LayerNorm(256),
+                nn.SiLU(),
+                nn.Linear(256, 128),  # Document structure encoding
+                nn.Softmax(dim=-1)
+            ),
+            'style': nn.Sequential(
+                nn.Linear(self.hidden_size, 512),
+                nn.LayerNorm(512),
+                nn.SiLU(),
+                nn.Linear(512, 256),  # Style embedding
+                nn.Tanh()
+            ),
+            'format': nn.Sequential(
+                nn.Linear(self.hidden_size, 256),
+                nn.LayerNorm(256),
+                nn.SiLU(),
+                nn.Linear(256, 64),  # Format control
+                nn.Sigmoid()
+            )
+        })
+    
+    def encode_conditions(self, condition: GenerationCondition) -> torch.Tensor:
+        """Encode all generation conditions into latent space with quantum entanglement"""
+        conditions = []
+        
+        # Text condition with semantic enhancement
+        if hasattr(condition, 'text') and condition.text is not None:
+            text_tokens = self.feature_extractors['text'](condition.text)  # Placeholder tokens
+            text_feat = text_tokens.mean(dim=1)  # Global pooling
+            text_feat = self.multimodal_fusion['text'](text_feat + torch.randn(1, self.hidden_size).to(text_feat.device))
+            conditions.append(text_feat)
+        
+        # Enhanced emotion condition (7 emotions + valence + arousal + intensity)
+        if hasattr(condition, 'emotion_vector') and condition.emotion_vector is not None:
+            # Ensure emotion vector has 10 dimensions
+            if condition.emotion_vector.shape[-1] == 7:
+                # Add valence, arousal, intensity defaults
+                extended_emotion = torch.cat([
+                    condition.emotion_vector,
+                    torch.tensor([0.5, 0.5, 0.5])  # Default valence, arousal, intensity
+                ], dim=-1)
+            else:
+                extended_emotion = condition.emotion_vector
+            emotion_feat = self.emotion_projector(extended_emotion)
+            emotion_feat = self.multimodal_fusion['emotion'](emotion_feat)
+            conditions.append(emotion_feat)
+        
+        # Reference conditions with style extraction
+        if hasattr(condition, 'i_reference') and condition.i_reference is not None:
+            image_feat = self.feature_extractors['image_style'](condition.i_reference)
+            image_feat = self.multimodal_fusion['image'](image_feat)
+            conditions.append(image_feat)
+        
+        if hasattr(condition, 'a_reference') and condition.a_reference is not None:
+            audio_feat = self.feature_extractors['audio_style'](condition.a_reference)
+            audio_feat = self.multimodal_fusion['audio'](audio_feat)
+            conditions.append(audio_feat)
+        
+        # Extract spatio-temporal features
+        if hasattr(condition, 'video_reference') and condition.video_reference is not None:
+            video_feat = condition.video_reference.mean(dim=(2, 3, 4))
+            video_feat = self.multimodal_fusion['video'](video_feat)
+            conditions.append(video_feat)
+        
+        if hasattr(condition, 'document_reference') and condition.document_reference is not None:
+            doc_feat = self.feature_extractors['document_style'](condition.document_reference)
+            doc_feat = self.multimodal_fusion['document'](doc_feat)
+            conditions.append(doc_feat)
+        
+        # Quantum entanglement between modalities
+        if len(conditions) >= 2:
+            # Apply cross-modal attention for consistency
+            conditions_tensor = torch.stack(conditions, dim=1)  # [1, N, hidden_size]
+            
+            # Image-audio entanglement
+            if len(conditions) >= 2:
+                entangled, _ = self.quantum_bridge['image_audio'](
+                    conditions_tensor, conditions_tensor, conditions_tensor
+                )
+                conditions = [entangled[:, i] for i in range(entangled.size(1))]
+        
+        # Combine conditions with learned weights
+        if not conditions:
+            return torch.randn(1, self.hidden_size)
+        
+        combined = torch.cat(conditions, dim=-1)
+        
+        # Pad or truncate to expected input size
+        expected_size = self.hidden_size * 6  # Based on condition_encoder input
+        if combined.size(-1) < expected_size:
+            padding = torch.randn(1, expected_size - combined.size(-1))
+            combined = torch.cat([combined, padding], dim=-1)
+        elif combined.size(-1) > expected_size:
+            combined = combined[:, :expected_size]
+        
+        return self.condition_encoder(combined)
+    
+    def generate_image(self, condition: GenerationCondition, steps: int = 50) -> torch.Tensor:
+        """Generate image from conditions"""
+        latent = self.encode_conditions(condition)
+        
+        # Diffusion process (simplified)
+        noise = torch.randn(1, 3, 512, 512)
+        for t in range(steps):
+            timestep = torch.tensor([t / steps])
+            time_emb = self.time_embedding(timestep.view(1, 1).expand(1, self.hidden_size))
+            conditioned_latent = latent + time_emb
+            
+            # Generate step
+            decoded = self.image_decoder(conditioned_latent)
+            noise = noise * 0.98 + decoded * 0.02
+        
+        return torch.clamp(noise, -1, 1)
+    
+    def generate_video(self, condition: GenerationCondition, frames: int = 16, steps: int = 50) -> torch.Tensor:
+        """Generate video from conditions"""
+        latent = self.encode_conditions(condition)
+        
+        # Temporal consistency
+        video_latent = latent.unsqueeze(1).expand(1, frames, self.hidden_size)
+        
+        # Diffusion process
+        noise = torch.randn(1, 3, frames, 64, 64)
+        for t in range(steps):
+            timestep = torch.tensor([t / steps])
+            time_emb = self.time_embedding(timestep.view(1, 1).expand(1, self.hidden_size))
+            conditioned_latent = video_latent + time_emb.unsqueeze(1)
+            
+            # Generate step with temporal smoothing
+            decoded = self.video_decoder(conditioned_latent.reshape(-1, self.hidden_size))
+            decoded = decoded.view(1, 3, frames, 64, 64)
+            noise = noise * 0.98 + decoded * 0.02
+        
+        return torch.clamp(noise, -1, 1)
+    
+    def generate_audio(self, condition: GenerationCondition, duration: float = 3.0, steps: int = 50) -> torch.Tensor:
+        """Generate audio from conditions with style control"""
+        latent = self.encode_conditions(condition)
+        
+        # Calculate sequence length (44.1kHz * duration)
+        seq_len = int(44100 * duration / 256)  # Downsampled
+        
+        # Diffusion process with style control
+        noise = torch.randn(1, 1, seq_len)
+        for t in range(steps):
+            timestep = torch.tensor([t / steps])
+            time_emb = self.time_embedding(timestep.view(1, 1).expand(1, self.hidden_size))
+            conditioned_latent = latent + time_emb
+            
+            # Generate step
+            decoded = self.audio_decoder(conditioned_latent)
+            decoded = F.interpolate(decoded, size=seq_len)
+            
+            # Apply audio style control
+            if condition.style_params:
+                decoded = self.apply_audio_style(decoded, condition.style_params)
+            
+            noise = noise * 0.98 + decoded * 0.02
+        
+        return torch.clamp(noise, -1, 1)
+    
+    def generate_document(self, condition: GenerationCondition, max_length: int = 1000, steps: int = 50) -> Dict[str, torch.Tensor]:
+        """Generate structured documents with full formatting control"""
+        latent = self.encode_conditions(condition)
+        
+        # Document generation with structure and style
+        document_outputs = {}
+        
+        # Generate content tokens
+        content_tokens = torch.randn(1, max_length, 8192)
+        for t in range(steps):
+            timestep = torch.tensor([t / steps])
+            time_emb = self.time_embedding(timestep.view(1, 1).expand(1, self.hidden_size))
+            conditioned_latent = latent + time_emb
+            
+            # Generate content step
+            content_step = self.document_decoder['content'](conditioned_latent)
+            content_tokens = content_tokens * 0.95 + content_step.unsqueeze(1).expand(-1, max_length, -1) * 0.05
+        
+        document_outputs['content'] = torch.clamp(content_tokens, -1, 1)
+        
+        # Generate structure
+        structure = self.document_decoder['structure'](latent)
+        document_outputs['structure'] = structure
+        
+        # Generate style
+        style = self.document_decoder['style'](latent)
+        document_outputs['style'] = style
+        
+        # Generate format control
+        format_control = self.document_decoder['format'](latent)
+        document_outputs['format'] = format_control
+        
+        return document_outputs
+    
+    def apply_audio_style(self, audio: torch.Tensor, style_params: Dict[str, float]) -> torch.Tensor:
+        """Apply audio style controls"""
+        if not style_params:
+            return audio
+        
+        # Apply pitch shift
+        if 'pitch' in style_params:
+            pitch_factor = style_params['pitch']
+            # Simplified pitch control via interpolation
+            audio = F.interpolate(audio, scale_factor=1 + (pitch_factor - 0.5) * 0.5)
+        
+        # Apply tempo control
+        if 'tempo' in style_params:
+            tempo_factor = style_params['tempo']
+            audio = F.interpolate(audio, scale_factor=1 + (tempo_factor - 0.5) * 0.3)
+        
+        # Apply volume control
+        if 'volume' in style_params:
+            volume_factor = style_params['volume']
+            audio = audio * volume_factor
+        
+        return torch.clamp(audio, -1, 1)
+    
+    def apply_document_style(self, document: Dict[str, torch.Tensor], style_params: Dict[str, float]) -> Dict[str, torch.Tensor]:
+        """Apply document style controls"""
+        if not style_params:
+            return document
+        
+        # Apply formality control
+        if 'formality' in style_params:
+            formality = style_params['formality']
+            document['content'] = document['content'] * (0.5 + formality * 0.5)
+            condition_features.append(document_features)
+        # Apply tone control
+        if 'tone' in style_params:
+            tone = style_params['tone']
+            tone_embedding = torch.tensor([tone] * 256)
+            document['style'] = (document['style'] + tone_embedding) / 2
+        
+        return document
+    
+    def apply_style_control(self, generated: torch.Tensor, style_params: Dict[str, float]) -> torch.Tensor:
+        """Apply style controls to generated content"""
+        if not style_params:
+            return generated
+        
+        # Convert style parameters to latent
+        style_vector = torch.tensor([[
+            style_params.get('brightness', 0.5),
+            style_params.get('contrast', 0.5),
+            style_params.get('saturation', 0.5),
+            style_params.get('sharpness', 0.5)
+        ]])
+        
+        # Apply style adjustments
+        adjusted = generated
+        if 'brightness' in style_params:
+            adjusted = adjusted + (style_params['brightness'] - 0.5) * 0.2
+        if 'contrast' in style_params:
+            adjusted = adjusted * (1 + (style_params['contrast'] - 0.5) * 0.5)
+        
+        return torch.clamp(adjusted, -1, 1)
+
+class MultiModalGenerator:
+    """
+    High-level interface for multi-modal generation
+    Integrates with existing multimodal components
+    """
+    
+    def __init__(self, cfg, vision_encoder=None, audio_encoder=None):
+        self.cfg = cfg
+        self.unified_gen = UnifiedGeneration(cfg)
+        self.vision_encoder = vision_encoder
+        self.audio_encoder = audio_encoder
+        
+    def generate_from_text(self, text: str, modality: str = 'image', **kwargs) -> torch.Tensor:
+        """Generate content from text prompt with 2025 mandatory watermark"""
+        from tools.watermark import watermark_manager
+        
+        condition = GenerationCondition()
+        condition.text_prompt = text
+        condition.generation_params = kwargs
+        
+        metadata = {
+            "prompt": text,
+            "modality": modality,
+            "params": kwargs,
+            "timestamp": str(pd.Timestamp.now()),
+            "user_id": kwargs.get("user_id", "anonymous"),
+            "generation_method": "text_to_" + modality
+        }
+        
+        if modality == 'image':
+            result = self.unified_gen.generate_image(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        elif modality == 'video':
+            result = self.unified_gen.generate_video(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        elif modality == 'audio':
+            result = self.unified_gen.generate_audio(condition)
+            return watermark_manager.add_watermark(result, metadata)
+            combined_condition = torch.cat(condition_features, dim=-1)
+            raise ValueError(f"Unsupported modality: {modality}")
+    
+    def generate_from_emotion(self, emotion: str, modality: str = 'image', **kwargs) -> torch.Tensor:
+        """Generate content from emotion with 2025 mandatory watermark"""
+        from tools.watermark import watermark_manager
+        
+        # Map emotion to vector with valence/arousal
+        emotion_map = {
+            'happy': [1, 0, 0, 0, 0, 0, 0, 0.8, 0.7, 0.9],  # + valence, arousal, intensity
+            'sad': [0, 1, 0, 0, 0, 0, 0, 0.2, 0.3, 0.8],
+            'angry': [0, 0, 1, 0, 0, 0, 0, 0.1, 0.9, 0.95],
+            'surprised': [0, 0, 0, 1, 0, 0, 0, 0.6, 0.8, 0.85],
+            'fear': [0, 0, 0, 0, 1, 0, 0, 0.1, 0.8, 0.9],
+            'disgust': [0, 0, 0, 0, 0, 1, 0, 0.2, 0.6, 0.7],
+            'neutral': [0, 0, 0, 0, 0, 0, 1, 0.5, 0.5, 0.5],
+            'excited': [0.7, 0, 0, 0.3, 0, 0, 0, 0.9, 0.8, 0.95],
+            'melancholy': [0, 0.8, 0, 0, 0.2, 0, 0, 0.3, 0.4, 0.7]
+        }
+        
+        condition = GenerationCondition()
+        condition.emotion_vector = torch.tensor([emotion_map.get(emotion.lower(), emotion_map['neutral'])], dtype=torch.float32)
+        condition.generation_params = kwargs
+        condition.style_params = kwargs.get('style', {})
+        metadata = {
+            "emotion": emotion,
+            "modality": modality,
+            "params": kwargs,
+            "timestamp": str(pd.Timestamp.now()),
+            "user_id": kwargs.get("user_id", "anonymous"),
+            "generation_method": "emotion_to_" + modality
+        }
+        
+        if modality == 'image':
+            result = self.unified_gen.generate_image(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        elif modality == 'video':
+            result = self.unified_gen.generate_video(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        elif modality == 'audio':
+            result = self.unified_gen.generate_audio(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        elif modality == 'document':
+            result = self.unified_gen.generate_document(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        else:
+            raise ValueError(f"Unsupported modality: {modality}")
+    
+    def cross_modal_generate(self, source_modality: str, target_modality: str, 
+                           input_data: torch.Tensor, **kwargs) -> torch.Tensor:
+        """Cross-modal generation (e.g., image to audio, text to video) with 2025 mandatory watermark"""
+        from tools.watermark import watermark_manager
+        
+        condition = GenerationCondition()
+        
+        # Encode source modality
+        if source_modality == 'image' and self.vision_encoder:
+            condition.image_reference = input_data
+        elif source_modality == 'audio' and self.audio_encoder:
+            condition.audio_reference = input_data
+        elif source_modality == 'video':
+            condition.video_reference = input_data
+        elif source_modality == 'document':
+            condition.document_reference = input_data
+        
+        condition.generation_params = kwargs
+        condition.style_params = kwargs.get('style', {})
+        
+        metadata = {
+            "source_modality": source_modality,
+            "target_modality": target_modality,
+            "params": kwargs,
+            "timestamp": str(pd.Timestamp.now()),
+            "user_id": kwargs.get("user_id", "anonymous"),
+            "generation_method": f"cross_modal_{source_modality}_to_{target_modality}"
+        }
+        
+        # Generate target modality with watermark
+        if target_modality == 'image':
+            result = self.unified_gen.generate_image(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        elif target_modality == 'video':
+            result = self.unified_gen.generate_video(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        elif target_modality == 'audio':
+            result = self.unified_gen.generate_audio(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        elif target_modality == 'document':
+            result = self.unified_gen.generate_document(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        else:
+            raise ValueError(f"Unsupported target modality: {target_modality}")
+    
+    def multimodal_fusion_generate(self, inputs: Dict[str, torch.Tensor], 
+                                 target_modality: str, **kwargs) -> torch.Tensor:
+        """Generate using multimodal fusion of all input modalities with 2025 mandatory watermark"""
+        from tools.watermark import watermark_manager
+        
+        condition = GenerationCondition()
+        
+        # Set all available references
+        for modality, data in inputs.items():
+            if modality == 'image':
+                condition.image_reference = data
+            elif modality == 'audio':
+                condition.audio_reference = data
+            elif modality == 'video':
+                condition.video_reference = data
+            elif modality == 'document':
+                condition.document_reference = data
+        
+        condition.generation_params = kwargs
+        condition.style_params = kwargs.get('style', {})
+        
+        metadata = {
+            "fusion_modalities": list(inputs.keys()),
+            "target_modality": target_modality,
+            "params": kwargs,
+            "timestamp": str(pd.Timestamp.now()),
+            "user_id": kwargs.get("user_id", "anonymous"),
+            "generation_method": f"multimodal_fusion_to_{target_modality}"
+        }
+        
+        # Generate with multimodal fusion and watermark
+        if target_modality == 'image':
+            result = self.unified_gen.generate_image(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        elif target_modality == 'video':
+            result = self.unified_gen.generate_video(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        elif target_modality == 'audio':
+            result = self.unified_gen.generate_audio(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        elif target_modality == 'document':
+            result = self.unified_gen.generate_document(condition)
+            return watermark_manager.add_watermark(result, metadata)
+        else:
+            raise ValueError(f"Unsupported target modality: {target_modality}")
+
+
+class MCPGenerationServer:
+    """
+    Enhanced MCP server for multi-modal generation with streaming support
+    Exposes all generation capabilities via MCP protocol
+    """
+    
+    def __init__(self, generator: MultiModalGenerator):
+        self.generator = generator
+        
+    async def handle_generate_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle MCP generation requests with enhanced error handling"""
+        try:
+            modality = request.get('modality', 'image')
+            prompt = request.get('prompt', '')
+            emotion = request.get('emotion', 'neutral')
+            style = request.get('style', {})
+            stream = request.get('stream', False)
+            
+            if stream:
+                # Stream generation progress
+                return self.generate_streaming(modality, prompt, emotion, style, request)
+            
+            # Standard generation
+            if prompt:
+                if modality == 'document':
+                    result = self.generator.unified_gen.generate_document(
+                        GenerationCondition(text_prompt=prompt, style_params=style)
+                    )
+                else:
+                    result = self.generator.generate_from_text(prompt, modality, style=style)
+            else:
+                if modality == 'document':
+                    result = self.generator.unified_gen.generate_document(
+                        GenerationCondition(emotion_vector=torch.tensor([[0, 0, 0, 0, 0, 0, 1, 0.5, 0.5, 0.5]]), style_params=style)
+                    )
+                else:
+                    result = self.generator.generate_from_emotion(emotion, modality, style=style)
+            
+            metadata = {
+                "modality": modality,
+                "prompt": prompt,
+                "emotion": emotion,
+                "style": style,
+                "timestamp": str(pd.Timestamp.now()),
+                "user_id": request.get('user_id', 'anonymous'),
+                "generation_method": "mcp_generation",
+                "request_id": str(uuid.uuid4())
+            }
+            
+            from tools.watermark import watermark_manager
+            watermarked_result = watermark_manager.add_watermark(result, metadata)
+            
+            # Enhanced response with metadata and watermark info
+            response = {
+                'success': True,
+                'modality': modality,
+                'timestamp': str(pd.Timestamp.now()),
+                'metadata': {
+                    'prompt': prompt,
+                    'emotion': emotion,
+                    'style': style,
+                    'generation_params': request,
+                    'watermark': {
+                        'applied': True,
+                        'method': 'hidden_watermark_only',
+                        'content_type': modality
+                    }
+                }
+            }
+            
+            # Handle different output formats
+            if modality == 'document':
+                response['data'] = {
+                    'content': watermarked_result['content'].detach().cpu().numpy().tolist(),
+                    'structure': watermarked_result['structure'].detach().cpu().numpy().tolist(),
+                    'style': watermarked_result['style'].detach().cpu().numpy().tolist(),
+                    'format': result['format'].detach().cpu().numpy().tolist()
+                }
+                response['shape'] = {
+                    'content': list(result['content'].shape),
+                    'structure': list(result['structure'].shape),
+                    'style': list(result['style'].shape),
+                    'format': list(result['format'].shape)
+                }
+            else:
+                result_np = watermarked_result.detach().cpu().numpy()
+                response['data'] = result_np.tolist()
+                response['shape'] = list(result_np.shape)
+                
+            return response
+            
+        except Exception as e:
+            return {
+                'success': False,
+                'error': str(e),
+                'timestamp': str(pd.Timestamp.now())
+            }
+    
+    async def generate_streaming(self, modality: str, prompt: str, emotion: str, style: Dict, request: Dict):
+        """Stream generation progress for real-time updates"""
+        steps = request.get('steps', 50)
+        
+        async def progress_stream():
+            for step in range(steps):
+                progress = {
+                    'step': step + 1,
+                    'total_steps': steps,
+                    'progress': (step + 1) / steps,
+                    'modality': modality
+                }
+                yield progress
+                await asyncio.sleep(0.1)
+        
+        return {'type': 'stream', 'generator': progress_stream()}
+    
+    def register_endpoints(self, server):
+        """Register all MCP endpoints including document generation"""
+        
+        @server.call_tool()
+        async def generate_image(prompt: str, emotion: str = 'neutral', **style):
+            return await self.handle_generate_request({
+                'modality': 'image',
+                'prompt': prompt,
+                'emotion': emotion,
+                'style': style
+            })
+        
+        @server.call_tool()
+        async def generate_video(prompt: str, emotion: str = 'neutral', frames: int = 16, **style):
+            return await self.handle_generate_request({
+                'modality': 'video',
+                'prompt': prompt,
+                'emotion': emotion,
+                'frames': frames,
+                'style': style
+            })
+        
+        @server.call_tool()
+        async def generate_audio(prompt: str, emotion: str = 'neutral', duration: float = 3.0, **style):
+            return await self.handle_generate_request({
+                'modality': 'audio',
+                'prompt': prompt,
+                'emotion': emotion,
+                'duration': duration,
+                'style': style
+            })
+        
+        @server.call_tool()
+        async def generate_document(prompt: str, max_length: int = 1000, emotion: str = 'neutral', **style):
+            return await self.handle_generate_request({
+                'modality': 'document',
+                'prompt': prompt,
+                'max_length': max_length,
+                'emotion': emotion,
+                'style': style
+            })
+        
+        @server.call_tool()
+        async def cross_modal_generate(source_modality: str, target_modality: str, input_data: List, **kwargs):
+            """Cross-modal generation endpoint with 2025 mandatory watermark"""
+            from tools.watermark import watermark_manager
+            
+            try:
+                input_tensor = torch.tensor(input_data)
+                
+                metadata = {
+                    "source_modality": source_modality,
+                    "target_modality": target_modality,
+                    "params": kwargs,
+                    "timestamp": str(pd.Timestamp.now()),
+                    "user_id": kwargs.get("user_id", "anonymous"),
+                    "generation_method": f"mcp_cross_modal_{source_modality}_to_{target_modality}"
+                }
+                
+                result = self.generator.cross_modal_generate(source_modality, target_modality, input_tensor, **kwargs)
+                
+                watermarked_result = watermark_manager.add_watermark(result, metadata)
+                
+                return {
+                    'success': True,
+                    'source_modality': source_modality,
+                    'target_modality': target_modality,
+                    'watermark': {
+                        'applied': True,
+                        'method': 'hidden_watermark_only',
+                        'content_type': target_modality
+                    },
+                    'data': watermarked_result.detach().cpu().numpy().tolist(),
+                    'shape': list(watermarked_result.shape)
+                }
+            except Exception as e:
+                return {'success': False, 'error': str(e)}
+        
+        @server.call_tool()
+        async def multimodal_fusion_generate(target_modality: str, **inputs):
+            """Multimodal fusion generation endpoint with 2025 mandatory watermark"""
+            from tools.watermark import watermark_manager
+            
+            try:
+                # Parse input tensors
+                parsed_inputs = {}
+                for modality, data in inputs.items():
+                    if modality != 'target_modality':
+                        parsed_inputs[modality] = torch.tensor(data)
+                
+                metadata = {
+                    "fusion_modalities": list(parsed_inputs.keys()),
+                    "target_modality": target_modality,
+                    "params": inputs,
+                    "timestamp": str(pd.Timestamp.now()),
+                    "user_id": inputs.get("user_id", "anonymous"),
+                    "generation_method": f"mcp_multimodal_fusion_to_{target_modality}"
+                }
+                
+                result = self.generator.multimodal_fusion_generate(parsed_inputs, target_modality, **inputs)
+                
+                watermarked_result = watermark_manager.add_watermark(result, metadata)
+                
+                return {
+                    'success': True,
+                    'target_modality': target_modality,
+                    'modalities_used': list(parsed_inputs.keys()),
+                    'watermark': {
+                        'applied': True,
+                        'method': 'hidden_watermark_only',
+                        'content_type': target_modality
+                    },
+                    'data': watermarked_result.detach().cpu().numpy().tolist(),
+                    'shape': list(watermarked_result.shape)
+                }
+            except Exception as e:
+                return {'success': False, 'error': str(e)}
+                
 # Export all multimodal components including the new agent system
 __all__ = [
     # Vision encoders
@@ -4143,6 +5148,10 @@ __all__ = [
     # Video encoders
     'VideoEncoder',
     'FrameEncoder',
+    
+    # Document encoders
+    'DocumentEncoder',
+    'DocumentProcessor',
     
     # Agent system (fully migrated from agent.py)
     'PiscesAgent',
@@ -4160,5 +5169,17 @@ __all__ = [
     
     # Cross-modal components
     'CrossModalAttention',
-    'DynamicModalFusion'  # Unified dynamic modal fusion with quantum entanglement capabilities
+    'DynamicModalFusion',  # Unified dynamic modal fusion with quantum entanglement capabilities
+    
+    # Unified generation system
+    'UnifiedGeneration',
+    'MultiModalGenerator',
+    'GenerationCondition',
+    'MCPGenerationServer',
+    
+    # Enhanced generation components
+    'DocumentDecoder',
+    'CrossModalGenerator',
+    'MultimodalFusionGenerator',
+    'StreamingGenerationServer'
 ]

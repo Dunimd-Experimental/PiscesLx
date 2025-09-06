@@ -23,8 +23,8 @@ import sys
 import json
 import argparse
 from pathlib import Path
-from utils.log import RIGHT, DEBUG, ERROR
 from configs.version import VERSION
+from utils.log import RIGHT, DEBUG, ERROR
 
 # Get the root directory of the project
 ROOT = os.path.abspath(os.path.dirname(__file__))
@@ -47,6 +47,7 @@ COMMANDS = [
     'rlhf',       # RLHF training
     'help',       # Show help for commands
     'dataset',    # Dataset management tool
+    'watermark',  # Watermark detection and management
 ]
 
 def main():
@@ -94,6 +95,11 @@ def main():
     parser.add_argument('--mcp_host', type=str, default='localhost', help='[mcp] MCP server host')
     parser.add_argument('--mcp_port', type=int, default=8080, help='[mcp] MCP server port')
     parser.add_argument('--mcp_action', type=str, choices=['start', 'stop', 'status', 'test'], default='start', help='[mcp] MCP server action')
+    parser.add_argument('--text', type=str, help='[watermark] Text content to check for watermark')
+    parser.add_argument('--file', type=str, help='[watermark] File path to check for watermark')
+    parser.add_argument('--batch', action='store_true', help='[watermark] Batch mode for directory processing')
+    parser.add_argument('--verbose', '-v', action='store_true', help='[watermark] Verbose output')
+    parser.add_argument('--json', action='store_true', help='[watermark] Output results in JSON format')
     args, unknown = parser.parse_known_args()
     
     # Only show version info if not running version or changelog command
@@ -166,8 +172,21 @@ def main():
         else:
             performance_benchmark(args.config, args.seq_len)
     elif args.command == 'mcp':
-        from tools.mcp import mcp_command
-        mcp_command(args)
+        from MCP import get_system_status, plaza
+        import json
+        
+        if args.mcp_action == 'start':
+            RIGHT("Starting enhanced MCP server...")
+            status = plaza.get_system_status()
+            print(json.dumps(status, indent=2, ensure_ascii=False))
+        elif args.mcp_action == 'status':
+            status = plaza.get_system_status()
+            print(json.dumps(status, indent=2, ensure_ascii=False))
+        elif args.mcp_action == 'test':
+            tools = plaza.get_available_tools()
+            RIGHT(f"Available tools: {len(tools)}")
+            for name, info in tools.items():
+                print(f"  - {name}: {info.get('description', 'No description')}")
     elif args.command == 'rlhf':
         from tools.rlhf import rlhf_train
 
@@ -176,6 +195,24 @@ def main():
         
         rlhf_train(args)
         RIGHT("RLHF training completed!")
+    elif args.command == 'watermark':
+        from tools.watermark_check import detect_watermark, batch_detect
+        
+        if args.file:
+            if args.batch:
+                result = batch_detect(args.file, args.verbose)
+            else:
+                with open(args.file, 'r', encoding='utf-8') as f:
+                    content = f.read().strip()
+                result = detect_watermark(content, args.verbose)
+        elif args.text:
+            result = detect_watermark(args.text, args.verbose)
+        else:
+            ERROR("Watermark command requires --text or --file argument")
+            sys.exit(1)
+            
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         ERROR(f"Unknown command: {args.command}")
         sys.exit(1)

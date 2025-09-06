@@ -19,285 +19,302 @@
 # limitations under the License.
 
 import os
-import logging
 import subprocess
-from pathlib import Path
-from .simple_mcp import register_tool
+from MCP import mcp
 from typing import Dict, Any, List, Optional
 
-logger = logging.getLogger(__name__)
-
 class GitTool:
-    """
-    A tool for managing Git repositories.
+    """Git repository management and analysis tools."""
     
-    This class provides methods to perform various Git operations, 
-    such as status checking, committing changes, and cloning repositories.
-    """
+    def __init__(self, repo_path: str = None):
+        self.repo_path = repo_path or os.getcwd()
     
-    def __init__(self):
-        """
-        Initialize the GitTool instance.
-        
-        Sets the name and description of the tool.
-        """
-        self.name = "git"
-        self.description = "Git repository operations and management"
-    
-    def get_schema(self) -> Dict[str, Any]:
-        """
-        Get the schema for Git operation parameters.
-        
-        Returns:
-            Dict[str, Any]: A dictionary defining the structure and constraints of the input parameters.
-        """
-        return {
-            "type": "object",
-            "properties": {
-                "operation": {
-                    "type": "string",
-                    "description": "Git operation to perform",
-                    "enum": [
-                        "status", "log", "diff", "add", "commit", "branch", 
-                        "checkout", "init", "clone", "push", "pull"
-                    ]
-                },
-                "repo_path": {
-                    "type": "string",
-                    "description": "Path to the Git repository"
-                },
-                "message": {
-                    "type": "string",
-                    "description": "Commit message (for commit operation)"
-                },
-                "files": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Files to add (for add operation)"
-                },
-                "branch_name": {
-                    "type": "string",
-                    "description": "Branch name (for branch/checkout operations)"
-                },
-                "remote_url": {
-                    "type": "string",
-                    "description": "Remote repository URL (for clone operation)"
-                },
-                "max_count": {
-                    "type": "integer",
-                    "description": "Maximum number of commits to show (for log operation)",
-                    "default": 10,
-                    "minimum": 1,
-                    "maximum": 100
-                }
-            },
-            "required": ["operation", "repo_path"]
-        }
-    
-    def _run_git_command(self, repo_path: str, *args) -> Dict[str, Any]:
-        """
-        Run a Git command and return the execution results.
-        
-        Args:
-            repo_path (str): Path to the Git repository.
-            *args: Additional arguments for the Git command.
-            
-        Returns:
-            Dict[str, Any]: A dictionary containing the execution status and result data.
-        """
+    def _run_git_command(self, command: List[str], cwd: str = None) -> Dict[str, Any]:
+        """Run a git command and return the result."""
         try:
-            # Resolve the full path of the repository
-            repo_path = Path(repo_path).expanduser().resolve()
-            
-            # Check if the repository path exists
-            if not repo_path.exists():
-                return {
-                    "success": False,
-                    "error": f"Repository path does not exist: {repo_path}"
-                }
-            
-            # Check if the path is a Git repository
-            git_dir = repo_path / '.git'
-            if not git_dir.exists() and 'init' not in args:
-                return {
-                    "success": False,
-                    "error": f"Not a git repository: {repo_path}"
-                }
-            
-            # Construct the Git command
-            cmd = ['git', '-C', str(repo_path)] + list(args)
-            
-            # Execute the Git command
+            cwd = cwd or self.repo_path
             result = subprocess.run(
-                cmd, 
-                capture_output=True, 
-                text=True, 
+                ['git'] + command,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
                 timeout=30
             )
             
-            # Check if the command execution failed
-            if result.returncode != 0:
+            if result.returncode == 0:
+                return {
+                    "success": True,
+                    "output": result.stdout.strip(),
+                    "stderr": result.stderr.strip()
+                }
+            else:
                 return {
                     "success": False,
-                    "error": result.stderr.strip() or result.stdout.strip()
+                    "error": result.stderr.strip() or f"Git command failed with exit code {result.returncode}",
+                    "exit_code": result.returncode
                 }
-            
-            return {
-                "success": True,
-                "data": {
-                    "output": result.stdout.strip(),
-                    "repo_path": str(repo_path)
-                }
-            }
-            
+                
         except subprocess.TimeoutExpired:
             return {
                 "success": False,
                 "error": "Git command timed out"
             }
-        except Exception as e:
-            logger.error(f"Git command error: {str(e)}")
+        except FileNotFoundError:
             return {
                 "success": False,
-                "error": f"Git error: {str(e)}"
+                "error": "Git is not installed or not found in PATH"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e)
             }
     
-    def _parse_git_status(self, status_output: str) -> Dict[str, Any]:
-        """
-        Parse the output of the 'git status --porcelain' command.
+    def is_git_repo(self, path: str = None) -> bool:
+        """Check if the given path is a git repository."""
+        try:
+            path = path or self.repo_path
+            result = subprocess.run(
+                ['git', 'rev-parse', '--git-dir'],
+                cwd=path,
+                capture_output=True,
+                text=True,
+                timeout=5
+            )
+            return result.returncode == 0
+        except:
+            return False
+
+# Global instance
+git_tool = GitTool()
+
+@mcp.tool()
+def git_status(repo_path: str = None) -> Dict[str, Any]:
+    """Get the current git status of a repository."""
+    try:
+        if repo_path is None:
+            repo_path = os.getcwd()
         
-        Args:
-            status_output (str): The output of the 'git status --porcelain' command.
+        if not git_tool.is_git_repo(repo_path):
+            return {
+                "success": False,
+                "error": f"Not a git repository: {repo_path}"
+            }
+        
+        result = git_tool._run_git_command(['status', '--porcelain'], cwd=repo_path)
+        
+        if result["success"]:
+            lines = result["output"].split('\n') if result["output"] else []
+            status_info = []
             
-        Returns:
-            Dict[str, Any]: A dictionary containing the parsed status information.
-        """
-        lines = status_output.strip().split('\n')
-        
-        staged = []
-        unstaged = []
-        untracked = []
-        
-        # Iterate through each line of the output to parse the status
-        for line in lines[2:] if len(lines) > 2 else lines:
-            line = line.strip()
-            if not line:
-                continue
-                
-            if line.startswith('??'):
-                untracked.append(line[3:].strip())
-            elif len(line) >= 3:
-                index_status = line[0]
-                worktree_status = line[1]
-                filename = line[3:].strip()
-                
-                if index_status != ' ':
-                    staged.append(filename)
-                if worktree_status != ' ':
-                    unstaged.append(filename)
-        
-        return {
-            "staged": staged,
-            "unstaged": unstaged,
-            "untracked": untracked,
-            "clean": not any([staged, unstaged, untracked])
-        }
-    
-    def execute(self, operation: str, repo_path: str, **kwargs) -> Dict[str, Any]:
-        """
-        Execute a specified Git operation.
-        
-        Args:
-            operation (str): The Git operation to perform.
-            repo_path (str): Path to the Git repository.
-            **kwargs: Additional parameters for the operation.
+            for line in lines:
+                if line.strip():
+                    status = line[:2]
+                    filename = line[3:]
+                    status_info.append({
+                        "status": status,
+                        "filename": filename,
+                        "staged": status[0] != ' ',
+                        "modified": status[1] != ' '
+                    })
             
-        Returns:
-            Dict[str, Any]: A dictionary containing the execution status and result data.
-        """
-        if operation == "status":
-            result = self._run_git_command(repo_path, 'status', '--porcelain')
-            if result['success']:
-                result['data']['parsed'] = self._parse_git_status(result['data']['output'])
+            return {
+                "success": True,
+                "repo_path": repo_path,
+                "files": status_info,
+                "clean": len(status_info) == 0,
+                "count": len(status_info)
+            }
+        else:
             return result
             
-        elif operation == "log":
-            max_count = kwargs.get('max_count', 10)
-            return self._run_git_command(
-                repo_path, 'log', '--oneline', f'-{max_count}', '--decorate', '--graph'
-            )
-            
-        elif operation == "diff":
-            return self._run_git_command(repo_path, 'diff', '--cached')
-            
-        elif operation == "add":
-            files = kwargs.get('files', [])
-            if not files:
-                return {
-                    "success": False,
-                    "error": "No files specified for add operation"
-                }
-            return self._run_git_command(repo_path, 'add', *files)
-            
-        elif operation == "commit":
-            message = kwargs.get('message', '')
-            if not message:
-                return {
-                    "success": False,
-                    "error": "No commit message provided"
-                }
-            return self._run_git_command(repo_path, 'commit', '-m', message)
-            
-        elif operation == "branch":
-            branch_name = kwargs.get('branch_name')
-            if branch_name:
-                return self._run_git_command(repo_path, 'checkout', '-b', branch_name)
-            else:
-                return self._run_git_command(repo_path, 'branch', '-a')
-                
-        elif operation == "checkout":
-            branch_name = kwargs.get('branch_name', '')
-            if not branch_name:
-                return {
-                    "success": False,
-                    "error": "No branch name provided"
-                }
-            return self._run_git_command(repo_path, 'checkout', branch_name)
-            
-        elif operation == "init":
-            repo_path = Path(kwargs.get('repo_path', repo_path)).expanduser().resolve()
-            try:
-                repo_path.mkdir(parents=True, exist_ok=True)
-                result = self._run_git_command(str(repo_path), 'init')
-                return result
-            except Exception as e:
-                return {
-                    "success": False,
-                    "error": f"Failed to initialize repository: {str(e)}"
-                }
-                
-        elif operation == "clone":
-            remote_url = kwargs.get('remote_url', '')
-            if not remote_url:
-                return {
-                    "success": False,
-                    "error": "No remote URL provided"
-                }
-            target_dir = kwargs.get('repo_path', '.')
-            return self._run_git_command(target_dir, 'clone', remote_url, target_dir)
-            
-        elif operation == "push":
-            return self._run_git_command(repo_path, 'push')
-            
-        elif operation == "pull":
-            return self._run_git_command(repo_path, 'pull')
-            
-        else:
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@mcp.tool()
+def git_log(repo_path: str = None, max_count: int = 10) -> Dict[str, Any]:
+    """Get the git commit history."""
+    try:
+        if repo_path is None:
+            repo_path = os.getcwd()
+        
+        if not git_tool.is_git_repo(repo_path):
             return {
                 "success": False,
-                "error": f"Unsupported operation: {operation}"
+                "error": f"Not a git repository: {repo_path}"
             }
+        
+        result = git_tool._run_git_command([
+            'log', 
+            '--oneline', 
+            '--max-count', str(max_count),
+            '--format=format:%H|%s|%an|%ae|%ad'
+        ], cwd=repo_path)
+        
+        if result["success"]:
+            lines = result["output"].split('\n') if result["output"] else []
+            commits = []
+            
+            for line in lines:
+                if line.strip() and '|' in line:
+                    parts = line.split('|', 4)
+                    if len(parts) == 5:
+                        commits.append({
+                            "hash": parts[0],
+                            "message": parts[1],
+                            "author": parts[2],
+                            "email": parts[3],
+                            "date": parts[4]
+                        })
+            
+            return {
+                "success": True,
+                "repo_path": repo_path,
+                "commits": commits,
+                "count": len(commits)
+            }
+        else:
+            return result
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
-# Register the Git tool
-git_tool = GitTool()
-register_tool(git_tool.name, git_tool.description, git_tool.get_schema(), git_tool.execute)
+@mcp.tool()
+def git_branch(repo_path: str = None) -> Dict[str, Any]:
+    """Get the list of branches in a repository."""
+    try:
+        if repo_path is None:
+            repo_path = os.getcwd()
+        
+        if not git_tool.is_git_repo(repo_path):
+            return {
+                "success": False,
+                "error": f"Not a git repository: {repo_path}"
+            }
+        
+        result = git_tool._run_git_command(['branch', '-a'], cwd=repo_path)
+        
+        if result["success"]:
+            lines = result["output"].split('\n') if result["output"] else []
+            branches = []
+            current_branch = None
+            
+            for line in lines:
+                line = line.strip()
+                if line:
+                    is_current = line.startswith('*')
+                    branch_name = line[2:] if is_current else line
+                    
+                    if is_current:
+                        current_branch = branch_name
+                    
+                    branches.append({
+                        "name": branch_name,
+                        "is_current": is_current,
+                        "is_remote": branch_name.startswith('remotes/')
+                    })
+            
+            return {
+                "success": True,
+                "repo_path": repo_path,
+                "branches": branches,
+                "current_branch": current_branch,
+                "count": len(branches)
+            }
+        else:
+            return result
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@mcp.tool()
+def git_remote(repo_path: str = None) -> Dict[str, Any]:
+    """Get the list of remote repositories."""
+    try:
+        if repo_path is None:
+            repo_path = os.getcwd()
+        
+        if not git_tool.is_git_repo(repo_path):
+            return {
+                "success": False,
+                "error": f"Not a git repository: {repo_path}"
+            }
+        
+        result = git_tool._run_git_command(['remote', '-v'], cwd=repo_path)
+        
+        if result["success"]:
+            lines = result["output"].split('\n') if result["output"] else []
+            remotes = []
+            
+            for line in lines:
+                if line.strip() and '\t' in line:
+                    parts = line.split('\t')
+                    if len(parts) >= 2:
+                        name = parts[0]
+                        url_and_type = parts[1].split(' ')
+                        if len(url_and_type) >= 2:
+                            remotes.append({
+                                "name": name,
+                                "url": url_and_type[0],
+                                "type": url_and_type[1].strip('()')
+                            })
+            
+            return {
+                "success": True,
+                "repo_path": repo_path,
+                "remotes": remotes,
+                "count": len(remotes)
+            }
+        else:
+            return result
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@mcp.tool()
+def git_diff(repo_path: str = None, staged: bool = False) -> Dict[str, Any]:
+    """Show changes between commits, commit and working tree, etc."""
+    try:
+        if repo_path is None:
+            repo_path = os.getcwd()
+        
+        if not git_tool.is_git_repo(repo_path):
+            return {
+                "success": False,
+                "error": f"Not a git repository: {repo_path}"
+            }
+        
+        cmd = ['diff', '--no-color']
+        if staged:
+            cmd.append('--staged')
+        
+        result = git_tool._run_git_command(cmd, cwd=repo_path)
+        
+        if result["success"]:
+            return {
+                "success": True,
+                "repo_path": repo_path,
+                "diff": result["output"],
+                "staged": staged,
+                "has_changes": bool(result["output"].strip())
+            }
+        else:
+            return result
+            
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e)
+        }

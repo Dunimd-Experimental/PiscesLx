@@ -20,200 +20,117 @@
 
 import re
 import asyncio
-import logging
 import requests
+from MCP import mcp
+from typing import Dict, Any
 from bs4 import BeautifulSoup
-from urllib.parse import urlparse
-from .simple_mcp import register_tool
-from typing import Dict, Any, Optional
 
-logger = logging.getLogger(__name__)
-
-class FetchTool:
-    """Web content fetching tool"""
-    
-    def __init__(self):
-        self.name = "fetch"
-        self.description = "Fetch and extract content from web URLs"
-        self.user_agent = "PiscesL1-MCP/1.0 (+https://github.com/piscesl1)"
-    
-    def get_schema(self) -> Dict[str, Any]:
-        return {
-            "type": "object",
-            "properties": {
-                "url": {
-                    "type": "string",
-                    "description": "URL to fetch content from"
-                },
-                "max_length": {
-                    "type": "integer",
-                    "description": "Maximum content length to return",
-                    "default": 5000,
-                    "minimum": 100,
-                    "maximum": 50000
-                },
-                "extract_text": {
-                    "type": "boolean",
-                    "description": "Extract clean text from HTML",
-                    "default": True
-                },
-                "include_metadata": {
-                    "type": "boolean", 
-                    "description": "Include page metadata",
-                    "default": False
-                }
-            },
-            "required": ["url"]
+@mcp.tool()
+def fetch_url(url: str, max_length: int = 5000, extract_text: bool = True) -> Dict[str, Any]:
+    """Fetch and extract content from a web URL."""
+    try:
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
         }
-    
-    def _extract_text_from_html(self, html: str) -> str:
-        """Extract clean text from HTML content"""
-        soup = BeautifulSoup(html, 'html.parser')
+        
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        soup = BeautifulSoup(response.content, 'html.parser')
         
         # Remove script and style elements
         for script in soup(["script", "style"]):
             script.decompose()
         
-        # Get text and clean it
-        text = soup.get_text()
-        
-        # Clean up whitespace
-        lines = (line.strip() for line in text.splitlines())
-        chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
-        text = ' '.join(chunk for chunk in chunks if chunk)
-        
-        return text
-    
-    def _get_metadata(self, soup: BeautifulSoup) -> Dict[str, str]:
-        """Extract page metadata"""
-        metadata = {}
-        
-        # Title
+        # Extract metadata
         title = soup.find('title')
-        if title:
-            metadata['title'] = title.get_text().strip()
+        title = title.get_text().strip() if title else ""
         
-        # Meta description
-        desc = soup.find('meta', attrs={'name': 'description'})
-        if desc:
-            metadata['description'] = desc.get('content', '').strip()
+        meta_description = soup.find('meta', attrs={'name': 'description'})
+        description = meta_description.get('content', '').strip() if meta_description else ""
         
-        # Meta keywords
-        keywords = soup.find('meta', attrs={'name': 'keywords'})
-        if keywords:
-            metadata['keywords'] = keywords.get('content', '').strip()
+        # Extract text content
+        if extract_text:
+            text_content = _extract_text_from_html(str(soup))
+            text_content = re.sub(r'\s+', ' ', text_content).strip()
+            if len(text_content) > max_length:
+                text_content = text_content[:max_length] + "..."
+        else:
+            text_content = ""
         
-        return metadata
+        # Extract links
+        links = []
+        for link in soup.find_all('a', href=True)[:10]:
+            links.append({
+                'text': link.get_text().strip(),
+                'url': link['href']
+            })
+        
+        return {
+            "success": True,
+            "url": url,
+            "title": title,
+            "description": description,
+            "text_content": text_content,
+            "links": links,
+            "status_code": response.status_code
+        }
+        
+    except requests.exceptions.RequestException as e:
+        return {
+            "success": False,
+            "error": f"Network error: {str(e)}"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "error_type": type(e).__name__
+        }
+
+def _extract_text_from_html(html: str) -> str:
+    """Extract clean text from HTML content."""
+    soup = BeautifulSoup(html, 'html.parser')
     
-    def execute(self, url: str, max_length: int = 5000, extract_text: bool = True, 
-                include_metadata: bool = False) -> Dict[str, Any]:
-        """Execute web fetch operation"""
-        try:
-            # Validate URL
-            parsed = urlparse(url)
-            if not parsed.scheme or not parsed.netloc:
-                return {
-                    "success": False,
-                    "error": "Invalid URL format"
-                }
-            
-            # Make request
-            response = requests.get(
-                url, 
-                headers={'User-Agent': self.user_agent},
-                timeout=30,
-                allow_redirects=True
-            )
-            response.raise_for_status()
-            
-            content = response.text
-            content_type = response.headers.get('content-type', '')
-            
-            result = {
-                "url": url,
-                "status_code": response.status_code,
-                "content_type": content_type,
-                "encoding": response.encoding
-            }
-            
-            # Handle HTML content
-            if 'text/html' in content_type.lower():
-                soup = BeautifulSoup(content, 'html.parser')
-                
-                if include_metadata:
-                    result['metadata'] = self._get_metadata(soup)
-                
-                if extract_text:
-                    content = self._extract_text_from_html(content)
-                
-            # Truncate content if needed
-            if len(content) > max_length:
-                content = content[:max_length] + "... [truncated]"
-            
-            result['content'] = content
-            result['length'] = len(content)
-            
-            return {
-                "success": True,
-                "data": result
-            }
-            
-        except requests.exceptions.Timeout:
-            return {
-                "success": False,
-                "error": "Request timeout"
-            }
-        except requests.exceptions.ConnectionError:
-            return {
-                "success": False,
-                "error": "Connection error"
-            }
-        except requests.exceptions.HTTPError as e:
-            return {
-                "success": False,
-                "error": f"HTTP error {e.response.status_code}: {e.response.reason}"
-            }
-        except Exception as e:
-            logger.error(f"Fetch error: {str(e)}")
-            return {
-                "success": False,
-                "error": f"Unexpected error: {str(e)}"
-            }
+    # Remove unwanted tags
+    for tag in soup(['script', 'style', 'header', 'footer', 'nav']):
+        tag.decompose()
+    
+    # Get text from main content areas
+    main_content = soup.find('main') or soup.find('article') or soup.find('div', class_=re.compile('content|main'))
+    if main_content:
+        text = main_content.get_text(separator=' ', strip=True)
+    else:
+        text = soup.get_text(separator=' ', strip=True)
+    
+    return text
 
-# Pisces L1 MCP广场集成
-from . import register_custom_tool
-
-# 注册获取工具到MCP广场
-register_custom_tool(
-    name="fetch",
-    description="获取网页内容，支持HTML文本提取和元数据",
-    parameters={
-        "type": "object",
-        "properties": {
-            "url": {
-                "type": "string",
-                "description": "要获取的网页URL"
-            },
-            "max_length": {
-                "type": "integer",
-                "description": "返回内容的最大长度",
-                "default": 5000,
-                "minimum": 100,
-                "maximum": 50000
-            },
-            "extract_text": {
-                "type": "boolean",
-                "description": "是否从HTML提取纯文本",
-                "default": True
-            },
-            "include_metadata": {
-                "type": "boolean",
-                "description": "是否包含页面元数据",
-                "default": False
-            }
-        },
-        "required": ["url"]
-    },
-    function=FetchTool().execute,
-    category="Web"
-)
+def _get_metadata(soup: BeautifulSoup) -> Dict[str, str]:
+    """Extract metadata from HTML."""
+    metadata = {}
+    
+    # Title
+    title = soup.find('title')
+    if title:
+        metadata['title'] = title.get_text().strip()
+    
+    # Meta description
+    meta_desc = soup.find('meta', attrs={'name': 'description'})
+    if meta_desc:
+        metadata['description'] = meta_desc.get('content', '').strip()
+    
+    # Meta keywords
+    meta_keywords = soup.find('meta', attrs={'name': 'keywords'})
+    if meta_keywords:
+        metadata['keywords'] = meta_keywords.get('content', '').strip()
+    
+    # Open Graph data
+    og_title = soup.find('meta', attrs={'property': 'og:title'})
+    if og_title:
+        metadata['og_title'] = og_title.get('content', '').strip()
+    
+    og_description = soup.find('meta', attrs={'property': 'og:description'})
+    if og_description:
+        metadata['og_description'] = og_description.get('content', '').strip()
+    
+    return metadata

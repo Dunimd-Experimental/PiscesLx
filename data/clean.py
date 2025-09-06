@@ -863,7 +863,7 @@ class DatasetCleaner:
         if "source" in merged.column_names:
             merged = merged.remove_columns(["source"])
         
-        RIGHT(f"Cleaning and merging completed! Total {len(merged)} records → {output_dir}")
+        RIGHT(f"Cleaning and merging completed! Total {len(merged)} records saved to {output_dir}")
         return merged
 
     @staticmethod

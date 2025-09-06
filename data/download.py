@@ -293,7 +293,7 @@ def _download_worker(args):
     Must be at module level to be picklable by multiprocessing.
     
     Args:
-        args: 包含 (dataset_name, save_name, description) 的元组
+        args: 包含 (dataset_name, save_name, description) 的元�?
     """
     dataset_name, save_name, description = args
     max_retries = 3
