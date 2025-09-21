@@ -13,6 +13,8 @@
   "moe_use_stable_gate": true,
   "moe_min_capacity": 8,
   "moe_prediction_horizon": 16,
+  "enable_cognitive_density": true,
+  "enable_dynamic_capacity": true,
   "enable_dynamic_fusion": true,
   "fusion_quality_threshold": 0.25,
   "fusion_dropout": 0.05,
@@ -51,5 +53,19 @@
     "force_quant": true,
     "force_lora": true,
     "lr": 1e-6
-  }
+  },
+  "use_h2o_attention": true,
+  "streaming_window": 32768,
+  "compression_ratio": 16,
+  "max_cache_size": 131072,
+  "cache_quantization": true,
+  "kv_cache_block_size": 1024,
+  "sdpa_prefer_flash": true,
+  "enable_speculative_decoding": true,
+  "speculative_candidates": 4,
+  "speculative_draft_length": 5,
+  "speculative_acceptance_threshold": 0.8,
+  "speculative_temperature": 0.7,
+  "speculative_top_k": 50,
+  "speculative_top_p": 0.9
 }

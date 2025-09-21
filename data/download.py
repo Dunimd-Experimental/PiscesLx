@@ -30,14 +30,17 @@ from tqdm import tqdm
 import multiprocessing
 from .clean import DatasetCleaner
 from datasets import load_from_disk
-from utils.log import RIGHT, DEBUG, ERROR
+from utils import RIGHT, DEBUG, ERROR
 
-# Configure ModelScope cache to use separate directory from data_cache
-MODELSCOPE_CACHE_DIR = os.path.join(os.path.dirname(__file__), "..", "modelscope")
-os.environ['MODELSCOPE_CACHE'] = MODELSCOPE_CACHE_DIR
-os.environ['MODELSCOPE_HUB_CACHE'] = MODELSCOPE_CACHE_DIR
-os.environ['MODELSCOPE_DATASETS_CACHE'] = os.path.join(MODELSCOPE_CACHE_DIR, "datasets")
-RIGHT(f"ModelScope cache configured to: {MODELSCOPE_CACHE_DIR}")
+from utils.cache import get_cache_manager
+
+# Initialize cache manager and register download cache directory
+cache_manager = get_cache_manager()
+datatemp_dir = cache_manager.get_cache_dir("datatemp")
+os.environ['MODELSCOPE_CACHE'] = str(datatemp_dir)
+os.environ['MODELSCOPE_HUB_CACHE'] = str(datatemp_dir)
+os.environ['MODELSCOPE_DATASETS_CACHE'] = str(datatemp_dir / "datasets")
+RIGHT(f"Download cache configured to: {datatemp_dir}")
 
 # Handle modelscope import gracefully
 try:
@@ -88,12 +91,9 @@ def detect_available_splits(dataset_name, trust_remote_code=True):
     
     return available_splits
 
-# Get the root directory of the current script
-ROOT = os.path.dirname(__file__)
-# Define the data cache directory path
-DATA = os.path.join(ROOT, "..", "data_cache")
-# Create the data cache directory if it doesn't exist
-os.makedirs(DATA, exist_ok=True)
+# Use cache manager for data cache directory
+cache_manager = get_cache_manager()
+DATA = str(cache_manager.get_cache_dir("data_cache"))
 
 def save(ds, name):
     """
@@ -126,6 +126,8 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
         max_samples_per_dataset (int, optional): The maximum number of samples per dataset. Defaults to 50000.
         post_download_clean (bool, optional): Whether to perform post-download cleaning. Defaults to True.
     """
+    # Use cache manager for data cache directory (already initialized above)
+    
     RIGHT("Starting ModelScope dataset download...")
     
     # Core datasets for Pisces L1 training
@@ -253,9 +255,10 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
             os.path.join(DATA, "temp"),
             os.path.join(DATA, "cache"),
             os.path.join(DATA, "downloads"),
-            MODELSCOPE_CACHE_DIR,  # Use the configured ModelScope cache
+            datatemp_dir,  # Use the configured ModelScope cache
             os.path.join(MODELSCOPE_CACHE_DIR, "datasets"),
-            os.path.join(MODELSCOPE_CACHE_DIR, "hub")
+            os.path.join(MODELSCOPE_CACHE_DIR, "hub"),
+            os.path.join(os.path.dirname(__file__), "..", "modelscope")  # Clean up old cache location
         ]
         # Remove all available cache directories
         for dir_path in cache_dirs:
@@ -451,7 +454,11 @@ def optimize_datasets(max_keep=None):
     import glob
     import os
     
-    for raw_dir in glob.glob("data_cache/*"):
+    from ..cache import get_cache_manager
+    cache_manager = get_cache_manager()
+    data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
+    
+    for raw_dir in glob.glob(os.path.join(data_cache_dir, "*")):
         # Skip non-directory files
         if not os.path.isdir(raw_dir):
             continue

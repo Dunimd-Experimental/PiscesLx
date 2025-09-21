@@ -21,20 +21,24 @@
 import math
 import torch
 import torch.nn as nn
-from utils.log import RIGHT
+from utils import RIGHT
 import torch.nn.functional as F
 from collections import OrderedDict
 
 def moe_init_weights(m):
     """
     Initialize weights for MoE (Mixture of Experts) layers.
+    Specifically, it initializes the weights of linear layers using Kaiming uniform initialization
+    and sets the bias to zero if it exists.
 
     Args:
         m (nn.Module): The module to initialize weights for.
     """
     if isinstance(m, nn.Linear):
+        # Initialize weights using Kaiming uniform initialization with a=sqrt(5)
         nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
         if m.bias is not None:
+            # Initialize bias to zero
             nn.init.zeros_(m.bias)
 
 class ExpertChoiceRouter(nn.Module):
@@ -53,6 +57,7 @@ class ExpertChoiceRouter(nn.Module):
             top_k (int, optional): The number of top tokens each expert selects. Defaults to 2.
         """
         super().__init__()
+        # Linear layer to calculate routing scores
         self.gate = nn.Linear(hidden_size, num_experts, bias=False)
         self.capacity_factor = capacity_factor
         self.num_experts = num_experts
@@ -68,23 +73,24 @@ class ExpertChoiceRouter(nn.Module):
         Returns:
             tuple: A tuple containing expert indices, dispatch mask, and load balancing loss.
         """
-        # x: (batch*seq, hidden_size)
+        # Calculate the maximum number of tokens each expert can handle
         tokens_per_expert = int(x.shape[0] * self.capacity_factor / self.num_experts)
         
-        # Calculate routing score
-        logits = self.gate(x)  # (tokens, experts)
+        # Calculate routing scores for each token and expert
+        logits = self.gate(x)  # Shape: (tokens, experts)
         
-        # Expert Choice: Each expert selects top-k tokens
-        expert_indices = torch.topk(logits.T, tokens_per_expert, dim=1).indices  # (experts, capacity)
+        # Each expert selects the top tokens_per_expert tokens with the highest scores
+        expert_indices = torch.topk(logits.T, tokens_per_expert, dim=1).indices  # Shape: (experts, capacity)
         
-        # Building a routing matrix
+        # Initialize a dispatch mask to indicate which tokens are routed to which experts
         dispatch_mask = torch.zeros_like(logits)
+        # Set the corresponding positions in the dispatch mask to 1
         dispatch_mask[expert_indices.T.flatten(), torch.arange(self.num_experts).repeat(tokens_per_expert)] = 1
         
-        # Calculate expert load
+        # Calculate the number of tokens assigned to each expert
         expert_load = dispatch_mask.sum(dim=0)
         
-        # Calculate load balancing loss
+        # Calculate the load balancing loss to ensure uniform distribution of tokens among experts
         load_balancing_loss = (expert_load * torch.log(expert_load / expert_load.mean())).mean()
         
         return expert_indices, dispatch_mask, load_balancing_loss
@@ -92,6 +98,7 @@ class ExpertChoiceRouter(nn.Module):
 class DynamicMoELayer(nn.Module):
     """
     A dynamic Mixture of Experts (MoE) layer with expert device management.
+    This layer can dynamically manage the placement of experts on different devices (CPU/GPU).
     """
     _layer_count = 0
     def __init__(self, cfg, device=None, dtype=None):
@@ -106,14 +113,18 @@ class DynamicMoELayer(nn.Module):
         super().__init__()
         DynamicMoELayer._layer_count += 1
         self.cfg = cfg
+        # Get the number of top experts to select for each token
         self.top_k = getattr(cfg, 'moe_top_k', 2)
+        # Get the total number of experts
         self.num_experts = getattr(cfg, 'moe_num_experts', 8)
+        # Initialize the expert choice router
         self.router = ExpertChoiceRouter(
             cfg.hidden_size, 
             self.num_experts, 
             capacity_factor=getattr(cfg, 'moe_capacity_factor', 1.25),
             top_k=self.top_k
         )
+        # Initialize the expert modules
         self.experts = nn.ModuleList([
             nn.Sequential(
                 nn.Linear(cfg.hidden_size, cfg.intermediate_size, bias=False, device=device, dtype=dtype),
@@ -121,16 +132,21 @@ class DynamicMoELayer(nn.Module):
                 nn.Linear(cfg.intermediate_size, cfg.hidden_size, bias=False, device=device, dtype=dtype)
             ) for _ in range(self.num_experts)
         ])
+        # Initialize the weights of each expert
         for expert in self.experts:
             expert.apply(moe_init_weights)
         
-        # Expert equipment management
+        # Get the maximum number of experts that can be placed on GPU
         self.max_gpu_experts = getattr(cfg, 'max_gpu_experts', 4)
+        # Ordered dictionary to record the last used step of each active expert
         self._active_experts = OrderedDict()  # expert_id: last_used_step
         self._step = 0
         
         if DynamicMoELayer._layer_count == 1:
-            RIGHT(f"DynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
+            try:
+                RIGHT(f"DynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
+            except UnicodeEncodeError:
+                print(f"[OK] DynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
     
     def _move_expert_to_gpu(self, expert_id):
         """
@@ -141,10 +157,13 @@ class DynamicMoELayer(nn.Module):
             expert_id (int): The ID of the expert to move to GPU.
         """
         expert = self.experts[expert_id]
+        # Move the expert to GPU if it's not already on GPU
         if next(expert.parameters()).device.type != 'cuda':
             expert.to('cuda')
+        # Update the last used step of the expert
         self._active_experts[expert_id] = self._step
         
+        # If the number of active experts exceeds the limit, move the least recently used expert to CPU
         if len(self._active_experts) > self.max_gpu_experts:
             lru_expert_id, _ = self._active_experts.popitem(last=False)
             self._move_expert_to_cpu(lru_expert_id)
@@ -157,6 +176,7 @@ class DynamicMoELayer(nn.Module):
             expert_id (int): The ID of the expert to move to CPU.
         """
         expert = self.experts[expert_id]
+        # Move the expert to CPU if it's not already on CPU
         if next(expert.parameters()).device.type != 'cpu':
             expert.to('cpu')
     
@@ -171,23 +191,27 @@ class DynamicMoELayer(nn.Module):
             tuple: A tuple containing output tensor and load balancing loss.
         """
         batch_size, seq_len, hidden = x.shape
+        # Flatten the input tensor
         x_flat = x.view(-1, hidden)
         
+        # Get expert indices, dispatch mask, and load balancing loss from the router
         expert_indices, dispatch_mask, load_balancing_loss = self.router(x_flat)
         
-        # Dynamic routing calculation
+        # Initialize the output tensor
         outputs = torch.zeros_like(x_flat)
         
-        # Expert equipment management
+        # Dynamically manage expert devices if there are more than 8 experts and the input is on GPU
         if self.num_experts > 8 and x.device.type == 'cuda':
             needed_experts = set()
+            # Find all experts that need to process tokens
             for expert_id in range(self.num_experts):
                 if expert_indices[expert_id].numel() > 0:
                     needed_experts.add(expert_id)
+            # Move needed experts to GPU
             for expert_id in needed_experts:
                 self._move_expert_to_gpu(expert_id)
         
-        # Expert calculation
+        # Process tokens through each expert
         for expert_id, expert in enumerate(self.experts):
             tokens = x_flat[expert_indices[expert_id]]
             if tokens.shape[0] > 0:

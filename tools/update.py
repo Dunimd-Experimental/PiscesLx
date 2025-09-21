@@ -21,9 +21,9 @@
 import os
 import sys
 from pathlib import Path
-from utils.ul import display_update_log
-from utils.log import RIGHT, DEBUG, ERROR
+from utils import display_update_log, RIGHT, DEBUG, ERROR
 
+# Try to import GitPython. If unavailable, use subprocess as fallback.
 try:
     from git import Repo, InvalidGitRepositoryError, GitCommandError
     GITPYTHON_AVAILABLE = True
@@ -33,13 +33,17 @@ except ImportError:
 
 def update():
     """
-    Pull latest code from remote repository using GitPython for better integration.
-    Falls back to subprocess if GitPython is not available.
+    Pull the latest code from the remote repository.
+    Use GitPython for better integration, and fall back to subprocess if GitPython is not available.
+    
+    After the update is successful, display the latest update log.
     """
+    # Primary remote repository URL
     remote_url = 'https://gitee.com/dunimd/piscesl1.git'
+    # Backup remote repository URL
     backup_url = 'https://github.com/mf2023/piscesl1.git'
     
-    # Get current working directory (project root)
+    # Get the current working directory, which is assumed to be the project root
     project_root = Path().cwd()
     
     if GITPYTHON_AVAILABLE:
@@ -48,15 +52,20 @@ def update():
         DEBUG("GitPython not available, falling back to system git commands")
         _update_with_subprocess(remote_url)
     
-    # Display latest update log after successful update
+    # Display the latest update log after a successful update
     display_update_log(project_root)
 
 def _update_with_gitpython(project_root: Path, primary_url: str, backup_url: str):
     """
-    Update repository using GitPython with enhanced error handling and progress reporting.
+    Update the repository using GitPython with enhanced error handling and progress reporting.
+
+    Args:
+        project_root (Path): Path to the project root directory.
+        primary_url (str): URL of the primary remote repository.
+        backup_url (str): URL of the backup remote repository.
     """
     try:
-        # Initialize or get existing repository
+        # Try to initialize or get an existing Git repository
         try:
             repo = Repo(project_root)
             DEBUG("Found existing git repository")
@@ -65,28 +74,29 @@ def _update_with_gitpython(project_root: Path, primary_url: str, backup_url: str
             DEBUG(f"To clone the repository: git clone {primary_url}")
             sys.exit(1)
         
-        # Check if we have any remotes configured
+        # Check if there are any remote repositories configured
         if not repo.remotes:
             DEBUG("No remotes found, adding origin...")
             repo.create_remote('origin', primary_url)
         
+        # Get the 'origin' remote repository
         origin = repo.remote('origin')
         
-        # Check current branch
+        # Get the name of the current branch
         try:
             current_branch = repo.active_branch.name
             DEBUG(f"Current branch: {current_branch}")
         except TypeError:
-            # Detached HEAD state
+            # Handle the detached HEAD state
             current_branch = 'master'
             DEBUG("In detached HEAD state, assuming master branch")
         
-        # Save current changes if any
+        # Save uncommitted changes if they exist
         if repo.is_dirty():
             DEBUG("Working directory has uncommitted changes, stashing...")
             repo.git.stash('save', 'Auto-stash before update')
         
-        # Fetch latest changes
+        # Fetch the latest changes from the remote repository
         DEBUG(f"Fetching latest changes from {primary_url}...")
         try:
             origin.fetch()
@@ -94,17 +104,17 @@ def _update_with_gitpython(project_root: Path, primary_url: str, backup_url: str
             if "gitee.com" in str(e) and backup_url:
                 DEBUG("Primary remote failed, trying backup repository...")
                 try:
-                    # Try backup URL
+                    # Try using the backup URL
                     origin.set_url(backup_url)
                     origin.fetch()
                     DEBUG(f"Successfully connected to backup: {backup_url}")
                 except GitCommandError:
-                    origin.set_url(primary_url)  # Restore original
+                    origin.set_url(primary_url)  # Restore the original URL
                     raise
             else:
                 raise
         
-        # Get latest commit info
+        # Get information about the latest commit
         try:
             latest_commit = origin.refs[current_branch].commit
             current_commit = repo.head.commit
@@ -113,11 +123,12 @@ def _update_with_gitpython(project_root: Path, primary_url: str, backup_url: str
                 RIGHT("Repository is already up to date")
                 return
             
-            # Show what will be updated
+            # List the commits that the local repository is behind
             commits_behind = list(repo.iter_commits(f'{current_commit.hexsha}..{latest_commit.hexsha}'))
             DEBUG(f"Found {len(commits_behind)} new commit(s)")
             
-            for commit in commits_behind[:3]:  # Show last 3 commits
+            # Display the last 3 new commits
+            for commit in commits_behind[:3]:
                 DEBUG(f"  - {commit.hexsha[:8]}: {commit.summary}")
             if len(commits_behind) > 3:
                 DEBUG(f"  ... and {len(commits_behind) - 3} more commits")
@@ -125,16 +136,16 @@ def _update_with_gitpython(project_root: Path, primary_url: str, backup_url: str
         except Exception as e:
             DEBUG(f"Could not get commit info: {e}")
         
-        # Reset to latest version
+        # Reset the local repository to the latest version of the remote branch
         DEBUG("Updating to latest version...")
         repo.git.reset('--hard', f'origin/{current_branch}')
         
-        # Clean untracked files
+        # Clean up untracked files
         repo.git.clean('-fd')
         
         RIGHT("Code successfully updated to the latest version")
         
-        # Check if stash exists and offer to restore
+        # Check if there are stashed changes and prompt the user
         try:
             stashes = repo.git.stash('list').strip()
             if stashes and 'Auto-stash before update' in stashes:
@@ -152,7 +163,10 @@ def _update_with_gitpython(project_root: Path, primary_url: str, backup_url: str
 
 def _update_with_subprocess(remote_url: str):
     """
-    Fallback update method using subprocess calls to git.
+    Fallback method to update the repository by calling git commands via subprocess.
+
+    Args:
+        remote_url (str): URL of the remote repository.
     """
     try:
         DEBUG(f"Pulling latest code from {remote_url}...")

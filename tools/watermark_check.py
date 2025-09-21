@@ -21,23 +21,28 @@
 import sys
 import json
 import argparse
+from utils import RIGHT, DEBUG, ERROR
 from typing import Dict, Any, Optional
-from utils.log import RIGHT, DEBUG, ERROR
 from tools.watermark import check_text_watermark
 
 def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
-    """Detect hidden watermark information in the text.
+    """Detect hidden watermark information in the specified text.
 
     Args:
-        text: The text to be detected.
-        verbose: Whether to display detailed information.
+        text (str): The text to be detected for watermarks.
+        verbose (bool, optional): Whether to display detailed detection information. Defaults to False.
 
     Returns:
-        A dictionary containing detection results.
+        Dict[str, Any]: A dictionary containing detection results with the following keys:
+            - watermark_detected (bool): Indicates whether a watermark was detected.
+            - watermark_info (Dict[str, Any]): Information about the detected watermark, None if no watermark is detected.
+            - compliance_status (str): Compliance status, possible values are "unknown", "compliant", "no_watermark", or "error".
+            - error (str): Error message if an exception occurs during detection, None otherwise.
     """
-    # Validate inputs
+    # Validate input parameters
     _validate_detect_args(text, verbose)
 
+    # Initialize the result dictionary
     result = {
         "watermark_detected": False,
         "watermark_info": None,
@@ -46,9 +51,11 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
     }
     
     try:
+        # Check for watermark in the text
         watermark_info = check_text_watermark(text)
         
         if watermark_info:
+            # Update result if a watermark is detected
             result["watermark_detected"] = True
             result["watermark_info"] = watermark_info
             result["compliance_status"] = "compliant"
@@ -65,11 +72,13 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
                 if params:
                     print(f"\tGeneration Parameters: {json.dumps(params, ensure_ascii=False)}")
         else:
+            # Update result if no watermark is detected
             result["compliance_status"] = "no_watermark"
             if verbose:
                 ERROR("No watermark detected")
                 
     except Exception as e:
+        # Update result if an error occurs during detection
         result["error"] = str(e)
         result["compliance_status"] = "error"
         if verbose:
@@ -78,24 +87,35 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
     return result
 
 def batch_detect(file_path: str, verbose: bool = False) -> Dict[str, Any]:
-    """Batch detect watermarks in a file.
+    """Batch detect watermarks in a text file.
 
     Args:
-        file_path: Path to the text file.
-        verbose: Whether to display detailed information.
+        file_path (str): Path to the text file for batch watermark detection.
+        verbose (bool, optional): Whether to display detailed batch detection results. Defaults to False.
 
     Returns:
-        A dictionary containing batch detection results.
+        Dict[str, Any]: A dictionary containing batch detection results with the following keys:
+            - total_lines (int): Total number of lines processed in the file.
+            - detected_lines (int): Number of lines with watermarks detected.
+            - compliant_lines (int): Number of compliant lines.
+            - detection_rate (float): Watermark detection rate.
+            - compliance_rate (float): Compliance rate.
+            - detailed_results (List[Dict[str, Any]]): Detailed detection results for each line.
+            - error (str): Error message if an exception occurs during batch detection, None otherwise.
+            - compliance_status (str): Compliance status, "error" if an exception occurs.
     """
-    # Validate inputs
+    # Validate input parameters
     _validate_batch_detect_args(file_path, verbose)
     try:
+        # Read the content of the file
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read()
 
+        # Split the content into lines
         lines = content.split('\n')
         results = []
 
+        # Detect watermarks in each non-empty line
         for i, line in enumerate(lines, 1):
             if line.strip():
                 result = detect_watermark(line.strip(), verbose=False)
@@ -103,6 +123,7 @@ def batch_detect(file_path: str, verbose: bool = False) -> Dict[str, Any]:
                 result["line_content"] = line.strip()[:100] + "..." if len(line) > 100 else line.strip()
                 results.append(result)
 
+        # Calculate summary statistics
         total_lines = len(results)
         detected_lines = sum(1 for r in results if r["watermark_detected"])
         compliant_lines = sum(1 for r in results if r["compliance_status"] == "compliant")
@@ -132,15 +153,32 @@ def batch_detect(file_path: str, verbose: bool = False) -> Dict[str, Any]:
             "compliance_status": "error"
         }
 
-
 def _validate_detect_args(text: str, verbose: bool):
+    """Validate the input parameters for the detect_watermark function.
+
+    Args:
+        text (str): The text to be validated.
+        verbose (bool): The verbose flag to be validated.
+
+    Raises:
+        ValueError: If text is not a non-empty string or verbose is not a boolean value.
+    """
     if not isinstance(text, str) or text.strip() == "":
         raise ValueError("text must be a non-empty string")
     if not isinstance(verbose, bool):
         raise ValueError("verbose must be a boolean")
 
-
 def _validate_batch_detect_args(file_path: str, verbose: bool):
+    """Validate the input parameters for the batch_detect function.
+
+    Args:
+        file_path (str): The file path to be validated.
+        verbose (bool): The verbose flag to be validated.
+
+    Raises:
+        ValueError: If file_path is not a non-empty string, the file does not exist, 
+                    or verbose is not a boolean value.
+    """
     if not isinstance(file_path, str) or file_path.strip() == "":
         raise ValueError("file_path must be a non-empty string")
     import os

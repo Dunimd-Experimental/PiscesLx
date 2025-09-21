@@ -19,85 +19,101 @@
 # limitations under the License.
 
 import torch
-from utils.log import RIGHT, ERROR
+from utils import RIGHT, DEBUG, ERROR
 
 def check(args=None, extra=None):
     """
-    Check GPU availability and status.
+    Check GPU availability and status, then test tensor operations.
 
     Args:
-        args (optional): Optional arguments, default is None.
-        extra (optional): Extra information, default is None.
+        args (optional): Optional arguments, default is None. Expected to be None or dict-like object.
+        extra (optional): Extra information, default is None. Expected to be None, dict or string.
 
     Returns:
         bool: True if tensor operations are successful, False otherwise.
     """
-    # Validate arguments
+    # Validate input arguments
     try:
         validate_check_args(args, extra)
     except Exception as e:
         ERROR(f"Invalid check arguments: {e}")
+
     # Log the start of GPU status check
     RIGHT("GPU Status Check")
-    # Check if PyTorch CUDA is available
-    RIGHT(f"PyTorch CUDA available: {torch.cuda.is_available()}")
-    if torch.cuda.is_available():
-        # Log the CUDA version
+
+    # Check PyTorch CUDA availability
+    cuda_available = torch.cuda.is_available()
+    RIGHT(f"PyTorch CUDA available: {cuda_available}")
+
+    if cuda_available:
+        # Log CUDA version
         RIGHT(f"CUDA version: {torch.version.cuda}")
         # Log the number of available GPUs
-        RIGHT(f"Number of GPUs: {torch.cuda.device_count()}")
-        for i in range(torch.cuda.device_count()):
-            # Get the properties of the current GPU
+        gpu_count = torch.cuda.device_count()
+        RIGHT(f"Number of GPUs: {gpu_count}")
+
+        for i in range(gpu_count):
+            # Get properties of the current GPU
             props = torch.cuda.get_device_properties(i)
-            # Log the name of the current GPU
+            # Log GPU name
             RIGHT(f"GPU {i}: {props.name}")
-            # Log the total memory of the current GPU in GB
+            # Log total GPU memory in GB
             RIGHT(f"  Memory: {props.total_memory / 1024**3:.1f} GB")
-            # Log the compute capability of the current GPU
+            # Log GPU compute capability
             RIGHT(f"  Compute Capability: {props.major}.{props.minor}")
+
             if i == 0:
-                # Empty the CUDA cache
+                # Clear CUDA cache
                 torch.cuda.empty_cache()
-                # Get the currently allocated memory in GB
+                # Get currently allocated memory in GB
                 allocated = torch.cuda.memory_allocated(i) / 1024**3
-                # Get the currently reserved memory in GB
+                # Get currently reserved memory in GB
                 cached = torch.cuda.memory_reserved(i) / 1024**3
-                # Log the allocated memory
+                # Log allocated memory
                 RIGHT(f"  Allocated: {allocated:.2f} GB")
-                # Log the cached memory
+                # Log cached memory
                 RIGHT(f"  Cached: {cached:.2f} GB")
     else:
-        # Log that no CUDA-capable GPU is found
+        # Log that no CUDA-capable GPU was found
         ERROR("No CUDA-capable GPU found")
-        # Log that training will use CPU
+        # Log that training will fall back to CPU
         ERROR("Training will use CPU (slower but functional)")
-    
+
     # Log the start of tensor operation testing
     RIGHT("=" * 50)
     RIGHT("Testing tensor operations...")
+
     try:
-        # Select the device (CUDA if available, otherwise CPU)
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        # Select device: CUDA if available, otherwise CPU
+        device = torch.device("cuda" if cuda_available else "cpu")
         # Create random tensors and move them to the selected device
         x = torch.randn(1000, 1000).to(device)
         y = torch.randn(1000, 1000).to(device)
         # Perform matrix multiplication
         z = torch.mm(x, y)
-        # Log that tensor operations are successful
+        # Log successful tensor operations
         RIGHT(f"Tensor operations successful on {device}")
+        return True
     except Exception as e:
-        # Log that tensor operations failed
+        # Log failed tensor operations
         ERROR(f"Tensor operations failed: {e}")
         return False
-    return True
 
 
 def validate_check_args(args=None, extra=None):
-    """Validate/normalize arguments for tools.check.check().
-    args/extra are optional; ensure they are None or dict-like when provided.
+    """
+    Validate and normalize arguments for the check() function.
+    
+    Args:
+        args (optional): Optional arguments. Expected to be None or a dict-like object.
+        extra (optional): Extra information. Expected to be None, a dict, or a string.
+    
+    Raises:
+        ValueError: If args is not None and not a dict-like object, 
+                   or if extra is not None, dict, or string.
     """
     if args is not None and not isinstance(args, (dict, object)):
-        # allow any object (Namespace), but reject obvious wrong types
+        # Allow any object (e.g., Namespace), but reject obviously wrong types
         raise ValueError("args must be None or an object-like container")
     if extra is not None and not isinstance(extra, (dict, str)):
         raise ValueError("extra must be None, dict or str")

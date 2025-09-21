@@ -22,13 +22,10 @@ import os
 import time
 import psutil
 import platform
-from utils.log import RIGHT, ERROR
-from utils.progress import get_progress_bar
+from utils import RIGHT, ERROR, get_progress_bar
 
-# Define the update interval for system monitoring (in seconds)
 UPDATE_INTERVAL = 1
 
-# --- Helper Functions ---
 def bytes_to_human(n):
     """
     Converts bytes to a human-readable format (KB, MB, GB, etc.).
@@ -39,72 +36,71 @@ def bytes_to_human(n):
     Returns:
         str: A string representing the bytes in a human-readable format.
     """
+    # Symbols for different byte units
     symbols = ('K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y')
+    # Dictionary to store prefix values for each symbol
     prefix = {}
     for i, s in enumerate(symbols):
+        # Calculate the prefix value for each symbol
         prefix[s] = 1 << (i + 1) * 10
+    # Iterate through symbols in reverse order
     for s in reversed(symbols):
         if n >= prefix[s]:
+            # Convert bytes to the corresponding unit
             value = float(n) / prefix[s]
             return f'{value:.2f}{s}B'
     return f"{n}B"
 
-# --- GPU Monitoring Setup ---
 # Flag indicating whether GPU monitoring is enabled
 GPU_ENABLED = False
 # Number of detected GPUs
 gpu_count = 0
 try:
-    # Try to import the pynvml library
+    # Import the pynvml library for NVIDIA GPU monitoring
     import pynvml
     # Initialize the pynvml library
     pynvml.nvmlInit()
-    # Get the number of GPUs
+    # Get the count of available NVIDIA GPUs
     gpu_count = pynvml.nvmlDeviceGetCount()
     if gpu_count > 0:
         GPU_ENABLED = True
 except Exception:
-    # If an error occurs, disable GPU monitoring
+    # Disable GPU monitoring if an error occurs
     GPU_ENABLED = False
 
-# --- Main Monitoring Logic ---
 def get_system_stats():
     """
-    Gathers all system statistics.
+    Gathers all system statistics, including CPU, memory, GPU, disk, etc.
 
     Returns:
         dict: A dictionary containing various system statistics.
     """
+    # Initialize an empty dictionary to store system statistics
     stats = {}
 
-    # CPU Statistics
-    # Get the total CPU usage percentage
+    # Get CPU usage statistics
     stats['cpu_percent_total'] = psutil.cpu_percent(percpu=False)
-    # Get the CPU usage percentage for each core
     stats['cpu_percent_per_core'] = psutil.cpu_percent(percpu=True)
     try:
-        # psutil.cpu_freq() might not be available on all systems or require root
-        # Get the CPU frequency for each core
+        # Get CPU frequency statistics for each core
         stats['cpu_freq'] = psutil.cpu_freq(percpu=True)
     except Exception:
-        # If an error occurs, set an empty list
+        # Set an empty list if CPU frequency information is unavailable
         stats['cpu_freq'] = []
 
-    # Memory Statistics
-    # Get virtual memory information
+    # Get virtual memory statistics
     mem = psutil.virtual_memory()
     stats['mem_total'] = mem.total
     stats['mem_used'] = mem.used
     stats['mem_percent'] = mem.percent
     
-    # Swap Memory Statistics
-    # Get swap memory information
+    # Get swap memory statistics
     swap = psutil.swap_memory()
     stats['swap_total'] = swap.total
     stats['swap_used'] = swap.used
     stats['swap_percent'] = swap.percent
 
-    # GPU Statistics
+    # Get GPU statistics if GPU monitoring is enabled
     if GPU_ENABLED:
         gpu_stats = []
         for i in range(gpu_count):
@@ -123,8 +119,7 @@ def get_system_stats():
             })
         stats['gpu'] = gpu_stats
 
-    # Disk Statistics
-    # Get all disk partitions
+    # Get disk usage statistics
     disk_partitions = psutil.disk_partitions()
     disk_usage_stats = []
     for partition in disk_partitions:
@@ -139,7 +134,7 @@ def get_system_stats():
                 'percent': usage.percent
             })
         except (PermissionError, FileNotFoundError):
-            # Can't access the drive or it's a special device
+            # Skip partitions that cannot be accessed
             continue
     stats['disk_usage'] = disk_usage_stats
 
@@ -147,7 +142,7 @@ def get_system_stats():
 
 def display_stats(stats, last_net_io, last_disk_io, last_time):
     """
-    Clears the screen and displays the formatted statistics.
+    Clears the screen and displays the formatted system statistics.
 
     Args:
         stats (dict): A dictionary containing system statistics.
@@ -158,21 +153,21 @@ def display_stats(stats, last_net_io, last_disk_io, last_time):
     Returns:
         tuple: Current network I/O counters and disk I/O counters.
     """
-    # Clear screen
+    # Clear the terminal screen
     os.system('cls' if os.name == 'nt' else 'clear')
 
     print(f"--- Pisces L1 System Monitor --- (Press Ctrl+C to exit)")
     print(f"System: {platform.system()} {platform.release()} | Update Interval: {UPDATE_INTERVAL}s")
     print("-" * 60)
 
-    # CPU Info
+    # Display CPU information
     print("--- CPU ---")
     print(f"Total Usage: {get_progress_bar(stats['cpu_percent_total'])}")
     for i, (percent, freq) in enumerate(zip(stats['cpu_percent_per_core'], stats.get('cpu_freq', []))):
         freq_str = f"{freq.current:.0f}MHz" if freq else "N/A"
         print(f"  Core {i:<2}: {get_progress_bar(percent, length=20)} @ {freq_str}")
     
-    # Memory Info
+    # Display memory information
     print("\n--- Memory ---")
     mem_total_h = bytes_to_human(stats['mem_total'])
     mem_used_h = bytes_to_human(stats['mem_used'])
@@ -182,7 +177,7 @@ def display_stats(stats, last_net_io, last_disk_io, last_time):
         swap_used_h = bytes_to_human(stats['swap_used'])
         print(f"Swap : {get_progress_bar(stats['swap_percent'])} ({swap_used_h} / {swap_total_h})")
 
-    # GPU Info
+    # Display GPU information if available
     if GPU_ENABLED and 'gpu' in stats:
         print("\n--- GPU ---")
         for i, gpu in enumerate(stats['gpu']):
@@ -192,13 +187,14 @@ def display_stats(stats, last_net_io, last_disk_io, last_time):
             print(f"  Usage : {get_progress_bar(gpu['util'])}")
             print(f"  Memory: {get_progress_bar(gpu['mem_percent'])} ({gpu_mem_used_h} / {gpu_mem_total_h})")
 
-    # Time delta for speed calculation
+    # Calculate the elapsed time for speed calculation
     current_time = time.time()
     elapsed_time = current_time - last_time
     if elapsed_time == 0:
-        elapsed_time = 1  # Avoid division by zero on the first run
+        # Avoid division by zero on the first run
+        elapsed_time = 1
 
-    # Disk Info
+    # Display disk I/O information
     current_disk_io = psutil.disk_io_counters()
     print("\n--- Disk ---")
     if last_disk_io:
@@ -211,7 +207,7 @@ def display_stats(stats, last_net_io, last_disk_io, last_time):
         disk_used_h = bytes_to_human(disk['used'])
         print(f"  {disk['mountpoint']:<10} {get_progress_bar(disk['percent'])} ({disk_used_h} / {disk_total_h})")
 
-    # Network Info
+    # Display network I/O information
     current_net_io = psutil.net_io_counters()
     print("\n--- Network ---")
     if last_net_io:
@@ -243,13 +239,13 @@ def monitor():
     last_time = time.time()
     try:
         while True:
-            # Get system statistics
+            # Collect system statistics
             stats = get_system_stats()
             # Display system statistics and update I/O counters
             last_net_io, last_disk_io = display_stats(stats, last_net_io, last_disk_io, last_time)
             # Update the last monitoring time
             last_time = time.time()
-            # Sleep for the update interval
+            # Wait for the specified update interval
             time.sleep(UPDATE_INTERVAL)
     except KeyboardInterrupt:
         RIGHT("\n\nMonitor stopped. Goodbye!")
@@ -257,5 +253,5 @@ def monitor():
         ERROR(f"\nAn error occurred: {e}")
     finally:
         if GPU_ENABLED:
-            # Shutdown the pynvml library
+            # Shutdown the pynvml library to release resources
             pynvml.nvmlShutdown()

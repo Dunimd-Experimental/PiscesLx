@@ -21,31 +21,32 @@
 import sys
 import argparse
 from pathlib import Path
-from utils.log import ERROR
-from utils.ul import display_all_versions, display_specific_version
+from utils import ERROR, display_all_versions, display_specific_version
 
 def show_changelog(args=None):
     """
-    Display changelog information for all versions or specific version.
-    
+    Display changelog information for all versions or a specific version.
+
     Args:
-        args: Command line arguments (optional)
+        args (argparse.Namespace, optional): Command line arguments. Defaults to None.
+
+    Raises:
+        SystemExit: If an error occurs while displaying changelog information, the program exits with status code 1.
     """
     try:
-        # Get project root directory
+        # Retrieve the root directory of the project
         project_root = Path(__file__).parent.parent
-        
-        # Parse command line arguments if provided
+
         if args and hasattr(args, 'all') and args.all:
-            # Show all versions
+            # Display changelog information for all versions
             display_all_versions(project_root)
         elif args and hasattr(args, 'version') and args.version:
-            # Show specific version
+            # Display changelog information for a specific version
             display_specific_version(project_root, args.version)
         else:
-            # Default: show all versions
+            # Display changelog information for all versions by default
             display_all_versions(project_root)
-        
+
     except Exception as e:
         ERROR(f"Failed to display changelog information: {e}")
         sys.exit(1)
@@ -53,13 +54,17 @@ def show_changelog(args=None):
 
 def parse_changelog_args():
     """
-    Parse command line arguments for changelog command.
+    Parse command line arguments for the changelog command.
+
+    Returns:
+        argparse.ArgumentParser: An ArgumentParser object configured for the changelog command.
     """
     parser = argparse.ArgumentParser(
         description='Display changelog information for all or specific versions',
         prog='python manage.py changelog'
     )
-    
+
+    # Add a mutually exclusive argument group
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
         '--all', '-a',
@@ -72,5 +77,5 @@ def parse_changelog_args():
         metavar='VERSION',
         help='Show changelog for a specific version (e.g., 1.0.0150)'
     )
-    
+
     return parser

@@ -18,14 +18,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Recursively calls itself, which may cause infinite recursion. The function purpose is to be determined.
 def RIGHT(content):
     print(f"✅\t{content}")
 
-# Print debug information with an orange emoji prefix.
 def DEBUG(content):
     print(f"🟧\t{content}")
 
-# Print error information with a cross emoji prefix.
 def ERROR(content):
     print(f"❌\t{content}")

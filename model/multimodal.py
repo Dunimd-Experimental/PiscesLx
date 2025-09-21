@@ -22,17 +22,23 @@ import os
 import math
 import uuid
 import json
+import time
 import torch
+import psutil
+import weakref
 import asyncio
+import threading
 import numpy as np
 import pandas as pd
 from torch import nn
 from PIL import Image
 from enum import Enum
+from utils import DEBUG, ERROR
 from datetime import datetime
 import torch.nn.functional as F
 from dataclasses import dataclass
-from utils.log import DEBUG, ERROR
+from collections import defaultdict
+from contextlib import contextmanager
 from typing import Optional, Tuple, List, Dict, Any, Callable, Union
 
 class SpatioTemporalRoPE3D(nn.Module):
@@ -187,7 +193,7 @@ class VisionEncoder(nn.Module):
     Unified Vision Encoder with NaViT native resolution support and SigLIP-style architecture.
     Supports arbitrary image resolutions and aspect ratios with efficient patch processing.
     """
-    def __init__(self, cfg):
+    def __init__(self, cfg, cache_manager=None):
         """
         Initialize the VisionEncoder with NaViT-style native resolution support.
 
@@ -225,15 +231,28 @@ class VisionEncoder(nn.Module):
         self.cls_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
         
         # Enhanced Transformer encoder with pre-norm architecture
+        use_sdpa_vision = bool(getattr(cfg, 'vision_use_sdpa', True))
         self.transformer = nn.ModuleDict({
             'layers': nn.ModuleList([
                 nn.ModuleDict({
                     'norm1': nn.LayerNorm(self.hidden_size),
-                    'attn': nn.MultiheadAttention(
-                        embed_dim=self.hidden_size,
-                        num_heads=self.num_heads,
-                        batch_first=True
-                    ),
+                    **({
+                        'attn_type': 'sdpa',
+                        'attn': nn.ModuleDict({
+                            'q': nn.Linear(self.hidden_size, self.hidden_size),
+                            'k': nn.Linear(self.hidden_size, self.hidden_size),
+                            'v': nn.Linear(self.hidden_size, self.hidden_size),
+                            'o': nn.Linear(self.hidden_size, self.hidden_size),
+                            'drop': nn.Dropout(getattr(cfg, 'attention_dropout', 0.0))
+                        })
+                    } if use_sdpa_vision else {
+                        'attn_type': 'mha',
+                        'attn': nn.MultiheadAttention(
+                            embed_dim=self.hidden_size,
+                            num_heads=self.num_heads,
+                            batch_first=True
+                        )
+                    }),
                     'norm2': nn.LayerNorm(self.hidden_size),
                     'mlp': nn.Sequential(
                         nn.Linear(self.hidden_size, 4 * self.hidden_size),
@@ -561,9 +580,57 @@ class VisionEncoder(nn.Module):
         for layer in self.transformer['layers']:
             # Pre-norm self-attention
             x_norm = layer['norm1'](x)
-            attn_out = layer['attn'](x_norm, x_norm, x_norm)[0]
+            if layer.get('attn_type', 'mha') == 'sdpa':
+                # SDPA/Flash backend if available, non-causal encoder attention
+                q_lin = layer['attn']['q'](x_norm)
+                k_lin = layer['attn']['k'](x_norm)
+                v_lin = layer['attn']['v'](x_norm)
+                B, T, D = q_lin.shape
+                H = self.num_heads
+                Dh = D // H
+                q = q_lin.view(B, T, H, Dh).transpose(1, 2).reshape(B * H, T, Dh)
+                k = k_lin.view(B, T, H, Dh).transpose(1, 2).reshape(B * H, T, Dh)
+                v = v_lin.view(B, T, H, Dh).transpose(1, 2).reshape(B * H, T, Dh)
+
+                attn_mask = None
+                if bool(getattr(self.cfg, 'use_sliding_window', False)):
+                    win = int(getattr(self.cfg, 'streaming_window', 16384))
+                    if win > 0 and win < T:
+                        key_pos = torch.arange(T, device=x.device)
+                        row_pos = torch.arange(T, device=x.device)
+                        lower_bound = (row_pos.view(-1, 1) - (win - 1))
+                        allowed = key_pos.view(1, -1) >= lower_bound  # [T,S]
+                        disallow = ~allowed  # True means mask
+                        attn_mask = disallow.expand(B * H, T, T)
+
+                try:
+                    from torch.backends.cuda import sdp_kernel as _sdp
+                    use_flash = torch.cuda.is_available() and bool(getattr(self.cfg, 'sdpa_prefer_flash', True))
+                except Exception:
+                    use_flash = False
+                if use_flash:
+                    with _sdp(enable_math=False, enable_flash=True, enable_mem_efficient=False):
+                        out_ = F.scaled_dot_product_attention(
+                            q, k, v,
+                            attn_mask=attn_mask,
+                            dropout_p=layer['attn']['drop'].p if self.training else 0.0,
+                            is_causal=False
+                        )
+                else:
+                    out_ = F.scaled_dot_product_attention(
+                        q, k, v,
+                        attn_mask=attn_mask,
+                        dropout_p=layer['attn']['drop'].p if self.training else 0.0,
+                        is_causal=False
+                    )
+                out = out_.reshape(B, H, T, Dh).transpose(1, 2).contiguous().view(B, T, D)
+                out = layer['attn']['drop'](out)
+                attn_out = layer['attn']['o'](out)
+            else:
+                attn_out = layer['attn'](x_norm, x_norm, x_norm)[0]
+
             x = x + attn_out
-            
+
             # Pre-norm MLP
             mlp_out = layer['mlp'](layer['norm2'](x))
             x = x + mlp_out
@@ -1834,6 +1901,14 @@ class MCPMessageType(Enum):
     SYNC_RESPONSE = "sync_response"
 
 @dataclass
+class GenerationCondition:
+    """Condition for multi-modal generation"""
+    text_prompt: str = ""
+    emotion_vector: Optional[torch.Tensor] = None
+    style_params: Optional[Dict[str, float]] = None
+    generation_params: Optional[Dict[str, Any]] = None
+
+@dataclass
 class MCPMessage:
     """Standardized MCP message format"""
     message_type: str
@@ -1892,7 +1967,8 @@ class PiscesReasoner(nn.Module):
         self.hidden_size = cfg.hidden_size
         self.vocab_size = cfg.vocab_size
         
-        # Multi-step CoT reasoning layers (enhanced from 2 to 4)
+        # Optimized multi-step CoT reasoning layers (reduced redundancy)
+        # Merged similar reasoning layers and added dynamic depth control
         self.reasoning_layers = nn.ModuleList([
             nn.TransformerEncoderLayer(
                 d_model=cfg.hidden_size,
@@ -1900,8 +1976,17 @@ class PiscesReasoner(nn.Module):
                 dim_feedforward=cfg.hidden_size * 4,
                 dropout=0.1,
                 batch_first=True
-            ) for _ in range(4)  # Enhanced: 4-step reasoning
+            ) for _ in range(3)  # Optimized: reduced from 4 to 3 layers
         ])
+        
+        # Dynamic reasoning depth controller
+        self.depth_controller = nn.Sequential(
+            nn.Linear(cfg.hidden_size, cfg.hidden_size // 4),
+            nn.ReLU(),
+            nn.Dropout(0.1),
+            nn.Linear(cfg.hidden_size // 4, 1),
+            nn.Sigmoid()
+        )
         
         # Enhanced reasoning components
         self.thinking_head = nn.Linear(cfg.hidden_size, cfg.vocab_size)
@@ -1934,6 +2019,71 @@ class PiscesReasoner(nn.Module):
         
         # Layer normalization
         self.layer_norm = nn.LayerNorm(cfg.hidden_size)
+    
+    def _calculate_problem_complexity(self, hidden_states):
+        """
+        Calculate problem complexity score for PiscesReasoner.
+        
+        Args:
+            hidden_states: Input hidden states [batch, seq_len, hidden_size]
+            
+        Returns:
+            float: Complexity score between 0 and 1
+        """
+        batch_size, seq_len, hidden_size = hidden_states.shape
+        
+        # Factor 1: Sequence length complexity
+        length_complexity = min(seq_len / 256, 1.0)  # Lower threshold for reasoning
+        
+        # Factor 2: Semantic diversity across the reasoning sequence
+        mean_state = hidden_states.mean(dim=1, keepdim=True)
+        semantic_variance = torch.var(hidden_states - mean_state, dim=[1,2]).mean()
+        diversity_complexity = torch.sigmoid(semantic_variance * 15)  # Higher sensitivity
+        
+        # Factor 3: Reasoning pattern complexity (gradient-based)
+        if hidden_states.requires_grad:
+            grad_magnitude = torch.norm(hidden_states.grad) if hidden_states.grad is not None else torch.tensor(0.0)
+            reasoning_complexity = torch.sigmoid(grad_magnitude * 5)
+        else:
+            reasoning_complexity = torch.tensor(0.5)
+        
+        # Combine factors with reasoning-specific weights
+        complexity = (length_complexity * 0.4 + 
+                     diversity_complexity * 0.4 + 
+                     reasoning_complexity * 0.2)
+        
+        return complexity.item()
+    
+    def _calculate_abstraction_gain(self, prev_states, curr_states):
+        """
+        Calculate abstraction gain for reasoning layers.
+        
+        Args:
+            prev_states: Previous layer hidden states
+            curr_states: Current layer hidden states
+            
+        Returns:
+            float: Abstraction gain score
+        """
+        # Measure reasoning improvement using multiple metrics
+        prev_pooled = F.normalize(prev_states.mean(dim=1), p=2, dim=-1)
+        curr_pooled = F.normalize(curr_states.mean(dim=1), p=2, dim=-1)
+        
+        # Semantic advancement
+        semantic_advance = 1 - F.cosine_similarity(prev_pooled, curr_pooled, dim=-1).mean()
+        
+        # Information consolidation (reduction in variance indicates abstraction)
+        prev_info = torch.norm(torch.var(prev_states, dim=1), p=2)
+        curr_info = torch.norm(torch.var(curr_states, dim=1), p=2)
+        consolidation_ratio = max(0, (prev_info - curr_info) / (prev_info + 1e-8))
+        
+        # Reasoning coherence (smoothness of state transitions)
+        state_diff = torch.norm(curr_states - prev_states, p=2, dim=-1).mean()
+        coherence_score = torch.sigmoid(1.0 / (state_diff + 0.1))
+        
+        # Combine metrics with reasoning-specific weights
+        abstraction_gain = semantic_advance * 0.5 + consolidation_ratio * 0.3 + coherence_score * 0.2
+        return abstraction_gain.item()
         
         # Special tokens for CoT
         self.register_buffer('start_thinking_token', torch.tensor([50256]))
@@ -1970,13 +2120,35 @@ class PiscesReasoner(nn.Module):
         else:
             attention_weights = None
         
-        # Multi-step CoT reasoning
+        # Multi-step CoT reasoning with adaptive depth
         reasoning_states = self.layer_norm(hidden_states)
         reasoning_steps = []
         
-        for layer in self.reasoning_layers:
+        # Calculate problem complexity for dynamic depth adjustment
+        complexity_score = self._calculate_problem_complexity(reasoning_states)
+        
+        # Dynamic depth selection based on complexity
+        if complexity_score < 0.3:
+            # Simple problems: use minimal depth
+            num_layers = 1
+        elif complexity_score < 0.6:
+            # Medium complexity: use moderate depth
+            num_layers = 2
+        else:
+            # Complex problems: use full depth
+            num_layers = len(self.reasoning_layers)
+        
+        # Adaptive reasoning with early termination
+        for i, layer in enumerate(self.reasoning_layers[:num_layers]):
+            prev_states = reasoning_states.clone()
             reasoning_states = layer(reasoning_states)
             reasoning_steps.append(reasoning_states.clone())
+            
+            # Check abstraction gain for early termination
+            if i > 0:
+                abstraction_gain = self._calculate_abstraction_gain(prev_states, reasoning_states)
+                if abstraction_gain < 0.1:  # Minimal improvement
+                    break
         
         # Get final reasoning state for outputs
         final_state = reasoning_states[:, -1, :]
@@ -2925,26 +3097,252 @@ class CrossModalAttention(nn.Module):
     def forward(self, query, key, value, mask=None):
         B, T_q, _ = query.shape
         B, T_k, _ = key.shape
-        
+
         # Project to Q, K, V
         Q = self.q_proj(self.norm1(query)).view(B, T_q, self.num_heads, self.head_dim).transpose(1, 2)
         K = self.k_proj(self.norm2(key)).view(B, T_k, self.num_heads, self.head_dim).transpose(1, 2)
         V = self.v_proj(value).view(B, T_k, self.num_heads, self.head_dim).transpose(1, 2)
-        
-        # Scaled dot-product attention
-        scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.head_dim)
-        
-        if mask is not None:
-            scores = scores.masked_fill(mask == 0, float('-inf'))
-        
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
-        
-        # Apply attention to values
-        out = torch.matmul(attn_weights, V)
-        out = out.transpose(1, 2).contiguous().view(B, T_q, self.hidden_size)
-        
+
+        # Optional xFormers fast path (mirrors usage style in modeling_aurora.Attention)
+        try:
+            from xformers.ops import memory_efficient_attention  # type: ignore
+            _use_xformers = True
+        except ImportError:
+            _use_xformers = False
+
+        if _use_xformers and mask is None:
+            # xFormers expects [B, H, T, D]
+            out = memory_efficient_attention(Q, K, V)  # -> [B, H, T_q, D]
+            out = out.transpose(1, 2).contiguous().view(B, T_q, self.hidden_size)
+        else:
+            # Scaled dot-product attention (PyTorch fallback)
+            scores = torch.matmul(Q, K.transpose(-2, -1)) / math.sqrt(self.head_dim)
+            if mask is not None:
+                scores = scores.masked_fill(mask == 0, float('-inf'))
+            attn_weights = F.softmax(scores, dim=-1)
+            attn_weights = self.dropout(attn_weights)
+            out = torch.matmul(attn_weights, V)
+            out = out.transpose(1, 2).contiguous().view(B, T_q, self.hidden_size)
+
         return self.o_proj(out)
+
+class MemoryManager:
+    """
+    Advanced memory management system for Pisces L1 model.
+    Provides dynamic memory monitoring, garbage collection, and leak prevention.
+    """
+    def __init__(self, device='cuda', memory_threshold=0.85, cleanup_interval=30, enable_background=True):
+        """
+        Initialize memory manager.
+        
+        Args:
+            device: Target device ('cuda' or 'cpu')
+            memory_threshold: Memory usage threshold for triggering cleanup (0-1)
+            cleanup_interval: Interval in seconds for automatic cleanup
+        """
+        self.device = device
+        self.memory_threshold = memory_threshold
+        self.cleanup_interval = cleanup_interval
+        self.enable_background = enable_background
+        
+        # Memory tracking
+        self.tensor_registry = weakref.WeakValueDictionary()
+        self.intermediate_tensors = defaultdict(list)
+        self.memory_stats = {
+            'peak_memory': 0,
+            'cleanup_count': 0,
+            'leak_preventions': 0,
+            'total_freed': 0
+        }
+        
+        # Threading for background cleanup
+        self.cleanup_thread = None
+        self.stop_cleanup = threading.Event()
+        self.monitor_active = False
+        
+        # GPU-specific tracking
+        if device == 'cuda' and torch.cuda.is_available():
+            self.gpu_id = torch.cuda.current_device()
+            self.initial_memory = torch.cuda.memory_allocated(self.gpu_id)
+        else:
+            self.gpu_id = None
+            self.initial_memory = 0
+    
+    def start_monitoring(self):
+        """Start background memory monitoring and cleanup."""
+        if not self.monitor_active and self.enable_background:
+            self.monitor_active = True
+            self.stop_cleanup.clear()
+            self.cleanup_thread = threading.Thread(target=self._background_cleanup, daemon=True)
+            self.cleanup_thread.start()
+            DEBUG(f"Memory monitoring started on {self.device}")
+    
+    def stop_monitoring(self):
+        """Stop background memory monitoring."""
+        if self.monitor_active:
+            self.monitor_active = False
+            self.stop_cleanup.set()
+            if self.cleanup_thread:
+                self.cleanup_thread.join(timeout=5)
+            self._emergency_cleanup()
+            DEBUG("Memory monitoring stopped")
+    
+    def register_tensor(self, tensor, name=None, is_intermediate=True):
+        """
+        Register a tensor for memory tracking.
+        
+        Args:
+            tensor: Tensor to register
+            name: Optional name for tracking
+            is_intermediate: Whether this is an intermediate tensor that can be cleaned
+        """
+        if tensor is None:
+            return tensor
+            
+        tensor_id = id(tensor)
+        self.tensor_registry[tensor_id] = tensor
+        
+        if is_intermediate and name:
+            self.intermediate_tensors[name].append(weakref.ref(tensor))
+            
+        return tensor
+    
+    def track_memory(self, operation_name="operation"):
+        """
+        Context manager for tracking memory usage of operations.
+        
+        Args:
+            operation_name: Name of the operation for logging
+        """
+        class MemoryTracker:
+            def __init__(tracker_self):
+                tracker_self.operation_name = operation_name
+                tracker_self.start_memory = self.get_memory_usage()
+                tracker_self.start_time = time.time()
+            
+            def __enter__(tracker_self):
+                return tracker_self
+            
+            def __exit__(tracker_self, exc_type, exc_val, exc_tb):
+                end_memory = self.get_memory_usage()
+                end_time = time.time()
+                
+                memory_diff = end_memory - tracker_self.start_memory
+                if abs(memory_diff) > 100 * 1024 * 1024:  # 100MB threshold
+                    DEBUG(f"Memory change in {tracker_self.operation_name}: {memory_diff / 1024**2:.2f}MB "
+                          f"({end_memory / 1024**2:.2f}MB total)")
+                
+                # Auto-cleanup if memory usage is high
+                if end_memory > self.get_memory_limit() * self.memory_threshold:
+                    self.cleanup_intermediate_tensors()
+        
+        return MemoryTracker()
+    
+    def get_memory_usage(self):
+        """Get current memory usage in bytes."""
+        if self.device == 'cuda' and torch.cuda.is_available():
+            return torch.cuda.memory_allocated(self.gpu_id)
+        else:
+            # CPU memory estimation
+            process = psutil.Process()
+            return process.memory_info().rss
+    
+    def get_memory_limit(self):
+        """Get total available memory in bytes."""
+        if self.device == 'cuda' and torch.cuda.is_available():
+            return torch.cuda.get_device_properties(self.gpu_id).total_memory
+        else:
+            return psutil.virtual_memory().total
+    
+    def cleanup_intermediate_tensors(self, force=False):
+        """
+        Clean up intermediate tensors to free memory.
+        
+        Args:
+            force: Force cleanup even if memory usage is low
+        """
+        current_usage = self.get_memory_usage()
+        memory_limit = self.get_memory_limit()
+        
+        if force or (current_usage > memory_limit * self.memory_threshold):
+            freed_count = 0
+            freed_memory = 0
+            
+            # Clean registered intermediate tensors
+            for name, tensor_refs in list(self.intermediate_tensors.items()):
+                alive_tensors = []
+                for tensor_ref in tensor_refs:
+                    tensor = tensor_ref()
+                    if tensor is not None:
+                        freed_memory += tensor.numel() * tensor.element_size()
+                        del tensor
+                        freed_count += 1
+                    else:
+                        alive_tensors.append(tensor_ref)
+                
+                self.intermediate_tensors[name] = alive_tensors
+            
+            # Force garbage collection
+            gc.collect()
+            if self.device == 'cuda':
+                torch.cuda.empty_cache()
+            
+            self.memory_stats['cleanup_count'] += 1
+            self.memory_stats['total_freed'] += freed_memory
+            
+            new_usage = self.get_memory_usage()
+            DEBUG(f"Memory cleanup: freed {freed_count} tensors, "
+                  f"{freed_memory / 1024**2:.2f}MB, "
+                  f"usage: {current_usage / 1024**2:.2f}MB -> {new_usage / 1024**2:.2f}MB")
+    
+    def _background_cleanup(self):
+        """Background thread for periodic memory cleanup."""
+        while not self.stop_cleanup.wait(self.cleanup_interval):
+            try:
+                self.cleanup_intermediate_tensors()
+                self._detect_memory_leaks()
+            except Exception as e:
+                ERROR(f"Background cleanup error: {e}")
+    
+    def _detect_memory_leaks(self):
+        """Detect potential memory leaks by monitoring tensor lifecycle."""
+        current_usage = self.get_memory_usage()
+        
+        # Update peak memory
+        if current_usage > self.memory_stats['peak_memory']:
+            self.memory_stats['peak_memory'] = current_usage
+        
+        # Check for suspicious memory patterns
+        memory_limit = self.get_memory_limit()
+        if current_usage > memory_limit * 0.95:  # 95% threshold
+            self.memory_stats['leak_preventions'] += 1
+            ERROR(f"High memory usage detected: {current_usage / 1024**3:.2f}GB / "
+                  f"{memory_limit / 1024**3:.2f}GB")
+            self._emergency_cleanup()
+    
+    def _emergency_cleanup(self):
+        """Emergency cleanup when memory is critically low."""
+        DEBUG("Performing emergency memory cleanup...")
+        
+        # Clear all intermediate tensors
+        self.intermediate_tensors.clear()
+        self.tensor_registry.clear()
+        
+        # Force garbage collection and cache clearing
+        gc.collect()
+        if self.device == 'cuda':
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    
+    def get_memory_stats(self):
+        """Get memory usage statistics."""
+        return {
+            **self.memory_stats,
+            'current_usage_mb': self.get_memory_usage() / 1024**2,
+            'memory_limit_mb': self.get_memory_limit() / 1024**2,
+            'usage_percentage': (self.get_memory_usage() / self.get_memory_limit()) * 100
+        }
+
 
 class HardwareAdaptiveConfig:
     """
@@ -2955,6 +3353,10 @@ class HardwareAdaptiveConfig:
     def __init__(self):
         self.device_info = self._detect_hardware()
         self.adaptive_config = self._generate_adaptive_config()
+        
+        # Initialize memory manager
+        self.memory_manager = MemoryManager()
+        self.memory_manager.start_monitoring()
     
     def _detect_hardware(self):
         """Detect available hardware and compute capabilities."""
@@ -3008,9 +3410,6 @@ class HardwareAdaptiveConfig:
         """Generate adaptive configuration based on detected hardware."""
         config_profiles = {
             'minimal': {  # RTX 4090, V100 16GB
-                'quantum_tensor_order': 4,
-                'bond_dim': 32,
-                'physical_dim': 16,
                 'max_layers': 2,
                 'max_heads': 4,
                 'max_lstm_layers': 1,
@@ -3019,9 +3418,6 @@ class HardwareAdaptiveConfig:
                 'checkpoint_segments': 4
             },
             'conservative': {  # Single A100 40GB, V100×2
-                'quantum_tensor_order': 6,
-                'bond_dim': 64,
-                'physical_dim': 32,
                 'max_layers': 3,
                 'max_heads': 8,
                 'max_lstm_layers': 1,
@@ -3030,9 +3426,6 @@ class HardwareAdaptiveConfig:
                 'checkpoint_segments': 2
             },
             'medium': {  # Single A100 80GB, A100×2 40GB
-                'quantum_tensor_order': 6,
-                'bond_dim': 96,
-                'physical_dim': 48,
                 'max_layers': 4,
                 'max_heads': 12,
                 'max_lstm_layers': 2,
@@ -3041,9 +3434,6 @@ class HardwareAdaptiveConfig:
                 'checkpoint_segments': 1
             },
             'high': {  # A100×2 80GB, A100×4 40GB
-                'quantum_tensor_order': 8,
-                'bond_dim': 128,
-                'physical_dim': 64,
                 'max_layers': 6,
                 'max_heads': 16,
                 'max_lstm_layers': 3,
@@ -3052,9 +3442,6 @@ class HardwareAdaptiveConfig:
                 'checkpoint_segments': 1
             },
             'maximum': {  # A100×4+ 80GB, H100 cluster
-                'quantum_tensor_order': 10,
-                'bond_dim': 192,
-                'physical_dim': 96,
                 'max_layers': 8,
                 'max_heads': 24,
                 'max_lstm_layers': 4,
@@ -3066,11 +3453,7 @@ class HardwareAdaptiveConfig:
         
         return config_profiles[self.device_info['recommended_config']]
     
-    def get_quantum_tensor_shape(self):
-        """Get adaptive quantum tensor shape based on hardware."""
-        order = self.adaptive_config['quantum_tensor_order']
-        bond_dim = self.adaptive_config['bond_dim']
-        return tuple([bond_dim] * order)
+
     
     def get_gradient_config(self):
         """Get gradient configuration based on hardware."""
@@ -3080,30 +3463,138 @@ class HardwareAdaptiveConfig:
             'checkpoint_segments': self.adaptive_config['checkpoint_segments']
         }
     
+    def __del__(self):
+        """Cleanup memory manager on deletion."""
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.stop_monitoring()
+    
 class DynamicModalFusion(nn.Module):
     """
     Advanced Arctic Architecture Modal Fusion with hierarchical attention and adaptive weighting.
     Implements multi-level fusion with temporal consistency and cross-modal reinforcement.
     """
     def __init__(self, cfg):
+        """
+        Initialize the DynamicModalFusion module.
+
+        Args:
+            cfg: Configuration object containing parameters such as hidden size, number of heads, etc.
+        """
         super().__init__()
         self.cfg = cfg
-        self.num_modalities = 6  # text, image, audio, video, document, agent
+        # Number of modalities: text, image, audio, video, document, agent
+        self.num_modalities = 6
         self.hidden_size = cfg.hidden_size
         
+        # Weight cache for common modality combinations
+        self.weight_cache = {}
+        self.cache_size_limit = 1000  # Limit cache size to prevent memory overflow
+        self.cache_hit_threshold = 0.95  # Similarity threshold for cache hits
+        
+        # Initialize memory manager for dynamic memory optimization
+        # If an external cache manager is provided, disable background thread to avoid interference
+        self.cache_manager = cache_manager
+        self.memory_manager = MemoryManager(enable_background=(cache_manager is None))
+        self.memory_manager.start_monitoring()
+        DEBUG("DynamicModalFusion initialized with advanced memory management")
+
+        # Core module for native multimodal processing: Unified tokenization layer
+        self.unified_tokenizer = nn.ModuleDict({
+            # Text is already in token form, so use identity mapping
+            'text': nn.Identity(),
+            # Convert images into patches using 2D convolution
+            'image': nn.Conv2d(3, self.hidden_size, 16, 16),
+            # Convert audio into patches using 1D convolution
+            'audio': nn.Conv1d(1, self.hidden_size, 16, 16),
+            # Convert videos into 3D patches using 3D convolution
+            'video': nn.Conv3d(3, self.hidden_size, (2, 16, 16), (2, 16, 16)),
+            # Project document features to the hidden size
+            'document': nn.Linear(768, self.hidden_size),
+            # Convert handwritten data into patches using 2D convolution
+            'handwriting': nn.Conv2d(1, self.hidden_size, 16, 16)
+        })
+
+        # Unified positional encoding for all modalities
+        self.unified_pos_embed = nn.Parameter(torch.randn(1, 16384, self.hidden_size) * 0.02)
+
+        # Modality type embedding
+        self.modality_tokens = nn.Embedding(6, self.hidden_size)
+
+        # Native multimodal attention for cross-modal token-level fusion
+        self.native_attention = nn.ModuleDict({
+            'cross_modal': nn.MultiheadAttention(
+                embed_dim=self.hidden_size,
+                num_heads=cfg.n_head,
+                batch_first=True,
+                dropout=0.1
+            ),
+            'self_modal': nn.MultiheadAttention(
+                embed_dim=self.hidden_size,
+                num_heads=cfg.n_head // 2,
+                batch_first=True,
+                dropout=0.1
+            )
+        })
+
+        # Dual gating mechanism: Integration of understanding and generation
+        self.modality_gates = nn.ModuleDict({
+            # Unified understanding gate for cross-modal information fusion
+            'understanding': nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size * 2),
+                nn.SiLU(),
+                nn.Linear(self.hidden_size * 2, self.hidden_size),
+                nn.Sigmoid()
+            ),
+            # Generation gates for independent generation control of each modality
+            'gen_text': nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size // 2),
+                nn.SiLU(),
+                nn.Linear(self.hidden_size // 2, self.hidden_size),
+                nn.Sigmoid()
+            ),
+            'gen_image': nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size // 2),
+                nn.SiLU(),
+                nn.Linear(self.hidden_size // 2, self.hidden_size),
+                nn.Sigmoid()
+            ),
+            'gen_audio': nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size // 2),
+                nn.SiLU(),
+                nn.Linear(self.hidden_size // 2, self.hidden_size),
+                nn.Sigmoid()
+            ),
+            'gen_video': nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size // 2),
+                nn.SiLU(),
+                nn.Linear(self.hidden_size // 2, self.hidden_size),
+                nn.Sigmoid()
+            ),
+            'gen_document': nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size // 2),
+                nn.SiLU(),
+                nn.Linear(self.hidden_size // 2, self.hidden_size),
+                nn.Sigmoid()
+            ),
+            'gen_agent': nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size // 2),
+                nn.SiLU(),
+                nn.Linear(self.hidden_size // 2, self.hidden_size),
+                nn.Sigmoid()
+            )
+        })
+
         # Initialize hardware-adaptive configuration
         self.hw_config = HardwareAdaptiveConfig()
-        
-        # Adaptive dimensions based on hardware
-        self.bond_dim = self.hw_config.adaptive_config['bond_dim']
-        self.physical_dim = self.hw_config.adaptive_config['physical_dim']
+
+
         self.max_layers = self.hw_config.adaptive_config['max_layers']
         self.max_heads = min(self.hw_config.adaptive_config['max_heads'], cfg.n_head)
-        
+
         # Gradient configuration
         self.gradient_config = self.hw_config.get_gradient_config()
         self.max_grad_norm = self.gradient_config['max_grad_norm']
-        
+
         # === Enhanced Hierarchical Fusion Architecture ===
         # Multi-level weight prediction with attention redistribution
         self.primary_weight_predictor = nn.Sequential(
@@ -3119,15 +3610,17 @@ class DynamicModalFusion(nn.Module):
             nn.Linear(self.hidden_size, self.num_modalities),
             nn.Softmax(dim=-1)
         )
-        
+
         # Revolutionary Multi-Scale Weight Refinement Network
         self.multi_scale_weight_refiner = nn.ModuleDict({
+            # Local weight refinement
             'local_refiner': nn.Sequential(
                 nn.Linear(self.num_modalities * 2, self.hidden_size // 2),
                 nn.SiLU(),
                 nn.Linear(self.hidden_size // 2, self.num_modalities),
                 nn.Sigmoid()
             ),
+            # Global weight refinement
             'global_refiner': nn.Sequential(
                 nn.Linear(self.num_modalities * 3, self.hidden_size),
                 nn.SiLU(),
@@ -3138,6 +3631,7 @@ class DynamicModalFusion(nn.Module):
                 nn.Linear(self.hidden_size // 2, self.num_modalities),
                 nn.Sigmoid()
             ),
+            # Temporal weight refinement using LSTM
             'temporal_refiner': nn.LSTM(
                 input_size=self.num_modalities,
                 hidden_size=self.num_modalities * 2,
@@ -3147,12 +3641,14 @@ class DynamicModalFusion(nn.Module):
                 bidirectional=True
             )
         })
-        
+
         # Advanced Temporal Consistency Enforcer with Memory
         # Register memory_bank parameter separately
-        self.memory_bank = nn.Parameter(torch.randn(100, self.num_modalities))  # Temporal memory
-        
+        # Temporal memory for storing modality information
+        self.memory_bank = nn.Parameter(torch.randn(100, self.num_modalities))
+
         self.temporal_consistency = nn.ModuleDict({
+            # LSTM for maintaining temporal consistency
             'consistency_lstm': nn.LSTM(
                 input_size=self.num_modalities,
                 hidden_size=self.num_modalities * 2,
@@ -3161,12 +3657,14 @@ class DynamicModalFusion(nn.Module):
                 dropout=0.1,
                 bidirectional=True
             ),
+            # Attention mechanism for memory interaction
             'memory_attention': nn.MultiheadAttention(
                 embed_dim=self.num_modalities,
                 num_heads=min(self.num_modalities, 8),
                 batch_first=True,
                 dropout=0.1
             ),
+            # Score calculation for temporal consistency
             'consistency_scorer': nn.Sequential(
                 nn.Linear(self.num_modalities * 4, self.hidden_size),  # LSTM + Memory
                 nn.SiLU(),
@@ -3174,27 +3672,31 @@ class DynamicModalFusion(nn.Module):
                 nn.Sigmoid()
             )
         })
-        
+
         # Revolutionary Cross-modal Reinforcement Attention Network
         self.reinforcement_attention = nn.ModuleDict({
+            # Primary attention for cross-modal interaction
             'primary_attention': nn.MultiheadAttention(
                 embed_dim=self.hidden_size,
                 num_heads=cfg.n_head // 2,
                 batch_first=True,
                 dropout=0.1
             ),
+            # Secondary attention for further refinement
             'secondary_attention': nn.MultiheadAttention(
                 embed_dim=self.hidden_size,
                 num_heads=cfg.n_head // 4,
                 batch_first=True,
                 dropout=0.1
             ),
+            # Gate for reinforcement control
             'reinforcement_gate': nn.Sequential(
                 nn.Linear(self.hidden_size * 2, self.hidden_size),
                 nn.SiLU(),
                 nn.Linear(self.hidden_size, self.hidden_size),
                 nn.Sigmoid()
             ),
+            # Module for fusing primary and secondary attention
             'attention_fusion': nn.Sequential(
                 nn.Linear(self.hidden_size * 2, self.hidden_size * 2),
                 nn.SiLU(),
@@ -3202,19 +3704,22 @@ class DynamicModalFusion(nn.Module):
                 nn.LayerNorm(self.hidden_size)
             )
         })
-        
+
         # Super-Enhanced Context Encoder with Hierarchical Processing
         self.context_encoder = nn.ModuleDict({
+            # Micro-context encoding
             'micro_context': nn.Sequential(
                 nn.Linear(self.hidden_size, self.hidden_size // 2),
                 nn.SiLU(),
                 nn.Linear(self.hidden_size // 2, self.num_modalities)
             ),
+            # Local context encoding
             'local_context': nn.Sequential(
                 nn.Linear(self.hidden_size, self.hidden_size // 2),
                 nn.SiLU(),
                 nn.Linear(self.hidden_size // 2, self.num_modalities)
             ),
+            # Global context encoding
             'global_context': nn.Sequential(
                 nn.Linear(self.hidden_size * self.num_modalities, self.hidden_size * 2),
                 nn.LayerNorm(self.hidden_size * 2),
@@ -3225,6 +3730,7 @@ class DynamicModalFusion(nn.Module):
                 nn.SiLU(),
                 nn.Linear(self.hidden_size, self.num_modalities)
             ),
+            # Cross-modal context encoding
             'cross_modal_context': nn.Sequential(
                 nn.Linear(self.hidden_size * 15, self.hidden_size * 4),  # 15 cross-modal pairs
                 nn.SiLU(),
@@ -3234,6 +3740,7 @@ class DynamicModalFusion(nn.Module):
                 nn.SiLU(),
                 nn.Linear(self.hidden_size * 2, self.num_modalities)
             ),
+            # Semantic context encoding using Transformer
             'semantic_context': nn.TransformerEncoderLayer(
                 d_model=self.hidden_size,
                 nhead=cfg.n_head // 4,
@@ -3242,7 +3749,7 @@ class DynamicModalFusion(nn.Module):
                 batch_first=True
             )
         })
-        
+
         # Hardware-Adaptive Cross-modal Attention Layers
         # Adjust number of cross-modal pairs based on hardware capacity
         if self.hw_config.device_info['recommended_config'] in ['maximum', 'high']:
@@ -3266,11 +3773,11 @@ class DynamicModalFusion(nn.Module):
                 'text_image', 'text_audio', 'text_agent',
                 'image_audio', 'image_agent', 'audio_agent'
             ]
-        
-        self.cross_modal_layers = nn.ModuleDict({
-            pair: CrossModalAttention(cfg) for pair in cross_modal_pairs
-        })
-        
+
+        # Store the pair configuration and use a single shared attention to reduce redundancy
+        self.cross_modal_pairs = cross_modal_pairs
+        self.shared_cross_modal_attn = CrossModalAttention(cfg)
+
         # Modality-specific enhancement networks
         self.modality_enhancers = nn.ModuleDict({
             modal: nn.Sequential(
@@ -3280,10 +3787,10 @@ class DynamicModalFusion(nn.Module):
                 nn.Linear(self.hidden_size, self.hidden_size)
             ) for modal in ['text', 'image', 'audio', 'video', 'document', 'agent']
         })
-        
+
         # Hardware-Adaptive Fusion Gate System
-        num_cross_modal_pairs = len(cross_modal_pairs)
-        
+        num_cross_modal_pairs = len(self.cross_modal_pairs)
+
         # Adjust gate complexity based on hardware
         if self.hw_config.device_info['recommended_config'] in ['maximum', 'high']:
             # Complex multi-level gating for high-end hardware
@@ -3328,233 +3835,226 @@ class DynamicModalFusion(nn.Module):
                     nn.Sigmoid()
                 )
             })
+        # Unified tokenization configuration
+        self.token_config = {
+            'image_patch_size': 16,
+            'audio_patch_size': 16,
+            'video_patch_size': 16,
+            'max_patches_per_modality': 256
+        }
+
+        # Native multimodal attention configuration
+        self.cross_modal_attention = nn.ModuleDict({
+            # Unified query/key/value projection
+            'q_proj': nn.Linear(self.hidden_size, self.hidden_size),
+            'k_proj': nn.Linear(self.hidden_size, self.hidden_size),
+            'v_proj': nn.Linear(self.hidden_size, self.hidden_size),
+            'output_proj': nn.Linear(self.hidden_size, self.hidden_size),
+            'layer_norm': nn.LayerNorm(self.hidden_size),
+            'attention_dropout': nn.Dropout(0.1)
+        })
+
+        # Modality type embedding
+        self.modal_type_embedding = nn.Embedding(self.num_modalities, self.hidden_size)
         
-        # Hardware-Adaptive Quantum Entanglement Components
-        # Dynamic core tensor based on hardware capabilities
-        tensor_shape = self.hw_config.get_quantum_tensor_shape()
-        self.core_tensor = nn.Parameter(
-            torch.randn(*tensor_shape) * 0.01
+        # Unified positional encoding
+        self.positional_encoding = nn.Parameter(
+            torch.randn(1, self.token_config['max_patches_per_modality'] * self.num_modalities, self.hidden_size) * 0.02
         )
-        
-        # Gradient Safety and Monitoring
-        # Register parameters separately (cannot be in ModuleDict)
-        self.gradient_monitor = nn.Parameter(torch.tensor(0.0))
-        self.scale_factor = nn.Parameter(torch.tensor(1.0))
-        self.hardware_scale = nn.Parameter(torch.tensor(self.hw_config.adaptive_config['bond_dim'] / 64.0))  # Adaptive scaling
-        
-        # Simplified projection matrices with gradient stability
-        self.modal_projections = nn.ModuleDict({
-            'text': nn.Sequential(
-                nn.Linear(self.hidden_size, self.physical_dim),
-                nn.LayerNorm(self.physical_dim),  # Added LayerNorm for gradient stability
-                nn.Dropout(0.1)  # Added dropout to prevent overfitting
-            ),
-            'image': nn.Sequential(
-                nn.Linear(self.hidden_size, self.physical_dim),
-                nn.LayerNorm(self.physical_dim),
-                nn.Dropout(0.1)
-            ),
-            'audio': nn.Sequential(
-                nn.Linear(self.hidden_size, self.physical_dim),
-                nn.LayerNorm(self.physical_dim),
-                nn.Dropout(0.1)
-            ),
-            'video': nn.Sequential(
-                nn.Linear(self.hidden_size, self.physical_dim),
-                nn.LayerNorm(self.physical_dim),
-                nn.Dropout(0.1)
-            ),
-            'document': nn.Sequential(
-                nn.Linear(self.hidden_size, self.physical_dim),
-                nn.LayerNorm(self.physical_dim),
-                nn.Dropout(0.1)
-            ),
-            'agent': nn.Sequential(
-                nn.Linear(self.hidden_size, self.physical_dim),
-                nn.LayerNorm(self.physical_dim),
-                nn.Dropout(0.1)
-            )
-        })
-        
-        # Simplified Quantum Gate Operations with Gradient Stability
-        self.quantum_gates = nn.ModuleDict({
-            # Primary entanglement gates with residual connections
-            'entangle_primary': nn.ModuleList([
-                nn.Sequential(
-                    nn.Linear(self.physical_dim * 2, self.bond_dim),
-                    nn.LayerNorm(self.bond_dim),  # LayerNorm for gradient stability
-                    nn.Tanh()  # Bounded activation to prevent gradient explosion
-                ) for _ in range(3)  # Reduced from 6 to 3 for stability
-            ]),
-            
-            # Simplified decoherence control
-            'decoherence_control': nn.Sequential(
-                nn.Linear(self.physical_dim * self.num_modalities, self.bond_dim),
-                nn.LayerNorm(self.bond_dim),
-                nn.Tanh(),  # Changed from SiLU to Tanh for bounded gradients
-                nn.Linear(self.bond_dim, 1),
-                nn.Sigmoid()  # Bounded output [0, 1]
-            )
-        })
-        
-        # Super-Enhanced Dynamic Entanglement Strength
-        self.entanglement_strength = nn.ModuleDict({
-            'strength_predictor': nn.Sequential(
-                nn.Linear(self.physical_dim * self.num_modalities, self.bond_dim * 2),
+
+        # Dual gating mechanism
+        self.dual_gating = nn.ModuleDict({
+            'understanding_gate': nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size // 2),
                 nn.SiLU(),
-                nn.Dropout(0.1),
-                nn.Linear(self.bond_dim * 2, self.bond_dim),
-                nn.LayerNorm(self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, 1),
+                nn.Linear(self.hidden_size // 2, self.hidden_size),
                 nn.Sigmoid()
             ),
-            'modality_weights': nn.Sequential(
-                nn.Linear(self.physical_dim * self.num_modalities, self.hidden_size),
+            'generation_gate': nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size // 2),
                 nn.SiLU(),
-                nn.Linear(self.hidden_size, self.num_modalities),
-                nn.Softmax(dim=-1)
-            ),
-            'entanglement_amplifier': nn.Sequential(
-                nn.Linear(1 + self.num_modalities, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, 1),
+                nn.Linear(self.hidden_size // 2, self.hidden_size),
                 nn.Sigmoid()
             )
         })
-        
-        # Advanced Quantum Decoder with Multi-Path Reconstruction
-        self.quantum_decoder = nn.ModuleDict({
-            'primary_decoder': nn.Sequential(
-                nn.Linear(self.bond_dim * self.num_modalities, self.hidden_size * 2),
-                nn.LayerNorm(self.hidden_size * 2),
-                nn.SiLU(),
-                nn.Dropout(0.1),
-                nn.Linear(self.hidden_size * 2, self.hidden_size),
-                nn.LayerNorm(self.hidden_size)
-            ),
-            'secondary_decoder': nn.Sequential(
-                nn.Linear(self.bond_dim * self.num_modalities // 2, self.hidden_size),
-                nn.LayerNorm(self.hidden_size),
-                nn.SiLU(),
-                nn.Linear(self.hidden_size, self.hidden_size)
-            ),
-            'fusion_decoder': nn.Sequential(
-                nn.Linear(self.hidden_size * 2, self.hidden_size * 2),
-                nn.SiLU(),
-                nn.Linear(self.hidden_size * 2, self.hidden_size),
-                nn.LayerNorm(self.hidden_size)
-            )
-        })
-        
-        # Revolutionary Cross-Modal Quantum Correlations Network
-        self.correlation_network = nn.ModuleDict({
-            # Enhanced pairwise correlations
-            'text_image': nn.Sequential(
-                nn.Linear(self.physical_dim * 2, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, self.bond_dim)
-            ),
-            'text_audio': nn.Sequential(
-                nn.Linear(self.physical_dim * 2, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, self.bond_dim)
-            ),
-            'text_video': nn.Sequential(
-                nn.Linear(self.physical_dim * 2, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, self.bond_dim)
-            ),
-            'image_audio': nn.Sequential(
-                nn.Linear(self.physical_dim * 2, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, self.bond_dim)
-            ),
-            'image_video': nn.Sequential(
-                nn.Linear(self.physical_dim * 2, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, self.bond_dim)
-            ),
-            'audio_video': nn.Sequential(
-                nn.Linear(self.physical_dim * 2, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, self.bond_dim)
-            ),
-            'text_agent': nn.Sequential(
-                nn.Linear(self.physical_dim * 2, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, self.bond_dim)
-            ),
-            'image_agent': nn.Sequential(
-                nn.Linear(self.physical_dim * 2, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, self.bond_dim)
-            ),
-            'audio_agent': nn.Sequential(
-                nn.Linear(self.physical_dim * 2, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, self.bond_dim)
-            ),
-            
-            # Higher-order correlations (triplets)
-            'text_image_audio': nn.Sequential(
-                nn.Linear(self.physical_dim * 3, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, self.bond_dim)
-            ),
-            'text_image_video': nn.Sequential(
-                nn.Linear(self.physical_dim * 3, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, self.bond_dim)
-            ),
-            'audio_video_agent': nn.Sequential(
-                nn.Linear(self.physical_dim * 3, self.bond_dim),
-                nn.SiLU(),
-                nn.Linear(self.bond_dim, self.bond_dim)
-            )
-        })
-        
-        # Fusion mode selection
-        self.fusion_mode = getattr(cfg, 'fusion_mode', 'quantum')  # 'quantum' or 'traditional'
-        
+
         self.norm = nn.LayerNorm(self.hidden_size)
         self.dropout = nn.Dropout(0.1)
-    
+
     def _get_modality_quality_scores(self, features):
-        """Calculate quality scores for each modality based on content."""
+        """
+        Calculate quality scores for each modality based on content.
+
+        Args:
+            features (dict): Dictionary containing features from different modalities.
+
+        Returns:
+            dict: Quality scores for each modality.
+        """
         quality_scores = {}
         device = next(iter(features.values())).device if features else torch.device('cpu')
         
         for modality, feat in features.items():
             if feat is not None and feat.numel() > 0:
-                # Calculate variance-based quality score (more stable)
-                feat_mean = feat.mean(dim=1)  # [batch, hidden]
-                feat_var = torch.var(feat_mean, dim=-1)  # Variance across features
-                quality = torch.sigmoid(feat_var).mean()  # Normalize to [0,1]
+                # Calculate the mean of features along the sequence dimension
+                feat_mean = feat.mean(dim=1)  # Shape: [batch, hidden]
+                # Calculate the variance of the mean features across the feature dimension
+                feat_var = torch.var(feat_mean, dim=-1)
+                # Normalize the variance to [0, 1] using sigmoid function
+                quality = torch.sigmoid(feat_var).mean()
                 quality_scores[modality] = quality
             else:
-                quality_scores[modality] = torch.tensor(0.1, device=device)  # Low quality for missing modalities
+                # Assign a low quality score for missing modalities
+                quality_scores[modality] = torch.tensor(0.1, device=device)
         
         return quality_scores
     
+    def _get_cached_weights(self, modal_features, quality_scores):
+        """
+        Get cached weights for common modality combinations.
+        
+        Args:
+            modal_features (dict): Dictionary of modal features.
+            quality_scores (dict): Quality scores for each modality.
+            
+        Returns:
+            torch.Tensor or None: Cached weights if found, None otherwise.
+        """
+        if not self.weight_cache:
+            return None
+            
+        # Create a signature for the current modality combination
+        modal_signature = []
+        for modal in ['text', 'image', 'audio', 'video', 'document', 'agent']:
+            if modal in modal_features and modal_features[modal] is not None:
+                modal_signature.append(f"{modal}:1")
+            else:
+                modal_signature.append(f"{modal}:0")
+        
+        # Add quality score information
+        quality_signature = []
+        for modal in ['text', 'image', 'audio', 'video', 'document', 'agent']:
+            if modal in quality_scores:
+                quality_val = quality_scores[modal].item() if torch.is_tensor(quality_scores[modal]) else float(quality_scores[modal])
+                quality_signature.append(f"{modal}:{quality_val:.2f}")
+            else:
+                quality_signature.append(f"{modal}:0.00")
+        
+        full_signature = "_".join(modal_signature + quality_signature)
+        
+        # Check for similar combinations in cache
+        if full_signature in self.weight_cache:
+            return self.weight_cache[full_signature]
+            
+        # Check for similar patterns with relaxed matching
+        for cached_sig, cached_weights in self.weight_cache.items():
+            if self._is_similar_signature(full_signature, cached_sig):
+                return cached_weights
+                
+        return None
+    
+    def _cache_weights(self, modal_features, quality_scores, weights):
+        """
+        Cache weights for common modality combinations.
+        
+        Args:
+            modal_features (dict): Dictionary of modal features.
+            quality_scores (dict): Quality scores for each modality.
+            weights (torch.Tensor): Weights to cache.
+        """
+        # Create a signature for the current modality combination
+        modal_signature = []
+        for modal in ['text', 'image', 'audio', 'video', 'document', 'agent']:
+            if modal in modal_features and modal_features[modal] is not None:
+                modal_signature.append(f"{modal}:1")
+            else:
+                modal_signature.append(f"{modal}:0")
+        
+        # Add quality score information
+        quality_signature = []
+        for modal in ['text', 'image', 'audio', 'video', 'document', 'agent']:
+            if modal in quality_scores:
+                quality_val = quality_scores[modal].item() if torch.is_tensor(quality_scores[modal]) else float(quality_scores[modal])
+                quality_signature.append(f"{modal}:{quality_val:.2f}")
+            else:
+                quality_signature.append(f"{modal}:0.00")
+        
+        full_signature = "_".join(modal_signature + quality_signature)
+        
+        # Cache the weights
+        self.weight_cache[full_signature] = weights.detach().clone()
+        
+        # Limit cache size to prevent memory overflow
+        if len(self.weight_cache) > self.cache_size_limit:
+            # Remove oldest entries
+            oldest_keys = list(self.weight_cache.keys())[:len(self.weight_cache) - self.cache_size_limit + 100]
+            for key in oldest_keys:
+                del self.weight_cache[key]
+    
+    def _is_similar_signature(self, sig1, sig2):
+        """
+        Check if two signatures are similar enough for cache matching.
+        
+        Args:
+            sig1 (str): First signature.
+            sig2 (str): Second signature.
+            
+        Returns:
+            bool: True if signatures are similar, False otherwise.
+        """
+        # Split signatures into modal and quality parts
+        parts1 = sig1.split('_')
+        parts2 = sig2.split('_')
+        
+        if len(parts1) != len(parts2):
+            return False
+            
+        # Check modal parts (exact match)
+        modal_parts1 = parts1[:6]
+        modal_parts2 = parts2[:6]
+        if modal_parts1 != modal_parts2:
+            return False
+            
+        # Check quality parts (relaxed matching)
+        quality_parts1 = parts1[6:]
+        quality_parts2 = parts2[6:]
+        
+        similar_count = 0
+        for q1, q2 in zip(quality_parts1, quality_parts2):
+            # Extract quality values
+            val1 = float(q1.split(':')[1])
+            val2 = float(q2.split(':')[1])
+            
+            # Check if quality values are similar
+            if abs(val1 - val2) < 0.1:
+                similar_count += 1
+        
+        return similar_count >= 5  # At least 5 out of 6 quality scores should be similar
+
     def _predict_enhanced_weights(self, modal_features, quality_scores, temporal_context=None):
         """
         Enhanced weight prediction with multi-level context and temporal consistency.
-        
+
         Args:
-            modal_features: Dict of modal features
-            quality_scores: Quality scores for each modality
-            temporal_context: Optional temporal context for consistency
-            
+            modal_features (dict): Dictionary of modal features.
+            quality_scores (dict): Quality scores for each modality.
+            temporal_context (torch.Tensor, optional): Optional temporal context for consistency.
+
         Returns:
-            Enhanced dynamic weights with temporal consistency
+            tuple: Enhanced dynamic weights with temporal consistency and a dictionary of intermediate results.
         """
+        # Register input tensors for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            for modal_name, feat in modal_features.items():
+                if feat is not None:
+                    self.memory_manager.register_tensor(feat, f"modal_feature_{modal_name}")
+        
         # Extract and normalize features
         feature_list = []
         modal_names = ['text', 'image', 'audio', 'video', 'document', 'agent']
         batch_size = 1
         
-        # Determine batch size from first valid feature
+        # Determine the batch size from the first valid feature
         for modal in modal_names:
             feat = modal_features.get(modal)
             if feat is not None and feat.numel() > 0:
@@ -3564,26 +4064,39 @@ class DynamicModalFusion(nn.Module):
         for modal in modal_names:
             feat = modal_features.get(modal, torch.zeros(batch_size, 1, self.hidden_size, device=next(self.parameters()).device))
             if feat.dim() == 3:
-                feat = feat.mean(dim=1)  # Pool sequence dimension
+                # Pool the sequence dimension by taking the mean
+                feat = feat.mean(dim=1)
             elif feat.dim() == 2:
                 feat = feat
             else:
+                # Flatten the feature tensor starting from the second dimension
                 feat = feat.flatten(start_dim=1)
             feature_list.append(feat)
         
-        # Concatenate all features
+        # Concatenate all features along the last dimension
         all_features = torch.cat(feature_list, dim=-1)
         
-        # Primary weight prediction
-        primary_weights = self.primary_weight_predictor(all_features)
+        # Register concatenated features for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(all_features, "concatenated_features")
         
-        # Local context encoding for each modality
+        # Check cache for existing weights
+        cached_weights = self._get_cached_weights(modal_features, quality_scores)
+        if cached_weights is not None:
+            # Use cached weights for efficiency
+            final_weights = cached_weights
+            primary_weights = cached_weights  # For return compatibility
+        else:
+            # Predict primary weights using the primary weight predictor
+            primary_weights = self.primary_weight_predictor(all_features)
+        
+        # Encode local context for each modality
         local_contexts = []
         for i, feat in enumerate(feature_list):
             local_ctx = self.context_encoder['local'](feat)
             local_contexts.append(local_ctx)
         
-        # Global context from all modalities
+        # Encode global context from all modalities
         global_context = self.context_encoder['global'](all_features)
         
         # Combine primary weights with quality scores
@@ -3596,24 +4109,36 @@ class DynamicModalFusion(nn.Module):
                 else:
                     quality_tensor[:, i] = float(quality_val)
             else:
-                quality_tensor[:, i] = 0.5  # Default quality
+                # Set default quality score if not available
+                quality_tensor[:, i] = 0.5
         
-        # Quality-aware refinement
+        # Perform quality-aware refinement
         weight_quality_combined = torch.cat([primary_weights, quality_tensor], dim=-1)
         refinement_multipliers = self.weight_refiner(weight_quality_combined)
         
-        # Apply refinement
+        # Apply refinement to primary weights
         refined_weights = primary_weights * refinement_multipliers
         
-        # Temporal consistency if available
+        # Ensure temporal consistency if temporal context is available
         if temporal_context is not None:
-            # Add temporal dimension and apply LSTM
-            temporal_input = refined_weights.unsqueeze(1)  # Add sequence dimension
+            # Add a temporal dimension to the refined weights
+            temporal_input = refined_weights.unsqueeze(1)
+            # Apply LSTM to maintain temporal consistency
             consistent_weights, _ = self.temporal_consistency['consistency_lstm'](temporal_input)
             refined_weights = consistent_weights.squeeze(1)
         
-        # Final normalization
+        # Normalize the refined weights using softmax
         final_weights = F.softmax(refined_weights, dim=-1)
+        
+        # Cache the computed weights for future use
+        if cached_weights is None:
+            self._cache_weights(modal_features, quality_scores, final_weights)
+        
+        # Register output tensors for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(final_weights, "final_weights")
+            self.memory_manager.register_tensor(primary_weights, "primary_weights")
+            self.memory_manager.register_tensor(refined_weights, "refined_weights")
         
         return final_weights, {
             'primary': primary_weights,
@@ -3626,13 +4151,19 @@ class DynamicModalFusion(nn.Module):
     def _hierarchical_cross_modal_attention(self, modal_features):
         """
         Apply hierarchical cross-modal attention with all modality pairs.
-        
+
         Args:
-            modal_features: Dict of modal features
-            
+            modal_features (dict): Dictionary of modal features.
+
         Returns:
-            Enhanced cross-modal features
+            tuple: Enhanced cross-modal features and cross-attention results.
         """
+        # Register input tensors for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            for modal_name, feat in modal_features.items():
+                if feat is not None:
+                    self.memory_manager.register_tensor(feat, f"cross_modal_input_{modal_name}")
+        
         modal_names = ['text', 'image', 'audio', 'video', 'document', 'agent']
         enhanced_features = {}
         cross_attentions = {}
@@ -3641,9 +4172,16 @@ class DynamicModalFusion(nn.Module):
         for modal in modal_names:
             feat = modal_features.get(modal)
             if feat is not None and feat.numel() > 0:
+                # Enhance the modality features by taking the mean and passing through the modality enhancer
                 enhanced_features[modal] = self.modality_enhancers[modal](feat.mean(dim=1))
             else:
+                # Initialize zero tensor for missing modalities
                 enhanced_features[modal] = torch.zeros(1, self.hidden_size, device=next(self.parameters()).device)
+        
+        # Register enhanced features for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            for modal_name, enhanced_feat in enhanced_features.items():
+                self.memory_manager.register_tensor(enhanced_feat, f"enhanced_feature_{modal_name}")
         
         # Compute all cross-modal attention pairs
         modality_pairs = [
@@ -3656,916 +4194,305 @@ class DynamicModalFusion(nn.Module):
         
         for mod1, mod2 in modality_pairs:
             key = f'{mod1}_{mod2}'
-            if key in self.cross_modal_layers:
-                # Prepare features for cross-attention
+            if key in getattr(self, 'cross_modal_pairs', []):
+                # Prepare features for cross-attention by adding a sequence dimension
                 feat1 = enhanced_features[mod1].unsqueeze(1)
                 feat2 = enhanced_features[mod2].unsqueeze(1)
-                
-                # Apply cross-modal attention
-                cross_att = self.cross_modal_layers[key](feat1, feat2, feat2)
+
+                # Apply cross-modal attention via the shared attention module
+                cross_att = self.shared_cross_modal_attn(feat1, feat2, feat2)
                 cross_attentions[key] = cross_att
+
+                # Register cross-attention output for memory monitoring
+                if hasattr(self, 'memory_manager'):
+                    self.memory_manager.register_tensor(cross_att, f"cross_attention_{key}")
         
         return enhanced_features, cross_attentions
 
-    def _tensor_contract(self, tensors, core_tensor):
-        """
-        Perform tensor network contraction for quantum entanglement.
-        
-        Args:
-            tensors: List of modality tensors [batch, physical_dim]
-            core_tensor: 6th-order core tensor
-            
-        Returns:
-            Contracted quantum state [batch, bond_dim * num_modalities]
-        """
-        batch_size = tensors[0].shape[0]
-        
-        # Initialize quantum state
-        quantum_state = torch.ones(batch_size, self.bond_dim, device=tensors[0].device)
-        
-        # Contract each modality tensor with core tensor
-        for i, tensor in enumerate(tensors):
-            # Project modality to bond dimension
-            projected = torch.einsum('bp,bd->bpd', tensor, 
-                                   torch.randn(self.physical_dim, self.bond_dim, 
-                                             device=tensor.device))
-            
-            # Contract with core tensor slice
-            if i < 6:
-                core_slice = core_tensor.select(i, 0)  # Get slice for this modality
-                quantum_state = torch.einsum('bk,kj->bj', quantum_state, core_slice)
-                quantum_state = torch.einsum('bpd,bd->bd', projected, quantum_state)
-        
-        return quantum_state
-
-    def _quantum_entanglement(self, modalities):
-        """
-        Create quantum entanglement between modalities using tensor networks.
-        
-        Args:
-            modalities: Dict of modality features
-            
-        Returns:
-            Entangled quantum state
-        """
-        # Project modalities to physical dimensions
-        projected_modalities = []
-        modality_names = ['text', 'image', 'audio', 'video', 'document', 'agent']
-        
-        for name in modality_names:
-            feat = modalities.get(name, torch.zeros(1, 1, self.hidden_size))
-            if feat is not None and feat.numel() > 0:
-                # Mean pooling and projection
-                pooled = feat.mean(dim=1)  # [batch, hidden]
-                projected = self.modal_projections[name](pooled)  # [batch, physical_dim]
-                projected_modalities.append(projected)
-            else:
-                projected_modalities.append(
-                    torch.zeros(feat.shape[0] if feat is not None else 1, 
-                              self.physical_dim, device=feat.device if feat is not None else torch.device('cpu'))
-                )
-        
-        # Create entanglement through tensor contraction
-        quantum_state = self._tensor_contract(projected_modalities, self.core_tensor)
-        
-        # Apply quantum gates for enhanced entanglement
-        entangled_states = []
-        for i in range(0, len(projected_modalities), 2):
-            if i + 1 < len(projected_modalities):
-                combined = torch.cat([projected_modalities[i], projected_modalities[i+1]], dim=-1)
-                gate_output = self.quantum_gates[f'entangle_{i//2 + 1}'](combined)
-                entangled_states.append(gate_output)
-        
-        # Combine all entangled states
-        if entangled_states:
-            entangled = torch.cat(entangled_states + [quantum_state], dim=-1)
-        else:
-            entangled = quantum_state
-        
-        return entangled
-
-    def _cross_modal_correlations(self, modalities):
-        """
-        Compute cross-modal quantum correlations.
-        
-        Args:
-            modalities: Dict of modality features
-            
-        Returns:
-            Correlation features
-        """
-        correlation_features = []
-        modality_names = ['text', 'image', 'audio', 'video', 'document', 'agent']
-        
-        # Extract projected features
-        projected = {}
-        for name in modality_names:
-            feat = modalities.get(name, torch.zeros(1, 1, self.hidden_size))
-            if feat is not None and feat.numel() > 0:
-                pooled = feat.mean(dim=1)
-                projected[name] = self.modal_projections[name](pooled)
-            else:
-                projected[name] = torch.zeros(feat.shape[0] if feat is not None else 1, 
-                                            self.physical_dim, device=feat.device if feat is not None else torch.device('cpu'))
-        
-        # Compute pairwise correlations
-        pairs = [
-            ('text', 'image'), ('text', 'audio'), ('image', 'audio'),
-            ('text', 'agent'), ('image', 'agent'), ('audio', 'agent')
-        ]
-        
-        for mod1, mod2 in pairs:
-            combined = torch.cat([projected[mod1], projected[mod2]], dim=-1)
-            correlation = self.correlation_network[f'{mod1}_{mod2}'](combined)
-            correlation_features.append(correlation)
-        
-        return torch.cat(correlation_features, dim=-1) if correlation_features else torch.zeros(1, self.bond_dim * 6)
-
-    def _quantum_fusion(self, modal_features):
-        """
-        Quantum entangled fusion using tensor network compression.
-        
-        Args:
-            modal_features: Dict containing features from different modalities
-            
-        Returns:
-            Fused multimodal representation with quantum entanglement
-        """
-        # Extract features for quantum processing
-        modalities = {
-            'text': modal_features.get('text', torch.zeros(1, 1, self.hidden_size)),
-            'image': modal_features.get('image', torch.zeros(1, 1, self.hidden_size)),
-            'audio': modal_features.get('audio', torch.zeros(1, 1, self.hidden_size)),
-            'video': modal_features.get('video', torch.zeros(1, 1, self.hidden_size)),
-            'document': modal_features.get('document', torch.zeros(1, 1, self.hidden_size)),
-            'agent': modal_features.get('agent', torch.zeros(1, 1, self.hidden_size))
-        }
-        
-        # Create quantum entanglement using tensor networks
-        quantum_state = self._quantum_entanglement(modalities)
-        
-        # Compute cross-modal correlations
-        correlation_features = self._cross_modal_correlations(modalities)
-        
-        # Calculate entanglement strength based on content quality
-        modality_features = []
-        for name in ['text', 'image', 'audio', 'video', 'document', 'agent']:
-            feat = modalities[name]
-            if feat is not None and feat.numel() > 0:
-                modality_features.append(feat.mean(dim=1))
-            else:
-                modality_features.append(torch.zeros(feat.shape[0] if feat is not None else 1, 
-                                                   self.physical_dim, device=feat.device if feat is not None else torch.device('cpu')))
-        
-        combined_features = torch.cat(modality_features, dim=-1)
-        entanglement_strength = self.entanglement_strength(combined_features)
-        
-        # Combine quantum state and correlation features
-        combined_quantum = torch.cat([quantum_state, correlation_features], dim=-1)
-        
-        # Decode quantum state to final representation
-        fused_output = self.quantum_decoder(combined_quantum)
-        
-        # Apply entanglement strength scaling
-        output = self.norm(fused_output) * entanglement_strength
-        
-        return output.unsqueeze(1)
-    
     def forward(self, modal_features):
         """
-        Hardware-Adaptive Arctic Architecture forward pass with intelligent gradient management.
-        
+        Native multimodal fusion forward pass.
+
+        Implement true token-level native multimodal fusion. All modalities are unified into tokens and cross-modal fusion is performed at the token level.
+
         Args:
-            modal_features: Dict containing features from different modalities
-            
+            modal_features (dict): Dictionary containing features from 6 modalities:
+                'text': Text tokens [batch, seq_len, hidden]
+                'image': Image features [batch, channels, height, width]
+                'audio': Audio features [batch, channels, time, freq]
+                'video': Video features [batch, channels, frames, height, width]
+                'document': Document features [batch, seq_len, hidden]
+                'agent': Agent features [batch, seq_len, hidden]
+
         Returns:
-            Fused multimodal representation optimized for current hardware
+            torch.Tensor: Fused multimodal representation with native multimodal fusion [batch, 1, hidden]
         """
+        # Register input tensors for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            for modal_name, modal_tensor in modal_features.items():
+                if modal_tensor is not None:
+                    self.memory_manager.register_tensor(modal_tensor, f"forward_input_{modal_name}")
+        
         # Hardware-adaptive gradient safety pre-check
         if self.training:
-            # Apply hardware-specific gradient monitoring
+            # Clear the gradient of the gradient monitor
             self.gradient_monitor.grad = None
             
-            # Adaptive mixed precision based on hardware
+            # Apply adaptive mixed precision based on hardware configuration
             if self.gradient_config['use_mixed_precision']:
                 with torch.cuda.amp.autocast():
-                    return self._forward_impl(modal_features)
+                    result = self._forward_impl(modal_features)
             else:
-                return self._forward_impl(modal_features)
+                result = self._forward_impl(modal_features)
         else:
-            return self._forward_impl(modal_features)
+            result = self._forward_impl(modal_features)
+        
+        # Register output tensor for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(result, "forward_output")
+        
+        return result
     
     def _forward_impl(self, modal_features):
-        """Internal forward implementation with hardware adaptations."""
-        # Extract features with hardware-adaptive normalization
+        """
+        Native multimodal Early Fusion implementation.
+
+        Args:
+            modal_features (dict): Dictionary containing features from different modalities.
+
+        Returns:
+            torch.Tensor: Global multimodal representation after fusion.
+        """
+        # Native Early Fusion: Unify all modalities into tokens
+        unified_tokens = []
+        token_type_ids = []  # Modality type identifiers
+        
         modal_names = ['text', 'image', 'audio', 'video', 'document', 'agent']
-        batch_size = 1
+        
+        # Unified patch encoding
+        for idx, modal in enumerate(modal_names):
+            feat = modal_features.get(modal)
+            if feat is not None and feat.numel() > 0:
+                # Native multimodal encoder (similar to MetaCLIP)
+                if modal == 'text':
+                    # Pass text tokens directly
+                    tokens = feat
+                elif modal == 'image':
+                    # Patchify images into 16x16 patches
+                    patches = self.unified_tokenizer['image'](feat)  # Shape: [B, C, H, W] -> [B, hidden, H/16, W/16]
+                    tokens = patches.flatten(2).transpose(1, 2)  # Shape: [B, num_patches, hidden]
+                elif modal == 'audio':
+                    # Patchify audio spectrograms
+                    spec = self.unified_tokenizer['audio'](feat)  # Shape: [B, 1, T] -> [B, hidden, T']
+                    tokens = spec.transpose(1, 2)  # Shape: [B, T', hidden]
+                elif modal == 'video':
+                    # 3D patchify videos into spatio-temporal patches
+                    batch_size, channels, frames, height, width = feat.shape
+                    feat = feat.permute(0, 2, 1, 3, 4).reshape(-1, channels, height, width)
+                    patches = self.unified_tokenizer['video'](feat)
+                    tokens = patches.flatten(2).transpose(1, 2)
+                    tokens = tokens.reshape(batch_size, frames * tokens.shape[1], self.hidden_size)
+                elif modal == 'document':
+                    # Layout-aware encoding for documents
+                    tokens = self.unified_tokenizer['document'](feat)
+                elif modal == 'agent':
+                    # State encoding for agents
+                    tokens = self.unified_tokenizer['agent'](feat)
+                
+                # Unified positional encoding (absolute + relative)
+                seq_len = tokens.shape[1]
+                pos_embed = self.unified_pos_embed[:, :seq_len, :]
+                tokens = tokens + pos_embed
+                
+                # Modality type embedding (similar to segment embedding)
+                modal_embed = self.modality_tokens(torch.tensor(idx, device=tokens.device))
+                tokens = tokens + modal_embed.unsqueeze(0).unsqueeze(0)
+                
+                unified_tokens.append(tokens)
+                token_type_ids.extend([idx] * seq_len)
+        
+        if not unified_tokens:
+            return torch.zeros(1, 1, self.hidden_size, device=next(self.parameters()).device)
+        
+        # Native multimodal sequence: Concatenate all tokens
+        multimodal_sequence = torch.cat(unified_tokens, dim=1)
+        token_type_tensor = torch.tensor(token_type_ids, device=multimodal_sequence.device)
+        
+        # Register tensors for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(multimodal_sequence, "multimodal_sequence")
+            self.memory_manager.register_tensor(token_type_tensor, "token_type_tensor")
+        
+        # Unified attention mechanism
+        # Native cross-modal attention: All tokens attend to each other
+        attended_sequence, _ = self.native_attention['cross_modal'](
+            multimodal_sequence, multimodal_sequence, multimodal_sequence
+        )
+        
+        # Register attention output for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(attended_sequence, "attended_sequence")
+        
+        # Modality-aware gating (understanding + generation dual control)
+        # Understanding gate: Integrate cross-modal information
+        understanding_gate = torch.sigmoid(
+            self.modality_gates['understanding'](attended_sequence.mean(dim=1))
+        ).unsqueeze(1)
+        
+        # Generation gates: Control generation for each modality
+        generation_gates = {}
+        for modal in modal_names:
+            generation_gates[modal] = torch.sigmoid(
+                self.modality_gates[f'gen_{modal}'](attended_sequence.mean(dim=1))
+            ).unsqueeze(1)
+        
+        # Dual fusion output
+        # Understanding output: Unified multimodal representation
+        understanding_output = attended_sequence * understanding_gate
+        
+        # Generation output: Independent generation paths for each modality
+        generation_outputs = {}
+        current_pos = 0
+        for idx, tokens in enumerate(unified_tokens):
+            if tokens is not None:
+                seq_len = tokens.shape[1]
+                modal_tokens = attended_sequence[:, current_pos:current_pos+seq_len, :]
+                
+                # Enhance generation for specific modalities
+                gen_gate = generation_gates[modal_names[idx]]
+                enhanced_tokens = modal_tokens * gen_gate
+                
+                # Save the modality-specific output
+                generation_outputs[modal_names[idx]] = enhanced_tokens
+                current_pos += seq_len
+        
+        # Final native fusion: Combine understanding and generation representations
+        # Understanding representation: Global multimodal understanding
+        global_representation = understanding_output.mean(dim=1, keepdim=True)
+        
+        # Register final representations for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(global_representation, "global_representation")
+            for modal_name, modal_output in generation_outputs.items():
+                self.memory_manager.register_tensor(modal_output, f"generation_output_{modal_name}")
+        
+        # Generation representation: Specific generation capabilities for each modality
+        # Use unified cache manager if available, otherwise use local cache
+        if hasattr(self, 'cache_manager'):
+            for modality, cache_data in generation_outputs.items():
+                self.cache_manager.set_generation_cache(modality, cache_data)
+        else:
+            self.generation_cache = generation_outputs  # Local cache fallback
+        
+        # Return the native fused representation
+        return global_representation
+    
+    def generate_modality(self, target_modal, prompt_tokens=None, temperature=1.0, top_k=None):
+        """
+        Generate content for a specified modality based on unified multimodal understanding.
+        This is a core feature of PiscesL1: integration of understanding and generation,
+        where all modalities share the same semantic space.
+
+        Args:
+            target_modal (str): Target generation modality ('text', 'image', 'audio', 'video', 'document', 'agent').
+            prompt_tokens (torch.Tensor, optional): Optional prompt tokens [batch, seq_len, hidden].
+            temperature (float, optional): Generation temperature control. Defaults to 1.0.
+            top_k (int, optional): Top-k sampling. Defaults to None.
+
+        Returns:
+            torch.Tensor: Modality-specific generation representation [batch, seq_len, hidden].
+        """
+        # Get generation cache from unified cache manager or local cache
+        if hasattr(self, 'cache_manager'):
+            generation_cache = {}
+            for modality in ['text', 'image', 'audio', 'video', 'document', 'agent']:
+                cached_data = self.cache_manager.get_generation_cache(modality)
+                if cached_data is not None:
+                    generation_cache[modality] = cached_data
+        else:
+            generation_cache = getattr(self, 'generation_cache', {})
+        
+        if not generation_cache:
+            raise ValueError("Must call forward() first to build generation cache")
+        
+        # Register input tensors for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            if prompt_tokens is not None:
+                self.memory_manager.register_tensor(prompt_tokens, f"gen_prompt_{target_modal}")
+        
+        # Native generation: Modality-specific generation based on unified understanding
         device = next(self.parameters()).device
         
-        # Determine batch size from first valid feature
-        for modal in modal_names:
-            feat = modal_features.get(modal)
-            if feat is not None and feat.numel() > 0:
-                batch_size = feat.shape[0]
-                device = feat.device
-                break
-        
-        # Hardware-adaptive feature normalization
-        normalized_features = {}
-        hardware_scale = self.hardware_scale
-        
-        for modal in modal_names:
-            feat = modal_features.get(modal)
-            if feat is not None and feat.numel() > 0:
-                # Apply hardware-adaptive scaling
-                feat_norm = torch.norm(feat, dim=-1, keepdim=True)
-                # Adaptive clipping based on hardware capacity
-                max_norm = 5.0 * hardware_scale  # Scale clipping threshold
-                feat_norm = torch.clamp(feat_norm, min=1e-8, max=max_norm)
-                normalized_features[modal] = feat / feat_norm * self.scale_factor
-            else:
-                normalized_features[modal] = torch.zeros(batch_size, 1, self.hidden_size, device=device)
-        
-        # Apply hardware-adaptive processing pipeline
-        if self.hw_config.device_info['recommended_config'] in ['maximum', 'high']:
-            # Full pipeline for high-end hardware
-            quality_scores = self._get_modality_quality_scores_safe(normalized_features)
-            enhanced_features, cross_attentions = self._hierarchical_cross_modal_attention_safe(normalized_features)
-            enhanced_weights, weight_details = self._predict_enhanced_weights_safe(
-                normalized_features, quality_scores, temporal_context=None
-            )
-            final_output = self._gradient_safe_fusion_full(enhanced_features, enhanced_weights, cross_attentions)
+        # Get the base generation representation
+        if target_modal in generation_cache:
+            base_generation = generation_cache[target_modal]
         else:
-            # Simplified pipeline for lower-end hardware
-            enhanced_features = self._simple_modality_enhancement(normalized_features)
-            enhanced_weights = self._simple_weight_prediction(enhanced_features)
-            final_output = self._gradient_safe_fusion_simple(enhanced_features, enhanced_weights)
+            # Use the general understanding representation if no specific modality is available
+            base_generation = self.cached_understanding if hasattr(self, 'cached_understanding') else torch.zeros(1, 1, self.hidden_size, device=device)
         
-        # Hardware-adaptive post-processing
-        if self.training:
-            # Apply hardware-specific gradient clipping
-            output_norm = torch.norm(final_output)
-            max_output_norm = 10.0 * hardware_scale
-            if output_norm > max_output_norm:
-                final_output = final_output / (output_norm / max_output_norm)
+        # Register base generation tensor for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(base_generation, f"gen_base_{target_modal}")
         
-        return final_output.unsqueeze(1)
-    
-    def _get_modality_quality_scores_safe(self, features):
-        """Calculate quality scores with gradient safety measures."""
-        quality_scores = {}
-        device = next(iter(features.values())).device if features else torch.device('cpu')
-        
-        for modality, feat in features.items():
-            if feat is not None and feat.numel() > 0:
-                # Safe variance calculation with clipping
-                feat_mean = feat.mean(dim=1)
-                feat_var = torch.var(feat_mean, dim=-1)
-                feat_var = torch.clamp(feat_var, min=1e-8, max=1e4)  # Prevent extreme values
-                quality = torch.sigmoid(feat_var * 0.1).mean()  # Scale down for stability
-                quality_scores[modality] = torch.clamp(quality, min=0.1, max=0.9)
-            else:
-                quality_scores[modality] = torch.tensor(0.5, device=device)
-        
-        return quality_scores
-    
-    def _hierarchical_cross_modal_attention_safe(self, modal_features):
-        """Apply cross-modal attention with gradient safety."""
-        modal_names = ['text', 'image', 'audio', 'video', 'document', 'agent']
-        enhanced_features = {}
-        cross_attentions = {}
-        
-        # Enhance individual modalities with gradient clipping
-        for modal in modal_names:
-            feat = modal_features.get(modal)
-            if feat is not None and feat.numel() > 0:
-                enhanced = self.modality_enhancers[modal](feat.mean(dim=1))
-                # Apply gradient clipping to prevent explosion
-                enhanced = torch.clamp(enhanced, min=-10.0, max=10.0)
-                enhanced_features[modal] = enhanced
-            else:
-                enhanced_features[modal] = torch.zeros(1, self.hidden_size, device=next(self.parameters()).device)
-        
-        # Simplified cross-modal attention (only key pairs)
-        key_pairs = [('text', 'image'), ('text', 'audio'), ('image', 'audio')]
-        
-        for mod1, mod2 in key_pairs:
-            key = f'{mod1}_{mod2}'
-            if key in self.cross_modal_layers:
-                feat1 = enhanced_features[mod1].unsqueeze(1)
-                feat2 = enhanced_features[mod2].unsqueeze(1)
-                
-                try:
-                    cross_att = self.cross_modal_layers[key](feat1, feat2, feat2)
-                    cross_att = torch.clamp(cross_att, min=-5.0, max=5.0)  # Gradient safety
-                    cross_attentions[key] = cross_att
-                except:
-                    # Fallback for gradient issues
-                    cross_attentions[key] = feat1 * 0.1
-        
-        return enhanced_features, cross_attentions
-    
-    def _predict_enhanced_weights_safe(self, modal_features, quality_scores, temporal_context=None):
-        """Predict weights with gradient safety measures."""
-        feature_list = []
-        modal_names = ['text', 'image', 'audio', 'video', 'document', 'agent']
-        batch_size = 1
-        
-        for modal in modal_names:
-            feat = modal_features.get(modal, torch.zeros(batch_size, 1, self.hidden_size, device=next(self.parameters()).device))
-            if feat.dim() == 3:
-                feat = feat.mean(dim=1)
-            # Apply gradient-safe normalization
-            feat = torch.clamp(feat, min=-5.0, max=5.0)
-            feature_list.append(feat)
-        
-        # Concatenate with gradient safety
-        all_features = torch.cat(feature_list, dim=-1)
-        all_features = torch.clamp(all_features, min=-3.0, max=3.0)
-        
-        # Primary weight prediction with gradient clipping
-        try:
-            primary_weights = self.primary_weight_predictor(all_features)
-        except:
-            # Fallback to uniform weights
-            primary_weights = torch.ones(batch_size, self.num_modalities, device=all_features.device) / self.num_modalities
-        
-        # Quality tensor construction
-        quality_tensor = torch.zeros(batch_size, self.num_modalities, device=next(self.parameters()).device)
-        for i, modal in enumerate(modal_names):
-            if modal in quality_scores:
-                quality_val = quality_scores[modal]
-                if torch.is_tensor(quality_val):
-                    quality_tensor[:, i] = torch.clamp(quality_val.expand(batch_size), min=0.1, max=0.9)
-                else:
-                    quality_tensor[:, i] = max(0.1, min(0.9, float(quality_val)))
-            else:
-                quality_tensor[:, i] = 0.5
-        
-        # Simple refinement to avoid complex gradient paths
-        refined_weights = primary_weights * quality_tensor
-        final_weights = F.softmax(refined_weights, dim=-1)
-        
-        return final_weights, {
-            'primary': primary_weights,
-            'quality_scores': quality_tensor,
-            'refinement': quality_tensor
-        }
-    
-    def _gradient_safe_fusion(self, enhanced_features, enhanced_weights, cross_attentions):
-        """Perform final fusion with comprehensive gradient safety."""
-        modal_names = ['text', 'image', 'audio', 'video', 'document', 'agent']
-        
-        # Weighted fusion with safety checks
-        weighted_modalities = []
-        for i, modal in enumerate(modal_names):
-            weight = enhanced_weights[:, i:i+1]
-            weight = torch.clamp(weight, min=0.01, max=1.0)  # Prevent zero weights
-            weighted_feat = enhanced_features[modal] * weight
-            weighted_feat = torch.clamp(weighted_feat, min=-3.0, max=3.0)
-            weighted_modalities.append(weighted_feat)
-        
-        # Simple summation for stability
-        fused_output = torch.stack(weighted_modalities, dim=1).sum(dim=1)
-        
-        # Final normalization with gradient safety
-        output_norm = torch.norm(fused_output, dim=-1, keepdim=True)
-        output_norm = torch.clamp(output_norm, min=1e-6, max=10.0)
-        final_output = fused_output / output_norm * 2.0  # Normalized to reasonable scale
-        
-        return final_output
-    
-    def _simple_modality_enhancement(self, modal_features):
-        """Simplified modality enhancement for lower-end hardware."""
-        modal_names = ['text', 'image', 'audio', 'video', 'document', 'agent']
-        enhanced_features = {}
-        
-        for modal in modal_names:
-            feat = modal_features.get(modal)
-            if feat is not None and feat.numel() > 0:
-                # Simple linear enhancement
-                enhanced = self.modality_enhancers[modal](feat.mean(dim=1))
-                enhanced = torch.clamp(enhanced, min=-5.0, max=5.0)
-                enhanced_features[modal] = enhanced
-            else:
-                enhanced_features[modal] = torch.zeros(1, self.hidden_size, device=next(self.parameters()).device)
-        
-        return enhanced_features
-    
-    def _simple_weight_prediction(self, enhanced_features):
-        """Simplified weight prediction for lower-end hardware."""
-        modal_names = ['text', 'image', 'audio', 'video', 'document', 'agent']
-        
-        # Simple uniform weighting with quality adjustment
-        weights = torch.ones(1, self.num_modalities, device=next(self.parameters()).device)
-        
-        # Adjust weights based on feature magnitudes
-        for i, modal in enumerate(modal_names):
-            feat_norm = torch.norm(enhanced_features[modal])
-            weights[0, i] = torch.clamp(feat_norm / 10.0, min=0.1, max=1.0)
-        
-        return F.softmax(weights, dim=-1)
-    
-    def _gradient_safe_fusion_simple(self, enhanced_features, enhanced_weights):
-        """Simplified fusion for lower-end hardware."""
-        modal_names = ['text', 'image', 'audio', 'video', 'document', 'agent']
-        
-        # Direct weighted sum
-        weighted_sum = torch.zeros_like(enhanced_features['text'])
-        
-        for i, modal in enumerate(modal_names):
-            weight = enhanced_weights[:, i:i+1]
-            weighted_feat = enhanced_features[modal] * weight
-            weighted_sum += torch.clamp(weighted_feat, min=-2.0, max=2.0)
-        
-        # Simple normalization
-        output_norm = torch.norm(weighted_sum, dim=-1, keepdim=True)
-        output_norm = torch.clamp(output_norm, min=1e-6, max=5.0)
-        final_output = weighted_sum / output_norm * 2.0
-        
-        return final_output
-    
-    def _gradient_safe_fusion_full(self, enhanced_features, enhanced_weights, cross_attentions):
-        """Full fusion pipeline for high-end hardware."""
-        modal_names = ['text', 'image', 'audio', 'video', 'document', 'agent']
-        
-        # Enhanced weighted fusion with cross-modal integration
-        weighted_modalities = []
-        for i, modal in enumerate(modal_names):
-            weight = enhanced_weights[:, i:i+1]
-            weight = torch.clamp(weight, min=0.01, max=1.0)
-            weighted_feat = enhanced_features[modal] * weight
-            weighted_feat = torch.clamp(weighted_feat, min=-3.0, max=3.0)
-            weighted_modalities.append(weighted_feat)
-        
-        # Integrate cross-modal attention results
-        cross_modal_enhancement = torch.zeros_like(enhanced_features['text'])
-        for key, cross_feat in cross_attentions.items():
-            if cross_feat is not None:
-                cross_modal_enhancement += cross_feat.mean(dim=1) * 0.1
-        
-        # Combine weighted modalities and cross-modal enhancements
-        fused_output = torch.stack(weighted_modalities, dim=1).sum(dim=1)
-        fused_output += torch.clamp(cross_modal_enhancement, min=-1.0, max=1.0)
-        
-        # Advanced normalization for high-end hardware
-        if self.hw_config.device_info['recommended_config'] == 'maximum':
-            # Apply adaptive fusion gate
-            primary_context = torch.cat([feat for feat in weighted_modalities], dim=-1)
-            primary_gate = self.adaptive_fusion_gate['primary'](primary_context)
-            quality_gate = self.adaptive_fusion_gate['quality_aware'](enhanced_weights)
+        # Conditional generation: Guided by prompts
+        if prompt_tokens is not None:
+            # Fuse the prompt with the base generation representation
+            prompt_mean = prompt_tokens.mean(dim=1, keepdim=True)
             
-            if 'temporal_gate' in self.adaptive_fusion_gate:
-                temporal_gate = self.adaptive_fusion_gate['temporal_gate'](enhanced_weights)
-                combined_gate = primary_gate * quality_gate * temporal_gate
-            else:
-                combined_gate = primary_gate * quality_gate
+            # Use the understanding gate for conditional control
+            condition_gate = self.modality_gates['understanding'](prompt_mean.squeeze(1))
+            conditioned = base_generation * condition_gate.unsqueeze(1)
             
-            fused_output = fused_output * combined_gate
-        
-        # Final normalization
-        output_norm = torch.norm(fused_output, dim=-1, keepdim=True)
-        output_norm = torch.clamp(output_norm, min=1e-6, max=10.0)
-        final_output = fused_output / output_norm * 3.0
-        
-        return final_output
-
-class DocumentEncoder(nn.Module):
-    """
-    Document encoder for text processing and understanding
-    Supports both plain text and structured documents
-    """
-    
-    def __init__(self, cfg):
-        super().__init__()
-        self.cfg = cfg
-        self.hidden_size = cfg.hidden_size
-        self.vocab_size = 50000
-        self.max_length = 8192
-        
-        # Token embedding
-        self.token_embedding = nn.Embedding(self.vocab_size, self.hidden_size)
-        self.position_embedding = nn.Embedding(self.max_length, self.hidden_size)
-        
-        # Document structure encoder
-        self.structure_encoder = nn.TransformerEncoder(
-            nn.TransformerEncoderLayer(
-                d_model=self.hidden_size,
-                nhead=cfg.n_head,
-                dim_feedforward=self.hidden_size * 4,
-                dropout=0.1,
-                batch_first=True
-            ),
-            num_layers=cfg.n_layer // 2
-        )
-        
-        # Document style encoder
-        self.style_encoder = nn.Sequential(
-            nn.Linear(self.hidden_size, self.hidden_size // 2),
-            nn.LayerNorm(self.hidden_size // 2),
-            nn.ReLU(),
-            nn.Linear(self.hidden_size // 2, 128)  # Style embedding
-        )
-        
-        # Content encoder
-        self.content_encoder = nn.Sequential(
-            nn.Linear(self.hidden_size, self.hidden_size),
-            nn.LayerNorm(self.hidden_size),
-            nn.ReLU(),
-            nn.Linear(self.hidden_size, self.hidden_size)
-        )
-        
-    def forward(self, input_ids, attention_mask=None):
-        """
-        Forward pass for document encoding
-        
-        Args:
-            input_ids: Token indices [batch_size, seq_len]
-            attention_mask: Attention mask [batch_size, seq_len]
-            
-        Returns:
-            Document embeddings and features
-        """
-        batch_size, seq_len = input_ids.shape
-        
-        # Token and position embeddings
-        token_embeds = self.token_embedding(input_ids)
-        positions = torch.arange(seq_len, device=input_ids.device).unsqueeze(0)
-        pos_embeds = self.position_embedding(positions)
-        
-        # Combine embeddings
-        embeddings = token_embeds + pos_embeds
-        
-        # Structure encoding
-        if attention_mask is not None:
-            attention_mask = attention_mask.bool()
-        
-        structure_output = self.structure_encoder(embeddings, src_key_padding_mask=attention_mask)
-        
-        # Global pooling
-        if attention_mask is not None:
-            mask_expanded = attention_mask.unsqueeze(-1).expand_as(structure_output)
-            structure_output = structure_output.masked_fill(~mask_expanded, 0)
-            lengths = attention_mask.sum(dim=1, keepdim=True)
-            pooled = structure_output.sum(dim=1) / lengths
+            # Add prompt information
+            prompt_weight = 0.3
+            enhanced_generation = conditioned + prompt_mean * prompt_weight
         else:
-            pooled = structure_output.mean(dim=1)
+            enhanced_generation = base_generation
         
-        # Content and style features
-        content_features = self.content_encoder(pooled)
-        style_features = self.style_encoder(pooled)
+        # Temperature control
+        if temperature != 1.0:
+            enhanced_generation = enhanced_generation / temperature
         
-        return {
-            'embeddings': structure_output,
-            'content': content_features,
-            'style': style_features,
-            'pooled': pooled
-        }
-
-
-class DocumentProcessor:
-    """
-    Document processor for handling various text formats
-    """
+        # Top-k processing (if applicable)
+        if top_k is not None and enhanced_generation.shape[-1] > top_k:
+            # Select top-k values along the feature dimension
+            top_values, top_indices = torch.topk(enhanced_generation, k=top_k, dim=-1)
+            mask = torch.zeros_like(enhanced_generation)
+            mask.scatter_(-1, top_indices, top_values)
+            enhanced_generation = mask
+        
+        # Register final generation output for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(enhanced_generation, f"gen_output_{target_modal}")
+        
+        return enhanced_generation
     
-    def __init__(self):
-        self.tokenizer = None  # Will be initialized with actual tokenizer
-        
-    def process_text(self, text, max_length=8192):
+    def generate_cross_modal(self, source_modal, target_modal, source_tokens=None):
         """
-        Process text input
-        
+        Implement true cross-modal understanding-generation, e.g., text -> image, image -> text, etc.
+
         Args:
-            text: Input text string
-            max_length: Maximum sequence length
-            
+            source_modal (str): Source modality.
+            target_modal (str): Target modality.
+            source_tokens (torch.Tensor, optional): Source modality tokens.
+
         Returns:
-            Processed document data
+            torch.Tensor: Cross-modal generation representation.
         """
-        # Simple tokenization for now
-        tokens = text.split()[:max_length]
-        token_ids = [hash(token) % 50000 for token in tokens]
+        # First perform unified understanding
+        dummy_features = {source_modal: source_tokens} if source_tokens is not None else {}
+        unified_rep = self.forward(dummy_features)
         
-        return {
-            'input_ids': torch.tensor(token_ids, dtype=torch.long).unsqueeze(0),
-            'attention_mask': torch.ones(len(token_ids), dtype=torch.long).unsqueeze(0)
-        }
-        
-    def process_file(self, file_path):
-        """
-        Process document file
-        
-        Args:
-            file_path: Path to document file
-            
-        Returns:
-            Processed document data
-        """
-        try:
-            with open(file_path, 'r', encoding='utf-8') as f:
-                text = f.read()
-            return self.process_text(text)
-        except Exception as e:
-            ERROR(f"Error processing document file: {e}")
-            return None
-
-
-class GenerationCondition:
-    """Generation conditions for unified multi-modal generation"""
-    def __init__(self):
-        self.text_prompt: Optional[str] = None
-        self.emotion_vector: Optional[torch.Tensor] = None
-        self.image_reference: Optional[torch.Tensor] = None
-        self.audio_reference: Optional[torch.Tensor] = None
-        self.video_reference: Optional[torch.Tensor] = None
-        self.style_weights: Dict[str, float] = {}
-        self.generation_params: Dict[str, Any] = {}
-
-
-class UnifiedGeneration(nn.Module):
-    """
-    Unified multi-modal generation system integrated into multimodal.py
-    Supports image, video, audio, document generation with full multimodal alignment
-    """
-    
-    def __init__(self, cfg):
-        super().__init__()
-        self.cfg = cfg
-        self.hidden_size = cfg.hidden_size
-        
-        # Generation decoders (inverse of existing encoders)
-        self.image_decoder = self._build_image_decoder()
-        self.video_decoder = self._build_video_decoder()
-        self.audio_decoder = self._build_audio_decoder()
-        self.document_decoder = self._build_document_decoder()  # NEW: Document generation
-        
-        # Cross-modal conditioning with quantum entanglement
-        self.condition_encoder = nn.Sequential(
-            nn.Linear(self.hidden_size * 6, self.hidden_size * 3),  # Expanded for document
-            nn.LayerNorm(self.hidden_size * 3),
-            nn.SiLU(),
-            nn.Linear(self.hidden_size * 3, self.hidden_size * 2),
-            nn.LayerNorm(self.hidden_size * 2),
-            nn.SiLU(),
-            nn.Linear(self.hidden_size * 2, self.hidden_size)
-        )
-        
-        # Emotional conditioning (enhanced with valence/arousal)
-        self.emotion_projector = nn.Sequential(
-            nn.Linear(10, self.hidden_size),  # 7 emotions + valence + arousal + intensity
-            nn.LayerNorm(self.hidden_size),
-            nn.SiLU(),
-            nn.Linear(self.hidden_size, self.hidden_size)
-        )
-        
-        # Multimodal fusion for generation
-        self.multimodal_fusion = nn.ModuleDict({
-            'text': nn.Linear(self.hidden_size, self.hidden_size),
-            'image': nn.Linear(self.hidden_size, self.hidden_size),
-            'audio': nn.Linear(self.hidden_size, self.hidden_size),
-            'video': nn.Linear(self.hidden_size, self.hidden_size),
-            'document': nn.Linear(self.hidden_size, self.hidden_size),  # NEW
-            'emotion': nn.Linear(self.hidden_size, self.hidden_size)
-        })
-        
-        # Advanced diffusion timestep embedding
-        self.time_embedding = nn.Sequential(
-            nn.Linear(self.hidden_size, self.hidden_size * 4),
-            nn.SiLU(),
-            nn.Dropout(0.1),
-            nn.Linear(self.hidden_size * 4, self.hidden_size * 2),
-            nn.SiLU(),
-            nn.Linear(self.hidden_size * 2, self.hidden_size)
-        )
-        
-        # Comprehensive style control
-        self.style_controller = nn.ModuleDict({
-            # Visual styles
-            'brightness': nn.Linear(self.hidden_size, 1),
-            'contrast': nn.Linear(self.hidden_size, 1),
-            'saturation': nn.Linear(self.hidden_size, 1),
-            'sharpness': nn.Linear(self.hidden_size, 1),
-            'hue': nn.Linear(self.hidden_size, 1),
-            
-            # Audio styles  
-            'pitch': nn.Linear(self.hidden_size, 1),
-            'tempo': nn.Linear(self.hidden_size, 1),
-            'volume': nn.Linear(self.hidden_size, 1),
-            'timbre': nn.Linear(self.hidden_size, 64),
-            
-            # Document styles
-            'formality': nn.Linear(self.hidden_size, 1),
-            'tone': nn.Linear(self.hidden_size, 5),  # 5 tone categories
-            'structure': nn.Linear(self.hidden_size, 3)  # narrative/expository/persuasive
-        })
-        
-        # Quantum entanglement for cross-modal consistency
-        self.quantum_bridge = nn.ModuleDict({
-            'image_audio': nn.MultiheadAttention(self.hidden_size, 8, batch_first=True),
-            'video_emotion': nn.MultiheadAttention(self.hidden_size, 8, batch_first=True),
-            'document_multimodal': nn.MultiheadAttention(self.hidden_size, 8, batch_first=True)
-        })
-        
-        # Spatio-temporal consistency for video
-        self.temporal_consistency = nn.LSTM(self.hidden_size, self.hidden_size, num_layers=2, batch_first=True)
-        
-        # Advanced feature extraction for references
-        self.feature_extractors = nn.ModuleDict({
-            'image_style': nn.Sequential(
-                nn.Conv2d(3, 64, 3, padding=1),
-                nn.AdaptiveAvgPool2d((8, 8)),
-                nn.Flatten(),
-                nn.Linear(64 * 8 * 8, self.hidden_size)
-            ),
-            'audio_style': nn.Sequential(
-                nn.Conv1d(1, 64, 3, padding=1),
-                nn.AdaptiveAvgPool1d(128),
-                nn.Flatten(),
-                nn.Linear(64 * 128, self.hidden_size)
-            ),
-            'document_style': nn.Sequential(
-                nn.Linear(1000, 512),  # Document token embedding
-                nn.ReLU(),
-                nn.Linear(512, self.hidden_size)
-            )
-        })
-        
-    def _build_image_decoder(self):
-        """Build image decoder (inverse of VisionEncoder)"""
-        return nn.Sequential(
-            nn.Linear(self.hidden_size, 512 * 8 * 8),
-            nn.Unflatten(1, (512, 8, 8)),
-            nn.ConvTranspose2d(512, 256, 4, stride=2, padding=1),
-            nn.BatchNorm2d(256),
-            nn.SiLU(),
-            nn.ConvTranspose2d(256, 128, 4, stride=2, padding=1),
-            nn.BatchNorm2d(128),
-            nn.SiLU(),
-            nn.ConvTranspose2d(128, 64, 4, stride=2, padding=1),
-            nn.BatchNorm2d(64),
-            nn.SiLU(),
-            nn.ConvTranspose2d(64, 32, 4, stride=2, padding=1),
-            nn.BatchNorm2d(32),
-            nn.SiLU(),
-            nn.ConvTranspose2d(32, 3, 3, padding=1),
-            nn.Tanh()
-        )
-    
-    def _build_video_decoder(self):
-        """Build video decoder (3D version)"""
-        return nn.Sequential(
-            nn.Linear(self.hidden_size, 512 * 4 * 4 * 4),
-            nn.Unflatten(1, (512, 4, 4, 4)),
-            nn.ConvTranspose3d(512, 256, 4, stride=2, padding=1),
-            nn.BatchNorm3d(256),
-            nn.SiLU(),
-            nn.ConvTranspose3d(256, 128, 4, stride=2, padding=1),
-            nn.BatchNorm3d(128),
-            nn.SiLU(),
-            nn.ConvTranspose3d(128, 64, 4, stride=2, padding=1),
-            nn.BatchNorm3d(64),
-            nn.SiLU(),
-            nn.ConvTranspose3d(64, 3, 3, padding=1),
-            nn.Tanh()
-        )
-    
-    def _build_audio_decoder(self):
-        """Build audio decoder (1D version)"""
-        return nn.Sequential(
-            nn.Linear(self.hidden_size, 512 * 64),
-            nn.Unflatten(1, (512, 64)),
-            nn.ConvTranspose1d(512, 256, 4, stride=2, padding=1),
-            nn.BatchNorm1d(256),
-            nn.SiLU(),
-            nn.ConvTranspose1d(256, 128, 4, stride=2, padding=1),
-            nn.BatchNorm1d(128),
-            nn.SiLU(),
-            nn.ConvTranspose1d(128, 64, 4, stride=2, padding=1),
-            nn.BatchNorm1d(64),
-            nn.SiLU(),
-            nn.ConvTranspose1d(64, 1, 3, padding=1),
-            nn.Tanh()
-        )
-    
-    def _build_document_decoder(self):
-        """Build document decoder for structured generation"""
-        return nn.ModuleDict({
-            'content': nn.Sequential(
-                nn.Linear(self.hidden_size, 2048),
-                nn.LayerNorm(2048),
-                nn.Dropout(0.1),
-                nn.SiLU(),
-                nn.Linear(2048, 4096),
-                nn.LayerNorm(4096),
-                nn.Dropout(0.1),
-                nn.Linear(4096, 8192),  # Document token space
-                nn.Tanh()
-            ),
-            'structure': nn.Sequential(
-                nn.Linear(self.hidden_size, 512),
-                nn.LayerNorm(512),
-                nn.SiLU(),
-                nn.Linear(512, 256),
-                nn.LayerNorm(256),
-                nn.SiLU(),
-                nn.Linear(256, 128),  # Document structure encoding
-                nn.Softmax(dim=-1)
-            ),
-            'style': nn.Sequential(
-                nn.Linear(self.hidden_size, 512),
-                nn.LayerNorm(512),
-                nn.SiLU(),
-                nn.Linear(512, 256),  # Style embedding
-                nn.Tanh()
-            ),
-            'format': nn.Sequential(
-                nn.Linear(self.hidden_size, 256),
-                nn.LayerNorm(256),
-                nn.SiLU(),
-                nn.Linear(256, 64),  # Format control
-                nn.Sigmoid()
-            )
-        })
-    
-    def encode_conditions(self, condition: GenerationCondition) -> torch.Tensor:
-        """Encode all generation conditions into latent space with quantum entanglement"""
-        conditions = []
-        
-        # Text condition with semantic enhancement
-        if hasattr(condition, 'text') and condition.text is not None:
-            text_tokens = self.feature_extractors['text'](condition.text)  # Placeholder tokens
-            text_feat = text_tokens.mean(dim=1)  # Global pooling
-            text_feat = self.multimodal_fusion['text'](text_feat + torch.randn(1, self.hidden_size).to(text_feat.device))
-            conditions.append(text_feat)
-        
-        # Enhanced emotion condition (7 emotions + valence + arousal + intensity)
-        if hasattr(condition, 'emotion_vector') and condition.emotion_vector is not None:
-            # Ensure emotion vector has 10 dimensions
-            if condition.emotion_vector.shape[-1] == 7:
-                # Add valence, arousal, intensity defaults
-                extended_emotion = torch.cat([
-                    condition.emotion_vector,
-                    torch.tensor([0.5, 0.5, 0.5])  # Default valence, arousal, intensity
-                ], dim=-1)
-            else:
-                extended_emotion = condition.emotion_vector
-            emotion_feat = self.emotion_projector(extended_emotion)
-            emotion_feat = self.multimodal_fusion['emotion'](emotion_feat)
-            conditions.append(emotion_feat)
-        
-        # Reference conditions with style extraction
-        if hasattr(condition, 'i_reference') and condition.i_reference is not None:
-            image_feat = self.feature_extractors['image_style'](condition.i_reference)
-            image_feat = self.multimodal_fusion['image'](image_feat)
-            conditions.append(image_feat)
-        
-        if hasattr(condition, 'a_reference') and condition.a_reference is not None:
-            audio_feat = self.feature_extractors['audio_style'](condition.a_reference)
-            audio_feat = self.multimodal_fusion['audio'](audio_feat)
-            conditions.append(audio_feat)
-        
-        # Extract spatio-temporal features
-        if hasattr(condition, 'video_reference') and condition.video_reference is not None:
-            video_feat = condition.video_reference.mean(dim=(2, 3, 4))
-            video_feat = self.multimodal_fusion['video'](video_feat)
-            conditions.append(video_feat)
-        
-        if hasattr(condition, 'document_reference') and condition.document_reference is not None:
-            doc_feat = self.feature_extractors['document_style'](condition.document_reference)
-            doc_feat = self.multimodal_fusion['document'](doc_feat)
-            conditions.append(doc_feat)
-        
-        # Quantum entanglement between modalities
-        if len(conditions) >= 2:
-            # Apply cross-modal attention for consistency
-            conditions_tensor = torch.stack(conditions, dim=1)  # [1, N, hidden_size]
-            
-            # Image-audio entanglement
-            if len(conditions) >= 2:
-                entangled, _ = self.quantum_bridge['image_audio'](
-                    conditions_tensor, conditions_tensor, conditions_tensor
-                )
-                conditions = [entangled[:, i] for i in range(entangled.size(1))]
-        
-        # Combine conditions with learned weights
-        if not conditions:
-            return torch.randn(1, self.hidden_size)
-        
-        combined = torch.cat(conditions, dim=-1)
-        
-        # Pad or truncate to expected input size
-        expected_size = self.hidden_size * 6  # Based on condition_encoder input
-        if combined.size(-1) < expected_size:
-            padding = torch.randn(1, expected_size - combined.size(-1))
-            combined = torch.cat([combined, padding], dim=-1)
-        elif combined.size(-1) > expected_size:
-            combined = combined[:, :expected_size]
-        
-        return self.condition_encoder(combined)
+        # Then generate content for the target modality
+        return self.generate_modality(target_modal, prompt_tokens=source_tokens)
     
     def generate_image(self, condition: GenerationCondition, steps: int = 50) -> torch.Tensor:
         """Generate image from conditions"""
         latent = self.encode_conditions(condition)
+        
+        # Register input latent for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(latent, "gen_image_latent")
         
         # Diffusion process (simplified)
         noise = torch.randn(1, 3, 512, 512)
@@ -4578,14 +4505,28 @@ class UnifiedGeneration(nn.Module):
             decoded = self.image_decoder(conditioned_latent)
             noise = noise * 0.98 + decoded * 0.02
         
-        return torch.clamp(noise, -1, 1)
+        final_image = torch.clamp(noise, -1, 1)
+        
+        # Register final output for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(final_image, "gen_image_output")
+        
+        return final_image
     
     def generate_video(self, condition: GenerationCondition, frames: int = 16, steps: int = 50) -> torch.Tensor:
         """Generate video from conditions"""
         latent = self.encode_conditions(condition)
         
+        # Register input latent for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(latent, "gen_video_latent")
+        
         # Temporal consistency
         video_latent = latent.unsqueeze(1).expand(1, frames, self.hidden_size)
+        
+        # Register video latent for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(video_latent, "gen_video_temporal_latent")
         
         # Diffusion process
         noise = torch.randn(1, 3, frames, 64, 64)
@@ -4599,11 +4540,21 @@ class UnifiedGeneration(nn.Module):
             decoded = decoded.view(1, 3, frames, 64, 64)
             noise = noise * 0.98 + decoded * 0.02
         
-        return torch.clamp(noise, -1, 1)
+        final_video = torch.clamp(noise, -1, 1)
+        
+        # Register final output for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(final_video, "gen_video_output")
+        
+        return final_video
     
     def generate_audio(self, condition: GenerationCondition, duration: float = 3.0, steps: int = 50) -> torch.Tensor:
         """Generate audio from conditions with style control"""
         latent = self.encode_conditions(condition)
+        
+        # Register input latent for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(latent, "gen_audio_latent")
         
         # Calculate sequence length (44.1kHz * duration)
         seq_len = int(44100 * duration / 256)  # Downsampled
@@ -4625,11 +4576,21 @@ class UnifiedGeneration(nn.Module):
             
             noise = noise * 0.98 + decoded * 0.02
         
-        return torch.clamp(noise, -1, 1)
+        final_audio = torch.clamp(noise, -1, 1)
+        
+        # Register final output for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(final_audio, "gen_audio_output")
+        
+        return final_audio
     
     def generate_document(self, condition: GenerationCondition, max_length: int = 1000, steps: int = 50) -> Dict[str, torch.Tensor]:
         """Generate structured documents with full formatting control"""
         latent = self.encode_conditions(condition)
+        
+        # Register input latent for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(latent, "gen_document_latent")
         
         # Document generation with structure and style
         document_outputs = {}
@@ -4647,17 +4608,33 @@ class UnifiedGeneration(nn.Module):
         
         document_outputs['content'] = torch.clamp(content_tokens, -1, 1)
         
+        # Register content tokens for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(document_outputs['content'], "gen_document_content")
+        
         # Generate structure
         structure = self.document_decoder['structure'](latent)
         document_outputs['structure'] = structure
+        
+        # Register structure for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(document_outputs['structure'], "gen_document_structure")
         
         # Generate style
         style = self.document_decoder['style'](latent)
         document_outputs['style'] = style
         
+        # Register style for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(document_outputs['style'], "gen_document_style")
+        
         # Generate format control
         format_control = self.document_decoder['format'](latent)
         document_outputs['format'] = format_control
+        
+        # Register format control for memory monitoring
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.register_tensor(document_outputs['format'], "gen_document_format")
         
         return document_outputs
     
@@ -4693,7 +4670,6 @@ class UnifiedGeneration(nn.Module):
         if 'formality' in style_params:
             formality = style_params['formality']
             document['content'] = document['content'] * (0.5 + formality * 0.5)
-            condition_features.append(document_features)
         # Apply tone control
         if 'tone' in style_params:
             tone = style_params['tone']
@@ -4723,6 +4699,11 @@ class UnifiedGeneration(nn.Module):
             adjusted = adjusted * (1 + (style_params['contrast'] - 0.5) * 0.5)
         
         return torch.clamp(adjusted, -1, 1)
+    
+    def __del__(self):
+        """Cleanup memory manager on deletion."""
+        if hasattr(self, 'memory_manager'):
+            self.memory_manager.stop_monitoring()
 
 class MultiModalGenerator:
     """
@@ -5169,7 +5150,7 @@ __all__ = [
     
     # Cross-modal components
     'CrossModalAttention',
-    'DynamicModalFusion',  # Unified dynamic modal fusion with quantum entanglement capabilities
+    'DynamicModalFusion',  # Unified dynamic modal fusion with native multimodal fusion capabilities
     
     # Unified generation system
     'UnifiedGeneration',

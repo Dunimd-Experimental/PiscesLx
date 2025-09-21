@@ -22,11 +22,14 @@ import os
 import re
 import gc
 import json
+import math
+import numpy as np
 import pandas as pd
 import multiprocessing as mp
-from utils.progress import progress_bar
-from utils.log import RIGHT, DEBUG, ERROR
-from typing import Dict, Callable, List, Optional, Tuple
+from collections import Counter
+from utils import progress_bar, RIGHT, DEBUG, ERROR
+from utils import get_cache_manager
+from typing import Dict, Callable, List, Optional, Tuple, Any
 from datasets import load_from_disk, Dataset, concatenate_datasets
 
 # ========== Plug-in Rule System ==========
@@ -103,7 +106,7 @@ class StreamCleaner:
     
     def clean_media(self, path: str, media_type: str) -> Optional[str]:
         """
-        Clean and validate multimedia files.
+        Clean and validate multimedia files with enhanced quality checks.
 
         Args:
             path (str): Path to the multimedia file.
@@ -116,17 +119,57 @@ class StreamCleaner:
             return None
             
         try:
+            # Enhanced media validation with quality scoring
             if media_type == "image":
-                return MediaCleaner.clean_image(path)
+                return MediaCleaner.clean_image_with_quality(path)
             elif media_type == "audio":
-                return MediaCleaner.clean_audio(path)
+                return MediaCleaner.clean_audio_with_quality(path)
             elif media_type == "video":
-                return MediaCleaner.clean_video(path)
+                return MediaCleaner.clean_video_with_quality(path)
             elif media_type == "doc":
-                return MediaCleaner.clean_document(path)
+                return MediaCleaner.clean_document_with_quality(path)
             return path
-        except Exception:
+        except Exception as e:
+            DEBUG(f"Media cleaning failed for {path}: {str(e)}")
             return None
+
+    @staticmethod
+    def get_media_quality_score(media_path: str, media_type: str) -> float:
+        """
+        Get quality score for a media file.
+        
+        Args:
+            media_path (str): Path to the media file
+            media_type (str): Type of media (image, audio, video, doc)
+            
+        Returns:
+            float: Quality score between 0 and 1
+        """
+        try:
+            if media_type == "image":
+                from PIL import Image
+                with Image.open(media_path) as img:
+                    return MediaCleaner._calculate_image_quality(img)
+            elif media_type == "audio":
+                return MediaCleaner._calculate_audio_quality(media_path)
+            elif media_type == "video":
+                import cv2
+                cap = cv2.VideoCapture(media_path)
+                total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+                quality = MediaCleaner._calculate_video_quality(cap, total_frames)
+                cap.release()
+                return quality
+            elif media_type == "doc":
+                import fitz
+                doc = fitz.open(media_path)
+                quality = MediaCleaner._calculate_document_quality(doc)
+                doc.close()
+                return quality
+            else:
+                return 0.5  # Default score for unknown types
+        except Exception as e:
+            DEBUG(f"Quality score calculation failed for {media_path}: {str(e)}")
+            return 0.5  # Default medium quality
 
 class MediaCleaner:
     """
@@ -157,6 +200,83 @@ class MediaCleaner:
             return None
 
     @staticmethod
+    def clean_image_with_quality(image_path, min_size=(224, 224), min_quality_score=0.6):
+        """
+        Clean and validate image files with advanced quality scoring.
+        
+        Args:
+            image_path (str): Path to the image file.
+            min_size (tuple): Minimum size requirement (width, height).
+            min_quality_score (float): Minimum quality score (0-1).
+            
+        Returns:
+            str: Path to the validated image if valid, None otherwise.
+        """
+        try:
+            from PIL import Image
+            import numpy as np
+            
+            with Image.open(image_path) as img:
+                # Basic validation
+                img = img.convert("RGB")
+                if img.size < min_size:
+                    return None
+                
+                # Advanced quality scoring
+                quality_score = MediaCleaner._calculate_image_quality(img)
+                if quality_score < min_quality_score:
+                    return None
+                
+                return image_path
+        except Exception as e:
+            DEBUG(f"Image quality cleaning failed for {image_path}: {str(e)}")
+            return None
+    
+    @staticmethod
+    def _calculate_image_quality(img):
+        """
+        Calculate comprehensive image quality score.
+        
+        Args:
+            img (PIL.Image): Image object
+            
+        Returns:
+            float: Quality score (0-1)
+        """
+        try:
+            import numpy as np
+            
+            # Convert to numpy array
+            img_array = np.array(img)
+            
+            # Resolution score
+            resolution_score = min((img.width * img.height) / (1024 * 1024), 1.0)  # Normalize to 1MP
+            
+            # Sharpness score (using Laplacian variance)
+            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY) if len(img_array.shape) == 3 else img_array
+            sharpness_score = min(cv2.Laplacian(gray, cv2.CV_64F).var() / 1000, 1.0)
+            
+            # Contrast score
+            contrast_score = min(gray.std() / 128, 1.0)
+            
+            # Brightness score (avoid over/under exposure)
+            mean_brightness = gray.mean()
+            brightness_score = 1.0 - abs(mean_brightness - 128) / 128
+            
+            # Combine scores
+            quality_score = (
+                resolution_score * 0.3 +
+                sharpness_score * 0.3 +
+                contrast_score * 0.2 +
+                brightness_score * 0.2
+            )
+            
+            return max(0.0, min(1.0, quality_score))
+            
+        except Exception:
+            return 0.5  # Default medium quality
+
+    @staticmethod
     def clean_audio(audio_path, min_duration=1.0, max_duration=30.0):
         """
         Clean and validate audio files.
@@ -178,6 +298,85 @@ class MediaCleaner:
             return audio_path
         except Exception:
             return None
+
+    @staticmethod
+    def clean_audio_with_quality(audio_path, min_duration=1.0, max_duration=30.0, min_quality_score=0.5):
+        """
+        Clean and validate audio files with advanced quality scoring.
+        
+        Args:
+            audio_path (str): Path to the audio file.
+            min_duration (float): Minimum duration in seconds.
+            max_duration (float): Maximum duration in seconds.
+            min_quality_score (float): Minimum quality score (0-1).
+            
+        Returns:
+            str: Path to the validated audio if valid, None otherwise.
+        """
+        try:
+            import librosa
+            import numpy as np
+            
+            # Basic duration check
+            y, sr = librosa.load(audio_path, sr=None, duration=max_duration + 1)
+            duration = len(y) / sr
+            
+            if duration < min_duration or duration > max_duration:
+                return None
+            
+            # Advanced quality scoring
+            quality_score = MediaCleaner._calculate_audio_quality(y, sr)
+            if quality_score < min_quality_score:
+                return None
+            
+            return audio_path
+        except Exception as e:
+            DEBUG(f"Audio quality cleaning failed for {audio_path}: {str(e)}")
+            return None
+    
+    @staticmethod
+    def _calculate_audio_quality(y, sr):
+        """
+        Calculate comprehensive audio quality score.
+        
+        Args:
+            y (np.array): Audio signal
+            sr (int): Sample rate
+            
+        Returns:
+            float: Quality score (0-1)
+        """
+        try:
+            import numpy as np
+            
+            # Duration score
+            duration = len(y) / sr
+            duration_score = min(duration / 10.0, 1.0)  # Normalize to 10 seconds
+            
+            # Dynamic range score
+            dynamic_range = np.max(y) - np.min(y)
+            dynamic_score = min(dynamic_range / 0.5, 1.0)  # Normalize to 0.5 range
+            
+            # RMS energy score (avoid silence)
+            rms_energy = np.sqrt(np.mean(y**2))
+            energy_score = min(rms_energy / 0.1, 1.0)  # Normalize to 0.1 RMS
+            
+            # Zero crossing rate (avoid excessive noise)
+            zcr = np.mean(librosa.feature.zero_crossing_rate(y)[0])
+            noise_score = 1.0 - min(zcr / 0.1, 1.0)  # Penalize high ZCR
+            
+            # Combine scores
+            quality_score = (
+                duration_score * 0.3 +
+                dynamic_score * 0.3 +
+                energy_score * 0.2 +
+                noise_score * 0.2
+            )
+            
+            return max(0.0, min(1.0, quality_score))
+            
+        except Exception:
+            return 0.5  # Default medium quality
 
     @staticmethod
     def clean_video(video_path, min_duration=3, min_frames=8):
@@ -213,6 +412,103 @@ class MediaCleaner:
             return None
 
     @staticmethod
+    def clean_video_with_quality(video_path, min_duration=3, min_frames=8, min_quality_score=0.5):
+        """
+        Clean and validate video files with advanced quality scoring.
+        
+        Args:
+            video_path (str): Path to the video file.
+            min_duration (int): Minimum duration in seconds.
+            min_frames (int): Minimum number of frames.
+            min_quality_score (float): Minimum quality score (0-1).
+            
+        Returns:
+            str: Path to the validated video if valid, None otherwise.
+        """
+        try:
+            import cv2
+            import numpy as np
+            
+            cap = cv2.VideoCapture(video_path)
+            
+            if not cap.isOpened():
+                return None
+            
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+            duration = frame_count / fps if fps > 0 else 0
+            
+            # Basic validation
+            if duration < min_duration or frame_count < min_frames:
+                cap.release()
+                return None
+            
+            # Advanced quality scoring (sample frames)
+            quality_score = MediaCleaner._calculate_video_quality(cap, frame_count)
+            cap.release()
+            
+            if quality_score < min_quality_score:
+                return None
+                
+            return video_path
+        except Exception as e:
+            DEBUG(f"Video quality cleaning failed for {video_path}: {str(e)}")
+            return None
+    
+    @staticmethod
+    def _calculate_video_quality(cap, total_frames):
+        """
+        Calculate comprehensive video quality score by sampling frames.
+        
+        Args:
+            cap (cv2.VideoCapture): Video capture object
+            total_frames (int): Total number of frames
+            
+        Returns:
+            float: Quality score (0-1)
+        """
+        try:
+            import numpy as np
+            
+            # Sample frames for quality assessment
+            sample_indices = np.linspace(0, total_frames - 1, min(10, total_frames), dtype=int)
+            frame_scores = []
+            
+            for idx in sample_indices:
+                cap.set(cv2.CAP_PROP_POS_FRAMES, idx)
+                ret, frame = cap.read()
+                if ret:
+                    # Convert frame to PIL Image for quality calculation
+                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                    pil_frame = Image.fromarray(frame_rgb)
+                    frame_score = MediaCleaner._calculate_image_quality(pil_frame)
+                    frame_scores.append(frame_score)
+            
+            if not frame_scores:
+                return 0.0
+            
+            # Consistency score (low variance is good)
+            avg_score = np.mean(frame_scores)
+            consistency_score = 1.0 - min(np.std(frame_scores) / avg_score if avg_score > 0 else 0, 0.5)
+            
+            # Duration score
+            fps = cap.get(cv2.CAP_PROP_FPS)
+            duration = total_frames / fps if fps > 0 else 0
+            duration_score = min(duration / 30.0, 1.0)  # Normalize to 30 seconds
+            
+            # Combine scores
+            quality_score = (
+                avg_score * 0.5 +
+                consistency_score * 0.3 +
+                duration_score * 0.2
+            )
+            
+            return max(0.0, min(1.0, quality_score))
+            
+        except Exception:
+            return 0.5  # Default medium quality
+
+    @staticmethod
     def clean_document(doc_path, max_pages=50):
         """
         Clean and validate document files.
@@ -234,11 +530,355 @@ class MediaCleaner:
         except Exception:
             return None
 
+    @staticmethod
+    def clean_document_with_quality(doc_path, max_pages=50, min_quality_score=0.3):
+        """
+        Clean and validate document files with advanced quality scoring.
+        
+        Args:
+            doc_path (str): Path to the document file.
+            max_pages (int): Maximum allowed pages.
+            min_quality_score (float): Minimum quality score (0-1).
+            
+        Returns:
+            str: Path to the validated document if valid, None otherwise.
+        """
+        try:
+            import fitz  # PyMuPDF
+            
+            doc = fitz.open(doc_path)
+            page_count = len(doc)
+            
+            # Basic validation
+            if page_count > max_pages:
+                doc.close()
+                return None
+            
+            # Advanced quality scoring
+            quality_score = MediaCleaner._calculate_document_quality(doc)
+            doc.close()
+            
+            if quality_score < min_quality_score:
+                return None
+                
+            return doc_path
+        except Exception as e:
+            DEBUG(f"Document quality cleaning failed for {doc_path}: {str(e)}")
+            return None
+    
+    @staticmethod
+    def _calculate_document_quality(doc):
+        """
+        Calculate comprehensive document quality score.
+        
+        Args:
+            doc (fitz.Document): PyMuPDF document object
+            
+        Returns:
+            float: Quality score (0-1)
+        """
+        try:
+            page_count = len(doc)
+            
+            if page_count == 0:
+                return 0.0
+            
+            # Page count score (normalize to reasonable range)
+            page_score = min(page_count / 10.0, 1.0)  # 10 pages = perfect score
+            
+            # Text content analysis
+            total_text_length = 0
+            valid_pages = 0
+            
+            for page_num in range(min(page_count, 5)):  # Sample first 5 pages
+                page = doc.load_page(page_num)
+                text = page.get_text()
+                
+                if text and len(text.strip()) > 10:  # At least 10 characters
+                    total_text_length += len(text.strip())
+                    valid_pages += 1
+            
+            # Content density score
+            avg_text_length = total_text_length / max(valid_pages, 1)
+            content_score = min(avg_text_length / 1000.0, 1.0)  # 1000 chars = perfect score
+            
+            # Structure score (check for basic document structure)
+            structure_score = valid_pages / min(page_count, 5)
+            
+            # Combine scores
+            quality_score = (
+                page_score * 0.2 +
+                content_score * 0.6 +
+                structure_score * 0.2
+            )
+            
+            return max(0.0, min(1.0, quality_score))
+            
+        except Exception:
+            return 0.5  # Default medium quality
+
+class DataQualityController:
+    """
+    Advanced data quality controller with intelligent filtering and dynamic thresholds.
+    """
+    
+    def __init__(self, quality_threshold=0.7, diversity_threshold=0.5, min_samples_per_domain=100):
+        """
+        Initialize quality controller with configurable thresholds.
+        
+        Args:
+            quality_threshold (float): Minimum quality score for data acceptance
+            diversity_threshold (float): Minimum diversity score for dataset balance
+            min_samples_per_domain (int): Minimum samples required per domain
+        """
+        self.quality_threshold = quality_threshold
+        self.diversity_threshold = diversity_threshold
+        self.min_samples_per_domain = min_samples_per_domain
+        self.quality_stats = {}
+        self.domain_weights = {}
+        
+    def analyze_dataset_quality(self, dataset_path):
+        """
+        Comprehensive dataset quality analysis with multi-dimensional metrics.
+        
+        Args:
+            dataset_path (str): Path to dataset
+            
+        Returns:
+            dict: Comprehensive quality analysis results
+        """
+        try:
+            if not os.path.exists(dataset_path):
+                return {"error": "Dataset path does not exist"}
+            
+            # Load dataset
+            if os.path.isdir(dataset_path):
+                # Arrow format directory
+                dataset = load_from_disk(dataset_path)
+                df = dataset.to_pandas()
+            elif dataset_path.endswith('.json'):
+                df = pd.read_json(dataset_path)
+            elif dataset_path.endswith('.jsonl'):
+                df = pd.read_json(dataset_path, lines=True)
+            elif dataset_path.endswith('.csv'):
+                df = pd.read_csv(dataset_path)
+            elif dataset_path.endswith('.parquet'):
+                df = pd.read_parquet(dataset_path)
+            else:
+                return {"error": "Unsupported file format. Supported formats: .arrow (directory), .json, .jsonl, .csv, .parquet"}
+            
+            total_samples = len(df)
+            if total_samples == 0:
+                return {"error": "Empty dataset"}
+            
+            # Text field detection
+            text_field = None
+            for field in TEXT_FIELD_KEYS:
+                if field in df.columns:
+                    text_field = field
+                    break
+            
+            if not text_field:
+                # Use first string column
+                string_cols = df.select_dtypes(include=['object']).columns
+                if len(string_cols) > 0:
+                    text_field = string_cols[0]
+                else:
+                    return {"error": "No text field found"}
+            
+            # Quality analysis
+            text_data = df[text_field].astype(str)
+            
+            # Basic statistics
+            text_lengths = text_data.str.len()
+            quality_scores = text_data.apply(DatasetCleaner.calculate_text_quality_score)
+            
+            # Advanced metrics
+            char_diversity = text_data.apply(lambda x: len(set(x.lower())) / len(x) if x else 0)
+            word_counts = text_data.apply(lambda x: len(re.findall(r'\b\w+\b', x.lower())))
+            sentence_counts = text_data.apply(lambda x: len(re.split(r'[.!?]+', x)))
+            
+            # Domain detection (simplified)
+            domain_keywords = {
+                'code': ['function', 'class', 'def', 'import', 'return', '{', '}', ';'],
+                'math': ['equation', 'formula', 'calculate', 'solve', 'math', 'algebra'],
+                'science': ['experiment', 'theory', 'research', 'study', 'analysis'],
+                'medical': ['patient', 'treatment', 'diagnosis', 'symptom', 'medicine'],
+                'finance': ['investment', 'market', 'stock', 'trading', 'financial']
+            }
+            
+            domain_scores = {}
+            for domain, keywords in domain_keywords.items():
+                keyword_matches = text_data.apply(
+                    lambda x: sum(1 for keyword in keywords if keyword.lower() in x.lower()) / len(keywords)
+                )
+                domain_scores[domain] = keyword_matches.mean()
+            
+            # Quality classification
+            high_quality = (quality_scores >= self.quality_threshold).sum()
+            medium_quality = ((quality_scores >= 0.5) & (quality_scores < self.quality_threshold)).sum()
+            low_quality = (quality_scores < 0.5).sum()
+            
+            stats = {
+                'total_samples': total_samples,
+                'text_field': text_field,
+                'avg_text_length': text_lengths.mean(),
+                'median_text_length': text_lengths.median(),
+                'std_text_length': text_lengths.std(),
+                'avg_quality_score': quality_scores.mean(),
+                'median_quality_score': quality_scores.median(),
+                'quality_score_std': quality_scores.std(),
+                'avg_char_diversity': char_diversity.mean(),
+                'avg_word_count': word_counts.mean(),
+                'avg_sentence_count': sentence_counts.mean(),
+                'high_quality_samples': high_quality,
+                'medium_quality_samples': medium_quality,
+                'low_quality_samples': low_quality,
+                'quality_distribution': {
+                    'high': high_quality / total_samples,
+                    'medium': medium_quality / total_samples,
+                    'low': low_quality / total_samples
+                },
+                'domain_scores': domain_scores,
+                'recommended_action': self._get_recommendation(quality_scores.mean(), high_quality / total_samples)
+            }
+            
+            self.quality_stats[dataset_path] = stats
+            return stats
+            
+        except Exception as e:
+            ERROR(f"Quality analysis failed for {dataset_path}: {str(e)}")
+            return {"error": str(e)}
+    
+    def _get_recommendation(self, avg_quality, high_quality_ratio):
+        """
+        Generate recommendations based on quality metrics.
+        
+        Args:
+            avg_quality (float): Average quality score
+            high_quality_ratio (float): Ratio of high quality samples
+            
+        Returns:
+            str: Recommendation message
+        """
+        if avg_quality >= 0.8 and high_quality_ratio >= 0.7:
+            return "Excellent quality - suitable for training"
+        elif avg_quality >= 0.6 and high_quality_ratio >= 0.5:
+            return "Good quality - minor filtering recommended"
+        elif avg_quality >= 0.4 and high_quality_ratio >= 0.3:
+            return "Moderate quality - significant filtering required"
+        else:
+            return "Poor quality - major cleanup or replacement needed"
+    
+    def optimize_data_mixing(self, dataset_paths, target_distribution=None):
+        """
+        Optimize dataset mixing ratios for balanced training data.
+        
+        Args:
+            dataset_paths (list): List of dataset paths
+            target_distribution (dict): Target domain distribution
+            
+        Returns:
+            dict: Optimized mixing ratios and recommendations
+        """
+        if target_distribution is None:
+            target_distribution = {
+                'general': 0.4,
+                'code': 0.2,
+                'math': 0.15,
+                'science': 0.1,
+                'medical': 0.08,
+                'finance': 0.07
+            }
+        
+        # Analyze each dataset
+        dataset_stats = {}
+        for path in dataset_paths:
+            stats = self.analyze_dataset_quality(path)
+            if 'error' not in stats:
+                dataset_stats[path] = stats
+        
+        if not dataset_stats:
+            return {"error": "No valid datasets for analysis"}
+        
+        # Calculate optimal mixing ratios
+        total_samples = sum(stats['total_samples'] for stats in dataset_stats.values())
+        mixing_ratios = {}
+        
+        for path, stats in dataset_stats.items():
+            base_ratio = stats['total_samples'] / total_samples
+            
+            # Quality adjustment
+            quality_factor = stats['quality_distribution']['high']
+            if stats['avg_quality_score'] < self.quality_threshold:
+                quality_factor *= 0.8
+            
+            # Domain alignment
+            domain_alignment = 0.0
+            for domain, score in stats['domain_scores'].items():
+                if domain in target_distribution:
+                    domain_alignment += score * target_distribution[domain]
+            
+            # Final ratio
+            adjusted_ratio = base_ratio * quality_factor * (0.5 + domain_alignment)
+            mixing_ratios[path] = {
+                'original_ratio': base_ratio,
+                'quality_adjusted_ratio': base_ratio * quality_factor,
+                'final_ratio': adjusted_ratio,
+                'sample_count': int(adjusted_ratio * 50000),  # Assume 50k total samples
+                'quality_score': stats['avg_quality_score'],
+                'domain_scores': stats['domain_scores']
+            }
+        
+        # Normalize ratios
+        total_adjusted = sum(ratio['final_ratio'] for ratio in mixing_ratios.values())
+        for path in mixing_ratios:
+            mixing_ratios[path]['normalized_ratio'] = mixing_ratios[path]['final_ratio'] / total_adjusted
+        
+        return {
+            'mixing_ratios': mixing_ratios,
+            'total_samples': 50000,
+            'recommendations': self._generate_mixing_recommendations(mixing_ratios)
+        }
+    
+    def _generate_mixing_recommendations(self, mixing_ratios):
+        """
+        Generate recommendations for dataset mixing.
+        
+        Args:
+            mixing_ratios (dict): Calculated mixing ratios
+            
+        Returns:
+            list: List of recommendation strings
+        """
+        recommendations = []
+        
+        # Sort by final ratio
+        sorted_ratios = sorted(mixing_ratios.items(), key=lambda x: x[1]['final_ratio'], reverse=True)
+        
+        for path, ratio in sorted_ratios[:3]:  # Top 3 datasets
+            if ratio['final_ratio'] > 0.1:
+                recommendations.append(f"Primary dataset: {os.path.basename(path)} ({ratio['normalized_ratio']:.1%})")
+            elif ratio['final_ratio'] > 0.05:
+                recommendations.append(f"Secondary dataset: {os.path.basename(path)} ({ratio['normalized_ratio']:.1%})")
+        
+        # Quality warnings
+        low_quality_datasets = [
+            path for path, ratio in mixing_ratios.items() 
+            if ratio['quality_score'] < self.quality_threshold
+        ]
+        
+        if low_quality_datasets:
+            recommendations.append(f"Warning: {len(low_quality_datasets)} datasets have low quality scores")
+        
+        return recommendations
+
+
 class DatasetCleaner:
     @staticmethod
     def fast_clean(data_dir: str, max_len: int = 256):
         """
-        Perform 30-second emergency data cleaning on JSON files in the specified directory.
+        Perform 30-second emergency data cleaning on dataset files in the specified directory.
 
         Args:
             data_dir (str): Directory containing JSON files to be cleaned.
@@ -260,12 +900,30 @@ class DatasetCleaner:
             return {k: [v[i] for i,m in enumerate(mask) if m] for k,v in batch.items()}
         
         # Quickly clean cached data
-        cache_files = [f for f in os.listdir(data_dir) if f.endswith('.json')]
+        cache_files = [f for f in os.listdir(data_dir) if f.endswith(('.json', '.jsonl', '.csv', '.parquet'))]
         for file in cache_files:
             file_path = os.path.join(data_dir, file)
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
+                # Load data based on file extension
+                if file_path.endswith('.json'):
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                elif file_path.endswith('.jsonl'):
+                    data = []
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                try:
+                                    data.append(json.loads(line))
+                                except json.JSONDecodeError:
+                                    continue
+                elif file_path.endswith('.csv'):
+                    df = pd.read_csv(file_path)
+                    data = df.to_dict('records')
+                elif file_path.endswith('.parquet'):
+                    df = pd.read_parquet(file_path)
+                    data = df.to_dict('records')
                 
                 # Apply emergency filter
                 if isinstance(data, dict) and 'text' in data:
@@ -307,6 +965,69 @@ class DatasetCleaner:
                 return None
         except Exception:
             return None
+
+    @staticmethod
+    def calculate_text_quality_score(text):
+        """
+        Calculate comprehensive text quality score based on multiple metrics.
+        
+        Args:
+            text (str): Text to evaluate
+            
+        Returns:
+            float: Quality score between 0 and 1
+        """
+        if not text or not isinstance(text, str):
+            return 0.0
+        
+        text = text.strip()
+        if not text:
+            return 0.0
+        
+        try:
+            # Length score
+            length_score = min(len(text) / 1000, 1.0)  # Normalize to 1000 chars max
+            
+            # Character diversity score
+            unique_chars = len(set(text.lower()))
+            char_diversity = min(unique_chars / 26, 1.0)  # Normalize to alphabet size
+            
+            # Word diversity score
+            words = re.findall(r'\b\w+\b', text.lower())
+            unique_words = len(set(words))
+            word_diversity = min(unique_words / len(words) if words else 0, 1.0)
+            
+            # Sentence structure score
+            sentences = re.split(r'[.!?]+', text)
+            valid_sentences = [s.strip() for s in sentences if len(s.strip().split()) >= 3]
+            structure_score = min(len(valid_sentences) / len(sentences) if sentences else 0, 1.0)
+            
+            # Punctuation balance score
+            punct_count = len(re.findall(r'[.!?,:;]', text))
+            punct_score = min(punct_count / (len(text) / 100), 1.0)  # Normalize punctuation density
+            
+            # Repetition penalty
+            word_counts = Counter(words)
+            if word_counts:
+                most_common_count = word_counts.most_common(1)[0][1]
+                repetition_penalty = 1.0 - min(most_common_count / len(words), 0.5)
+            else:
+                repetition_penalty = 1.0
+            
+            # Combine scores with weights
+            quality_score = (
+                length_score * 0.2 +
+                char_diversity * 0.15 +
+                word_diversity * 0.25 +
+                structure_score * 0.25 +
+                punct_score * 0.1 +
+                repetition_penalty * 0.05
+            )
+            
+            return max(0.0, min(1.0, quality_score))
+            
+        except Exception:
+            return 0.5  # Default medium quality on error
 
     @staticmethod
     def process_dataset(input_path, output_path, text_field='text', **clean_kwargs):
@@ -363,8 +1084,16 @@ class DatasetCleaner:
             # JSONL format
             df = pd.read_json(input_path, lines=True)
             original_size = len(df)
+        elif input_path.endswith('.csv'):
+            # CSV format
+            df = pd.read_csv(input_path)
+            original_size = len(df)
+        elif input_path.endswith('.parquet'):
+            # Parquet format
+            df = pd.read_parquet(input_path)
+            original_size = len(df)
         else:
-            raise ValueError(f"Unsupported file format: {input_path}")
+            raise ValueError(f"Unsupported file format: {input_path}. Supported formats: .arrow (directory), .json, .jsonl, .csv, .parquet")
         
         # Auto-detect text field if specified field not found
         from . import TEXT_FIELD_KEYS
@@ -607,8 +1336,17 @@ class DatasetCleaner:
         
         # Advanced text cleaning with NLP processing
         import re
-        import spacy
-        from textblob import TextBlob
+        try:
+            import spacy
+            SPACY_AVAILABLE = True
+        except ImportError:
+            SPACY_AVAILABLE = False
+        
+        try:
+            from textblob import TextBlob
+            TEXTBLOB_AVAILABLE = True
+        except ImportError:
+            TEXTBLOB_AVAILABLE = False
         
         def clean_text_content(text):
             """
@@ -628,11 +1366,15 @@ class DatasetCleaner:
             
             try:
                 # Load spaCy model for advanced cleaning
-                try:
-                    nlp = spacy.load("en_core_web_sm")
-                except OSError:
-                    # Fallback to basic regex if spaCy not available
-                    nlp = None
+                nlp = None
+                if SPACY_AVAILABLE:
+                    try:
+                        nlp = spacy.load("en_core_web_sm")
+                    except OSError:
+                        try:
+                            nlp = spacy.load("en_core_web_md")
+                        except OSError:
+                            pass  # Fallback to basic regex
                 
                 # Multi-stage cleaning pipeline
                 
@@ -664,11 +1406,12 @@ class DatasetCleaner:
                 
                 # Stage 4: Quality enhancement
                 # Correct common spelling issues
-                try:
-                    blob = TextBlob(text)
-                    text = str(blob.correct())
-                except:
-                    pass  # Skip if TextBlob fails
+                if TEXTBLOB_AVAILABLE:
+                    try:
+                        blob = TextBlob(text)
+                        text = str(blob.correct())
+                    except:
+                        pass  # Skip if TextBlob fails
                 
                 # Final normalization
                 text = text.strip()
@@ -730,6 +1473,255 @@ class DatasetCleaner:
             return video_path
         except Exception:
             return None
+
+    @staticmethod
+    def enhanced_multimodal_cleaning_work(
+        dataset_path, 
+        output_path, 
+        text_field='text',
+        quality_threshold=0.5,
+        enable_quality_scoring=True,
+        chunk_size=2000,
+        num_workers=None,
+        **kwargs
+    ):
+        """
+        Enhanced multimodal dataset cleaning with advanced quality scoring and comprehensive validation.
+        
+        Args:
+            dataset_path (str): Path to input dataset
+            output_path (str): Path to save cleaned dataset
+            text_field (str): Name of text field
+            quality_threshold (float): Minimum quality score for acceptance
+            enable_quality_scoring (bool): Enable advanced quality scoring
+            chunk_size (int): Processing chunk size
+            num_workers (int): Number of parallel workers
+            **kwargs: Additional cleaning parameters
+            
+        Returns:
+            dict: Cleaning statistics and quality metrics
+        """
+        try:
+            # Initialize quality controller
+            quality_controller = DataQualityController(
+                quality_threshold=quality_threshold,
+                diversity_threshold=0.3
+            )
+            
+            # Analyze dataset quality first
+            quality_analysis = quality_controller.analyze_dataset_quality(dataset_path)
+            
+            if "error" in quality_analysis:
+                ERROR(f"Quality analysis failed: {quality_analysis['error']}")
+                return {"error": quality_analysis["error"]}
+            
+            DEBUG(f"Dataset quality analysis: {quality_analysis}")
+            
+            # Load dataset
+            if os.path.isdir(dataset_path):
+                # Arrow format directory
+                dataset = load_from_disk(dataset_path)
+            elif dataset_path.endswith('.json'):
+                df = pd.read_json(dataset_path)
+                dataset = Dataset.from_pandas(df)
+            elif dataset_path.endswith('.jsonl'):
+                df = pd.read_json(dataset_path, lines=True)
+                dataset = Dataset.from_pandas(df)
+            elif dataset_path.endswith('.csv'):
+                df = pd.read_csv(dataset_path)
+                dataset = Dataset.from_pandas(df)
+            elif dataset_path.endswith('.parquet'):
+                df = pd.read_parquet(dataset_path)
+                dataset = Dataset.from_pandas(df)
+            else:
+                return {"error": "Unsupported file format. Supported formats: .arrow (directory), .json, .jsonl, .csv, .parquet"}
+            
+            total_samples = len(dataset)
+            
+            # Find multimodal fields
+            multimodal_fields = StreamCleaner.find_multimodal_fields(dataset)
+            
+            # Process in chunks with quality scoring
+            cleaned_data = []
+            quality_scores = []
+            media_quality_scores = []
+            
+            # Set up multiprocessing
+            if num_workers is None:
+                num_workers = min(os.cpu_count(), 4)
+            
+            for i in range(0, total_samples, chunk_size):
+                chunk = dataset.select(range(i, min(i + chunk_size, total_samples)))
+                
+                # Clean chunk
+                cleaned_chunk, chunk_quality_scores, chunk_media_scores = DatasetCleaner._process_chunk_with_quality(
+                    chunk, 
+                    text_field, 
+                    multimodal_fields,
+                    enable_quality_scoring,
+                    **kwargs
+                )
+                
+                cleaned_data.extend(cleaned_chunk)
+                quality_scores.extend(chunk_quality_scores)
+                media_quality_scores.extend(chunk_media_scores)
+                
+                # Memory management
+                gc.collect()
+                
+                DEBUG(f"Processed chunk {i//chunk_size + 1}/{(total_samples-1)//chunk_size + 1}")
+            
+            # Filter by quality threshold
+            if enable_quality_scoring:
+                valid_indices = [
+                    i for i, score in enumerate(quality_scores) 
+                    if score >= quality_threshold
+                ]
+                cleaned_data = [cleaned_data[i] for i in valid_indices]
+                quality_scores = [quality_scores[i] for i in valid_indices]
+                media_quality_scores = [media_quality_scores[i] for i in valid_indices]
+            
+            # Create cleaned dataset
+            if cleaned_data:
+                cleaned_df = pd.DataFrame(cleaned_data)
+                cleaned_dataset = Dataset.from_pandas(cleaned_df)
+                cleaned_dataset.save_to_disk(output_path)
+                
+                # Generate comprehensive statistics
+                stats = {
+                    'original_samples': total_samples,
+                    'cleaned_samples': len(cleaned_data),
+                    'retention_rate': len(cleaned_data) / total_samples if total_samples > 0 else 0,
+                    'avg_text_quality': np.mean(quality_scores) if quality_scores else 0,
+                    'avg_media_quality': np.mean(media_quality_scores) if media_quality_scores else 0,
+                    'quality_distribution': {
+                        'high': sum(1 for s in quality_scores if s >= 0.8) / len(quality_scores) if quality_scores else 0,
+                        'medium': sum(1 for s in quality_scores if 0.5 <= s < 0.8) / len(quality_scores) if quality_scores else 0,
+                        'low': sum(1 for s in quality_scores if s < 0.5) / len(quality_scores) if quality_scores else 0,
+                    },
+                    'multimodal_fields_found': list(multimodal_fields.keys()),
+                    'quality_analysis': quality_analysis
+                }
+                
+                RIGHT(f"Enhanced multimodal cleaning completed: {stats['cleaned_samples']}/{stats['original_samples']} samples retained")
+                return stats
+            else:
+                WARNING("No samples passed quality filtering")
+                return {"error": "All samples failed quality filtering"}
+                
+        except Exception as e:
+            ERROR(f"Enhanced multimodal cleaning failed: {str(e)}")
+            return {"error": str(e)}
+    
+    @staticmethod
+    def _process_chunk_with_quality(chunk, text_field, multimodal_fields, enable_quality_scoring, **kwargs):
+        """
+        Process a chunk of data with comprehensive quality scoring.
+        
+        Args:
+            chunk: Dataset chunk
+            text_field (str): Text field name
+            multimodal_fields (dict): Multimodal field information
+            enable_quality_scoring (bool): Enable quality scoring
+            **kwargs: Cleaning parameters
+            
+        Returns:
+            tuple: (cleaned_data, text_quality_scores, media_quality_scores)
+        """
+        cleaned_data = []
+        text_quality_scores = []
+        media_quality_scores = []
+        
+        for sample in chunk:
+            try:
+                cleaned_sample = dict(sample)
+                
+                # Clean text field
+                if text_field in cleaned_sample:
+                    original_text = cleaned_sample[text_field]
+                    
+                    # Extract text from complex formats
+                    if isinstance(original_text, (list, dict)):
+                        extracted_text = DatasetCleaner._extract_text_from_complex_format(original_text)
+                        cleaned_sample[text_field] = extracted_text
+                    
+                    # Calculate text quality
+                    if enable_quality_scoring:
+                        text_quality = DatasetCleaner.calculate_text_quality_score(cleaned_sample[text_field])
+                        cleaned_sample['text_quality_score'] = text_quality
+                        text_quality_scores.append(text_quality)
+                    else:
+                        text_quality_scores.append(1.0)  # Default score
+                
+                # Clean multimodal fields
+                media_score_sum = 0
+                media_count = 0
+                
+                for field_name, field_type in multimodal_fields.items():
+                    if field_name in cleaned_sample and cleaned_sample[field_name]:
+                        media_path = cleaned_sample[field_name]
+                        
+                        # Clean media with quality scoring
+                        cleaned_path = StreamCleaner.clean_media(media_path, field_type)
+                        
+                        if cleaned_path:
+                            cleaned_sample[field_name] = cleaned_path
+                            
+                            # Get quality score if available
+                            if enable_quality_scoring and hasattr(StreamCleaner, 'get_media_quality_score'):
+                                media_quality = StreamCleaner.get_media_quality_score(cleaned_path, field_type)
+                                cleaned_sample[f'{field_name}_quality_score'] = media_quality
+                                media_score_sum += media_quality
+                                media_count += 1
+                        else:
+                            # Media failed cleaning, remove from sample
+                            del cleaned_sample[field_name]
+                
+                # Calculate average media quality
+                avg_media_quality = media_score_sum / media_count if media_count > 0 else 1.0
+                media_quality_scores.append(avg_media_quality)
+                
+                cleaned_data.append(cleaned_sample)
+                
+            except Exception as e:
+                DEBUG(f"Sample processing failed: {str(e)}")
+                continue
+        
+        return cleaned_data, text_quality_scores, media_quality_scores
+    
+    @staticmethod
+    def _extract_text_from_complex_format(data):
+        """
+        Extract text from complex formats (conversations, nested structures).
+        
+        Args:
+            data: Complex data structure
+            
+        Returns:
+            str: Extracted text
+        """
+        if isinstance(data, str):
+            return data.strip()
+        elif isinstance(data, list):
+            texts = []
+            for item in data:
+                if isinstance(item, dict):
+                    # Extract from conversation formats
+                    for key in ['content', 'text', 'value', 'human', 'assistant', 'user', 'bot']:
+                        if key in item and item[key]:
+                            texts.append(str(item[key]).strip())
+                            break
+                elif isinstance(item, str):
+                    texts.append(item.strip())
+            return ' '.join(texts)
+        elif isinstance(data, dict):
+            texts = []
+            for key in ['content', 'text', 'value', 'human', 'assistant', 'user', 'bot']:
+                if key in data and data[key]:
+                    texts.append(str(data[key]).strip())
+            return ' '.join(texts)
+        else:
+            return str(data).strip()
 
     @staticmethod
     def find_field(item: dict, candidates: List[str]) -> Optional[str]:
@@ -801,7 +1793,7 @@ class DatasetCleaner:
 
     @staticmethod
     def merge_and_clean(
-        input_dir="data_cache",
+        input_dir=None,
         output_dir=None,
         min_len=1,
         max_len=1024,
@@ -812,7 +1804,7 @@ class DatasetCleaner:
         Perform one-click merge and clean on datasets in the input directory, supporting multiprocessing streaming processing.
 
         Args:
-            input_dir (str, optional): Directory containing datasets to be cleaned. Defaults to "data_cache".
+            input_dir (str, optional): Directory containing datasets to be cleaned. Defaults to cache manager data directory.
             output_dir (str, optional): Directory to save the merged and cleaned dataset. Defaults to None.
             min_len (int, optional): Minimum length of valid text. Defaults to 1.
             max_len (int, optional): Maximum length of valid text. Defaults to 1024.
@@ -822,6 +1814,11 @@ class DatasetCleaner:
         Returns:
             Optional[Dataset]: The merged and cleaned dataset if successful, None otherwise.
         """
+        
+        # Use cache manager to get data directory if input_dir is not provided
+        if input_dir is None:
+            cache_manager = get_cache_manager()
+            input_dir = cache_manager.get_or_create_cache_dir("data_cache")
         
         if not os.path.exists(input_dir):
             raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
@@ -965,7 +1962,7 @@ class DatasetCleaner:
 
     @staticmethod
     def fast_clean(
-        input_dir="data_cache",
+        input_dir=None,
         output_dir=None,
         min_len=1,
         max_len=1024,
@@ -976,7 +1973,7 @@ class DatasetCleaner:
         Fast cleaning mode - complete all cleaning steps in one click.
         
         Args:
-            input_dir: Input dataset directory.
+            input_dir: Input dataset directory. Defaults to cache manager data directory.
             output_dir: Output directory for cleaned datasets (None to avoid creation).
             min_len: Minimum text length.
             max_len: Maximum text length.
@@ -984,6 +1981,10 @@ class DatasetCleaner:
             enable_multiprocessing: Whether to enable multiprocessing.
         """
         try:
+            # Use cache manager to get data directory if input_dir is not provided
+            if input_dir is None:
+                cache_manager = get_cache_manager()
+                input_dir = cache_manager.get_or_create_cache_dir("data_cache")
             if enable_multiprocessing:
                 return DatasetCleaner.merge_and_clean(
                     input_dir=input_dir,

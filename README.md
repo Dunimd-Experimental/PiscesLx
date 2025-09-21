@@ -1,6 +1,6 @@
 # ⚠️ Compliance Notice
 
-**If you use this model in China, including but not limited to training, fine tuning, commercial testing, etc., if you provide any services to the public, please complete the procedures in accordance with relevant laws and regulations first.**
+**Please be advised that PiscesL1 does not provide model filing services in accordance with the provisions of China’s "Interim Measures for the Management of Generative Artificial Intelligence Services" and other relevant regulations; if services are provided to the public in any form within the territory of China, please complete the required filings independently.**
 
 ---
 
@@ -12,12 +12,12 @@ A next-generation lightweight multimodal Mixture-of-Experts (MoE) model with **A
 
 ## ❄️ Arctic Architecture Innovations
 
-### 🧠 Quantum Reasoning Engine (PiscesReasoner)
+### 🧠 Multi-Path Reasoning Engine (PiscesReasoner)
 - **Hierarchical Reasoning Chains (HRC)**: Multi-layer abstraction processing
-- **Quantum Superposition Thinking**: 8 parallel hypothesis streams with quantum collapse
+- **Parallel Hypothesis Thinking**: 8 concurrent reasoning streams with dynamic selection
 - **Dynamic Fact Verification**: Real-time truth checking and consistency scoring  
 - **Meta-cognitive Reflection**: Self-awareness of reasoning process with uncertainty quantification
-- **Quantum Special Tokens**: `<start_hypothesis>`, `<start_evidence>`, `<start_conclusion>`, `<quantum_merge>`
+- **Reasoning Special Tokens**: `<|start_hypothesis|>`, `<|start_evidence|>`, `<|start_conclusion|>`, `<|hypothesis_split|>`, `<|hypothesis_merge|>`
 
 ### 🔧 MoE Expert System
 - **8 Expert Top-2 Routing**: Intelligent load balancing with StableMoEGate
@@ -32,9 +32,9 @@ A next-generation lightweight multimodal Mixture-of-Experts (MoE) model with **A
 - **DocEncoder**: Document structure understanding with LayoutLMv3 integration
 - **AgentEncoder**: Comprehensive agent behavior modeling (observations, actions, reflections)
 
-### ⚛️ Quantum Entangled Fusion
-- **DynamicModalFusion**: Advanced cross-modal attention with quantum entanglement
-- **Tensor Network Compression**: 6-pair correlation networks for modal interactions
+### ⚛️ Advanced Multi-Modal Fusion
+- **DynamicModalFusion**: Native multimodal fusion with unified token-level processing
+- **Native Cross-Modal Attention**: Token-level cross-modal fusion without tensor networks
 - **Hardware Adaptive Configuration**: Intelligent hardware detection and optimization
 - **Quality-aware Fusion Gates**: Adaptive fusion based on content quality
 
@@ -50,24 +50,25 @@ A next-generation lightweight multimodal Mixture-of-Experts (MoE) model with **A
 - **Persistent Memory**: Context management and experience accumulation
 - **MCP Communication**: Multi-Agent Communication Protocol for distributed reasoning
 
-### 🎯 K-FAC Optimization
-- **Second-order Optimization**: Diagonal Fisher matrix approximation
-- **Memory-efficient Implementation**: 99%+ memory reduction vs full K-FAC
-- **Curvature-aware Training**: Natural gradient computation for faster convergence
-- **Adaptive Gradient Clipping**: Dynamic threshold adjustment based on training history
+### 🎯 Advanced Optimization (K-FAC Enhanced)
+- **Second-order Optimization**: Memory-efficient diagonal Fisher matrix approximation with K-FAC
+- **Adaptive Gradient Clipping**: Dynamic threshold adjustment based on gradient history
+- **Natural Gradient Descent**: Curvature-aware training for faster convergence
+- **Memory Optimization**: 99%+ memory reduction vs full second-order methods
+- **Automatic Stability**: Handles 280K+ gradient norms seamlessly
 
 ---
 
 ## 🚀 Features
 
-- **Arctic Architecture**: Revolutionary multimodal architecture with quantum-inspired reasoning
-- **Quantum Reasoning Engine**: Beyond traditional Chain-of-Thought with hierarchical abstraction
+- **Arctic Architecture**: Revolutionary multimodal architecture with advanced reasoning capabilities
+- **Multi-Path Reasoning Engine**: Beyond traditional Chain-of-Thought with hierarchical abstraction
 - **5-Modal Understanding**: Unified processing of text, image, audio, video, document, and agent inputs
 - **MoE Expert System**: 8 experts with intelligent Top-2 routing and load prediction
 - **Ultra-Long Context**: Up to 10M+ tokens with YaRN RoPE and H2O attention
 - **Advanced Quantization**: 2-bit, 4-bit, 8-bit quantization options with gradient stability
 - **Memory Optimization**: Runs 0.5B model on 14.58GB GPU with QLoRA + gradient checkpointing
-- **K-FAC Optimization**: Second-order optimization with diagonal Fisher matrix approximation
+- **Advanced Optimization**: K-FAC-enhanced second-order optimization with automatic stability
 - **Native Agent Support**: Built-in MCP protocol and tool integration
 - **One-command Workflow**: Complete management via `python manage.py`
 
@@ -112,8 +113,10 @@ python manage.py help
 | monitor    | System monitor (GPU/CPU/memory)                                      |
 | download   | Download datasets for training                                       |
 | dataset    | Arrow/JSON dataset conversion                                        |
+| cache      | Cache maintenance (stats / clear-dataset / clear-downloads / clear-all) |
 | quantize   | Quantize model to 4/8-bit for efficiency                             |
 | benchmark  | Run performance benchmarking                                         |
+| mcp        | MCP server operations (status / warmup / refresh-cache)              |
 | help       | Show help message                                                    |
 
 #### Example
@@ -123,7 +126,7 @@ python manage.py version          # Show current version
 python manage.py changelog --all    # Show all versions
 python manage.py changelog --version 1.0.0150  # Show specific version
 python manage.py train
-python manage.py infer --ckpt ckpt/model.pt --prompt "Hello, Pisces!"
+python manage.py infer --ckpt ckpt/latest.pt --prompt "Hello, Pisces!"
 ```
 
 ---
@@ -132,8 +135,8 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "Hello, Pisces!"
 
 ### Arctic Architecture Components
 - **Core Transformer**: RMSNorm, YaRN RoPE, Grouped-Query Attention
-- **Quantum Reasoning**: 4-layer hierarchical abstraction with meta-cognitive reflection
-- **Multimodal Fusion**: Quantum entangled cross-modal attention with tensor networks
+- **Multi-Path Reasoning**: 4-layer hierarchical abstraction with meta-cognitive reflection
+- **Multimodal Fusion**: Advanced cross-modal attention with correlation networks
 - **MoE System**: Dynamic expert routing with LSTM load prediction
 - **Memory Optimization**: Gradient checkpointing, mixed precision, K-FAC optimization
 
@@ -153,7 +156,7 @@ python manage.py infer --ckpt ckpt/model.pt --prompt "Hello, Pisces!"
 - **Multimodal Encoders**: Optimized and balanced
   - VisionEncoder: ~120M, VideoEncoder: ~150M, AudioEncoder: ~80M
   - DocEncoder: ~80M, AgentEncoder: ~70M
-- **Quantum Reasoning Engine**: Integrated within core parameters
+- **Multi-path Reasoning Engine**: Integrated within core parameters
 - **Modal Fusion System**: Lightweight design for efficiency
 
 ### Quantization Options
@@ -243,7 +246,7 @@ Pisces L1 Arctic architecture supports **training 1.5B parameter models on 14.58
 - **Multi-bit Quantization**: 2-bit (experimental), 4-bit (default), 8-bit (stable)
 - **LoRA Adaptation**: Only 0.024% parameters trainable (360K out of 1.5B)
 - **Gradient Checkpointing**: Reduces activation memory by 50%+
-- **K-FAC Optimization**: Diagonal Fisher matrix approximation
+- **Advanced Optimization**: K-FAC-enhanced second-order methods
 - **Adaptive Gradient Clipping**: Handles gradient explosion automatically
 
 ### Training Examples
@@ -293,7 +296,7 @@ python manage.py download
 python manage.py train --model_size 0.5B
 
 # 6. Run inference
-python manage.py infer --prompt "Explain quantum computing in simple terms" --ckpt ckpt/latest.pt
+python manage.py infer --prompt "Explain machine learning in simple terms" --ckpt ckpt/latest.pt
 ```
 
 ## 🤖 MCP Native Agent Support [Beta]
@@ -304,6 +307,18 @@ Pisces L1 now includes **native MCP (Model Context Protocol)** support, enabling
 - **Async Communication**: All agent methods support async/await
 - **Multimodal MCP**: Full support for text, image, audio via MCP protocol
 - **Zero Dependencies**: No additional libraries required
+
+### MCP Command Examples
+```bash
+# Show MCP config status
+python manage.py mcp --mcp_action status
+
+# Start background discovery (non-blocking)
+python manage.py mcp --mcp_action warmup
+
+# Refresh MCP tools cache (blocking)
+python manage.py mcp --mcp_action refresh-cache
+```
 
 ## 🎯 Model Evaluation & Benchmarking
 Pisces L1 includes comprehensive benchmarking support for 26 standardized evaluation benchmarks covering Chinese, English, mathematics, coding, and reasoning tasks.
@@ -370,12 +385,12 @@ python manage.py benchmark --info mmlu
 
 #### Run performance benchmark
 ```bash
-python manage.py benchmark --perf --config configs/7B.json --seq_len 4096
+python manage.py benchmark --perf --config configs/1.5B.json --seq_len 4096
 ```
 
 #### Run specific benchmark
 ```bash
-python manage.py benchmark --benchmark mmlu --config configs/7B.json
+python manage.py benchmark --benchmark mmlu --config configs/1.5B.json
 ```
 
 ## ❓ FAQ
@@ -392,7 +407,7 @@ python manage.py benchmark --benchmark mmlu --config configs/7B.json
 - **Q: How to run on CPU only?**  
   A: Most features require GPU, but you can try with `--device cpu` (performance will be slow).
 - **Q: How to run model evaluation?**  
-  A: Use `python tools/benchmark.py` with available benchmarks. See the Model Evaluation section above.
+  A: Use `python manage.py benchmark` with available benchmarks. See the Model Evaluation section above.
 
 ---
 

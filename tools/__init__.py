@@ -17,3 +17,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+import os
+import sys
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
+from .mcp import read_config
+from .watermark import watermark_manager, watermark_text
+from utils.cache import get_cache_manager, get_config_manager
+
+__all__ = [
+    'read_config',
+    'watermark_manager', 'watermark_text',
+    'get_cache_manager', 'get_config_manager',
+]

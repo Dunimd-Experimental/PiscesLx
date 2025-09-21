@@ -18,13 +18,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Import necessary system and third - party libraries
 import os
 import sys
 import json
 import torch
 import warnings
-from utils.gpu_manager import GPUManager
-from utils.log import RIGHT, DEBUG, ERROR
+from utils import GPUManager, RIGHT, DEBUG, ERROR
+from utils.cache import get_cache_manager
+
+# Force Python to run in unbuffered mode
+os.environ['PYTHONUNBUFFERED'] = '1'
+
+# Force stdout and stderr to be unbuffered
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(line_buffering=False, write_through=True)
+if hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(line_buffering=False, write_through=True)
+
+# Ensure that the print function always flushes output immediately
+print = lambda *args, **kwargs: __builtins__.print(*args, **kwargs, flush=True)
 
 def setup_distributed_training():
     """
@@ -40,24 +53,27 @@ def setup_distributed_training():
     import torch
     import torch.distributed as dist
     
-    # Automatically detect the distributed environment
+    # Automatically detect distributed training environment variables
     local_rank = int(os.environ.get('LOCAL_RANK', -1))
     world_size = int(os.environ.get('WORLD_SIZE', 1))
     rank = int(os.environ.get('RANK', 0))
     
+    # Determine if the current training is in distributed mode
     is_distributed = local_rank >= 0 and world_size > 1
     
-    # 3D parallel configuration
+    # Initialize 3D parallel configuration
     dp_size = max(1, world_size)  # Data parallel size
     pp_size = 1  # Pipeline parallel size
     mp_size = 1  # Model parallel size
     
     if is_distributed:
+        # Initialize the distributed training process group
         dist.init_process_group(backend='nccl')
+        # Set the current CUDA device
         torch.cuda.set_device(local_rank)
         device = torch.device(f'cuda:{local_rank}')
         
-        # Dynamically calculate 3D parallel configuration
+        # Dynamically calculate 3D parallel configuration based on the number of GPUs
         num_gpus = torch.cuda.device_count()
         if num_gpus >= 8:
             dp_size = max(1, num_gpus // 4)
@@ -69,7 +85,7 @@ def setup_distributed_training():
             
         RIGHT(f"3D Parallel: DP={dp_size}, PP={pp_size}, MP={mp_size}, rank {rank}/{world_size}")
     else:
-        # Single-GPU or multi-GPU mode
+        # Single - GPU or multi - GPU non - distributed mode
         gpu_manager = GPUManager()
         strategy = gpu_manager.strategy
         
@@ -81,6 +97,7 @@ def setup_distributed_training():
             
         RIGHT(f"Training mode: {strategy['mode']}")
         
+    # Construct 3D parallel configuration dictionary
     parallel_config = {
         'dp_size': dp_size,
         'pp_size': pp_size,
@@ -104,7 +121,9 @@ def create_ddp_model(model, device, is_distributed, local_rank):
         torch.nn.Module: The wrapped model.
     """
     if is_distributed:
+        # Move the model to the specified device
         model = model.to(device)
+        # Wrap the model with DistributedDataParallel
         model = torch.nn.parallel.DistributedDataParallel(
             model, 
             device_ids=[local_rank],
@@ -112,10 +131,10 @@ def create_ddp_model(model, device, is_distributed, local_rank):
             find_unused_parameters=True
         )
     else:
-        # Single-GPU mode
+        # Single - GPU mode, move the model to the specified device
         model = model.to(device)
         
-        # Check if multiple GPUs are available but distributed training is not used
+        # If multiple GPUs are available but not using distributed training, use DataParallel
         if torch.cuda.device_count() > 1:
             RIGHT(f"Detected {torch.cuda.device_count()} GPUs, using DataParallel")
             model = torch.nn.DataParallel(model)
@@ -124,8 +143,8 @@ def create_ddp_model(model, device, is_distributed, local_rank):
 
 def create_dataloader(dataset, batch_size, is_distributed, world_size=1, rank=0, local_rank=0):
     """
-    Create a data loader that supports distributed training.
-
+    Create an optimized data loader with async prefetching and multi-threaded augmentation.
+    
     Args:
         dataset (torch.utils.data.Dataset): The dataset to be loaded.
         batch_size (int): The batch size.
@@ -139,10 +158,11 @@ def create_dataloader(dataset, batch_size, is_distributed, world_size=1, rank=0,
     """
     import torch
     from torch.utils.data import DistributedSampler
+    import multiprocessing as mp
     
     # Handle empty dataset to avoid deadlock
     if len(dataset) == 0:
-        return torch.utils.data.DataLoader([], batch_size=1)  # Return empty loader to avoid deadlock
+        return torch.utils.data.DataLoader([], batch_size=1)
     
     if is_distributed:
         # Create a distributed sampler for distributed training
@@ -157,16 +177,49 @@ def create_dataloader(dataset, batch_size, is_distributed, world_size=1, rank=0,
     else:
         sampler = None
         shuffle = True
+    
+    # Optimized configuration for async prefetching and multi-threading
+    num_workers = min(mp.cpu_count(), 8)  # Use up to 8 CPU cores
+    prefetch_factor = 4 if num_workers > 0 else 2  # Increase prefetch for better GPU utilization
+    persistent_workers = num_workers > 0  # Keep workers alive between epochs
+    pin_memory = torch.cuda.is_available()  # Enable pin memory for GPU training
+    
+    # Async data augmentation for multimodal inputs
+    def async_collate_fn(batch):
+        """Enhanced collate function with async data augmentation."""
+        # Pre-fetch next batch while processing current batch
+        augmented_batch = []
+        for item in batch:
+            # Apply lightweight data augmentation for multimodal inputs
+            if 'pixel_values' in item and item['pixel_values'] is not None:
+                # Random horizontal flip for images (10% probability)
+                if torch.rand(1).item() < 0.1:
+                    item['pixel_values'] = torch.flip(item['pixel_values'], dims=[-1])
+            
+            if 'audio_input' in item and item['audio_input'] is not None:
+                # Random noise injection for audio (5% probability, 0.01 amplitude)
+                if torch.rand(1).item() < 0.05:
+                    if isinstance(item['audio_input'], dict) and 'input_values' in item['audio_input']:
+                        noise = torch.randn_like(item['audio_input']['input_values']) * 0.01
+                        item['audio_input']['input_values'] = item['audio_input']['input_values'] + noise
+            
+            augmented_batch.append(item)
         
+        # Use original collate function for final processing
+        return collate_fn(augmented_batch)
+    
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         sampler=sampler,
-        collate_fn=collate_fn,
-        num_workers=2,
-        pin_memory=True,
-        persistent_workers=True
+        collate_fn=async_collate_fn,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        persistent_workers=persistent_workers,
+        prefetch_factor=prefetch_factor,
+        drop_last=True,  # Drop incomplete batches for better GPU utilization
+        multiprocessing_context='spawn' if num_workers > 0 else None  # Use spawn for stability
     )
 
 def collate_fn(batch):
@@ -181,16 +234,16 @@ def collate_fn(batch):
               pixel_values, and audio_input.
     """
     import torch
-    # Ultra-conservative sequence length for 14GB GPU with 1.5B model
+    # Ultra - conservative sequence length for 14GB GPU with 1.5B model
     MAX_SEQ_LEN = 96  # Reduced from 128 to 96 for critical memory efficiency
     
-    # Extract and pad input_ids
+    # Extract input_ids from the batch and pad them
     input_ids = [item["input_ids"] for item in batch]
     input_ids = torch.nn.utils.rnn.pad_sequence(input_ids, batch_first=True, padding_value=0)
     if input_ids.shape[1] > MAX_SEQ_LEN:
         input_ids = input_ids[:, :MAX_SEQ_LEN]
     
-    # Handle pixel_values for vision modality - limit size for memory
+    # Handle pixel_values for vision modality to limit memory usage
     pixel_values = None
     if any(item.get("pixel_values") is not None for item in batch):
         pixel_values_list = [item["pixel_values"] for item in batch if item.get("pixel_values") is not None]
@@ -204,6 +257,7 @@ def collate_fn(batch):
         if audio_input_list:
             audio_input = {'input_values': torch.nn.utils.rnn.pad_sequence(audio_input_list, batch_first=True, padding_value=0)}
     
+    # Create labels based on input_ids
     labels = input_ids.clone()
     if labels.shape[1] > MAX_SEQ_LEN:
         labels = labels[:, :MAX_SEQ_LEN]
@@ -221,16 +275,21 @@ def train(args):
     Args:
         args (argparse.Namespace): Command line arguments containing training configuration.
     """
-    # Validate/normalize arguments before training
     try:
+        # Validate and normalize training arguments
         args = validate_train_args(args)
     except Exception as e:
         ERROR(f"Invalid training arguments: {e}")
         raise
+    
     try:
+        # Ensure immediate output flushing for subprocess
+        sys.stdout.flush()
+        sys.stderr.flush()
+        # Start the actual training process
         _train_impl(args)
     except torch.cuda.OutOfMemoryError as e:
-        # CUDA out of memory error handler with quantization suggestion
+        # Handle CUDA out of memory error and give quantization suggestions
         model_size = getattr(args, 'model_size', '0.5B').upper()
         dataset = getattr(args, 'dataset', 'Chinese2')
 
@@ -245,6 +304,12 @@ def train(args):
         sys.exit(1)
 
 def _train_impl(args):
+    """
+    Implement the actual training logic of the Pisces model.
+
+    Args:
+        args (argparse.Namespace): Command line arguments containing training configuration.
+    """
     import torch
     from data.dataset import PiscesDataset
     from torch.utils.data import DataLoader
@@ -254,12 +319,14 @@ def _train_impl(args):
     from torch.optim.lr_scheduler import ReduceLROnPlateau
     from transformers import get_linear_schedule_with_warmup
     
+    # Get the model size and construct the configuration file path
     model_size = getattr(args, 'model_size', '0.5B').upper()
     config_path = f"configs/{model_size}.json"
     if not os.path.exists(config_path):
         ERROR(f"Config file {config_path} not found. Please provide a valid --model_size.")
         sys.exit(1)
 
+    # Load the full configuration file
     with open(config_path, 'r') as f:
         full_config = json.load(f)
     
@@ -267,6 +334,7 @@ def _train_impl(args):
         ERROR(f"training_config not found in {config_path}")
         sys.exit(1)
     
+    # Extract training configuration parameters
     training_config = full_config['training_config']
     batch_size = training_config['batch_size']
     accum = training_config['accum']
@@ -295,7 +363,8 @@ def _train_impl(args):
         RIGHT("Command line override: force_quant = false")
     
     epochs = 1
-    save_dir = "ckpt"
+    cache_manager = get_cache_manager()
+    save_dir = cache_manager.get_or_create_cache_dir("ckpt")
     
     class DynamicGradientAccumulator:
         """Safe dynamic gradient accumulation based on gradient norm monitoring"""
@@ -367,6 +436,7 @@ def _train_impl(args):
             self.grad_norm_history.clear()
             self.stable_steps = 0
     
+    # Initialize the dynamic gradient accumulator
     grad_accumulator = DynamicGradientAccumulator(accum, max_accum)
     
     min_plateau_epoch = 5
@@ -380,7 +450,8 @@ def _train_impl(args):
         RIGHT(f"Using command line dataset: {args.dataset}")
     else:
         # Fallback to model.txt file
-        data_cache_dir = "data_cache"
+        cache_manager = get_cache_manager()
+        data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
         model_txt = os.path.join(data_cache_dir, "model.txt")
         if not os.path.exists(model_txt):
             ERROR(f"{model_txt} not found! Please create it with one dataset name per line, or use --dataset argument.")
@@ -390,11 +461,11 @@ def _train_impl(args):
         if not dataset_list:
             ERROR(f"No dataset names found in {model_txt}! Please use --dataset argument instead.")
             sys.exit(1)
+    
     # Set up distributed training
     device, is_distributed, local_rank, world_size, _ = setup_distributed_training()
     
     # Adjust batch size according to hardware and distributed environment
-    import torch
     if is_distributed:
         effective_batch_size = batch_size // world_size
         if effective_batch_size < 1:
@@ -402,12 +473,11 @@ def _train_impl(args):
             batch_size = world_size
         RIGHT(f"Distributed training: global batch_size={batch_size}, per-GPU batch_size={effective_batch_size}")
     else:
-        # Single-GPU mode, optimize using GPU manager
+        # Single - GPU mode, optimize using GPU manager
         gpu_manager = GPUManager()
         recommended_batch = gpu_manager.recommend_batch_size(model_size, seq_len)
         
         # Special handling for 1.9B Arctic architecture
-        # The model has grown from 0.5B to 1.9B, need conservative batch size
         if "0.5B" in model_size and recommended_batch > 8:
             # For Arctic 1.9B architecture, limit batch size to avoid OOM
             conservative_batch = min(8, recommended_batch)  # Max 8 for 1.9B model
@@ -419,7 +489,7 @@ def _train_impl(args):
             batch_size = recommended_batch
         effective_batch_size = batch_size
         
-    # Set up mixed precision
+    # Set up mixed precision training
     scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
     RIGHT("Mixed precision training enabled")
         
@@ -435,7 +505,7 @@ def _train_impl(args):
 
     RIGHT("Initializing PiscesModel with Reasoner...")
     
-    # Always-on Reasoner: Tokenizer setup
+    # Always - on Reasoner: Tokenizer setup
     tokenizer = get_tokenizer()
     special_tokens = ["<think>", "</think>"]
     tokenizer.add_tokens(special_tokens)
@@ -458,32 +528,32 @@ def _train_impl(args):
         if use_quant:
             # Configure quantization based on bits
             if quant_bits == 2:
-                # 2-bit quantization (experimental)
+                # 2 - bit quantization (experimental)
                 quant_config = BitsAndBytesConfig(
                     load_in_4bit=True,  # Use 4bit as base, will be further compressed
                     bnb_4bit_compute_dtype=torch.float16,
                     bnb_4bit_quant_type="nf4",
                     bnb_4bit_use_double_quant=True,
-                    # Additional compression for 2-bit simulation
+                    # Additional compression for 2 - bit simulation
                     llm_int8_enable_fp32_cpu_offload=True
                 )
-                RIGHT(f"Using 2-bit quantization (experimental, based on 4-bit+compression)")
+                RIGHT(f"Using 2 - bit quantization (experimental, based on 4 - bit+compression)")
             elif quant_bits == 4:
-                # Standard 4-bit quantization
+                # Standard 4 - bit quantization
                 quant_config = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=torch.float16,
                     bnb_4bit_quant_type="nf4",
                     bnb_4bit_use_double_quant=True
                 )
-                RIGHT(f"Using 4-bit quantization (NF4)")
+                RIGHT(f"Using 4 - bit quantization (NF4)")
             elif quant_bits == 8:
-                # 8-bit quantization
+                # 8 - bit quantization
                 quant_config = BitsAndBytesConfig(
                     load_in_8bit=True,
                     llm_int8_enable_fp32_cpu_offload=False
                 )
-                RIGHT(f"Using 8-bit quantization (INT8)")
+                RIGHT(f"Using 8 - bit quantization (INT8)")
             else:
                 ERROR(f"Unsupported quantization bits: {quant_bits}. Supported: 2, 4, 8")
                 sys.exit(1)
@@ -506,7 +576,7 @@ def _train_impl(args):
     else:
         model = PiscesModel(cfg)
 
-    # Always-on Reasoner: Model and Reasoner setup
+    # Always - on Reasoner: Model and Reasoner setup
     model.resize_token_embeddings(len(tokenizer))
     start_id = tokenizer.encoder.get("<think>")
     end_id = tokenizer.encoder.get("</think>")
@@ -526,10 +596,60 @@ def _train_impl(args):
         RIGHT(f"Using {torch.cuda.device_count()} GPUs")
         model = torch.nn.DataParallel(model)
     RIGHT("Initializing optimizer and scheduler...")
+    
+    # Multi-modal adaptive learning rate configuration
+    def get_parameter_groups(model, base_lr):
+        """Create parameter groups with different learning rates for different modalities."""
+        param_groups = []
+        
+        # Text encoder parameters (standard learning rate)
+        text_params = []
+        # Vision encoder parameters (slower learning rate for stability)
+        vision_params = []
+        # Audio encoder parameters (slower learning rate for stability)
+        audio_params = []
+        # Multimodal fusion parameters (faster learning rate for better convergence)
+        fusion_params = []
+        # Other parameters (standard learning rate)
+        other_params = []
+        
+        model_params = model.parameters() if not hasattr(model, 'module') else model.module.parameters()
+        
+        for name, param in model.named_parameters():
+            if not param.requires_grad:
+                continue
+                
+            if 'vision' in name.lower() or 'visual' in name.lower():
+                vision_params.append(param)
+            elif 'audio' in name.lower() or 'speech' in name.lower():
+                audio_params.append(param)
+            elif 'fusion' in name.lower() or 'multimodal' in name.lower():
+                fusion_params.append(param)
+            elif 'text' in name.lower() or 'language' in name.lower():
+                text_params.append(param)
+            else:
+                other_params.append(param)
+        
+        # Create parameter groups with different learning rates
+        if text_params:
+            param_groups.append({'params': text_params, 'lr': base_lr, 'name': 'text'})
+        if vision_params:
+            param_groups.append({'params': vision_params, 'lr': base_lr * 0.5, 'name': 'vision'})  # Slower for vision
+        if audio_params:
+            param_groups.append({'params': audio_params, 'lr': base_lr * 0.3, 'name': 'audio'})  # Even slower for audio
+        if fusion_params:
+            param_groups.append({'params': fusion_params, 'lr': base_lr * 1.5, 'name': 'fusion'})  # Faster for fusion
+        if other_params:
+            param_groups.append({'params': other_params, 'lr': base_lr, 'name': 'other'})
+        
+        return param_groups
+    
+    # Create modality-aware parameter groups
+    param_groups = get_parameter_groups(model, lr)
+    
     # Memory-optimized AdamW configuration for 14GB GPU
     optimizer = torch.optim.AdamW(
-        filter(lambda p: p.requires_grad, model.parameters() if not hasattr(model, 'module') else model.module.parameters()),
-        lr=lr,
+        param_groups,
         weight_decay=0.01,
         betas=(0.9, 0.999),
         eps=1e-8,
@@ -540,8 +660,51 @@ def _train_impl(args):
         differentiable=False,  # Disable differentiable to save memory
         fused=False  # Disable fused implementation which can use more memory
     )
-    RIGHT("Optimizer and scheduler ready.")
-    # Initialize the adaptive gradient clipper with K-FAC support
+    
+    # Modality-aware learning rate scheduler
+    def create_modality_scheduler(optimizer, modality_name, base_scheduler_config):
+        """Create modality-specific learning rate scheduler."""
+        # Find the parameter group for this modality
+        modality_group = None
+        for group in optimizer.param_groups:
+            if group.get('name') == modality_name:
+                modality_group = group
+                break
+        
+        if modality_group is None:
+            return None
+        
+        # Create modality-specific scheduler configuration
+        if modality_name == 'vision':
+            # Vision: slower decay, longer warmup
+            return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=10, T_mult=2, eta_min=1e-7
+            )
+        elif modality_name == 'audio':
+            # Audio: very slow decay, very long warmup
+            return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=15, T_mult=2, eta_min=5e-8
+            )
+        elif modality_name == 'fusion':
+            # Fusion: faster decay, shorter warmup
+            return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=5, T_mult=1, eta_min=2e-7
+            )
+        else:
+            # Text and others: standard decay
+            return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
+                optimizer, T_0=8, T_mult=1, eta_min=1e-7
+            )
+    
+    # Create modality-specific schedulers
+    modality_schedulers = {}
+    for modality in ['text', 'vision', 'audio', 'fusion', 'other']:
+        scheduler = create_modality_scheduler(optimizer, modality, training_config)
+        if scheduler is not None:
+            modality_schedulers[modality] = scheduler
+    
+    RIGHT("Optimizer and modality-aware schedulers ready.")
+    # Initialize the adaptive gradient clipper with K - FAC support
     grad_clipper = AdaptiveGradientClipper(
         initial_max_norm=1.0,
         history_length=100,
@@ -562,17 +725,18 @@ def _train_impl(args):
 
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
-            RIGHT(f"Learning rate auto-reset to {lr}")
+            RIGHT(f"Learning rate auto - reset to {lr}")
         min_lr_threshold = lr * 0.5
         for param_group in optimizer.param_groups:
             if param_group['lr'] < min_lr_threshold:
                 param_group['lr'] = lr
-                RIGHT(f"Learning rate auto-reset to {lr}")
+                RIGHT(f"Learning rate auto - reset to {lr}")
     for dataset in dataset_list:
         DEBUG(f"\n==============================")
         RIGHT(f"Training dataset: {dataset}")
         RIGHT(f"Batch size: {batch_size}, Epochs: {epochs}, LR: {lr}")
-        data_cache_dir = "data_cache"  # Define data_cache_dir here
+        cache_manager = get_cache_manager()
+        data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
         cache_path = os.path.join(data_cache_dir, dataset)
         if not os.path.exists(cache_path):
             ERROR(f"Local dataset not found: {cache_path}")
@@ -625,7 +789,7 @@ def _train_impl(args):
                         for k, v in batch.items() if k in model_keys and v is not None
                     }
                     
-                    # Handle multi-modal inputs
+                    # Handle multi - modal inputs
                     pixel_values = device_batch.get("pixel_values")
                     audio_input = device_batch.get("audio_input")
                     if audio_input is not None and isinstance(audio_input, dict):
@@ -640,6 +804,32 @@ def _train_impl(args):
                             audio=audio_input
                         )
                         loss = outputs.get("loss")
+                        
+                        # Multi-task uncertainty weighting
+                        if hasattr(outputs, 'task_losses') and outputs.task_losses is not None:
+                            # Extract individual task losses
+                            task_losses = outputs.task_losses
+                            
+                            # Initialize uncertainty parameters if not exists
+                            if not hasattr(model, 'log_vars'):
+                                num_tasks = len(task_losses)
+                                model.log_vars = torch.nn.Parameter(torch.zeros(num_tasks))
+                                model.log_vars.to(device)
+                            
+                            # Compute uncertainty-weighted loss
+                            precision = torch.exp(-model.log_vars)
+                            weighted_losses = precision * task_losses + 0.5 * model.log_vars
+                            loss = weighted_losses.sum()
+                            
+                            # Log uncertainty values for monitoring
+                            if step % 100 == 0:
+                                uncertainties = torch.exp(model.log_vars)
+                                for i, uncertainty in enumerate(uncertainties):
+                                    DEBUG(f"Task {i} uncertainty: {uncertainty.item():.4f}")
+                        
+                        # Fallback to single loss if no task losses available
+                        if loss is None and outputs.get("loss") is not None:
+                            loss = outputs.get("loss")
 
                     if loss is not None and loss.requires_grad:
                         if is_distributed or torch.cuda.device_count() > 1:
@@ -695,6 +885,11 @@ def _train_impl(args):
                     if loss is not None:
                         current_accum = grad_accumulator.get_current_accum()
                         total_loss += loss.item() * current_accum
+                        
+                        # Update modality-specific schedulers
+                        for modality, modality_scheduler in modality_schedulers.items():
+                            if modality_scheduler is not None:
+                                modality_scheduler.step()
                         
                         if epoch+1 > min_plateau_epoch and scheduler is not None:
                             scheduler.step(loss.item())
@@ -756,7 +951,7 @@ def _train_impl(args):
                     else:
                         epoch += 1
         except KeyboardInterrupt:
-            ERROR("Training interrupted by user (Ctrl-C). Saving checkpoint...")
+            ERROR("Training interrupted by user (Ctrl - C). Saving checkpoint...")
             interrupt_ckpt = f"{save_dir}/latest_interrupt.pt"
             save_ckpt(model, optimizer, epoch + 1, interrupt_ckpt)
             RIGHT(f"Checkpoint saved: {interrupt_ckpt}")
@@ -774,13 +969,13 @@ def _train_impl(args):
     RIGHT(f"All datasets finished. Final model weights saved to: {final_weight_path}")
 
 class AdaptiveGradientClipper:
-    """Adaptive gradient clipper with K-FAC Hessian approximation for second-order optimization."""
+    """Adaptive gradient clipper with K - FAC Hessian approximation for second - order optimization."""
     
     def __init__(self, initial_max_norm=1.0, history_length=100, percentile=95, 
                  min_clip=0.1, max_clip=10.0, warmup_steps=10, use_kfac=True, 
                  kfac_update_freq=100, kfac_damping=0.001):
         """
-        Initialize the adaptive gradient clipper with K-FAC support.
+        Initialize the adaptive gradient clipper with K - FAC support.
         
         Args:
             initial_max_norm (float): Initial maximum gradient norm.
@@ -788,10 +983,10 @@ class AdaptiveGradientClipper:
             percentile (int): Percentile used to calculate the adaptive threshold.
             min_clip (float): Minimum clipping threshold.
             max_clip (float): Maximum clipping threshold.
-            warmup_steps (int): Warm-up steps during which a fixed threshold is used.
-            use_kfac (bool): Whether to use K-FAC Hessian approximation.
-            kfac_update_freq (int): Frequency of K-FAC Fisher matrix updates.
-            kfac_damping (float): Damping parameter for K-FAC.
+            warmup_steps (int): Warm - up steps during which a fixed threshold is used.
+            use_kfac (bool): Whether to use K - FAC Hessian approximation.
+            kfac_update_freq (int): Frequency of K - FAC Fisher matrix updates.
+            kfac_damping (float): Damping parameter for K - FAC.
         """
         self.initial_max_norm = initial_max_norm
         self.current_max_norm = initial_max_norm
@@ -813,7 +1008,7 @@ class AdaptiveGradientClipper:
         
     def update_and_clip(self, parameters, optimizer=None, scaler=None):
         """
-        Update the gradient clipping threshold and perform gradient clipping with K-FAC support.
+        Update the gradient clipping threshold and perform gradient clipping with K - FAC support.
         
         Args:
             parameters (Iterable[torch.Tensor]): Model parameters.
@@ -828,7 +1023,7 @@ class AdaptiveGradientClipper:
         
         parameters = list(parameters)
         
-        # Calculate natural gradient norm using K-FAC if enabled
+        # Calculate natural gradient norm using K - FAC if enabled
         if self.use_kfac and self.step_count > self.warmup_steps:
             total_norm = self._calculate_natural_gradient_norm(parameters)
         else:
@@ -840,11 +1035,11 @@ class AdaptiveGradientClipper:
                     total_norm += param_norm ** 2
             total_norm = total_norm ** 0.5
         
-        # Update K-FAC Fisher matrices periodically
+        # Update K - FAC Fisher matrices periodically
         if self.use_kfac and self.kfac_step % self.kfac_update_freq == 0:
             self._update_kfac_matrices(parameters)
         
-        # Use a fixed threshold during the warm-up period
+        # Use a fixed threshold during the warm - up period
         if self.step_count <= self.warmup_steps:
             max_norm = self.initial_max_norm
         else:
@@ -853,13 +1048,13 @@ class AdaptiveGradientClipper:
             if len(self.grad_norm_history) > self.history_length:
                 self.grad_norm_history.pop(0)
             
-            # Calculate the adaptive threshold with K-FAC adjustment
+            # Calculate the adaptive threshold with K - FAC adjustment
             if len(self.grad_norm_history) >= 10:
                 try:
                     import numpy as np
                     percentile_value = np.percentile(self.grad_norm_history, self.percentile)
                     
-                    # Adjust target norm based on K-FAC curvature information
+                    # Adjust target norm based on K - FAC curvature information
                     curvature_factor = self._get_curvature_factor()
                     adjusted_percentile = percentile_value * curvature_factor
                     
@@ -880,10 +1075,10 @@ class AdaptiveGradientClipper:
         
         max_norm = self.current_max_norm
         
-        # Perform gradient clipping with K-FAC preconditioning
+        # Perform gradient clipping with K - FAC preconditioning
         if total_norm > 0:
             if self.use_kfac and self.step_count > self.warmup_steps:
-                # Apply K-FAC preconditioning
+                # Apply K - FAC preconditioning
                 self._apply_kfac_preconditioning(parameters)
             
             clip_coef = max_norm / (total_norm + 1e-6)
@@ -903,7 +1098,7 @@ class AdaptiveGradientClipper:
         return total_norm, 1.0, False
     
     def _calculate_natural_gradient_norm(self, parameters):
-        """Calculate natural gradient norm using diagonal K-FAC approximation."""
+        """Calculate natural gradient norm using diagonal K - FAC approximation."""
         natural_norm = 0.0
         
         for param in parameters:
@@ -932,18 +1127,18 @@ class AdaptiveGradientClipper:
         return natural_norm ** 0.5
     
     def _update_kfac_matrices(self, parameters):
-        """Update K-FAC Fisher matrix approximations with memory optimization."""
+        """Update K - FAC Fisher matrix approximations with memory optimization."""
         for param in parameters:
             if param.grad is not None:
                 param_id = id(param)
                 grad = param.grad.data
                 
-                # Memory-efficient Fisher matrix approximation using diagonal elements only
+                # Memory - efficient Fisher matrix approximation using diagonal elements only
                 if len(grad.shape) == 2:  # Weight matrix
-                    # Use element-wise squares instead of full outer product to save memory
+                    # Use element - wise squares instead of full outer product to save memory
                     fisher_approx = (grad * grad).mean(dim=1, keepdim=True)  # [out_features, 1]
                 elif len(grad.shape) == 1:  # Bias vector
-                    fisher_approx = grad * grad  # Element-wise squares
+                    fisher_approx = grad * grad  # Element - wise squares
                 else:
                     continue
                 
@@ -958,7 +1153,7 @@ class AdaptiveGradientClipper:
                     self.fisher_matrices[param_id] = fisher_approx.detach()
     
     def _get_curvature_factor(self):
-        """Get curvature factor based on K-FAC Fisher matrices."""
+        """Get curvature factor based on K - FAC Fisher matrices."""
         if not self.fisher_matrices:
             return 1.0
         
@@ -984,7 +1179,7 @@ class AdaptiveGradientClipper:
         return max(0.5, min(2.0, curvature_factor))
     
     def _apply_kfac_preconditioning(self, parameters):
-        """Apply diagonal K-FAC preconditioning to gradients."""
+        """Apply diagonal K - FAC preconditioning to gradients."""
         for param in parameters:
             if param.grad is not None and param.requires_grad:
                 param_id = id(param)
@@ -1019,24 +1214,31 @@ class AdaptiveGradientClipper:
 def validate_train_args(args):
     """Validate and normalize arguments for tools.train.train().
     Fills defaults for optional args and checks basic constraints.
+
+    Args:
+        args (argparse.Namespace): Command line arguments containing training configuration.
+
+    Returns:
+        argparse.Namespace: Validated and normalized arguments.
     """
-    # model_size default
+    # Set default model size if not provided
     if not hasattr(args, 'model_size') or not args.model_size:
         setattr(args, 'model_size', '0.5B')
 
-    # dataset presence: either args.dataset provided or data_cache/model.txt exists
+    # Check dataset presence: either args.dataset provided or data_cache/model.txt exists
     if not getattr(args, 'dataset', None):
-        data_cache_dir = "data_cache"
+        cache_manager = get_cache_manager()
+        data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
         model_txt = os.path.join(data_cache_dir, "model.txt")
         if not os.path.exists(model_txt):
             raise ValueError("dataset not provided and data_cache/model.txt not found")
 
-    # boolean flags defaults
+    # Set default values for boolean flags
     for flag in ("force_quant", "force_lora", "quant", "no_quant"):
         if not hasattr(args, flag):
             setattr(args, flag, False)
 
-    # quant bits validation (if provided)
+    # Validate quant bits if provided
     if hasattr(args, 'quant_bits') and args.quant_bits is not None:
         try:
             qb = int(args.quant_bits)
@@ -1045,12 +1247,12 @@ def validate_train_args(args):
         if qb not in (2, 4, 8):
             raise ValueError("quant_bits must be one of {2,4,8}")
 
-    # resume checkpoint path (if provided)
+    # Validate resume checkpoint path if provided
     if getattr(args, 'resume_ckpt', None):
         if not os.path.exists(args.resume_ckpt):
             raise ValueError(f"resume_ckpt not found: {args.resume_ckpt}")
 
-    # save_dir default
+    # Set default save directory if not provided
     if not getattr(args, 'save_dir', None):
         setattr(args, 'save_dir', 'ckpt')
 

@@ -24,12 +24,12 @@ import json
 import time
 import asyncio
 import logging
+import inspect
 import importlib
 import threading
-import inspect
 from pathlib import Path
-from dataclasses import dataclass, asdict
 from datetime import datetime, timedelta
+from dataclasses import dataclass, asdict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Any, Optional, Callable, Set, Union, TypeVar, Generic
 
@@ -103,6 +103,10 @@ class PiscesL1MCPPlaza:
         self._watcher_thread = None
         self._stop_watcher = threading.Event()
         
+        # 文档处理器集成
+        self.document_processor = None
+        self._init_document_processor()
+        
         # FastMCP兼容层
         self._fastmcp_instance = None
         
@@ -165,6 +169,16 @@ class PiscesL1MCPPlaza:
             )
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
+    
+    def _init_document_processor(self):
+        """Initialize document processor for PDF/DOCX/PPTX handling."""
+        try:
+            from MCP.document_processor import DocumentProcessor
+            self.document_processor = DocumentProcessor()
+            self.logger.info("📄 Document processor initialized")
+        except ImportError as e:
+            self.logger.warning(f"Document processor not available: {e}")
+            self.document_processor = None
     
     def _is_tool_compatible(self, module_name: str, module) -> bool:
         """Check if a tool is compatible with the system."""
@@ -474,11 +488,110 @@ class PiscesL1MCPPlaza:
                     ))
                 }
         
+        # 文档处理工具
+        if self.document_processor:
+            tools_info.update({
+                "extract_document_content": {
+                    "type": "Document Processor",
+                    "description": "Extract content from PDF, DOCX, PPTX files",
+                    "parameters": {
+                        "file_path": {"type": "string", "description": "Path to document file"},
+                        "include_full_content": {"type": "boolean", "description": "Include full content or summary"}
+                    },
+                    "metadata": asdict(ToolMetadata(
+                        name="extract_document_content", 
+                        description="Advanced document content extraction", 
+                        category="Document Processing", 
+                        version="1.0.0", 
+                        author="PiscesL1", 
+                        last_updated=datetime.now(), 
+                        dependencies=["PyMuPDF", "python-docx", "python-pptx"]
+                    ))
+                },
+                "list_supported_formats": {
+                    "type": "Document Processor",
+                    "description": "List all supported document formats",
+                    "parameters": {},
+                    "metadata": asdict(ToolMetadata(
+                        name="list_supported_formats", 
+                        description="Document format support information", 
+                        category="Document Processing", 
+                        version="1.0.0", 
+                        author="PiscesL1", 
+                        last_updated=datetime.now(), 
+                        dependencies=[]
+                    ))
+                },
+                "batch_process_documents": {
+                    "type": "Document Processor", 
+                    "description": "Process multiple documents in batch",
+                    "parameters": {
+                        "directory_path": {"type": "string", "description": "Directory containing documents"},
+                        "recursive": {"type": "boolean", "description": "Search subdirectories"}
+                    },
+                    "metadata": asdict(ToolMetadata(
+                        name="batch_process_documents", 
+                        description="Batch document processing", 
+                        category="Document Processing", 
+                        version="1.0.0", 
+                        author="PiscesL1", 
+                        last_updated=datetime.now(), 
+                        dependencies=["PyMuPDF", "python-docx", "python-pptx"]
+                    ))
+                }
+            })
+        
         return tools_info
     
     def execute_tool(self, tool_name: str, parameters: Dict[str, Any], session_id: str = "default") -> Dict[str, Any]:
         self._discover_and_register_tools()
         
+        # 文档处理工具
+        if self.document_processor:
+            doc_tools = {
+                "extract_document_content": self.document_processor.extract_document_content,
+                "list_supported_formats": self.document_processor.list_supported_formats,
+                "batch_process_documents": self.document_processor.batch_process_documents
+            }
+            
+            if tool_name in doc_tools:
+                try:
+                    start_time = time.time()
+                    
+                    if tool_name == "extract_document_content":
+                        result = self.document_processor.extract_document_content(
+                            parameters.get("file_path", ""),
+                            parameters.get("include_full_content", True)
+                        )
+                    elif tool_name == "list_supported_formats":
+                        result = self.document_processor.list_supported_formats()
+                    elif tool_name == "batch_process_documents":
+                        result = self.document_processor.batch_process_documents(
+                            parameters.get("directory_path", ""),
+                            parameters.get("recursive", False)
+                        )
+                    else:
+                        result = doc_tools[tool_name](**parameters)
+                    
+                    # 性能统计
+                    execution_time = time.time() - start_time
+                    if tool_name in self.tool_metadata:
+                        meta = self.tool_metadata[tool_name]
+                        meta.usage_count += 1
+                        meta.last_used = datetime.now()
+                        if execution_time > 0:
+                            meta.performance_score = max(0.1, min(1.0, 1.0 / (execution_time * 10)))
+                    
+                    return result
+                    
+                except Exception as e:
+                    self.logger.error(f"Document tool execution failed {tool_name}: {e}")
+                    if tool_name in self.tool_metadata:
+                        self.tool_metadata[tool_name].error_rate = min(1.0, 
+                            self.tool_metadata[tool_name].error_rate + 0.1)
+                    return {"error": str(e)}
+        
+        # Pisces原生工具
         if tool_name in self.tools:
             tool = self.tools[tool_name]
             try:
@@ -550,14 +663,18 @@ class PiscesL1MCPPlaza:
         self._discover_and_register_tools()
         
         total_tools = len(self.tools) + len(self.core_server.mcp_server.tools)
+        doc_tools_count = 3 if self.document_processor else 0
         
         return {
             "status": "running",
-            "total_tools": total_tools,
+            "total_tools": total_tools + doc_tools_count,
             "piscesl1_tools": len(self.tools),
             "fastmcp_tools": len(self.core_server.mcp_server.tools),
+            "document_processor_tools": doc_tools_count,
+            "document_processor_available": self.document_processor is not None,
             "enhancement_level": "enterprise",
             "blacklisted_tools": list(self.blacklisted_tools),
+            "supported_document_formats": list(self.document_processor.supported_formats.keys()) if self.document_processor else [],
             "tool_stats": [
                 {
                     "name": stat.name,

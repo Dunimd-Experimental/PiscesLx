@@ -19,12 +19,14 @@
 # limitations under the License.
 
 import os
-import asyncio
 import time
+import asyncio
 import contextlib
-from utils.gpu_manager import GPUManager
-from utils.log import RIGHT, DEBUG, ERROR
-from tools.watermark import watermark_manager, watermark_text
+from utils import GPUManager, RIGHT, DEBUG, ERROR
+from tools import watermark_manager, watermark_text
+
+sys.stdout.reconfigure(line_buffering=True)
+sys.stderr.reconfigure(line_buffering=True)
 
 def setup_inference_device(device_pref):
     """
@@ -38,17 +40,20 @@ def setup_inference_device(device_pref):
     """
     import torch
 
+    # If device preference is set to "auto", automatically select the appropriate device
     if device_pref == "auto":
-        # Prefer a fast non-blocking decision path: if CUDA isn't available, go CPU directly
+        # Prioritize a fast, non-blocking decision path: if CUDA is unavailable, switch to CPU directly
         if not torch.cuda.is_available():
             device = torch.device("cpu")
             RIGHT("CUDA not available, falling back to CPU inference mode")
             RIGHT("Inference mode: cpu")
         else:
-            # Try GPUManager with a safety net to avoid crashes/hangs
+            # Try to use GPUManager with a safety mechanism to prevent crashes or hangs
             try:
                 gpu_manager = GPUManager()
+                # Print GPU summary information
                 gpu_manager.print_summary()
+                # Get the inference strategy from GPUManager
                 strategy = gpu_manager.get_inference_strategy()
 
                 if strategy['mode'] == 'cpu':
@@ -58,12 +63,12 @@ def setup_inference_device(device_pref):
                     device = torch.device(f"cuda:{strategy['gpu_ids'][0]}")
                     torch.cuda.set_device(strategy['gpu_ids'][0])
                 else:
-                    # Multi-GPU inference, use the first GPU or DataParallel
+                    # For multi-GPU inference, use the first GPU or enable DataParallel
                     device = torch.device("cuda")
 
                 RIGHT(f"Inference mode: {strategy['mode']}")
             except Exception as e:
-                # Any issue with GPUManager -> safe fallback to single CUDA device or CPU
+                # If GPUManager encounters an issue, safely fall back to a single CUDA device or CPU
                 if torch.cuda.is_available():
                     device = torch.device("cuda")
                     RIGHT(f"GPUManager unavailable, using default CUDA device: {e}")
@@ -71,6 +76,7 @@ def setup_inference_device(device_pref):
                     device = torch.device("cpu")
                     RIGHT(f"GPUManager unavailable and CUDA not available, using CPU: {e}")
     else:
+        # If device preference is specified, use the specified device
         device = torch.device(device_pref)
 
     RIGHT(f"Using device: {device}")
@@ -100,6 +106,7 @@ class VLLMEngine:
             return
             
         self.model_path = model_path
+        # Initialize the LLM model
         self.llm = self.LLM(
             model=model_path,
             dtype=dtype,
@@ -124,12 +131,14 @@ class VLLMEngine:
         if not self.vllm_available:
             return None
             
+        # Configure sampling parameters
         sampling_params = self.SamplingParams(
             temperature=temperature,
             max_tokens=max_tokens,
             top_p=top_p,
             stop=stop
         )
+        # Generate text using the LLM model
         outputs = self.llm.generate([prompt], sampling_params)
         generated_text = outputs[0].outputs[0].text
         
@@ -166,7 +175,7 @@ def infer(args):
     from torchvision.transforms import functional as TF
     import torch.nn.functional as F
     
-    # Validate and normalize args first
+    # Validate and normalize the input arguments first
     try:
         args = validate_infer_args(args)
     except Exception as e:
@@ -175,15 +184,18 @@ def infer(args):
 
     RIGHT("Starting Pisces L1 Inference with MCP Integration...")
     
+    # Set up the inference device
     device = setup_inference_device("auto")
     
     # Get the model size from arguments, default to "0.5B"
     model_size = getattr(args, "model_size", "0.5B").upper()
+    # Load the model configuration
     cfg = PiscesConfig.from_json(f"configs/{model_size}.json")
     # Enable automatic 4-bit/LoRA/mixed precision inference
     use_quantization = cfg.force_quant if hasattr(cfg, 'force_quant') else False
     
     if use_quantization:
+        # Configure 4-bit quantization parameters
         quant_config = BitsAndBytesConfig(
             load_in_4bit=True,
             bnb_4bit_compute_dtype=torch.bfloat16,
@@ -202,6 +214,7 @@ def infer(args):
     lora_used = False
     if args.ckpt:
         RIGHT(f"Loading model: {args.ckpt}")
+        # Load the model checkpoint
         checkpoint = torch.load(args.ckpt, map_location=device)
         state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
 
@@ -214,10 +227,12 @@ def infer(args):
             else:
                 model.resize_token_embeddings(ckpt_vocab_size)
 
+        # Check if the checkpoint contains LoRA/QLoRA parameters
         lora_keys = [k for k in state_dict.keys() if k.startswith('base_model.model.') or '.lora_A.' in k or '.lora_B.' in k]
         if lora_keys:
             from peft import get_peft_model, LoraConfig, TaskType
             RIGHT("Detected LoRA/QLoRA checkpoint, wrapping PiscesModel with LoRA config...")
+            # Configure LoRA parameters
             lora_config = LoraConfig(
                 r=8, lora_alpha=32, target_modules=["q_proj", "v_proj", "o_proj"],
                 lora_dropout=0.05, bias="none", task_type=TaskType.CAUSAL_LM
@@ -259,6 +274,7 @@ def infer(args):
     if use_vllm:
         try:
             RIGHT("Initializing VLLM engine...")
+            # Initialize the VLLM engine
             vllm_engine = VLLMEngine(
                 model_path=args.ckpt,
                 dtype=getattr(args, 'vllm_dtype', 'auto'),
@@ -287,17 +303,18 @@ def infer(args):
         
         if generated_text:
             # Skip MCP processing to prevent hanging
-                    RIGHT("\n" + "="*50)
-                    RIGHT("Generated Response:")
-                    RIGHT("="*50)
-                    RIGHT(generated_text)
-                    return
+            RIGHT("\n" + "="*50)
+            RIGHT("Generated Response:")
+            RIGHT("="*50)
+            RIGHT(generated_text)
+            return
     
     # Native Pisces inference path
     RIGHT("Loading Pisces BPETokenizer...")
     tokenizer = get_tokenizer()
     RIGHT("Pisces BPETokenizer loaded successfully")
     RIGHT(f"Processing prompt: {args.prompt}")
+    # Encode the input prompt
     input_ids = tokenizer.encode(args.prompt, return_tensors="pt").to(device)
     pixel_values = None
     if args.image and os.path.exists(args.image):
@@ -325,6 +342,7 @@ def infer(args):
     draft_model = None
     if getattr(args, 'speculative', False) and getattr(args, 'draft_model', None):
         try:
+            # Load the draft model configuration
             draft_cfg = PiscesConfig.from_json(f"configs/{args.draft_model.upper()}.json")
             draft_model = PiscesModel(draft_cfg, quantization_config=quant_config)
             if args.ckpt:
@@ -528,7 +546,7 @@ def validate_infer_args(args):
     if not hasattr(args, 'prompt') or args.prompt is None or str(args.prompt).strip() == "":
         raise ValueError("Missing required argument: prompt")
 
-    # Defaults
+    # Set default values for arguments
     if not hasattr(args, 'model_size') or not args.model_size:
         setattr(args, 'model_size', '0.5B')
     if not hasattr(args, 'max_length') or not isinstance(args.max_length, int):
@@ -552,7 +570,7 @@ def validate_infer_args(args):
     if not hasattr(args, 'spec_gamma'):
         setattr(args, 'spec_gamma', 4)
 
-    # Ranges
+    # Validate argument value ranges
     try:
         temp = float(args.temperature)
         if not (0.0 <= temp <= 2.0):
@@ -570,7 +588,7 @@ def validate_infer_args(args):
     if not isinstance(args.max_length, int) or args.max_length <= 0:
         raise ValueError("max_length must be a positive integer")
 
-    # Paths
+    # Validate file paths
     if hasattr(args, 'image') and args.image:
         if not os.path.exists(args.image):
             raise ValueError(f"image path does not exist: {args.image}")

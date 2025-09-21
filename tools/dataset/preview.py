@@ -19,23 +19,25 @@
 # limitations under the License.
 
 import streamlit as st
-from .loader import parse_nested_strings
+from loader import parse_nested_strings
 
 def get_all_fields(base_fields, new_fields, batch_fields):
     """
     Combine and deduplicate fields from three field lists.
 
     Args:
-        base_fields (list): The base list of fields.
-        new_fields (list): The list of new fields.
-        batch_fields (list): The list of batch fields.
+        base_fields (list): The base list of the base fields.
+        new_fields (list): The list of the new fields.
+        batch_fields (list): The list of the batch fields.
 
     Returns:
         list: A list containing all unique fields from the three input lists.
     """
-    all_fields = []  # Store all unique fields
-    seen = set()  # Store fields that have been seen to avoid duplicates
+    all_fields = []
+    seen = set()
+    # Iterate through each field list
     for field_list in [base_fields, new_fields, batch_fields]:
+        # Iterate through each field in the current list
         for field in field_list:
             if field and field not in seen:
                 all_fields.append(field)
@@ -51,16 +53,18 @@ def process_preview_data(data, field_order, rules, rename_map, defaults=None):
         field_order (list): A list of fields in the desired order.
         rules (list): A list of fields to be filtered out.
         rename_map (dict): A dictionary mapping old field names to new ones.
+        defaults (dict, optional): A dictionary containing default values for missing fields. Defaults to None.
 
     Returns:
         list: A list of processed records.
     """
-    processed_data = []  # Store processed records
+    processed_data = []
     defaults = defaults or {}
+    # Iterate through each record in the data
     for idx, rec in enumerate(data):
         if isinstance(rec, dict):
-            rec = parse_nested_strings(rec)  # Parse nested strings in the record
-            fil = {}  # Store the filtered and renamed record
+            rec = parse_nested_strings(rec)
+            fil = {}
             # Add fields in the specified order
             for ordered_field in field_order:
                 if ordered_field in rec and ordered_field not in rules:

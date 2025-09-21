@@ -24,6 +24,7 @@ import time
 import uuid
 import torch
 import random
+import base64
 import secrets
 import hashlib
 from datetime import datetime
@@ -40,28 +41,27 @@ class PiscesWatermark:
         # Initialize model ID and version
         self.model_id = model_id
         self.version = version
-        # Generate watermark key
+        # Generate a unique watermark key
         self.watermark_key = self._generate_watermark_key()
-        
-        # Load watermark configuration from JSON
+        # Load watermark configuration from JSON file
         self.config = self._load_watermark_config()
-        
-        # Initialize parameters from config
+        # Initialize zero-width character mapping from configuration
         self.zero_width_chars = self._get_zero_width_mapping()
+        # Create reverse mapping from zero-width characters to bits
         self.char_to_bits = {v: k for k, v in self.zero_width_chars.items()}
     
     def _load_watermark_config(self) -> Dict[str, Any]:
         """
         Load watermark configuration from JSON file.
+        If the file is not found or JSON decoding fails, return a fallback configuration.
 
         Returns:
-            Dict[str, Any]: Loaded watermark configuration.
+            Dict[str, Any]: Loaded watermark configuration or fallback configuration.
         """
         try:
             with open('configs/watermark.json', 'r', encoding='utf-8') as f:
                 return json.load(f)
         except (FileNotFoundError, json.JSONDecodeError):
-            # Fallback configuration
             return {
                 "watermark_2025": {
                     "compliance_version": "2025.09.01",
@@ -97,19 +97,21 @@ class PiscesWatermark:
     def _get_zero_width_mapping(self) -> Dict[str, str]:
         """
         Get zero-width character mapping from configuration.
+        Use the first 4 characters for 2-bit encoding.
 
         Returns:
             Dict[str, str]: Character mapping for watermark encoding.
         """
         chars = self.config["watermark_2025"]["text"]["zero_width"]["characters"]
         mapping = {}
-        for i, char in enumerate(chars[:4]):  # Use first 4 characters for 2-bit encoding
+        for i, char in enumerate(chars[:4]):
             mapping[str(i)] = char
         return mapping
 
     def _generate_watermark_key(self) -> str:
         """
-        Generate a watermark key based on the model and current time.
+        Generate a watermark key based on the model ID and current timestamp, 
+        combined with a short UUID for uniqueness.
 
         Returns:
             str: Generated watermark key.
@@ -121,6 +123,7 @@ class PiscesWatermark:
     def _create_watermark_payload(self, metadata: Dict[str, Any]) -> Dict[str, Any]:
         """
         Create a watermark payload compliant with national standards.
+        The payload includes model information, generation metadata, and compliance details.
 
         Args:
             metadata (Dict[str, Any]): Generation metadata.
@@ -148,6 +151,8 @@ class PiscesWatermark:
     def _encode_watermark_bits(self, payload: Dict[str, Any]) -> str:
         """
         Encode watermark data into a binary string.
+        Convert the payload to compressed JSON, add a checksum, 
+        encode to Base64, and then convert to binary.
 
         Args:
             payload (Dict[str, Any]): Watermark payload.
@@ -157,24 +162,21 @@ class PiscesWatermark:
         """
         # Convert payload to compressed JSON
         json_str = json.dumps(payload, separators=(',', ':'), sort_keys=True)
-        
-        # Calculate checksum
+        # Calculate MD5 checksum of the JSON string
         checksum = hashlib.md5(json_str.encode()).hexdigest()[:8]
-        
-        # Combine data and checksum
+        # Combine JSON string and checksum
         combined = f"{json_str}|{checksum}"
-        
-        # Convert to Base64 encoding
+        # Encode the combined string to Base64
         encoded = base64.b64encode(combined.encode()).decode()
-        
-        # Convert to binary representation
+        # Convert Base64 string to binary representation
         binary_str = ''.join(format(ord(c), '08b') for c in encoded)
-        
         return binary_str
 
     def _encode_watermark_bits_2025(self, payload: Dict[str, Any]) -> str:
         """
-        Enhanced watermark encoding.
+        Enhanced watermark encoding method.
+        Add version identifier and encoding time, use multiple checksums, 
+        add error correction code, and redundant parity bits.
 
         Args:
             payload (Dict[str, Any]): Watermark payload.
@@ -182,26 +184,21 @@ class PiscesWatermark:
         Returns:
             str: Binary string with enhanced encoding and redundancy.
         """
-        # Add version identifier
+        # Add version identifier to the payload
         payload["encoding_version"] = "2025.09.01"
+        # Add encoding time to the payload
         payload["encoding_time"] = int(time.time() * 1000)
-        
-        # Use more secure encoding
+        # Convert payload to compressed JSON with ensure_ascii=False
         json_str = json.dumps(payload, separators=(',', ':'), sort_keys=True, ensure_ascii=False)
-        
-        # Multiple checksums
+        # Calculate MD5 and SHA-256 checksums
         md5_hash = hashlib.md5(json_str.encode()).hexdigest()
         sha256_hash = hashlib.sha256(json_str.encode()).hexdigest()
-        
-        # Combine data and multiple checks
+        # Combine JSON string and multiple checksums
         combined = f"{json_str}|{md5_hash}|{sha256_hash[:16]}"
-        
-        # Use more efficient encoding
+        # Encode the combined string to Base64
         encoded = base64.b64encode(combined.encode('utf-8')).decode('ascii')
-        
-        # Add error correction code
+        # Convert Base64 string to binary representation
         binary_str = ''.join(format(ord(c), '08b') for c in encoded)
-        
         # Add redundant parity bits
         redundant_binary = ""
         for i in range(0, len(binary_str), 8):
@@ -211,12 +208,13 @@ class PiscesWatermark:
                 redundant_binary += byte + parity
             else:
                 redundant_binary += byte
-        
         return redundant_binary
     
     def embed_text_watermark(self, content: str, metadata: Dict[str, Any]) -> str:
         """
         Embed a text watermark using zero-width characters with configuration parameters.
+        Generate a payload, convert it to binary, and insert zero-width characters 
+        at pseudo-random positions in the content.
 
         Args:
             content (str): Original text content.
@@ -228,15 +226,15 @@ class PiscesWatermark:
         if not content or not content.strip():
             return content
 
-        # Get configuration parameters
+        # Get text watermark configuration
         text_config = self.config["watermark_2025"]["text"]
         zero_width_config = text_config["zero_width"]
         compliance_version = self.config["watermark_2025"]["compliance_version"]
         
-        # Generate watermark key
+        # Generate a unique watermark key
         key = self._generate_watermark_key()
         
-        # Use configured payload
+        # Create watermark payload based on configuration
         payload = {
             "standard": compliance_version,
             "model": self.model_id,
@@ -255,36 +253,34 @@ class PiscesWatermark:
             }
         }
         
-        # Convert payload to binary
+        # Convert payload to binary string
         payload_str = json.dumps(payload, separators=(',', ':'), sort_keys=True)
         binary_data = ''.join(format(ord(c), '08b') for c in payload_str)
         
-        # Embed using zero-width characters with configuration
+        # Prepare watermark bits for embedding
         watermark_bits = list(binary_data)
         
-        # Use configured redundancy
+        # Get configured redundancy value
         redundancy = zero_width_config.get("redundancy", 3)
         watermarked_content = content
         
         for layer in range(redundancy):
-            # Insert watermark bits at pseudo-random positions
-            layer_bits = watermark_bits[layer::redundancy]  # Distribute bits across layers
-            
+            # Distribute bits across layers
+            layer_bits = watermark_bits[layer::redundancy]
             # Generate insertion positions based on key and layer
             positions = []
             for i, char in enumerate(content):
-                # Use key-based pseudo-random position selection
                 if (hashlib.md5(f"{key}_{layer}_{i}".encode()).hexdigest())[:2] == '00':
                     positions.append(i)
             
-            # Insert watermark bits
+            # Insert watermark bits from end to avoid index shifting
             temp_content = list(watermarked_content)
             bit_idx = 0
             
-            for pos in sorted(positions, reverse=True):  # Insert from end to avoid index shifting
+            for pos in sorted(positions, reverse=True):
                 if bit_idx < len(layer_bits):
                     bit = int(layer_bits[bit_idx])
-                    if bit < len(self.zero_width_chars):  # Ensure index is valid
+                    if bit < len(self.zero_width_chars):
                         watermark_char = self.zero_width_chars[str(bit)]
                         temp_content.insert(pos, watermark_char)
                     bit_idx += 1
@@ -296,6 +292,8 @@ class PiscesWatermark:
     def extract_text_watermark(self, text: str) -> Optional[Dict[str, Any]]:
         """
         Extract hidden watermark from text.
+        Extract zero-width characters, convert them back to binary, 
+        find synchronization mark, verify checksum, and parse JSON.
 
         Args:
             text (str): Text that may contain a watermark.
@@ -303,7 +301,7 @@ class PiscesWatermark:
         Returns:
             Optional[Dict[str, Any]]: Watermark data or None if not found.
         """
-        # Extract all zero-width characters
+        # Extract all zero-width characters from the text
         zero_width_chars = []
         for char in text:
             if char in self.char_to_bits:
@@ -312,16 +310,16 @@ class PiscesWatermark:
         if not zero_width_chars:
             return None
         
-        # Convert characters back to binary
+        # Convert zero-width characters back to binary string
         binary_str = ''.join(self.char_to_bits[char] for char in zero_width_chars)
         
-        # Find synchronization mark
+        # Find synchronization mark in the binary string
         sync_pattern = "1010" * 4
         sync_pos = binary_str.find(sync_pattern)
         if sync_pos == -1:
             return None
         
-        # Extract length information
+        # Extract length information from the binary string
         start_pos = sync_pos + len(sync_pattern)
         if start_pos + 16 > len(binary_str):
             return None
@@ -332,17 +330,15 @@ class PiscesWatermark:
         except ValueError:
             return None
         
-        # Extract data part
+        # Extract data part from the binary string
         data_start = start_pos + 16
-        data_end = data_start + data_length * 4  # Every 2 bits correspond to a character
-        
+        data_end = data_start + data_length * 4
         if data_end > len(binary_str):
             return None
         
-        # Extract Base64 data
         data_bits = binary_str[data_start:data_end]
         
-        # Convert binary back to characters
+        # Convert binary string back to characters
         decoded_chars = []
         for i in range(0, len(data_bits), 8):
             byte_bits = data_bits[i:i+8]
@@ -357,11 +353,11 @@ class PiscesWatermark:
             return None
         
         try:
-            # Decode Base64
+            # Decode Base64 string
             decoded_str = ''.join(decoded_chars)
             decoded_data = base64.b64decode(decoded_str).decode()
             
-            # Separate data and checksum
+            # Separate JSON data and checksum
             if '|' not in decoded_data:
                 return None
             
@@ -372,7 +368,7 @@ class PiscesWatermark:
             if checksum != expected_checksum:
                 return None
             
-            # Parse JSON
+            # Parse JSON data
             payload = json.loads(json_data)
             return payload
             
@@ -382,6 +378,8 @@ class PiscesWatermark:
     def embed_image_watermark(self, image_tensor: torch.Tensor, metadata: Dict[str, Any]) -> torch.Tensor:
         """
         Embed dual watermarks (hidden + visible) in an image using configuration parameters.
+        Generate a payload, embed a hidden frequency domain watermark, 
+        and add a visible watermark.
 
         Args:
             image_tensor (torch.Tensor): Input image tensor [C, H, W].
@@ -393,12 +391,13 @@ class PiscesWatermark:
         import torch.fft as fft
         import torch.nn.functional as F
         
-        # Get configuration parameters
+        # Get image watermark configuration
         image_config = self.config["watermark_2025"]["image"]
         compliance_version = self.config["watermark_2025"]["compliance_version"]
         hidden_config = image_config["hidden"]
         visible_config = image_config["visible"]
         
+        # Create watermark payload based on configuration
         payload = {
             "standard": compliance_version,
             "model": self.model_id,
@@ -417,27 +416,27 @@ class PiscesWatermark:
             }
         }
         
-        # Step 1: Hidden frequency domain watermark
+        # Step 1: Embed hidden frequency domain watermark
         payload_str = json.dumps(payload, separators=(',', ':'), sort_keys=True)
         binary_data = ''.join(format(ord(c), '08b') for c in payload_str)
         
         c, h, w = image_tensor.shape
         
-        # Convert to frequency domain
+        # Convert image to frequency domain
         freq_domain = fft.fft2(image_tensor)
         
-        # Enhanced frequency domain watermark embedding using config parameters
+        # Prepare watermark bits for embedding
         watermark_bits = list(binary_data)
         bit_idx = 0
         dct_strength = hidden_config.get("dct_strength", 0.08)
         channels = hidden_config.get("channels", ["Y", "U", "V"])
         
-        # Use configured channels
+        # Embed watermark in configured channels
         for channel_idx in range(min(c, len(channels))):
             # Apply DCT to each channel
             channel_freq = fft.fft2(image_tensor[channel_idx])
             
-            # Embed in the mid-frequency region (balance visibility and robustness)
+            # Embed in the mid-frequency region
             embed_start_h, embed_end_h = h//4, 3*h//4
             embed_start_w, embed_end_w = w//4, 3*w//4
             
@@ -446,7 +445,7 @@ class PiscesWatermark:
                 for j in range(embed_start_w, embed_end_w, 2):
                     if bit_idx < len(watermark_bits):
                         bit = int(watermark_bits[bit_idx])
-                        # Use configured embedding strength
+                        # Adjust embedding strength based on position
                         strength = dct_strength * (1 + 0.1 * (i % 3))
                         phase_shift = bit * strength
                         channel_freq[i, j] *= (1 + phase_shift)
@@ -455,7 +454,7 @@ class PiscesWatermark:
             # Inverse transform back to spatial domain
             image_tensor[channel_idx] = torch.real(fft.ifft2(channel_freq))
         
-        # Step 2: Add visible watermark using configuration
+        # Step 2: Add visible watermark
         watermarked_image = self._add_visible_watermark(image_tensor)
         
         return watermarked_image
@@ -463,6 +462,8 @@ class PiscesWatermark:
     def _add_visible_watermark(self, image_tensor: torch.Tensor) -> torch.Tensor:
         """
         Add a visible watermark using configuration parameters.
+        Calculate watermark position, create a semi-transparent background, 
+        and apply it to the image.
 
         Args:
             image_tensor (torch.Tensor): Input image tensor [C, H, W].
@@ -474,11 +475,11 @@ class PiscesWatermark:
         
         c, h, w = image_tensor.shape
         
-        # Get configuration parameters
+        # Get visible watermark configuration
         image_config = self.config["watermark_2025"]["image"]
         visible_config = image_config["visible"]
         
-        # Use configured watermark text
+        # Get watermark text and dimensions
         watermark_text = visible_config.get("text", "AI-generated-PiscesL1")
         text_height = visible_config.get("text_height", 24)
         text_width = len(watermark_text) * visible_config.get("char_width", 12)
@@ -503,17 +504,17 @@ class PiscesWatermark:
             start_y = max(0, h - text_height - margin)
             start_x = max(0, w - text_width - margin)
         
-        # Create watermarked area
+        # Create a copy of the image tensor
         watermarked = image_tensor.clone()
         
-        # Add configured semi-transparent background
+        # Get background color and opacity
         opacity = visible_config.get("opacity", 0.1)
-        background_color = visible_config.get("background_color", [1.0, 1.0, 1.0])  # White
+        background_color = visible_config.get("background_color", [1.0, 1.0, 1.0])
         
+        # Apply semi-transparent background to the watermark area
         for y in range(start_y, min(h, start_y + text_height)):
             for x in range(start_x, min(w, start_x + text_width)):
                 if 0 <= y < h and 0 <= x < w:
-                    # Apply configured color and opacity
                     for channel in range(min(c, len(background_color))):
                         watermarked[channel, y, x] = (
                             (1 - opacity) * watermarked[channel, y, x] + 
@@ -525,6 +526,8 @@ class PiscesWatermark:
     def embed_audio_watermark(self, audio_tensor: torch.Tensor, metadata: Dict[str, Any]) -> torch.Tensor:
         """
         Embed a hidden watermark in audio using configuration parameters.
+        Generate a payload, embed a hidden LSB watermark, 
+        add a spectrum watermark, and restore the original shape.
 
         Args:
             audio_tensor (torch.Tensor): Input audio tensor [T] or [C, T].
@@ -535,11 +538,12 @@ class PiscesWatermark:
         """
         import torch
         
-        # Get configuration parameters
+        # Get audio watermark configuration
         audio_config = self.config["watermark_2025"]["audio"]
         compliance_version = self.config["watermark_2025"]["compliance_version"]
         hidden_config = audio_config["hidden"]
         
+        # Create watermark payload based on configuration
         payload = {
             "standard": compliance_version,
             "model": self.model_id,
@@ -558,7 +562,7 @@ class PiscesWatermark:
             }
         }
         
-        # Step 1: Hidden spectrum watermark
+        # Step 1: Embed hidden LSB watermark
         payload_str = json.dumps(payload, separators=(',', ':'), sort_keys=True)
         binary_data = ''.join(format(ord(c), '08b') for c in payload_str)
         
@@ -572,32 +576,29 @@ class PiscesWatermark:
         lsb_bits = hidden_config.get("lsb_bits", 6)
         lsb_strength = hidden_config.get("lsb_strength", 1.0)
         
-        # Enhanced LSB watermark using configuration
+        # Embed LSB watermark
         watermarked_audio = audio_1d.clone()
         bits = list(binary_data)
         
-        # Use configured LSB bits for embedding
         for i in range(min(len(watermarked_audio) - lsb_bits, len(bits))):
             bit = int(bits[i])
             
-            # Embed using configured LSB bits
             start_idx = i * lsb_bits
             if start_idx + lsb_bits <= len(watermarked_audio):
                 for j in range(lsb_bits):
                     sample = watermarked_audio[start_idx + j]
                     
-                    # Embed in the j-th bit
                     mask = 1 << j
                     if bit == 1:
                         watermarked_audio[start_idx + j] = sample | mask
                     else:
                         watermarked_audio[start_idx + j] = sample & ~mask
         
-        # Step 2: Spectrum watermark using configuration
+        # Step 2: Add spectrum watermark
         spectrum_config = hidden_config.get("spectrum", {})
         watermarked_audio = self._add_spectrum_watermark(watermarked_audio, payload_str, spectrum_config)
         
-        # Step 3: Remove visible voice watermark
+        # Step 3: Commented out - Remove visible voice watermark
         # watermarked_audio = self._add_voice_watermark(watermarked_audio)
         
         # Restore original shape
@@ -606,6 +607,8 @@ class PiscesWatermark:
     def _add_spectrum_watermark(self, audio: torch.Tensor, payload: str, spectrum_config: Dict[str, Any] = None) -> torch.Tensor:
         """
         Add a spectrum watermark to the inaudible frequency band using configuration parameters.
+        Convert audio to frequency domain, encode watermark data into spectrum amplitude changes, 
+        and convert back to time domain.
 
         Args:
             audio (torch.Tensor): Input audio tensor.
@@ -620,32 +623,31 @@ class PiscesWatermark:
         if spectrum_config is None:
             spectrum_config = {}
         
-        # Get configuration parameters
+        # Get spectrum watermark configuration
         sample_rate = spectrum_config.get("sample_rate", 44100)
         min_freq = spectrum_config.get("min_freq", 18000)
         max_freq = spectrum_config.get("max_freq", 20000)
         amplitude = spectrum_config.get("amplitude", 0.01)
         spread_factor = spectrum_config.get("spread_factor", 10)
         
-        # Convert to frequency domain
+        # Convert audio to frequency domain
         spectrum = fft.fft(audio)
         
-        # Encode the watermark into the configured frequency band
+        # Get frequency bins
         freq_bins = torch.fft.fftfreq(len(audio), 1/sample_rate)
         
-        # Find frequency indices corresponding to configured range
+        # Find frequency indices in the configured range
         target_freqs = (freq_bins >= min_freq) & (freq_bins <= max_freq)
         
         if torch.sum(target_freqs) > 0:
             # Encode watermark data into spectrum amplitude changes
             watermark_bits = ''.join(format(ord(c), '08b') for c in payload)
             
-            # Embed watermark in the target frequency band
             target_indices = torch.where(target_freqs)[0]
             for i, idx in enumerate(target_indices[:len(watermark_bits)]):
                 bit = int(watermark_bits[i % len(watermark_bits)])
                 
-                # Use spread spectrum technique with configured parameters
+                # Use spread spectrum technique
                 for offset in range(spread_factor):
                     if idx + offset < len(spectrum):
                         spectrum[idx + offset] += bit * amplitude * (1 - offset/spread_factor)
@@ -655,7 +657,9 @@ class PiscesWatermark:
     
     def _add_voice_watermark(self, audio: torch.Tensor) -> torch.Tensor:
         """
-        Add a visible voice watermark.
+        Add a visible voice watermark to the audio.
+        Create a simple voice signal using sine waves, add an envelope, 
+        and add it to the beginning of the audio.
 
         Args:
             audio (torch.Tensor): Input audio tensor.
@@ -668,18 +672,15 @@ class PiscesWatermark:
         # Assume sampling rate is 44.1kHz
         sample_rate = 44100
         
-        # Visible voice watermark in the first 2 seconds
+        # Visible voice watermark duration is 2 seconds
         watermark_duration = 2.0
         watermark_samples = int(watermark_duration * sample_rate)
         
         if len(audio) < watermark_samples:
             return audio
         
-        # Create a simple voice signal (female voice saying "This is AI-generated audio content")
-        # Use a combination of sine waves to simulate a female voice
+        # Create a simple voice signal
         t = torch.linspace(0, watermark_duration, watermark_samples)
-        
-        # Female voice fundamental frequency is about 220Hz, add harmonics
         base_freq = 220
         voice_signal = (
             0.1 * torch.sin(2 * torch.pi * base_freq * t) +
@@ -687,7 +688,7 @@ class PiscesWatermark:
             0.03 * torch.sin(2 * torch.pi * base_freq * 3 * t)
         )
         
-        # Add envelope (fade-in and fade-out)
+        # Add envelope to the voice signal
         envelope = torch.ones_like(t)
         fade_samples = int(0.1 * sample_rate)
         envelope[:fade_samples] = torch.linspace(0, 1, fade_samples)
@@ -695,7 +696,7 @@ class PiscesWatermark:
         
         voice_signal *= envelope
         
-        # Add to the beginning of the audio
+        # Add voice signal to the beginning of the audio
         watermarked = audio.clone()
         watermarked[:watermark_samples] += voice_signal
         
@@ -704,6 +705,7 @@ class PiscesWatermark:
     def verify_watermark(self, content: Union[str, torch.Tensor], expected_metadata: Dict[str, Any]) -> bool:
         """
         Verify if the content contains a valid watermark.
+        Extract watermark data based on content type and verify key fields.
 
         Args:
             content (Union[str, torch.Tensor]): Content to be verified.
@@ -715,7 +717,7 @@ class PiscesWatermark:
         if isinstance(content, str):
             extracted = self.extract_text_watermark(content)
         elif isinstance(content, torch.Tensor):
-            # Simplified processing here; should call the corresponding extraction method based on content type in practice
+            # Simplified processing; should call corresponding extraction method in practice
             extracted = None
         else:
             return False
@@ -723,7 +725,7 @@ class PiscesWatermark:
         if not extracted:
             return False
         
-        # Verify key fields
+        # Verify key fields in the extracted watermark data
         return (
             extracted.get("model") == self.model_id and
             extracted.get("compliance", {}).get("standard") == "GB/T 45225-2024"
@@ -733,19 +735,21 @@ class PiscesWatermark:
 class WatermarkManager:
     """
     Watermark manager integrated into the inference process.
+    This class is responsible for adding, checking, and verifying watermarks.
     """
     
     def __init__(self, model_id: str = "PiscesL1-1.5B"):
         # Initialize the watermark instance
         self.watermark = PiscesWatermark(model_id)
-        # Always enabled, cannot be disabled
-        self.enabled = True  
+        # Watermark is always enabled and cannot be disabled
+        self.enabled = True
         # Force enabled mode
         self.force_enabled = True  
     
     def add_watermark(self, content: Union[str, torch.Tensor], metadata: Dict[str, Any]) -> Union[str, torch.Tensor]:
         """
         Add mandatory watermarks based on content type.
+        Enhance metadata, detect content type, and call the corresponding watermark embedding method.
 
         Args:
             content (Union[str, torch.Tensor]): Content to add watermark.
@@ -758,7 +762,7 @@ class WatermarkManager:
         if content is None:
             return content
             
-        # Enhanced metadata collection
+        # Enhance metadata collection
         enhanced_metadata = {
             **metadata,
             "user_id": metadata.get("user_id", "anonymous"),
@@ -790,7 +794,7 @@ class WatermarkManager:
     
     def _detect_content_type(self, content: Union[str, torch.Tensor]) -> str:
         """
-        Automatically detect content type.
+        Automatically detect content type based on the input content.
 
         Args:
             content (Union[str, torch.Tensor]): Content to detect type.
@@ -802,17 +806,17 @@ class WatermarkManager:
             return "text"
         elif isinstance(content, torch.Tensor):
             shape = content.shape
-            if len(shape) == 3 and shape[0] in [1, 3, 4]:  # [C, H, W]
+            if len(shape) == 3 and shape[0] in [1, 3, 4]:
                 return "image"
-            elif len(shape) == 1 or (len(shape) == 2 and shape[0] == 1):  # [T] or [1, T]
+            elif len(shape) == 1 or (len(shape) == 2 and shape[0] == 1):
                 return "audio"
-            elif len(shape) == 4:  # [C, T, H, W] - video
+            elif len(shape) == 4:
                 return "video"
         return "unknown"
     
     def _embed_video_watermark(self, video_tensor: torch.Tensor, metadata: Dict[str, Any]) -> torch.Tensor:
         """
-        Process video watermarking.
+        Process video watermarking by adding image watermark to each frame.
 
         Args:
             video_tensor (torch.Tensor): Input video tensor [C, T, H, W].
@@ -823,12 +827,12 @@ class WatermarkManager:
         """
         import torch
         
-        # Add image watermark to each frame
+        # Get video dimensions
         c, t, h, w = video_tensor.shape
         watermarked_video = video_tensor.clone()
         
         for frame_idx in range(t):
-            frame = video_tensor[:, frame_idx, :, :]  # [C, H, W]
+            frame = video_tensor[:, frame_idx, :, :]
             watermarked_frame = self.watermark.embed_image_watermark(frame, {
                 **metadata,
                 "frame_index": frame_idx,
@@ -841,6 +845,7 @@ class WatermarkManager:
     def check_watermark(self, content: Union[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
         """
         Check watermark information in the content.
+        Detect content type and call the corresponding watermark extraction method.
 
         Args:
             content (Union[str, torch.Tensor]): Content to check watermark.
@@ -851,7 +856,6 @@ class WatermarkManager:
         if isinstance(content, str):
             return self.watermark.extract_text_watermark(content)
         elif isinstance(content, torch.Tensor):
-            # Select detection method based on content type
             content_type = self._detect_content_type(content)
             if content_type == "image":
                 return self._detect_image_watermark(content)
@@ -861,7 +865,7 @@ class WatermarkManager:
     
     def _detect_image_watermark(self, image_tensor: torch.Tensor) -> Optional[Dict[str, Any]]:
         """
-        Detect image watermark.
+        Detect image watermark by loading configuration and returning watermark information.
 
         Args:
             image_tensor (torch.Tensor): Input image tensor.
@@ -869,7 +873,6 @@ class WatermarkManager:
         Returns:
             Optional[Dict[str, Any]]: Detected watermark information or None.
         """
-        # Load config for actual detection parameters
         try:
             with open('configs/watermark.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
@@ -884,7 +887,7 @@ class WatermarkManager:
 
     def _detect_audio_watermark(self, audio_tensor: torch.Tensor) -> Optional[Dict[str, Any]]:
         """
-        Detect audio watermark.
+        Detect audio watermark by loading configuration and returning watermark information.
 
         Args:
             audio_tensor (torch.Tensor): Input audio tensor.
@@ -892,7 +895,6 @@ class WatermarkManager:
         Returns:
             Optional[Dict[str, Any]]: Detected watermark information or None.
         """
-        # Load config for actual detection parameters
         try:
             with open('configs/watermark.json', 'r', encoding='utf-8') as f:
                 config = json.load(f)
@@ -908,20 +910,21 @@ class WatermarkManager:
     def disable(self):
         """
         Disable function removed, maintain interface compatibility.
+        Watermark is in force mode and cannot be disabled.
         """
-        # Force mode, cannot be disabled
         pass
     
     def enable(self):
         """
         Always enabled.
+        Watermark is in force mode and always enabled.
         """
-        # Force mode, always enabled
         pass
     
     def is_compliant(self, content: Union[str, torch.Tensor]) -> bool:
         """
         Check if the content complies with the mandatory watermark standard.
+        For text, check both visible and hidden watermarks; other types are considered compliant by default.
 
         Args:
             content (Union[str, torch.Tensor]): Content to check compliance.
@@ -930,7 +933,6 @@ class WatermarkManager:
             bool: Compliance result.
         """
         if isinstance(content, str):
-            # Load config to get correct visible watermark text
             try:
                 with open('configs/watermark.json', 'r', encoding='utf-8') as f:
                     config = json.load(f)
@@ -945,10 +947,8 @@ class WatermarkManager:
             return has_visible or has_hidden
         return True  # Other types are considered compliant by default
 
-
 # Global watermark manager instance (2025 mandatory standard)
 watermark_manager = WatermarkManager()
-
 
 def watermark_text(text: str, prompt: str = "", generation_params: Dict[str, Any] = None) -> str:
     """
@@ -967,7 +967,6 @@ def watermark_text(text: str, prompt: str = "", generation_params: Dict[str, Any
         "params": generation_params or {}
     }
     return watermark_manager.add_watermark(text, metadata)
-
 
 def check_text_watermark(text: str) -> Optional[Dict[str, Any]]:
     """

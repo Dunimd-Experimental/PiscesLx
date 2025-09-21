@@ -18,6 +18,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from utils import RIGHT, ERROR
+
 def help():
     print("Pisces L1 Management Tool Help\n")
     print("Available commands:")
@@ -32,6 +34,7 @@ def help():
     print("  monitor    - System monitor (GPU/CPU/memory)")
     print("  download   - Download datasets for training")
     print("  dataset    - Arrow/JSON dataset conversion")
+    print("  cache      - Cache maintenance (stats / clear-dataset / clear-downloads / clear-all)")
     print("  quantize   - Model quantization (8-bit or 4-bit)")
     print("  benchmark  - Model evaluation & benchmarking (26 standardized benchmarks)")
     print("  mcp        - MCP server management (start/stop/status/test)")
@@ -51,6 +54,11 @@ def help():
     print("  python manage.py benchmark --info mmlu")
     print("  python manage.py benchmark --benchmark mmlu --config configs/7B.json")
     print("  python manage.py benchmark --perf --config configs/7B.json --seq_len 4096")
+    print("\nCache maintenance:")
+    print("  python manage.py cache --cache_action stats            # Show cache stats for .pisceslx and cache/")
+    print("  python manage.py cache --cache_action clear-dataset    # Clear Dataset tool cache (.pisceslx/cache/dataset)")
+    print("  python manage.py cache --cache_action clear-downloads  # Clear downloads & download caches (.pisceslx/cache/data_cache/, .pisceslx/cache/datatemp)")
+    print("  python manage.py cache --cache_action clear-all        # Clear ALL caches under .pisceslx (irreversible)")
     print("\nMCP Server examples:")
     print("  python manage.py mcp --mcp_action start")
     print("  python manage.py mcp --mcp_action status")

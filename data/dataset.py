@@ -31,14 +31,14 @@ import multiprocessing as mp
 from datetime import datetime
 from queue import Queue, Empty
 from dataclasses import dataclass
-from utils.progress import progress_bar
-from model.tokenizer import get_tokenizer
-from utils.log import RIGHT, DEBUG, ERROR
+from utils import progress_bar
+from model import get_tokenizer
+from utils import RIGHT, DEBUG, ERROR
 from datasets import load_from_disk, Dataset as HFDataset
 from typing import Iterator, Optional, Union, Dict, List, Any
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
-from model.multimodal import VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder
+from model import VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder
 
 # Keys used to identify image data in the dataset
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
@@ -219,18 +219,63 @@ class LargeScaleStreamingDataset(IterableDataset):
         RIGHT(f"Data index built: {len(self.data_index)} files, estimated {total_samples} samples")
         
     def _adaptive_batch_size(self) -> int:
-        """Adaptively adjust batch size based on memory usage"""
+        """Adaptively adjust batch size based on memory usage and computational complexity"""
         memory_stats = self.memory_monitor.check_memory()
         available_memory = memory_stats['system_available_gb']
         
+        # Base batch size from memory
         if available_memory > 16.0:
-            return min(self.batch_config.batch_size * 2, 128)
+            base_batch = min(self.batch_config.batch_size * 2, 128)
         elif available_memory > 8.0:
-            return self.batch_config.batch_size
+            base_batch = self.batch_config.batch_size
         elif available_memory > 4.0:
-            return max(self.batch_config.batch_size // 2, 8)
+            base_batch = max(self.batch_config.batch_size // 2, 8)
         else:
-            return max(self.batch_config.batch_size // 4, 4)
+            base_batch = max(self.batch_config.batch_size // 4, 4)
+        
+        # Adjust based on computational complexity of samples
+        complexity_factor = self._estimate_batch_complexity()
+        
+        # Dynamic batch size based on complexity and memory
+        dynamic_batch = int(base_batch * complexity_factor)
+        
+        # Ensure minimum and maximum bounds
+        return max(4, min(dynamic_batch, 256))
+        
+    def _estimate_batch_complexity(self) -> float:
+        """Estimate computational complexity of current batch"""
+        complexity_scores = []
+        
+        # Sample a few recent items to estimate complexity
+        sample_count = min(10, len(self.data_index) if hasattr(self, 'data_index') else 10)
+        
+        for i in range(sample_count):
+            try:
+                # Get sample complexity based on multimodal content
+                sample_path = self.data_index[i]['path'] if i < len(self.data_index) else ""
+                complexity = 1.0
+                
+                # Higher complexity for multimodal data
+                if any(key in sample_path.lower() for key in ['image', 'video', 'audio']):
+                    complexity *= 0.7  # Reduce batch size for multimodal
+                elif 'text' in sample_path.lower() or sample_path.endswith('.txt'):
+                    complexity *= 1.2  # Increase batch size for text-only
+                    
+                # Sequence length factor (estimate from file size)
+                if os.path.exists(sample_path):
+                    file_size = os.path.getsize(sample_path) / (1024 * 1024)  # MB
+                    if file_size > 10:  # Large files
+                        complexity *= 0.8
+                    elif file_size < 1:  # Small files
+                        complexity *= 1.1
+                        
+                complexity_scores.append(complexity)
+                
+            except (IndexError, OSError):
+                complexity_scores.append(1.0)
+        
+        # Return average complexity factor
+        return np.mean(complexity_scores) if complexity_scores else 1.0
             
     def _process_file_streaming(self, file_info: Dict) -> Iterator[Dict]:
         """Stream processing for single file"""
@@ -445,28 +490,98 @@ class OptimizedDataLoader:
         self.memory_monitor = memory_monitor or MemoryMonitor()
         
     def get_dataloader(self) -> DataLoader:
-        """Get optimized DataLoader"""
+        """Get optimized DataLoader with dynamic batching"""
+        # Dynamic batch size calculation based on complexity and memory
+        dynamic_batch_size = self._calculate_dynamic_batch_size()
+        
         # Adjust parameters based on dataset type
         if hasattr(self.dataset, '__class__') and 'LargeScaleStreamingDataset' in str(type(self.dataset)):
-            # Streaming dataset optimization
+            # Streaming dataset with dynamic batching
             return DataLoader(
                 self.dataset,
                 batch_size=None,  # Streaming datasets don't need batch_size
                 num_workers=min(self.batch_config.num_workers, MAX_WORKERS),
                 pin_memory=self.batch_config.pin_memory,
-                prefetch_factor=self.batch_config.prefetch_factor
+                prefetch_factor=self.batch_config.prefetch_factor,
+                persistent_workers=True  # Enable persistent workers for better performance
             )
         else:
-            # Traditional dataset optimization
+            # Traditional dataset with dynamic batching
             return DataLoader(
                 self.dataset,
-                batch_size=self.batch_config.batch_size,
+                batch_size=dynamic_batch_size,
                 shuffle=True,
                 num_workers=min(self.batch_config.num_workers, MAX_WORKERS),
                 pin_memory=self.batch_config.pin_memory,
                 drop_last=self.batch_config.drop_last,
-                prefetch_factor=self.batch_config.prefetch_factor
+                prefetch_factor=self.batch_config.prefetch_factor,
+                persistent_workers=True  # Enable persistent workers for better performance
             )
+            
+    def _calculate_dynamic_batch_size(self) -> int:
+        """Calculate dynamic batch size based on memory and computational complexity"""
+        # Get current memory status
+        memory_stats = self.memory_monitor.check_memory()
+        available_memory = memory_stats['system_available_gb']
+        gpu_memory = memory_stats.get('gpu_free_gb', available_memory)
+        
+        # Base batch size from available memory
+        if gpu_memory > 20.0:
+            base_batch = 64
+        elif gpu_memory > 12.0:
+            base_batch = 32
+        elif gpu_memory > 8.0:
+            base_batch = 16
+        elif gpu_memory > 4.0:
+            base_batch = 8
+        else:
+            base_batch = 4
+            
+        # Adjust based on system memory
+        if available_memory < 4.0:
+            base_batch = max(2, base_batch // 2)
+            
+        # Complexity factor from dataset characteristics
+        complexity_factor = self._estimate_dataset_complexity()
+        
+        # Calculate final dynamic batch size
+        dynamic_batch = int(base_batch * complexity_factor)
+        
+        # Ensure bounds
+        return max(2, min(dynamic_batch, 128))
+        
+    def _estimate_dataset_complexity(self) -> float:
+        """Estimate dataset computational complexity"""
+        try:
+            # Sample dataset to estimate complexity
+            if hasattr(self.dataset, '__len__') and len(self.dataset) > 0:
+                # Sample a few items
+                sample_size = min(5, len(self.dataset))
+                complexity_scores = []
+                
+                for i in range(sample_size):
+                    sample = self.dataset[i] if hasattr(self.dataset, '__getitem__') else {}
+                    complexity = 1.0
+                    
+                    # Check for multimodal content
+                    if isinstance(sample, dict):
+                        if any(key in sample for key in ['pixel_values', 'audio_input', 'video_frames']):
+                            complexity *= 0.6  # Higher complexity for multimodal
+                        elif 'input_ids' in sample:
+                            # Estimate sequence length complexity
+                            seq_len = len(sample['input_ids']) if hasattr(sample['input_ids'], '__len__') else 100
+                            if seq_len > 1000:
+                                complexity *= 0.8
+                            elif seq_len < 100:
+                                complexity *= 1.2
+                                
+                    complexity_scores.append(complexity)
+                
+                return np.mean(complexity_scores) if complexity_scores else 1.0
+        except Exception:
+            pass
+            
+        return 1.0
             
     def adaptive_batch_iterator(self, target_memory_gb: float = 2.0):
         """Adaptive batch iterator"""
@@ -554,8 +669,11 @@ class PiscesDataset(Dataset):
         self.batch_config = BatchConfig()
         self.memory_monitor = MemoryMonitor(MEMORY_THRESHOLD_GB)
             
-        # First attempt to load dataset from local cache
-        cache_path = os.path.join("data_cache", subset)
+        # Use cache manager for dataset cache path
+        from ..cache import get_cache_manager
+        cache_manager = get_cache_manager()
+        data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
+        cache_path = os.path.join(data_cache_dir, subset)
         
         try:
             if os.path.exists(cache_path):
@@ -659,7 +777,8 @@ class PiscesDataset(Dataset):
             # Multi-tier fallback system
             try:
                 # Tier 1: Try loading from backup dataset
-                backup_path = os.path.join("data_cache", "backup", "tiny")
+                backup_dir = cache_manager.get_or_create_cache_dir("data_cache")
+                backup_path = os.path.join(backup_dir, "backup", "tiny")
                 if os.path.exists(backup_path):
                     self.ds = load_from_disk(backup_path)
                     if split == "train" and "train" in self.ds:
@@ -680,7 +799,7 @@ class PiscesDataset(Dataset):
                 # Generate diverse synthetic data
                 synthetic_data = []
                 templates = [
-                    "The quantum computing algorithm demonstrated {adj} performance in {domain} applications.",
+                    "The advanced computing algorithm demonstrated {adj} performance in {domain} applications.",
                     "Machine learning models require {adj} datasets for {domain} optimization.",
                     "Neural network architectures show {adj} results in {domain} scenarios.",
                     "Data processing pipelines achieve {adj} efficiency in {domain} workflows.",
@@ -711,8 +830,9 @@ class PiscesDataset(Dataset):
                 
                 # Save synthetic data for future use
                 try:
-                    os.makedirs(os.path.join("data_cache", "synthetic"), exist_ok=True)
-                    with open(os.path.join("data_cache", "synthetic", "fallback.json"), 'w') as f:
+                    synthetic_dir = cache_manager.get_or_create_cache_dir("data_cache")
+                    os.makedirs(os.path.join(synthetic_dir, "synthetic"), exist_ok=True)
+                    with open(os.path.join(synthetic_dir, "synthetic", "fallback.json"), 'w') as f:
                         json.dump(synthetic_data, f, indent=2)
                 except:
                     pass  # Ignore save errors
@@ -843,7 +963,8 @@ class PiscesDataset(Dataset):
         
         # Generate cache key based on dataset and tokenizer
         cache_key = hashlib.md5(f"{len(self.ds)}_{len(self.tokenizer)}".encode()).hexdigest()
-        cache_file = os.path.join("data_cache", f"token_validation_{cache_key}.json")
+        data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
+        cache_file = os.path.join(data_cache_dir, f"token_validation_{cache_key}.json")
         
         # Check if validation cache exists
         if os.path.exists(cache_file):
@@ -860,7 +981,8 @@ class PiscesDataset(Dataset):
         
         # Save validation results to cache
         try:
-            os.makedirs("data_cache", exist_ok=True)
+            data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
+            os.makedirs(data_cache_dir, exist_ok=True)
             with open(cache_file, 'w') as f:
                 json.dump({"validated": True, "timestamp": str(datetime.now())}, f)
         except Exception:

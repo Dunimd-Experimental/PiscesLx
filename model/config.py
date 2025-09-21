@@ -61,11 +61,12 @@ class PiscesConfig:
     # MoE-related configurations
     moe_num_experts: int = 64  # Number of experts in the Mixture of Experts
     moe_top_k: int = 2  # Top-k experts to use in Mixture of Experts
-    moe_capacity_factor: float = 1.25  # Capacity factor for expert routing
+    moe_capacity_factor: float = 1.0  # Optimized capacity factor for memory control
     moe_load_balance_alpha: float = 0.01  # Load balancing loss coefficient
     moe_noise_std: float = 0.1  # Routing noise standard deviation
     moe_use_stable_gate: bool = True  # Whether to use stable routing gate
     moe_min_capacity: int = 4  # Minimum capacity
+    moe_prediction_horizon: int = 8  # Prediction horizon for dynamic capacity
     
     intermediate_size: int = 5632
     max_position_embeddings: int = 8192
@@ -87,11 +88,21 @@ class PiscesConfig:
     use_gradient_checkpointing: bool = True  # Enable gradient checkpointing for memory efficiency
     use_pre_norm: bool = True  # Use Pre-Norm architecture for stability
     attention_dropout: float = 0.0  # Dropout rate for attention layers
+    # Kernel optimizations
+    fused_qkv: bool = False  # Use fused QKV projection in Attention for better efficiency when supported
     
     # Dynamic multimodal fusion configurations
-    enable_dynamic_fusion: bool = True  # Enable dynamic content-based modality weighting
+    enable_dynamic_fusion: bool = True  # Enable native token-level multimodal fusion
     fusion_quality_threshold: float = 0.3  # Quality threshold for modality inclusion
     fusion_dropout: float = 0.1  # Dropout for fusion layers
+    modal_token_count: int = 8  # Number of fused multimodal tokens to prepend when fusion returns [B, H]
+    
+    # Advanced optimization configurations
+    enable_cognitive_density: bool = True  # Enable cognitive density optimization for ALL 64 experts
+    enable_dynamic_capacity: bool = True  # Enable dynamic capacity scaling for balanced loading
+    cognitive_enhancement_scale: float = 0.1  # Scale factor for cognitive enhancement
+    expert_temperature_max: float = 5.0  # Maximum routing temperature for exploration
+    expert_load_balance_threshold: float = 0.15  # Threshold for load imbalance warnings
     
     # 3D Spatio-Temporal RoPE configurations for video understanding
     use_3d_spatio_temporal_rope: bool = False  # Enable 3D spatio-temporal RoPE for video frames
@@ -99,10 +110,34 @@ class PiscesConfig:
     
     # Long context configurations
     attention_type: str = "standard"  # Type of attention: standard, streaming_llm, h2o_attention
-    streaming_window: int = 4096  # Window size for streaming attention
-    compression_ratio: int = 4  # Compression ratio for H2O attention
+    # Enable H2O by default for long-context readiness; can be turned off per run
+    use_h2o_attention: bool = True
+    streaming_window: int = 16384  # Window size for streaming attention (long-context friendly)
+    compression_ratio: int = 8  # Compression ratio for H2O attention
     use_sliding_window: bool = False  # Enable sliding window attention for long contexts
     long_factor: int = 32  # Long context scaling factor
+    # KV cache and attention kernel knobs
+    max_cache_size: int = 8192  # Max tokens kept in KV cache (paged)
+    cache_quantization: bool = True  # Enable KV cache quantization
+    kv_cache_block_size: int = 512  # Paged KV block size
+    sdpa_prefer_flash: bool = True  # Prefer FlashAttention backend for SDPA when available
+    
+    # Speculative decoding configurations
+    speculative_candidates: int = 4  # Number of candidate tokens for speculative decoding
+    speculative_draft_length: int = 5  # Length of draft sequence
+    speculative_acceptance_threshold: float = 0.8  # Threshold for accepting draft tokens
+    speculative_temperature: float = 0.7  # Temperature for speculative sampling
+    speculative_top_k: int = 50  # Top-k for speculative sampling
+    speculative_top_p: float = 0.9  # Top-p for speculative sampling
+    enable_speculative_decoding: bool = True  # Enable speculative decoding by default
+
+    # MCP tool-use routing thresholds
+    tool_uncertainty_threshold: float = 0.7  # Trigger tools when uncertainty exceeds this
+    tool_fact_consistency_threshold: float = 0.6  # Trigger tools when fact consistency below this
+
+    # Debug output controls
+    enable_debug_outputs: bool = False  # If True, model.forward returns a 'debug' section with shapes/dtypes
+    debug_verbose: bool = False  # If True, include extra debug like modality presence and fusion shapes
     
     @classmethod
     def from_json(cls, path):

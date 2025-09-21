@@ -20,24 +20,24 @@
 
 import sys
 from pathlib import Path
-from utils.log import ERROR
-from utils.ul import display_version_changelog, get_current_version
+from utils import ERROR, display_version_changelog, get_current_version
 
 def show_version():
     """
-    Display current version information and corresponding update log.
+    Display the current version information and the corresponding update log.
+    If an error occurs during the process, it will print an error message and exit the program.
     """
     try:
-        # Get project root directory
+        # Obtain the project root directory by navigating up two levels from the current file.
         project_root = Path(__file__).parent.parent
         
-        # Get current version
+        # Retrieve the current version of the project.
         current_version = get_current_version(project_root)
         if not current_version:
             ERROR("Could not determine current version")
             sys.exit(1)
         
-        # Display version information and changelog
+        # Display the version information and changelog.
         display_version_changelog(project_root, current_version)
         
     except Exception as e:
@@ -46,26 +46,28 @@ def show_version():
 
 def _display_version_changelog(project_root: Path, current_version: str):
     """
-    Display the changelog for the current version.
-    
+    Display the changelog for the specified version.
+
     Args:
-        project_root (Path): Project root directory path
-        current_version (str): Current version string
+        project_root (Path): Path to the project root directory.
+        current_version (str): Current version string in the format of "major.minor.patch".
     """
+    # Construct the path to the UL directory.
     ul_dir = project_root / "UL"
     
+    # Skip changelog display if the UL directory does not exist.
     if not ul_dir.exists():
         DEBUG("UL directory not found, skipping changelog display")
         return
     
     try:
-        # Convert version to UL filename format (e.g., "1.0.0150" -> "100150.UL")
+        # Convert the version string to the UL filename format (e.g., "1.0.0150" -> "100150.UL").
         version_parts = current_version.split('.')
         if len(version_parts) != 3:
             DEBUG(f"Invalid version format: {current_version}")
             return
         
-        # Format: major + minor (2 digits) + patch (3 digits)
+        # Format the version components into the UL filename: major + minor (2 digits) + patch (3 digits).
         try:
             major = int(version_parts[0])
             minor = int(version_parts[1])
@@ -75,17 +77,19 @@ def _display_version_changelog(project_root: Path, current_version: str):
             DEBUG(f"Could not convert version to UL filename: {current_version}")
             return
         
+        # Construct the path to the UL file.
         ul_file_path = ul_dir / ul_filename
         
+        # Skip changelog display if the UL file does not exist.
         if not ul_file_path.exists():
             DEBUG(f"\nNo changelog found for version {current_version}")
             return
         
-        # Read and parse the update log
+        # Read the content of the UL file.
         with open(ul_file_path, 'r', encoding='utf-8') as f:
             content = f.read()
         
-        # Extract changelog items (lines starting with '-')
+        # Extract changelog items that start with '-'.
         changelog_lines = []
         lines = content.split('\n')
         in_changelog = False
@@ -98,20 +102,19 @@ def _display_version_changelog(project_root: Path, current_version: str):
             elif in_changelog and line.startswith('-'):
                 changelog_lines.append(line)
             elif in_changelog and line and not line.startswith('-'):
-                # End of changelog section
+                # End of the changelog section.
                 break
         
-        # Display changelog
+        # Print the header of the changelog.
         DEBUG(f"Changelog for Version {current_version}")
         
         if changelog_lines:
             for item in changelog_lines:
-                # Clean up the changelog item and add emoji
+                # Clean up the changelog item and add an emoji prefix.
                 clean_item = item.lstrip('- ').strip()
                 print(f"  🔸 {clean_item}")
         else:
             DEBUG("No changelog items found")
-
         
     except Exception as e:
         DEBUG(f"Error reading changelog: {e}")

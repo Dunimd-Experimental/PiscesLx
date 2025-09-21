@@ -22,7 +22,7 @@ import os
 import sys
 import platform
 import subprocess
-from utils.log import RIGHT
+from utils import RIGHT
 
 def setup(args):
     """
@@ -35,27 +35,20 @@ def setup(args):
     Returns:
         None
     """
-    # Validate args (placeholder for future options)
+    # Validate input arguments, continue setup even if validation fails
     try:
         args = validate_setup_args(args)
     except Exception as e:
         RIGHT(f"Invalid setup arguments: {e}")
-        # Continue with best-effort setup even if args invalid
+
     RIGHT("Pisces auto environment setup...")
     
-    # Create modelscope cache directory if not exists
-    modelscope_dir = os.path.join(os.getcwd(), "modelscope")
-    if not os.path.exists(modelscope_dir):
-        os.makedirs(modelscope_dir, exist_ok=True)
-        RIGHT(f"Created ModelScope cache directory: {modelscope_dir}")
-    else:
-        RIGHT(f"ModelScope cache directory already exists: {modelscope_dir}")
+    from utils import get_cache_manager
+    cache_manager = get_cache_manager()
+    env_dir = cache_manager.get_cache_dir("env")
+    venv_dir = str(env_dir)
     
-    # Get the current Python interpreter path
-    py_exec = sys.executable
-    # Define the virtual environment directory path
-    venv_dir = os.path.join(os.getcwd(), "pisces_env")
-    # Check if the current operating system is Windows
+    # Determine if the current operating system is Windows
     is_windows = platform.system().lower().startswith("win")
 
     # Check if the script is running outside a virtual environment
@@ -64,7 +57,8 @@ def setup(args):
         # Create a new virtual environment
         subprocess.check_call([py_exec, "-m", "venv", venv_dir])
         RIGHT(f"Virtual environment created at {venv_dir}")
-        # Get the Python interpreter path in the virtual environment
+        
+        # Get the Python interpreter path within the virtual environment
         python_bin = os.path.join(venv_dir, "Scripts" if is_windows else "bin", "python" + (".exe" if is_windows else ""))
         RIGHT("Re-running setup in venv...")
         # Re-run the script using the Python interpreter in the virtual environment
@@ -106,7 +100,14 @@ def setup(args):
         os.execv(shell, [shell, "-i", "-c", f"source '{activate}'; exec {shell}"])
 
 def validate_setup_args(args):
-    """Validate/normalize setup args. Currently a no-op placeholder.
+    """
+    Validate and normalize setup arguments. Currently a no-op placeholder.
     Ensures args is at least a SimpleNamespace-like object.
+
+    Args:
+        args: Command line arguments to be validated.
+
+    Returns:
+        args: The original or normalized arguments.
     """
     return args

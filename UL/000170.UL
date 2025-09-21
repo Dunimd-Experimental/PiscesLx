@@ -16,10 +16,8 @@
 ! See the License for the specific language governing permissions and
 ! limitations under the License.
 
-### 1.0.0120
+### 0.0.0170
 
-- Introducing a brand new dataset processing tool
-- Fix import errors in tools tool
-- Update the content of the manageability. py command
-- Optimize some content descriptions in the README
-- Optimize file copyright information content description
+- Repair and optimize the model
+- Optimization tools
+- Optimize the description of the README section

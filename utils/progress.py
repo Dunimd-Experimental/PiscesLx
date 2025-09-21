@@ -25,6 +25,8 @@ from typing import Optional
 class ProgressBar:
     """
     A unified progress bar utility class based on the implementation in monitor.py.
+    This class provides a flexible way to display progress information during task execution,
+    supporting features like ETA calculation and custom display styles.
     """
     
     def __init__(self, total: int, desc: str = "", length: int = 30, 
@@ -37,7 +39,7 @@ class ProgressBar:
             total (int): The total number of items to process.
             desc (str, optional): The description of the progress bar. Defaults to "".
             length (int, optional): The length of the progress bar. Defaults to 30.
-            fill_char (str, optional): The character used to represent completed progress. Defaults to '�?.
+            fill_char (str, optional): The character used to represent completed progress. Defaults to '█'.
             empty_char (str, optional): The character used to represent incomplete progress. Defaults to '-'.
             show_eta (bool, optional): Whether to show the estimated time of arrival (ETA). Defaults to True.
             file: The file object to write the progress bar to. Defaults to sys.stdout.
@@ -61,7 +63,7 @@ class ProgressBar:
             seconds (float): The time in seconds.
 
         Returns:
-            str: The formatted time string.
+            str: The formatted time string, e.g., "12.3s", "4.5m", "1.2h".
         """
         if seconds < 60:
             return f"{seconds:.1f}s"
@@ -72,13 +74,13 @@ class ProgressBar:
     
     def _get_bar(self, percent: float) -> str:
         """
-        Generate the progress bar string.
+        Generate the progress bar string based on the given percentage.
 
         Args:
-            percent (float): The progress percentage.
+            percent (float): The progress percentage, ranging from 0 to 100.
 
         Returns:
-            str: The progress bar string.
+            str: The progress bar string, e.g., "|██████████----------|".
         """
         filled_length = int(self.length * percent / 100)
         bar = self.fill_char * filled_length + self.empty_char * (self.length - filled_length)
@@ -107,7 +109,7 @@ class ProgressBar:
         """
         Display or update the progress bar on the screen.
         Skip if total is 0 to avoid division by zero.
-        Prevent overly frequent updates.
+        Prevent overly frequent updates to improve performance.
         """
         if self.total == 0:
             return
@@ -179,7 +181,6 @@ def progress_bar(iterable, desc: str = "", total: Optional[int] = None,
                 length: int = 30, file=None):
     """
     Wrap an iterable with a progress bar.
-
     If the length of the iterable can be determined, use a full progress bar.
     Otherwise, use a simple counter to show the processing progress.
 
@@ -226,7 +227,7 @@ def get_simple_progress_bar(percent: float, length: int = 30) -> str:
         length (int, optional): The length of the progress bar. Defaults to 30.
 
     Returns:
-        str: The simple progress bar string.
+        str: The simple progress bar string, e.g., "|██████████----------|  50.0%".
     """
     try:
         percent = float(percent)

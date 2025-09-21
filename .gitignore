@@ -21,6 +21,7 @@
 .trae/
 .vscode/
 .idea/
+.pisceslx/
 *.swp
 *.swo
 *~

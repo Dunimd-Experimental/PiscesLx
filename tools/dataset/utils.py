@@ -23,6 +23,8 @@ import re
 def natural_sort_key(text):
     """
     Generate a key for natural sorting, which can handle numeric parts in the text.
+    Natural sorting is a way to sort strings containing numbers in a human-friendly order,
+    for example, it will sort ["file1", "file10", "file2"] as ["file1", "file2", "file10"].
 
     Args:
         text (str): The input text to generate the sorting key for.
@@ -30,12 +32,5 @@ def natural_sort_key(text):
     Returns:
         list: A list containing integers or lowercase strings, used as the sorting key.
     """
+    # Split the text by digits, then convert digit parts to integers and non-digit parts to lowercase
     return [int(s) if s.isdigit() else s.lower() for s in re.split(r'(\d+)', text)]
-
-def modal_of(name: str) -> str:
-    # You may need to define the content of PREFIX2MODAL here
-    PREFIX2MODAL = {}  
-    for p, m in PREFIX2MODAL.items():
-        if name.startswith(p):
-            return m
-    return "other"

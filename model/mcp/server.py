@@ -33,7 +33,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from utils.log import RIGHT, DEBUG, ERROR
+from utils import RIGHT, DEBUG, ERROR
 
 @dataclass
 class ToolStats:
@@ -55,7 +55,7 @@ class ToolStats:
 
 class OptimizedMCPServer:
     """
-    Optimized MCP server with advanced features, designed to manage and load MCP tools efficiently.
+    An optimized MCP server with advanced features, designed to efficiently manage and load MCP tools.
     """
     
     def __init__(self):
@@ -63,7 +63,7 @@ class OptimizedMCPServer:
         Initialize the OptimizedMCPServer instance.
         
         Creates a FastMCP server, initializes tool statistics and loaded modules sets,
-        sets up a thread pool executor, enables hot - reload, and records the initial check time.
+        sets up a thread pool executor, enables hot-reload, and records the initial check time.
         """
         self.mcp_server = FastMCP("PiscesL1 Optimized MCP Server")
         self.tool_stats: List[ToolStats] = []
@@ -85,21 +85,21 @@ class OptimizedMCPServer:
         start_time = time.time()
         module_name = py_file.stem
         
-        # Skip __init__.py file
+        # Skip __init__.py file as it's usually used for package initialization
         if module_name == "__init__":
             return ToolStats(module_name, 0, 0, "skipped")
             
         try:
-            # Invalidate cache for hot - reload
+            # Invalidate cache for hot-reload to ensure the latest module version is loaded
             if module_name in sys.modules:
                 importlib.reload(sys.modules[module_name])
             else:
                 module = importlib.import_module(f"MCP.{module_name}")
                 
-            # Check if the module has an 'mcp' attribute
+            # Check if the module has an 'mcp' attribute to determine if it contains MCP tools
             if hasattr(module, 'mcp'):
                 tool_mcp = getattr(module, 'mcp')
-                # Check if the 'mcp' attribute has a 'tools' attribute
+                # Check if the 'mcp' attribute has a 'tools' attribute to get available tools
                 if hasattr(tool_mcp, 'tools'):
                     self.mcp_server.tools.update(tool_mcp.tools)
                     tool_count = len(tool_mcp.tools)
@@ -126,12 +126,12 @@ class OptimizedMCPServer:
         # Get the path to the MCP directory
         mcp_dir = Path(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))) / "MCP"
         
-        # Check if the MCP directory exists
+        # Check if the MCP directory exists. If not, log an error and exit the function
         if not mcp_dir.exists():
             ERROR(f"MCP directory not found: {mcp_dir}")
             return
         
-        # Skip discovery if no changes and not forced to reload
+        # Skip discovery if no changes and not forced to reload to improve performance
         if not force_reload and time.time() - self._last_check_time < 1:
             return
             
@@ -140,9 +140,9 @@ class OptimizedMCPServer:
         # Get all Python files except __init__.py in the MCP directory
         py_files = [f for f in mcp_dir.glob("*.py") if f.name != "__init__.py"]
         
-        # Clear previous tool statistics
+        # Clear previous tool statistics to ensure fresh data
         self.tool_stats.clear()
-        # Load modules concurrently
+        # Load modules concurrently using a thread pool to speed up the process
         with ThreadPoolExecutor(max_workers=min(4, len(py_files))) as executor:
             future_to_file = {executor.submit(self._load_module_async, f): f for f in py_files}
             
@@ -156,7 +156,7 @@ class OptimizedMCPServer:
         
         RIGHT(f"Optimized auto-discovery: {total_tools} tools from {len(successful)}/{len(py_files)} modules")
         
-        # Log detailed loading statistics
+        # Log detailed loading statistics for debugging and monitoring
         for stats in sorted(self.tool_stats, key=lambda x: x.load_time, reverse=True):
             if stats.status == "success":
                 DEBUG(f"{stats.name}: {stats.tool_count} tools ({stats.load_time:.3f}s)")
@@ -182,7 +182,15 @@ discovery_thread = threading.Thread(target=_async_tool_discovery, daemon=True)
 discovery_thread.start()
 
 def wait_for_tools(timeout=5):
-    """Wait for tool discovery to complete"""
+    """
+    Wait for tool discovery to complete.
+
+    Args:
+        timeout (int, optional): Maximum waiting time in seconds. Defaults to 5.
+
+    Returns:
+        bool: True if the discovery thread is still alive after waiting, False otherwise.
+    """
     discovery_thread.join(timeout=timeout)
     return discovery_thread.is_alive()
 
@@ -202,7 +210,7 @@ def server_status() -> str:
     Get the current status information of the MCP server.
 
     Returns:
-        str: A JSON - formatted string containing server status details.
+        str: A JSON-formatted string containing server status details.
     """
     return f"""{{
     "name": "PiscesL1 MCP Server",

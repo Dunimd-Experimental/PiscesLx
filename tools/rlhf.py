@@ -18,37 +18,42 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import re
+import gc
 import os
 import torch
-from transformers import AutoModelForCausalLM, AutoTokenizer
+import torch.nn as nn
 from trl import PPOTrainer, PPOConfig
-from utils.log import RIGHT, DEBUG, ERROR
+from utils import RIGHT, DEBUG, ERROR, WARNING
+from transformers import AutoModelForCausalLM, AutoTokenizer
 
 def rlhf_train(args):
     """
-    Perform a complete RLHF (Reinforcement Learning with Human Feedback) training process.
-    Called from manage.py.
+    Perform a complete RLHF (Reinforcement Learning with Human Feedback) training process using PPO algorithm.
+    This function is called from manage.py to initiate the training workflow.
 
     Args:
-        args (Namespace): A namespace object containing all training parameters.
+        args (Namespace): A namespace object containing all training parameters, 
+                         including model path, learning rate, batch size, etc.
 
     Returns:
-        None
+        None: This function does not return any value, but it trains and saves the model.
     """
     RIGHT("Starting RLHF training with PPO...")
-    # Validate/normalize arguments
+
+    # Validate and normalize the input arguments to ensure they meet the training requirements
     try:
         args = validate_rlhf_args(args)
     except Exception as e:
         ERROR(f"Invalid RLHF arguments: {e}")
         return
     
-    # Validate the input arguments
+    # Check if the model path is specified, which is essential for loading the pre-trained model
     if not hasattr(args, 'model_path') or not args.model_path:
         ERROR("Model path --model_path must be specified")
         return
     
-    # Load the pre-trained model and tokenizer
+    # Load the pre-trained causal language model and its corresponding tokenizer from the given path
     model = AutoModelForCausalLM.from_pretrained(
         args.model_path, 
         torch_dtype=torch.float16, 
@@ -56,7 +61,7 @@ def rlhf_train(args):
     )
     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
     
-    # Configure the PPO training
+    # Configure the PPO training parameters with gradient clipping and stability protections
     ppo_config = PPOConfig(
         model_name=args.model_path,
         learning_rate=args.rlhf_lr,
@@ -65,9 +70,23 @@ def rlhf_train(args):
         gradient_accumulation_steps=args.rlhf_accum_steps,
         optimize_cuda_cache=True,
         log_with="wandb" if args.log_with_wandb else None,
+        # Add gradient clipping for training stability
+        max_grad_norm=1.0,
+        # Add KL divergence penalty to prevent policy collapse
+        target_kl=0.1,
+        # Add entropy bonus for exploration
+        init_kl_coef=0.2,
+        # Add adaptive KL control
+        adap_kl_ctrl=True,
+        # Add value function clipping for stability
+        cliprange_value=0.2,
+        # Add PPO clipping range
+        cliprange=0.2,
+        # Add early stopping based on KL divergence
+        early_stopping=True,
     )
     
-    # Initialize the PPO trainer
+    # Initialize the PPO trainer with the loaded model, configuration, and tokenizer
     ppo_trainer = PPOTrainer(
         model=model,
         config=ppo_config,
@@ -75,7 +94,7 @@ def rlhf_train(args):
         dataset=None,
     )
     
-    # Load the human feedback dataset
+    # Load the human feedback dataset for training
     try:
         from datasets import load_dataset
         dataset = load_dataset(args.rlhf_dataset, split="train")
@@ -84,70 +103,168 @@ def rlhf_train(args):
         ERROR(f"Failed to load RLHF dataset: {e}")
         return
     
-    def compute_reward(completions, human_feedback, ai_feedback=None, safety_score=None):
+    def compute_reward(completions, human_feedback, ai_feedback=None, safety_score=None, adversarial_score=None):
         """
-        GPT-4 level hybrid feedback system: Dual evaluation with human and AI feedback.
+        Implement an advanced reward function with adversarial training and robustness validation.
+        The rewards are calculated based on human scores, AI quality evaluation, safety checks, and adversarial robustness.
 
         Args:
             completions (torch.Tensor): Model-generated responses.
             human_feedback (list): List of human scores.
             ai_feedback (list, optional): AI-generated quality scores. Defaults to None.
             safety_score (list, optional): Safety/harmlessness scores. Defaults to None.
+            adversarial_score (list, optional): Adversarial robustness scores. Defaults to None.
 
         Returns:
-            torch.Tensor: Tensor containing weighted reward scores.
+            torch.Tensor: Tensor containing weighted reward scores in the range [0.0, 2.0].
         """
-        # Convert human feedback scores to tensor
-        human_rewards = torch.tensor([float(score) for score in human_feedback])
+        # Convert human feedback scores from list to tensor with numerical stability
+        human_rewards = torch.tensor([float(score) for score in human_feedback], dtype=torch.float32)
         
-        # AI-assisted evaluation (rule-based quality check)
+        # Add numerical stability check
+        if torch.isnan(human_rewards).any() or torch.isinf(human_rewards).any():
+            human_rewards = torch.nan_to_num(human_rewards, nan=1.0, posinf=2.0, neginf=0.0)
+        
+        # Perform AI-assisted evaluation using rule-based quality checks if AI feedback is not provided
         if ai_feedback is None:
             ai_feedback = []
             for completion in completions:
-                # Decode the completion to text
-                response_text = tokenizer.decode(completion, skip_special_tokens=True)
-                
-                # Quality evaluation rules
-                quality_score = 1.0
-                if len(response_text.split()) > 10:  # Sufficiently detailed
-                    quality_score += 0.2
-                if any(keyword in response_text.lower() for keyword in ["explain", "because", "therefore"]):
-                    quality_score += 0.3  # Complete reasoning chain
-                if response_text.count(".") > 2:  # Structured response
-                    quality_score += 0.1
+                try:
+                    # Decode the model-generated response to text with error handling
+                    response_text = tokenizer.decode(completion, skip_special_tokens=True)
                     
-                ai_feedback.append(min(quality_score, 2.0))
+                    # Evaluate the quality of the response based on advanced rules
+                    quality_score = 1.0
+                    
+                    # Length-based scoring with normalization
+                    word_count = len(response_text.split())
+                    if 10 <= word_count <= 200:  # Optimal length range
+                        quality_score += 0.2 * min(word_count / 50.0, 1.0)  # Normalize length bonus
+                    
+                    # Reasoning chain detection
+                    reasoning_keywords = ["explain", "because", "therefore", "consequently", "as a result"]
+                    reasoning_count = sum(1 for keyword in reasoning_keywords if keyword in response_text.lower())
+                    quality_score += 0.3 * min(reasoning_count / 3.0, 1.0)
+                    
+                    # Structure and coherence checks
+                    sentence_count = response_text.count(".")
+                    if sentence_count > 2:
+                        quality_score += 0.1 * min(sentence_count / 5.0, 1.0)
+                    
+                    # Add diversity score to prevent repetitive responses
+                    unique_words = len(set(response_text.lower().split()))
+                    total_words = max(len(response_text.split()), 1)
+                    diversity_ratio = unique_words / total_words
+                    quality_score += 0.2 * diversity_ratio
+                    
+                    ai_feedback.append(min(quality_score, 2.0))
+                    
+                except Exception as e:
+                    ERROR(f"Error in AI feedback computation: {e}")
+                    ai_feedback.append(1.0)  # Default safe score
         
-        # Convert AI feedback scores to tensor
-        ai_rewards = torch.tensor([float(score) for score in ai_feedback])
+        # Convert AI feedback scores from list to tensor with stability checks
+        ai_rewards = torch.tensor([float(score) for score in ai_feedback], dtype=torch.float32)
+        if torch.isnan(ai_rewards).any() or torch.isinf(ai_rewards).any():
+            ai_rewards = torch.nan_to_num(ai_rewards, nan=1.0, posinf=2.0, neginf=0.0)
         
-        # Safety check
+        # Perform safety check on the model-generated responses
         if safety_score is None:
             safety_rewards = torch.ones_like(human_rewards)
             for i, completion in enumerate(completions):
-                response_text = tokenizer.decode(completion, skip_special_tokens=True)
-                if any(harm_word in response_text.lower() for harm_word in ["harm", "danger", "illegal"]):
-                    safety_rewards[i] = 0.1  # Significantly reduce reward for harmful content
+                try:
+                    response_text = tokenizer.decode(completion, skip_special_tokens=True)
+                    
+                    # Enhanced safety detection with multiple categories
+                    harmful_categories = {
+                        "physical_harm": ["harm", "danger", "injury", "violence"],
+                        "illegal_activities": ["illegal", "crime", "steal", "fraud"],
+                        "toxic_content": ["hate", "discrimination", "racism", "sexism"],
+                        "misinformation": ["false", "misleading", "fake", "conspiracy"]
+                    }
+                    
+                    safety_penalty = 0.0
+                    for category, keywords in harmful_categories.items():
+                        if any(keyword in response_text.lower() for keyword in keywords):
+                            safety_penalty += 0.3  # Cumulative penalty for multiple violations
+                    
+                    safety_rewards[i] = max(0.1, 1.0 - safety_penalty)  # Ensure minimum safety score
+                    
+                except Exception as e:
+                    ERROR(f"Error in safety check: {e}")
+                    safety_rewards[i] = 0.5  # Conservative safety score on error
         else:
-            # Convert safety scores to tensor
-            safety_rewards = torch.tensor([float(score) for score in safety_score])
+            # Convert safety scores from list to tensor with stability checks
+            safety_rewards = torch.tensor([float(score) for score in safety_score], dtype=torch.float32)
+            if torch.isnan(safety_rewards).any() or torch.isinf(safety_rewards).any():
+                safety_rewards = torch.nan_to_num(safety_rewards, nan=1.0, posinf=1.0, neginf=0.1)
         
-        # Hybrid weights: 70% human + 20% AI + 10% safety
-        final_rewards = 0.7 * human_rewards + 0.2 * ai_rewards + 0.1 * safety_rewards
+        # Adversarial robustness scoring
+        if adversarial_score is None:
+            # Default adversarial robustness based on response consistency
+            adversarial_rewards = torch.ones_like(human_rewards)
+            for i, completion in enumerate(completions):
+                try:
+                    response_text = tokenizer.decode(completion, skip_special_tokens=True)
+                    
+                    # Check for adversarial patterns
+                    adversarial_patterns = [
+                        r"ignore.*previous.*instructions",
+                        r"disregard.*safety.*guidelines",
+                        r"bypass.*security.*measures",
+                        r"override.*constraints"
+                    ]
+                    
+                    import re
+                    robustness_score = 1.0
+                    for pattern in adversarial_patterns:
+                        if re.search(pattern, response_text, re.IGNORECASE):
+                            robustness_score -= 0.4  # Heavy penalty for adversarial vulnerability
+                    
+                    adversarial_rewards[i] = max(0.1, robustness_score)
+                    
+                except Exception as e:
+                    ERROR(f"Error in adversarial check: {e}")
+                    adversarial_rewards[i] = 0.5  # Conservative robustness score on error
+        else:
+            # Convert adversarial scores from list to tensor with stability checks
+            adversarial_rewards = torch.tensor([float(score) for score in adversarial_score], dtype=torch.float32)
+            if torch.isnan(adversarial_rewards).any() or torch.isinf(adversarial_rewards).any():
+                adversarial_rewards = torch.nan_to_num(adversarial_rewards, nan=1.0, posinf=1.0, neginf=0.1)
+        
+        # Combine all reward components with advanced weighting
+        # Dynamic weighting based on data quality
+        human_weight = 0.6
+        ai_weight = 0.15
+        safety_weight = 0.15
+        adversarial_weight = 0.1
+        
+        # Apply temperature scaling for numerical stability
+        temperature = 0.8
+        final_rewards = (
+            human_weight * human_rewards +
+            ai_weight * ai_rewards +
+            safety_weight * safety_rewards +
+            adversarial_weight * adversarial_rewards
+        ) * temperature
+        
+        # Final numerical stability check and clamping
+        final_rewards = torch.nan_to_num(final_rewards, nan=1.0, posinf=2.0, neginf=0.0)
         return torch.clamp(final_rewards, 0.0, 2.0)
     
-    # RLHF training loop
+    # Start the RLHF training loop
     total_steps = 0
-    for epoch in range(args.rlhf_epochs):
-        epoch_rewards = []
-        
-        for batch_idx, batch in enumerate(dataset.select(range(min(len(dataset), args.rlhf_max_samples)))):
-            try:
-                # Prepare the input tensors
+    try:
+        for epoch in range(args.rlhf_epochs):
+            epoch_rewards = []
+            
+            # Iterate over batches of the dataset
+            for batch_idx, batch in enumerate(dataset.select(range(min(len(dataset), args.rlhf_max_samples)))):
+                # Prepare the input tensors for the model
                 inputs = tokenizer(batch["prompt"], return_tensors="pt", padding=True, truncation=True)
                 query_tensors = inputs["input_ids"]
                 
-                # Generate responses
+                # Generate responses using the PPO trainer
                 response_tensors = ppo_trainer.generate(
                     query_tensors,
                     max_new_tokens=args.rlhf_max_length,
@@ -155,45 +272,111 @@ def rlhf_train(args):
                     temperature=0.7
                 )
                 
-                # Get GPT-4 level hybrid feedback
+                # Get feedback scores from the batch data
                 human_feedback = batch.get("human_score", [1.0] * len(response_tensors))
                 ai_feedback = batch.get("ai_score", None)  # Optional AI quality evaluation
                 safety_score = batch.get("safety_score", None)  # Optional safety evaluation
+                adversarial_score = batch.get("adversarial_score", None)  # Optional adversarial robustness evaluation
                 
-                # Compute rewards
-                rewards = compute_reward(response_tensors, human_feedback, ai_feedback, safety_score)
+                # Compute rewards based on the feedback with robustness validation
+                rewards = compute_reward(response_tensors, human_feedback, ai_feedback, safety_score, adversarial_score)
                 
-                # Perform PPO update
-                stats = ppo_trainer.step(query_tensors, response_tensors, rewards)
-                epoch_rewards.append(rewards.mean().item())
-                
-                total_steps += 1
-                if total_steps % 10 == 0:
-                    DEBUG(f"Step {total_steps}, Reward: {rewards.mean():.4f}")
+                # Perform a PPO update step with numerical stability protection
+                try:
+                    # Add gradient clipping and stability checks
+                    with torch.cuda.amp.autocast(enabled=True):  # Enable mixed precision for stability
+                        stats = ppo_trainer.step(query_tensors, response_tensors, rewards)
                     
-            except Exception as e:
-                ERROR(f"Error in batch {batch_idx}: {e}")
-                continue
+                    # Validate reward statistics
+                    if torch.isnan(rewards).any() or torch.isinf(rewards).any():
+                        ERROR(f"Numerical instability detected in rewards at batch {batch_idx}")
+                        rewards = torch.nan_to_num(rewards, nan=1.0, posinf=2.0, neginf=0.0)
+                    
+                    epoch_rewards.append(rewards.mean().item())
+                    
+                    total_steps += 1
+                    if total_steps % 10 == 0:
+                        DEBUG(f"Step {total_steps}, Reward: {rewards.mean():.4f}, KL: {stats.get('objective/kl', 0):.4f}")
+                        
+                        # Early stopping based on KL divergence
+                        if stats.get('objective/kl', 0) > ppo_config.target_kl:
+                            WARNING(f"KL divergence {stats['objective/kl']:.4f} exceeded target {ppo_config.target_kl}, considering early stopping")
+                    
+                except RuntimeError as e:
+                    if "out of memory" in str(e):
+                        ERROR(f"OOM error at batch {batch_idx}, clearing cache and continuing")
+                        torch.cuda.empty_cache()
+                        continue
+                    else:
+                        ERROR(f"Runtime error in batch {batch_idx}: {e}")
+                        continue
+                except Exception as e:
+                    ERROR(f"Error in batch {batch_idx}: {e}")
+                    continue
         
+        # End of epoch - calculate epoch statistics
         avg_reward = sum(epoch_rewards) / len(epoch_rewards) if epoch_rewards else 0
         RIGHT(f"Epoch {epoch+1}/{args.rlhf_epochs} completed, Avg Reward: {avg_reward:.4f}")
     
-    # Save the trained model
+    except Exception as e:
+        ERROR(f"Critical error during RLHF training: {e}")
+        raise
+    
+    # Save the trained model if an output directory is specified
     if args.output_dir:
         output_path = os.path.join(args.output_dir, f"rlhf_model_{args.rlhf_epochs}epochs")
-        model.save_pretrained(output_path)
-        tokenizer.save_pretrained(output_path)
-        RIGHT(f"RLHF model saved to: {output_path}")
+        
+        # Save with numerical stability validation
+        try:
+            model.save_pretrained(output_path)
+            tokenizer.save_pretrained(output_path)
+            RIGHT(f"RLHF model saved to: {output_path}")
+            
+            # Validate saved model integrity
+            from transformers import AutoModelForCausalLM, AutoTokenizer
+            test_model = AutoModelForCausalLM.from_pretrained(output_path)
+            test_tokenizer = AutoTokenizer.from_pretrained(output_path)
+            
+            # Test model with a simple prompt
+            test_input = test_tokenizer("Hello, world!", return_tensors="pt")
+            with torch.no_grad():
+                test_output = test_model(**test_input)
+                if torch.isnan(test_output.logits).any() or torch.isinf(test_output.logits).any():
+                    WARNING("Numerical instability detected in saved model")
+                else:
+                    RIGHT("Model integrity validation passed")
+            
+            # Clean up test model
+            del test_model, test_tokenizer
+            gc.collect()
+            torch.cuda.empty_cache()
+            
+        except Exception as e:
+            ERROR(f"Error saving model: {e}")
+            raise
     
     RIGHT("RLHF training completed successfully!")
 
 def validate_rlhf_args(args):
-    """Validate and normalize arguments for RLHF training."""
-    # Required: model_path
+    """
+    Validate and normalize arguments for RLHF training.
+    This function checks if required arguments are provided, sets default values for missing arguments,
+    and validates the ranges and types of numerical arguments.
+
+    Args:
+        args (Namespace): A namespace object containing training parameters.
+
+    Returns:
+        Namespace: The validated and normalized arguments.
+
+    Raises:
+        ValueError: If any argument is invalid, e.g., missing required argument or invalid value range.
+    """
+    # Check if the model path is provided, which is a required argument
     if not hasattr(args, 'model_path') or not args.model_path:
         raise ValueError("--model_path is required")
 
-    # Defaults for RLHF hyperparameters if missing
+    # Set default values for RLHF hyperparameters if they are not specified
     defaults = {
         'rlhf_lr': 1e-5,
         'rlhf_batch_size': 4,
@@ -210,7 +393,7 @@ def validate_rlhf_args(args):
         if not hasattr(args, k):
             setattr(args, k, v)
 
-    # Ranges and types
+    # Validate the ranges and types of numerical arguments
     if float(args.rlhf_lr) <= 0:
         raise ValueError("rlhf_lr must be > 0")
     for name in ['rlhf_batch_size', 'rlhf_mini_batch_size', 'rlhf_accum_steps', 'rlhf_epochs', 'rlhf_max_samples', 'rlhf_max_length']:

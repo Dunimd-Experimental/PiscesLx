@@ -26,20 +26,30 @@ import pyarrow as pa
 from datasets import load_dataset, load_from_disk, Dataset, DatasetDict
 
 def arrow(progress_cb=None):
-    """Advanced Arrow format datasets to JSON conversion with intelligent processing and error recovery.
+    """Convert advanced Arrow format datasets to JSON with intelligent processing and error recovery.
 
     Args:
         progress_cb (callable | None): Optional callback function in the form of progress_cb(level:str, message:str).
             Suggested values for level: "debug", "info", "success", "error", "warning".
+
+    Returns:
+        dict: Processing statistics including total datasets, successful conversions, failed conversions, 
+              total records, and errors.
     """
     def emit(level: str, message: str, **kwargs):
-        """Enhanced emission with context and error details."""
-        # Add timestamp and context
+        """Enhance the message with a timestamp and emit it through the callback or print it.
+
+        Args:
+            level (str): Message level, e.g., "debug", "info", "success", "error", "warning".
+            message (str): The message to emit.
+            **kwargs: Additional keyword arguments.
+        """
+        # Import datetime module to add timestamp to the message
         import datetime
         timestamp = datetime.datetime.now().strftime("%H:%M:%S")
         enriched_message = f"[{timestamp}] {message}"
-        
-        # Output through callback with enhanced context
+
+        # Try to emit the message through the callback
         if callable(progress_cb):
             try:
                 progress_cb(level, enriched_message)
@@ -50,40 +60,40 @@ def arrow(progress_cb=None):
                     print(f"[callback_error] {str(callback_error)}")
                 except:
                     pass
-        
-        # Fallback mechanism with error handling
+
+        # Fallback to print the message if the callback fails
         try:
             print(f"[{level}] {enriched_message}")
         except Exception as print_error:
-            # Final fallback - write to stderr if possible
+            # Final fallback: write to stderr if possible
             import sys
             try:
                 sys.stderr.write(f"EMERGENCY: {str(print_error)}\n")
             except:
                 pass
-    
+
     def find_arrow_datasets(root_dir):
-        """Advanced Arrow dataset discovery with comprehensive validation and metadata extraction.
+        """Discover Arrow datasets in the specified directory with comprehensive validation and metadata extraction.
 
         Args:
             root_dir (str): The root directory to start the search from.
 
         Returns:
-            list: A list of validated paths to directories containing Arrow datasets.
+            list: A list of validated paths to directories containing Arrow datasets, sorted by modification time (newest first).
         """
         if not os.path.exists(root_dir):
             emit("error", f"Root directory does not exist: {root_dir}")
             return []
-            
+
         datasets = []
         validation_cache = {}
-        
+
         try:
             for root, dirs, files in os.walk(root_dir):
                 # Skip hidden directories and common cache directories
                 dirs[:] = [d for d in dirs if not d.startswith('.') and not d.startswith('__')]
-                
-                # Enhanced detection with multiple indicators
+
+                # Define multiple indicators to detect Arrow datasets
                 indicators = [
                     "dataset_info.json",
                     "state.json", 
@@ -91,24 +101,23 @@ def arrow(progress_cb=None):
                     "features.json",
                     "dataset.arrow"
                 ]
-                
-                # Quick validation cache
+
+                # Use a cache key to avoid repeated validation for the same directory
                 cache_key = root
                 if cache_key in validation_cache:
                     if validation_cache[cache_key]:
                         datasets.append(root)
                     continue
-                
-                # Check for dataset indicators
+
+                # Check if any indicators exist in the current directory
                 found_indicators = [ind for ind in indicators if os.path.exists(os.path.join(root, ind))]
-                
+
                 if found_indicators:
-                    # Enhanced validation
                     try:
-                        # Check for actual Arrow files
+                        # Check for actual Arrow or Parquet files
                         arrow_files = [f for f in files if f.endswith('.arrow') or f.endswith('.parquet')]
-                        
-                        # Validate dataset integrity
+
+                        # Validate dataset integrity by checking if any indicator file is non-empty
                         is_valid = False
                         for indicator in found_indicators:
                             indicator_path = os.path.join(root, indicator)
@@ -118,9 +127,9 @@ def arrow(progress_cb=None):
                                     break
                             except (OSError, IOError):
                                 continue
-                        
+
                         if is_valid:
-                            # Additional metadata collection
+                            # Collect additional metadata about the dataset
                             dataset_info = {
                                 'path': root,
                                 'indicators': found_indicators,
@@ -128,32 +137,32 @@ def arrow(progress_cb=None):
                                 'total_files': len(files),
                                 'subdirs': len(dirs)
                             }
-                            
+
                             validation_cache[cache_key] = True
                             datasets.append(root)
                             emit("debug", f"Valid dataset found: {root} ({dataset_info})")
                         else:
                             validation_cache[cache_key] = False
-                            
+
                     except Exception as validation_error:
                         emit("warning", f"Validation error for {root}: {str(validation_error)}")
                         validation_cache[cache_key] = False
-                        
+
         except Exception as discovery_error:
             emit("error", f"Dataset discovery failed: {str(discovery_error)}")
-            
-        # Remove duplicates and sort by modification time (newest first)
+
+        # Remove duplicates and sort datasets by modification time (newest first)
         try:
             datasets = list(set(datasets))
             datasets.sort(key=lambda x: os.path.getmtime(x), reverse=True)
         except Exception:
             pass  # Fallback to unsorted
-            
+
         emit("info", f"Found {len(datasets)} validated Arrow datasets")
         return datasets
 
     def get_next_filename(base_dir, prefix="train"):
-        """Get the next available filename in the format train*.json.
+        """Get the next available filename in the format prefix*.json.
 
         Args:
             base_dir (str): The directory where the files are located.
@@ -165,7 +174,7 @@ def arrow(progress_cb=None):
         existing = glob.glob(os.path.join(base_dir, f"{prefix}*.json"))
         if not existing:
             return os.path.join(base_dir, f"{prefix}1.json")
-        
+
         numbers = []
         for f in existing:
             basename = os.path.basename(f)
@@ -175,16 +184,16 @@ def arrow(progress_cb=None):
                     numbers.append(num)
                 except ValueError:
                     continue
-        
+
         next_num = max(numbers) + 1 if numbers else 1
         return os.path.join(base_dir, f"{prefix}{next_num}.json")
 
-    # Start of the main logic
+    # Get the current working directory and initialize counters
     current_dir = os.getcwd()
     processed_count = 0
     skipped_count = 0
 
-    # Find all Arrow dataset directories
+    # Find all Arrow dataset directories in the current working directory
     dataset_dirs = find_arrow_datasets(current_dir)
 
     if not dataset_dirs:
@@ -194,17 +203,17 @@ def arrow(progress_cb=None):
 
     for dataset_dir in dataset_dirs:
         emit("info", f"Processing: {dataset_dir}")
-        
+
         dataset = None
-        
-        # Try load_from_disk first
+
+        # Try to load the dataset using load_from_disk first
         try:
             dataset = load_from_disk(dataset_dir)
             emit("success", "Successfully loaded using load_from_disk.")
         except Exception as e:
             emit("error", f"load_from_disk failed: {e}")
-        
-        # If load_from_disk fails, try load_dataset
+
+        # If load_from_disk fails, try to load the dataset using load_dataset
         if dataset is None:
             try:
                 dataset = load_dataset(dataset_dir)
@@ -212,12 +221,12 @@ def arrow(progress_cb=None):
             except Exception as e:
                 emit("error", f"load_dataset failed: {e}")
                 continue
-        
+
         if dataset is None:
             emit("error", "Unable to load dataset, skipping.")
             continue
-        
-        # Advanced processing with memory optimization and error recovery
+
+        # Initialize processing statistics
         processing_stats = {
             'total_datasets': 0,
             'successful_conversions': 0,
@@ -225,32 +234,40 @@ def arrow(progress_cb=None):
             'total_records': 0,
             'errors': []
         }
-        
+
         def process_dataset_with_recovery(dataset_obj, dataset_name="dataset"):
-            """Process individual dataset with comprehensive error handling."""
+            """Process an individual dataset with comprehensive error handling and memory optimization.
+
+            Args:
+                dataset_obj: The dataset object to process.
+                dataset_name (str, optional): The name of the dataset. Defaults to "dataset".
+
+            Returns:
+                bool: True if the dataset is successfully converted, False otherwise.
+            """
             try:
                 if len(dataset_obj) == 0:
                     emit("warning", f"Skipping empty dataset: {dataset_name}")
                     processing_stats['failed_conversions'] += 1
                     return
-                
+
                 total_records = len(dataset_obj)
                 processing_stats['total_records'] += total_records
-                
-                # Intelligent batch sizing based on available memory
+
+                # Import psutil to get available memory and determine batch size
                 import psutil
                 available_memory = psutil.virtual_memory().available
                 base_batch_size = min(5000, max(1000, total_records // 20))
-                
-                # Adjust batch size based on memory pressure
+
+                # Adjust batch size based on available memory
                 memory_factor = max(0.1, min(1.0, available_memory / (1024**3)))  # GB-based scaling
                 batch_size = max(100, int(base_batch_size * memory_factor))
-                
+
                 emit("info", f"Processing {dataset_name}: {total_records} records, batch size: {batch_size}, memory: {available_memory/1024**3:.1f}GB")
-                
+
                 output_file = get_next_filename(current_dir, dataset_name)
-                
-                # Safe file handling with backup
+
+                # Create a backup of the output file if it exists
                 backup_file = output_file + ".backup"
                 if os.path.exists(output_file):
                     try:
@@ -259,14 +276,20 @@ def arrow(progress_cb=None):
                         os.remove(output_file)
                     except Exception as backup_error:
                         emit("warning", f"Backup failed: {backup_error}")
-                
+
                 processed = 0
                 first_batch = True
                 conversion_errors = []
-                
-                # Enhanced data processing with type safety
+
                 def safe_encode_value(value):
-                    """Safely encode various data types."""
+                    """Safely encode various data types to ensure JSON compatibility.
+
+                    Args:
+                        value: The value to encode.
+
+                    Returns:
+                        The encoded value.
+                    """
                     if value is None:
                         return None
                     elif isinstance(value, str):
@@ -280,82 +303,82 @@ def arrow(progress_cb=None):
                             return str(value)
                     else:
                         return str(value)
-                
+
                 while processed < total_records:
                     end_idx = min(processed + batch_size, total_records)
-                    
+
                     try:
                         batch = dataset_obj.select(range(processed, end_idx))
-                        
-                        # Enhanced record processing
+
+                        # Clean and encode each record in the batch
                         records = []
                         for item in batch:
                             cleaned_item = {}
                             for key, value in item.items():
                                 cleaned_item[key] = safe_encode_value(value)
                             records.append(cleaned_item)
-                        
-                        # Atomic file writing with error recovery
+
+                        # Write the batch to a temporary file
                         temp_file = output_file + ".tmp"
                         mode = 'w' if first_batch else 'a'
-                        
+
                         try:
                             with open(temp_file, mode, encoding='utf-8') as f:
                                 for record in records:
                                     json.dump(record, f, ensure_ascii=False)
                                     f.write('\n')
-                            
-                            # Atomic move
+
+                            # Atomically move the temporary file to the output file
                             if first_batch and os.path.exists(output_file):
                                 os.remove(output_file)
                             os.rename(temp_file, output_file)
-                            
+
                         except Exception as file_error:
                             if os.path.exists(temp_file):
                                 os.remove(temp_file)
                             raise file_error
-                        
+
                         processed = end_idx
                         first_batch = False
-                        
+
                         progress_percent = (processed / max(total_records, 1)) * 100
                         emit("debug", f"Progress: {processed}/{total_records} ({progress_percent:.1f}%)")
-                        
-                        # Aggressive memory cleanup
+
+                        # Perform aggressive memory cleanup
                         del records, batch
                         gc.collect()
-                        
-                        # Memory pressure check
+
+                        # Check memory usage and adjust batch size if necessary
                         if psutil.virtual_memory().percent > 85:
                             emit("warning", "High memory usage detected, reducing batch size")
                             batch_size = max(50, batch_size // 2)
-                        
+
                     except Exception as batch_error:
                         conversion_errors.append(str(batch_error))
                         emit("error", f"Batch processing failed: {batch_error}")
-                        
-                        # Recovery attempt with smaller batch
+
+                        # Try to recover by reducing the batch size
                         if batch_size > 100:
                             batch_size = max(50, batch_size // 2)
                             emit("info", f"Retrying with reduced batch size: {batch_size}")
                             continue
                         else:
                             break
-                
+
                 if processed == total_records:
                     processing_stats['successful_conversions'] += 1
                     emit("success", f"Successfully converted {dataset_name}: {output_file}")
-                    
-                    # Cleanup backup if successful
+
+                    # Clean up the backup file if the conversion is successful
                     if os.path.exists(backup_file):
                         os.remove(backup_file)
-                        
+
                     return True
                 else:
                     processing_stats['failed_conversions'] += 1
                     processing_stats['errors'].extend(conversion_errors)
-                    
-                    # Restore from backup on failure
+
+                    # Restore from backup if the conversion fails
                     if os.path.exists(backup_file):
                         try:
                             if os.path.exists(output_file):
@@ -364,31 +387,31 @@ def arrow(progress_cb=None):
                             emit("info", "Restored from backup due to conversion failure")
                         except Exception as restore_error:
                             emit("error", f"Backup restoration failed: {restore_error}")
-                    
+
                     return False
-                    
+
             except Exception as processing_error:
                 processing_stats['failed_conversions'] += 1
                 processing_stats['errors'].append(str(processing_error))
                 emit("error", f"Dataset processing failed: {processing_error}")
                 return False
-        
+
         # Process DatasetDict or single Dataset with enhanced handling
         if isinstance(dataset, DatasetDict):
             processing_stats['total_datasets'] = len(dataset.keys())
-            
+
             for split_name in dataset.keys():
                 split_data = dataset[split_name]
                 process_dataset_with_recovery(split_data, f"{split_name}")
-                
+
         elif isinstance(dataset, Dataset):
             processing_stats['total_datasets'] = 1
             process_dataset_with_recovery(dataset, "dataset")
-            
-        # Final statistics and cleanup
+
+        # Emit final processing statistics
         emit("info", f"Conversion completed. Stats: {processing_stats}")
-        
-        # Memory cleanup
+
+        # Perform memory cleanup
         gc.collect()
-        
+
         return processing_stats

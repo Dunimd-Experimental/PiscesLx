@@ -22,7 +22,6 @@ import json, ast
 import streamlit as st
 from typing import Any
 
-# Define the chunk size constant
 CHUNK_SIZE = 1000
 
 def parse_nested_strings(value):
@@ -36,25 +35,31 @@ def parse_nested_strings(value):
         Any: The input value with nested JSON strings parsed into Python objects.
     """
     def _parse(obj: Any) -> Any:
-        # If the object is a dictionary, recursively parse each value
+        # If the object is a dictionary, recursively parse each value in the dictionary
         if isinstance(obj, dict):
             return {k: _parse(v) for k, v in obj.items()}
-        # If the object is a list, recursively parse each element
+        # If the object is a list, recursively parse each element in the list
         elif isinstance(obj, list):
             return [_parse(e) for e in obj]
-        # If the object is a string, try to parse it as JSON
+        # If the object is a string, attempt to parse it as JSON
         elif isinstance(obj, str):
-            obj = obj.strip()
-            if obj and (obj.startswith('{') or obj.startswith('[')):
+            # Remove leading and trailing whitespace
+            stripped_obj = obj.strip()
+            # Check if the string might be a JSON object or array
+            if stripped_obj and (stripped_obj.startswith('{') or stripped_obj.startswith('[')):
                 try:
-                    return json.loads(obj)
+                    # Try to parse the string as JSON
+                    return json.loads(stripped_obj)
                 except json.JSONDecodeError:
                     try:
-                        return json.loads(obj.replace('\\"', '"'))
+                        # Try to fix escaped quotes and parse as JSON
+                        return json.loads(stripped_obj.replace('\\"', '"'))
                     except:
                         try:
-                            return ast.literal_eval(obj)
+                            # Try to evaluate the string as a Python literal
+                            return ast.literal_eval(stripped_obj)
                         except:
+                            # Return the original string if all parsing attempts fail
                             return obj
         return obj
     return _parse(value)
@@ -76,9 +81,9 @@ def robust_json_load(file_path, max_lines=None):
         list: A list of dictionaries containing the parsed JSON data.
     """
     import json, ast
-    # Store the parsed data
+    # List to store the parsed JSON data
     data = []
-    # Count the number of invalid lines
+    # Counter for the number of invalid lines encountered
     invalid_lines = 0
 
     def parse_nested(obj):
@@ -92,29 +97,37 @@ def robust_json_load(file_path, max_lines=None):
             Any: The input object with nested JSON strings parsed into Python objects.
         """
         if isinstance(obj, dict):
+            # Recursively parse each value in the dictionary
             return {k: parse_nested(v) for k, v in obj.items()}
         elif isinstance(obj, list):
+            # Recursively parse each element in the list
             return [parse_nested(e) for e in obj]
         elif isinstance(obj, str):
-            s = obj.strip()
-            if s and (s.startswith('{') or s.startswith('[')):
+            # Remove leading and trailing whitespace
+            stripped_str = obj.strip()
+            # Check if the string might be a JSON object or array
+            if stripped_str and (stripped_str.startswith('{') or stripped_str.startswith('[')):
                 try:
-                    return parse_nested(json.loads(s))
+                    # Parse the string as JSON and recursively parse the result
+                    return parse_nested(json.loads(stripped_str))
                 except Exception:
                     try:
-                        return parse_nested(ast.literal_eval(s))
+                        # Evaluate the string as a Python literal and recursively parse the result
+                        return parse_nested(ast.literal_eval(stripped_str))
                     except Exception:
+                        # Return the original string if parsing fails
                         return obj
             return obj
         else:
+            # Return non-dict, non-list, and non-string objects as-is
             return obj
 
     try:
-        # Open and read the file content
+        # Open the file and read its content, removing leading and trailing whitespace
         with open(file_path, 'r', encoding='utf-8') as f:
             content = f.read().strip()
 
-        # First try to load the entire content as standard JSON (array/object)
+        # First attempt: Try to load the entire content as standard JSON (array/object)
         try:
             parsed = json.loads(content)
             if isinstance(parsed, list):
@@ -123,7 +136,7 @@ def robust_json_load(file_path, max_lines=None):
                 data = [parsed]
             else:
                 data = []
-            # Recursively parse nested JSON strings
+            # Recursively parse nested JSON strings in each dictionary record
             data = [parse_nested(rec) for rec in data if isinstance(rec, dict)]
             if max_lines and len(data) > max_lines:
                 return data[:max_lines]
@@ -131,7 +144,7 @@ def robust_json_load(file_path, max_lines=None):
         except Exception:
             pass
 
-        # Try to parse the content line by line (JSONL)
+        # Second attempt: Try to parse the content line by line (JSONL format)
         lines = [line.strip() for line in content.split('\n') if line.strip()]
         for line_num, line in enumerate(lines):
             if max_lines and len(data) >= max_lines:
@@ -143,6 +156,7 @@ def robust_json_load(file_path, max_lines=None):
             except Exception:
                 # Try to fix common escaping and truncation issues
                 try:
+                    # Remove trailing characters that don't close JSON structures
                     fixed_line = line.rstrip()
                     while fixed_line and fixed_line[-1] not in '}]")':
                         fixed_line = fixed_line[:-1]

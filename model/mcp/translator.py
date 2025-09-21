@@ -29,23 +29,42 @@ from typing import Dict, Any, List, Optional, Tuple
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-from utils.log import RIGHT, DEBUG, ERROR
+from utils import RIGHT, DEBUG, ERROR
 
 # Config-driven MCP: load tools from configuration, no import-time discovery
-from tools.mcp import read_config
+from tools import read_config
 import importlib
 
 _mcp_available = False
 _tools_cache: Dict[str, Any] = {}
 
 def _load_tools_from_config() -> Dict[str, Any]:
+    """
+    Load enabled tools from the configuration.
+
+    Retrieves the configuration using `read_config()` and filters out tools 
+    that are not enabled. Only tools that are represented as dictionaries 
+    and have the `enabled` key set to `True` (default) are included.
+
+    Returns:
+        Dict[str, Any]: A dictionary containing the names and configurations of enabled tools.
+    """
     cfg = read_config()
     tools = cfg.get("tools", {})
     return {k: v for k, v in tools.items() if isinstance(v, dict) and v.get("enabled", True)}
 
 @dataclass
 class AgentCall:
-    """Represents a parsed agent call from model output"""
+    """
+    Represents a parsed agent call from model output.
+
+    Attributes:
+        tool_name (str): Name of the tool to be called.
+        parameters (Dict[str, Any]): Parameters for the tool call.
+        raw_match (str): Raw matched text from the model output.
+        start_pos (int): Start position of the match in the original text.
+        end_pos (int): End position of the match in the original text.
+    """
     tool_name: str
     parameters: Dict[str, Any]
     raw_match: str
@@ -54,17 +73,22 @@ class AgentCall:
 
 class MCPTranslationLayer:
     """
-    MCP Translation Layer with Official SDK Integration
-    
+    MCP Translation Layer with Official SDK Integration.
+
     Core component for parsing model output containing <agent> tags and translating them
     to official MCP SDK calls. Bridges between model XML output and official MCP protocol.
     Located in model/mcp/ as part of the model's core interaction capability.
     """
     
     def __init__(self):
+        """
+        Initialize the MCPTranslationLayer instance.
+
+        Loads the tools from the configuration once without blocking and sets the availability status.
+        If an error occurs during loading, logs the error and marks MCP as unavailable.
+        """
         global _mcp_available, _tools_cache
         self._ready = False
-        # Load once from config without any blocking
         try:
             _tools_cache = _load_tools_from_config()
             _mcp_available = len(_tools_cache) > 0
@@ -72,32 +96,57 @@ class MCPTranslationLayer:
             ERROR(f"Failed to load MCP tools config: {e}")
             _mcp_available = False
         
-    def _wait_for_ready(self, timeout=0.0):
-        """Non-blocking readiness check: ready if tools cache is non-empty."""
+    def _wait_for_ready(self, timeout: float = 0.0) -> bool:
+        """
+        Perform a non-blocking readiness check.
+
+        Checks if the instance is ready by verifying that MCP is available and the tools cache is non-empty.
+        Updates the readiness status if it hasn't been set yet.
+
+        Args:
+            timeout (float, optional): Timeout value (currently unused). Defaults to 0.0.
+
+        Returns:
+            bool: True if the instance is ready, False otherwise.
+        """
         if not self._ready:
             self._ready = _mcp_available and bool(_tools_cache)
         return self._ready
         
     async def __aenter__(self):
-        """Async context manager entry"""
+        """
+        Enter the asynchronous context manager.
+
+        Returns:
+            MCPTranslationLayer: The current instance of MCPTranslationLayer.
+        """
         return self
     
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        """Async context manager exit"""
+        """
+        Exit the asynchronous context manager.
+
+        Args:
+            exc_type: Type of the exception.
+            exc_val: Value of the exception.
+            exc_tb: Traceback of the exception.
+        """
         pass
     
     def extract_agent_calls(self, text: str) -> List[AgentCall]:
         """
-        Extract all <agent> tags from model output
-        
+        Extract all <agent> tags from model output.
+
+        Uses regular expressions to find all <agent> tags in the input text, 
+        parses the tool name and parameters, and creates AgentCall objects.
+
         Args:
-            text (str): Model output text containing agent tags
-            
+            text (str): Model output text containing agent tags.
+
         Returns:
-            List[AgentCall]: List of parsed agent calls
+            List[AgentCall]: List of parsed agent calls.
         """
         agent_calls = []
-        
         # Regex pattern to match <agent><an>tool_name</an><ap1>param1</ap1>...</agent>
         agent_pattern = r'<agent><an>(.+?)</an>(.*?)</agent>'
         
@@ -128,28 +177,31 @@ class MCPTranslationLayer:
     
     def remove_agent_tags(self, text: str, placeholder: str = "") -> str:
         """
-        Remove all <agent> tags from text, optionally replacing with placeholder
-        
+        Remove all <agent> tags from text, optionally replacing with placeholder.
+
         Args:
-            text (str): Text containing agent tags
-            placeholder (str): Text to replace agent tags with
-            
+            text (str): Text containing agent tags.
+            placeholder (str, optional): Text to replace agent tags with. Defaults to "".
+
         Returns:
-            str: Text with agent tags removed/replaced
+            str: Text with agent tags removed/replaced.
         """
         agent_pattern = r'<agent>.*?</agent>'
         return re.sub(agent_pattern, placeholder, text, flags=re.DOTALL)
     
     def replace_agent_tags_with_status(self, text: str, results: List[Dict[str, Any]]) -> str:
         """
-        Replace agent tags with execution status and results
-        
+        Replace agent tags with execution status and results.
+
+        Extracts agent calls from the input text, sorts them in reverse order of their positions,
+        and replaces each agent tag with the corresponding execution result or status.
+
         Args:
-            text (str): Original text with agent tags
-            results (List[Dict]): Results from tool executions
-            
+            text (str): Original text with agent tags.
+            results (List[Dict]): Results from tool executions.
+
         Returns:
-            str: Text with agent tags replaced by results
+            str: Text with agent tags replaced by results.
         """
         agent_calls = self.extract_agent_calls(text)
         
@@ -187,8 +239,19 @@ class MCPTranslationLayer:
         return modified_text
     
     def _format_tool_result(self, tool_name: str, result: Dict[str, Any]) -> str:
-        """Format tool execution result for user display"""
-        
+        """
+        Format tool execution result for user display.
+
+        Generates a user-friendly string representation of the tool execution result 
+        based on the tool name and result data.
+
+        Args:
+            tool_name (str): Name of the tool.
+            result (Dict[str, Any]): Tool execution result.
+
+        Returns:
+            str: Formatted result string.
+        """
         if tool_name == "web_search":
             query = result.get('query', '')
             results = result.get('results', [])
@@ -262,7 +325,20 @@ class MCPTranslationLayer:
     async def execute_agent_calls(self, agent_calls: List[AgentCall], 
                                 session_id: str = "default", 
                                 agent_id: str = "pisces_model") -> List[Dict[str, Any]]:
-        """Execute multiple agent calls using config-registered local tools."""
+        """
+        Execute multiple agent calls using config-registered local tools.
+
+        Iterates through the list of agent calls, converts parameters, loads the corresponding tool function,
+        and executes it. Collects and returns the execution results.
+
+        Args:
+            agent_calls (List[AgentCall]): List of agent calls to execute.
+            session_id (str, optional): Session identifier. Defaults to "default".
+            agent_id (str, optional): Agent identifier. Defaults to "pisces_model".
+
+        Returns:
+            List[Dict[str, Any]]: List of execution results for each agent call.
+        """
         results = []
         
         for call in agent_calls:
@@ -326,15 +402,18 @@ class MCPTranslationLayer:
                                  session_id: str = "default",
                                  agent_id: str = "pisces_model") -> str:
         """
-        Process model output with agent calls using official MCP protocol
-        
+        Process model output with agent calls using official MCP protocol.
+
+        Extracts agent calls from the model output, executes them, and replaces the agent tags 
+        with the execution results.
+
         Args:
-            model_output (str): Raw model output with agent tags
-            session_id (str): Session identifier
-            agent_id (str): Agent identifier
-            
+            model_output (str): Raw model output with agent tags.
+            session_id (str, optional): Session identifier. Defaults to "default".
+            agent_id (str, optional): Agent identifier. Defaults to "pisces_model".
+
         Returns:
-            str: Processed output with agent calls replaced by results
+            str: Processed output with agent calls replaced by results.
         """
         # Extract agent calls from XML tags
         agent_calls = self.extract_agent_calls(model_output)
@@ -355,7 +434,20 @@ class MCPTranslationLayer:
     async def execute_mcp_calls(self, agent_calls: List[AgentCall], 
                                session_id: str = "default", 
                                agent_id: str = "pisces_model") -> List[Dict[str, Any]]:
-        """Execute agent calls using config-registered local tools (non-blocking)."""
+        """
+        Execute agent calls using config-registered local tools (non-blocking).
+
+        Checks if the instance is ready before executing the agent calls. If not ready, 
+        returns a list of error results for each call.
+
+        Args:
+            agent_calls (List[AgentCall]): List of agent calls to execute.
+            session_id (str, optional): Session identifier. Defaults to "default".
+            agent_id (str, optional): Agent identifier. Defaults to "pisces_model".
+
+        Returns:
+            List[Dict[str, Any]]: List of execution results for each agent call.
+        """
         if not self._wait_for_ready(timeout=0.0):
             return [{
                 "success": False,
@@ -367,10 +459,17 @@ class MCPTranslationLayer:
     
     def _convert_parameters(self, tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Convert ap1, ap2... parameters to official MCP SDK format
-        
-        XML: <ap1>value1</ap1><ap2>value2</ap2>
-        SDK: {"param1": "value1", "param2": "value2"}
+        Convert ap1, ap2... parameters to official MCP SDK format.
+
+        Maps XML-style parameters (ap1, ap2, etc.) to the official MCP SDK format 
+        based on tool-specific mappings. Non-ap parameters are kept as-is.
+
+        Args:
+            tool_name (str): Name of the tool.
+            parameters (Dict[str, Any]): Original parameters in XML format.
+
+        Returns:
+            Dict[str, Any]: Converted parameters in official MCP SDK format.
         """
         converted = {}
         
@@ -417,7 +516,15 @@ class MCPTranslationLayer:
         return converted
     
     async def get_available_tools(self) -> List[Dict[str, Any]]:
-        """Get list of available tools from config."""
+        """
+        Get list of available tools from config.
+
+        Retrieves the list of available tools from the tools cache and formats them 
+        into a list of dictionaries containing tool names, descriptions, and categories.
+
+        Returns:
+            List[Dict[str, Any]]: List of available tools with their metadata.
+        """
         try:
             return [{
                 "name": name,
@@ -431,39 +538,47 @@ class MCPTranslationLayer:
 # Utility functions for standalone usage
 async def process_text_with_mcp(text: str) -> str:
     """
-    Standalone function to process text containing agent calls
-    
+    Standalone function to process text containing agent calls.
+
+    Creates an instance of MCPTranslationLayer using an async context manager,
+    and processes the input text containing agent calls.
+
     Args:
-        text (str): Text with agent tags
-        
+        text (str): Text with agent tags.
+
     Returns:
-        str: Processed text with results
+        str: Processed text with results.
     """
     async with MCPTranslationLayer() as translator:
         return await translator.process_model_output(text)
 
 def extract_agent_calls_sync(text: str) -> List[AgentCall]:
     """
-    Synchronous version of agent call extraction
-    
+    Synchronous version of agent call extraction.
+
+    Creates an instance of MCPTranslationLayer and extracts agent calls from the input text.
+
     Args:
-        text (str): Text containing agent tags
-        
+        text (str): Text containing agent tags.
+
     Returns:
-        List[AgentCall]: Extracted agent calls
+        List[AgentCall]: Extracted agent calls.
     """
     translator = MCPTranslationLayer()
     return translator.extract_agent_calls(text)
 
 def execute_tool_call_sync(xml_tag: str) -> Dict[str, Any]:
     """
-    Synchronous execution of a single XML tool call
-    
+    Synchronous execution of a single XML tool call.
+
+    Extracts the first agent call from the input XML tag, converts its parameters,
+    finds the corresponding tool function, and executes it synchronously.
+
     Args:
-        xml_tag (str): XML tag containing tool call
-        
+        xml_tag (str): XML tag containing tool call.
+
     Returns:
-        Dict: Tool execution result
+        Dict: Tool execution result.
     """
     translator = MCPTranslationLayer()
     

@@ -19,11 +19,13 @@
 
 from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
 
-# Get a learning rate scheduler of type CosineAnnealingWarmRestarts.
+# Create and return a CosineAnnealingWarmRestarts scheduler instance.
+#
 # Args:
-#     optimizer (Optimizer): Wrapped optimizer.
-#     T_0 (int, optional): Number of iterations for the first restart. Default: 1000.
+#     optimizer (torch.optim.Optimizer): Wrapped optimizer.
+#     T_0 (int, optional): Number of iterations for the first restart. Defaults to 1000.
+#
 # Returns:
-#     CosineAnnealingWarmRestarts: A CosineAnnealingWarmRestarts scheduler instance.
+#     torch.optim.lr_scheduler.CosineAnnealingWarmRestarts: A CosineAnnealingWarmRestarts scheduler instance.
 def get_scheduler(optimizer, T_0=1000):
     return CosineAnnealingWarmRestarts(optimizer, T_0)

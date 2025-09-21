@@ -38,7 +38,6 @@ def save_ckpt(model, optimizer, epoch, path):
         'epoch': epoch
     }, path)
 
-
 def load_ckpt(path, model, optimizer):
     """
     Load the model checkpoint from the specified path.

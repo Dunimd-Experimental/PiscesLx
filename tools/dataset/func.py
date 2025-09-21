@@ -18,8 +18,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 import re
 import ast
 import json
@@ -27,7 +25,8 @@ import math
 import random
 import calendar
 import statistics
-from typing import Any, Dict
+from pathlib import Path
+from typing import Any, Dict, Optional, Callable
 from datetime import datetime, timezone, timedelta
 
 _ALLOWED_BUILTINS = {
@@ -1431,11 +1430,90 @@ def eval_expr_safe(expr: str, rec: Dict[str, Any], idx: int = 0) -> Any:
         'ISBLANK': ISBLANK, 'ISNUMBER': ISNUMBER, 'ISTEXT': ISTEXT, 'ISLOGICAL': ISLOGICAL, 'ISNA': ISNA, 'ISNONTEXT': ISNONTEXT,
         # HELP
         'HELP': HELP,
+        # Template helpers
+        'run_template': run_template,
+        'run_template_by_name': run_template_by_name,
         })
     return eval(code, {"__builtins__": {}}, ctx)
 
+# ================= Template Runner =================
+def _template_exec_env() -> Dict[str, Any]:
+    """Build a restricted exec environment for running template code."""
+    return _build_ctx({
+        # helpers identical to eval context
+        'get': get,
+        'join_text': join_text,
+        'chat_to_qa': chat_to_qa,
+        'coalesce': coalesce,
+        'lower': lower, 'upper': upper, 'strip': strip, 'replace': replace, 'split': split,
+        'join_list': join_list, 'contains': contains, 'startswith': startswith, 'endswith': endswith, 'truncate': truncate,
+        'json_loads': json_loads, 'json_dumps': json_dumps,
+        'flatten': flatten,
+        'to_int': to_int, 'to_float': to_float, 'safe_number': safe_number,
+        'regex_search': regex_search, 'regex_findall': regex_findall, 'regex_sub': regex_sub,
+        'date_parse': date_parse, 'date_format': date_format, 'to_timestamp': to_timestamp, 'date_diff': date_diff,
+        'dict_lookup': dict_lookup,
+        # Excel-like
+        'LEFT': LEFT, 'RIGHT': RIGHT, 'MID': MID, 'LEN': LEN, 'TRIM': TRIM, 'LOWER': LOWER, 'UPPER': UPPER,
+        'PROPER': PROPER, 'SUBSTITUTE': SUBSTITUTE, 'REPLACE': REPLACE, 'FIND': FIND, 'SEARCH': SEARCH,
+        'CONCAT': CONCAT, 'CONCATENATE': CONCATENATE, 'TEXTSPLIT': TEXTSPLIT, 'TEXTAFTER': TEXTAFTER, 'TEXTBEFORE': TEXTBEFORE,
+        'VALUE': VALUE, 'TEXT': TEXT, 'CLEAN': CLEAN, 'EXACT': EXACT, 'REPT': REPT, 'CHAR': CHAR, 'CODE': CODE,
+        'IF': IF, 'AND': AND, 'OR': OR, 'NOT': NOT, 'IFERROR': IFERROR, 'IFNA': IFNA,
+        'SUM': SUM, 'AVERAGE': AVERAGE, 'MEDIAN': MEDIAN, 'MODE': MODE, 'ROUND': ROUND, 'ROUNDDOWN': ROUNDDOWN, 'ROUNDUP': ROUNDUP,
+        'INT': INT, 'MOD': MOD, 'POWER': POWER, 'SQRT': SQRT, 'RAND': RAND, 'RANDBETWEEN': RANDBETWEEN,
+        'COUNT': COUNT, 'COUNTA': COUNTA, 'COUNTBLANK': COUNTBLANK, 'MIN': MIN_, 'MAX': MAX_, 'SMALL': SMALL, 'LARGE': LARGE,
+        'CEILING': CEILING, 'FLOOR': FLOOR,
+        'TEXTJOIN': TEXTJOIN, 'UNIQUE': UNIQUE, 'FILTER': FILTER, 'SORT': SORT, 'INDEX': INDEX, 'MATCH': MATCH,
+        'TRANSPOSE': TRANSPOSE, 'CHOOSE': CHOOSE,
+        'COUNTIF': COUNTIF, 'SUMIF': SUMIF, 'AVERAGEIF': AVERAGEIF, 'COUNTIFS': COUNTIFS, 'SUMIFS': SUMIFS, 'AVERAGEIFS': AVERAGEIFS,
+        'HELP': HELP,
+    })
+
+def _call_template_fn(function_code: str, rec: Dict[str, Any]) -> Any:
+    """Exec template code and call first available function among transform/main/apply."""
+    env = _template_exec_env()
+    ns: Dict[str, Any] = {}
+    exec(function_code or "", {"__builtins__": {}}, ns)  # restricted
+    for fn_name in ("transform", "main", "apply"):
+        fn = ns.get(fn_name)
+        if callable(fn):
+            return fn(rec)
+    raise ValueError("No callable function found in template. Define 'transform', 'main' or 'apply'.")
+
+def run_template(template_id: str, rec: Dict[str, Any]) -> Any:
+    """Run a saved function template by ID with the given record.
+
+    Example usage in函数框: run_template("<uuid>", rec)
+    """
+    try:
+        from tools.dataset.func_templates import FunctionTemplateManager  # local import
+        tm = FunctionTemplateManager()
+        tpl = tm.get_template(str(template_id))
+        if not tpl:
+            raise ValueError("Template not found: " + str(template_id))
+        return _call_template_fn(tpl.get("function_code", ""), rec)
+    except Exception as e:
+        # Return error text to preview而不是抛出
+        return f"<TEMPLATE ERROR: {e}>"
+
+def run_template_by_name(name: str, rec: Dict[str, Any]) -> Any:
+    """Run the most recently更新的模板 by name (case-insensitive)."""
+    try:
+        from tools.dataset.func_templates import FunctionTemplateManager
+        tm = FunctionTemplateManager()
+        name_lc = str(name).strip().lower()
+        candidates = [t for t in tm.list_templates() if str(t.get("name", "")).strip().lower() == name_lc]
+        if not candidates:
+            raise ValueError("Template not found by name: " + str(name))
+        # 已按更新时间降序排序过 list_templates；取第一个
+        tpl = candidates[0]
+        return _call_template_fn(tpl.get("function_code", ""), rec)
+    except Exception as e:
+        return f"<TEMPLATE ERROR: {e}>"
+
 __all__ = [
     'eval_expr_safe',
+    'run_template', 'run_template_by_name',
     # record helpers
     'get', 'join_text', 'chat_to_qa', 'coalesce',
     # text

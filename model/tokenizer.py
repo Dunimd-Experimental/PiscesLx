@@ -23,7 +23,7 @@ import re
 import json
 import unicodedata
 import urllib.request
-from utils.log import RIGHT, ERROR
+from utils import RIGHT, ERROR
 
 class BPETokenizer:
     """A Byte Pair Encoding (BPE) tokenizer implementation.
@@ -42,44 +42,55 @@ class BPETokenizer:
             vocab_path (str, optional): Path to the vocabulary file (vocab.json). Defaults to None.
             merges_path (str, optional): Path to the merges file (merges.txt). Defaults to None.
             special_tokens (list, optional): List of special tokens. Defaults to ["<s>", "</s>", "<unk>", "<pad>"].
+            byte_fallback (bool, optional): Whether to enable byte-level fallback. Defaults to True.
         """
         self.vocab_path = vocab_path
         self.merges_path = merges_path
         self.byte_fallback = byte_fallback
 
         if vocab_path and os.path.exists(vocab_path):
-            # Load vocabulary from file
+            # Load the vocabulary from the specified file
             with open(vocab_path, "r", encoding="utf-8") as f:
                 self.encoder = json.load(f)
+            # Create a decoder by inverting the encoder mapping
             self.decoder = {v: k for k, v in self.encoder.items()}
         else:
-            # Create a dummy vocabulary with ASCII printable characters
+            # Create a dummy vocabulary containing ASCII printable characters
             base_tokens = [chr(i) for i in range(32, 127)]
             self.encoder = {tok: i for i, tok in enumerate(base_tokens)}
             self.decoder = {i: tok for tok, i in self.encoder.items()}
             ERROR("No vocab.json found, using dummy vocab.")
+
         if merges_path and os.path.exists(merges_path):
-            # Load merge rules from file
+            # Load merge rules from the specified file
             with open(merges_path, "r", encoding="utf-8") as f:
                 merges = [tuple(line.strip().split()) for line in f if not line.startswith("#") and line.strip()]
+            # Assign ranks to each merge pair
             self.bpe_ranks = {pair: i for i, pair in enumerate(merges)}
         else:
             ERROR("No merges.txt found, using char-level BPE.")
+
+        # Set default special tokens if not provided
         self.special_tokens = special_tokens or ["<s>", "</s>", "<unk>", "<pad>"]
+
         # Add special tokens to the vocabulary
         for tok in self.special_tokens:
             if tok not in self.encoder:
                 self.encoder[tok] = len(self.encoder)
                 self.decoder[self.encoder[tok]] = tok
-        # Install UTF-8 byte tokens for fallback to ensure multilingual coverage
-        # e.g., <0x00> ... <0xFF>
+
+        # Generate UTF-8 byte tokens for fallback to ensure multilingual support
         self.byte_tokens = [f"<0x{b:02X}>" for b in range(256)]
         for tok in self.byte_tokens:
             if tok not in self.encoder:
                 self.encoder[tok] = len(self.encoder)
                 self.decoder[self.encoder[tok]] = tok
+
+        # Create mappings between bytes and token IDs
         self.byte_to_id = {b: self.encoder[f"<0x{b:02X}>"] for b in range(256)}
         self.id_to_byte = {tid: b for (b, tid) in self.byte_to_id.items()}
+
+        # Get the IDs of special tokens
         self.unk_id = self.encoder["<unk>"]
         self.pad_id = self.encoder["<pad>"]
         self.bos_id = self.encoder["<s>"]
@@ -116,12 +127,12 @@ class BPETokenizer:
             save_directory (str): Directory to save the tokenizer files.
         """
         os.makedirs(save_directory, exist_ok=True)
-        # Save vocabulary
+        # Save the vocabulary to a JSON file
         vocab_file = os.path.join(save_directory, "vocab.json")
         with open(vocab_file, "w", encoding="utf-8") as f:
             json.dump(self.encoder, f, ensure_ascii=False, indent=2)
 
-        # Copy merges file if it exists
+        # Copy the merges file if it exists
         if self.merges_path and os.path.exists(self.merges_path):
             import shutil
             merges_file = os.path.join(save_directory, "merges.txt")
@@ -138,20 +149,28 @@ class BPETokenizer:
         """
         if token in self.special_tokens:
             return [token]
+
+        # Convert the token into a tuple of characters
         word = tuple(token)
+        # Generate all possible adjacent pairs of characters
         pairs = set(zip(word, word[1:]))
+
         if not pairs:
             return [token]
+
         while True:
             min_pair = None
             min_rank = float("inf")
+            # Find the pair with the lowest merge rank
             for pair in pairs:
                 rank = self.bpe_ranks.get(pair, float("inf"))
                 if rank < min_rank:
                     min_rank = rank
                     min_pair = pair
+
             if min_pair is None or min_pair not in self.bpe_ranks:
                 break
+
             first, second = min_pair
             new_word = []
             i = 0
@@ -160,19 +179,24 @@ class BPETokenizer:
                     j = word.index(first, i)
                     new_word.extend(word[i:j])
                     i = j
-                except:
+                except ValueError:
                     new_word.extend(word[i:])
                     break
-                if i < len(word)-1 and word[i] == first and word[i+1] == second:
-                    new_word.append(first+second)
+
+                if i < len(word) - 1 and word[i] == first and word[i + 1] == second:
+                    new_word.append(first + second)
                     i += 2
                 else:
                     new_word.append(word[i])
                     i += 1
+
             word = tuple(new_word)
             if len(word) == 1:
                 break
+
+            # Generate new pairs for the next iteration
             pairs = set(zip(word, word[1:]))
+
         return word
 
     def encode(self, text, return_tensors=None):
@@ -185,27 +209,36 @@ class BPETokenizer:
         Returns:
             list or torch.Tensor: A list of token IDs or a PyTorch tensor.
         """
-        # Normalize to NFC for stable Unicode processing
+        # Normalize the text to NFC form for stable Unicode processing
         text = unicodedata.normalize("NFC", text)
+
+        # Add spaces around special tokens
         for tok in self.special_tokens:
             text = text.replace(tok, f" {tok} ")
+
+        # Split the text into tokens using regular expressions
         tokens = re.findall(r"\w+|[^\w\s]|<[^>]+>", text, re.UNICODE)
+
         ids = []
         for token in tokens:
+            # Apply BPE if merge rules are available, otherwise use the token as-is
             bpe_tokens = self.bpe(token) if self.bpe_ranks else [token]
             for bpe_tok in bpe_tokens:
                 if bpe_tok in self.encoder:
                     ids.append(self.encoder[bpe_tok])
                 else:
                     if self.byte_fallback:
+                        # Encode out-of-vocabulary tokens as UTF-8 bytes
                         for b in bpe_tok.encode("utf-8"):
                             ids.append(self.byte_to_id[b])
                     else:
                         ids.append(self.unk_id)
                     # print(f"[Tokenizer] OOV token: {bpe_tok}")
+
         if return_tensors == "pt":
             import torch
             return torch.tensor([ids], dtype=torch.long)
+
         return ids
 
     def encode_batch(self, texts, return_tensors=None):
@@ -230,7 +263,7 @@ class BPETokenizer:
         Returns:
             str: The decoded text.
         """
-        # Reconstruct bytes sequences produced by byte_fallback
+        # Reconstruct byte sequences produced by byte-level fallback
         out_tokens = []
         bytes_buf = []
         for i in ids:
@@ -244,6 +277,7 @@ class BPETokenizer:
                         out_tokens.append("".join(f"<0x{b:02X}>" for b in bytes_buf))
                     bytes_buf = []
                 out_tokens.append(self.decoder.get(i, "<unk>"))
+
         if bytes_buf:
             try:
                 out_tokens.append(bytes(bytes_buf).decode("utf-8"))
@@ -300,17 +334,22 @@ def get_tokenizer():
         FileNotFoundError: If vocab.json or merges.txt is not found.
     """
     vocab_path, merges_path = None, None
+    # Search for the vocabulary file in multiple locations
     for path in ["tokenizer/vocab.json", "vocab.json", os.environ.get("PISCES_VOCAB_PATH")]:
         if path and os.path.exists(path):
             vocab_path = path
             break
+
+    # Search for the merges file in multiple locations
     for path in ["tokenizer/merges.txt", "merges.txt", os.environ.get("PISCES_MERGES_PATH")]:
         if path and os.path.exists(path):
             merges_path = path
             break
+
     if vocab_path is None or merges_path is None:
         raise FileNotFoundError(
             "❌\tPisces BPETokenizer: vocab.json or merges.txt not found! "
             "Please put them in the 'tokenizer/' directory."
         )
+
     return BPETokenizer(vocab_path, merges_path)

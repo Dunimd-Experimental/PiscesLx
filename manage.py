@@ -24,30 +24,30 @@ import json
 import argparse
 from pathlib import Path
 from configs.version import VERSION
-from utils.log import RIGHT, DEBUG, ERROR
+from utils import RIGHT, DEBUG, ERROR
 
-# Get the root directory of the project
 ROOT = os.path.abspath(os.path.dirname(__file__))
 
-# List of available commands
+# List of available commands with their purposes
 COMMANDS = [
-    'setup',      # Environment setup
-    'source',     # Activate virtual environment
-    'update',       # Pull latest code from remote
-    'version',    # Show current version and changelog
-    'changelog',  # Show version history and specific version changelog
-    'train',      # Train model
-    'infer',      # Inference with MCP integration
-    'check',      # Check GPU/deps
-    'monitor',    # System monitor
+    'setup',      # Set up the environment
+    'source',     # Activate the virtual environment
+    'update',     # Pull the latest code from the remote repository
+    'version',    # Display the current version and changelog
+    'changelog',  # Show the version history and specific version changelog
+    'train',      # Train the model
+    'infer',      # Perform inference with MCP integration
+    'check',      # Check GPU and dependencies
+    'monitor',    # Monitor the system
     'download',   # Download datasets
-    'quantize',   # Model quantization
-    'benchmark',  # Model evaluation & benchmarking
-    'mcp',        # MCP server operations
-    'rlhf',       # RLHF training
-    'help',       # Show help for commands
-    'dataset',    # Dataset management tool
-    'watermark',  # Watermark detection and management
+    'quantize',   # Quantize the model
+    'benchmark',  # Evaluate and benchmark the model
+    'mcp',        # Perform MCP server operations
+    'rlhf',       # Conduct RLHF training
+    'help',       # Show help information for commands
+    'dataset',    # Manage datasets
+    'watermark',  # Detect and manage watermarks
+    'cache',      # Maintain the cache
 ]
 
 def main():
@@ -55,33 +55,39 @@ def main():
     Main function to handle command-line arguments and execute corresponding commands.
     This function parses the command-line arguments and calls the appropriate function
     based on the specified command.
+    
+    Args:
+        None
+    
+    Returns:
+        None
     """
     parser = argparse.ArgumentParser(description="Pisces L1 Management Tool (manage.py)")
     parser.add_argument('command', nargs='?', choices=COMMANDS, help="Command to execute")
-    parser.add_argument('--ckpt', default='', help='Checkpoint file (for infer)')
-    parser.add_argument('--prompt', default='Hello, please introduce yourself', help='Prompt (for infer)')
-    parser.add_argument('--image', default='', help='Image path (for infer)')
-    parser.add_argument('--max_samples', type=int, default=50000, help='Max samples per dataset (for download)')
+    parser.add_argument('--ckpt', default='', help='Checkpoint file (for inference)')
+    parser.add_argument('--prompt', default='Hello, please introduce yourself', help='Prompt (for inference)')
+    parser.add_argument('--image', default='', help='Image path (for inference)')
+    parser.add_argument('--max_samples', type=int, default=50000, help='Maximum number of samples per dataset (for download)')
     parser.add_argument('--speculative', action='store_true', help='Enable speculative decoding for faster inference')
-    parser.add_argument('--draft_model', type=str, default='', help='Path to draft model for speculative decoding')
+    parser.add_argument('--draft_model', type=str, default='', help='Path to the draft model for speculative decoding')
     parser.add_argument('--spec_gamma', type=int, default=4, help='Number of speculative tokens per step (default: 4)')
-    parser.add_argument('--save', default='', help='[quantize] Output path for quantized model')
-    parser.add_argument('--bits', type=int, default=8, help='[quantize] Quantization bits (4 or 8)')
-    parser.add_argument('--config', default='configs/0.5B.json', help='[benchmark] Model config path')
-    parser.add_argument('--seq_len', type=int, default=512, help='[benchmark] Sequence length for benchmark')
-    parser.add_argument('--list', action='store_true', help='[benchmark] List all available benchmarks')
-    parser.add_argument('--info', type=str, help='[benchmark] Show detailed info about a benchmark')
-    parser.add_argument('--benchmark', type=str, help='[benchmark] Run specific benchmark evaluation')
-    parser.add_argument('--model', type=str, help='[benchmark] Model checkpoint path')
-    parser.add_argument('--perf', action='store_true', help='[benchmark] Run performance benchmark')
-    parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g. 0.5B, 1.5B, 7B, 70B, 128B')
+    parser.add_argument('--save', default='', help='Output path for the quantized model (for quantization)')
+    parser.add_argument('--bits', type=int, default=8, help='Quantization bits (4 or 8) (for quantization)')
+    parser.add_argument('--config', default='configs/0.5B.json', help='Model configuration path (for benchmarking)')
+    parser.add_argument('--seq_len', type=int, default=512, help='Sequence length for benchmarking (for benchmarking)')
+    parser.add_argument('--list', action='store_true', help='List all available benchmarks (for benchmarking)')
+    parser.add_argument('--info', type=str, help='Show detailed information about a benchmark (for benchmarking)')
+    parser.add_argument('--benchmark', type=str, help='Run a specific benchmark evaluation (for benchmarking)')
+    parser.add_argument('--model', type=str, help='Model checkpoint path (for benchmarking)')
+    parser.add_argument('--perf', action='store_true', help='Run a performance benchmark (for benchmarking)')
+    parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g., 0.5B, 1.5B, 7B, 70B, 128B')
     parser.add_argument('--dataset', default='Chinese2', type=str, help='Dataset name for training')
-    parser.add_argument('--resume_ckpt', default='', type=str, help='Path to checkpoint to resume training')
-    parser.add_argument('--reset_lr', action='store_true', help='Reset learning rate after resuming checkpoint')
-    parser.add_argument('--quant', action='store_true', help='Force enable quantization (4-bit)')
+    parser.add_argument('--resume_ckpt', default='', type=str, help='Path to the checkpoint to resume training')
+    parser.add_argument('--reset_lr', action='store_true', help='Reset the learning rate after resuming from a checkpoint')
+    parser.add_argument('--quant', action='store_true', help='Force enable 4-bit quantization')
     parser.add_argument('--no_quant', action='store_true', help='Force disable quantization')
-    parser.add_argument('--force_quant', action='store_true', help='Override config to force enable quantization')
-    parser.add_argument('--force_lora', action='store_true', help='Override config to force enable LoRA')
+    parser.add_argument('--force_quant', action='store_true', help='Override the configuration to force enable quantization')
+    parser.add_argument('--force_lora', action='store_true', help='Override the configuration to force enable LoRA')
     parser.add_argument('--quant_bits', type=int, choices=[2, 4, 8], default=4, help='Quantization bits: 2, 4, or 8 (default: 4)')
     parser.add_argument('--rlhf', action='store_true', help='Enable RLHF (Reinforcement Learning from Human Feedback)')
     parser.add_argument('--rlhf_dataset', type=str, default='dunimd/human_feedback', help='RLHF human feedback dataset')
@@ -92,17 +98,19 @@ def main():
     parser.add_argument('--rlhf_epochs', type=int, default=3, help='RLHF training epochs')
     parser.add_argument('--rlhf_max_samples', type=int, default=1000, help='RLHF maximum number of samples')
     parser.add_argument('--rlhf_max_length', type=int, default=512, help='RLHF maximum sequence length')
-    parser.add_argument('--mcp_host', type=str, default='localhost', help='[mcp] MCP server host')
-    parser.add_argument('--mcp_port', type=int, default=8080, help='[mcp] MCP server port')
-    parser.add_argument('--mcp_action', type=str, choices=['status', 'warmup', 'refresh-cache'], default='status', help='[mcp] MCP action')
-    parser.add_argument('--text', type=str, help='[watermark] Text content to check for watermark')
-    parser.add_argument('--file', type=str, help='[watermark] File path to check for watermark')
-    parser.add_argument('--batch', action='store_true', help='[watermark] Batch mode for directory processing')
-    parser.add_argument('--verbose', '-v', action='store_true', help='[watermark] Verbose output')
-    parser.add_argument('--json', action='store_true', help='[watermark] Output results in JSON format')
+    parser.add_argument('--mcp_host', type=str, default='localhost', help='MCP server host (for MCP operations)')
+    parser.add_argument('--mcp_port', type=int, default=8080, help='MCP server port (for MCP operations)')
+    parser.add_argument('--mcp_action', type=str, choices=['status', 'warmup', 'refresh-cache'], default='status', help='MCP action to perform (for MCP operations)')
+    parser.add_argument('--text', type=str, help='Text content to check for watermark (for watermark detection)')
+    parser.add_argument('--file', type=str, help='File path to check for watermark (for watermark detection)')
+    parser.add_argument('--batch', action='store_true', help='Enable batch mode for directory processing (for watermark detection)')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output (for watermark detection)')
+    parser.add_argument('--json', action='store_true', help='Output results in JSON format (for watermark detection)')
+    parser.add_argument('--cache_action', type=str, choices=['stats', 'clear-all', 'clear-dataset', 'clear-downloads'], default='stats', help='Cache action to perform: stats, clear-all, clear-dataset, or clear-downloads (for cache maintenance)')
+
     args, unknown = parser.parse_known_args()
     
-    # Only show version info if not running version or changelog command
+    # Display version information if not running the version or changelog command
     if args.command not in ['version', 'changelog']:
         RIGHT("PiscesL1 Model Version: " + VERSION)
     
@@ -143,7 +151,7 @@ def main():
     elif args.command == 'changelog':
         from tools.changelog import show_changelog, parse_changelog_args
         
-        # Parse changelog-specific arguments from unknown args
+        # Parse changelog-specific arguments from unknown arguments
         changelog_parser = parse_changelog_args()
         
         try:
@@ -173,8 +181,6 @@ def main():
             performance_benchmark(args.config, args.seq_len)
     elif args.command == 'mcp':
         from tools.mcp import status as mcp_status, background_refresh, read_config, write_config, discover_tools, merge_to_config
-        import json
-        
         if args.mcp_action == 'status':
             RIGHT("MCP config status")
             s = mcp_status()
@@ -216,6 +222,18 @@ def main():
             
         if args.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
+    elif args.command == 'cache':
+        from tools.cache import cache_stats, clear_all_cache, clear_dataset_cache, clear_downloads_cache
+        if args.cache_action == 'stats':
+            s = cache_stats()
+            print(json.dumps(s, ensure_ascii=False, indent=2))
+        elif args.cache_action == 'clear-all':
+            clear_all_cache()
+        elif args.cache_action == 'clear-dataset':
+            clear_dataset_cache()
+        elif args.cache_action == 'clear-downloads':
+            clear_downloads_cache()
+
     else:
         ERROR(f"Unknown command: {args.command}")
         sys.exit(1)

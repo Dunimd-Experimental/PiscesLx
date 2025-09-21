@@ -19,11 +19,10 @@
 # limitations under the License.
 
 import time, torch, json, os
-from utils.log import RIGHT, ERROR
+from utils import RIGHT, ERROR
 from typing import Dict, List, Any
 from model import PiscesModel, PiscesConfig
 
-# Benchmark configurations
 BENCHMARKS = {
     "mmlu": {
         "name": "MMLU (Massive Multitask Language Understanding)",
@@ -198,13 +197,25 @@ BENCHMARKS = {
 }
 
 def list_benchmarks():
-    """List all available benchmark configurations."""
+    """
+    List all available benchmark configurations.
+    
+    Prints out the names and languages of all available benchmarks.
+    """
     RIGHT("Available benchmarks:")
     for key, info in BENCHMARKS.items():
         print(f"  {key}: {info['name']} ({info['language']})")
 
 def benchmark_info(benchmark_name: str):
-    """Get detailed information about a specific benchmark."""
+    """
+    Get detailed information about a specific benchmark.
+    
+    Args:
+        benchmark_name (str): The name of the benchmark to retrieve information for.
+    
+    Returns:
+        None: If the benchmark is not found, prints an error message and returns None.
+    """
     if benchmark_name not in BENCHMARKS:
         ERROR(f"Benchmark '{benchmark_name}' not found")
         return
@@ -218,29 +229,34 @@ def performance_benchmark(config_path="configs/0.5B.json", seq_len=8192, model_p
     """
     Run performance benchmark on the model.
     
+    This function measures the time taken for a forward pass on the model with random input tokens.
+    
     Args:
-        config_path: Path to model configuration JSON file
-        seq_len: Sequence length for benchmarking
-        model_path: Path to the model checkpoint (optional)
+        config_path (str, optional): Path to model configuration JSON file. Defaults to "configs/0.5B.json".
+        seq_len (int, optional): Sequence length for benchmarking. Defaults to 8192.
+        model_path (str, optional): Path to the model checkpoint. Defaults to None.
+    
+    Returns:
+        float: The elapsed time in seconds for the forward pass.
     """
     _validate_performance_benchmark_args(config_path, seq_len, model_path)
-    # Load configuration from JSON file
+    # Load model configuration from the specified JSON file
     cfg = PiscesConfig.from_json(config_path)
 
-    # Detect the appropriate device for computation
+    # Detect the device (GPU or CPU) to use for computation
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     RIGHT(f"Using device: {device}")
 
     # Initialize the model and set it to evaluation mode
     model = PiscesModel(cfg).to(device).eval()
     
-    # Load model weights if provided
+    # Load pre-trained model weights if the model path is provided and exists
     if model_path and os.path.exists(model_path):
         import sys
         sys.path.append(os.path.dirname(__file__))
         from trainer.checkpoint import load_ckpt
         
-        # Create dummy optimizer for load_ckpt compatibility
+        # Create a dummy optimizer to ensure compatibility with the load_ckpt function
         dummy_optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
         load_ckpt(model_path, model, dummy_optimizer)
         RIGHT(f"Loaded model weights from: {model_path}")
@@ -250,22 +266,22 @@ def performance_benchmark(config_path="configs/0.5B.json", seq_len=8192, model_p
     # Generate random tokens for benchmarking
     tok = torch.randint(0, cfg.vocab_size, (1, seq_len)).to(device)
 
-    # Synchronize CUDA operations to ensure accurate timing
+    # Synchronize CUDA operations to ensure accurate timing measurement
     if torch.cuda.is_available():
         torch.cuda.synchronize()
 
-    # Record the start time
+    # Record the start time of the forward pass
     t0 = time.time()
 
-    # Perform a forward pass without computing gradients
+    # Perform a forward pass without computing gradients to speed up the process
     with torch.no_grad():
         _ = model(tok)
 
-    # Synchronize CUDA operations again
+    # Synchronize CUDA operations again to ensure all computations are completed
     if torch.cuda.is_available():
         torch.cuda.synchronize()
 
-    # Log the time taken for the forward pass
+    # Calculate and log the elapsed time for the forward pass
     elapsed = time.time() - t0
     RIGHT(f"{seq_len} tokens forward: {elapsed:.4f}s")
     return elapsed
@@ -274,10 +290,16 @@ def run_benchmark(benchmark_name: str, model_path: str = None, config_path: str 
     """
     Run a specific benchmark evaluation.
     
+    This function initializes the model and prepares for running a specific benchmark.
+    Note that the actual evaluation logic needs to be implemented for each benchmark.
+    
     Args:
-        benchmark_name: Name of the benchmark to run
-        model_path: Path to the model checkpoint
-        config_path: Path to model configuration JSON file
+        benchmark_name (str): Name of the benchmark to run.
+        model_path (str, optional): Path to the model checkpoint. Defaults to None.
+        config_path (str, optional): Path to model configuration JSON file. Defaults to "configs/0.5B.json".
+    
+    Returns:
+        None: If the benchmark is not found, prints an error message and returns None.
     """
     _validate_run_benchmark_args(benchmark_name, model_path, config_path)
     if benchmark_name not in BENCHMARKS:
@@ -286,21 +308,22 @@ def run_benchmark(benchmark_name: str, model_path: str = None, config_path: str 
     
     RIGHT(f"Running {BENCHMARKS[benchmark_name]['name']} benchmark...")
     
-    # Load configuration and model
+    # Load model configuration from the specified JSON file
     cfg = PiscesConfig.from_json(config_path)
+    # Detect the device (GPU or CPU) to use for computation
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     RIGHT(f"Using device: {device}")
     
-    # Initialize the model
+    # Initialize the model and set it to evaluation mode
     model = PiscesModel(cfg).to(device).eval()
     
-    # Load model weights if provided
+    # Load pre-trained model weights if the model path is provided and exists
     if model_path and os.path.exists(model_path):
         import sys
         sys.path.append(os.path.dirname(__file__))
         from trainer.checkpoint import load_ckpt
         
-        # Create dummy optimizer for load_ckpt compatibility
+        # Create a dummy optimizer to ensure compatibility with the load_ckpt function
         dummy_optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
         load_ckpt(model_path, model, dummy_optimizer)
         RIGHT(f"Loaded model weights from: {model_path}")
@@ -316,8 +339,20 @@ def run_benchmark(benchmark_name: str, model_path: str = None, config_path: str 
     # specific dataset loading and evaluation logic for each benchmark
     RIGHT(f"Benchmark '{benchmark_name}' evaluation completed (model loaded successfully)")
 
-
 def _validate_performance_benchmark_args(config_path, seq_len, model_path):
+    """
+    Validate the arguments for the performance_benchmark function.
+    
+    Args:
+        config_path (str): Path to model configuration JSON file.
+        seq_len (int): Sequence length for benchmarking.
+        model_path (str, optional): Path to the model checkpoint.
+    
+    Raises:
+        ValueError: If config_path is not a non-empty string or does not exist.
+        ValueError: If seq_len is not a positive integer.
+        ValueError: If model_path is provided but does not exist.
+    """
     if not isinstance(config_path, str) or not config_path:
         raise ValueError("config_path must be a non-empty string")
     if not os.path.exists(config_path):
@@ -332,8 +367,20 @@ def _validate_performance_benchmark_args(config_path, seq_len, model_path):
         if not os.path.exists(model_path):
             raise ValueError(f"model_path not found: {model_path}")
 
-
 def _validate_run_benchmark_args(benchmark_name, model_path, config_path):
+    """
+    Validate the arguments for the run_benchmark function.
+    
+    Args:
+        benchmark_name (str): Name of the benchmark to run.
+        model_path (str, optional): Path to the model checkpoint.
+        config_path (str): Path to model configuration JSON file.
+    
+    Raises:
+        ValueError: If benchmark_name is not a non-empty string.
+        ValueError: If config_path is not a non-empty string or does not exist.
+        ValueError: If model_path is provided but does not exist.
+    """
     if not isinstance(benchmark_name, str) or not benchmark_name:
         raise ValueError("benchmark_name must be a non-empty string")
     if not isinstance(config_path, str) or not config_path:
