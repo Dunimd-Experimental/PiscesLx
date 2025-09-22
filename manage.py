@@ -50,6 +50,42 @@ COMMANDS = [
     'cache',      # Maintain the cache
 ]
 
+def ensure_venv_activated():
+    """
+    Ensure the virtual environment is activated. If not, activate it automatically.
+    This function is called before executing each command.
+    """
+    # Check if already in a virtual environment
+    if sys.prefix != sys.base_prefix:
+        return True  # Already in a virtual environment
+    
+    # Get the virtual environment path
+    venv_dir = os.path.join(ROOT, ".pisceslx", "env")
+    if not os.path.exists(venv_dir):
+        venv_dir = os.path.join(ROOT, "venv")  # Compatibility with old version paths
+    
+    if not os.path.exists(venv_dir):
+        return False  # Virtual environment does not exist
+    
+    # Check if the system is Windows
+    is_windows = os.name == 'nt'
+    
+    # Get the Python interpreter path of the virtual environment
+    if is_windows:
+        venv_python = os.path.join(venv_dir, "Scripts", "python.exe")
+    else:
+        venv_python = os.path.join(venv_dir, "bin", "python")
+    
+    if not os.path.exists(venv_python):
+        return False  # Virtual environment Python interpreter does not exist
+    
+    # If not currently in the virtual environment, restart within the virtual environment
+    if sys.executable != venv_python:
+        RIGHT("Detected that the virtual environment is not activated. Restarting within the virtual environment...")
+        os.execv(venv_python, [venv_python] + sys.argv)
+    
+    return True
+
 def main():
     """
     Main function to handle command-line arguments and execute corresponding commands.
@@ -114,6 +150,11 @@ def main():
     if args.command not in ['version', 'changelog']:
         RIGHT("PiscesL1 Model Version: " + VERSION)
     
+    # Ensure the virtual environment is activated (except for 'setup', 'source', and 'help' commands)
+    if args.command and args.command not in ['setup', 'source', 'help']:
+        if not ensure_venv_activated():
+            ERROR("Virtual environment not found. Please run 'python manage.py setup' first to create the virtual environment.")
+            sys.exit(1)
     if args.command is None or args.command == 'help':
         from tools.help import help
         help()

@@ -21,11 +21,55 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Add project root to Python path for cross-platform compatibility
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if project_root not in sys.path:
+    sys.path.insert(0, project_root)
 
-from .mcp import read_config
-from .watermark import watermark_manager, watermark_text
-from utils.cache import get_cache_manager, get_config_manager
+# Ensure current directory is in path
+current_dir = os.path.abspath(os.path.dirname(__file__))
+if current_dir not in sys.path:
+    sys.path.insert(0, current_dir)
+
+# Initialize variables with None as fallback
+read_config = None
+watermark_manager = None
+watermark_text = None
+get_cache_manager = None
+get_config_manager = None
+
+try:
+    if 'setup' not in sys.argv:
+        # Import local modules first
+        try:
+            from .mcp import read_config
+            from .watermark import watermark_manager, watermark_text
+        except ImportError as e:
+            print(f"Warning: Could not import local modules: {e}")
+        
+        # Try multiple import strategies for utils.cache
+        import_success = False
+        import_attempts = [
+            lambda: __import__('utils.cache', fromlist=['get_cache_manager', 'get_config_manager']),
+            lambda: __import__('piscesl1.utils.cache', fromlist=['get_cache_manager', 'get_config_manager']),
+            lambda: __import__('..utils.cache', fromlist=['get_cache_manager', 'get_config_manager']),
+        ]
+        
+        for attempt in import_attempts:
+            try:
+                cache_module = attempt()
+                get_cache_manager = getattr(cache_module, 'get_cache_manager')
+                get_config_manager = getattr(cache_module, 'get_config_manager')
+                import_success = True
+                break
+            except (ImportError, AttributeError):
+                continue
+        
+        if not import_success:
+            print(f"Warning: Could not import utils.cache module after multiple attempts")
+            
+except Exception as e:
+    print(f"Warning: Error during module imports: {e}")
 
 __all__ = [
     'read_config',

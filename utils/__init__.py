@@ -18,10 +18,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .gpu_manager import GPUManager
+import sys
 from .log import DEBUG, ERROR, RIGHT
 from .progress import progress_bar, get_progress_bar
-from .cache import PiscesCache, get_cache_manager, get_config_manager
 from .ul import (
     display_update_log,
     display_all_versions,
@@ -29,6 +28,22 @@ from .ul import (
     display_version_changelog,
     get_current_version,
 )
+
+try:
+    if 'setup' not in sys.argv:
+        from .gpu_manager import GPUManager
+        from .cache import PiscesCache, get_cache_manager, get_config_manager
+    else:
+        GPUManager = None
+        PiscesCache = None
+        get_cache_manager = None
+        get_config_manager = None
+except ImportError as e:
+    # Handle import errors gracefully during setup or when modules are not available
+    GPUManager = None
+    PiscesCache = None
+    get_cache_manager = None
+    get_config_manager = None
 
 __all__ = [
     'GPUManager',

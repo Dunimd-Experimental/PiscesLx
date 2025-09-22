@@ -20,9 +20,10 @@
 
 import os
 import json
-import torch
 import subprocess
 from typing import Dict, List, Tuple, Optional
+
+torch = None
 
 class GPUManager:
     """
@@ -38,6 +39,14 @@ class GPUManager:
     
     def _detect_hardware(self):
         """Perform system-level hardware detection."""
+        global torch
+        if torch is None:
+            try:
+                import torch
+            except ImportError:
+                self.gpu_info = []
+                return
+        
         if not torch.cuda.is_available():
             self.gpu_info = []
             return
@@ -85,7 +94,7 @@ class GPUManager:
         """System determines the training strategy without developer control."""
         if not self.gpu_info:
             # Raise an error when no GPU is detected, CPU training is not allowed
-            raise RuntimeError("❌tNo GPU detected. Pisces L1 requires a GPU for training.")
+            raise RuntimeError("❌\tNo GPU detected. Pisces L1 requires a GPU for training.")
         
         available_gpus = []
         for gpu in self.gpu_info:
@@ -182,7 +191,7 @@ class GPUManager:
         print("=" * 50)
         
         if not self.gpu_info:
-            print("❌tNo GPU detected")
+            print("❌\tNo GPU detected")
             return
         
         print(f"🟧\tDetected {len(self.gpu_info)} GPUs:")
@@ -203,6 +212,18 @@ class GPUManager:
     
     def get_recommendation(self) -> Dict:
         """Get the system-level recommended configuration."""
+        global torch
+        if torch is None:
+            try:
+                import torch
+            except ImportError:
+                return {
+                    'strategy': self.strategy,
+                    'gpu_info': self.gpu_info,
+                    'cuda_available': False,
+                    'device_count': 0
+                }
+        
         return {
             'strategy': self.strategy,
             'gpu_info': self.gpu_info,

@@ -43,10 +43,15 @@ def setup(args):
 
     RIGHT("Pisces auto environment setup...")
     
-    from utils import get_cache_manager
-    cache_manager = get_cache_manager()
-    env_dir = cache_manager.get_cache_dir("env")
-    venv_dir = str(env_dir)
+    if 'setup' in sys.argv:
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        venv_dir = os.path.join(project_root, ".pisceslx", "env")
+        os.makedirs(venv_dir, exist_ok=True)
+    else:
+        from utils import get_cache_manager
+        cache_manager = get_cache_manager()
+        env_dir = cache_manager.get_cache_dir("env")
+        venv_dir = str(env_dir)
     
     # Determine if the current operating system is Windows
     is_windows = platform.system().lower().startswith("win")
@@ -55,7 +60,8 @@ def setup(args):
     if sys.prefix == sys.base_prefix:
         RIGHT("Not in virtual environment. Creating venv...")
         # Create a new virtual environment
-        subprocess.check_call([py_exec, "-m", "venv", venv_dir])
+        python_executable = sys.executable
+        subprocess.check_call([python_executable, "-m", "venv", venv_dir])
         RIGHT(f"Virtual environment created at {venv_dir}")
         
         # Get the Python interpreter path within the virtual environment

@@ -21,13 +21,7 @@
   "intermediate_size": 1280,
   "max_position_embeddings": 262144,
   "rope_theta": 10000.0,
-  "rope_scaling": {
-    "type": "dynamic_yarn",
-    "factor": 64.0,
-    "original_max_position_embeddings": 4096,
-    "dynamic_ntk": true,
-    "long_factor": 32
-  },
+  "rope_scaling": null,
   "dropout": 0.0,
   "image_res": -1,
   "image_patch": 14,
@@ -51,7 +45,7 @@
     "force_lora": false,
     "lr": 3e-05
   },
-  "use_h2o_attention": false,
+  "use_h2o_attention": true,
   "streaming_window": 4096,
   "compression_ratio": 8,
   "max_cache_size": 4096,

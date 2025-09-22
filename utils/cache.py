@@ -20,11 +20,12 @@
 
 import os
 import json
-import yaml
-import pickle
 import time
+import pickle
 from pathlib import Path
 from typing import Dict, Any, Optional, Union, List
+
+yaml = None
 
 class PiscesCache:
     """Pure cache system - only provides infrastructure, no business logic.
@@ -139,6 +140,13 @@ class PiscesCache:
         Returns:
             True if successful
         """
+        global yaml
+        if yaml is None:
+            try:
+                import yaml
+            except ImportError:
+                return False
+        
         try:
             cache_file = self.get_cache_file(filename, *dir_parts)
             with open(cache_file, 'w', encoding='utf-8') as f:
@@ -157,6 +165,13 @@ class PiscesCache:
         Returns:
             Cached data or None if not found/invalid
         """
+        global yaml
+        if yaml is None:
+            try:
+                import yaml
+            except ImportError:
+                return None
+        
         try:
             cache_file = self.get_cache_file(filename, *dir_parts)
             if not cache_file.exists():

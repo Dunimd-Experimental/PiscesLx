@@ -21,14 +21,7 @@
   "intermediate_size": 20480,
   "max_position_embeddings": 1048576,
   "rope_theta": 10000.0,
-  "rope_scaling": {
-    "type": "streaming_llm",
-    "factor": 256.0,
-    "original_max_position_embeddings": 4096,
-    "dynamic_ntk": true,
-    "long_factor": 128,
-    "streaming_window": 8192
-  },
+  "rope_scaling": null,
   "dropout": 0.0,
   "image_res": -1,
   "image_patch": 14,
