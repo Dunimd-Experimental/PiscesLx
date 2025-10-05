@@ -73,7 +73,10 @@ def _format_labels(labels: Optional[Dict[str, str]]) -> str:
     # Sort labels by name to ensure consistent output
     sorted_labels = sorted(labels.items())
     # Format each label as 'name="value"' with proper escaping
-    label_pairs = [f'{name}="{str(value).replace("\"", "\\\"")}"' for name, value in sorted_labels]
+    label_pairs = []
+    for name, value in sorted_labels:
+        escaped_value = str(value).replace('"', '\"')
+        label_pairs.append(f'{name}="{escaped_value}"')
     return "{" + ",".join(label_pairs) + "}"
 
 class Counter:
