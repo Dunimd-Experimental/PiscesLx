@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -17,7 +17,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 # Common text field keys for dataset processing
 TEXT_FIELD_KEYS = [
     "text", "content", "sentence", "paragraph", "body", "article", "summary", "desc", "description", "title",

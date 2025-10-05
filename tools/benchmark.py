@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -254,7 +254,7 @@ def performance_benchmark(config_path="configs/0.5B.json", seq_len=8192, model_p
     if model_path and os.path.exists(model_path):
         import sys
         sys.path.append(os.path.dirname(__file__))
-        from trainer.checkpoint import load_ckpt
+        from utils.checkpoint import load_ckpt
         
         # Create a dummy optimizer to ensure compatibility with the load_ckpt function
         dummy_optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
@@ -321,7 +321,7 @@ def run_benchmark(benchmark_name: str, model_path: str = None, config_path: str 
     if model_path and os.path.exists(model_path):
         import sys
         sys.path.append(os.path.dirname(__file__))
-        from trainer.checkpoint import load_ckpt
+        from utils.checkpoint import load_ckpt
         
         # Create a dummy optimizer to ensure compatibility with the load_ckpt function
         dummy_optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)

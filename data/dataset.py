@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -17,7 +17,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import os
 import gc
 import time
@@ -192,9 +191,11 @@ class LargeScaleStreamingDataset(IterableDataset):
                         if file.endswith(('.json', '.jsonl', '.txt')):
                             file_path = os.path.join(root, file)
                             file_size = os.path.getsize(file_path)
-                            estimated_samples = max(1, file_size // 1024)  # Rough estimate
-                            
-                            self.data_index.append({
+                            # Count actual samples in file instead of rough estimate
+                    actual_samples = self._count_samples_in_file(file_path)
+                    estimated_samples = max(1, actual_samples)
+                    
+                    self.data_index.append({
                                 'path': file_path,
                                 'type': 'file',
                                 'estimated_samples': estimated_samples,
@@ -205,7 +206,9 @@ class LargeScaleStreamingDataset(IterableDataset):
             elif os.path.isfile(source_path):
                 # Handle single files
                 file_size = os.path.getsize(source_path)
-                estimated_samples = max(1, file_size // 1024)
+                # Count actual samples in file instead of rough estimate
+                actual_samples = self._count_samples_in_file(source_path)
+                estimated_samples = max(1, actual_samples)
                 
                 self.data_index.append({
                     'path': source_path,
@@ -241,6 +244,74 @@ class LargeScaleStreamingDataset(IterableDataset):
         
         # Ensure minimum and maximum bounds
         return max(4, min(dynamic_batch, 256))
+    
+    def _count_samples_in_file(self, file_path: str) -> int:
+        """Count actual number of samples in a file."""
+        try:
+            count = 0
+            if file_path.endswith('.jsonl'):
+                # Count lines in JSONL file
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip():
+                            count += 1
+            elif file_path.endswith('.json'):
+                # Count items in JSON array
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        count = len(data)
+                    else:
+                        count = 1  # Single JSON object
+            elif file_path.endswith('.txt'):
+                # Count non-empty lines in text file
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip():
+                            count += 1
+            else:
+                # Fallback for unknown formats
+                count = 1
+                
+            return max(1, count)
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to count samples in {file_path}", {"error": str(e)})
+            return 1  # Minimum count fallback
+    
+    def _count_samples_in_file(self, file_path: str) -> int:
+        """Count actual number of samples in a file."""
+        try:
+            count = 0
+            if file_path.endswith('.jsonl'):
+                # Count lines in JSONL file
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip():
+                            count += 1
+            elif file_path.endswith('.json'):
+                # Count items in JSON array
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        count = len(data)
+                    else:
+                        count = 1  # Single JSON object
+            elif file_path.endswith('.txt'):
+                # Count non-empty lines in text file
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        if line.strip():
+                            count += 1
+            else:
+                # Fallback for unknown formats
+                count = 1
+                
+            return max(1, count)
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to count samples in {file_path}", {"error": str(e)})
+            return 1  # Minimum count fallback
         
     def _estimate_batch_complexity(self) -> float:
         """Estimate computational complexity of current batch"""

@@ -3,12 +3,12 @@
 # This file is part of Pisces L1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
-# Licensed under the Creative Commons Attribution-NonCommercial 4.0 International License (CC BY-NC 4.0).
+# Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
 # Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
-#     https://creativecommons.org/licenses/by-nc/4.0/
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
@@ -44,7 +44,6 @@ fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 python-multipart>=0.0.6
 pydantic>=2.0.0
-python-multipart>=0.0.6
 pandas>=1.5.0
 gradio>=4.42
 ijson==3.2.0.post0
@@ -63,3 +62,10 @@ pytz>=2024.1
 pywin32>=306; platform_system == "Windows"
 duckduckgo-search>=6.2.6
 plotly>=5.20.0,<6.0.0
+safetensors>=0.4.2
+torch-directml>=0.2.0; platform_system == "Windows"
+torch-audio>=2.1.0; platform_system == "Linux"
+deepspeed>=0.12.0
+megatron-lm>=0.6.0
+mpi4py>=3.1.0
+amd-rocm>=5.0.0; platform_system == "Linux"

@@ -43,7 +43,74 @@
     "seq_len": 32,
     "force_quant": true,
     "force_lora": true,
-    "lr": 1e-6
+    "lr": 1e-06,
+    "epochs": 0,
+    "min_plateau_epoch": 5,
+    "loss_stop_threshold": 2.8,
+    "max_epochs_stop": 0,
+    "auto_export_safetensors": false,
+    "collate_seq_len": 32,
+    "special_tokens": [
+      "<think>",
+      "</think>"
+    ],
+    "grad_clip": {
+      "initial_max_norm": 1.0,
+      "history_length": 100,
+      "percentile": 95,
+      "min_clip": 0.1,
+      "max_clip": 10.0,
+      "warmup_steps": 10,
+      "use_kfac": true,
+      "kfac_update_freq": 100,
+      "kfac_damping": 0.001
+    },
+    "schedulers": {
+      "text": {},
+      "vision": {},
+      "audio": {},
+      "fusion": {},
+      "other": {}
+    }
+  },
+  "inference_config": {
+    "force_quant": null,
+    "force_lora": true,
+    "lora_config": {
+      "r": 128,
+      "lora_alpha": 256,
+      "target_modules": [
+        "q_proj",
+        "v_proj",
+        "o_proj",
+        "gate_proj",
+        "up_proj",
+        "down_proj"
+      ],
+      "lora_dropout": 0.05,
+      "bias": "none"
+    },
+    "sampling": {
+      "temperature": 0.7,
+      "top_p": 0.95,
+      "max_length": 512,
+      "top_k_short": 40,
+      "top_p_short": 0.9,
+      "top_k_long": 20,
+      "top_p_long": 0.8
+    },
+    "vllm": {
+      "use_vllm": false,
+      "dtype": "auto",
+      "gpu_memory_utilization": 0.9,
+      "tensor_parallel_size": 1
+    },
+    "speculative": {
+      "enable": false,
+      "gamma": 4,
+      "draft_model": null
+    },
+    "chunk_size": 512
   },
   "use_h2o_attention": true,
   "streaming_window": 32768,

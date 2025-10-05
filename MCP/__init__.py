@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -17,7 +17,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
 import os
 import sys
 import json
@@ -137,7 +136,7 @@ class PiscesL1MCPPlaza:
                             try:
                                 current_mtime = py_file.stat().st_mtime
                                 if current_mtime > last_check[py_file.name]:
-                                    self.logger.info(f"🔄 File changed: {py_file.name}")
+                                    self.logger.info("File changed", {"file": py_file.name})
                                     last_check[py_file.name] = current_mtime
                                     
                                     # 标记缓存无效并触发重载
@@ -150,12 +149,12 @@ class PiscesL1MCPPlaza:
                     time.sleep(2)  # 每2秒检查一次
                     
                 except Exception as e:
-                    self.logger.error(f"File watcher error: {e}")
+                    self.logger.error("File watcher error", {"error": str(e)})
                     time.sleep(5)
         
         self._watcher_thread = threading.Thread(target=watch_files, daemon=True)
         self._watcher_thread.start()
-        self.logger.info("🎯 File watcher started for hot reload")
+        self.logger.info("File watcher started for hot reload")
     
     def _setup_logging(self):
         """Set up the logging system."""
@@ -175,15 +174,15 @@ class PiscesL1MCPPlaza:
         try:
             from MCP.document_processor import DocumentProcessor
             self.document_processor = DocumentProcessor()
-            self.logger.info("📄 Document processor initialized")
+            self.logger.info("Document processor initialized")
         except ImportError as e:
-            self.logger.warning(f"Document processor not available: {e}")
+            self.logger.warning("Document processor not available", {"error": str(e)})
             self.document_processor = None
     
     def _is_tool_compatible(self, module_name: str, module) -> bool:
         """Check if a tool is compatible with the system."""
         if module_name in self.blacklisted_tools:
-            self.logger.info(f"Skipping blacklisted tool: {module_name}")
+            self.logger.info("Skipping blacklisted tool", {"tool": module_name})
             return False
         
         has_tool = hasattr(module, 'pisces_tool') or hasattr(module, 'mcp')
@@ -298,10 +297,7 @@ class PiscesL1MCPPlaza:
         successful = [s for s in new_stats if s.status == "success" and s.tool_count > 0]
         if successful:
             total_tools = sum(s.tool_count for s in self.tool_stats if s.status == "success")
-            self.logger.info(
-                f"🚀 MCP Plaza updated: {total_tools} tools, "
-                f"{len(successful)} files processed"
-            )
+            self.logger.info("MCP Plaza updated", {"tools": total_tools, "files": len(successful)})
 
     # FastMCP兼容API
     # 在PiscesL1MCPPlaza类中添加FastMCP兼容装饰器
@@ -585,7 +581,7 @@ class PiscesL1MCPPlaza:
                     return result
                     
                 except Exception as e:
-                    self.logger.error(f"Document tool execution failed {tool_name}: {e}")
+                    self.logger.error("Document tool execution failed", {"tool": tool_name, "error": str(e)})
                     if tool_name in self.tool_metadata:
                         self.tool_metadata[tool_name].error_rate = min(1.0, 
                             self.tool_metadata[tool_name].error_rate + 0.1)
@@ -610,7 +606,7 @@ class PiscesL1MCPPlaza:
                 
                 return result
             except Exception as e:
-                self.logger.error(f"Tool execution failed {tool_name}: {e}")
+                self.logger.error("Tool execution failed", {"tool": tool_name, "error": str(e)})
                 if tool_name in self.tool_metadata:
                     self.tool_metadata[tool_name].error_rate = min(1.0, 
                         self.tool_metadata[tool_name].error_rate + 0.1)
@@ -622,7 +618,7 @@ class PiscesL1MCPPlaza:
                 tool_func = self.core_server.mcp_server.tools[tool_name]
                 return tool_func(parameters)
             except Exception as e:
-                self.logger.error(f"FastMCP tool execution failed {tool_name}: {e}")
+                self.logger.error("FastMCP tool execution failed", {"tool": tool_name, "error": str(e)})
                 return {"error": str(e)}
         
         return {"error": f"Tool '{tool_name}' not found"}
@@ -651,11 +647,11 @@ class PiscesL1MCPPlaza:
                 dependencies=[]
             )
             
-            self.logger.info(f"📝 Enhanced tool registered: {name}")
+            self.logger.info("Enhanced tool registered", {"tool": name})
             return True
             
         except Exception as e:
-            self.logger.error(f"Failed to register custom tool: {e}")
+            self.logger.error("Failed to register custom tool", {"error": str(e)})
             return False
     
     def get_system_status(self) -> Dict[str, Any]:
@@ -693,7 +689,7 @@ class PiscesL1MCPPlaza:
             self.tools.clear()
             self.tool_metadata.clear()
             self._discover_and_register_tools()
-            self.logger.info("🔄 Enhanced tool reloading completed")
+            self.logger.info("Enhanced tool reloading completed")
 
 # 全局单例
 plaza = PiscesL1MCPPlaza()
@@ -720,7 +716,7 @@ class FastMCP:
             if self._watcher_thread and self._watcher_thread.is_alive():
                 self._stop_watcher.set()
                 self._watcher_thread.join(timeout=1)
-                self.logger.info("🛑 File watcher stopped")
+                self.logger.info("File watcher stopped")
             
             # 清理线程池
             if self._executor:
@@ -731,12 +727,12 @@ class FastMCP:
                 self._cache.clear()
                 
         except Exception as e:
-            self.logger.error(f"Cleanup error: {e}")
+            self.logger.error("Cleanup error", {"error": str(e)})
     
     def stop(self):
         """手动停止MCP Plaza"""
         self._cleanup()
-        self.logger.info("🎯 MCP Plaza stopped gracefully")
+        self.logger.info("MCP Plaza stopped gracefully")
     
     def tool(self, name: Optional[str] = None, description: Optional[str] = None):
         """FastMCP兼容的装饰器"""
@@ -752,7 +748,7 @@ class FastMCP:
     
     def run(self):
         """运行MCP服务器"""
-        self._plaza.logger.info(f"🚀 Enhanced FastMCP '{self.name}' running on Pisces engine")
+        self._plaza.logger.info("Enhanced FastMCP running on Pisces engine", {"name": self.name})
         return self._plaza.get_system_status()
 
 # 向后兼容的便捷接口
