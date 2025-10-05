@@ -80,7 +80,7 @@ from utils.hooks.types import (
 )
 from utils.hooks.registry import PiscesLxCoreListenerRegistry, PiscesLxCoreRegistryEntry
 from utils.hooks.executor import PiscesLxCoreHookExecutor
-from utils.hooks.bus import PiscesLxCoreHookBus, get_global_hook_bus
+from utils.hooks.bus import PiscesLxCoreHookBus, PiscesLxCoreGlobalHookBusFacade, get_global_hook_bus
 
 # Device module
 from utils.device.config import PiscesLxCoreDeviceConfig
@@ -99,10 +99,9 @@ from utils.device.dist import (
     PiscesLxCoreProcessGroupManager,
     PiscesLxCoreModelParallelizer,
     PiscesLxCoreClusterEnv,
-    PiscesLxCoreTopologySuggestion,
-    suggest_topology,
+    PiscesLxCoreTopologyOptimizer,
     PiscesLxCoreLaunchSpec,
-    build_distributed_sampler,
+    PiscesLxCoreDistributedSamplerBuilder,
 )
 
 # Observability module
@@ -112,13 +111,17 @@ from utils.observability.facade import PiscesLxCoreObservabilityFacade
 from utils.observability.manager import PiscesLxCoreObservabilityManager
 from utils.observability.service import PiscesLxCoreObservabilityService
 
-# Config module functions
-from utils.config.manager import get_config_manager
+# Quantization module
+from utils.quantization import PiscesLxCoreQuantizer, QuantizationConfig, QuantizationMethod, QuantizationGranularity, QuantizationMetrics, PiscesLxCoreQuantizationFacade
+
+# Config module
+from utils.config.manager import PiscesLxCoreConfigManager, PiscesLxCoreConfigManagerFacade, get_config_manager
 
 # Constants
 RIGHT = "✅"
 ERROR = "🔴"
 DEBUG = "🔵"
+WARNING = "⚠️"
 
 __all__ = [
     # Core utilities
@@ -127,7 +130,7 @@ __all__ = [
     'PiscesLxCoreValidator',
     'PiscesLxCoreConfigLoader',
     'PiscesLxCoreConfigManager',
-    'get_config_manager',
+    'PiscesLxCoreConfigManagerFacade',
     'PiscesLxCoreTimeout', 
     'PiscesLxCoreRetry', 
     'PiscesLxCoreParallel',
@@ -135,6 +138,7 @@ __all__ = [
     'RIGHT',
     'ERROR',
     'DEBUG',
+    'WARNING',
     
     # Error taxonomy
     'PiscesLxCoreError',
@@ -200,9 +204,9 @@ __all__ = [
     'PiscesLxCoreModelParallelizer',
     'PiscesLxCoreClusterEnv',
     'PiscesLxCoreTopologySuggestion',
-    'suggest_topology',
+    'PiscesLxCoreTopologyOptimizer',
     'PiscesLxCoreLaunchSpec',
-    'build_distributed_sampler',
+    'PiscesLxCoreDistributedSamplerBuilder',
     
     # Hooks
     'PiscesLxCoreAlgorithmicListener',
@@ -213,7 +217,7 @@ __all__ = [
     'PiscesLxCoreRegistryEntry',
     'PiscesLxCoreHookExecutor',
     'PiscesLxCoreHookBus',
-    'get_global_hook_bus',
+    'PiscesLxCoreGlobalHookBusFacade',
     
     # Observability
     'PiscesLxCoreObservabilityService',
@@ -221,4 +225,12 @@ __all__ = [
     'PiscesLxCoreMetricsRegistry',
     'PiscesLxCoreObservabilityFacade',
     'PiscesLxCoreObservabilityManager',
+    
+    # Quantization
+    'PiscesLxCoreQuantizer',
+    'QuantizationConfig',
+    'QuantizationMethod',
+    'QuantizationGranularity',
+    'QuantizationMetrics',
+    'PiscesLxCoreQuantizationFacade',
 ]

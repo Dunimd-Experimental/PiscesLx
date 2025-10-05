@@ -66,6 +66,4 @@ safetensors>=0.4.2
 torch-directml>=0.2.0; platform_system == "Windows"
 torch-audio>=2.1.0; platform_system == "Linux"
 deepspeed>=0.12.0
-megatron-lm>=0.6.0
 mpi4py>=3.1.0
-amd-rocm>=5.0.0; platform_system == "Linux"

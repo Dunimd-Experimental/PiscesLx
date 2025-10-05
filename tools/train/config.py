@@ -19,18 +19,25 @@
 # limitations under the License.
 
 import json
-from utils import DEBUG
 from typing import Any, Optional
 from dataclasses import dataclass
+from utils import DEBUG, PiscesLxCoreConfigManager
 
 @dataclass
 class PiscesLxToolsTrainConfig:
     """Lightweight typed view for accessing train-time configuration.
 
     It merges CLI args with optional JSON config files, preferring CLI.
+    Uses utils.config.manager.PiscesLxCoreConfigManager for enhanced configuration management.
     """
 
     data: dict
+    _config_manager: PiscesLxCoreConfigManager = None
+
+    def __post_init__(self):
+        """Initialize config manager after dataclass creation."""
+        if self._config_manager is None:
+            self._config_manager = PiscesLxCoreConfigManager(self.data)
 
     @classmethod
     def from_args(cls, args: Any) -> "PiscesLxToolsTrainConfig":
@@ -86,6 +93,11 @@ class PiscesLxToolsTrainConfig:
         Returns:
             The configuration value at the specified path, or the default value if not found.
         """
+        # Use config manager for enhanced path-based retrieval
+        if self._config_manager:
+            return self._config_manager.get(key, default)
+        
+        # Fallback to manual path traversal
         cur = self.data
         for part in key.split("."):
             if not isinstance(cur, dict) or part not in cur:
@@ -100,3 +112,13 @@ class PiscesLxToolsTrainConfig:
             A dictionary containing the effective configuration data.
         """
         return dict(self.data)
+    
+    def validate(self) -> bool:
+        """Validate configuration using utils config manager.
+        
+        Returns:
+            bool: True if configuration is valid, False otherwise.
+        """
+        if self._config_manager:
+            return self._config_manager.validate()
+        return True

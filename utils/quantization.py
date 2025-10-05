@@ -28,10 +28,12 @@ from enum import Enum
 from dataclasses import dataclass
 from utils.log.core import PiscesLxCoreLog
 from transformers import BitsAndBytesConfig
-from model import PiscesModel, PiscesConfig
-from utils.device.manager import PiscesLxCoreDeviceManager
 from typing import Optional, Dict, Any, List, Union, Tuple
 from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError, PiscesLxCoreMemoryError
+
+# Define constants locally to avoid circular imports
+RIGHT = "✅"
+ERROR = "🔴"
 
 _log = PiscesLxCoreLog("pisceslx.quantize")
 
@@ -116,15 +118,19 @@ class QuantizationMetrics:
 class PiscesLxCoreQuantizer:
     """A class providing advanced quantization utilities with support for multiple quantization methods."""
 
-    def __init__(self, device_manager: Optional[PiscesLxCoreDeviceManager] = None):
+    def __init__(self, device_manager: Optional[Any] = None):
         """
         Initialize the quantizer with an optional device manager.
 
         Args:
-            device_manager (Optional[PiscesLxCoreDeviceManager]): Device manager for handling device operations. 
+            device_manager (Optional[Any]): Device manager for handling device operations. 
                 If None, a new instance of PiscesLxCoreDeviceManager will be created.
         """
-        self.device_manager = device_manager or PiscesLxCoreDeviceManager()
+        if device_manager is None:
+            from utils.device.manager import PiscesLxCoreDeviceManager
+            self.device_manager = PiscesLxCoreDeviceManager()
+        else:
+            self.device_manager = device_manager
         self._calibration_data = None
         self._metrics = QuantizationMetrics()
         
@@ -138,6 +144,8 @@ class PiscesLxCoreQuantizer:
         config_path: Optional[str] = None,
         quantization_config: Optional[QuantizationConfig] = None,
     ) -> QuantizationMetrics:
+        # Delayed import to avoid circular imports
+        from model import PiscesModel, PiscesConfig
         """
         Quantize a model checkpoint with the specified configuration and save the quantized model.
 
@@ -270,7 +278,7 @@ class PiscesLxCoreQuantizer:
         
         return self._metrics
 
-    def _apply_bitsandbytes_quantization(self, model: PiscesModel, config: QuantizationConfig) -> PiscesModel:
+    def _apply_bitsandbytes_quantization(self, model: Any, config: QuantizationConfig) -> Any:
         """
         Apply BitsAndBytes quantization to the model.
 
@@ -301,7 +309,7 @@ class PiscesLxCoreQuantizer:
         
         return model
     
-    def _apply_dynamic_quantization(self, model: PiscesModel, config: QuantizationConfig) -> PiscesModel:
+    def _apply_dynamic_quantization(self, model: Any, config: QuantizationConfig) -> Any:
         """
         Apply dynamic quantization to the model.
 
@@ -325,7 +333,7 @@ class PiscesLxCoreQuantizer:
         )
         return quantized_model
     
-    def _apply_static_quantization(self, model: PiscesModel, config: QuantizationConfig) -> PiscesModel:
+    def _apply_static_quantization(self, model: Any, config: QuantizationConfig) -> Any:
         """
         Apply static quantization with calibration to the model.
 
@@ -354,7 +362,7 @@ class PiscesLxCoreQuantizer:
         quantized_model = torch.quantization.convert(model_prepared)
         return quantized_model
     
-    def _apply_gptq_quantization(self, model: PiscesModel, config: QuantizationConfig) -> PiscesModel:
+    def _apply_gptq_quantization(self, model: Any, config: QuantizationConfig) -> Any:
         """
         Apply GPTQ quantization to the model with a calibration dataset.
         If the calibration dataset is not available or an error occurs, fall back to BitsAndBytes quantization.
@@ -439,7 +447,7 @@ class PiscesLxCoreQuantizer:
                 _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
             return self._apply_bitsandbytes_quantization(model, config)
     
-    def _apply_awq_quantization(self, model: PiscesModel, config: QuantizationConfig) -> PiscesModel:
+    def _apply_awq_quantization(self, model: Any, config: QuantizationConfig) -> Any:
         """
         Apply AWQ quantization to the model with a calibration dataset.
         If the calibration dataset is not available or an error occurs, fall back to BitsAndBytes quantization.
@@ -580,7 +588,7 @@ class PiscesLxCoreQuantizer:
         ]
         return default_texts
 
-    def _apply_kv_cache_quantization(self, model: PiscesModel, config: QuantizationConfig) -> PiscesModel:
+    def _apply_kv_cache_quantization(self, model: Any, config: QuantizationConfig) -> Any:
         """
         Apply KV-cache quantization to the model.
 
@@ -711,7 +719,7 @@ class PiscesLxCoreQuantizer:
 
     def analyze_model_sensitivity(
         self, 
-        model: PiscesModel, 
+        model: Any, 
         test_data: Optional[torch.Tensor] = None,
         layer_names: Optional[List[str]] = None,
         *,
@@ -878,7 +886,7 @@ class PiscesLxCoreQuantizer:
         
         return dequantized
     
-    def estimate_memory_usage(self, model_config: PiscesConfig, quantization_config: QuantizationConfig) -> Dict[str, float]:
+    def estimate_memory_usage(self, model_config: Any, quantization_config: QuantizationConfig) -> Dict[str, float]:
         """
         Estimate the memory usage of a quantized model based on its configuration and quantization settings.
 
@@ -915,7 +923,7 @@ class PiscesLxCoreQuantizer:
             "compression_ratio": 32 / quantization_config.bits,  # Assuming FP32 baseline
         }
     
-    def _estimate_parameter_count(self, model_config: PiscesConfig) -> int:
+    def _estimate_parameter_count(self, model_config: Any) -> int:
         """
         Estimate the total number of parameters in a transformer-based model based on its configuration.
 
@@ -1112,7 +1120,7 @@ class PiscesLxCoreQuantizer:
     
     def get_optimal_config(
         self,
-        model_config: PiscesConfig,
+        model_config: Any,  # Changed from PiscesConfig to Any to avoid import
         target_memory_mb: Optional[float] = None,
         target_accuracy: Optional[float] = None,
         device_constraints: Optional[Dict[str, Any]] = None
@@ -1163,3 +1171,101 @@ class PiscesLxCoreQuantizer:
             _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         return optimal_config
+
+# Convenience class for direct checkpoint quantization
+class PiscesLxCoreQuantizationFacade:
+    """Facade class for direct checkpoint quantization operations.
+    
+    This class provides a unified interface for quantizing model checkpoints
+    without requiring direct instantiation of PiscesLxCoreQuantizer.
+    """
+    
+    def __init__(self, device_manager: Optional[Any] = None):
+        """
+        Initialize the quantization facade with an optional device manager.
+
+        Args:
+            device_manager (Optional[Any]): Device manager for handling device operations. 
+                If None, a new instance of PiscesLxCoreDeviceManager will be created.
+        """
+        self._quantizer = PiscesLxCoreQuantizer(device_manager=device_manager)
+    
+    def quantize_checkpoint(
+        self,
+        checkpoint_path: str,
+        save_path: str,
+        bits: int = 8,
+        *,
+        model_size: Optional[str] = None,
+        config_path: Optional[str] = None,
+        quantization_config: Optional[QuantizationConfig] = None,
+    ) -> QuantizationMetrics:
+        """
+        Quantize a model checkpoint with the specified configuration and save the quantized model.
+
+        Args:
+            checkpoint_path (str): Path to the original model checkpoint.
+            save_path (str): Path to save the quantized model.
+            bits (int, optional): Number of bits for quantization if no quantization config is provided. Defaults to 8.
+            model_size (Optional[str], optional): Size of the model, used to infer the config path if config_path is None. Defaults to None.
+            config_path (Optional[str], optional): Path to the model configuration file. Defaults to None.
+            quantization_config (Optional[QuantizationConfig], optional): Quantization configuration. 
+                If None, a default configuration with the specified bits will be created. Defaults to None.
+
+        Returns:
+            QuantizationMetrics: Metrics evaluating the performance and effects of quantization.
+
+        Raises:
+            PiscesLxCoreValidationError: If the input parameters are invalid.
+            PiscesLxCoreIOError: If there is an error reading the checkpoint or writing the quantized model.
+        """
+        return self._quantizer.quantize_checkpoint(
+            checkpoint_path=checkpoint_path,
+            save_path=save_path,
+            bits=bits,
+            model_size=model_size,
+            config_path=config_path,
+            quantization_config=quantization_config,
+        )
+
+# Convenience function for direct checkpoint quantization (deprecated, use PiscesLxCoreQuantizationFacade instead)
+def quantize_checkpoint(
+    checkpoint_path: str,
+    save_path: str,
+    bits: int = 8,
+    *,
+    model_size: Optional[str] = None,
+    config_path: Optional[str] = None,
+    quantization_config: Optional[QuantizationConfig] = None,
+) -> QuantizationMetrics:
+    """
+    Quantize a model checkpoint with the specified configuration and save the quantized model.
+    
+    This is a convenience function that creates a PiscesLxCoreQuantizer instance and uses it
+    to quantize the checkpoint.
+
+    Args:
+        checkpoint_path (str): Path to the original model checkpoint.
+        save_path (str): Path to save the quantized model.
+        bits (int, optional): Number of bits for quantization if no quantization config is provided. Defaults to 8.
+        model_size (Optional[str], optional): Size of the model, used to infer the config path if config_path is None. Defaults to None.
+        config_path (Optional[str], optional): Path to the model configuration file. Defaults to None.
+        quantization_config (Optional[QuantizationConfig], optional): Quantization configuration. 
+            If None, a default configuration with the specified bits will be created. Defaults to None.
+
+    Returns:
+        QuantizationMetrics: Metrics evaluating the performance and effects of quantization.
+
+    Raises:
+        PiscesLxCoreValidationError: If the input parameters are invalid.
+        PiscesLxCoreIOError: If there is an error reading the checkpoint or writing the quantized model.
+    """
+    facade = PiscesLxCoreQuantizationFacade()
+    return facade.quantize_checkpoint(
+        checkpoint_path=checkpoint_path,
+        save_path=save_path,
+        bits=bits,
+        model_size=model_size,
+        config_path=config_path,
+        quantization_config=quantization_config,
+    )

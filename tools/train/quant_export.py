@@ -20,7 +20,7 @@
 
 from typing import List
 from utils import RIGHT, ERROR
-from utils.quantization import quantize_checkpoint
+from utils.quantization import PiscesLxCoreQuantizationFacade
 
 class PiscesLxToolsQuantExporter:
     """Unified quantization and export facade for train pipeline.
@@ -96,7 +96,10 @@ class PiscesLxToolsQuantExporter:
             model_size = self.cfg.get('model.size', default=None)
         except Exception:
             model_size = None
-        quantize_checkpoint(ckpt_path, save_path, resolved_bits, model_size=model_size)
+        
+        # Use the new facade class instead of the function
+        quantizer = PiscesLxCoreQuantizationFacade()
+        quantizer.quantize_checkpoint(ckpt_path, save_path, resolved_bits, model_size=model_size)
 
     def export(self, save_path: str, formats: List[str]) -> None:
         """Export the given weights (quantized or not) to requested formats.

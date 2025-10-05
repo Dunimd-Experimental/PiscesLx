@@ -299,6 +299,31 @@ class PiscesLxCoreConfigManager:
             self.logger.success("CONFIG_CLEARED", {"config_name": config_name})
 
 
+class PiscesLxCoreConfigManagerFacade:
+    """
+    Facade class for configuration management operations.
+    Provides a unified interface for accessing configuration manager functionality.
+    """
+    
+    def __init__(self, project_root: Optional[Path] = None) -> None:
+        """
+        Initialize the configuration manager facade.
+        
+        Args:
+            project_root (Optional[Path]): Path to the project root directory.
+        """
+        self._manager = PiscesLxCoreConfigManager.get_instance(project_root)
+    
+    def get_manager(self) -> PiscesLxCoreConfigManager:
+        """
+        Get the underlying configuration manager instance.
+        
+        Returns:
+            PiscesLxCoreConfigManager: The configuration manager instance.
+        """
+        return self._manager
+
+
 def get_config_manager(project_root: Optional[Path] = None) -> PiscesLxCoreConfigManager:
     """
     Get an instance of the configuration manager.

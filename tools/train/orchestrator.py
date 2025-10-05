@@ -22,8 +22,11 @@ import os
 import sys
 import importlib.util
 from types import ModuleType
-from utils import RIGHT, DEBUG, ERROR
+from utils import RIGHT, DEBUG, ERROR, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
 from utils.hooks import PiscesLxCoreHookBus
+from utils import PiscesLxCoreDeviceFacade, PiscesLxCoreDeviceManager
+from utils import PiscesLxCoreEnhancedCacheManager
+from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
 from .profiler import PiscesLxToolsProfiler
 from .config import PiscesLxToolsTrainConfig
 from .quant_export import PiscesLxToolsQuantExporter
@@ -38,6 +41,9 @@ class PiscesLxToolsTrainOrchestrator:
 
     This class preserves original behavior by delegating to legacy tools/train.py
     for standard training, ensuring backward compatibility.
+    
+    Enhanced with utils device management, configuration management, caching,
+    and observability features for improved reliability and monitoring.
     """
 
     def __init__(self, args):
@@ -54,10 +60,33 @@ class PiscesLxToolsTrainOrchestrator:
         self.hooks = PiscesLxCoreHookBus()
         # Initialize the profiler for performance monitoring
         self.profiler = PiscesLxToolsProfiler()
+        
+        # Initialize utils-enhanced components
+        self._init_utils_components()
+
+    def _init_utils_components(self):
+        """Initialize utils-enhanced components for better reliability and monitoring."""
+        # Initialize device facade for unified device management
+        self.device_facade = PiscesLxCoreDeviceFacade(self.args)
+        
+        # Initialize cache manager for training data caching
+        self.cache_manager = PiscesLxCoreEnhancedCacheManager.get_instance()
+        
+        # Initialize observability facade for enhanced monitoring
+        self.observability = PiscesLxCoreObservabilityFacade()
+        
+        # Initialize metrics registry for training metrics
+        self.metrics_registry = PiscesLxCoreMetricsRegistry()
+        
+        # Emit orchestrator initialization event
+        self.hooks.emit("train.orchestrator.init", 
+                       config=self.cfg.dump_effective(),
+                       device_config=self.device_facade.setup_devices() if hasattr(self.device_facade, 'setup_devices') else {})
 
     def run(self, args) -> None:
         """
         Run the training workflow based on the specified mode.
+        Enhanced with utils observability and error handling.
 
         Args:
             args: Command line arguments or configuration object.
@@ -65,73 +94,196 @@ class PiscesLxToolsTrainOrchestrator:
         # Get the training mode from the configuration, default to "standard"
         mode = self.cfg.get("train.mode", default="standard")
         RIGHT(f"Train orchestrator mode: {mode}")
-        if mode == "standard":
-            self.run_standard_training()
-        elif mode == "quant_export":
-            self.run_quant_and_export()
-        elif mode == "preference":
-            self.run_preference_alignment()
-        else:
-            ERROR(f"Unknown train.mode: {mode}")
+        
+        # Emit training start event for observability
+        self.hooks.emit("train.start", mode=mode, config=self.cfg.dump_effective())
+        
+        try:
+            if mode == "standard":
+                self.run_standard_training()
+            elif mode == "quant_export":
+                self.run_quant_and_export()
+            elif mode == "preference":
+                self.run_preference_alignment()
+            else:
+                ERROR(f"Unknown train.mode: {mode}")
+                # Emit training error event
+                self.hooks.emit("train.error", error=f"Unknown train.mode: {mode}")
+                raise ValueError(f"Unknown train.mode: {mode}")
+                
+            # Emit training completion event
+            self.hooks.emit("train.complete", mode=mode)
+            
+        except Exception as e:
+            # Emit training failure event with error details
+            self.hooks.emit("train.failure", error=str(e), mode=mode)
+            ERROR(f"Training failed in mode {mode}: {e}")
+            raise
 
     def run_standard_training(self) -> None:
         """Run standard supervised training via the class-based runner.
 
         Behavior remains identical because the runner delegates to the
         legacy implementation internally during this migration phase.
+        
+        Enhanced with utils device validation and cache management.
         """
         from .runner import PiscesLxToolsTrainRunner
+        
+        # Validate device configuration before training
+        device_config = self.device_facade.setup_devices(mode="auto")
+        if device_config.get('device_type') == 'cpu':
+            RIGHT("Training on CPU - performance may be limited")
+        
+        # Setup cache for training data if available
+        if self.cache_manager:
+            cache_key = f"train_standard_{hash(str(self.args))}"
+            cached_config = self.cache_manager.get(cache_key)
+            if cached_config:
+                DEBUG(f"Using cached training configuration")
+        
+        # Emit training standard start event
+        self.hooks.emit("train.standard.start", device_config=device_config)
+        
         # Create a runner instance with the provided arguments and configuration
         runner = PiscesLxToolsTrainRunner(self.args, hooks=self.hooks, profiler=self.profiler, cfg=self.cfg)
-        # Start the training process
-        runner.train()
+        
+        # Start the training process with utils-enhanced monitoring
+        try:
+            runner.train()
+            # Cache successful configuration
+            if self.cache_manager:
+                self.cache_manager.set(cache_key, {"status": "success", "device_config": device_config})
+        except Exception as e:
+            # Emit training error event
+            self.hooks.emit("train.standard.error", error=str(e))
+            raise
+        
+        # Emit training standard completion event
+        self.hooks.emit("train.standard.complete")
 
     def run_quant_and_export(self) -> None:
         """
         Run quantization and export process.
 
         Quantizes the model and exports it in specified formats if provided.
+        
+        Enhanced with utils checkpoint management and observability.
         """
+        # Emit quantization start event
+        self.hooks.emit("train.quant.start")
+        
         # Create a quantization exporter instance
         qe = PiscesLxToolsQuantExporter(self.cfg, self.hooks, self.profiler)
+        
         # Get the quantization bits from args or config, default to 4
         bits = getattr(self.args, "quant_bits", None) or self.cfg.get("quant.bits", default=4)
+        
         # Get the checkpoint path from args or config
         ckpt = getattr(self.args, "ckpt", None) or self.cfg.get("quant.ckpt", default="")
+        
         # Get the save path from args or config
         save = getattr(self.args, "save", None) or self.cfg.get("quant.save", default="")
+        
         # Check if checkpoint and save paths are provided
         if not ckpt or not save:
             ERROR("quant_export requires --ckpt and --save or corresponding config keys")
+            self.hooks.emit("train.quant.error", error="Missing checkpoint or save path")
             raise SystemExit(1)
-        # Perform quantization
-        qe.quantize(ckpt, bits, save)
-        # Get the export formats from config
-        export_formats = self.cfg.get("export.formats", default=[])
-        if export_formats:
-            # Export the quantized model in specified formats
-            qe.export(save, export_formats)
+        
+        # Validate checkpoint using utils checkpoint manager
+        checkpoint_manager = PiscesLxCoreCheckpointManager()
+        if not checkpoint_manager.validate_checkpoint(ckpt):
+            ERROR(f"Invalid checkpoint file: {ckpt}")
+            self.hooks.emit("train.quant.error", error=f"Invalid checkpoint: {ckpt}")
+            raise SystemExit(1)
+        
+        try:
+            # Emit quantization process event
+            self.hooks.emit("train.quant.process", ckpt=ckpt, bits=bits, save=save)
+            
+            # Perform quantization
+            qe.quantize(ckpt, bits, save)
+            
+            # Get the export formats from config
+            export_formats = self.cfg.get("export.formats", [])
+            if export_formats:
+                # Emit export start event
+                self.hooks.emit("train.export.start", formats=export_formats)
+                
+                # Export the quantized model in specified formats
+                qe.export(save, export_formats)
+                
+                # Emit export completion event
+                self.hooks.emit("train.export.complete", formats=export_formats)
+            
+            # Emit quantization completion event
+            self.hooks.emit("train.quant.complete")
+            
+        except Exception as e:
+            # Emit quantization error event
+            self.hooks.emit("train.quant.error", error=str(e))
+            ERROR(f"Quantization and export failed: {e}")
+            raise
 
     def run_preference_alignment(self) -> None:
         """
         Run human preference alignment training.
 
         Supports different preference alignment methods like SFT, DPO, and PPO.
+        
+        Enhanced with utils observability and metrics tracking.
         """
+        # Emit preference alignment start event
+        self.hooks.emit("train.align.start")
+        
         # Create a preference trainer instance
         pa = PiscesLxToolsPreferenceTrainer(self.cfg, self.hooks, self.profiler, args=self.args)
+        
         # Get the preference alignment type from config, default to "sft"
         pref_type = self.cfg.get("train.pref.type", default="sft")
         RIGHT(f"Running preference alignment: {pref_type}")
-        if pref_type == "sft":
-            pa.run_sft(self.cfg)
-        elif pref_type == "dpo":
-            pa.run_dpo(self.cfg)
-        elif pref_type == "ppo":
-            pa.run_ppo(self.cfg)
-        else:
-            ERROR(f"Unknown train.pref.type: {pref_type}")
-            raise SystemExit(1)
+        
+        try:
+            # Track alignment start in metrics registry
+            if self.metrics_registry:
+                self.metrics_registry.increment("train.alignment.started")
+            
+            # Emit alignment process event with metrics
+            alignment_metrics = {
+                "method": pref_type,
+                "dataset": self.cfg.get("train.pref.dataset", ""),
+                "has_ref_model": bool(self.cfg.get("train.pref.ref_model", ""))
+            }
+            self.hooks.emit("train.align.process", metrics=alignment_metrics)
+            
+            if pref_type == "sft":
+                pa.run_sft(self.cfg)
+            elif pref_type == "dpo":
+                pa.run_dpo(self.cfg)
+            elif pref_type == "ppo":
+                pa.run_ppo(self.cfg)
+            else:
+                ERROR(f"Unknown train.pref.type: {pref_type}")
+                self.hooks.emit("train.align.error", error=f"Unknown train.pref.type: {pref_type}")
+                raise SystemExit(1)
+            
+            # Track alignment completion in metrics registry
+            if self.metrics_registry:
+                self.metrics_registry.increment("train.alignment.completed")
+            
+            # Emit preference alignment completion event
+            self.hooks.emit("train.align.complete", method=pref_type)
+            
+        except Exception as e:
+            # Track alignment failure in metrics registry
+            if self.metrics_registry:
+                self.metrics_registry.increment("train.alignment.failed")
+            
+            # Emit preference alignment error event
+            self.hooks.emit("train.align.error", error=str(e), method=pref_type)
+            ERROR(f"Preference alignment failed: {e}")
+            raise
 
     def _load_legacy_train_module(self) -> ModuleType | None:
         """

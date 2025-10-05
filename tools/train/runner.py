@@ -21,7 +21,7 @@
 import os
 import sys
 from types import ModuleType
-from utils import RIGHT, ERROR
+from utils import RIGHT, ERROR, PiscesLxCoreDeviceFacade, PiscesLxCoreDeviceManager, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager, PiscesLxCoreEnhancedCacheManager
 from . import impl as _impl
 from .impl import PiscesLxToolsTrainImpl
 
@@ -52,16 +52,46 @@ class PiscesLxToolsTrainRunner:
             pass
         # Keep a reference to the module for helper delegations (no behavior change)
         self._impl_module = _impl
+    
+    def _init_utils_components(self):
+        """Initialize utils-enhanced components for device management and configuration."""
+        # Initialize device facade for device management
+        self.device_facade = PiscesLxCoreDeviceFacade()
+        
+        # Initialize config manager for enhanced configuration handling
+        self.config_manager = PiscesLxCoreConfigManager()
+        
+        # Initialize checkpoint manager for model checkpoint handling
+        self.checkpoint_manager = PiscesLxCoreCheckpointManager()
+        
+        RIGHT("PiscesLxToolsTrainRunner utils components initialized")
+        
+        # Initialize utils-enhanced components
+        self._init_utils_components()
 
     def train(self) -> None:
         """
         Entry point to start training using the legacy implementation for now.
         Validates the training arguments before executing the training implementation.
+        Enhanced with utils device validation and configuration management.
 
         Raises:
             Exception: If the training arguments are invalid.
         """
         RIGHT("Starting training via PiscesLxToolsTrainRunner (delegating to legacy _train_impl)")
+        
+        # Validate device configuration before training
+        device_config = self.device_facade.setup_devices(mode="auto")
+        if device_config.get('device_type') == 'cpu':
+            RIGHT("Training on CPU - performance may be limited")
+        
+        # Validate configuration using utils config manager
+        if hasattr(self, 'config_manager') and self.config_manager:
+            validation_result = self.config_manager.validate(self.args)
+            if not validation_result.is_valid:
+                ERROR(f"Configuration validation failed: {validation_result.errors}")
+                raise ValueError(f"Invalid configuration: {validation_result.errors}")
+        
         # Validate arguments before running the implementation to preserve legacy behavior
         if hasattr(self._impl, "validate_args"):
             try:
@@ -69,8 +99,14 @@ class PiscesLxToolsTrainRunner:
             except Exception as e:
                 ERROR(f"Invalid training arguments: {e}")
                 raise
-        # Delegate to class facade to run training
-        self._impl.train(self.args)
+        
+        try:
+            # Delegate to class facade to run training
+            self._impl.train(self.args)
+            RIGHT("Training completed successfully")
+        except Exception as e:
+            ERROR(f"Training failed: {e}")
+            raise
 
     def setup_distributed_training(self):
         """
@@ -79,24 +115,77 @@ class PiscesLxToolsTrainRunner:
 
         Returns:
             The result of the implementation's setup_distributed_training function.
+            
+        Enhanced with utils device management and configuration validation.
         """
-        # Delegate to class facade (behavior preserved)
-        return self._impl.setup_distributed_training()
+        # Validate distributed configuration
+        if hasattr(self, 'cfg') and self.cfg and hasattr(self, 'config_manager') and self.config_manager:
+            dist_config = self.cfg.get("distributed", {})
+            if dist_config:
+                validation_result = self.config_manager.validate(dist_config)
+                if not validation_result.is_valid:
+                    ERROR(f"Distributed configuration validation failed: {validation_result.errors}")
+        
+        # Setup devices using utils device facade
+        device_config = self.device_facade.setup_devices(mode="distributed")
+        
+        # Emit distributed setup start event
+        if hasattr(self, 'hooks') and self.hooks:
+            self.hooks.emit("train.distributed.setup.start", device_config=device_config)
+        
+        try:
+            # Delegate to implementation
+            dist_config = self._impl.setup_distributed_training()
+            
+            # Emit distributed setup completion event
+            if hasattr(self, 'hooks') and self.hooks:
+                self.hooks.emit("train.distributed.setup.complete", config=dist_config)
+            
+            return dist_config
+            
+        except Exception as e:
+            # Emit distributed setup error event
+            if hasattr(self, 'hooks') and self.hooks:
+                self.hooks.emit("train.distributed.setup.error", error=str(e))
+            ERROR(f"Distributed training setup failed: {e}")
+            raise
 
     def create_dataloader(self, *a, **kw):
         """
-        Create a data loader.
-        Delegates the task to the implementation module with the provided arguments.
+        Create a data loader for training.
 
         Args:
-            *a: Positional arguments to pass to the implementation's create_dataloader function.
-            **kw: Keyword arguments to pass to the implementation's create_dataloader function.
+            *a: Positional arguments passed to the implementation.
+            **kw: Keyword arguments passed to the implementation.
 
         Returns:
-            The data loader created by the implementation module.
+            The data loader instance.
+            
+        Enhanced with utils device management and caching.
         """
-        # Delegate to class facade (behavior preserved)
-        return self._impl.create_dataloader(*a, **kw)
+        # Emit dataloader creation start event
+        if hasattr(self, 'hooks') and self.hooks:
+            self.hooks.emit("train.dataloader.create.start", args=a, kwargs=kw)
+        
+        try:
+            # Validate device configuration for dataloader
+            device_config = self.device_facade.setup_devices(mode="auto")
+            
+            # Create dataloader using implementation
+            dataloader = self._impl.create_dataloader(*a, **kw)
+            
+            # Emit dataloader creation completion event
+            if hasattr(self, 'hooks') and self.hooks:
+                self.hooks.emit("train.dataloader.create.complete", device_config=device_config)
+            
+            return dataloader
+            
+        except Exception as e:
+            # Emit dataloader creation error event
+            if hasattr(self, 'hooks') and self.hooks:
+                self.hooks.emit("train.dataloader.create.error", error=str(e))
+            ERROR(f"DataLoader creation failed: {e}")
+            raise
 
     def collate_fn(self, batch):
         """
@@ -108,6 +197,29 @@ class PiscesLxToolsTrainRunner:
 
         Returns:
             The collated batch of data.
+            
+        Enhanced with utils device management.
         """
-        # Delegate to class facade (behavior preserved)
-        return self._impl.collate_fn(batch)
+        # Emit collate function start event
+        if hasattr(self, 'hooks') and self.hooks:
+            self.hooks.emit("train.collate.start", batch_size=len(batch))
+        
+        try:
+            # Get device configuration for batch processing
+            device_config = self.device_facade.setup_devices(mode="auto")
+            
+            # Use implementation's collate function
+            collated_batch = self._impl.collate_fn(batch)
+            
+            # Emit collate function completion event
+            if hasattr(self, 'hooks') and self.hooks:
+                self.hooks.emit("train.collate.complete", device_config=device_config)
+            
+            return collated_batch
+            
+        except Exception as e:
+            # Emit collate function error event
+            if hasattr(self, 'hooks') and self.hooks:
+                self.hooks.emit("train.collate.error", error=str(e))
+            ERROR(f"Collate function failed: {e}")
+            raise

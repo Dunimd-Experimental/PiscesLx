@@ -23,7 +23,7 @@ import yaml
 import uuid
 from pathlib import Path
 from datetime import datetime
-from utils import get_config_manager
+from utils import PiscesLxCoreConfigManagerFacade
 from typing import Dict, List, Optional, Any
 
 class FunctionTemplateManager:

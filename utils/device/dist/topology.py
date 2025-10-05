@@ -40,6 +40,43 @@ class PiscesLxCoreTopologySuggestion:
     pp_size: int
 
 
+class PiscesLxCoreTopologyOptimizer:
+    """Optimizer class for suggesting optimal parallel topologies based on available GPU resources."""
+    
+    def suggest_topology(self, total_gpus: Optional[int] = None) -> PiscesLxCoreTopologySuggestion:
+        """Suggests an appropriate parallel topology based on the number of available GPUs.
+
+        This method applies a heuristic strategy to recommend a conservative 
+        parallel configuration. If the number of GPUs is not specified, it attempts 
+        to automatically detect the count of available CUDA devices.
+
+        Args:
+            total_gpus (Optional[int]): The total number of available GPUs. 
+                If not provided, the function will attempt to detect the number 
+                of CUDA-capable devices. Defaults to None.
+
+        Returns:
+            PiscesLxCoreTopologySuggestion: A data class containing the recommended 
+                parallel configuration (dp_size, tp_size, pp_size).
+        """
+        # Automatically detect the number of available GPUs if not specified
+        if total_gpus is None:
+            try:
+                total_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+            except Exception:
+                total_gpus = 0
+
+        # Suggest topology based on the number of available GPUs
+        if total_gpus >= 8:
+            return PiscesLxCoreTopologySuggestion(dp_size=2, tp_size=2, pp_size=2)
+        elif total_gpus >= 4:
+            return PiscesLxCoreTopologySuggestion(dp_size=2, tp_size=2, pp_size=1)
+        elif total_gpus >= 2:
+            return PiscesLxCoreTopologySuggestion(dp_size=2, tp_size=1, pp_size=1)
+        else:
+            return PiscesLxCoreTopologySuggestion(dp_size=1, tp_size=1, pp_size=1)
+
+# Legacy function for backward compatibility
 def suggest_topology(total_gpus: Optional[int] = None) -> PiscesLxCoreTopologySuggestion:
     """Suggests an appropriate parallel topology based on the number of available GPUs.
 
@@ -56,19 +93,5 @@ def suggest_topology(total_gpus: Optional[int] = None) -> PiscesLxCoreTopologySu
         PiscesLxCoreTopologySuggestion: A data class containing the recommended 
             parallel configuration (dp_size, tp_size, pp_size).
     """
-    # Automatically detect the number of available GPUs if not specified
-    if total_gpus is None:
-        try:
-            total_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
-        except Exception:
-            total_gpus = 0
-
-    # Suggest topology based on the number of available GPUs
-    if total_gpus >= 8:
-        return PiscesLxCoreTopologySuggestion(dp_size=2, tp_size=2, pp_size=2)
-    elif total_gpus >= 4:
-        return PiscesLxCoreTopologySuggestion(dp_size=2, tp_size=2, pp_size=1)
-    elif total_gpus >= 2:
-        return PiscesLxCoreTopologySuggestion(dp_size=2, tp_size=1, pp_size=1)
-    else:
-        return PiscesLxCoreTopologySuggestion(dp_size=1, tp_size=1, pp_size=1)
+    optimizer = PiscesLxCoreTopologyOptimizer()
+    return optimizer.suggest_topology(total_gpus)

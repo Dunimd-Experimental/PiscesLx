@@ -20,7 +20,7 @@
 import os
 import yaml
 from i18n import t, set_lang
-from utils import get_config_manager
+from utils import PiscesLxCoreConfigManagerFacade
 from typing import Any, Dict, Optional
 from dataclasses import dataclass, field, asdict
 from func_templates import FunctionTemplateManager
@@ -32,7 +32,7 @@ cache_manager = get_cache_manager()
 DATA_CACHE_DIR = cache_manager.get_cache_dir("data_cache")
 
 # Use centralized config manager
-_config_manager = get_config_manager(PROJECT_ROOT)
+_config_manager = PiscesLxCoreConfigManagerFacade(PROJECT_ROOT)
 
 @dataclass
 class AppSettings:

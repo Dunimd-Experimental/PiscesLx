@@ -20,10 +20,11 @@
 
 from .env import PiscesLxCoreClusterEnv
 from .launcher import PiscesLxCoreLaunchSpec
-from .sampler import build_distributed_sampler
+from .sampler import PiscesLxCoreDistributedSamplerBuilder, build_distributed_sampler
 from .wrap import PiscesLxCoreModelParallelizer
 from .process import PiscesLxCoreProcessGroupManager
-from .topology import PiscesLxCoreTopologySuggestion, suggest_topology
+from .topology import PiscesLxCoreTopologyOptimizer
+from .sampler import PiscesLxCoreDistributedSamplerBuilder
 from .planner import PiscesLxCoreDistConfig,PiscesLxCoreDistPlan,PiscesLxCoreDistPlanner
 
 __all__ = [
@@ -33,7 +34,7 @@ __all__ = [
     'PiscesLxCoreProcessGroupManager',
     'PiscesLxCoreModelParallelizer',
     'PiscesLxCoreClusterEnv',
-    'PiscesLxCoreTopologySuggestion', 'suggest_topology',
+    'PiscesLxCoreTopologyOptimizer',
     'PiscesLxCoreLaunchSpec',
-    'build_distributed_sampler',
+    'PiscesLxCoreDistributedSamplerBuilder',
 ]

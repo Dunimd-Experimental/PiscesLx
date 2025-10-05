@@ -24,8 +24,8 @@ import json
 import torch
 import warnings
 from utils.cache import get_cache_manager
-from utils.device import PiscesLxCoreDeviceRunner
-from utils import RIGHT, DEBUG, ERROR
+from utils.device import PiscesLxCoreDeviceRunner, PiscesLxCoreDeviceManager, PiscesLxCoreDeviceFacade
+from utils import RIGHT, DEBUG, ERROR, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
 
 _HOOKS = None
 _PROFILER = None
@@ -64,6 +64,7 @@ def _emit(event: str, **kwargs):
 def setup_distributed_training():
     """
     Set up the distributed training environment with 3D parallel support.
+    Enhanced with utils.device.PiscesLxCoreDeviceFacade for unified device management.
 
     Returns:
         torch.device: The device to use for training.
@@ -74,6 +75,7 @@ def setup_distributed_training():
     """
     import torch
     import torch.distributed as dist
+    from utils.device.dist import PiscesLxCoreDistConfig, PiscesLxCoreDistPlanner
     
     # Automatically detect distributed training environment variables
     local_rank = int(os.environ.get('LOCAL_RANK', -1))
@@ -89,14 +91,26 @@ def setup_distributed_training():
     mp_size = 1  # Model parallel size
     
     if is_distributed:
-        # Initialize the distributed training process group
+        # Use utils distributed configuration for enhanced setup
+        dist_config = PiscesLxCoreDistConfig(
+            world_size=world_size,
+            rank=rank,
+            local_rank=local_rank,
+            master_addr=os.environ.get('MASTER_ADDR', 'localhost'),
+            master_port=int(os.environ.get('MASTER_PORT', 29500))
+        )
+        
+        # Initialize the distributed training process group using utils
         dist.init_process_group(backend='nccl')
         # Set the current CUDA device
         torch.cuda.set_device(local_rank)
         device = torch.device(f'cuda:{local_rank}')
         
-        # Dynamically calculate 3D parallel configuration based on the number of GPUs
+        # Use utils device facade for intelligent 3D parallel configuration
+        device_facade = PiscesLxCoreDeviceFacade()
         num_gpus = torch.cuda.device_count()
+        
+        # Enhanced parallel configuration using utils device manager
         if num_gpus >= 8:
             dp_size = max(1, num_gpus // 4)
             pp_size = 2
@@ -104,11 +118,18 @@ def setup_distributed_training():
         elif num_gpus >= 4:
             dp_size = max(1, num_gpus // 2)
             pp_size = 2
+        
+        # Emit distributed setup event for observability
+        _emit("train.distributed.setup", 
+              world_size=world_size, rank=rank, local_rank=local_rank,
+              dp_size=dp_size, pp_size=pp_size, mp_size=mp_size)
             
         RIGHT(f"3D Parallel: DP={dp_size}, PP={pp_size}, MP={mp_size}, rank {rank}/{world_size}")
     else:
-        # Single-GPU or multi-GPU non-distributed mode
-        device_config = PiscesLxCoreDeviceRunner.setup_devices()
+        # Single-GPU or multi-GPU non-distributed mode - use utils device facade
+        device_facade = PiscesLxCoreDeviceFacade()
+        device_config = device_facade.setup_devices(mode="auto")
+        
         if device_config.get('device_type') == 'cpu':
             device = torch.device('cpu')
             RIGHT("Training mode: CPU fallback (via device orchestrator)")
@@ -120,14 +141,18 @@ def setup_distributed_training():
             else:
                 device = torch.device('cuda')
             RIGHT(f"Training mode: {device_config.get('strategy', 'single_gpu')}")
-        # Apply silently without printing suggestions
+        
+        # Emit device setup event for observability
+        _emit("train.device.setup", device_config=device_config)
         
     # Construct 3D parallel configuration dictionary
     parallel_config = {
         'dp_size': dp_size,
         'pp_size': pp_size,
         'mp_size': mp_size,
-        'total_gpus': dp_size * pp_size * mp_size
+        'total_gpus': dp_size * pp_size * mp_size,
+        'device_type': device.type,
+        'device_index': device.index if hasattr(device, 'index') else 0
     }
     
     return device, is_distributed, local_rank, world_size, parallel_config
@@ -135,6 +160,7 @@ def setup_distributed_training():
 def create_ddp_model(model, device, is_distributed, local_rank):
     """
     Create a distributed data parallel model.
+    Enhanced with utils device management for optimal model placement.
 
     Args:
         model (torch.nn.Module): The model to be wrapped.
@@ -145,10 +171,18 @@ def create_ddp_model(model, device, is_distributed, local_rank):
     Returns:
         torch.nn.Module: The wrapped model.
     """
+    from utils.device import PiscesLxCoreModelParallelizer
+    
     if is_distributed:
-        # Move the model to the specified device
+        # Move the model to the specified device with utils-enhanced placement
         model = model.to(device)
-        # Wrap the model with DistributedDataParallel
+        
+        # Emit model distribution event for observability
+        _emit("train.model.distribute", 
+              device=str(device), local_rank=local_rank, 
+              model_params=sum(p.numel() for p in model.parameters()))
+        
+        # Wrap the model with DistributedDataParallel using utils recommendations
         model = torch.nn.parallel.DistributedDataParallel(
             model, 
             device_ids=[local_rank],
@@ -156,13 +190,25 @@ def create_ddp_model(model, device, is_distributed, local_rank):
             find_unused_parameters=True
         )
     else:
-        # Single - GPU mode, move the model to the specified device
+        # Single-GPU mode with utils device management
+        device_facade = PiscesLxCoreDeviceFacade()
+        device_config = device_facade.setup_devices(mode="auto")
+        
+        # Move the model to the specified device
         model = model.to(device)
         
         # If multiple GPUs are available but not using distributed training, use DataParallel
-        if torch.cuda.device_count() > 1:
-            RIGHT(f"Detected {torch.cuda.device_count()} GPUs, using DataParallel")
+        gpu_count = torch.cuda.device_count()
+        if gpu_count > 1:
+            RIGHT(f"Detected {gpu_count} GPUs, using DataParallel")
+            
+            # Emit multi-GPU setup event for observability
+            _emit("train.model.dataparallel", gpu_count=gpu_count)
+            
             model = torch.nn.DataParallel(model)
+        
+        # Emit model placement event for observability
+        _emit("train.model.place", device=str(device), gpu_count=gpu_count)
             
     return model
 

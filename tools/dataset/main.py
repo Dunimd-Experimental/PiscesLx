@@ -39,7 +39,7 @@ from field_manager import init_field_rules, add_new_field, manage_fields
 
 # Import root utils functions
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from utils import get_config_manager, get_cache_manager
+from utils import PiscesLxCoreConfigManagerFacade, get_cache_manager
 
 import streamlit as st, pyarrow as pa, pyarrow.json as paj, json, jsonlines, ast, time, shutil
 
@@ -59,7 +59,7 @@ from tools.dataset.settings import get_settings, set_settings, AppSettings, Sett
 CHUNK_SIZE = 2000
 
 # Initialize config manager for centralized file management
-config_manager = get_config_manager(PROJECT_ROOT)
+config_manager = PiscesLxCoreConfigManagerFacade(PROJECT_ROOT)
 st.session_state.config_manager = config_manager
 
 # Cache manager already imported above

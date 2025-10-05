@@ -101,6 +101,61 @@ _global_hook_bus: Optional[PiscesLxCoreHookBus] = None
 _global_lock = threading.Lock()
 
 
+class PiscesLxCoreGlobalHookBusFacade:
+    """
+    Facade class for global HookBus operations.
+    Provides a unified interface for accessing the global HookBus instance.
+    """
+    
+    def __init__(self) -> None:
+        """Initialize the facade with the global HookBus instance."""
+        self._hook_bus = get_global_hook_bus()
+    
+    def get_hook_bus(self) -> PiscesLxCoreHookBus:
+        """
+        Get the global HookBus instance.
+        
+        Returns:
+            PiscesLxCoreHookBus: The global HookBus instance.
+        """
+        return self._hook_bus
+    
+    def emit(self, event_type: str, **kwargs: Any) -> None:
+        """
+        Emit an event through the global HookBus.
+        
+        Args:
+            event_type (str): The type of the event to emit.
+            **kwargs (Any): Additional keyword arguments to pass to the listeners.
+        """
+        self._hook_bus.emit(event_type, **kwargs)
+    
+    def get_listeners(self, event_type: str) -> List:
+        """
+        Get listeners for a specific event type.
+        
+        Args:
+            event_type (str): The type of the event to get listeners for.
+            
+        Returns:
+            List: A list of listeners for the specified event.
+        """
+        return self._hook_bus.get_listeners(event_type)
+    
+    def get_metrics(self, event_type: Optional[str] = None) -> Dict[str, PiscesLxCoreEventMetrics]:
+        """
+        Get event metrics from the global HookBus.
+        
+        Args:
+            event_type (Optional[str]): The type of the event to get metrics for.
+                If None, return metrics for all events.
+                
+        Returns:
+            Dict[str, PiscesLxCoreEventMetrics]: A dictionary containing the event metrics.
+        """
+        return self._hook_bus.get_metrics(event_type)
+
+
 def get_global_hook_bus() -> PiscesLxCoreHookBus:
     """Get the global HookBus instance.
     

@@ -36,7 +36,7 @@ read_config = None
 watermark_manager = None
 watermark_text = None
 get_cache_manager = None
-get_config_manager = None
+PiscesLxCoreConfigManagerFacade = None
 
 try:
     if 'setup' not in sys.argv:
@@ -50,16 +50,16 @@ try:
         # Try multiple import strategies for utils.cache
         import_success = False
         import_attempts = [
-            lambda: __import__('utils.cache', fromlist=['get_cache_manager', 'get_config_manager']),
-            lambda: __import__('piscesl1.utils.cache', fromlist=['get_cache_manager', 'get_config_manager']),
-            lambda: __import__('..utils.cache', fromlist=['get_cache_manager', 'get_config_manager']),
+            lambda: __import__('utils.cache', fromlist=['get_cache_manager', 'PiscesLxCoreConfigManagerFacade']),
+            lambda: __import__('piscesl1.utils.cache', fromlist=['get_cache_manager', 'PiscesLxCoreConfigManagerFacade']),
+            lambda: __import__('..utils.cache', fromlist=['get_cache_manager', 'PiscesLxCoreConfigManagerFacade']),
         ]
         
         for attempt in import_attempts:
             try:
                 cache_module = attempt()
                 get_cache_manager = getattr(cache_module, 'get_cache_manager')
-                get_config_manager = getattr(cache_module, 'get_config_manager')
+                PiscesLxCoreConfigManagerFacade = getattr(cache_module, 'PiscesLxCoreConfigManagerFacade')
                 import_success = True
                 break
             except (ImportError, AttributeError):
@@ -74,5 +74,5 @@ except Exception as e:
 __all__ = [
     'read_config',
     'watermark_manager', 'watermark_text',
-    'get_cache_manager', 'get_config_manager',
+    'get_cache_manager', 'PiscesLxCoreConfigManagerFacade',
 ]

@@ -22,6 +22,48 @@ import torch
 from typing import Any, Optional
 from torch.utils.data import DistributedSampler
 
+class PiscesLxCoreDistributedSamplerBuilder:
+    """Builder class for creating distributed samplers for distributed training setups."""
+    
+    def build_distributed_sampler(self, dataset: Any, world_size: int, rank: int, *, shuffle: bool = True, drop_last: bool = True) -> Optional[Any]:
+        """Create and return a DistributedSampler for distributed training, or None if not applicable.
+
+        This method abstracts the creation of a DistributedSampler to simplify its integration 
+        with DataLoader in distributed settings.
+
+        Args:
+            dataset (Any): Dataset to be used for sampling.
+            world_size (int): Total number of processes in the distributed training setup.
+            rank (int): Unique identifier of the current process within the world_size.
+            shuffle (bool, optional): Flag to enable shuffling of data at every epoch. Defaults to True.
+            drop_last (bool, optional): Flag to drop the last batch if it is incomplete. Defaults to True.
+
+        Returns:
+            Optional[Any]: Instance of DistributedSampler if in distributed mode and initialization succeeds,
+                           otherwise None.
+        """
+        # Early return if torch is not available
+        if torch is None:
+            return None
+        
+        # Early return if not running in distributed mode
+        if world_size <= 1:
+            return None
+
+        try:
+            # Initialize and return the DistributedSampler
+            return DistributedSampler(
+                dataset,
+                num_replicas=world_size,
+                rank=rank,
+                shuffle=shuffle,
+                drop_last=drop_last,
+            )
+        except Exception:
+            # Silently handle exceptions and return None
+            return None
+
+# Legacy function for backward compatibility
 def build_distributed_sampler(dataset: Any, world_size: int, rank: int, *, shuffle: bool = True, drop_last: bool = True) -> Optional[Any]:
     """Create and return a DistributedSampler for distributed training, or None if not applicable.
 
@@ -39,23 +81,5 @@ def build_distributed_sampler(dataset: Any, world_size: int, rank: int, *, shuff
         Optional[Any]: Instance of DistributedSampler if in distributed mode and initialization succeeds,
                        otherwise None.
     """
-    # Early return if torch is not available
-    if torch is None:
-        return None
-    
-    # Early return if not running in distributed mode
-    if world_size <= 1:
-        return None
-
-    try:
-        # Initialize and return the DistributedSampler
-        return DistributedSampler(
-            dataset,
-            num_replicas=world_size,
-            rank=rank,
-            shuffle=shuffle,
-            drop_last=drop_last,
-        )
-    except Exception:
-        # Silently handle exceptions and return None
-        return None
+    builder = PiscesLxCoreDistributedSamplerBuilder()
+    return builder.build_distributed_sampler(dataset, world_size, rank, shuffle=shuffle, drop_last=drop_last)
