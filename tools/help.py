@@ -18,7 +18,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from utils import RIGHT, ERROR
+from utils import PiscesLxCoreLog as LOG
+RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
 
 def help():
     print("Pisces L1 Management Tool Help\n")

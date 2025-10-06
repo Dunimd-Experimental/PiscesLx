@@ -23,14 +23,22 @@ import sys
 import json
 import torch
 import warnings
-from utils.cache import get_cache_manager
+from utils import PiscesLxCoreEnhancedCacheManager
 from utils.device import PiscesLxCoreDeviceRunner, PiscesLxCoreDeviceManager, PiscesLxCoreDeviceFacade
-from utils import RIGHT, DEBUG, ERROR, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
+from utils import PiscesLxCoreLog as LOG, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
+RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
 
 _HOOKS = None
 _PROFILER = None
 _CFG = None
 COLLATE_MAX_SEQ_LEN = 96
+
+# Local compatibility wrapper to avoid importing utils functions
+def get_cache_manager():
+    try:
+        return PiscesLxCoreEnhancedCacheManager.get_instance()
+    except Exception:
+        return PiscesLxCoreEnhancedCacheManager()
 
 def set_context(*, hooks=None, profiler=None, cfg=None):
     """

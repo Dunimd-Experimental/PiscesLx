@@ -22,7 +22,7 @@ import os
 import platform
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
-from utils.log.core import PiscesLxCoreLog
+from utils import PiscesLxCoreLog
 
 
 class PiscesLxToolsMonitorDisplayUtils:

@@ -21,7 +21,8 @@
 import os
 import sys
 from types import ModuleType
-from utils import RIGHT, ERROR, PiscesLxCoreDeviceFacade, PiscesLxCoreDeviceManager, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager, PiscesLxCoreEnhancedCacheManager
+from utils import PiscesLxCoreLog as LOG, PiscesLxCoreDeviceFacade, PiscesLxCoreDeviceManager, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager, PiscesLxCoreEnhancedCacheManager
+RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
 from . import impl as _impl
 from .impl import PiscesLxToolsTrainImpl
 

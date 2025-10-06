@@ -21,7 +21,7 @@
 import sys
 import json
 import argparse
-from utils import RIGHT, DEBUG, ERROR
+from utils import PiscesLxCoreLog as LOG
 from typing import Dict, Any, Optional
 from tools.watermark import check_text_watermark
 
@@ -61,7 +61,7 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
             result["compliance_status"] = "compliant"
 
             if verbose:
-                RIGHT("Valid watermark detected")
+                LOG.info("Valid watermark detected")
                 print(f"\tModel: {watermark_info.get('model', 'unknown')}")
                 print(f"\tVersion: {watermark_info.get('version', 'unknown')}")
                 print(f"\tGeneration Time: {watermark_info.get('timestamp', 'unknown')}")
@@ -75,14 +75,14 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
             # Update result if no watermark is detected
             result["compliance_status"] = "no_watermark"
             if verbose:
-                ERROR("No watermark detected")
+                LOG.error("No watermark detected")
                 
     except Exception as e:
         # Update result if an error occurs during detection
         result["error"] = str(e)
         result["compliance_status"] = "error"
         if verbose:
-            ERROR(f"Detection error: {e}")
+            LOG.error(f"Detection error: {e}")
     
     return result
 
@@ -138,7 +138,7 @@ def batch_detect(file_path: str, verbose: bool = False) -> Dict[str, Any]:
         }
 
         if verbose:
-            RIGHT(f"Batch Detection Results:")
+            LOG.info(f"Batch Detection Results:")
             print(f"\tTotal Lines: {total_lines}")
             print(f"\tLines with Watermark Detected: {detected_lines}")
             print(f"\tCompliant Lines: {compliant_lines}")

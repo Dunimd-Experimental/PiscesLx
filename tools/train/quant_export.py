@@ -19,8 +19,9 @@
 # limitations under the License.
 
 from typing import List
-from utils import RIGHT, ERROR
-from utils.quantization import PiscesLxCoreQuantizationFacade
+from utils import PiscesLxCoreLog as LOG
+RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
+from utils import PiscesLxCoreQuantizationFacade
 
 class PiscesLxToolsQuantExporter:
     """Unified quantization and export facade for train pipeline.
@@ -112,7 +113,8 @@ class PiscesLxToolsQuantExporter:
         """
         import os
         import torch
-        from utils import RIGHT, ERROR
+        from utils import PiscesLxCoreLog as LOG
+        RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
 
         if not formats:
             return

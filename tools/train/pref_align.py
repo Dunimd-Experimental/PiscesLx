@@ -18,7 +18,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from utils import RIGHT, ERROR, DEBUG, WARNING
+from utils import PiscesLxCoreLog as LOG
+RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug; WARNING = LOG.warning
 
 class PiscesLxToolsPreferenceTrainer:
     """Unifies SFT/DPO/PPO preference alignment under a single facade.

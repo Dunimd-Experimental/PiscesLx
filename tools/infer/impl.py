@@ -22,7 +22,8 @@ import os
 import sys
 import time
 import contextlib
-from utils import RIGHT, DEBUG, ERROR
+from utils import PiscesLxCoreLog as LOG
+RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
 from typing import Any, Optional, List
 
 # Runtime context

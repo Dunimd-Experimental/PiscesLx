@@ -19,7 +19,8 @@
 # limitations under the License.
 
 from typing import Any
-from utils import RIGHT, ERROR
+from utils import PiscesLxCoreLog as LOG
+RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
 from . import impl as _impl
 from .impl import PiscesLxToolsInferImpl
 

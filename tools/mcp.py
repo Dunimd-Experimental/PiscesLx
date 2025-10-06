@@ -21,7 +21,8 @@
 import os
 import json
 from pathlib import Path
-from utils import RIGHT, DEBUG, ERROR
+from utils import PiscesLxCoreLog as LOG
+RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
 from typing import Dict, Any, Optional
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "MCP" / "MCP.json"

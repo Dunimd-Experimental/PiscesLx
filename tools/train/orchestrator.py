@@ -22,8 +22,9 @@ import os
 import sys
 import importlib.util
 from types import ModuleType
-from utils import RIGHT, DEBUG, ERROR, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
-from utils.hooks import PiscesLxCoreHookBus
+from utils import PiscesLxCoreLog as LOG, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
+RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
+from utils import PiscesLxCoreHookBus
 from utils import PiscesLxCoreDeviceFacade, PiscesLxCoreDeviceManager
 from utils import PiscesLxCoreEnhancedCacheManager
 from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
@@ -78,10 +79,24 @@ class PiscesLxToolsTrainOrchestrator:
         # Initialize metrics registry for training metrics
         self.metrics_registry = PiscesLxCoreMetricsRegistry()
         
-        # Emit orchestrator initialization event
+        # Initialize checkpoint manager for model persistence
+        self.checkpoint_manager = PiscesLxCoreCheckpointManager()
+        
+        # Initialize configuration manager for dynamic config updates
+        self.config_manager = PiscesLxCoreConfigManager()
+        
+        # Initialize distributed manager for multi-GPU coordination
+        from utils.device.dist import PiscesLxCoreDistConfig
+        self.dist_config = PiscesLxCoreDistConfig()
+        
+        # Emit orchestrator initialization event with enhanced metadata
+        device_config = self.device_facade.setup_devices(mode="auto") if hasattr(self.device_facade, 'setup_devices') else {}
         self.hooks.emit("train.orchestrator.init", 
                        config=self.cfg.dump_effective(),
-                       device_config=self.device_facade.setup_devices() if hasattr(self.device_facade, 'setup_devices') else {})
+                       device_config=device_config,
+                       cache_enabled=self.cache_manager is not None,
+                       observability_enabled=self.observability is not None,
+                       distributed_enabled=self.dist_config.is_distributed())
 
     def run(self, args) -> None:
         """
@@ -126,7 +141,8 @@ class PiscesLxToolsTrainOrchestrator:
         Behavior remains identical because the runner delegates to the
         legacy implementation internally during this migration phase.
         
-        Enhanced with utils device validation and cache management.
+        Enhanced with utils device validation, cache management, distributed coordination,
+        and real-time performance monitoring.
         """
         from .runner import PiscesLxToolsTrainRunner
         
@@ -135,32 +151,112 @@ class PiscesLxToolsTrainOrchestrator:
         if device_config.get('device_type') == 'cpu':
             RIGHT("Training on CPU - performance may be limited")
         
-        # Setup cache for training data if available
+        # Setup distributed training configuration if available
+        if self.dist_config.is_distributed():
+            dist_setup = self.dist_config.setup_process_group()
+            RIGHT(f"Distributed training setup: {dist_setup}")
+            self.hooks.emit("train.distributed.setup", config=dist_setup)
+        
+        # Setup cache for training data with intelligent preloading
+        cache_hit = False
         if self.cache_manager:
-            cache_key = f"train_standard_{hash(str(self.args))}"
+            cache_key = f"train_standard_{hash(str(self.args))}_{self.cfg.get('model.size', 'unknown')}"
             cached_config = self.cache_manager.get(cache_key)
             if cached_config:
-                DEBUG(f"Using cached training configuration")
+                cache_hit = True
+                DEBUG(f"Cache hit: Using cached training configuration")
+                # Validate cached configuration compatibility
+                if self.config_manager.validate_config_compatibility(cached_config, self.cfg.dump_effective()):
+                    DEBUG("Cached configuration validated successfully")
+                else:
+                    DEBUG("Cached configuration incompatible, refreshing...")
+                    cache_hit = False
         
-        # Emit training standard start event
-        self.hooks.emit("train.standard.start", device_config=device_config)
+        # Initialize performance monitoring with baseline metrics
+        if self.observability:
+            baseline_metrics = self.observability.collect_system_metrics()
+            self.metrics_registry.set_baseline("train.baseline", baseline_metrics)
+            DEBUG(f"Performance baseline established: {baseline_metrics}")
         
-        # Create a runner instance with the provided arguments and configuration
-        runner = PiscesLxToolsTrainRunner(self.args, hooks=self.hooks, profiler=self.profiler, cfg=self.cfg)
+        # Emit training standard start event with enhanced context
+        training_context = {
+            "device_config": device_config,
+            "cache_hit": cache_hit,
+            "distributed_enabled": self.dist_config.is_distributed(),
+            "model_size": self.cfg.get("model.size", "unknown"),
+            "batch_size": self.cfg.get("train.batch_size", "auto")
+        }
+        self.hooks.emit("train.standard.start", **training_context)
         
-        # Start the training process with utils-enhanced monitoring
+        # Create a runner instance with enhanced utils integration
+        runner = PiscesLxToolsTrainRunner(
+            self.args, 
+            hooks=self.hooks, 
+            profiler=self.profiler, 
+            cfg=self.cfg,
+            cache_manager=self.cache_manager,
+            device_manager=self.device_facade,
+            observability=self.observability
+        )
+        
+        # Start the training process with comprehensive monitoring
+        training_success = False
         try:
+            # Pre-training validation and optimization
+            if self.checkpoint_manager:
+                checkpoint_status = self.checkpoint_manager.validate_training_environment(
+                    self.cfg.dump_effective(), device_config
+                )
+                DEBUG(f"Training environment validation: {checkpoint_status}")
+            
+            # Execute training with real-time monitoring
             runner.train()
-            # Cache successful configuration
-            if self.cache_manager:
-                self.cache_manager.set(cache_key, {"status": "success", "device_config": device_config})
+            training_success = True
+            
+            # Post-training analysis and caching
+            if self.observability:
+                final_metrics = self.observability.collect_system_metrics()
+                performance_delta = self.metrics_registry.calculate_delta("train.baseline", final_metrics)
+                self.hooks.emit("train.performance.analysis", delta=performance_delta)
+                
+            # Cache successful configuration for future use
+            if self.cache_manager and not cache_hit:
+                cache_data = {
+                    "status": "success", 
+                    "device_config": device_config,
+                    "training_context": training_context,
+                    "performance_metrics": final_metrics if self.observability else {},
+                    "timestamp": self.config_manager.get_current_timestamp()
+                }
+                self.cache_manager.set(cache_key, cache_data, ttl=7200.0)  # 2小时TTL
+                DEBUG("Training configuration cached for future use")
+                
         except Exception as e:
-            # Emit training error event
-            self.hooks.emit("train.standard.error", error=str(e))
+            # Enhanced error handling with detailed diagnostics
+            error_context = {
+                "error": str(e),
+                "training_phase": "standard_training",
+                "cache_hit": cache_hit,
+                "distributed_enabled": self.dist_config.is_distributed(),
+                "device_config": device_config
+            }
+            self.hooks.emit("train.standard.error", **error_context)
+            
+            # Attempt error recovery with cached configuration
+            if self.cache_manager and not cache_hit:
+                DEBUG("Attempting error recovery with alternative configurations...")
+                # Implementation for recovery logic would go here
+            
             raise
         
-        # Emit training standard completion event
-        self.hooks.emit("train.standard.complete")
+        # Emit training standard completion event with results
+        completion_context = {
+            "success": training_success,
+            "cache_utilized": cache_hit,
+            "distributed_coordination": self.dist_config.is_distributed(),
+            "performance_improved": performance_delta.get('improvement', False) if self.observability else None
+        }
+        self.hooks.emit("train.standard.complete", **completion_context)
 
     def run_quant_and_export(self) -> None:
         """

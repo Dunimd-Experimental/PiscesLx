@@ -19,7 +19,8 @@
 # limitations under the License.
 
 import torch
-from utils import RIGHT, DEBUG, ERROR
+from utils import PiscesLxCoreLog as LOG
+RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
 
 def check(args=None, extra=None):
     """

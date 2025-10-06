@@ -21,8 +21,8 @@
 import psutil
 from typing import Dict, Any, Optional, List
 from utils.concurrency import PiscesLxCoreRetry
-from utils.cache.enhanced import PiscesLxCoreEnhancedCacheManager
-from utils.device.manager import PiscesLxCoreDeviceManager
+from utils import PiscesLxCoreEnhancedCacheManager
+from utils import PiscesLxCoreDeviceManager
 
 
 class PiscesLxMonitorStatsCollector:

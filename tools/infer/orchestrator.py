@@ -19,8 +19,11 @@
 # limitations under the License.
 
 from typing import Any, Optional
-from utils import RIGHT, ERROR
-from utils.hooks import PiscesLxCoreHookBus
+from utils import PiscesLxCoreLog as LOG
+RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
+from utils import PiscesLxCoreHookBus, PiscesLxCoreDeviceFacade, PiscesLxCoreEnhancedCacheManager
+from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
+from utils import PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
 
 # Reuse the training profiler to avoid duplication
 try:
@@ -41,13 +44,15 @@ except Exception:
             """Start profiling for a specific phase with optional metadata."""
             self._active = True
             self._phase_timers[phase_name] = time.perf_counter()
-            from utils import DEBUG
+            from utils import PiscesLxCoreLog as LOG
+            DEBUG = LOG.debug
             print(f"{DEBUG} Profiler started for phase: {phase_name}")
         
         def stop(self, phase_name: str = "infer", **kwargs) -> Optional[float]:
             """Stop profiling and return elapsed time for the specified phase."""
             if not self._active or phase_name not in self._phase_timers:
-                from utils import DEBUG
+                from utils import PiscesLxCoreLog as LOG
+                DEBUG = LOG.debug
                 print(f"{DEBUG} Profiler stop called for inactive phase: {phase_name}")
                 return None
             
@@ -55,7 +60,8 @@ except Exception:
             self._phase_results[phase_name] = elapsed
             self._active = False
             
-            from utils import DEBUG
+            from utils import PiscesLxCoreLog as LOG
+            DEBUG = LOG.debug
             print(f"{DEBUG} Profiler stopped for phase: {phase_name}, elapsed: {elapsed:.3f}s")
             return elapsed
 
@@ -86,6 +92,8 @@ class PiscesLxToolsInferOrchestrator:
     Modes (phase-1):
     - standard: native Pisces inference (behavior preserved)
     - vllm: high-performance inference via VLLM (auto-fallback if unavailable)
+    
+    Enhanced with utils device management, caching, observability, and performance optimization.
     """
 
     def __init__(self, args: Any) -> None:
@@ -93,18 +101,185 @@ class PiscesLxToolsInferOrchestrator:
         self.hooks = PiscesLxCoreHookBus()
         self.profiler = PiscesLxToolsProfiler()
         self.cfg = PiscesLxToolsInferConfig.from_args(args)
+        
+        # Initialize utils-enhanced components for inference optimization
+        self._init_utils_components()
+
+    def _init_utils_components(self):
+        """Initialize utils-enhanced components for inference optimization and monitoring."""
+        # Initialize device facade for optimal device selection
+        self.device_facade = PiscesLxCoreDeviceFacade(self.args)
+        
+        # Initialize cache manager for model and inference result caching
+        self.cache_manager = PiscesLxCoreEnhancedCacheManager.get_instance()
+        
+        # Initialize observability facade for inference performance monitoring
+        self.observability = PiscesLxCoreObservabilityFacade()
+        
+        # Initialize metrics registry for inference-specific metrics
+        self.metrics_registry = PiscesLxCoreMetricsRegistry()
+        
+        # Initialize checkpoint manager for model loading optimization
+        self.checkpoint_manager = PiscesLxCoreCheckpointManager()
+        
+        # Initialize configuration manager for dynamic inference config
+        self.config_manager = PiscesLxCoreConfigManager()
+        
+        # Emit orchestrator initialization event
+        device_config = self.device_facade.setup_devices(mode="inference") if hasattr(self.device_facade, 'setup_devices') else {}
+        self.hooks.emit("infer.orchestrator.init",
+                       config=self.cfg.dump_effective() if hasattr(self.cfg, 'dump_effective') else {},
+                       device_config=device_config,
+                       cache_enabled=self.cache_manager is not None,
+                       observability_enabled=self.observability is not None)
 
     def run(self, args: Any) -> None:
         mode = self.cfg.get('infer.mode', default=(getattr(args, 'infer_mode', None) or 'standard'))
         RIGHT(f"Infer orchestrator mode: {mode}")
-        if mode in ('standard', 'vllm'):
-            self.run_standard_infer()
-        else:
-            ERROR(f"Unknown infer.mode: {mode}")
-            raise SystemExit(1)
+        
+        # Emit inference start event with enhanced context
+        inference_context = {
+            "mode": mode,
+            "device_config": self.device_facade.setup_devices(mode="inference") if hasattr(self.device_facade, 'setup_devices') else {},
+            "cache_enabled": self.cache_manager is not None,
+            "observability_enabled": self.observability is not None
+        }
+        self.hooks.emit("infer.start", **inference_context)
+        
+        try:
+            if mode in ('standard', 'vllm'):
+                self.run_standard_infer()
+            else:
+                ERROR(f"Unknown infer.mode: {mode}")
+                self.hooks.emit("infer.error", error=f"Unknown infer.mode: {mode}")
+                raise SystemExit(1)
+                
+            # Emit inference completion event
+            self.hooks.emit("infer.complete", mode=mode)
+            
+        except Exception as e:
+            # Emit inference failure event with detailed error context
+            error_context = {
+                "error": str(e),
+                "mode": mode,
+                "device_config": inference_context.get("device_config", {})
+            }
+            self.hooks.emit("infer.failure", **error_context)
+            ERROR(f"Inference failed in mode {mode}: {e}")
+            raise
 
     def run_standard_infer(self) -> None:
-        """Run native/vLLM inference via the class-based runner."""
+        """Run native/vLLM inference via the class-based runner.
+        
+        Enhanced with utils device optimization, model caching, and performance monitoring.
+        """
         from .runner import PiscesLxToolsInferRunner
-        runner = PiscesLxToolsInferRunner(self.args, hooks=self.hooks, profiler=self.profiler, cfg=self.cfg)
-        runner.infer()
+        
+        # Optimize device configuration for inference
+        device_config = self.device_facade.setup_devices(mode="inference")
+        if device_config.get('device_type') == 'cpu':
+            RIGHT("Inference on CPU - performance may be limited")
+        
+        # Setup intelligent model caching
+        cache_hit = False
+        if self.cache_manager:
+            model_key = f"infer_model_{self.cfg.get('model.name', 'unknown')}_{hash(str(self.args))}"
+            cached_model = self.cache_manager.get(model_key)
+            if cached_model:
+                cache_hit = True
+                DEBUG(f"Model cache hit: Using cached model configuration")
+        
+        # Initialize inference performance monitoring
+        if self.observability:
+            inference_baseline = self.observability.collect_system_metrics()
+            self.metrics_registry.set_baseline("infer.baseline", inference_baseline)
+            DEBUG(f"Inference baseline established: GPU memory {inference_baseline.get('gpu_memory_used', 'N/A')}MB")
+        
+        # Validate model checkpoint before inference
+        model_path = self.cfg.get('infer.model_path') or getattr(self.args, 'model_path', None)
+        if model_path and self.checkpoint_manager:
+            checkpoint_valid = self.checkpoint_manager.validate_checkpoint(model_path)
+            if not checkpoint_valid:
+                ERROR(f"Invalid model checkpoint: {model_path}")
+                self.hooks.emit("infer.checkpoint.error", error="Invalid model checkpoint", path=model_path)
+                raise SystemExit(1)
+            DEBUG(f"Model checkpoint validated: {model_path}")
+        
+        # Emit inference standard start event with enhanced context
+        inference_context = {
+            "device_config": device_config,
+            "cache_hit": cache_hit,
+            "model_path": model_path,
+            "batch_size": self.cfg.get("infer.batch_size", 1),
+            "max_tokens": self.cfg.get("infer.max_tokens", 512)
+        }
+        self.hooks.emit("infer.standard.start", **inference_context)
+        
+        # Create runner with enhanced utils integration
+        runner = PiscesLxToolsInferRunner(
+            self.args, 
+            hooks=self.hooks, 
+            profiler=self.profiler, 
+            cfg=self.cfg,
+            cache_manager=self.cache_manager,
+            device_manager=self.device_facade,
+            observability=self.observability
+        )
+        
+        # Execute inference with comprehensive monitoring
+        inference_success = False
+        try:
+            # Pre-inference optimization
+            if self.observability:
+                pre_inference_metrics = self.observability.collect_system_metrics()
+                self.hooks.emit("infer.pre.optimization", metrics=pre_inference_metrics)
+            
+            # Run inference
+            runner.infer()
+            inference_success = True
+            
+            # Post-inference analysis and caching
+            if self.observability:
+                post_inference_metrics = self.observability.collect_system_metrics()
+                performance_analysis = self.metrics_registry.calculate_delta("infer.baseline", post_inference_metrics)
+                
+                # Cache model if performance is optimal
+                if self.cache_manager and not cache_hit and performance_analysis.get('efficiency_score', 0) > 0.8:
+                    model_cache_data = {
+                        "model_config": self.cfg.dump_effective() if hasattr(self.cfg, 'dump_effective') else {},
+                        "device_config": device_config,
+                        "performance_metrics": post_inference_metrics,
+                        "efficiency_score": performance_analysis.get('efficiency_score', 0),
+                        "timestamp": self.config_manager.get_current_timestamp()
+                    }
+                    self.cache_manager.set(model_key, model_cache_data, ttl=3600.0)  # 1小时TTL
+                    DEBUG(f"Model configuration cached with efficiency score: {performance_analysis.get('efficiency_score', 0)}")
+                
+                self.hooks.emit("infer.performance.analysis", analysis=performance_analysis)
+                
+        except Exception as e:
+            # Enhanced error handling for inference failures
+            error_context = {
+                "error": str(e),
+                "inference_phase": "standard_inference",
+                "cache_hit": cache_hit,
+                "device_config": device_config,
+                "model_path": model_path
+            }
+            self.hooks.emit("infer.standard.error", **error_context)
+            
+            # Attempt recovery with alternative device configuration
+            if self.device_facade and 'cuda' in str(e).lower():
+                DEBUG("Attempting CPU fallback due to CUDA error...")
+                # Implementation for device fallback would go here
+            
+            raise
+        
+        # Emit inference standard completion event with results
+        completion_context = {
+            "success": inference_success,
+            "cache_utilized": cache_hit,
+            "device_optimized": device_config.get('optimization_applied', False),
+            "performance_monitored": self.observability is not None
+        }
+        self.hooks.emit("infer.standard.complete", **completion_context)

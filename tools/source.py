@@ -20,7 +20,7 @@
 
 import os
 import sys
-from utils import RIGHT
+from utils import PiscesLxCoreLog as LOG
 
 def source():
     """
@@ -42,17 +42,17 @@ def source():
         if "powershell.exe" in shell.lower() or "pwsh.exe" in shell.lower():
             # Get the PowerShell activation script path
             activate = os.path.join(venv_dir, "Scripts", "Activate.ps1")
-            RIGHT("Auto-entering Pisces venv shell (PowerShell)...")
+            LOG.info("Auto-entering Pisces venv shell (PowerShell)...")
             os.execv(shell, [shell, "-NoExit", "-Command", f". '{activate}'"])
         else:
             # Get the cmd activation script path
             activate = os.path.join(venv_dir, "Scripts", "activate.bat")
-            RIGHT("Auto-entering Pisces venv shell (Windows cmd)...")
+            LOG.info("Auto-entering Pisces venv shell (Windows cmd)...")
             os.execv(shell, [shell, "/K", activate])
     else:
         # Get the Unix-like system shell path, default to /bin/bash
         shell = os.environ.get("SHELL", "/bin/bash")
         # Get the Unix-like system activation script path
         activate = os.path.join(venv_dir, "bin", "activate")
-        RIGHT("Auto-entering Pisces venv shell (Linux/Mac)...")
+        LOG.info("Auto-entering Pisces venv shell (Linux/Mac)...")
         os.execv(shell, [shell, "-i", "-c", f"source '{activate}'; exec {shell}"])

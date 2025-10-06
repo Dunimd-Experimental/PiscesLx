@@ -22,13 +22,11 @@ import os
 import sys
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
-from utils.cache import PiscesLxCoreCacheManager
-from utils.device import PiscesLxCoreDeviceManager
-from utils.filesystem import PiscesLxCoreFilesystemManager
-from utils.decorators import PiscesLxCoreRetry, PiscesLxCoreTimeout
-from utils.log.core import PiscesLxCoreLog
-from utils.constants import MONITOR_LOG_DIR, MONITOR_LOG_FILE
-
+from utils import PiscesLxCoreCacheManager
+from utils import PiscesLxCoreDeviceManager
+from utils import PiscesLxCoreFS
+from utils import PiscesLxCoreDecorators
+from utils import PiscesLxCoreLog
 
 class PiscesLxMonitorContext:
     """Runtime context management for monitoring operations."""
@@ -57,7 +55,7 @@ class PiscesLxMonitorContext:
                 hook(event_type, data)
             except Exception as e:
                 # Use project's log system for error reporting
-                from utils.log.core import PiscesLxCoreLog
+                from utils import PiscesLxCoreLog
                 error_logger = PiscesLxCoreLog("pisceslx.monitor.context")
                 error_logger.error(f"Hook error: {e}")
 
@@ -67,17 +65,21 @@ class PiscesLxMonitorUtils:
     
     def __init__(self):
         """Initialize utility components."""
-        self.fs_manager = PiscesLxCoreFilesystemManager()
+        self.fs_manager = PiscesLxCoreFS()
         self.cache_manager = PiscesLxCoreCacheManager()
         self.device_manager = PiscesLxCoreDeviceManager()
         
+        # Build log paths dynamically
+        monitor_log_dir = self.fs_manager.logs_dir()
+        monitor_log_file = monitor_log_dir / "monitor.log"
+        
         # Ensure log directory exists
-        self.fs_manager.ensure_dir_exists(MONITOR_LOG_DIR)
+        self.fs_manager.ensure_dir_exists(monitor_log_dir)
         
         # Initialize logger using project's log system
         self.logger = PiscesLxCoreLog(
             name="pisceslx.monitor.file",
-            file_path=MONITOR_LOG_FILE,
+            file_path=str(monitor_log_file),
             console=False,  # Disable console output to avoid polluting app.log
             enable_file=True
         )
@@ -90,7 +92,7 @@ class PiscesLxMonitorUtils:
         """Get device manager."""
         return self.device_manager
     
-    def get_fs_manager(self) -> PiscesLxCoreFilesystemManager:
+    def get_fs_manager(self) -> PiscesLxCoreFS:
         """Get filesystem manager."""
         return self.fs_manager
     
@@ -131,7 +133,7 @@ class PiscesLxMonitorContextManager:
         """Get global device manager."""
         return self._utils_manager.get_device_manager()
     
-    def get_fs_manager(self) -> PiscesLxCoreFilesystemManager:
+    def get_fs_manager(self) -> PiscesLxCoreFS:
         """Get global filesystem manager."""
         return self._utils_manager.get_fs_manager()
     

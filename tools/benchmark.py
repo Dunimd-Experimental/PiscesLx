@@ -19,7 +19,8 @@
 # limitations under the License.
 
 import time, torch, json, os
-from utils import RIGHT, ERROR
+from utils import PiscesLxCoreLog as LOG
+RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
 from typing import Dict, List, Any
 from model import PiscesModel, PiscesConfig
 

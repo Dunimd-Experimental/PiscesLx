@@ -22,7 +22,7 @@ import time
 import json
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
-from utils.cache.enhanced import PiscesLxCoreEnhancedCacheManager
+from utils import PiscesLxCoreEnhancedCacheManager
 
 
 class PiscesLxMonitorDataManager:
