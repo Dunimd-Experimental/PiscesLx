@@ -66,7 +66,14 @@ def download_worker(task: Tuple[str, str, str, list[str], str, Optional[int]]) -
     """
     # logs removed
     from .sources import SourceRouter
+    from .caches import DownloadCacheContext
+    
     dataset_name, save_name, description, preferred_sources, data_dir, max_samples = task
+    
+    # 在子进程中设置缓存环境变量
+    cache = DownloadCacheContext()
+    cache.setup_env()
+    
     # logs removed
     logger = PiscesLxCoreLog("pisceslx.data.download")
     logger.info(f"Starting download: {dataset_name} -> {save_name}")
