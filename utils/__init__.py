@@ -54,6 +54,7 @@ from utils.error import (
 # Cache module
 from utils.cache.core import PiscesLxCoreCache
 from utils.cache.enhanced import PiscesLxCoreEnhancedCache, PiscesLxCoreEnhancedCacheManager
+from utils.cache import PiscesLxCoreCacheManagerFacade
 
 # Backward compatibility alias
 PiscesLxCoreCacheManager = PiscesLxCoreEnhancedCacheManager
@@ -161,6 +162,7 @@ __all__ = [
     'PiscesLxCoreEnhancedCache',
     'PiscesLxCoreEnhancedCacheManager',
     'PiscesLxCoreCacheManager',  # Backward compatibility alias
+    'PiscesLxCoreCacheManagerFacade',
     
     # Logging
     'PiscesLxCoreLog',

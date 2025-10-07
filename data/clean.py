@@ -27,8 +27,7 @@ import numpy as np
 import pandas as pd
 import multiprocessing as mp
 from collections import Counter
-from utils import PiscesLxCoreLog
-from utils import get_cache_manager
+from utils import PiscesLxCoreLog, PiscesLxCoreCacheManagerFacade
 from typing import Dict, Callable, List, Optional, Tuple, Any
 from datasets import load_from_disk, Dataset, concatenate_datasets
 
@@ -1820,8 +1819,8 @@ class DatasetCleaner:
         
         # Use cache manager to get data directory if input_dir is not provided
         if input_dir is None:
-            cache_manager = get_cache_manager()
-            input_dir = cache_manager.get_or_create_cache_dir("data_cache")
+            cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
+            input_dir = cache_manager.get_cache_dir("data_cache")
         
         if not os.path.exists(input_dir):
             raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
@@ -1986,8 +1985,8 @@ class DatasetCleaner:
         try:
             # Use cache manager to get data directory if input_dir is not provided
             if input_dir is None:
-                cache_manager = get_cache_manager()
-                input_dir = cache_manager.get_or_create_cache_dir("data_cache")
+                cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
+                input_dir = cache_manager.get_cache_dir("data_cache")
             if enable_multiprocessing:
                 return DatasetCleaner.merge_and_clean(
                     input_dir=input_dir,

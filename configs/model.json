@@ -1,0 +1,55 @@
+{
+  "version": "0.1",
+  "defaults": {
+    "max_samples_per_dataset": 50000,
+    "post_download_clean": true,
+    "source_preference": ["modelscope", "huggingface"]
+  },
+  "datasets": [
+    { "name": "baicai003/Llama3-Chinese-dataset", "save": "Chinese1", "desc": "Chinese1", "source": "huggingface" },
+    { "name": "liucong/Chinese-DeepSeek-R1-Distill-data-110k-SFT", "save": "Chinese2", "desc": "Chinese2", "source": "huggingface" },
+    { "name": "AI-ModelScope/OpenOrca-Chinese", "save": "Chinese3", "desc": "Chinese3", "source": "modelscope" },
+
+    { "name": "YorickHe/CoT", "save": "English1", "desc": "English1", "source": "huggingface" },
+    { "name": "DAMO_ConvAI/EnDoc2BotDialogue", "save": "English2", "desc": "English2", "source": "huggingface" },
+    { "name": "Intelligent-Internet/wikipedia_en", "save": "English3", "desc": "English3", "source": "huggingface" },
+
+    { "name": "swift/MetaMathQA", "save": "Math1", "desc": "Math1" },
+    { "name": "AI-MO/NuminaMath-CoT", "save": "Math2", "desc": "Math2" },
+    { "name": "AI-ModelScope/NuminaMath-CoT", "save": "Math3", "desc": "Math3", "source": "modelscope" },
+    { "name": "xpengx/EleutherAI-proof-pile-2", "save": "Math4", "desc": "Math4", "source": "huggingface" },
+    { "name": "tastelikefeet/competition_math", "save": "Math5", "desc": "Math5", "source": "huggingface" },
+
+    { "name": "HuggingFaceH4/CodeAlpaca_20K", "save": "Code1", "desc": "Code1", "source": "huggingface" },
+    { "name": "jablonkagroup/codeparrot_github-code-chemistry-python", "save": "Code2", "desc": "Code2", "source": "huggingface" },
+    { "name": "jablonkagroup/codeparrot_github-code-chemistry-python", "save": "Code3", "desc": "Code3", "source": "huggingface" },
+    { "name": "codefuse-ai/CodeExercise-Python-27k", "save": "Code4", "desc": "Code4", "source": "huggingface" },
+
+    { "name": "AI-ModelScope/webvid-10M", "save": "Web1", "desc": "Web1", "source": "modelscope" },
+    { "name": "prithivMLmods/OpenWeb888K", "save": "Web2", "desc": "Web2", "source": "huggingface" },
+    { "name": "OmniData/Pile-OpenWebText2", "save": "Web3", "desc": "Web3" },
+
+    { "name": "OmniData/Clotho", "save": "Audio1", "desc": "Audio1" },
+    { "name": "modelscope/Libri2Mix_8k", "save": "Audio2", "desc": "Audio2", "source": "modelscope" },
+    { "name": "lmms-lab/AudioSetCaps_350k_converted", "save": "Audio3", "desc": "Audio3", "source": "huggingface" },
+
+    { "name": "modelscope/coco_captions_small_slice", "save": "Image1", "desc": "Image1", "source": "modelscope" },
+    { "name": "FreedomIntelligence/ShareGPT-4o-Image", "save": "Image2", "desc": "Image2", "source": "huggingface" },
+
+    { "name": "iic/MSAgent-Bench", "save": "Agent1", "desc": "Agent1", "source": "modelscope" },
+    { "name": "iic/MSAgent-MultiRole", "save": "Agent2", "desc": "Agent2", "source": "modelscope" },
+    { "name": "AI-ModelScope/orca-agentinstruct-1M-v1", "save": "Agent3", "desc": "Agent3", "source": "modelscope" },
+    { "name": "iic/MSAgent-Pro", "save": "Agent4", "desc": "Agent4", "source": "modelscope" },
+    { "name": "AI-ModelScope/ms_agent_for_agentfabric", "save": "Agent5", "desc": "Agent5", "source": "modelscope" },
+
+    { "name": "swift/VQAv2", "save": "VQAv2", "desc": "VQAv2" },
+    { "name": "OmniData/FinQA", "save": "FinQA", "desc": "FinQA" },
+    { "name": "swift/DocVQA", "save": "DocVQ1A", "desc": "DocVQA1" },
+    { "name": "modelscope/ceval-exam", "save": "Exam", "desc": "Exam", "source": "modelscope" },
+    { "name": "AI-ModelScope/LAION-SG", "save": "SG1", "desc": "SG1", "source": "modelscope" },
+    { "name": "HuggingFaceH4/ultrachat_200k", "save": "Chat1", "desc": "Chat1", "source": "huggingface" },
+    { "name": "OpenDataLab/PubLayNet", "save": "Publaynet1", "desc": "PubLayNet1" },
+    { "name": "krisfu/delicate_medical_r1_data", "save": "Medical1", "desc": "Medical1" },
+    { "name": "BJQW14B/bs_challenge_financial_14b_dataset", "save": "Financial1", "desc": "Financial1" }
+  ]
+}

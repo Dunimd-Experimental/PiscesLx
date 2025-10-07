@@ -19,9 +19,8 @@
 # limitations under the License.
 
 import os
-from utils import ERROR, RIGHT
+from utils import ERROR, RIGHT, PiscesLxCoreCacheManagerFacade
 from datasets import load_from_disk, DatasetDict
-from utils import get_cache_manager
 
 def get_subsets_from_model_txt():
     """
@@ -34,8 +33,8 @@ def get_subsets_from_model_txt():
         list: A list of dataset subset names. Returns an empty list if the file does not exist.
     """
     # Use cache manager for model.txt file path
-    cache_manager = get_cache_manager()
-    data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
+    cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
+    data_cache_dir = cache_manager.get_cache_dir("data_cache")
     model_txt_path = os.path.join(data_cache_dir, "model.txt")
     
     # Check if the model.txt file exists
