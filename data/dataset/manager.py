@@ -19,11 +19,13 @@
 # limitations under the License.
 
 from .core import PiscesDataset
-from utils import PiscesLxCoreLog
+
 from .registry import REGISTRY as DATASETS
 from typing import List, Optional, Dict, Any
 from .streaming import LargeScaleStreamingDataset
 from .loader import OptimizedDataLoader, BatchConfig
+
+# logs removed
 
 class PiscesLxToolsDatasetManager:
     """
@@ -33,7 +35,7 @@ class PiscesLxToolsDatasetManager:
         """
         Initialize the dataset manager and create a logger instance.
         """
-        self.logger = PiscesLxCoreLog("pisceslx.data.dataset.manager")
+        
 
     def load(self, subset: str = "tiny", split: str = "train", config: Optional[Dict[str, Any]] = None, max_samples: Optional[int] = None) -> PiscesDataset:
         """
@@ -55,10 +57,8 @@ class PiscesLxToolsDatasetManager:
         builder = DATASETS.get(subset)
         if builder:
             ds = builder(subset=subset, split=split, config=config, max_samples=max_samples)
-            self.logger.success(f"dataset_built_by_registry {subset}")
             return ds
         ds = PiscesDataset(subset=subset, split=split, config=config, max_samples=max_samples)
-        self.logger.success(f"dataset_loaded {subset} split={split} size={len(ds)}")
         return ds
 
     def dataloader(self, dataset, batch_config: Optional[BatchConfig] = None):
@@ -98,4 +98,4 @@ class PiscesLxToolsDatasetManager:
             builder: The builder function or class for the dataset.
         """
         DATASETS.register(name, builder)
-        self.logger.success(f"dataset_registered {name}")
+        pass

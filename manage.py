@@ -39,7 +39,6 @@ def get_logger():
 # List of available commands with their purposes
 COMMANDS = [
     'setup',      # Set up the environment
-    'source',     # Activate the virtual environment
     'update',     # Pull the latest code from the remote repository
     'version',    # Display the current version and changelog
     'changelog',  # Show the version history and specific version changelog
@@ -55,42 +54,6 @@ COMMANDS = [
     'watermark',  # Detect and manage watermarks
     'cache',      # Maintain the cache
 ]
-
-def ensure_venv_activated():
-    """
-    Ensure the virtual environment is activated. If not, activate it automatically.
-    This function is called before executing each command.
-    """
-    # Check if already in a virtual environment
-    if sys.prefix != sys.base_prefix:
-        return True  # Already in a virtual environment
-    
-    # Get the virtual environment path
-    venv_dir = os.path.join(ROOT, ".pisceslx", "env")
-    if not os.path.exists(venv_dir):
-        venv_dir = os.path.join(ROOT, "venv")  # Compatibility with old version paths
-    
-    if not os.path.exists(venv_dir):
-        return False  # Virtual environment does not exist
-    
-    # Check if the system is Windows
-    is_windows = os.name == 'nt'
-    
-    # Get the Python interpreter path of the virtual environment
-    if is_windows:
-        venv_python = os.path.join(venv_dir, "Scripts", "python.exe")
-    else:
-        venv_python = os.path.join(venv_dir, "bin", "python")
-    
-    if not os.path.exists(venv_python):
-        return False  # Virtual environment Python interpreter does not exist
-    
-    # If not currently in the virtual environment, restart within the virtual environment
-    if sys.executable != venv_python:
-        get_logger().success("Detected that the virtual environment is not activated. Restarting within the virtual environment...", event="manage.right")
-        os.execv(venv_python, [venv_python] + sys.argv)
-    
-    return True
 
 def main():
     """
@@ -157,17 +120,7 @@ def main():
     args, unknown = parser.parse_known_args()
     
     if args.command == 'setup':
-        print(f"✅ PiscesL1 Model Version: {VERSION}")
-    
-    # Ensure the virtual environment is activated (except for 'setup', 'source', and 'help' commands)
-    if args.command and args.command not in ['setup', 'source', 'help']:
-        if not ensure_venv_activated():
-            if args.command == 'setup':
-                print("🔴 Virtual environment not found. Please run 'python manage.py setup' first to create the virtual environment.")
-            else:
-                get_logger().error("Virtual environment not found. Please run 'python manage.py setup' first to create the virtual environment.", event="manage.error")
-            sys.exit(1)
-
+        print(f"✅\tPiscesL1 Model Version: {VERSION}")
     if args.command not in ['version', 'changelog', 'setup']:
         print(f"✅\tPiscesL1 Model Version: {VERSION}")
     if args.command is None or args.command == 'help':
@@ -199,9 +152,6 @@ def main():
     elif args.command == 'setup':
         from tools.setup import setup
         setup(args)
-    elif args.command == 'source':
-        from tools.source import source
-        source()
     elif args.command == 'update':
         from utils import PiscesLxCoreInfoUpdate
         updater = PiscesLxCoreInfoUpdate()

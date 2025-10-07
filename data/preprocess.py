@@ -19,7 +19,7 @@
 # limitations under the License.
 
 import os
-from utils import ERROR, RIGHT, PiscesLxCoreCacheManagerFacade
+from utils import PiscesLxCoreCacheManagerFacade
 from datasets import load_from_disk, DatasetDict
 
 def get_subsets_from_model_txt():
@@ -39,7 +39,7 @@ def get_subsets_from_model_txt():
     
     # Check if the model.txt file exists
     if not os.path.exists(model_txt_path):
-        ERROR(f"{model_txt_path} not found! Please create it with one dataset name per line.")
+        pass
         return []
     
     # Open the model.txt file and read dataset subset names
@@ -66,7 +66,7 @@ def build_splits(subset):
     
     # Check if the dataset subset exists
     if not os.path.exists(subset_path):
-        ERROR(f"{subset_path} does not exist, please run download.py first")
+        pass
         return
     
     # Load the dataset from disk
@@ -85,7 +85,7 @@ def build_splits(subset):
     
     # Save the split dataset back to disk
     dataset_dict.save_to_disk(subset_path)
-    RIGHT(f"{subset} split completed �?{subset_path}")
+    # RIGHT(f"{subset} split completed �?{subset_path}")
 
 if __name__ == "__main__":
     # Get all dataset subset names

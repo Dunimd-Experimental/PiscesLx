@@ -25,9 +25,9 @@ from typing import Dict, Any, List
 
 import pandas as pd
 from datasets import load_from_disk, Dataset
-from utils import PiscesLxCoreLog
 
-_log = PiscesLxCoreLog("PiscesLx.DataClean.Quality")
+
+# logs removed
 
 
 def calculate_text_quality_score(text: str) -> float:
@@ -147,5 +147,5 @@ class DataQualityController:
             self.quality_stats[dataset_path] = stats
             return stats
         except Exception as e:
-            _log.error(f"Quality analysis failed for {dataset_path}: {e}")
+            return {"error": str(e)}
             return {"error": str(e)}

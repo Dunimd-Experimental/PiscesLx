@@ -20,9 +20,9 @@
 
 import re
 from typing import Callable, Dict, Optional, Any, List
-from utils import PiscesLxCoreLog
 
-_log = PiscesLxCoreLog("PiscesLx.DataClean.Rules")
+
+# logs removed
 
 # 基础文本清洗规则
 RULES: Dict[str, Callable[[str], str]] = {
@@ -74,7 +74,7 @@ class StreamCleaner:
                 return MediaCleaner.clean_document_with_quality(path)
             return path
         except Exception as e:
-            _log.debug(f"clean_media fail: {path} type={media_type} err={e}")
+            pass
             return None
 
     @staticmethod
@@ -102,7 +102,7 @@ class StreamCleaner:
                 return score
             return 0.5
         except Exception as e:
-            _log.debug(f"get_media_quality_score fail: {media_path} type={media_type} err={e}")
+            pass
             return 0.5
 
     @staticmethod

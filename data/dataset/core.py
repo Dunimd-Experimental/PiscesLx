@@ -23,7 +23,7 @@ import torch
 from datasets import load_from_disk
 from torch.utils.data import Dataset
 from typing import Optional, Dict, Any
-from utils import PiscesLxCoreLog, PiscesLxCoreCacheManagerFacade
+from utils import PiscesLxCoreCacheManagerFacade
 from model import get_tokenizer, VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder
 
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
@@ -46,7 +46,7 @@ class PiscesDataset(Dataset):
         Raises:
             FileNotFoundError: If the dataset cache directory does not exist.
         """
-        self.logger = PiscesLxCoreLog("pisceslx.data.dataset.core")
+        
         self.subset = subset
         self.split = split
         self.config = config or {}
@@ -103,7 +103,7 @@ class PiscesDataset(Dataset):
             vocab = len(self.tokenizer)
             ids = torch.clamp(ids, 0, vocab - 1)
         except Exception as e:
-            self.logger.error("tokenize_failed", idx=idx, error=str(e))
+            pass
             ids = torch.tensor([0], dtype=torch.long)
         pixel_values = self._process_mm(item, IMAGE_KEYS, self.vision_encoder, "image")
         audio_input = self._process_mm(item, AUDIO_KEYS, self.audio_encoder, "audio")
@@ -190,5 +190,5 @@ class PiscesDataset(Dataset):
             if kind == "video":
                 return encoder.process_video(p)
         except Exception as e:
-            self.logger.debug("mm_failed", kind=kind, error=str(e))
+            pass
         return None

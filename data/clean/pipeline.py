@@ -24,12 +24,12 @@ from typing import Optional, Dict, Any, List, Tuple
 
 import pandas as pd
 from datasets import load_from_disk, Dataset, concatenate_datasets
-from utils import PiscesLxCoreLog, PiscesLxCoreCacheManagerFacade
+from utils import PiscesLxCoreCacheManagerFacade
 
 from .rules import StreamCleaner, AUTO_FIELDS
 from .quality import calculate_text_quality_score
 
-_log = PiscesLxCoreLog("PiscesLx.DataClean.Pipeline")
+# logs removed
 
 
 class DatasetCleaner:
@@ -71,13 +71,13 @@ class DatasetCleaner:
                     detected = k
                     break
             if detected:
-                _log.debug(f"Text field '{text_field}' not found, using '{detected}'")
+                pass
                 text_field = detected
             else:
                 string_cols = df.select_dtypes(include=["object"]).columns
                 if len(string_cols) > 0:
                     text_field = string_cols[0]
-                    _log.debug(f"No standard text field found, using first string column '{text_field}'")
+                    pass
                 else:
                     raise ValueError(f"No text field found. Columns: {list(df.columns)}")
 
@@ -181,7 +181,7 @@ class DatasetCleaner:
                 media_scores.append((sum_q / cnt_q) if cnt_q else 1.0)
                 cleaned_rows.append(row)
             except Exception as e:
-                _log.debug(f"sample fail: {e}")
+                pass
                 continue
         return cleaned_rows, text_scores, media_scores
 
@@ -198,7 +198,7 @@ class DatasetCleaner:
         rules = rules  # 保留参数位，后续扩展
         raw_paths = [os.path.join(input_dir, d) for d in os.listdir(input_dir) if os.path.isdir(os.path.join(input_dir, d))]
         if not raw_paths:
-            _log.debug("No datasets to be cleaned found")
+            return None
             return None
 
         from multiprocessing import Pool

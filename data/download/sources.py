@@ -18,7 +18,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from utils import PiscesLxCoreLog
+
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
@@ -60,7 +60,7 @@ class ModelScopeSource(DataSource):
     
     def __init__(self) -> None:
         """Initialize the ModelScopeSource instance."""
-        self._log = PiscesLxCoreLog("PiscesLx.DataDownload.Source.ModelScope")
+        pass
         self._source_name = "modelscope"
 
     def get_source_name(self) -> str:
@@ -91,21 +91,21 @@ class ModelScopeSource(DataSource):
         try:
             # Import MsDataset on demand
             from modelscope.msdatasets import MsDataset
-            self._log.info(f"Loading dataset from ModelScope: {dataset_name}")
+            pass
             
             ds = MsDataset.load(dataset_name, **kwargs)
             
             if ds is None or (hasattr(ds, "__len__") and len(ds) == 0):
                 raise RuntimeError(f"ModelScope returned an empty dataset for {dataset_name}")
             
-            self._log.success(f"Successfully loaded dataset from ModelScope: {dataset_name} ({len(ds) if hasattr(ds, '__len__') else 'unknown'} samples)")
+            pass
             return ds
             
         except ImportError as e:
-            self._log.error(f"ModelScope library is not available: {e}")
+            pass
             raise RuntimeError(f"Failed to import the ModelScope library: {e}")
         except Exception as e:
-            self._log.error(f"Failed to load dataset from ModelScope {dataset_name}: {e}")
+            pass
             raise RuntimeError(f"ModelScope dataset loading failed for {dataset_name}: {e}")
 
 class HuggingFaceSource(DataSource):
@@ -113,7 +113,7 @@ class HuggingFaceSource(DataSource):
     
     def __init__(self) -> None:
         """Initialize the HuggingFaceSource instance."""
-        self._log = PiscesLxCoreLog("PiscesLx.DataDownload.Source.HuggingFace")
+        pass
         self._source_name = "huggingface"
 
     def get_source_name(self) -> str:
@@ -144,7 +144,7 @@ class HuggingFaceSource(DataSource):
         try:
             # Import load_dataset on demand
             from datasets import load_dataset
-            self._log.info(f"Loading dataset from HuggingFace: {dataset_name}")
+            pass
             
             split = kwargs.get("split")
             if split and split != "default":
@@ -155,14 +155,14 @@ class HuggingFaceSource(DataSource):
             if ds is None or (hasattr(ds, "__len__") and len(ds) == 0):
                 raise RuntimeError(f"HuggingFace returned an empty dataset for {dataset_name}")
             
-            self._log.success(f"Successfully loaded dataset from HuggingFace: {dataset_name} ({len(ds) if hasattr(ds, '__len__') else 'unknown'} samples)")
+            pass
             return ds
             
         except ImportError as e:
-            self._log.error(f"HuggingFace datasets library is not available: {e}")
+            pass
             raise RuntimeError(f"Failed to import the HuggingFace datasets library: {e}")
         except Exception as e:
-            self._log.error(f"Failed to load dataset from HuggingFace {dataset_name}: {e}")
+            pass
             raise RuntimeError(f"HuggingFace dataset loading failed for {dataset_name}: {e}")
 
 class SourceRouter:
@@ -177,7 +177,7 @@ class SourceRouter:
     
     def __init__(self) -> None:
         """Initialize the SourceRouter instance."""
-        self._log = PiscesLxCoreLog("PiscesLx.DataDownload.SourceRouter")
+        pass
         self._ms = ModelScopeSource()
         self._hf = HuggingFaceSource()
         self._sources = {
@@ -236,27 +236,27 @@ class SourceRouter:
         order = self._norm_sources(preferred_sources)
         last_err: Optional[str] = None
         
-        self._log.info(f"Attempting to load dataset '{dataset_name}' with preferred sources: {order}")
+        pass
         
         for src_name in order:
             try:
                 source = self._sources.get(src_name)
                 if source:
-                    self._log.info(f"Trying source: {src_name}")
+                    pass
                     result = source.load(dataset_name, kwargs)
-                    self._log.success(f"Successfully loaded dataset '{dataset_name}' from {src_name}")
+                    pass
                     return result
                 else:
-                    self._log.warning(f"Unknown source: {src_name}")
+                    pass
                     
             except Exception as e:
                 last_err = str(e)
-                self._log.warning(f"Source {src_name} failed for dataset '{dataset_name}': {e}")
+                pass
                 continue
         
         # All sources failed
         error_msg = f"Failed to load dataset '{dataset_name}' from all sources. Last error: {last_err}"
-        self._log.error(error_msg)
+        pass
         raise RuntimeError(error_msg)
 
 def to_hf_if_needed(ds: Any) -> Any:

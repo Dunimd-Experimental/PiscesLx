@@ -21,11 +21,12 @@
 import os
 import json
 import torch
-from utils import PiscesLxCoreLog
 from .memory import MemoryMonitor
 from torch.utils.data import IterableDataset
 from typing import Iterator, Dict, List, Optional
 from model import get_tokenizer, VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder
+
+
 
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
 AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]
@@ -35,7 +36,7 @@ VIDEO_KEYS = ["video", "video_path", "mp4", "avi", "mov", "mkv"]
 class LargeScaleStreamingDataset(IterableDataset):
     def __init__(self, data_sources: List[str], config: Optional[dict] = None):
         super().__init__()
-        self.logger = PiscesLxCoreLog("pisceslx.data.dataset.streaming")
+        
         self.data_sources = data_sources
         self.tokenizer = get_tokenizer()
         self.config = config or {}
@@ -58,7 +59,7 @@ class LargeScaleStreamingDataset(IterableDataset):
                             idx.append({"path": p})
             elif os.path.isfile(src):
                 idx.append({"path": src})
-        self.logger.success(f"streaming_index_built files={len(idx)}")
+        pass
         return idx
 
     def __iter__(self) -> Iterator[Dict]:
@@ -93,7 +94,7 @@ class LargeScaleStreamingDataset(IterableDataset):
                             continue
                         yield self._process_one({"text": text}, f"{path}:{ln}")
         except Exception as e:
-            self.logger.error("stream_file_failed", file=path, error=str(e))
+            pass
 
     def _process_one(self, raw: Dict, sid: str) -> Dict:
         try:
@@ -113,7 +114,7 @@ class LargeScaleStreamingDataset(IterableDataset):
             mm = self._extract_mm(raw)
             return {"input_ids": ids, "labels": ids.clone(), "sample_id": sid, **mm}
         except Exception as e:
-            self.logger.error("stream_sample_failed", sid=sid, error=str(e))
+            pass
             return {"input_ids": torch.tensor([0], dtype=torch.long), "labels": torch.tensor([0], dtype=torch.long), "sample_id": sid}
 
     def _extract_mm(self, sample: Dict) -> Dict:
@@ -133,7 +134,7 @@ class LargeScaleStreamingDataset(IterableDataset):
                 if vp and self.memory.check_memory()["system_available_gb"] > 4.0:
                     out["video_frames"] = self.video_encoder.process_video(vp)
         except Exception as e:
-            self.logger.debug("mm_extract_failed", error=str(e))
+            pass
         return out
 
     @staticmethod

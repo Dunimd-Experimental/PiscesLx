@@ -19,7 +19,6 @@
 # limitations under the License.
 
 from typing import Optional
-from utils import PiscesLxCoreLog
 from torch.utils.data import DataLoader
 
 class BatchConfig:
@@ -66,7 +65,7 @@ class OptimizedDataLoader:
         """
         self.dataset = dataset
         self.cfg = batch_config or BatchConfig()
-        self.logger = PiscesLxCoreLog("pisceslx.data.dataset.loader")
+        
 
     def get(self) -> DataLoader:
         """Get a PyTorch DataLoader instance based on the dataset type.

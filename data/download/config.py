@@ -22,9 +22,9 @@ import json
 from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Optional
-from utils import PiscesLxCoreLog
 
-_log = PiscesLxCoreLog("PiscesLx.DataDownload.Config")
+
+# logs removed
 
 @dataclass
 class DatasetItem:
@@ -130,8 +130,6 @@ class ConfigLoader:
             ValueError: If the JSON content in the configuration file is invalid.
             RuntimeError: If there is an error loading the configuration file.
         """
-        _log.info(f"Loading download configuration from: {self.path}")
-        
         try:
             with open(self.path, "r", encoding="utf-8") as f:
                 raw = json.load(f)
@@ -144,7 +142,7 @@ class ConfigLoader:
         datasets_raw = raw.get("datasets", [])
         
         if not datasets_raw:
-            _log.warning("No datasets found in configuration")
+            pass
         
         items: List[DatasetItem] = []
         for i, d in enumerate(datasets_raw):
@@ -157,12 +155,12 @@ class ConfigLoader:
                     source_preference=d.get("source_preference"),
                 )
                 items.append(item)
-                _log.debug(f"Loaded dataset config {i+1}: {item.name} -> {item.save}")
+                
             except KeyError as e:
-                _log.error(f"Invalid dataset configuration at index {i}: missing {e}")
+                pass
                 continue
             except Exception as e:
-                _log.error(f"Error loading dataset config at index {i}: {e}")
+                pass
                 continue
 
         # Normalize default source preference
@@ -184,8 +182,8 @@ class ConfigLoader:
             datasets=items,
         )
         
-        _log.success(f"Successfully loaded download configuration with {len(items)} datasets")
-        _log.info(f"Default source preference: {cfg.source_preference}")
+        pass
+        pass
         
         return cfg
 

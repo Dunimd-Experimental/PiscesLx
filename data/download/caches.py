@@ -22,7 +22,7 @@ import os
 import logging
 import warnings
 from pathlib import Path
-from utils import PiscesLxCoreLog, PiscesLxCoreCacheManagerFacade
+from utils import PiscesLxCoreCacheManagerFacade
 
 class DownloadCacheContext:
     """
@@ -42,7 +42,6 @@ class DownloadCacheContext:
         Sets up the logger, cache manager, and initializes cache directory paths.
         Logs the initialization information.
         """
-        self._log = PiscesLxCoreLog("PiscesLx.DataDownload.Cache")
         self._cache = PiscesLxCoreCacheManagerFacade.get_instance()
         
         # Get and ensure consistent cache paths
@@ -50,7 +49,7 @@ class DownloadCacheContext:
         self._data_dir = Path(self._cache.get_cache_dir("data_cache"))
         
         self._initialized = False
-        self._log.info(f"Cache context initialized - Temp: {self._datatemp_dir}, Data: {self._data_dir}")
+        pass
 
     def setup_env(self) -> None:
         """Set up environment variables for all data sources.
@@ -89,10 +88,10 @@ class DownloadCacheContext:
         warnings.filterwarnings("ignore", category=UserWarning, module="datasets")
         
         self._initialized = True
-        self._log.success(f"Download cache environment configured successfully")
-        self._log.info(f"ModelScope cache: {self._datatemp_dir}")
-        self._log.info(f"HuggingFace cache: {self._datatemp_dir}")
-        self._log.info(f"Dataset save directory: {self._data_dir}")
+        pass
+        pass
+        pass
+        pass
 
     @property
     def MODELSCOPE_CACHE_DIR(self) -> str:
@@ -164,8 +163,8 @@ class DownloadCacheContext:
             if self._datatemp_dir.exists():
                 shutil.rmtree(self._datatemp_dir)
                 self._datatemp_dir.mkdir(parents=True, exist_ok=True)
-                self._log.success(f"Cache directory cleaned: {self._datatemp_dir}")
+                pass
         except Exception as e:
-            self._log.warning(f"Failed to cleanup cache: {e}")
+            pass
 
 __all__ = ["DownloadCacheContext"]

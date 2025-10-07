@@ -23,7 +23,6 @@ import torch
 import psutil
 import threading
 from queue import Queue, Empty
-from utils import PiscesLxCoreLog
 from typing import Dict, Optional, List
 
 class MemoryMonitor:
@@ -38,7 +37,7 @@ class MemoryMonitor:
         """
         self.threshold_gb = threshold_gb
         self.alerts = 0
-        self.logger = PiscesLxCoreLog("pisceslx.data.dataset.memory")
+        
 
     def check_memory(self) -> Dict[str, float]:
         """Check the memory usage of the current process, system, and GPUs.
@@ -63,7 +62,7 @@ class MemoryMonitor:
                         "total": torch.cuda.get_device_properties(i).total_memory / 1024**3,
                     }
         except Exception as e:
-            self.logger.debug("GPU_MEMORY_QUERY_FAILED", error=str(e))
+            pass
         return {
             "process_memory_gb": memory_info.rss / 1024**3,
             "system_available_gb": system_memory.available / 1024**3,
@@ -96,8 +95,8 @@ class MemoryMonitor:
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()
         except Exception as e:
-            self.logger.debug("MEM_CLEANUP_FAILED", error=str(e))
-        self.logger.debug("MEM_CLEANUP", alerts=self.alerts)
+            pass
+        pass
 
 class StreamingDataBuffer:
     """A class for buffering streaming data using a thread-safe queue."""
@@ -110,7 +109,7 @@ class StreamingDataBuffer:
         """
         self.buffer: "Queue[List[dict]]" = Queue(maxsize=buffer_size)
         self._stop_event = threading.Event()
-        self.logger = PiscesLxCoreLog("pisceslx.data.dataset.streambuf")
+        
 
     def add_batch(self, batch_data: "List[dict]"):
         """Add a batch of data to the buffer if the stop event is not set.
@@ -123,7 +122,7 @@ class StreamingDataBuffer:
         try:
             self.buffer.put(batch_data, timeout=1.0)
         except Exception as e:
-            self.logger.error("STREAMBUF_ADD_FAILED", error=str(e))
+            pass
 
     def get_batch(self, timeout: float = 5.0) -> Optional["List[dict]"]:
         """Retrieve a batch of data from the buffer with a specified timeout.
