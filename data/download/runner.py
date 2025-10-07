@@ -23,7 +23,7 @@ import gc
 import shutil
 from tqdm import tqdm
 import multiprocessing
-
+from typing import Any, Tuple
 from data.clean import DatasetCleaner
 from .caches import DownloadCacheContext
 from datasets import load_from_disk, Dataset
@@ -31,13 +31,7 @@ from typing import Optional, Set, List, Tuple
 from .sources import SourceRouter, to_hf_if_needed
 from .config import ConfigLoader, DownloadConfig, DatasetItem
 
-# module-level logger
-# logs removed
-
-# module-level helper to avoid pickling issues in multiprocessing
-from typing import Any, Tuple
-
-def save_dataset(ds: Any, data_dir: str, name: str) -> bool:
+def save_dataset(ds: Any, data_dir: str, name: str, max_samples: Optional[int] = None) -> bool:
     import os
     try:
         # Ensure dataset is in HuggingFace format if needed
@@ -46,6 +40,11 @@ def save_dataset(ds: Any, data_dir: str, name: str) -> bool:
             ds = to_hf_if_needed(ds)
         except Exception:
             pass
+        
+        # Apply max_samples limit if specified and valid
+        if max_samples is not None and max_samples > 0 and len(ds) > max_samples:
+            ds = ds.select(range(max_samples))
+        
         save_path = os.path.join(data_dir, name)
         pass
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
@@ -56,14 +55,14 @@ def save_dataset(ds: Any, data_dir: str, name: str) -> bool:
         pass
         return False
 
-def download_worker(task: Tuple[str, str, str, list[str], str]) -> Optional[str]:
+def download_worker(task: Tuple[str, str, str, list[str], str, Optional[int]]) -> Optional[str]:
     """
     Module-level worker function used by multiprocessing.Pool.
     Accepts only picklable arguments.
     """
     # logs removed
     from .sources import SourceRouter
-    dataset_name, save_name, description, preferred_sources, data_dir = task
+    dataset_name, save_name, description, preferred_sources, data_dir, max_samples = task
     # logs removed
     pass
     try:
@@ -92,7 +91,7 @@ def download_worker(task: Tuple[str, str, str, list[str], str]) -> Optional[str]
         if ds is None:
             pass
             return None
-        if save_dataset(ds, data_dir, save_name):
+        if save_dataset(ds, data_dir, save_name, max_samples):  # Apply max_samples limit
             pass
             return save_name
         else:
@@ -248,6 +247,9 @@ class PiscesLxToolsDatasetDownload:
             (d.name, d.save, d.desc, self._norm_sources(preferred_sources_for(d)))
             for d in cfg.datasets if d.save not in downloaded
         ]
+        
+        # Store max_samples_per_dataset for worker processes
+        max_samples_per_dataset = getattr(cfg, 'max_samples_per_dataset', None)
         total = len(cfg.datasets)
         if not to_download:
             return
@@ -262,8 +264,8 @@ class PiscesLxToolsDatasetDownload:
 
         success_count = 0
         successfully_downloaded: Set[str] = set()
-        # Build picklable tasks: (dataset_name, save_name, desc, preferred_sources, data_dir)
-        tasks = [(n, s, d, prefs, self._DATA) for (n, s, d, prefs) in to_download]
+        # Build picklable tasks: (dataset_name, save_name, desc, preferred_sources, data_dir, max_samples)
+        tasks = [(n, s, d, prefs, self._DATA, max_samples_per_dataset) for (n, s, d, prefs) in to_download]
         with multiprocessing.Pool(processes=workers) as pool:
             results = list(tqdm(pool.imap_unordered(download_worker, tasks), total=len(tasks), desc="Downloading datasets"))
             for save_name in results:

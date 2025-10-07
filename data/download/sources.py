@@ -1,285 +1,91 @@
-#!/usr/bin/env python3
+"""
+Dataset source router and utilities for PiscesL1 data download module.
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
-#
-# This file is part of Pisces L1.
-# The PiscesL1 project belongs to the Dunimd project team.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+This module provides source routing capabilities for downloading datasets from
+various sources including ModelScope and HuggingFace.
+"""
 
-
-from abc import ABC, abstractmethod
+import os
 from typing import Any, Dict, List, Optional
 
-class DataSource(ABC):
-    """Abstract base class defining the interface for all dataset sources."""
-    
-    @abstractmethod
-    def load(self, dataset_name: str, kwargs: Dict[str, Any] | None = None) -> Any:
-        """
-        Load a dataset from the source.
-        
-        Args:
-            dataset_name (str): Name of the dataset to load.
-            kwargs (Optional[Dict[str, Any]]): Additional arguments for dataset loading.
-            
-        Returns:
-            Any: The loaded dataset object.
-            
-        Raises:
-            NotImplementedError: If the method is not implemented by a subclass.
-        """
-        raise NotImplementedError
-    
-    @abstractmethod
-    def get_source_name(self) -> str:
-        """
-        Get the name of this data source.
-        
-        Returns:
-            str: The name of the data source.
-            
-        Raises:
-            NotImplementedError: If the method is not implemented by a subclass.
-        """
-        raise NotImplementedError
-
-class ModelScopeSource(DataSource):
-    """Data source implementation for loading datasets from ModelScope."""
-    
-    def __init__(self) -> None:
-        """Initialize the ModelScopeSource instance."""
-        pass
-        self._source_name = "modelscope"
-
-    def get_source_name(self) -> str:
-        """
-        Get the name of this data source.
-        
-        Returns:
-            str: The name of the data source, which is 'modelscope'.
-        """
-        return self._source_name
-
-    def load(self, dataset_name: str, kwargs: Dict[str, Any] | None = None) -> Any:
-        """
-        Load a dataset from ModelScope.
-        
-        Args:
-            dataset_name (str): Name of the dataset to load.
-            kwargs (Optional[Dict[str, Any]]): Additional arguments for dataset loading.
-            
-        Returns:
-            Any: The loaded dataset object from ModelScope.
-            
-        Raises:
-            RuntimeError: If the ModelScope library cannot be imported, 
-                         the dataset is empty, or loading fails.
-        """
-        kwargs = kwargs or {}
-        try:
-            # Import MsDataset on demand
-            from modelscope.msdatasets import MsDataset
-            pass
-            
-            ds = MsDataset.load(dataset_name, **kwargs)
-            
-            if ds is None or (hasattr(ds, "__len__") and len(ds) == 0):
-                raise RuntimeError(f"ModelScope returned an empty dataset for {dataset_name}")
-            
-            pass
-            return ds
-            
-        except ImportError as e:
-            pass
-            raise RuntimeError(f"Failed to import the ModelScope library: {e}")
-        except Exception as e:
-            pass
-            raise RuntimeError(f"ModelScope dataset loading failed for {dataset_name}: {e}")
-
-class HuggingFaceSource(DataSource):
-    """Data source implementation for loading datasets from HuggingFace."""
-    
-    def __init__(self) -> None:
-        """Initialize the HuggingFaceSource instance."""
-        pass
-        self._source_name = "huggingface"
-
-    def get_source_name(self) -> str:
-        """
-        Get the name of this data source.
-        
-        Returns:
-            str: The name of the data source, which is 'huggingface'.
-        """
-        return self._source_name
-
-    def load(self, dataset_name: str, kwargs: Dict[str, Any] | None = None) -> Any:
-        """
-        Load a dataset from HuggingFace.
-        
-        Args:
-            dataset_name (str): Name of the dataset to load.
-            kwargs (Optional[Dict[str, Any]]): Additional arguments for dataset loading.
-            
-        Returns:
-            Any: The loaded dataset object from HuggingFace.
-            
-        Raises:
-            RuntimeError: If the HuggingFace datasets library cannot be imported, 
-                         the dataset is empty, or loading fails.
-        """
-        kwargs = kwargs or {}
-        try:
-            # Import load_dataset on demand
-            from datasets import load_dataset
-            pass
-            
-            split = kwargs.get("split")
-            if split and split != "default":
-                ds = load_dataset(dataset_name, split=split)
-            else:
-                ds = load_dataset(dataset_name)
-            
-            if ds is None or (hasattr(ds, "__len__") and len(ds) == 0):
-                raise RuntimeError(f"HuggingFace returned an empty dataset for {dataset_name}")
-            
-            pass
-            return ds
-            
-        except ImportError as e:
-            pass
-            raise RuntimeError(f"Failed to import the HuggingFace datasets library: {e}")
-        except Exception as e:
-            pass
-            raise RuntimeError(f"HuggingFace dataset loading failed for {dataset_name}: {e}")
 
 class SourceRouter:
     """
-    An intelligent router for dataset sources.
-    Routes dataset loading requests to appropriate sources based on preferences and availability.
-    
-    Supported source identifiers:
-      - "modelscope", "ms", "Magic Tower"
-      - "huggingface", "hf", "Hugging Face"
+    Router for loading datasets from different sources.
     """
     
-    def __init__(self) -> None:
-        """Initialize the SourceRouter instance."""
+    def __init__(self):
+        """Initialize the source router."""
         pass
-        self._ms = ModelScopeSource()
-        self._hf = HuggingFaceSource()
-        self._sources = {
-            "modelscope": self._ms,
-            "huggingface": self._hf,
-        }
-
-    @staticmethod
-    def _norm_sources(srcs: List[str] | None) -> List[str]:
+    
+    def load(self, dataset_name: str, kwargs: Dict[str, Any] = None, 
+             preferred_sources: List[str] = None) -> Optional[Any]:
         """
-        Normalize source names to standard format.
+        Load a dataset from the specified sources.
         
         Args:
-            srcs (Optional[List[str]]): List of source names to normalize.
+            dataset_name: Name of the dataset to load
+            kwargs: Additional arguments for dataset loading
+            preferred_sources: List of preferred sources in order
             
         Returns:
-            List[str]: List of normalized source names. If input is None or empty, 
-                      returns ["modelscope", "huggingface"].
+            Loaded dataset object or None if failed
         """
-        if not srcs:
-            return ["modelscope", "huggingface"]
-        
-        norm = []
-        for s in srcs:
-            s_lower = (s or "").strip().lower()
-            if s_lower in ("hf", "huggingface", "Hugging Face"):
-                norm.append("huggingface")
-            elif s_lower in ("ms", "modelscope", "Magic Tower"):
-                norm.append("modelscope")
-        
-        # Remove duplicates while preserving order
-        seen = set()
-        out = []
-        for s in norm:
-            if s not in seen:
-                seen.add(s)
-                out.append(s)
-        
-        return out or ["modelscope", "huggingface"]
-
-    def load(self, dataset_name: str, kwargs: Dict[str, Any] | None = None, preferred_sources: List[str] | None = None) -> Any:
-        """
-        Load a dataset with intelligent source routing.
-        
-        Args:
-            dataset_name (str): Name of the dataset to load.
-            kwargs (Optional[Dict[str, Any]]): Additional arguments for dataset loading.
-            preferred_sources (Optional[List[str]]): List of preferred sources in order of preference.
+        if kwargs is None:
+            kwargs = {}
+        if preferred_sources is None:
+            preferred_sources = ["modelscope", "huggingface"]
             
-        Returns:
-            Any: The loaded dataset object.
-            
-        Raises:
-            RuntimeError: If all sources fail to load the dataset.
-        """
-        order = self._norm_sources(preferred_sources)
-        last_err: Optional[str] = None
-        
-        pass
-        
-        for src_name in order:
+        # Try each source in order of preference
+        for source in preferred_sources:
             try:
-                source = self._sources.get(src_name)
-                if source:
-                    pass
-                    result = source.load(dataset_name, kwargs)
-                    pass
-                    return result
-                else:
-                    pass
-                    
-            except Exception as e:
-                last_err = str(e)
-                pass
+                if source == "modelscope":
+                    return self._load_from_modelscope(dataset_name, kwargs)
+                elif source == "huggingface":
+                    return self._load_from_huggingface(dataset_name, kwargs)
+            except Exception:
                 continue
-        
-        # All sources failed
-        error_msg = f"Failed to load dataset '{dataset_name}' from all sources. Last error: {last_err}"
-        pass
-        raise RuntimeError(error_msg)
+                
+        return None
+    
+    def _load_from_modelscope(self, dataset_name: str, kwargs: Dict[str, Any]) -> Optional[Any]:
+        """Load dataset from ModelScope."""
+        try:
+            from modelscope import MsDataset
+            return MsDataset.load(dataset_name, **kwargs)
+        except Exception:
+            return None
+    
+    def _load_from_huggingface(self, dataset_name: str, kwargs: Dict[str, Any]) -> Optional[Any]:
+        """Load dataset from HuggingFace."""
+        try:
+            from datasets import load_dataset
+            return load_dataset(dataset_name, **kwargs)
+        except Exception:
+            return None
+
 
 def to_hf_if_needed(ds: Any) -> Any:
     """
-    Convert various dataset types to HuggingFace Dataset format if necessary.
+    Convert dataset to HuggingFace format if needed.
     
     Args:
-        ds (Any): Input dataset object.
+        ds: Input dataset object
         
     Returns:
-        Any: HuggingFace Dataset object or the original object if already in the correct format.
+        Dataset in HuggingFace format
     """
-    if hasattr(ds, "to_hf_dataset"):
-        return ds.to_hf_dataset()
-    if hasattr(ds, "data") and hasattr(ds, "info"):
+    # If it's already in HuggingFace format, return as-is
+    if hasattr(ds, 'save_to_disk'):
         return ds
-    if hasattr(ds, "__iter__") and not hasattr(ds, "save_to_disk"):
-        try:
-            from datasets import Dataset
-            if hasattr(ds, "to_pandas"):
-                return Dataset.from_pandas(ds.to_pandas())
-        except Exception:
-            pass
+    
+    # Try to convert from ModelScope format
+    try:
+        from datasets import Dataset
+        if hasattr(ds, 'to_hf_dataset'):
+            return ds.to_hf_dataset()
+    except Exception:
+        pass
+    
+    # Return original if conversion fails
     return ds
-
-__all__ = ["DataSource", "ModelScopeSource", "HuggingFaceSource", "SourceRouter", "to_hf_if_needed"]
