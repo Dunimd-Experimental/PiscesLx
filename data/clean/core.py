@@ -19,17 +19,13 @@
 # limitations under the License.
 
 import os
-from typing import Optional, Dict, Any, Tuple, List
-
-from utils import PiscesLxCoreLog, PiscesLxCoreCacheManagerFacade
-
-# 使用全新 OOP 模块实现，彻底移除 legacy 依赖
+from .rules import StreamCleaner
 from .pipeline import DatasetCleaner
 from .quality import DataQualityController
-from .rules import StreamCleaner
+from typing import Optional, Dict, Any, Tuple, List
+from utils import PiscesLxCoreLog, PiscesLxCoreCacheManagerFacade
 
 _log = PiscesLxCoreLog("PiscesLx.DataClean")
-
 
 class PiscesLxToolsDatasetClean:
     """

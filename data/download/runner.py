@@ -30,29 +30,33 @@ from datasets import load_from_disk, Dataset
 from typing import Optional, Set, List, Tuple
 from .sources import SourceRouter, to_hf_if_needed
 from .config import ConfigLoader, DownloadConfig, DatasetItem
+import time
+from utils import PiscesLxCoreLog
 
 def save_dataset(ds: Any, data_dir: str, name: str, max_samples: Optional[int] = None) -> bool:
     import os
+    logger = PiscesLxCoreLog("pisceslx.data.download")
     try:
         # Ensure dataset is in HuggingFace format if needed
         try:
             from .sources import to_hf_if_needed
             ds = to_hf_if_needed(ds)
         except Exception:
-            pass
+            logger.debug("Dataset is already in HuggingFace format or conversion failed")
         
         # Apply max_samples limit if specified and valid
         if max_samples is not None and max_samples > 0 and len(ds) > max_samples:
+            logger.info(f"Limiting dataset {name} from {len(ds)} to {max_samples} samples")
             ds = ds.select(range(max_samples))
         
         save_path = os.path.join(data_dir, name)
-        pass
+        logger.debug(f"Saving dataset to {save_path}")
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         ds.save_to_disk(save_path)
-        pass
+        logger.info(f"Successfully saved dataset to {save_path}")
         return True
     except Exception as e:
-        pass
+        logger.error(f"Failed to save dataset {name}: {str(e)}")
         return False
 
 def download_worker(task: Tuple[str, str, str, list[str], str, Optional[int]]) -> Optional[str]:
@@ -64,42 +68,61 @@ def download_worker(task: Tuple[str, str, str, list[str], str, Optional[int]]) -
     from .sources import SourceRouter
     dataset_name, save_name, description, preferred_sources, data_dir, max_samples = task
     # logs removed
-    pass
-    try:
-        router = SourceRouter()
-        methods = [
-            ({}, "direct"),
-            ({"split": "train"}, "split=train"),
-            ({"split": "validation"}, "split=validation"),
-            ({"split": "test"}, "split=test"),
-            ({"split": "default"}, "split=default"),
-        ]
-        last_err: Optional[str] = None
-        ds = None
-        for kwargs, desc in methods:
-            try:
-                pass
-                tmp = router.load(dataset_name, kwargs, preferred_sources=preferred_sources)
-                if tmp is not None and (not hasattr(tmp, "__len__") or len(tmp) > 0):
-                    ds = tmp
-                    pass
-                    break
-            except Exception as e:
-                last_err = str(e)
-                pass
+    logger = PiscesLxCoreLog("pisceslx.data.download")
+    logger.info(f"Starting download: {dataset_name} -> {save_name}")
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            logger.debug(f"Downloading {dataset_name} (attempt {attempt + 1}/{max_retries})")
+            
+            router = SourceRouter()
+            methods = [
+                ({}, "direct"),
+                ({"split": "train"}, "split=train"),
+                ({"split": "validation"}, "split=validation"),
+                ({"split": "test"}, "split=test"),
+                ({"split": "default"}, "split=default"),
+            ]
+            last_err: Optional[str] = None
+            ds = None
+            for kwargs, desc in methods:
+                try:
+                    logger.debug(f"Trying method {desc}")
+                    tmp = router.load(dataset_name, kwargs, preferred_sources=preferred_sources)
+                    if tmp is not None and (not hasattr(tmp, "__len__") or len(tmp) > 0):
+                        ds = tmp
+                        logger.debug(f"Successfully loaded with method {desc}")
+                        break
+                except Exception as e:
+                    last_err = str(e)
+                    logger.debug(f"Method {desc} failed: {str(e)}")
+                    continue
+            
+            if ds is None:
+                logger.error(f"Failed to load dataset {dataset_name} after all methods")
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying {dataset_name} in 5 seconds...")
+                    import time
+                    time.sleep(5)
+                    continue
+                return None
+                
+            if save_dataset(ds, data_dir, save_name, max_samples):  # Apply max_samples limit
+                logger.info(f"Successfully saved dataset {dataset_name} -> {save_name}")
+                return save_name
+            else:
+                logger.error(f"Failed to save dataset {dataset_name} to {save_name}")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Exception in download_worker for {dataset_name}: {str(e)}")
+            if attempt < max_retries - 1:
+                logger.info(f"Retrying after exception for {dataset_name}...")
+                import time
+                time.sleep(5)
                 continue
-        if ds is None:
-            pass
             return None
-        if save_dataset(ds, data_dir, save_name, max_samples):  # Apply max_samples limit
-            pass
-            return save_name
-        else:
-            pass
-            return None
-    except Exception as e:
-        pass
-        return None
 
 class PiscesLxToolsDatasetDownload:
     def __init__(self) -> None:
@@ -235,7 +258,8 @@ class PiscesLxToolsDatasetDownload:
             if os.path.exists(p):
                 downloaded.add(item.save)
 
-        # Generate download tasks
+        # Generate download tasks and deduplicate by dataset name
+        seen_names: Set[str] = set()
         def preferred_sources_for(d: DatasetItem) -> List[str]:
             if getattr(d, "source", None):
                 return [d.source]
@@ -243,10 +267,13 @@ class PiscesLxToolsDatasetDownload:
                 return d.source_preference
             return cfg.source_preference
 
-        to_download: List[Tuple[str, str, str, List[str]]] = [
-            (d.name, d.save, d.desc, self._norm_sources(preferred_sources_for(d)))
-            for d in cfg.datasets if d.save not in downloaded
-        ]
+        to_download: List[Tuple[str, str, str, List[str]]] = []
+        for d in cfg.datasets:
+            if d.save not in downloaded and d.name not in seen_names:
+                to_download.append((d.name, d.save, d.desc, self._norm_sources(preferred_sources_for(d))))
+                seen_names.add(d.name)
+            elif d.name in seen_names:
+                pass  # Skip duplicate dataset names
         
         # Store max_samples_per_dataset for worker processes
         max_samples_per_dataset = getattr(cfg, 'max_samples_per_dataset', None)
@@ -266,8 +293,19 @@ class PiscesLxToolsDatasetDownload:
         successfully_downloaded: Set[str] = set()
         # Build picklable tasks: (dataset_name, save_name, desc, preferred_sources, data_dir, max_samples)
         tasks = [(n, s, d, prefs, self._DATA, max_samples_per_dataset) for (n, s, d, prefs) in to_download]
+        
+        # Show real download statistics
+        total_datasets = len(cfg.datasets)
+        skipped_datasets = total_datasets - len(to_download)
+        if skipped_datasets > 0:
+            pass  # Log: skipping X duplicate/already downloaded datasets
+        
+        if len(to_download) == 0:
+            pass  # Log: all datasets already downloaded or skipped
+            return
+        
         with multiprocessing.Pool(processes=workers) as pool:
-            results = list(tqdm(pool.imap_unordered(download_worker, tasks), total=len(tasks), desc="Downloading datasets"))
+            results = list(tqdm(pool.imap_unordered(download_worker, tasks), total=len(tasks), desc=f"Downloading {len(tasks)} unique datasets"))
             for save_name in results:
                 if save_name:
                     success_count += 1

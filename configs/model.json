@@ -16,13 +16,11 @@
 
     { "name": "AI-ModelScope/MetaMathQA", "save": "Math1", "desc": "Math1", "source": "modelscope" },
     { "name": "AI-ModelScope/NuminaMath-CoT", "save": "Math2", "desc": "Math2", "source": "modelscope" },
-    { "name": "AI-ModelScope/NuminaMath-CoT", "save": "Math3", "desc": "Math3", "source": "modelscope" },
     { "name": "AI-ModelScope/EleutherAI-proof-pile-2", "save": "Math4", "desc": "Math4", "source": "modelscope" },
     { "name": "AI-ModelScope/competition_math", "save": "Math5", "desc": "Math5", "source": "modelscope" },
 
     { "name": "AI-ModelScope/CodeAlpaca_20K", "save": "Code1", "desc": "Code1", "source": "modelscope" },
     { "name": "AI-ModelScope/codeparrot_github-code-chemistry-python", "save": "Code2", "desc": "Code2", "source": "modelscope" },
-    { "name": "AI-ModelScope/codeparrot_github-code-chemistry-python", "save": "Code3", "desc": "Code3", "source": "modelscope" },
     { "name": "AI-ModelScope/CodeExercise-Python-27k", "save": "Code4", "desc": "Code4", "source": "modelscope" },
 
     { "name": "AI-ModelScope/webvid-10M", "save": "Web1", "desc": "Web1", "source": "modelscope" },
