@@ -7,6 +7,10 @@ various sources including ModelScope and HuggingFace.
 
 import os
 from typing import Any, Dict, List, Optional
+from utils import PiscesLxCoreLog
+
+# module-level logger for this source module
+_logger = PiscesLxCoreLog("pisceslx.data.download.sources")
 
 
 class SourceRouter:
@@ -16,7 +20,7 @@ class SourceRouter:
     
     def __init__(self):
         """Initialize the source router."""
-        pass
+        _logger.debug("SourceRouter initialized")
     
     def load(self, dataset_name: str, kwargs: Dict[str, Any] = None, 
              preferred_sources: List[str] = None) -> Optional[Any]:
@@ -43,7 +47,8 @@ class SourceRouter:
                     return self._load_from_modelscope(dataset_name, kwargs)
                 elif source == "huggingface":
                     return self._load_from_huggingface(dataset_name, kwargs)
-            except Exception:
+            except Exception as e:
+                _logger.debug(f"Router load error: source={source} dataset={dataset_name} kwargs={kwargs}: {e}")
                 continue
                 
         return None
@@ -54,7 +59,8 @@ class SourceRouter:
             # Correct import path for MsDataset
             from modelscope.msdatasets import MsDataset  # type: ignore
             return MsDataset.load(dataset_name, **kwargs)
-        except Exception:
+        except Exception as e:
+            _logger.debug(f"ModelScope load failed for {dataset_name} with kwargs={kwargs}: {e}")
             return None
     
     def _load_from_huggingface(self, dataset_name: str, kwargs: Dict[str, Any]) -> Optional[Any]:
@@ -62,7 +68,8 @@ class SourceRouter:
         try:
             from datasets import load_dataset
             return load_dataset(dataset_name, **kwargs)
-        except Exception:
+        except Exception as e:
+            _logger.debug(f"HuggingFace load failed for {dataset_name} with kwargs={kwargs}: {e}")
             return None
 
 
@@ -98,7 +105,8 @@ def detect_available_splits(dataset_name: str, source: str | None = None) -> lis
             else:
                 continue
             available.append(split)
-        except Exception:
+        except Exception as e:
+            _logger.debug(f"Split probe failed: source={src} dataset={dataset_name} split={split}: {e}")
             continue
 
     if not available:
@@ -111,8 +119,29 @@ def detect_available_splits(dataset_name: str, source: str | None = None) -> lis
                 from datasets import load_dataset  # type: ignore
                 _ = load_dataset(dataset_name, trust_remote_code=True)
             available.append("__direct__")
-        except Exception:
+        except Exception as e:
             # none available
-            pass
+            _logger.debug(f"Direct probe failed: source={src} dataset={dataset_name}: {e}")
 
     return available
+
+def to_hf_if_needed(ds: Any) -> Any:
+    """
+    Convert dataset to HuggingFace format if needed.
+
+    - If it's already an HF dataset (has save_to_disk), return as-is.
+    - If it's a ModelScope dataset exposing to_hf_dataset(), convert and return.
+    - Otherwise, return original object.
+    """
+    try:
+        if hasattr(ds, "save_to_disk"):
+            return ds
+        # ModelScope dataset conversion helper
+        if hasattr(ds, "to_hf_dataset"):
+            try:
+                return ds.to_hf_dataset()  # type: ignore[attr-defined]
+            except Exception as e:
+                _logger.debug(f"to_hf_if_needed conversion failed: {e}")
+    except Exception as e:
+        _logger.debug(f"to_hf_if_needed conversion failed: {e}")
+    return ds
