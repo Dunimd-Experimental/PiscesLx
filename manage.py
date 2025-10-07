@@ -156,23 +156,20 @@ def main():
 
     args, unknown = parser.parse_known_args()
     
-    # Display version information if not running the version or changelog command
-    if args.command not in ['version', 'changelog']:
-        # 在setup阶段避免使用日志系统，防止循环导入
-        if args.command == 'setup':
-            print(f"✅ PiscesL1 Model Version: {VERSION}")
-        else:
-            get_logger().success("PiscesL1 Model Version: " + VERSION, event="manage.right")
+    if args.command == 'setup':
+        print(f"✅ PiscesL1 Model Version: {VERSION}")
     
     # Ensure the virtual environment is activated (except for 'setup', 'source', and 'help' commands)
     if args.command and args.command not in ['setup', 'source', 'help']:
         if not ensure_venv_activated():
-            # 在setup阶段避免使用日志系统，防止循环导入
             if args.command == 'setup':
                 print("🔴 Virtual environment not found. Please run 'python manage.py setup' first to create the virtual environment.")
             else:
                 get_logger().error("Virtual environment not found. Please run 'python manage.py setup' first to create the virtual environment.", event="manage.error")
             sys.exit(1)
+
+    if args.command not in ['version', 'changelog', 'setup']:
+        print(f"✅\tPiscesL1 Model Version: {VERSION}")
     if args.command is None or args.command == 'help':
         from tools.help import help
         help()

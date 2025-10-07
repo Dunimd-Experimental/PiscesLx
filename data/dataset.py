@@ -17,6 +17,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import os
 import gc
 import time
@@ -30,14 +31,16 @@ import multiprocessing as mp
 from datetime import datetime
 from queue import Queue, Empty
 from dataclasses import dataclass
-from utils import progress_bar
 from model import get_tokenizer
-from utils import RIGHT, DEBUG, ERROR
+from utils import PiscesLxCoreLog
+from tqdm import tqdm
 from datasets import load_from_disk, Dataset as HFDataset
 from typing import Iterator, Optional, Union, Dict, List, Any
 from torch.utils.data import Dataset, DataLoader, IterableDataset
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor
 from model import VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder
+
+_log = PiscesLxCoreLog("PiscesLx.DataDataset")
 
 # Keys used to identify image data in the dataset
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
@@ -192,10 +195,10 @@ class LargeScaleStreamingDataset(IterableDataset):
                             file_path = os.path.join(root, file)
                             file_size = os.path.getsize(file_path)
                             # Count actual samples in file instead of rough estimate
-                    actual_samples = self._count_samples_in_file(file_path)
-                    estimated_samples = max(1, actual_samples)
-                    
-                    self.data_index.append({
+                            actual_samples = self._count_samples_in_file(file_path)
+                            estimated_samples = max(1, actual_samples)
+                            
+                            self.data_index.append({
                                 'path': file_path,
                                 'type': 'file',
                                 'estimated_samples': estimated_samples,
@@ -219,7 +222,7 @@ class LargeScaleStreamingDataset(IterableDataset):
                 total_samples += estimated_samples
                 
         self.estimated_total_samples = total_samples
-        RIGHT(f"Data index built: {len(self.data_index)} files, estimated {total_samples} samples")
+        _log.success(f"Data index built: {len(self.data_index)} files, estimated {total_samples} samples")
         
     def _adaptive_batch_size(self) -> int:
         """Adaptively adjust batch size based on memory usage and computational complexity"""
@@ -748,7 +751,7 @@ class PiscesDataset(Dataset):
         
         try:
             if os.path.exists(cache_path):
-                RIGHT(f"Loading dataset from local cache: {cache_path}")
+                _logger.success(f"Loading dataset from local cache: {cache_path}")
                 self.ds = load_from_disk(cache_path)
                 if split == "train" and "train" in self.ds:
                     self.ds = self.ds["train"]
@@ -757,9 +760,9 @@ class PiscesDataset(Dataset):
                 
                 # Filter out empty or invalid samples with improved cleaning
                 original_size = len(self.ds)
-                RIGHT(f"Local dataset loaded successfully: {original_size} samples")
+                _logger.success(f"Local dataset loaded successfully: {original_size} samples")
                 if original_size > 0:
-                    RIGHT("Filtering dataset to remove samples with no valid content...")
+                    _logger.success("Filtering dataset to remove samples with no valid content...")
                     
                     # Import cleaning utilities
                     from .clean import StreamCleaner
@@ -821,13 +824,13 @@ class PiscesDataset(Dataset):
                         
                         self.ds = self.ds.filter(emergency_filter)
                         filtered_size = len(self.ds)
-                        RIGHT(f"Emergency filter: {filtered_size}/{original_size} samples remain")
+                        _logger.success(f"Emergency filter: {filtered_size}/{original_size} samples remain")
                     else:
-                        RIGHT(f"Filtered out {original_size - filtered_size} samples. {filtered_size}/{original_size} samples remain ({(filtered_size/original_size)*100:.2f}%).")
+                        _logger.success(f"Filtered out {original_size - filtered_size} samples. {filtered_size}/{original_size} samples remain ({(filtered_size/original_size)*100:.2f}%).")
             else:
-                ERROR(f"Local cache not found, trying online download: {subset}")
+                _logger.error(f"Local cache not found, trying online download: {subset}")
                 if "MsDataset" not in globals() or "MsDataset" not in locals():
-                    ERROR("MsDataset unavailable. Cannot load ModelScope dataset online. Please upgrade modelscope>=1.28.0 and datasets>=2.14.7, or use only local datasets.")
+                    _logger.error("MsDataset unavailable. Cannot load ModelScope dataset online. Please upgrade modelscope>=1.28.0 and datasets>=2.14.7, or use only local datasets.")
                     self.ds = [{"text": f"Hello world {i}", "id": i} for i in range(100)]
                 else:
                     try:
@@ -836,10 +839,10 @@ class PiscesDataset(Dataset):
                             self.ds = msds.to_hf_dataset()
                         else:
                             self.ds = msds
-                        RIGHT(f"Online dataset loaded successfully: {len(self.ds)} samples")
+                        _logger.success(f"Online dataset loaded successfully: {len(self.ds)} samples")
                     except Exception as e:
-                        ERROR(f"MsDataset.load failed: {str(e)}")
-                        ERROR("Could not load ModelScope dataset online. Falling back to local test data.")
+                        _logger.error(f"MsDataset.load failed: {str(e)}")
+                        _logger.error("Could not load ModelScope dataset online. Falling back to local test data.")
                         self.ds = [{"text": f"Hello world {i}", "id": i} for i in range(100)]
         except Exception as e:
             ERROR(f"Dataset loading failed: {str(e)}")
@@ -897,7 +900,7 @@ class PiscesDataset(Dataset):
                     })
                 
                 self.ds = synthetic_data
-                RIGHT(f"Synthetic test dataset generated: {len(self.ds)} samples")
+                _logger.success(f"Synthetic test dataset generated: {len(self.ds)} samples")
                 
                 # Save synthetic data for future use
                 try:
@@ -909,11 +912,11 @@ class PiscesDataset(Dataset):
                     pass  # Ignore save errors
                 
             except Exception as synth_error:
-                ERROR(f"Synthetic generation failed: {str(synth_error)}")
+                _logger.error(f"Synthetic generation failed: {str(synth_error)}")
                 
                 # Tier 3: Ultra-basic fallback
                 self.ds = [{"text": f"Advanced AI system optimization {i}", "id": i} for i in range(100)]
-                RIGHT("Ultra-basic fallback dataset created")
+                _logger.success("Ultra-basic fallback dataset created")
         
         self.tokenizer = get_tokenizer()
         self.config = config
@@ -950,7 +953,7 @@ class PiscesDataset(Dataset):
         if len(self.ds) == 0:
             return
             
-        RIGHT("Applying DeepSeek-level data ratio optimization...")
+        _logger.success("Applying DeepSeek-level data ratio optimization...")
         
         # Domain classification based on content patterns
         def classify_domain(example):
@@ -1125,11 +1128,11 @@ class PiscesDataset(Dataset):
         # Process results
         invalid_samples = [(idx, error) for idx, valid, error in all_results if not valid]
         
-        RIGHT("Token validation complete!")
+        _logger.success("Token validation complete!")
         
         # Enhanced reporting
         if invalid_samples:
-            ERROR(f"Found {len(invalid_samples)} invalid samples ({len(invalid_samples)/max_samples*100:.2f}%)")
+            _logger.error(f"Found {len(invalid_samples)} invalid samples ({len(invalid_samples)/max_samples*100:.2f}%)")
             
             # Analyze error patterns
             error_types = {}
@@ -1138,9 +1141,9 @@ class PiscesDataset(Dataset):
                 error_types[error_type] = error_types.get(error_type, 0) + 1
             
             for error_type, count in error_types.items():
-                DEBUG(f"  {error_type}: {count} samples")
+                _logger.debug(f"  {error_type}: {count} samples")
         else:
-            RIGHT("All token IDs validated successfully")
+            _logger.success("All token IDs validated successfully")
             
         # Performance metrics
         DEBUG(f"Vocabulary size: {vocab_size}")
@@ -1170,7 +1173,7 @@ class PiscesDataset(Dataset):
         if hasattr(self, '_debug_count'):
             self._debug_count = getattr(self, '_debug_count', 0) + 1
             if self._debug_count <= 3:
-                DEBUG(f"Debug item structure: {type(item)}, keys: {list(item.keys()) if isinstance(item, dict) else 'N/A'}")
+                _logger.debug(f"Debug item structure: {type(item)}, keys: {list(item.keys()) if isinstance(item, dict) else 'N/A'}")
         
         # Look for a direct key match
         for key in TEXT_FIELD_KEYS:
@@ -1369,7 +1372,7 @@ class PiscesDataset(Dataset):
             memory_delta = memory_after - memory_before
             
             if processing_time > 1.0:  # Warn for slow processing
-                DEBUG(f"Slow sample processing: {idx} took {processing_time:.2f}s")
+                _logger.debug(f"Slow sample processing: {idx} took {processing_time:.2f}s")
 
             return {
                 "input_ids": input_ids,
@@ -1384,7 +1387,7 @@ class PiscesDataset(Dataset):
             }
             
         except Exception as e:
-            ERROR(f"Critical error processing sample {idx}: {str(e)}")
+            _logger.error(f"Critical error processing sample {idx}: {str(e)}")
             
             # Return fallback sample with error information
             return {
@@ -1402,7 +1405,7 @@ class PiscesDataset(Dataset):
     
     def _apply_large_scale_optimizations(self):
         """Apply 5TB large-scale dataset optimizations - enabled by default in Arctic architecture"""
-        RIGHT("Arctic architecture: 5TB dataset processing optimizations active")
+        _logger.success("Arctic architecture: 5TB dataset processing optimizations active")
         
         # Cleanup memory before optimization
         self.memory_monitor.cleanup()
@@ -1414,15 +1417,15 @@ class PiscesDataset(Dataset):
                 self.ds.set_format(type='torch', 
                                  columns=list(self.ds.features.keys()),
                                  output_all_columns=False)
-                DEBUG("Memory mapping enabled for dataset")
+                _logger.debug("Memory mapping enabled for dataset")
             except Exception as e:
-                DEBUG(f"Memory mapping failed, continuing without: {e}")
+                _logger.debug(f"Memory mapping failed, continuing without: {e}")
         else:
-            DEBUG("Dataset is not a HuggingFace dataset, skipping memory mapping")
+            _logger.debug("Dataset is not a HuggingFace dataset, skipping memory mapping")
             
         # Pre-calculate optimal batch size
         self.optimal_batch_size = self._calculate_optimal_batch_size()
-        RIGHT(f"Calculated optimal batch size: {self.optimal_batch_size}")
+        _logger.success(f"Calculated optimal batch size: {self.optimal_batch_size}")
         
     def _calculate_optimal_batch_size(self) -> int:
         """Calculate optimal batch size"""
@@ -1481,7 +1484,7 @@ class PiscesDataset(Dataset):
                         self.memory_monitor.cleanup()
                         
             except Exception as e:
-                ERROR(f"Distributed batch creation error at index {idx}: {e}")
+                _logger.error(f"Distributed batch creation error at index {idx}: {e}")
                 continue
                 
         # Yield remaining samples
@@ -1492,7 +1495,7 @@ class PiscesDataset(Dataset):
         """Enable data loading checkpoint functionality"""
         self.checkpoint_dir = checkpoint_dir
         os.makedirs(checkpoint_dir, exist_ok=True)
-        RIGHT(f"Data checkpointing enabled: {checkpoint_dir}")
+        _logger.success(f"Data checkpointing enabled: {checkpoint_dir}")
         
         # Save dataset metadata
         metadata = {
@@ -1510,7 +1513,7 @@ class PiscesDataset(Dataset):
         with open(os.path.join(checkpoint_dir, "metadata.json"), 'w') as f:
             json.dump(metadata, f, indent=2)
             
-        DEBUG("Dataset metadata saved for checkpointing")
+        _logger.debug("Dataset metadata saved for checkpointing")
 
     def _process_multimodal_data(self, item: dict, keys: list, encoder, data_type: str, sample_idx: int) -> any:
         """
@@ -1543,10 +1546,10 @@ class PiscesDataset(Dataset):
                 
                 # Skip processing if low memory
                 if data_type == "video" and free < 2.0:
-                    DEBUG(f"Skipping video processing due to low memory: {free:.1f}GB free")
+                    _logger.debug(f"Skipping video processing due to low memory: {free:.1f}GB free")
                     return None
                 elif free < 1.0:
-                    DEBUG(f"Skipping {data_type} processing due to low memory: {free:.1f}GB free")
+                    _logger.debug(f"Skipping {data_type} processing due to low memory: {free:.1f}GB free")
                     return None
 
             # Process data based on type
@@ -1561,9 +1564,9 @@ class PiscesDataset(Dataset):
             else:
                 return None
                 
-            DEBUG(f"{data_type.capitalize()} processed successfully: {data_path}")
+            _logger.debug(f"{data_type.capitalize()} processed successfully: {data_path}")
             return result
             
         except Exception as e:
-            ERROR(f"{data_type.capitalize()} processing error for sample {sample_idx}: {str(e)}")
+            _logger.error(f"{data_type.capitalize()} processing error for sample {sample_idx}: {str(e)}")
             return None

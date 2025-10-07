@@ -17,6 +17,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import os
 import gc
 import glob
@@ -29,9 +30,12 @@ from tqdm import tqdm
 import multiprocessing
 from .clean import DatasetCleaner
 from datasets import load_from_disk
-from utils import RIGHT, DEBUG, ERROR
+from utils import RIGHT, DEBUG, ERROR, PiscesLxCoreLog
 
 from utils.cache import get_cache_manager
+
+# Initialize logger
+_log = PiscesLxCoreLog("PiscesLx.DataDownload")
 
 # Initialize cache manager and register download cache directory
 cache_manager = get_cache_manager()
@@ -39,14 +43,14 @@ datatemp_dir = cache_manager.get_cache_dir("datatemp")
 os.environ['MODELSCOPE_CACHE'] = str(datatemp_dir)
 os.environ['MODELSCOPE_HUB_CACHE'] = str(datatemp_dir)
 os.environ['MODELSCOPE_DATASETS_CACHE'] = str(datatemp_dir / "datasets")
-RIGHT(f"Download cache configured to: {datatemp_dir}")
+_log.success(f"Download cache configured to: {datatemp_dir}")
 
 # Handle modelscope import gracefully
 try:
     from modelscope.msdatasets import MsDataset
     MODELSCOPE_AVAILABLE = True
 except ImportError as e:
-    DEBUG(f"Modelscope not available, falling back to datasets: {e}")
+    _log.debug(f"Modelscope not available, falling back to datasets: {e}")
     MODELSCOPE_AVAILABLE = False
 
 logging.getLogger('modelscope').setLevel(logging.ERROR)
@@ -73,7 +77,7 @@ def detect_available_splits(dataset_name, trust_remote_code=True):
                 load_dataset(dataset_name, split=split, trust_remote_code=True)
             available_splits.append(split)
         except Exception as e:
-            DEBUG(f"Split {split} not available for {dataset_name}: {str(e)[:200]}...")
+            _log.debug(f"Split {split} not available for {dataset_name}: {str(e)[:200]}...")
             continue
     
     # If no splits are found, try loading without specifying a split
@@ -86,7 +90,7 @@ def detect_available_splits(dataset_name, trust_remote_code=True):
                 load_dataset(dataset_name, trust_remote_code=True)
             available_splits.append('default')
         except Exception as e:
-            DEBUG(f"No default split found for {dataset_name}: {str(e)[:200]}...")
+            _log.debug(f"No default split found for {dataset_name}: {str(e)[:200]}...")
     
     return available_splits
 
@@ -200,10 +204,10 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
     downloaded_count = len(downloaded)
     
     if not to_download:
-        RIGHT(f"All {total} datasets already downloaded")
+        _log.success(f"All {total} datasets already downloaded")
         return
     
-    DEBUG(f"Detected {total} total datasets, {downloaded_count} downloaded, {len(to_download)} need download")
+    _log.debug(f"Detected {total} total datasets, {downloaded_count} downloaded, {len(to_download)} need download")
     success_count = 0
     successfully_downloaded = set()
 
@@ -218,11 +222,11 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
                     success_count += 1
                     successfully_downloaded.add(save_name)
     else:
-        RIGHT(f"All {total} datasets already downloaded")
+        _log.success(f"All {total} datasets already downloaded")
             
     # Perform unified cleaning after all datasets are downloaded using auto_clean with multiprocessing
     if post_download_clean and successfully_downloaded:
-        DEBUG(f"\nStarting unified cleaning for all {len(successfully_downloaded)} downloaded datasets...")
+        _log.debug(f"\nStarting unified cleaning for all {len(successfully_downloaded)} downloaded datasets...")
         try:
             DatasetCleaner.auto_clean(
                 input_dir=DATA,
@@ -231,9 +235,9 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
                 text_field=None,
                 workers=None  # Enable multiprocessing support
             )
-            RIGHT(f"Unified cleaning completed for all datasets")
+            _log.success(f"Unified cleaning completed for all datasets")
         except Exception as e:
-            ERROR(f"Unified cleaning failed: {e}")
+            _log.error(f"Unified cleaning failed: {e}")
             try:
                 DatasetCleaner.auto_clean(
                     input_dir=DATA,
@@ -241,11 +245,11 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
                     min_length=1,
                     text_field=None
                 )
-                RIGHT(f"Unified cleaning completed in fallback mode")
+                _log.success(f"Unified cleaning completed in fallback mode")
             except Exception as e2:
-                ERROR(f"Unified cleaning in fallback mode failed: {e2}")
+                _log.error(f"Unified cleaning in fallback mode failed: {e2}")
     
-        DEBUG("Cleaning up system cache...")
+        _log.debug("Cleaning up system cache...")
 
         # Use the configured ModelScope cache directory
         cache_dirs = [
@@ -263,20 +267,20 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
         for dir_path in cache_dirs:
             if os.path.exists(dir_path):
                 shutil.rmtree(dir_path)
-                RIGHT(f"Removed cache directory: {dir_path}")
+                _log.success(f"Removed cache directory: {dir_path}")
         
         gc.collect()
-        RIGHT("System garbage collection completed")
+        _log.success("System garbage collection completed")
         
         try:
             import torch
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-                RIGHT("CUDA memory cache cleared")
+                _log.success("CUDA memory cache cleared")
         except ImportError:
             pass
         
-        RIGHT(f"Download completed! Success: {success_count}/{len(datasets)}")
+        _log.success(f"Download completed! Success: {success_count}/{len(datasets)}")
         
         # Generate model.txt with successfully downloaded datasets
         if successfully_downloaded:
@@ -285,9 +289,9 @@ def download_datasets(max_samples_per_dataset=50000, post_download_clean=True):
                 with open(model_file, 'w', encoding='utf-8') as f:
                     for dataset_name in sorted(successfully_downloaded):
                         f.write(f"{dataset_name}\n")
-                RIGHT(f"Generated model.txt with {len(successfully_downloaded)} datasets")
+                _log.success(f"Generated model.txt with {len(successfully_downloaded)} datasets")
             except Exception as e:
-                ERROR(f"Failed to generate model.txt: {e}")
+                _log.error(f"Failed to generate model.txt: {e}")
 
 def _download_worker(args):
     """
@@ -302,7 +306,7 @@ def _download_worker(args):
     
     for attempt in range(max_retries):
         try:
-            RIGHT(f"Downloading {description} ({dataset_name})... (Attempt {attempt+1}/{max_retries})")
+            _log.success(f"Downloading {description} ({dataset_name})... (Attempt {attempt+1}/{max_retries})")
 
             ds = None
             last_error = None
@@ -371,24 +375,24 @@ def _download_worker(args):
                         continue
                 
             if ds is not None and len(ds) > 0:
-                RIGHT(f"Successfully loaded {dataset_name}")
+                _log.success(f"Successfully loaded {dataset_name}")
             else:
                 # Final fallback: try using datasets library directly
                 try:
                     from datasets import load_dataset
                     ds = load_dataset(dataset_name, trust_remote_code=True)
                     if ds is not None and len(ds) > 0:
-                        RIGHT(f"Successfully loaded {dataset_name} via fallback")
+                        _log.success(f"Successfully loaded {dataset_name} via fallback")
                     else:
-                        ERROR(f"Failed to load {dataset_name} after all attempts")
+                        _log.error(f"Failed to load {dataset_name} after all attempts")
                 except Exception as e:
-                    ERROR(f"Failed to load {dataset_name} after all attempts")
+                    _log.error(f"Failed to load {dataset_name} after all attempts")
                     last_error = str(e)
             
             if ds is None or (hasattr(ds, '__len__') and len(ds) == 0):
-                ERROR(f"Failed to load dataset {dataset_name} after trying all methods. Last error: {last_error}")
+                _log.error(f"Failed to load dataset {dataset_name} after trying all methods. Last error: {last_error}")
                 if attempt < max_retries - 1:
-                    DEBUG(f"Retrying in 5 seconds...")
+                    _log.debug(f"Retrying in 5 seconds...")
                     import time
                     time.sleep(5)
                     continue
@@ -414,10 +418,10 @@ def _download_worker(args):
                     pass
             
             original_size = len(ds)
-            RIGHT(f"Dataset loaded successfully, samples: {original_size:,}")
+            _log.success(f"Dataset loaded successfully, samples: {original_size:,}")
             
             if save(ds, save_name):
-                RIGHT(f"Successfully saved {save_name}")
+                _log.success(f"Successfully saved {save_name}")
                 # Clean up memory
                 if 'ds' in locals():
                     del ds
@@ -429,15 +433,15 @@ def _download_worker(args):
                     pass
                 return save_name
             else:
-                DEBUG(f"Save failed for {dataset_name}, retrying...")
+                _log.debug(f"Save failed for {dataset_name}, retrying...")
                 
         except Exception as e:
             if attempt < max_retries - 1:
-                ERROR(f"Attempt {attempt+1} failed: {e}. Retrying...")
+                _log.error(f"Attempt {attempt+1} failed: {e}. Retrying...")
                 import time
                 time.sleep(5)  # Add delay to avoid frequent retries
             else:
-                ERROR(f"All {max_retries} attempts failed for {dataset_name}. Last error: {e}")
+                _log.error(f"All {max_retries} attempts failed for {dataset_name}. Last error: {e}")
     return None
 
 
@@ -484,14 +488,14 @@ def optimize_datasets(max_keep=None):
                     break
             
             if not text_field:
-                # If no standard field is found, use the first string column
-                string_cols = df.select_dtypes(include=['object']).columns
-                if len(string_cols) > 0:
-                    text_field = string_cols[0]
-                    DEBUG(f"Using string column '{text_field}' as the text field")
-                else:
-                    DEBUG(f"{raw_dir} - No text field found, skipping")
-                    continue
+                    # If no standard field is found, use the first string column
+                    string_cols = df.select_dtypes(include=['object']).columns
+                    if len(string_cols) > 0:
+                        text_field = string_cols[0]
+                        _log.debug(f"Using string column '{text_field}' as the text field")
+                    else:
+                        _log.debug(f"{raw_dir} - No text field found, skipping")
+                        continue
             
             # Clean text data
             import re
@@ -515,18 +519,18 @@ def optimize_datasets(max_keep=None):
             df_cleaned = df[mask]
             
             if len(df_cleaned) == 0:
-                DEBUG(f"{raw_dir} - No valid data after cleaning, skipping")
+                _log.debug(f"{raw_dir} - No valid data after cleaning, skipping")
                 continue
-            
+           
             # No longer limit the data volume, keep all cleaned data
             # If len(df_cleaned) > 0, keep all
-                
+            
             # Save the cleaned data back to the original directory directly
             new_ds = Dataset.from_pandas(df_cleaned, preserve_index=False)
             new_ds.save_to_disk(raw_dir)
-            
-            RIGHT(f"{raw_dir} | In-place cleaning completed: {len(df_cleaned)}/{original_len} records")
-            
+              
+            _log.success(f"{raw_dir} | In-place cleaning completed: {len(df_cleaned)}/{original_len} records")
+              
         except Exception as e:
-            ERROR(f"{raw_dir} - Processing failed: {e}")
+            _log.error(f"{raw_dir} - Processing failed: {e}")
             continue

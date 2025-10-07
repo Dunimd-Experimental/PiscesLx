@@ -17,6 +17,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import os
 import re
 import gc
@@ -26,12 +27,15 @@ import numpy as np
 import pandas as pd
 import multiprocessing as mp
 from collections import Counter
-from utils import progress_bar, RIGHT, DEBUG, ERROR
+from utils import PiscesLxCoreLog
 from utils import get_cache_manager
 from typing import Dict, Callable, List, Optional, Tuple, Any
 from datasets import load_from_disk, Dataset, concatenate_datasets
 
 # ========== Plug-in Rule System ==========
+# Initialize logger for this module
+_log = PiscesLxCoreLog("PiscesLx.DataClean")
+
 # Define a dictionary of text cleaning rules
 RULES: Dict[str, Callable[[str], str]] = {
     # Remove control characters from the text
@@ -129,7 +133,7 @@ class StreamCleaner:
                 return MediaCleaner.clean_document_with_quality(path)
             return path
         except Exception as e:
-            DEBUG(f"Media cleaning failed for {path}: {str(e)}")
+            _log.debug(f"Media cleaning failed for {path}: {str(e)}")
             return None
 
     @staticmethod
@@ -167,7 +171,7 @@ class StreamCleaner:
             else:
                 return 0.5  # Default score for unknown types
         except Exception as e:
-            DEBUG(f"Quality score calculation failed for {media_path}: {str(e)}")
+            _log.debug(f"Quality score calculation failed for {media_path}: {str(e)}")
             return 0.5  # Default medium quality
 
 class MediaCleaner:
@@ -228,7 +232,7 @@ class MediaCleaner:
                 
                 return image_path
         except Exception as e:
-            DEBUG(f"Image quality cleaning failed for {image_path}: {str(e)}")
+            _logger.debug(f"Image quality cleaning failed for {image_path}: {str(e)}")
             return None
     
     @staticmethod
@@ -330,7 +334,7 @@ class MediaCleaner:
             
             return audio_path
         except Exception as e:
-            DEBUG(f"Audio quality cleaning failed for {audio_path}: {str(e)}")
+            _logger.debug(f"Audio quality cleaning failed for {audio_path}: {str(e)}")
             return None
     
     @staticmethod
@@ -451,7 +455,7 @@ class MediaCleaner:
                 
             return video_path
         except Exception as e:
-            DEBUG(f"Video quality cleaning failed for {video_path}: {str(e)}")
+            _logger.debug(f"Video quality cleaning failed for {video_path}: {str(e)}")
             return None
     
     @staticmethod
@@ -562,7 +566,7 @@ class MediaCleaner:
                 
             return doc_path
         except Exception as e:
-            DEBUG(f"Document quality cleaning failed for {doc_path}: {str(e)}")
+            _logger.debug(f"Document quality cleaning failed for {doc_path}: {str(e)}")
             return None
     
     @staticmethod
@@ -746,7 +750,7 @@ class DataQualityController:
             return stats
             
         except Exception as e:
-            ERROR(f"Quality analysis failed for {dataset_path}: {str(e)}")
+            _logger.error(f"Quality analysis failed for {dataset_path}: {str(e)}")
             return {"error": str(e)}
     
     def _get_recommendation(self, avg_quality, high_quality_ratio):
@@ -883,7 +887,7 @@ class DatasetCleaner:
             data_dir (str): Directory containing JSON files to be cleaned.
             max_len (int, optional): Maximum length of valid text. Defaults to 256.
         """
-        DEBUG("Performing emergency data cleaning...")
+        _logger.debug("Performing emergency data cleaning...")
         
         def emergency_filter(batch):
             """
@@ -930,11 +934,11 @@ class DatasetCleaner:
                     with open(file_path, 'w', encoding='utf-8') as f:
                         json.dump(filtered, f, ensure_ascii=False, indent=2)
                 
-                RIGHT(f"Cleaning completed: {file}")
+                _logger.success(f"Cleaning completed: {file}")
             except Exception as e:
-                DEBUG(f"Skipping file {file}: {e}")
+                _logger.debug(f"Skipping file {file}: {e}")
         
-        RIGHT("Emergency data cleaning completed!")
+        _logger.success("Emergency data cleaning completed!")
     
     @staticmethod
     def clean_text(text, min_length=1):
@@ -1105,14 +1109,14 @@ class DatasetCleaner:
                     break
             
             if detected_field:
-                DEBUG(f"Text field '{text_field}' not found, using '{detected_field}' instead")
+                _logger.debug(f"Text field '{text_field}' not found, using '{detected_field}' instead")
                 text_field = detected_field
             else:
                 # If no text field found, use the first string column
                 string_cols = df.select_dtypes(include=['object']).columns
                 if len(string_cols) > 0:
                     text_field = string_cols[0]
-                    DEBUG(f"No standard text field found, using first string column '{text_field}'")
+                    _logger.debug(f"No standard text field found, using first string column '{text_field}'")
                 else:
                     raise ValueError(f"No text field found in dataset. Available columns: {list(df.columns)}")
 
@@ -1511,10 +1515,10 @@ class DatasetCleaner:
             quality_analysis = quality_controller.analyze_dataset_quality(dataset_path)
             
             if "error" in quality_analysis:
-                ERROR(f"Quality analysis failed: {quality_analysis['error']}")
+                _logger.error(f"Quality analysis failed: {quality_analysis['error']}")
                 return {"error": quality_analysis["error"]}
             
-            DEBUG(f"Dataset quality analysis: {quality_analysis}")
+            _logger.debug(f"Dataset quality analysis: {quality_analysis}")
             
             # Load dataset
             if os.path.isdir(dataset_path):
@@ -1568,7 +1572,7 @@ class DatasetCleaner:
                 # Memory management
                 gc.collect()
                 
-                DEBUG(f"Processed chunk {i//chunk_size + 1}/{(total_samples-1)//chunk_size + 1}")
+                _logger.debug(f"Processed chunk {i//chunk_size + 1}/{(total_samples-1)//chunk_size + 1}")
             
             # Filter by quality threshold
             if enable_quality_scoring:
@@ -1602,14 +1606,14 @@ class DatasetCleaner:
                     'quality_analysis': quality_analysis
                 }
                 
-                RIGHT(f"Enhanced multimodal cleaning completed: {stats['cleaned_samples']}/{stats['original_samples']} samples retained")
+                _logger.success(f"Enhanced multimodal cleaning completed: {stats['cleaned_samples']}/{stats['original_samples']} samples retained")
                 return stats
             else:
                 WARNING("No samples passed quality filtering")
                 return {"error": "All samples failed quality filtering"}
                 
         except Exception as e:
-            ERROR(f"Enhanced multimodal cleaning failed: {str(e)}")
+            _logger.error(f"Enhanced multimodal cleaning failed: {str(e)}")
             return {"error": str(e)}
     
     @staticmethod
@@ -1683,7 +1687,7 @@ class DatasetCleaner:
                 cleaned_data.append(cleaned_sample)
                 
             except Exception as e:
-                DEBUG(f"Sample processing failed: {str(e)}")
+                _logger.debug(f"Sample processing failed: {str(e)}")
                 continue
         
         return cleaned_data, text_quality_scores, media_quality_scores
@@ -1787,7 +1791,7 @@ class DatasetCleaner:
             return None
             
         except Exception as e:
-            ERROR(f"Failed to process dataset {ds_path}: {str(e)}")
+            _logger.error(f"Failed to process dataset {ds_path}: {str(e)}")
             return None
 
     @staticmethod
@@ -1833,10 +1837,10 @@ class DatasetCleaner:
         ]
         
         if not raw_paths:
-            DEBUG("No datasets to be cleaned found")
+            _logger.debug("No datasets to be cleaned found")
             return None
         
-        DEBUG(f"Found {len(raw_paths)} datasets, starting {workers} processes for cleaning...")
+        _logger.debug(f"Found {len(raw_paths)} datasets, starting {workers} processes for cleaning...")
         
         # Multiprocessing cleaning
         with mp.Pool(workers) as pool:
@@ -1852,14 +1856,14 @@ class DatasetCleaner:
         if not valid_results:
             return None
         
-        RIGHT(f"Merging {len(valid_results)} cleaned datasets...")
+        _logger.success(f"Merging {len(valid_results)} cleaned datasets...")
         merged = concatenate_datasets(valid_results)
         
         # Remove source column to avoid metadata
         if "source" in merged.column_names:
             merged = merged.remove_columns(["source"])
         
-        RIGHT(f"Cleaning and merging completed! Total {len(merged)} records saved to {output_dir}")
+        _logger.success(f"Cleaning and merging completed! Total {len(merged)} records saved to {output_dir}")
         return merged
 
     @staticmethod
@@ -1927,18 +1931,18 @@ class DatasetCleaner:
         try:
             # Validate dataset exists and is accessible
             if not os.path.exists(input_path):
-                DEBUG(f"Dataset path does not exist: {input_path}")
+                _logger.debug(f"Dataset path does not exist: {input_path}")
                 return (0, 0)
             
             # Check if dataset is empty
             try:
                 dataset = load_from_disk(input_path)
                 if len(dataset) == 0:
-                    DEBUG(f"Dataset {dataset_name} is empty, skipping processing")
+                    _logger.debug(f"Dataset {dataset_name} is empty, skipping processing")
                     return (0, 0)
-                DEBUG(f"Starting to process dataset: {dataset_name} (Total {len(dataset)} records)")
+                _logger.debug(f"Starting to process dataset: {dataset_name} (Total {len(dataset)} records)")
             except Exception as e:
-                ERROR(f"Failed to load dataset {dataset_name}: {str(e)}")
+                _logger.error(f"Failed to load dataset {dataset_name}: {str(e)}")
                 return (0, 0)
             
             # Process the dataset and get the cleaning results
@@ -2032,14 +2036,14 @@ class DatasetCleaner:
                 
                 # Check if download is complete
                 if not DatasetCleaner.is_download_complete(input_path):
-                    DEBUG(f"Dataset {dataset_name} download not complete, skipping...")
+                    _logger.debug(f"Dataset {dataset_name} download not complete, skipping...")
                     continue
                 
                 output_path = os.path.join(output_dir, f"{dataset_name}_clean")
                 if not os.path.exists(output_path):
                     datasets_to_clean.append((dataset_name, input_path, output_path))
                 else:
-                    RIGHT(f"Cleaned dataset already exists: {output_path}, skipping processing")
+                    _logger.success(f"Cleaned dataset already exists: {output_path}, skipping processing")
         
         # Process datasets that are ready
         import multiprocessing as mp
@@ -2055,7 +2059,7 @@ class DatasetCleaner:
                 )
         else:
             # Multi-process mode
-            DEBUG(f"Using {workers} processes to clean {len(datasets_to_clean)} datasets...")
+            _logger.debug(f"Using {workers} processes to clean {len(datasets_to_clean)} datasets...")
             
             # Prepare arguments for parallel processing
             process_args = [
@@ -2076,10 +2080,10 @@ class DatasetCleaner:
                     try:
                         cleaned_count, total_count = future.result()
                         if cleaned_count == 0:
-                            DEBUG(f"Warning: No valid data left after cleaning {dataset_name} (Original {total_count} samples)")
+                            _logger.debug(f"Warning: No valid data left after cleaning {dataset_name} (Original {total_count} samples)")
                         else:
-                            RIGHT(f"Cleaning completed: {dataset_name} -> {dataset_name}_clean | Samples retained: {cleaned_count}/{total_count}")
+                            _logger.success(f"Cleaning completed: {dataset_name} -> {dataset_name}_clean | Samples retained: {cleaned_count}/{total_count}")
                     except Exception as e:
-                        ERROR(f"Error cleaning {dataset_name}: {str(e)}")
+                        _logger.error(f"Error cleaning {dataset_name}: {str(e)}")
         
         return True
