@@ -26,42 +26,48 @@ from queue import Queue, Empty
 from typing import Dict, Optional, List
 
 class MemoryMonitor:
-    """A class for monitoring system, process, and GPU memory usage and performing memory cleanup."""
+    """A class for monitoring memory usage of the current process, system, and GPUs, 
+    and performing memory cleanup operations when necessary."""
 
     def __init__(self, threshold_gb: float = 8.0):
         """Initialize the MemoryMonitor instance.
 
         Args:
-            threshold_gb (float, optional): The memory threshold in gigabytes. 
-                If the process memory exceeds this value, garbage collection will be triggered. Defaults to 8.0.
+            threshold_gb (float, optional): Memory threshold in gigabytes. 
+                Garbage collection will be triggered if the process memory exceeds this value. Defaults to 8.0.
         """
         self.threshold_gb = threshold_gb
         self.alerts = 0
-        
 
     def check_memory(self) -> Dict[str, float]:
         """Check the memory usage of the current process, system, and GPUs.
 
         Returns:
-            Dict[str, float]: A dictionary containing memory usage information, including:
-                - "process_memory_gb": The resident set size of the process in gigabytes.
-                - "system_available_gb": The available system memory in gigabytes.
-                - "system_used_percent": The percentage of used system memory.
-                - "gpu_memory": A dictionary containing GPU memory information for each available GPU.
+            Dict[str, float]: A dictionary containing memory usage information:
+                - "process_memory_gb": Resident set size of the process in gigabytes.
+                - "system_available_gb": Available system memory in gigabytes.
+                - "system_used_percent": Percentage of used system memory.
+                - "gpu_memory": A dictionary with memory information for each available GPU, 
+                                including allocated, cached, and total memory.
         """
+        # Get the current process
         process = psutil.Process()
+        # Get the memory information of the current process
         memory_info = process.memory_info()
+        # Get the system virtual memory information
         system_memory = psutil.virtual_memory()
         gpu_memory = {}
         try:
             if torch.cuda.is_available():
+                # Iterate over all available GPUs
                 for i in range(torch.cuda.device_count()):
                     gpu_memory[f"gpu_{i}"] = {
                         "allocated": torch.cuda.memory_allocated(i) / 1024**3,
                         "cached": torch.cuda.memory_reserved(i) / 1024**3,
                         "total": torch.cuda.get_device_properties(i).total_memory / 1024**3,
                     }
-        except Exception as e:
+        except Exception:
+            # Silently handle exceptions when getting GPU memory information
             pass
         return {
             "process_memory_gb": memory_info.rss / 1024**3,
@@ -73,7 +79,7 @@ class MemoryMonitor:
     def should_gc(self) -> bool:
         """Determine if garbage collection should be performed based on the process memory usage.
 
-        If the process memory exceeds the predefined threshold, increment the alert counter and return True.
+        Increments the alert counter if the process memory exceeds the predefined threshold.
 
         Returns:
             bool: True if the process memory exceeds the threshold, False otherwise.
@@ -85,18 +91,21 @@ class MemoryMonitor:
         return False
 
     def cleanup(self):
-        """Perform garbage collection and clean up GPU cache if available.
+        """Perform garbage collection and clean up the GPU cache if available.
 
-        Logs the cleanup operation and any errors that occur during the process.
+        Silently handles exceptions that occur during the cleanup process.
         """
         try:
+            # Perform garbage collection
             gc.collect()
             if torch.cuda.is_available():
+                # Empty the GPU cache
                 torch.cuda.empty_cache()
+                # Synchronize the current stream on the current device
                 torch.cuda.synchronize()
-        except Exception as e:
+        except Exception:
+            # Silently handle exceptions during cleanup
             pass
-        pass
 
 class StreamingDataBuffer:
     """A class for buffering streaming data using a thread-safe queue."""
@@ -105,11 +114,10 @@ class StreamingDataBuffer:
         """Initialize the StreamingDataBuffer instance.
 
         Args:
-            buffer_size (int, optional): The maximum size of the buffer queue. Defaults to 1000.
+            buffer_size (int, optional): Maximum size of the buffer queue. Defaults to 1000.
         """
         self.buffer: "Queue[List[dict]]" = Queue(maxsize=buffer_size)
         self._stop_event = threading.Event()
-        
 
     def add_batch(self, batch_data: "List[dict]"):
         """Add a batch of data to the buffer if the stop event is not set.
@@ -120,15 +128,17 @@ class StreamingDataBuffer:
         if self._stop_event.is_set():
             return
         try:
+            # Put the batch data into the buffer with a timeout of 1 second
             self.buffer.put(batch_data, timeout=1.0)
-        except Exception as e:
+        except Exception:
+            # Silently handle exceptions when adding data to the buffer
             pass
 
     def get_batch(self, timeout: float = 5.0) -> Optional["List[dict]"]:
         """Retrieve a batch of data from the buffer with a specified timeout.
 
         Args:
-            timeout (float, optional): The maximum time in seconds to wait for data. Defaults to 5.0.
+            timeout (float, optional): Maximum time in seconds to wait for data. Defaults to 5.0.
 
         Returns:
             Optional[List[dict]]: A batch of data if available within the timeout, None otherwise.

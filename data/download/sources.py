@@ -1,39 +1,54 @@
-"""
-Dataset source router and utilities for PiscesL1 data download module.
+#!/usr/bin/env python3
 
-This module provides source routing capabilities for downloading datasets from
-various sources including ModelScope and HuggingFace.
-"""
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
+#
+# This file is part of Pisces L1.
+# The PiscesL1 project belongs to the Dunimd project team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import os
-from typing import Any, Dict, List, Optional
 from utils import PiscesLxCoreLog
+from typing import Any, Dict, List, Optional
 
-# module-level logger for this source module
 _logger = PiscesLxCoreLog("pisceslx.data.download.sources")
-
+# Verbose switch: set PISCESLX_DOWNLOAD_VERBOSE=1 to see detailed debug logs
+_VERBOSE = (os.getenv("PISCESLX_DOWNLOAD_VERBOSE", "0") == "1")
 
 class SourceRouter:
     """
-    Router for loading datasets from different sources.
+    A router class responsible for loading datasets from different sources.
     """
     
     def __init__(self):
-        """Initialize the source router."""
-        _logger.debug("SourceRouter initialized")
+        """Initialize the source router. Log initialization if verbose mode is enabled."""
+        if _VERBOSE:
+            _logger.debug("SourceRouter initialized")
     
     def load(self, dataset_name: str, kwargs: Dict[str, Any] = None, 
              preferred_sources: List[str] = None) -> Optional[Any]:
         """
-        Load a dataset from the specified sources.
-        
+        Attempt to load a dataset from the specified sources in order of preference.
+
         Args:
-            dataset_name: Name of the dataset to load
-            kwargs: Additional arguments for dataset loading
-            preferred_sources: List of preferred sources in order
-            
+            dataset_name (str): Name of the dataset to load.
+            kwargs (Dict[str, Any], optional): Additional arguments for dataset loading. Defaults to None.
+            preferred_sources (List[str], optional): List of preferred sources in order. 
+                Defaults to ["modelscope", "huggingface"].
+
         Returns:
-            Loaded dataset object or None if failed
+            Optional[Any]: The loaded dataset object if successful, None otherwise.
         """
         if kwargs is None:
             kwargs = {}
@@ -48,43 +63,66 @@ class SourceRouter:
                 elif source == "huggingface":
                     return self._load_from_huggingface(dataset_name, kwargs)
             except Exception as e:
-                _logger.debug(f"Router load error: source={source} dataset={dataset_name} kwargs={kwargs}: {e}")
+                if _VERBOSE:
+                    _logger.debug(f"Router load error: source={source} dataset={dataset_name} kwargs={kwargs}: {e}")
                 continue
                 
         return None
     
     def _load_from_modelscope(self, dataset_name: str, kwargs: Dict[str, Any]) -> Optional[Any]:
-        """Load dataset from ModelScope."""
+        """
+        Load a dataset from the ModelScope platform.
+
+        Args:
+            dataset_name (str): Name of the dataset to load.
+            kwargs (Dict[str, Any]): Additional arguments for dataset loading.
+
+        Returns:
+            Optional[Any]: The loaded dataset object if successful, None otherwise.
+        """
         try:
-            # Correct import path for MsDataset
+            # Import MsDataset from modelscope.msdatasets
             from modelscope.msdatasets import MsDataset  # type: ignore
             return MsDataset.load(dataset_name, **kwargs)
         except Exception as e:
-            _logger.debug(f"ModelScope load failed for {dataset_name} with kwargs={kwargs}: {e}")
+            if _VERBOSE:
+                _logger.debug(f"ModelScope load failed for {dataset_name} with kwargs={kwargs}: {e}")
             return None
     
     def _load_from_huggingface(self, dataset_name: str, kwargs: Dict[str, Any]) -> Optional[Any]:
-        """Load dataset from HuggingFace."""
+        """
+        Load a dataset from the HuggingFace platform.
+
+        Args:
+            dataset_name (str): Name of the dataset to load.
+            kwargs (Dict[str, Any]): Additional arguments for dataset loading.
+
+        Returns:
+            Optional[Any]: The loaded dataset object if successful, None otherwise.
+        """
         try:
             from datasets import load_dataset
             return load_dataset(dataset_name, **kwargs)
         except Exception as e:
-            _logger.debug(f"HuggingFace load failed for {dataset_name} with kwargs={kwargs}: {e}")
+            if _VERBOSE:
+                _logger.debug(f"HuggingFace load failed for {dataset_name} with kwargs={kwargs}: {e}")
             return None
 
 
 def detect_available_splits(dataset_name: str, source: str | None = None) -> list[str]:
     """
-    Detect available splits for a dataset on a specific source without brute-force spam.
+    Detect available splits for a dataset on a specific source without brute-force attempts.
 
     Args:
-        dataset_name: The dataset repository name (as configured).
-        source: "modelscope" or "huggingface". If None, defaults to "modelscope".
+        dataset_name (str): The name of the dataset repository.
+        source (str | None, optional): The source platform, either "modelscope" or "huggingface". 
+            If None, defaults to "modelscope".
 
     Returns:
-        A list of available split names. If empty, caller should try direct load without split.
-        If only direct load works, returns ["__direct__"].
+        list[str]: A list of available split names. If empty, the caller should try direct load without a split.
+            If only direct load works, returns ["__direct__"].
     """
+    # List of common split names to probe
     candidates = [
         "train", "train_full", "train_all",
         "validation", "valid", "dev",
@@ -94,6 +132,7 @@ def detect_available_splits(dataset_name: str, source: str | None = None) -> lis
     src = (source or "modelscope").strip().lower()
     available: list[str] = []
 
+    # Try each candidate split
     for split in candidates:
         try:
             if src == "modelscope":
@@ -106,11 +145,12 @@ def detect_available_splits(dataset_name: str, source: str | None = None) -> lis
                 continue
             available.append(split)
         except Exception as e:
-            _logger.debug(f"Split probe failed: source={src} dataset={dataset_name} split={split}: {e}")
+            if _VERBOSE:
+                _logger.debug(f"Split probe failed: source={src} dataset={dataset_name} split={split}: {e}")
             continue
 
     if not available:
-        # Probe direct/no-split
+        # Try to load the dataset directly without specifying a split
         try:
             if src == "modelscope":
                 from modelscope.msdatasets import MsDataset  # type: ignore
@@ -120,28 +160,38 @@ def detect_available_splits(dataset_name: str, source: str | None = None) -> lis
                 _ = load_dataset(dataset_name, trust_remote_code=True)
             available.append("__direct__")
         except Exception as e:
-            # none available
-            _logger.debug(f"Direct probe failed: source={src} dataset={dataset_name}: {e}")
+            # No available splits or direct load
+            if _VERBOSE:
+                _logger.debug(f"Direct probe failed: source={src} dataset={dataset_name}: {e}")
 
     return available
 
 def to_hf_if_needed(ds: Any) -> Any:
     """
-    Convert dataset to HuggingFace format if needed.
+    Convert a dataset to HuggingFace format if necessary.
 
-    - If it's already an HF dataset (has save_to_disk), return as-is.
-    - If it's a ModelScope dataset exposing to_hf_dataset(), convert and return.
-    - Otherwise, return original object.
+    - If the dataset is already a HuggingFace dataset (has save_to_disk method), return it as-is.
+    - If the dataset is a ModelScope dataset with to_hf_dataset method, convert it and return.
+    - Otherwise, return the original object.
+
+    Args:
+        ds (Any): The dataset object to potentially convert.
+
+    Returns:
+        Any: The original or converted dataset object.
     """
     try:
+        # Check if it's already a HuggingFace dataset
         if hasattr(ds, "save_to_disk"):
             return ds
-        # ModelScope dataset conversion helper
+        # Try to convert if it's a ModelScope dataset
         if hasattr(ds, "to_hf_dataset"):
             try:
                 return ds.to_hf_dataset()  # type: ignore[attr-defined]
             except Exception as e:
-                _logger.debug(f"to_hf_if_needed conversion failed: {e}")
+                if _VERBOSE:
+                    _logger.debug(f"to_hf_if_needed conversion failed: {e}")
     except Exception as e:
-        _logger.debug(f"to_hf_if_needed conversion failed: {e}")
+        if _VERBOSE:
+            _logger.debug(f"to_hf_if_needed conversion failed: {e}")
     return ds

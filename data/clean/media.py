@@ -23,10 +23,19 @@ from utils import PiscesLxCoreLog
 
 _log = PiscesLxCoreLog("PiscesLx.DataClean.Media")
 
-
 class MediaCleaner:
     @staticmethod
     def clean_image(image_path: str, min_size=(224, 224)) -> Optional[str]:
+        """
+        Clean an image by checking its size.
+
+        Args:
+            image_path (str): Path to the image file.
+            min_size (tuple, optional): Minimum width and height of the image. Defaults to (224, 224).
+
+        Returns:
+            Optional[str]: Path to the image if it meets the size requirement, None otherwise.
+        """
         try:
             from PIL import Image
             with Image.open(image_path) as img:
@@ -39,6 +48,17 @@ class MediaCleaner:
 
     @staticmethod
     def clean_image_with_quality(image_path: str, min_size=(224, 224), min_quality_score: float = 0.6) -> Optional[str]:
+        """
+        Clean an image by checking its size and quality.
+
+        Args:
+            image_path (str): Path to the image file.
+            min_size (tuple, optional): Minimum width and height of the image. Defaults to (224, 224).
+            min_quality_score (float, optional): Minimum quality score of the image. Defaults to 0.6.
+
+        Returns:
+            Optional[str]: Path to the image if it meets the size and quality requirements, None otherwise.
+        """
         try:
             from PIL import Image
             with Image.open(image_path) as img:
@@ -55,18 +75,27 @@ class MediaCleaner:
 
     @staticmethod
     def _calculate_image_quality(img) -> float:
+        """
+        Calculate the quality score of an image based on resolution, sharpness, contrast, and brightness.
+
+        Args:
+            img (PIL.Image.Image): PIL Image object.
+
+        Returns:
+            float: Quality score between 0.0 and 1.0. If an exception occurs, returns 0.5.
+        """
         try:
             import numpy as np
             import cv2
             arr = np.array(img)
             gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY) if arr.ndim == 3 else arr
-            # 分辨率（相对 1MP 归一化）
+            # Resolution (normalized relative to 1MP)
             resolution_score = min((img.width * img.height) / (1024 * 1024), 1.0)
-            # 锐度（拉普拉斯方差）
+            # Sharpness (Laplacian variance)
             sharpness_score = min(cv2.Laplacian(gray, cv2.CV_64F).var() / 1000, 1.0)
-            # 对比度
+            # Contrast
             contrast_score = min(gray.std() / 128, 1.0)
-            # 亮度均衡
+            # Brightness balance
             mean_brightness = gray.mean()
             brightness_score = 1.0 - abs(mean_brightness - 128) / 128
             score = (
@@ -81,6 +110,17 @@ class MediaCleaner:
 
     @staticmethod
     def clean_audio(audio_path: str, min_duration: float = 1.0, max_duration: float = 30.0) -> Optional[str]:
+        """
+        Clean an audio file by checking its duration.
+
+        Args:
+            audio_path (str): Path to the audio file.
+            min_duration (float, optional): Minimum duration of the audio in seconds. Defaults to 1.0.
+            max_duration (float, optional): Maximum duration of the audio in seconds. Defaults to 30.0.
+
+        Returns:
+            Optional[str]: Path to the audio if it meets the duration requirement, None otherwise.
+        """
         try:
             import librosa
             y, sr = librosa.load(audio_path, sr=None)
@@ -94,6 +134,18 @@ class MediaCleaner:
     @staticmethod
     def clean_audio_with_quality(audio_path: str, min_duration: float = 1.0, max_duration: float = 30.0,
                                  min_quality_score: float = 0.5) -> Optional[str]:
+        """
+        Clean an audio file by checking its duration and quality.
+
+        Args:
+            audio_path (str): Path to the audio file.
+            min_duration (float, optional): Minimum duration of the audio in seconds. Defaults to 1.0.
+            max_duration (float, optional): Maximum duration of the audio in seconds. Defaults to 30.0.
+            min_quality_score (float, optional): Minimum quality score of the audio. Defaults to 0.5.
+
+        Returns:
+            Optional[str]: Path to the audio if it meets the duration and quality requirements, None otherwise.
+        """
         try:
             import librosa
             y, sr = librosa.load(audio_path, sr=None, duration=max_duration + 1)
@@ -110,6 +162,16 @@ class MediaCleaner:
 
     @staticmethod
     def _calculate_audio_quality(y, sr) -> float:
+        """
+        Calculate the quality score of an audio based on duration, dynamic range, RMS energy, and noise level.
+
+        Args:
+            y (np.ndarray): Audio time series.
+            sr (int): Sampling rate of the audio.
+
+        Returns:
+            float: Quality score between 0.0 and 1.0. If an exception occurs, returns 0.5.
+        """
         try:
             import numpy as np
             import librosa
@@ -133,6 +195,17 @@ class MediaCleaner:
 
     @staticmethod
     def clean_video(video_path: str, min_duration: int = 3, min_frames: int = 8) -> Optional[str]:
+        """
+        Clean a video file by checking its duration and frame count.
+
+        Args:
+            video_path (str): Path to the video file.
+            min_duration (int, optional): Minimum duration of the video in seconds. Defaults to 3.
+            min_frames (int, optional): Minimum number of frames in the video. Defaults to 8.
+
+        Returns:
+            Optional[str]: Path to the video if it meets the duration and frame count requirements, None otherwise.
+        """
         try:
             import cv2
             cap = cv2.VideoCapture(video_path)
@@ -151,6 +224,18 @@ class MediaCleaner:
     @staticmethod
     def clean_video_with_quality(video_path: str, min_duration: int = 3, min_frames: int = 8,
                                  min_quality_score: float = 0.5) -> Optional[str]:
+        """
+        Clean a video file by checking its duration, frame count, and quality.
+
+        Args:
+            video_path (str): Path to the video file.
+            min_duration (int, optional): Minimum duration of the video in seconds. Defaults to 3.
+            min_frames (int, optional): Minimum number of frames in the video. Defaults to 8.
+            min_quality_score (float, optional): Minimum quality score of the video. Defaults to 0.5.
+
+        Returns:
+            Optional[str]: Path to the video if it meets the duration, frame count, and quality requirements, None otherwise.
+        """
         try:
             import cv2
             cap = cv2.VideoCapture(video_path)
@@ -172,6 +257,16 @@ class MediaCleaner:
 
     @staticmethod
     def _calculate_video_quality(cap, total_frames: int) -> float:
+        """
+        Calculate the quality score of a video by sampling frames and calculating their average quality and consistency.
+
+        Args:
+            cap (cv2.VideoCapture): OpenCV VideoCapture object.
+            total_frames (int): Total number of frames in the video.
+
+        Returns:
+            float: Quality score between 0.0 and 1.0. If an exception occurs, returns 0.5.
+        """
         try:
             import numpy as np
             import cv2
@@ -192,7 +287,7 @@ class MediaCleaner:
             avg = float(sum(scores) / len(scores))
             var = float(_np.std(scores))
             consistency = 1.0 - min(var / (avg if avg > 0 else 1.0), 0.5)
-            # 取更强的平均+一致性
+            # Combine average score and consistency
             score = avg * 0.7 + consistency * 0.3
             return max(0.0, min(1.0, score))
         except Exception:
@@ -200,6 +295,16 @@ class MediaCleaner:
 
     @staticmethod
     def clean_document(doc_path: str, max_pages: int = 50) -> Optional[str]:
+        """
+        Clean a document file by checking its page count.
+
+        Args:
+            doc_path (str): Path to the document file.
+            max_pages (int, optional): Maximum number of pages in the document. Defaults to 50.
+
+        Returns:
+            Optional[str]: Path to the document if it meets the page count requirement, None otherwise.
+        """
         try:
             import fitz
             doc = fitz.open(doc_path)
@@ -211,6 +316,17 @@ class MediaCleaner:
 
     @staticmethod
     def clean_document_with_quality(doc_path: str, max_pages: int = 50, min_quality_score: float = 0.3) -> Optional[str]:
+        """
+        Clean a document file by checking its page count and quality.
+
+        Args:
+            doc_path (str): Path to the document file.
+            max_pages (int, optional): Maximum number of pages in the document. Defaults to 50.
+            min_quality_score (float, optional): Minimum quality score of the document. Defaults to 0.3.
+
+        Returns:
+            Optional[str]: Path to the document if it meets the page count and quality requirements, None otherwise.
+        """
         try:
             import fitz
             doc = fitz.open(doc_path)
@@ -228,6 +344,15 @@ class MediaCleaner:
 
     @staticmethod
     def _calculate_document_quality(doc) -> float:
+        """
+        Calculate the quality score of a document based on page count, average content length, and structure.
+
+        Args:
+            doc (fitz.Document): PyMuPDF Document object.
+
+        Returns:
+            float: Quality score between 0.0 and 1.0. If an exception occurs, returns 0.5.
+        """
         try:
             page_count = len(doc)
             if page_count == 0:

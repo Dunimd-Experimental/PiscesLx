@@ -20,36 +20,53 @@
 
 import os
 import re
+import pandas as pd
 from collections import Counter
 from typing import Dict, Any, List
-
-import pandas as pd
 from datasets import load_from_disk, Dataset
 
-
-# logs removed
-
-
 def calculate_text_quality_score(text: str) -> float:
+    """
+    Calculate the quality score of a given text based on multiple criteria.
+
+    Args:
+        text (str): The input text to calculate the quality score for.
+
+    Returns:
+        float: The calculated quality score, ranging from 0.0 to 1.0.
+               Returns 0.0 if the input is invalid or empty, and 0.5 if an exception occurs.
+    """
     if not text or not isinstance(text, str):
         return 0.0
     text = text.strip()
     if not text:
         return 0.0
     try:
+        # Calculate length score: longer text gets higher score, capped at 1.0
         length_score = min(len(text) / 1000, 1.0)
+        # Calculate character diversity score based on unique lowercase characters
         unique_chars = len(set(text.lower()))
         char_diversity = min(unique_chars / 26, 1.0)
-        words = re.findall(r"\\b\\w+\\b", text.lower())
+        # Bug fix: correct regex pattern from r"\\b\\w+\\b" to r"\b\w+\b"
+        words = re.findall(r"\b\w+\b", text.lower())
         unique_words = len(set(words))
+        # Calculate word diversity score
         word_diversity = min(unique_words / len(words), 1.0) if words else 0.0
+        # Split text into sentences
         sentences = re.split(r"[.!?]+", text)
+        # Filter valid sentences with at least 3 words
         valid_sentences = [s.strip() for s in sentences if len(s.strip().split()) >= 3]
+        # Calculate sentence structure score
         structure_score = min(len(valid_sentences) / len(sentences), 1.0) if sentences else 0.0
+        # Count punctuation marks
         punct_count = len(re.findall(r"[.!?,:;]", text))
+        # Calculate punctuation score
         punct_score = min(punct_count / (len(text) / 100), 1.0)
+        # Count word occurrences
         word_counts = Counter(words)
+        # Calculate repetition penalty
         repetition_penalty = 1.0 - min((word_counts.most_common(1)[0][1] / len(words)) if words else 0.0, 0.5)
+        # Combine all scores to get the final quality score
         score = (
             length_score * 0.2 +
             char_diversity * 0.15 +
@@ -62,9 +79,16 @@ def calculate_text_quality_score(text: str) -> float:
     except Exception:
         return 0.5
 
-
 class DataQualityController:
     def __init__(self, quality_threshold: float = 0.7, diversity_threshold: float = 0.5, min_samples_per_domain: int = 100):
+        """
+        Initialize the DataQualityController.
+
+        Args:
+            quality_threshold (float, optional): Threshold for high-quality samples. Defaults to 0.7.
+            diversity_threshold (float, optional): Threshold for diversity. Defaults to 0.5.
+            min_samples_per_domain (int, optional): Minimum samples per domain. Defaults to 100.
+        """
         self.quality_threshold = quality_threshold
         self.diversity_threshold = diversity_threshold
         self.min_samples_per_domain = min_samples_per_domain
@@ -72,6 +96,16 @@ class DataQualityController:
         self.domain_weights: Dict[str, float] = {}
 
     def analyze_dataset_quality(self, dataset_path: str) -> Dict[str, Any]:
+        """
+        Analyze the quality of a dataset from the given path.
+
+        Args:
+            dataset_path (str): Path to the dataset, which can be a directory or a file.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing quality statistics of the dataset.
+                            Returns an error message if an issue occurs.
+        """
         try:
             if not os.path.exists(dataset_path):
                 return {"error": "Dataset path does not exist"}
@@ -93,9 +127,9 @@ class DataQualityController:
             if total == 0:
                 return {"error": "Empty dataset"}
 
-            # 文本字段探测
+            # Detect text field
             text_field = None
-            # 使用统一的TEXT_FIELD_KEYS进行字段探测
+            # Use unified TEXT_FIELD_KEYS for field detection
             from .. import TEXT_FIELD_KEYS
             for k in TEXT_FIELD_KEYS:
                 if k in df.columns:
@@ -147,5 +181,4 @@ class DataQualityController:
             self.quality_stats[dataset_path] = stats
             return stats
         except Exception as e:
-            return {"error": str(e)}
             return {"error": str(e)}

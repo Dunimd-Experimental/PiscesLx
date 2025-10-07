@@ -781,3 +781,24 @@ class PiscesLxCoreLog:
     def close(self):
         """Close the logger and stop real-time monitoring."""
         self._manager.stop_real_time_monitoring()
+
+# --- helper: control external library loggers via our utils API ---
+def set_external_logger_level(logger_name: str, level: str = "ERROR") -> None:
+    """Set level for an external logger (wrapper to avoid importing logging in callers).
+
+    Args:
+        logger_name: name of the external logger, e.g. "modelscope".
+        level: one of DEBUG/INFO/WARNING/ERROR/CRITICAL.
+    """
+    try:
+        import logging as _logging
+        level_map = {
+            "DEBUG": _logging.DEBUG,
+            "INFO": _logging.INFO,
+            "WARNING": _logging.WARNING,
+            "ERROR": _logging.ERROR,
+            "CRITICAL": _logging.CRITICAL,
+        }
+        _logging.getLogger(logger_name).setLevel(level_map.get(level.upper(), _logging.ERROR))
+    except Exception:
+        pass

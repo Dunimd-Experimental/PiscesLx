@@ -21,33 +21,35 @@
 from typing import Callable, Dict, Optional, Any
 
 class DatasetRegistry:
-    """A registry class for managing dataset builders.
-    
-    This class provides a simple key-value store to register and retrieve dataset builders.
+    """Manages a registry of dataset builders.
+
+    This class implements a simple key-value store that allows users to register
+    dataset builders and retrieve them by name.
     """
 
     def __init__(self):
         """Initialize the DatasetRegistry instance.
-        
-        Creates an empty dictionary to store dataset builders.
+
+        Creates an empty dictionary to store dataset builders, 
+        where keys are builder names and values are callable builders.
         """
         self._builders: Dict[str, Callable[..., Any]] = {}
 
     def register(self, name: str, builder: Callable[..., Any]):
-        """Register a dataset builder with the given name.
-        
+        """Register a dataset builder with a specified name.
+
         Args:
-            name (str): The name under which the builder will be registered.
-            builder (Callable[..., Any]): The dataset builder callable.
+            name (str): The unique identifier for the dataset builder.
+            builder (Callable[..., Any]): A callable object that builds the dataset.
         """
         self._builders[name] = builder
 
     def get(self, name: str) -> Optional[Callable[..., Any]]:
-        """Retrieve the dataset builder for the given name.
-        
+        """Retrieve a dataset builder by its name.
+
         Args:
             name (str): The name of the dataset builder to retrieve.
-            
+
         Returns:
             Optional[Callable[..., Any]]: The dataset builder if found, None otherwise.
         """
@@ -55,21 +57,21 @@ class DatasetRegistry:
 
     def build(self, name: str, **kwargs):
         """Build a dataset using the registered builder with the given name.
-        
+
         Args:
             name (str): The name of the dataset builder to use.
             **kwargs: Additional keyword arguments to pass to the builder.
-            
+
         Returns:
             Any: The result of calling the dataset builder.
-            
+
         Raises:
-            KeyError: If no dataset builder is found for the given name.
+            KeyError: If no dataset builder is found for the specified name.
         """
-        b = self.get(name)
-        if not b:
+        builder = self.get(name)
+        if not builder:
             raise KeyError(f"Dataset builder not found: {name}")
-        return b(**kwargs)
+        return builder(**kwargs)
 
 # Default singleton instance of DatasetRegistry
 REGISTRY = DatasetRegistry()

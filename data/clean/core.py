@@ -29,17 +29,19 @@ _log = PiscesLxCoreLog("PiscesLx.DataClean")
 
 class PiscesLxToolsDatasetClean:
     """
-    PiscesLx 数据清理工具（对外唯一入口类）
-    - 面向对象封装原有函数式清理逻辑
-    - 支持快速清理、自动清理、单数据集处理与质量分析
-    - 使用统一日志系统，不做环境探测
+    A unified entry class for PiscesLx dataset cleaning tools.
+    It encapsulates the original functional cleaning logic in an object-oriented manner
+    and supports fast cleaning, automatic cleaning, single dataset processing, and quality analysis.
     """
 
     def __init__(self) -> None:
+        """
+        Initialize the dataset cleaning tool.
+        Get the cache manager instance and set the data cache directory.
+        """
         self.cache = PiscesLxCoreCacheManagerFacade.get_instance()
         self.data_cache_dir = self.cache.get_cache_dir("data_cache")
 
-    # 统一入口
     def run(
         self,
         mode: str = "auto",
@@ -48,11 +50,19 @@ class PiscesLxToolsDatasetClean:
         **kwargs: Any
     ) -> Any:
         """
-        统一入口：
-        - mode="auto": 自动清理目录下所有数据集（并发）
-        - mode="fast": 快速清理并合并
-        - mode="one": 处理单个数据集（需提供 input_path/output_path）
-        - mode="analyze": 分析单数据集质量（需提供 dataset_path）
+        Unified entry point for dataset cleaning operations.
+
+        Args:
+            mode (str, optional): Cleaning mode. Options are "auto", "fast", "one", "analyze". Defaults to "auto".
+            input_dir (Optional[str], optional): Input directory path. Defaults to None.
+            output_dir (Optional[str], optional): Output directory path. Defaults to None.
+            **kwargs (Any): Additional arguments for different cleaning modes.
+
+        Returns:
+            Any: The return value varies depending on the cleaning mode.
+
+        Raises:
+            ValueError: If the specified mode is not supported.
         """
         mode = (mode or "auto").lower()
         if mode == "auto":
@@ -70,7 +80,6 @@ class PiscesLxToolsDatasetClean:
         else:
             raise ValueError(f"Unsupported clean mode: {mode}")
 
-    # 快速清理并合并
     def fast_clean(
         self,
         input_dir: Optional[str] = None,
@@ -80,6 +89,20 @@ class PiscesLxToolsDatasetClean:
         workers: Optional[int] = None,
         enable_multiprocessing: bool = True
     ) -> Any:
+        """
+        Perform fast cleaning and merging of datasets.
+
+        Args:
+            input_dir (Optional[str], optional): Input directory path. Defaults to the data cache directory.
+            output_dir (Optional[str], optional): Output directory path. Defaults to None.
+            min_len (int, optional): Minimum length of data. Defaults to 1.
+            max_len (int, optional): Maximum length of data. Defaults to 1024.
+            workers (Optional[int], optional): Number of worker processes. Defaults to None.
+            enable_multiprocessing (bool, optional): Whether to enable multiprocessing. Defaults to True.
+
+        Returns:
+            Any: The result of fast cleaning.
+        """
         input_dir = input_dir or self.data_cache_dir
         _log.debug(f"Fast clean start | input_dir={input_dir} output_dir={output_dir}")
         try:
@@ -94,7 +117,6 @@ class PiscesLxToolsDatasetClean:
         finally:
             _log.success("Fast clean finished")
 
-    # 自动清理目录下所有数据集
     def auto_clean(
         self,
         input_dir: Optional[str] = None,
@@ -103,6 +125,19 @@ class PiscesLxToolsDatasetClean:
         workers: Optional[int] = None,
         **clean_kwargs: Any
     ) -> bool:
+        """
+        Automatically clean all datasets in the specified directory.
+
+        Args:
+            input_dir (Optional[str], optional): Input directory path. Defaults to the data cache directory.
+            output_dir (Optional[str], optional): Output directory path. Defaults to a subdirectory in the data cache directory.
+            media_fields (Optional[Dict[str, Any]], optional): Media fields configuration. Defaults to None.
+            workers (Optional[int], optional): Number of worker processes. Defaults to None.
+            **clean_kwargs (Any): Additional cleaning arguments.
+
+        Returns:
+            bool: True if the cleaning is successful, False otherwise.
+        """
         input_dir = input_dir or self.data_cache_dir
         output_dir = output_dir or os.path.join(self.data_cache_dir, "data_clean")
         _log.debug(f"Auto clean start | input_dir={input_dir} output_dir={output_dir}")
@@ -117,7 +152,6 @@ class PiscesLxToolsDatasetClean:
         _log.success("Auto clean finished")
         return ok
 
-    # 单数据集处理
     def process_one(
         self,
         input_path: str,
@@ -125,6 +159,21 @@ class PiscesLxToolsDatasetClean:
         text_field: str = "text",
         **clean_kwargs: Any
     ) -> Tuple[int, int]:
+        """
+        Process a single dataset.
+
+        Args:
+            input_path (str): Path to the input dataset.
+            output_path (str): Path to the output dataset.
+            text_field (str, optional): Name of the text field. Defaults to "text".
+            **clean_kwargs (Any): Additional cleaning arguments.
+
+        Returns:
+            Tuple[int, int]: A tuple containing the number of retained records and the total number of records.
+
+        Raises:
+            ValueError: If input_path or output_path is not provided.
+        """
         if not input_path or not output_path:
             raise ValueError("process_one requires input_path and output_path")
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
@@ -138,8 +187,19 @@ class PiscesLxToolsDatasetClean:
         _log.success(f"Process finished | retained={retained}/{total}")
         return retained, total
 
-    # 数据集质量分析
     def analyze(self, dataset_path: str) -> Dict[str, Any]:
+        """
+        Analyze the quality of a single dataset.
+
+        Args:
+            dataset_path (str): Path to the dataset to be analyzed.
+
+        Returns:
+            Dict[str, Any]: A dictionary containing the analysis statistics.
+
+        Raises:
+            ValueError: If dataset_path is not provided.
+        """
         if not dataset_path:
             raise ValueError("analyze requires dataset_path")
         _log.debug(f"Analyze dataset quality | path={dataset_path}")

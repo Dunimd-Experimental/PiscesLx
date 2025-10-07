@@ -23,32 +23,29 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Optional
 
-
-# logs removed
-
 @dataclass
 class DatasetItem:
     """
     Represents a configuration item for a dataset, including source preferences.
     """
     name: str  # Name of the dataset
-    save: str  # Save path of the dataset
+    save: str  # Save path to store the dataset
     desc: str  # Description of the dataset
-    source: Optional[str] = None  # Specify a specific source for the dataset
+    source: Optional[str] = None  # Specific source for the dataset
     source_preference: Optional[List[str]] = None  # Ordered list of preferred sources
 
     def normalize_source_preference(self, default_preference: List[str]) -> List[str]:
         """
-        Normalize the source preference list, converting aliases for "HuggingFace" and "ModelScope" to standard names.
-        Remove duplicates while preserving the order of sources.
+        Normalize the source preference list by converting aliases for "HuggingFace" and "ModelScope" to standard names.
+        Remove duplicate sources while preserving the original order.
 
         Args:
-            default_preference (List[str]): The default source preference list to return if no valid preference is provided.
+            default_preference (List[str]): Default source preference list to return when no valid preference is provided.
 
         Returns:
             List[str]: A normalized and deduplicated source preference list.
         """
-        # If a specific source is specified, normalize it
+        # Normalize if a specific source is specified
         if self.source:
             source_lower = self.source.strip().lower()
             if source_lower in ("hf", "huggingface", "baobaolian"):
@@ -58,7 +55,7 @@ class DatasetItem:
             else:
                 return [source_lower]
         
-        # If a custom preference list is provided, normalize it
+        # Normalize if a custom preference list is provided
         if self.source_preference:
             normalized = []
             for src in self.source_preference:
@@ -123,6 +120,9 @@ class ConfigLoader:
         """
         Load and validate the download configuration from the JSON file.
 
+        Args:
+            No additional arguments.
+
         Returns:
             DownloadConfig: A configured DownloadConfig object.
 
@@ -138,12 +138,12 @@ class ConfigLoader:
         except Exception as e:
             raise RuntimeError(f"Failed to load configuration file {self.path}: {e}")
 
+        # Get default configuration values
         defaults = raw.get("defaults", {})
+        # Get raw dataset configurations
         datasets_raw = raw.get("datasets", [])
         
-        if not datasets_raw:
-            pass
-        
+        # Initialize list to store DatasetItem objects
         items: List[DatasetItem] = []
         for i, d in enumerate(datasets_raw):
             try:
@@ -155,12 +155,9 @@ class ConfigLoader:
                     source_preference=d.get("source_preference"),
                 )
                 items.append(item)
-                
-            except KeyError as e:
-                pass
+            except KeyError:
                 continue
-            except Exception as e:
-                pass
+            except Exception:
                 continue
 
         # Normalize default source preference
@@ -181,9 +178,6 @@ class ConfigLoader:
             source_preference=normalized_default_pref,
             datasets=items,
         )
-        
-        pass
-        pass
         
         return cfg
 

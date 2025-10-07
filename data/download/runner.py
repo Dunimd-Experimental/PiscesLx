@@ -20,20 +20,32 @@
 
 import os
 import gc
+import time
 import shutil
 from tqdm import tqdm
-from typing import Any, Tuple
 import multiprocessing
+from typing import Any, Tuple
+from utils import PiscesLxCoreLog
 from data.clean import DatasetCleaner
 from .caches import DownloadCacheContext
 from datasets import load_from_disk, Dataset
 from typing import Optional, Set, List, Tuple
-from .sources import SourceRouter, to_hf_if_needed, detect_available_splits
 from .config import ConfigLoader, DownloadConfig, DatasetItem
-import time
-from utils import PiscesLxCoreLog
+from .sources import SourceRouter, to_hf_if_needed, detect_available_splits
 
 def save_dataset(ds: Any, data_dir: str, name: str, max_samples: Optional[int] = None) -> bool:
+    """
+    Save a dataset to the specified directory with optional sample limitation.
+
+    Args:
+        ds (Any): The dataset to be saved.
+        data_dir (str): The directory where the dataset will be saved.
+        name (str): The name of the dataset.
+        max_samples (Optional[int]): The maximum number of samples to save. If None, all samples will be saved.
+
+    Returns:
+        bool: True if the dataset is saved successfully, False otherwise.
+    """
     import os
     logger = PiscesLxCoreLog("pisceslx.data.download")
     try:
@@ -61,20 +73,24 @@ def save_dataset(ds: Any, data_dir: str, name: str, max_samples: Optional[int] =
 
 def download_worker(task: Tuple[str, str, str, list[str], str, Optional[int]]) -> Optional[str]:
     """
-    Module-level worker function used by multiprocessing.Pool.
-    Accepts only picklable arguments.
+    Module-level worker function used by multiprocessing.Pool to download and save a dataset.
+
+    Args:
+        task (Tuple[str, str, str, list[str], str, Optional[int]]): A tuple containing task information, 
+            including dataset name, save name, description, preferred sources, data directory, and max samples.
+
+    Returns:
+        Optional[str]: The save name of the dataset if downloaded and saved successfully, None otherwise.
     """
-    # logs removed
     from .sources import SourceRouter
     from .caches import DownloadCacheContext
     
     dataset_name, save_name, description, preferred_sources, data_dir, max_samples = task
     
-    # 在子进程中设置缓存环境变量
+    # Set up cache environment variables in the child process
     cache = DownloadCacheContext()
     cache.setup_env()
     
-    # logs removed
     logger = PiscesLxCoreLog("pisceslx.data.download")
     logger.info(f"Starting download: {dataset_name} -> {save_name}")
     max_retries = 3
@@ -84,10 +100,10 @@ def download_worker(task: Tuple[str, str, str, list[str], str, Optional[int]]) -
             logger.debug(f"Downloading {dataset_name} (attempt {attempt + 1}/{max_retries})")
             
             router = SourceRouter()
-            # Strictly respect the first preferred source, do not cross-hub fallback here
+            # Strictly respect the first preferred source, do not perform cross-hub fallback here
             strict_sources: List[str] = [preferred_sources[0]] if preferred_sources else ["modelscope"]
             src = strict_sources[0].strip().lower()
-            # Build methods based on detected splits from the chosen source
+            # Build loading methods based on detected splits from the chosen source
             splits = detect_available_splits(dataset_name, src)
             methods: List[Tuple[dict, str]] = []
             if "__direct__" in splits or not splits:
@@ -142,7 +158,13 @@ class PiscesLxToolsDatasetDownload:
         Initialize the dataset download tool.
         Set up logging, cache context, source router, and data directories.
         """
-        
+        # Reduce third-party log noise via our logging helper
+        try:
+            from utils.log.core import set_external_logger_level
+            set_external_logger_level("modelscope", "ERROR")
+        except Exception:
+            pass
+
         self._cache = DownloadCacheContext()
         self._cache.setup_env()
         self._router = SourceRouter()
@@ -175,12 +197,10 @@ class PiscesLxToolsDatasetDownload:
             if not os.path.isdir(raw_dir):
                 continue
             try:
-                pass
                 ds = load_from_disk(raw_dir)
                 original_len = len(ds)
                 # Skip empty datasets
                 if original_len == 0:
-                    pass
                     continue
 
                 df = ds.to_pandas()
@@ -195,9 +215,7 @@ class PiscesLxToolsDatasetDownload:
                     string_cols = df.select_dtypes(include=["object"]).columns
                     if len(string_cols) > 0:
                         text_field = string_cols[0]
-                        pass
                     else:
-                        pass
                         continue
 
                 # Define a simple text cleaning function
@@ -226,14 +244,11 @@ class PiscesLxToolsDatasetDownload:
                 df_cleaned = df[mask]
                 # Skip if no valid data after cleaning
                 if len(df_cleaned) == 0:
-                    pass
                     continue
 
                 new_ds = Dataset.from_pandas(df_cleaned, preserve_index=False)
                 new_ds.save_to_disk(raw_dir)
-                pass
             except Exception as e:
-                pass
                 continue
 
     def _load_config(self, config_path: str | int, max_samples_override: Optional[int]) -> DownloadConfig:
@@ -255,6 +270,39 @@ class PiscesLxToolsDatasetDownload:
         if isinstance(max_samples_override, int) and max_samples_override > 0:
             cfg.max_samples_per_dataset = max_samples_override
         return cfg
+
+    @staticmethod
+    def _norm_sources(srcs: List[str] | None) -> List[str]:
+        """
+        Normalize source names with support for aliases and de-duplicate while preserving order.
+
+        Args:
+            srcs (List[str] | None): List of source names.
+
+        Returns:
+            List[str]: Normalized list of source names.
+        """
+        if not srcs:
+            return ["modelscope", "huggingface"]
+
+        norm: List[str] = []
+        for s in srcs:
+            s_lower = (s or "").strip().lower()
+            if s_lower in ("hf", "huggingface", "baobaolian"):
+                norm.append("huggingface")
+            elif s_lower in ("ms", "modelscope", "motta", "mota"):
+                norm.append("modelscope")
+            else:
+                norm.append(s_lower)
+
+        seen = set()
+        out: List[str] = []
+        for s in norm:
+            if s not in seen:
+                seen.add(s)
+                out.append(s)
+
+        return out or ["modelscope", "huggingface"]
 
     def _run_download(self, cfg: DownloadConfig):
         """
@@ -288,17 +336,13 @@ class PiscesLxToolsDatasetDownload:
                 to_download.append((d.name, d.save, d.desc, self._norm_sources(preferred_sources_for(d))))
                 seen_names.add(d.name)
             elif d.name in seen_names:
-                pass  # Skip duplicate dataset names
+                continue  # Skip duplicate dataset names
         
         # Store max_samples_per_dataset for worker processes
         max_samples_per_dataset = getattr(cfg, 'max_samples_per_dataset', None)
         total = len(cfg.datasets)
         if not to_download:
             return
-            return
-
-        pass
-        pass
 
         # Download datasets in parallel
         cpu_cores = multiprocessing.cpu_count()
@@ -313,9 +357,9 @@ class PiscesLxToolsDatasetDownload:
         total_datasets = len(cfg.datasets)
         skipped_datasets = total_datasets - len(to_download)
         if skipped_datasets > 0:
-            pass  # Log: skipping X duplicate/already downloaded datasets
+            logger.info(f"Skipping {skipped_datasets} duplicate/already downloaded datasets")
         if len(to_download) == 0:
-            pass  # Log: all datasets already downloaded or skipped
+            logger.info("All datasets already downloaded or skipped")
             return
 
         # Run pool with Windows-safe fallback to sequential execution
@@ -352,10 +396,12 @@ class PiscesLxToolsDatasetDownload:
                     )
                 except Exception as e2:
                     logger.error(f"Exception in unified cleaning: {str(e)} -> {str(e2)}")
-                    pass
 
             # Clean up caches
-            self._cleanup_caches()
+            try:
+                self._cleanup_caches()
+            except Exception as e:
+                logger.debug(f"Cache cleanup skipped: {e}")
             gc.collect()
 
             try:
@@ -373,4 +419,14 @@ class PiscesLxToolsDatasetDownload:
                         f.write(f"{name}\n")
             except Exception as e:
                 logger.error(f"Exception in generating model.txt: {str(e)}")
-                pass
+
+    def _cleanup_caches(self) -> None:
+        """Clean temporary caches after a run."""
+        logger = PiscesLxCoreLog("pisceslx.data.download")
+        try:
+            # Delegate to cache context cleanup
+            self._cache.cleanup_cache()
+            logger.debug("Temporary caches cleaned")
+        except Exception as e:
+            # Keep it low-noise; not fatal
+            logger.debug(f"Cache cleanup failed: {e}")

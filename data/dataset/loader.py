@@ -22,9 +22,8 @@ from typing import Optional
 from torch.utils.data import DataLoader
 
 class BatchConfig:
-    """Configuration class for batch processing.
-
-    Stores parameters related to batch processing in data loading.
+    """Stores configuration parameters for batch processing in data loading.
+    
     These parameters are used to configure the PyTorch DataLoader.
     """
     def __init__(
@@ -35,7 +34,7 @@ class BatchConfig:
         drop_last: bool = False,
         prefetch_factor: int = 2
     ):
-        """Initialize the BatchConfig object.
+        """Initialize a BatchConfig object with batch processing parameters.
 
         Args:
             batch_size (int, optional): Number of samples per batch to load. Defaults to 32.
@@ -52,30 +51,27 @@ class BatchConfig:
 
 class OptimizedDataLoader:
     """A wrapper class for PyTorch's DataLoader with optimized configuration.
-
-    Provides an optimized data loading mechanism based on the dataset type.
+    
+    Provides different data loading mechanisms based on the dataset type.
     """
     def __init__(self, dataset, batch_config: Optional[BatchConfig] = None):
-        """Initialize the OptimizedDataLoader object.
+        """Initialize an OptimizedDataLoader object.
 
         Args:
             dataset: Dataset from which to load the data.
             batch_config (Optional[BatchConfig], optional): Batch configuration object. 
-                If None, default BatchConfig will be used. Defaults to None.
+                If None, a default BatchConfig will be used. Defaults to None.
         """
         self.dataset = dataset
         self.cfg = batch_config or BatchConfig()
-        
 
     def get(self) -> DataLoader:
-        """Get a PyTorch DataLoader instance based on the dataset type.
-
-        Simplified to use a fixed batch strategy. Complex dynamic batching can be extended based on MemoryMonitor later.
+        """Get a configured PyTorch DataLoader instance based on the dataset type.
 
         Returns:
             DataLoader: A PyTorch DataLoader instance configured according to the dataset type.
         """
-        # For IterableDataset: do not pass batch_size
+        # If the dataset is iterable but does not have a length, treat it as an IterableDataset
         if hasattr(self.dataset, "__iter__") and not hasattr(self.dataset, "__len__"):
             return DataLoader(
                 self.dataset,
@@ -85,6 +81,7 @@ class OptimizedDataLoader:
                 prefetch_factor=self.cfg.prefetch_factor,
                 persistent_workers=True
             )
+        # For regular datasets, use the configured batch size and enable shuffling
         else:
             return DataLoader(
                 self.dataset,

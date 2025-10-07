@@ -26,22 +26,32 @@ from torch.utils.data import IterableDataset
 from typing import Iterator, Dict, List, Optional
 from model import get_tokenizer, VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder
 
-
-
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
 AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]
 DOC_KEYS = ["doc", "document", "doc_path", "pdf"]
 VIDEO_KEYS = ["video", "video_path", "mp4", "avi", "mov", "mkv"]
 
 class LargeScaleStreamingDataset(IterableDataset):
+    """An iterable dataset for large-scale streaming data processing.
+    
+    This dataset supports reading data from multiple sources, including directories and files,
+    and processing various file formats such as JSONL, JSON, and TXT. It also provides support
+    for multimodal data processing.
+    """
     def __init__(self, data_sources: List[str], config: Optional[dict] = None):
+        """Initialize the LargeScaleStreamingDataset.
+
+        Args:
+            data_sources (List[str]): List of paths to data sources, which can be files or directories.
+            config (Optional[dict]): Configuration dictionary. If None, default settings will be used.
+        """
         super().__init__()
         
         self.data_sources = data_sources
         self.tokenizer = get_tokenizer()
         self.config = config or {}
         self.memory = MemoryMonitor(threshold_gb=8.0)
-        # multimodal encoders are optional
+        # Initialize multimodal encoders if config is provided
         self.vision_encoder = VisionEncoder(config) if config else None
         self.audio_encoder = AudioEncoder(config) if config else None
         self.doc_encoder = DocEncoder(config) if config else None
@@ -49,6 +59,13 @@ class LargeScaleStreamingDataset(IterableDataset):
         self._index: List[Dict] = self._build_index()
 
     def _build_index(self) -> List[Dict]:
+        """Build an index of all valid data files.
+
+        Traverse through the provided data sources, collect paths of all JSONL, JSON, and TXT files.
+
+        Returns:
+            List[Dict]: A list of dictionaries, each containing a 'path' key pointing to a data file.
+        """
         idx: List[Dict] = []
         for src in self.data_sources:
             if os.path.isdir(src):
@@ -59,14 +76,30 @@ class LargeScaleStreamingDataset(IterableDataset):
                             idx.append({"path": p})
             elif os.path.isfile(src):
                 idx.append({"path": src})
-        pass
         return idx
 
     def __iter__(self) -> Iterator[Dict]:
+        """Return an iterator over the dataset.
+
+        Yields data samples from all indexed files.
+
+        Returns:
+            Iterator[Dict]: An iterator that yields processed data samples.
+        """
         for fi in self._index:
             yield from self._iter_file(fi["path"])
 
     def _iter_file(self, path: str) -> Iterator[Dict]:
+        """Iterate over a single data file and yield processed samples.
+
+        Supports JSONL, JSON, and TXT file formats.
+
+        Args:
+            path (str): Path to the data file.
+
+        Returns:
+            Iterator[Dict]: An iterator that yields processed data samples from the file.
+        """
         try:
             if path.endswith(".jsonl"):
                 with open(path, "r", encoding="utf-8") as f:
@@ -97,6 +130,17 @@ class LargeScaleStreamingDataset(IterableDataset):
             pass
 
     def _process_one(self, raw: Dict, sid: str) -> Dict:
+        """Process a single raw data sample.
+
+        Tokenize the text in the sample, extract multimodal data, and format the output.
+
+        Args:
+            raw (Dict): Raw data sample.
+            sid (str): Sample ID.
+
+        Returns:
+            Dict: Processed data sample containing input IDs, labels, sample ID, and multimodal data.
+        """
         try:
             from data import TEXT_FIELD_KEYS
             text = ""
@@ -114,10 +158,19 @@ class LargeScaleStreamingDataset(IterableDataset):
             mm = self._extract_mm(raw)
             return {"input_ids": ids, "labels": ids.clone(), "sample_id": sid, **mm}
         except Exception as e:
-            pass
             return {"input_ids": torch.tensor([0], dtype=torch.long), "labels": torch.tensor([0], dtype=torch.long), "sample_id": sid}
 
     def _extract_mm(self, sample: Dict) -> Dict:
+        """Extract multimodal data from a sample.
+
+        Process image, audio, document, and video data if the corresponding encoders are enabled.
+
+        Args:
+            sample (Dict): Data sample containing multimodal data.
+
+        Returns:
+            Dict: A dictionary containing processed multimodal data.
+        """
         out = {"pixel_values": None, "audio_input": None, "doc_input": None, "video_frames": None}
         try:
             if self.vision_encoder and self.vision_encoder.enabled:
@@ -139,6 +192,15 @@ class LargeScaleStreamingDataset(IterableDataset):
 
     @staticmethod
     def _first_valid(item: Dict, keys: List[str]) -> Optional[str]:
+        """Find the first valid string value for the given keys in a dictionary.
+
+        Args:
+            item (Dict): Dictionary to search in.
+            keys (List[str]): List of keys to check.
+
+        Returns:
+            Optional[str]: The first valid string value found, or None if no valid value is found.
+        """
         for k in keys:
             v = item.get(k)
             if isinstance(v, str) and v.strip():

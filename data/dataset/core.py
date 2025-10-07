@@ -32,45 +32,44 @@ DOC_KEYS = ["doc", "document", "doc_path", "pdf"]
 VIDEO_KEYS = ["video", "video_path", "mp4", "avi", "mov", "mkv"]
 
 class PiscesDataset(Dataset):
-    """A custom dataset class for Pisces, designed to load and process multi-modal data."""
+    """A custom dataset class for loading and processing multi-modal data for the Pisces project."""
 
     def __init__(self, subset: str = "tiny", split: str = "train", config: Optional[Dict[str, Any]] = None, max_samples: Optional[int] = None):
         """Initialize the PiscesDataset instance.
 
         Args:
             subset (str, optional): The subset of the dataset to load. Defaults to "tiny".
-            split (str, optional): The data split to load (e.g., "train", "val", "test"). Defaults to "train".
+            split (str, optional): The data split to load, e.g., "train", "val", or "test". Defaults to "train".
             config (Optional[Dict[str, Any]], optional): Configuration dictionary for the dataset. Defaults to None.
             max_samples (Optional[int], optional): Maximum number of samples to load. If None, load all samples. Defaults to None.
 
         Raises:
             FileNotFoundError: If the dataset cache directory does not exist.
         """
-        
         self.subset = subset
         self.split = split
         self.config = config or {}
 
-        # Get or create the data cache directory
+        # Get the instance of cache manager and create data cache directory
         cache = PiscesLxCoreCacheManagerFacade.instance()
         data_cache = cache.get_or_create_cache_dir("data_cache")
-        cache_path = os.path.join(data_cache, subset)
+        cache_path = os.path.join(data_cache, self.subset)
 
-        # Check if the cache path exists
+        # Check if the dataset cache path exists
         if not os.path.exists(cache_path):
             raise FileNotFoundError(f"Dataset cache not found at {cache_path}. Please run downloader to prepare local cache.")
 
-        # Load the dataset from disk
+        # Load dataset from the cache path
         ds = load_from_disk(cache_path)
-        if isinstance(ds, dict) and split in ds:
-            ds = ds[split]
+        if isinstance(ds, dict) and self.split in ds:
+            ds = ds[self.split]
         self.ds = ds
 
         # Limit the number of samples if max_samples is specified
         if max_samples is not None and len(self.ds) > max_samples:
             self.ds = self.ds.select(range(max_samples))
 
-        # Initialize the tokenizer and encoders
+        # Initialize the tokenizer and modality encoders
         self.tokenizer = get_tokenizer()
         self.vision_encoder = VisionEncoder(self.config) if self.config else None
         self.audio_encoder = AudioEncoder(self.config) if self.config else None
@@ -86,7 +85,7 @@ class PiscesDataset(Dataset):
         return len(self.ds)
 
     def __getitem__(self, idx: int) -> Dict[str, Any]:
-        """Retrieve a single sample from the dataset at the specified index.
+        """Retrieve and process a single sample from the dataset at the specified index.
 
         Args:
             idx (int): The index of the sample to retrieve.
@@ -100,10 +99,9 @@ class PiscesDataset(Dataset):
             text = "<empty>"
         try:
             ids = self.tokenizer.encode(text, return_tensors="pt")[0]
-            vocab = len(self.tokenizer)
-            ids = torch.clamp(ids, 0, vocab - 1)
-        except Exception as e:
-            pass
+            vocab_size = len(self.tokenizer)
+            ids = torch.clamp(ids, 0, vocab_size - 1)
+        except Exception:
             ids = torch.tensor([0], dtype=torch.long)
         pixel_values = self._process_mm(item, IMAGE_KEYS, self.vision_encoder, "image")
         audio_input = self._process_mm(item, AUDIO_KEYS, self.audio_encoder, "audio")
@@ -119,49 +117,49 @@ class PiscesDataset(Dataset):
         }
 
     def _extract_text(self, item: Dict[str, Any]) -> str:
-        """Extract text from a dataset item.
+        """Extract text from a dataset item through multiple strategies.
 
         Args:
             item (Dict[str, Any]): A dictionary representing a dataset item.
 
         Returns:
-            str: The extracted text. If no text is found, an empty string is returned.
+            str: The extracted text. Returns an empty string if no text is found.
         """
         from data import TEXT_FIELD_KEYS
         if isinstance(item, dict):
-            # Try to find text in predefined text field keys
-            for k in TEXT_FIELD_KEYS:
-                v = item.get(k)
-                if isinstance(v, str) and v.strip():
-                    return v.strip()
+            # Try to find text using predefined text field keys
+            for key in TEXT_FIELD_KEYS:
+                value = item.get(key)
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
 
-            # Try to extract text from conversations
-            conv = item.get("conversations")
-            if isinstance(conv, list) and conv:
-                acc = []
-                for turn in conv:
+            # Try to extract text from conversation data
+            conversations = item.get("conversations")
+            if isinstance(conversations, list) and conversations:
+                text_parts = []
+                for turn in conversations:
                     if isinstance(turn, dict):
                         content = turn.get("value") or turn.get("content") or turn.get("text")
                         if content and str(content).strip():
                             role = turn.get("from", turn.get("role", ""))
-                            acc.append(f"{role}: {content}" if role else str(content))
-                if acc:
-                    return "\n".join(acc)
+                            text_parts.append(f"{role}: {content}" if role else str(content))
+                if text_parts:
+                    return "\n".join(text_parts)
 
-            # Fallback: find any non-empty string value
-            for v in item.values():
-                if isinstance(v, str) and v.strip():
-                    return v.strip()
+            # Fallback strategy: find any non-empty string value
+            for value in item.values():
+                if isinstance(value, str) and value.strip():
+                    return value.strip()
         return ""
 
-    def _process_mm(self, item: Dict[str, Any], keys, encoder, kind: str) -> Optional[Any]:
+    def _process_mm(self, item: Dict[str, Any], keys: list, encoder, kind: str) -> Optional[Any]:
         """Process multi-modal data from a dataset item.
 
         Args:
             item (Dict[str, Any]): A dictionary representing a dataset item.
             keys (list): A list of keys to search for in the item.
             encoder: The encoder to process the data.
-            kind (str): The type of data to process (e.g., "image", "audio", "document", "video").
+            kind (str): The type of data to process, e.g., "image", "audio", "document", "video".
 
         Returns:
             Optional[Any]: The processed data if successful, otherwise None.
@@ -169,26 +167,26 @@ class PiscesDataset(Dataset):
         if not encoder or not getattr(encoder, "enabled", False):
             return None
 
-        # Find the first valid path from the keys
-        p = None
-        for k in keys:
-            v = item.get(k) if isinstance(item, dict) else None
-            if isinstance(v, str) and v.strip():
-                p = v.strip()
+        # Find the first valid path from the given keys
+        path = None
+        for key in keys:
+            value = item.get(key) if isinstance(item, dict) else None
+            if isinstance(value, str) and value.strip():
+                path = value.strip()
                 break
 
-        if not p:
+        if not path:
             return None
 
         try:
             if kind == "image":
-                return encoder.process_image(p)
+                return encoder.process_image(path)
             if kind == "audio":
-                return encoder.process_audio(p)
+                return encoder.process_audio(path)
             if kind == "document":
-                return encoder.process_doc(p)
+                return encoder.process_doc(path)
             if kind == "video":
-                return encoder.process_video(p)
-        except Exception as e:
+                return encoder.process_video(path)
+        except Exception:
             pass
         return None

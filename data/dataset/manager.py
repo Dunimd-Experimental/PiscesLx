@@ -19,30 +19,28 @@
 # limitations under the License.
 
 from .core import PiscesDataset
-
 from .registry import REGISTRY as DATASETS
 from typing import List, Optional, Dict, Any
 from .streaming import LargeScaleStreamingDataset
 from .loader import OptimizedDataLoader, BatchConfig
 
-# logs removed
-
 class PiscesLxToolsDatasetManager:
     """
-    A manager class for Pisces datasets, providing a unified interface for dataset operations.
+    A manager class for Pisces datasets that provides a unified interface for dataset operations.
     """
     def __init__(self):
         """
-        Initialize the dataset manager and create a logger instance.
+        Initialize the dataset manager.
         """
-        
+        pass
 
     def load(self, subset: str = "tiny", split: str = "train", config: Optional[Dict[str, Any]] = None, max_samples: Optional[int] = None) -> PiscesDataset:
         """
         Load a dataset based on the specified subset and split.
 
-        First, check if there's a registered builder for the subset. If so, use it to build the dataset.
-        Otherwise, create a new PiscesDataset instance directly.
+        This method first checks if there is a registered builder for the given subset.
+        If a builder is found, it uses the builder to create the dataset.
+        Otherwise, it creates a new PiscesDataset instance directly.
 
         Args:
             subset (str, optional): The name of the dataset subset. Defaults to "tiny".
@@ -53,7 +51,7 @@ class PiscesLxToolsDatasetManager:
         Returns:
             PiscesDataset: A loaded PiscesDataset instance.
         """
-        # Try to get the registered builder for the subset
+        # Retrieve the registered builder for the subset
         builder = DATASETS.get(subset)
         if builder:
             ds = builder(subset=subset, split=split, config=config, max_samples=max_samples)
@@ -66,7 +64,7 @@ class PiscesLxToolsDatasetManager:
         Create a data loader for the given dataset.
 
         Args:
-            dataset: The dataset to create a data loader for.
+            dataset: The dataset for which to create a data loader.
             batch_config (Optional[BatchConfig], optional): Configuration for batch processing. Defaults to None.
 
         Returns:
@@ -98,4 +96,3 @@ class PiscesLxToolsDatasetManager:
             builder: The builder function or class for the dataset.
         """
         DATASETS.register(name, builder)
-        pass
