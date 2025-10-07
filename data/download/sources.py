@@ -51,7 +51,8 @@ class SourceRouter:
     def _load_from_modelscope(self, dataset_name: str, kwargs: Dict[str, Any]) -> Optional[Any]:
         """Load dataset from ModelScope."""
         try:
-            from modelscope import MsDataset
+            # Correct import path for MsDataset
+            from modelscope.msdatasets import MsDataset  # type: ignore
             return MsDataset.load(dataset_name, **kwargs)
         except Exception:
             return None
@@ -65,27 +66,53 @@ class SourceRouter:
             return None
 
 
-def to_hf_if_needed(ds: Any) -> Any:
+def detect_available_splits(dataset_name: str, source: str | None = None) -> list[str]:
     """
-    Convert dataset to HuggingFace format if needed.
-    
+    Detect available splits for a dataset on a specific source without brute-force spam.
+
     Args:
-        ds: Input dataset object
-        
+        dataset_name: The dataset repository name (as configured).
+        source: "modelscope" or "huggingface". If None, defaults to "modelscope".
+
     Returns:
-        Dataset in HuggingFace format
+        A list of available split names. If empty, caller should try direct load without split.
+        If only direct load works, returns ["__direct__"].
     """
-    # If it's already in HuggingFace format, return as-is
-    if hasattr(ds, 'save_to_disk'):
-        return ds
-    
-    # Try to convert from ModelScope format
-    try:
-        from datasets import Dataset
-        if hasattr(ds, 'to_hf_dataset'):
-            return ds.to_hf_dataset()
-    except Exception:
-        pass
-    
-    # Return original if conversion fails
-    return ds
+    candidates = [
+        "train", "train_full", "train_all",
+        "validation", "valid", "dev",
+        "test", "eval", "test_all",
+    ]
+
+    src = (source or "modelscope").strip().lower()
+    available: list[str] = []
+
+    for split in candidates:
+        try:
+            if src == "modelscope":
+                from modelscope.msdatasets import MsDataset  # type: ignore
+                _ = MsDataset.load(dataset_name, split=split, trust_remote_code=True)
+            elif src == "huggingface":
+                from datasets import load_dataset  # type: ignore
+                _ = load_dataset(dataset_name, split=split, trust_remote_code=True)
+            else:
+                continue
+            available.append(split)
+        except Exception:
+            continue
+
+    if not available:
+        # Probe direct/no-split
+        try:
+            if src == "modelscope":
+                from modelscope.msdatasets import MsDataset  # type: ignore
+                _ = MsDataset.load(dataset_name, trust_remote_code=True)
+            elif src == "huggingface":
+                from datasets import load_dataset  # type: ignore
+                _ = load_dataset(dataset_name, trust_remote_code=True)
+            available.append("__direct__")
+        except Exception:
+            # none available
+            pass
+
+    return available

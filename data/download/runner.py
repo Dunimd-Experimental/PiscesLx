@@ -22,13 +22,13 @@ import os
 import gc
 import shutil
 from tqdm import tqdm
-import multiprocessing
 from typing import Any, Tuple
+import multiprocessing
 from data.clean import DatasetCleaner
 from .caches import DownloadCacheContext
 from datasets import load_from_disk, Dataset
 from typing import Optional, Set, List, Tuple
-from .sources import SourceRouter, to_hf_if_needed
+from .sources import SourceRouter, to_hf_if_needed, detect_available_splits
 from .config import ConfigLoader, DownloadConfig, DatasetItem
 import time
 from utils import PiscesLxCoreLog
@@ -84,19 +84,24 @@ def download_worker(task: Tuple[str, str, str, list[str], str, Optional[int]]) -
             logger.debug(f"Downloading {dataset_name} (attempt {attempt + 1}/{max_retries})")
             
             router = SourceRouter()
-            methods = [
-                ({}, "direct"),
-                ({"split": "train"}, "split=train"),
-                ({"split": "validation"}, "split=validation"),
-                ({"split": "test"}, "split=test"),
-                ({"split": "default"}, "split=default"),
-            ]
+            # Strictly respect the first preferred source, do not cross-hub fallback here
+            strict_sources: List[str] = [preferred_sources[0]] if preferred_sources else ["modelscope"]
+            src = strict_sources[0].strip().lower()
+            # Build methods based on detected splits from the chosen source
+            splits = detect_available_splits(dataset_name, src)
+            methods: List[Tuple[dict, str]] = []
+            if "__direct__" in splits or not splits:
+                methods.append(({}, "direct"))
+            for sp in splits:
+                if sp == "__direct__":
+                    continue
+                methods.append(({"split": sp}, f"split={sp}"))
             last_err: Optional[str] = None
             ds = None
             for kwargs, desc in methods:
                 try:
                     logger.debug(f"Trying method {desc}")
-                    tmp = router.load(dataset_name, kwargs, preferred_sources=preferred_sources)
+                    tmp = router.load(dataset_name, kwargs, preferred_sources=strict_sources)
                     if tmp is not None and (not hasattr(tmp, "__len__") or len(tmp) > 0):
                         ds = tmp
                         logger.debug(f"Successfully loaded with method {desc}")
@@ -258,6 +263,9 @@ class PiscesLxToolsDatasetDownload:
         Args:
             cfg (DownloadConfig): Download configuration object.
         """
+        # Logger for this run
+        logger = PiscesLxCoreLog("pisceslx.data.download")
+
         # Collect the names of already downloaded datasets
         downloaded: Set[str] = set()
         for item in cfg.datasets:
@@ -300,27 +308,32 @@ class PiscesLxToolsDatasetDownload:
         successfully_downloaded: Set[str] = set()
         # Build picklable tasks: (dataset_name, save_name, desc, preferred_sources, data_dir, max_samples)
         tasks = [(n, s, d, prefs, self._DATA, max_samples_per_dataset) for (n, s, d, prefs) in to_download]
-        
+
         # Show real download statistics
         total_datasets = len(cfg.datasets)
         skipped_datasets = total_datasets - len(to_download)
         if skipped_datasets > 0:
             pass  # Log: skipping X duplicate/already downloaded datasets
-        
         if len(to_download) == 0:
             pass  # Log: all datasets already downloaded or skipped
             return
-        
-        with multiprocessing.Pool(processes=workers) as pool:
-            results = list(tqdm(pool.imap_unordered(download_worker, tasks), total=len(tasks), desc=f"Downloading {len(tasks)} unique datasets"))
-            for save_name in results:
-                if save_name:
-                    success_count += 1
-                    successfully_downloaded.add(save_name)
+
+        # Run pool with Windows-safe fallback to sequential execution
+        try:
+            with multiprocessing.Pool(processes=workers) as pool:
+                results = list(tqdm(pool.imap_unordered(download_worker, tasks), total=len(tasks), desc=f"Downloading {len(tasks)} unique datasets"))
+        except Exception:
+            results = []
+            for t in tqdm(tasks, total=len(tasks), desc=f"Downloading {len(tasks)} unique datasets (sequential)"):
+                results.append(download_worker(t))
+
+        for save_name in results:
+            if save_name:
+                success_count += 1
+                successfully_downloaded.add(save_name)
 
         # Perform unified cleaning on downloaded datasets
-        if cfg.post_download_clean and successfully_downloaded:
-            pass
+        if getattr(cfg, 'post_download_clean', True) and successfully_downloaded:
             try:
                 DatasetCleaner.auto_clean(
                     input_dir=self._DATA,
@@ -329,9 +342,7 @@ class PiscesLxToolsDatasetDownload:
                     text_field=None,
                     workers=None
                 )
-                pass
             except Exception as e:
-                pass
                 try:
                     DatasetCleaner.auto_clean(
                         input_dir=self._DATA,
@@ -339,222 +350,27 @@ class PiscesLxToolsDatasetDownload:
                         min_length=1,
                         text_field=None
                     )
-                    pass
                 except Exception as e2:
+                    logger.error(f"Exception in unified cleaning: {str(e)} -> {str(e2)}")
                     pass
 
             # Clean up caches
             self._cleanup_caches()
             gc.collect()
-            pass
 
             try:
                 import torch  # type: ignore
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                    pass
             except Exception:
                 pass
 
-            pass
-
             # Generate model.txt file
-            if successfully_downloaded:
+            try:
                 model_file = os.path.join(self._DATA, "model.txt")
-                try:
-                    with open(model_file, "w", encoding="utf-8") as f:
-                        for name in sorted(successfully_downloaded):
-                            f.write(f"{name}\n")
-                    pass
-                except Exception as e:
-                    pass
-
-    def _download_worker(self, args: Tuple[str, str, str, List[str]]) -> Optional[str]:
-        """
-        Worker function responsible for downloading a single dataset.
-
-        Args:
-            args (Tuple[str, str, str, List[str]]): A tuple containing dataset name, save name, description, and preferred sources.
-
-        Returns:
-            Optional[str]: Save name if the download is successful, None otherwise.
-        """
-        dataset_name, save_name, description, preferred_sources = args
-        # logs removed
-        
-        try:
-            # Try loading the dataset from different sources
-            ds = self._load_with_methods(dataset_name, preferred_sources)
-            if ds is None:
-                # logs removed
-                return None
-            
-            # Save the loaded dataset
-            self._save(ds, save_name, description)
-            # logs removed
-            return save_name
-            
-        except Exception as e:
-            # logs removed
-            return None
-
-    def _save(self, ds, name: str, description: str = "") -> bool:
-        """
-        Save the dataset to the final location in the data directory.
-
-        Args:
-            ds: Dataset object to be saved.
-            name (str): Name of the dataset.
-            description (str): Description of the dataset.
-
-        Returns:
-            bool: True if the dataset is saved successfully, False otherwise.
-        """
-        try:
-            save_path = os.path.join(self._DATA, name)
-            # logs removed
-            
-            # Ensure the parent directory exists
-            os.makedirs(os.path.dirname(save_path), exist_ok=True)
-            
-            # Save the dataset to the specified path
-            ds.save_to_disk(save_path)
-            # logs removed
-            return True
-            
-        except Exception as e:
-            # logs removed
-            return False
-
-    def _cleanup_caches(self):
-        """
-        Clean up temporary cache directories while preserving the final data.
-        """
-        pass
-        
-        # List of ModelScope specific cache directories
-        modelscope_dirs = [
-            os.path.join(self._cache.MODELSCOPE_CACHE_DIR, "datasets"),
-            os.path.join(self._cache.MODELSCOPE_CACHE_DIR, "hub"),
-            str(self._cache.get_modelscope_cache_dir()),
-        ]
-        
-        # List of HuggingFace specific cache directories
-        huggingface_dirs = [
-            os.path.join(self._cache.HUGGINGFACE_CACHE_DIR, "hf_datasets"),
-            os.path.join(self._cache.HUGGINGFACE_CACHE_DIR, "hf_hub"),
-            os.path.join(self._cache.HUGGINGFACE_CACHE_DIR, "transformers"),
-            str(self._cache.get_huggingface_cache_dir()),
-        ]
-        
-        # List of general temporary directories (excluding the main datatmp)
-        temp_dirs = [
-            os.path.join(self._DATA, ".cache"),
-            os.path.join(self._DATA, "tmp"),
-            os.path.join(self._DATA, "temp"),
-            os.path.join(self._DATA, "cache"),
-            os.path.join(self._DATA, "downloads"),
-            os.path.join(os.path.dirname(__file__), "..", "modelscope"),
-        ]
-        
-        # Combine all directories to be cleaned
-        all_cache_dirs = modelscope_dirs + huggingface_dirs + temp_dirs
-        
-        # Remove duplicate directories
-        unique_dirs = []
-        seen = set()
-        for d in all_cache_dirs:
-            if d and d not in seen and os.path.exists(d):
-                seen.add(d)
-                unique_dirs.append(d)
-        
-        cleaned_count = 0
-        for dir_path in unique_dirs:
-            try:
-                if os.path.isdir(dir_path):
-                    shutil.rmtree(dir_path)
-                    pass
-                    cleaned_count += 1
+                with open(model_file, "w", encoding="utf-8") as f:
+                    for name in sorted(successfully_downloaded):
+                        f.write(f"{name}\n")
             except Exception as e:
+                logger.error(f"Exception in generating model.txt: {str(e)}")
                 pass
-        
-        pass
-        
-        # Keep main datatmp and data_cache directories intact
-        pass
-
-    @staticmethod
-    def _norm_sources(srcs: List[str] | None) -> List[str]:
-        """
-        Normalize source names with support for various identifiers including Chinese.
-
-        Args:
-            srcs (List[str] | None): List of source names.
-
-        Returns:
-            List[str]: Normalized list of source names.
-        """
-        if not srcs:
-            return ["modelscope", "huggingface"]
-        
-        norm = []
-        for s in srcs:
-            s_lower = (s or "").strip().lower()
-            if s_lower in ("hf", "huggingface", "BaoBaoLian"):
-                norm.append("huggingface")
-            elif s_lower in ("ms", "modelscope", "MoTa"):
-                norm.append("modelscope")
-        
-        # Remove duplicates while preserving order
-        seen = set()
-        out = []
-        for s in norm:
-            if s not in seen:
-                seen.add(s)
-                out.append(s)
-        
-        return out or ["modelscope", "huggingface"]
-
-    def _load_with_methods(self, dataset_name: str, preferred_sources: List[str]):
-        """
-        Attempt to load a dataset using multiple methods and splits.
-
-        Args:
-            dataset_name (str): Name of the dataset to load.
-            preferred_sources (List[str]): List of preferred sources to load the dataset from.
-
-        Returns:
-            Dataset: Loaded dataset if successful.
-
-        Raises:
-            RuntimeError: If all attempts to load the dataset fail.
-        """
-        # logs removed
-        
-        methods = [
-            ({}, "direct"),
-            ({"split": "train"}, "split=train"),
-            ({"split": "validation"}, "split=validation"),
-            ({"split": "test"}, "split=test"),
-            ({"split": "default"}, "split=default"),
-        ]
-        
-        last_err: Optional[str] = None
-        
-        for kwargs, method_desc in methods:
-            try:
-                pass
-                ds = self._router.load(dataset_name, kwargs, preferred_sources=preferred_sources)
-                
-                if ds is not None and len(ds) > 0:
-                    pass
-                    return ds
-                    
-            except Exception as e:
-                last_err = str(e)
-                pass
-                continue
-        
-        # If all methods failed, raise an error with the last error message
-        raise RuntimeError(f"Failed to load dataset {dataset_name} from all sources. Last error: {last_err}")
-        raise RuntimeError(f"Failed to load dataset {dataset_name} from all sources. Last error: {last_err}")
