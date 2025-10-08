@@ -19,8 +19,8 @@
 # limitations under the License.
 
 from typing import Any
-from utils import PiscesLxCoreLog as LOG
-RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+logger = PiscesLxCoreLog("pisceslx.data.download")
 from . import impl as _impl
 from .impl import PiscesLxToolsMonitorImpl
 
@@ -54,12 +54,12 @@ class PiscesLxToolsMonitorRunner:
 
     def monitor(self) -> None:
         """Start monitoring using the implementation module."""
-        RIGHT("Starting monitoring via PiscesLxToolsMonitorRunner")
+        logger.success("Starting monitoring via PiscesLxToolsMonitorRunner")
         try:
             # Delegate to class facade to run monitoring
             self._impl.monitor(self.args)
         except SystemExit:
             raise
         except Exception as e:
-            ERROR(f"Monitoring failed: {e}")
+            logger.error(f"Monitoring failed: {e}")
             raise

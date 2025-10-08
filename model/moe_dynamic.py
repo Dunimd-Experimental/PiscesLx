@@ -20,9 +20,12 @@
 import math
 import torch
 import torch.nn as nn
-from utils import RIGHT
 import torch.nn.functional as F
 from collections import OrderedDict
+
+# 添加新的日志实例
+from utils import PiscesLxCoreLog
+logger = PiscesLxCoreLog("Arctic.Model.MoEDynamic")
 
 def moe_init_weights(m):
     """
@@ -143,7 +146,8 @@ class DynamicMoELayer(nn.Module):
         
         if DynamicMoELayer._layer_count == 1:
             try:
-                RIGHT(f"DynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
+                # 使用新的日志系统替换旧的日志调用
+                logger.info(f"DynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
             except UnicodeEncodeError:
                 print(f"[OK] DynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
     

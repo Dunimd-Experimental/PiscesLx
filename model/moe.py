@@ -20,9 +20,12 @@
 import math
 import torch
 from torch import nn
-from utils import RIGHT
 import torch.nn.functional as F
 from collections import OrderedDict
+
+# 添加新的日志实例
+from utils import PiscesLxCoreLog
+logger = PiscesLxCoreLog("Arctic.Model.MoE")
 
 def moe_init_weights(m):
     """
@@ -593,7 +596,8 @@ class MoELayer(nn.Module):
         # Print layer information for the first layer
         if MoELayer._layer_count == 1:
             gate_type = "Stable" if use_stable_gate else "Standard"
-            RIGHT(f"MoELayer: {self.num_experts} experts, top-{self.top_k} routing, {gate_type} gate")
+            # 使用新的日志系统替换旧的日志调用
+            logger.info(f"MoELayer: {self.num_experts} experts, top-{self.top_k} routing, {gate_type} gate")
 
         self.max_gpu_experts = max_gpu_experts
         # Ordered dictionary to record the last used step of each expert
@@ -666,16 +670,19 @@ class MoELayer(nn.Module):
             balance_threshold = getattr(self, 'expert_load_balance_threshold', 0.15)
             if load_variance > balance_threshold or load_ratio > 8.0:
                 if load_ratio > 10.0:  # Critical imbalance
-                    RIGHT(f"CRITICAL: Expert load severely imbalanced - max/min ratio: {load_ratio:.2f}, variance: {load_variance:.4f}")
+                    # 使用新的日志系统替换旧的日志调用
+                    logger.error(f"CRITICAL: Expert load severely imbalanced - max/min ratio: {load_ratio:.2f}, variance: {load_variance:.4f}")
                 elif load_variance > balance_threshold * 1.33:  # High variance
-                    RIGHT(f"WARNING: Expert load distribution showing high variance - ratio: {load_ratio:.2f}, variance: {load_variance:.4f}")
+                    # 使用新的日志系统替换旧的日志调用
+                    logger.warning(f"WARNING: Expert load distribution showing high variance - ratio: {load_ratio:.2f}, variance: {load_variance:.4f}")
             
             # Provide adaptive load balancing suggestions
             suggestion_threshold = balance_threshold * 0.67
             if load_variance > suggestion_threshold or load_ratio > 5.0:
                 suggested_temp = min(2.0, 1.0 + load_variance * 10)
                 mode = "Training" if self.training else "Inference"
-                RIGHT(f"SUGGESTION ({mode}): Consider increasing routing temperature to {suggested_temp:.2f} for better load distribution")
+                # 使用新的日志系统替换旧的日志调用
+                logger.info(f"SUGGESTION ({mode}): Consider increasing routing temperature to {suggested_temp:.2f} for better load distribution")
 
     def forward(self, x):
         """

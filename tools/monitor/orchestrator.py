@@ -21,8 +21,8 @@
 import logging
 import time
 from typing import Any, Optional
-from utils import PiscesLxCoreLog as LOG
-RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+logger = PiscesLxCoreLog("pisceslx.data.download")
 from utils import PiscesLxCoreHookBus
 from utils import PiscesLxCoreEnhancedCacheManager
 from utils import PiscesLxCoreTimeout, PiscesLxCoreRetry
@@ -48,25 +48,19 @@ except Exception:
             """Start profiling for a specific phase with optional metadata."""
             self._active = True
             self._phase_timers[phase_name] = time.perf_counter()
-            from utils import PiscesLxCoreLog as LOG
-            DEBUG = LOG.debug
-            print(f"{DEBUG} Profiler started for phase: {phase_name}")
+            logger.debug(f"Profiler started for phase: {phase_name}")
         
         def stop(self, phase_name: str = "monitor", **kwargs) -> Optional[float]:
             """Stop profiling and return elapsed time for the specified phase."""
             if not self._active or phase_name not in self._phase_timers:
-                from utils import PiscesLxCoreLog as LOG
-                DEBUG = LOG.debug
-                print(f"{DEBUG} Profiler stop called for inactive phase: {phase_name}")
+                logger.debug(f"Profiler stop called for inactive phase: {phase_name}")
                 return None
             
             elapsed = time.perf_counter() - self._phase_timers[phase_name]
             self._phase_results[phase_name] = elapsed
             self._active = False
             
-            from utils import PiscesLxCoreLog as LOG
-            DEBUG = LOG.debug
-            print(f"{DEBUG} Profiler stopped for phase: {phase_name}, elapsed: {elapsed:.3f}s")
+            logger.debug(f"Profiler stopped for phase: {phase_name}, elapsed: {elapsed:.3f}s")
             return elapsed
 
 try:
@@ -156,7 +150,7 @@ class PiscesLxToolsMonitorOrchestrator:
             elif mode == "predictive":
                 self.run_enhanced_monitor(mode, session_id)
             else:
-                ERROR(f"Unknown monitoring mode: {mode}")
+                logger.error(f"Unknown monitoring mode: {mode}")
                 raise ValueError(f"Unknown monitoring mode: {mode}")
             
             # Emit completion event with enhanced results
@@ -180,10 +174,10 @@ class PiscesLxToolsMonitorOrchestrator:
             session_cache["recovery_attempts"] = completion_metrics["recovery_attempts"]
             self._cache_manager.set(f"session_{session_id}", session_cache, ttl=7200.0)  # 2小时TTL
             
-            DEBUG(f"Monitoring completed successfully in {session_cache['duration']:.2f}s")
+            logger.debug(f"Monitoring completed successfully in {session_cache['duration']:.2f}s")
             
         except Exception as e:
-            ERROR(f"Monitoring failed: {e}")
+            logger.error(f"Monitoring failed: {e}")
             
             # Enhanced error diagnostics and recovery suggestions
             diagnostics = self._diagnose_monitoring_error(e)
@@ -324,15 +318,15 @@ class PiscesLxToolsMonitorOrchestrator:
         """Attempt automatic error recovery based on error diagnostics."""
         try:
             error_type = type(error).__name__
-            DEBUG(f"Attempting automatic recovery for {error_type}")
+            logger.debug(f"Attempting automatic recovery for {error_type}")
             
             if "timeout" in str(error).lower():
                 # Retry with increased timeout
-                DEBUG("Implementing timeout recovery strategy...")
+                logger.debug("Implementing timeout recovery strategy...")
                 return True
             elif "memory" in str(error).lower():
                 # Attempt memory cleanup
-                DEBUG("Implementing memory recovery strategy...")
+                logger.debug("Implementing memory recovery strategy...")
                 if hasattr(self._cache_manager, 'cleanup'):
                     self._cache_manager.cleanup()
                 return True
@@ -340,7 +334,7 @@ class PiscesLxToolsMonitorOrchestrator:
             return False
             
         except Exception as recovery_error:
-            DEBUG(f"Automatic recovery failed: {recovery_error}")
+            logger.debug(f"Automatic recovery failed: {recovery_error}")
             return False
     
     @PiscesLxCoreRetry(max_attempts=3, delay=1.0, backoff=2.0)

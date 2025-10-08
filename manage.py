@@ -85,6 +85,7 @@ def main():
     parser.add_argument('--benchmark', type=str, help='Run a specific benchmark evaluation (for benchmarking)')
     parser.add_argument('--model', type=str, help='Model checkpoint path (for benchmarking)')
     parser.add_argument('--perf', action='store_true', help='Run a performance benchmark (for benchmarking)')
+    parser.add_argument('--selftest', action='store_true', help='Run built-in benchmark tests (for benchmarking)')
     parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g., 0.5B, 1.5B, 7B, 70B, 128B')
     parser.add_argument('--dataset', default='Chinese2', type=str, help='Dataset name for training')
     parser.add_argument('--resume_ckpt', default='', type=str, help='Path to the checkpoint to resume training')
@@ -142,7 +143,7 @@ def main():
         orchestrator = PiscesLxToolsMonitorOrchestrator(args)
         orchestrator.run(args)
     elif args.command == 'download':
-        from data.download import PiscesLxToolsDatasetDownload
+        from tools.data.download import PiscesLxToolsDatasetDownload
         tool = PiscesLxToolsDatasetDownload()
         tool.download(args.max_samples)
         tool.optimize(max_keep=5000)
@@ -175,18 +176,12 @@ def main():
             pass
     
     elif args.command == 'benchmark':
-        from tools.benchmark import list_benchmarks, benchmark_info, performance_benchmark, run_benchmark
-        
-        if args.list:
-            list_benchmarks()
-        elif args.info:
-            benchmark_info(args.info)
-        elif args.perf:
-            performance_benchmark(args.config, args.seq_len, args.model)
-        elif args.benchmark:
-            run_benchmark(args.benchmark, args.model, args.config)
+        from tools.benchmark.orchestrator import PiscesLxToolsBenchmarkOrchestrator
+        orchestrator = PiscesLxToolsBenchmarkOrchestrator(args)
+        if args.selftest:
+            orchestrator.run_tests(args)
         else:
-            performance_benchmark(args.config, args.seq_len)
+            orchestrator.run(args)
     elif args.command == 'mcp':
         from tools.mcp import status as mcp_status, background_refresh, read_config, write_config, discover_tools, merge_to_config
         if args.mcp_action == 'status':

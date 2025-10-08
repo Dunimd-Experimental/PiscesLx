@@ -22,8 +22,8 @@ import os
 import sys
 import time
 import contextlib
-from utils import PiscesLxCoreLog as LOG
-RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+logger = PiscesLxCoreLog("pisceslx.data.download")
 from typing import Any, Optional, List
 
 # Runtime context
@@ -84,8 +84,8 @@ def setup_inference_device(device_pref: str):
         # Check if CUDA is available
         if not torch.cuda.is_available():
             device = torch.device("cpu")
-            RIGHT("CUDA not available, falling back to CPU inference mode")
-            RIGHT("Inference mode: cpu")
+            logger.success("CUDA not available, falling back to CPU inference mode")
+            logger.success("Inference mode: cpu")
         else:
             try:
                 from utils.device import setup_devices
@@ -93,7 +93,7 @@ def setup_inference_device(device_pref: str):
                 # Apply device selection from orchestrator
                 if device_config.get('device_type') == 'cpu':
                     device = torch.device("cpu")
-                    RIGHT("CPU inference mode (via device orchestrator)")
+                    logger.success("CPU inference mode (via device orchestrator)")
                 else:
                     gpu_ids = device_config.get('gpu_ids', [])
                     if gpu_ids:
@@ -105,14 +105,14 @@ def setup_inference_device(device_pref: str):
             except Exception as e:
                 if torch.cuda.is_available():
                     device = torch.device("cuda")
-                    RIGHT(f"DeviceOrchestrator unavailable, using default CUDA device: {e}")
+                    logger.success(f"DeviceOrchestrator unavailable, using default CUDA device: {e}")
                 else:
                     device = torch.device("cpu")
-                    RIGHT(f"DeviceOrchestrator unavailable and CUDA not available, using CPU: {e}")
+                    logger.success(f"DeviceOrchestrator unavailable and CUDA not available, using CPU: {e}")
     else:
         device = torch.device(device_pref)
 
-    RIGHT(f"Using device: {device}")
+    logger.success(f"Using device: {device}")
     return device
 
 class VLLMEngine:
@@ -142,7 +142,7 @@ class VLLMEngine:
             self.SamplingParams = SamplingParams
         except ImportError:
             self.vllm_available = False
-            ERROR("VLLM not available, falling back to native inference")
+            logger.error("VLLM not available, falling back to native inference")
             return
 
         self.model_path = model_path
@@ -208,7 +208,7 @@ class VLLMEngine:
             "user_id": "vllm_user",
             "timestamp": str(int(time.time()))
         }
-        from tools import watermark_text
+        from tools.infer.watermark import watermark_text
         return watermark_text(generated_text, prompt, watermark_metadata)
 
 def _get_attr(obj: Any, name: str, default: Any) -> Any:
@@ -500,9 +500,9 @@ def _infer_impl(args: Any) -> None:
     try:
         args = validate_infer_args(args)
     except Exception as e:
-        ERROR(f"Invalid inference arguments: {e}")
+        logger.error(f"Invalid inference arguments: {e}")
         raise
-    RIGHT("Starting Pisces L1 Inference with MCP Integration...")
+    logger.success("Starting Pisces L1 Inference with MCP Integration...")
     _emit('on_infer_start', args=args)
     # Load model configuration and inference settings
     model_size = getattr(args, "model_size", "0.5B").upper()
@@ -531,18 +531,18 @@ def _infer_impl(args: Any) -> None:
         pass
     # Enable DataParallel if multiple GPUs are available
     if torch.cuda.device_count() > 1 and device.type == 'cuda':
-        RIGHT(f"Detected {torch.cuda.device_count()} GPUs, enabling DataParallel inference")
+        logger.success(f"Detected {torch.cuda.device_count()} GPUs, enabling DataParallel inference")
         model = torch.nn.DataParallel(model)
     lora_used = False
 {{ ... }}
-        RIGHT(f"Loading model: {args.ckpt}")
+        logger.success(f"Loading model: {args.ckpt}")
         checkpoint = torch.load(args.ckpt, map_location=device)
         state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
         # Adjust vocabulary size if there's a mismatch between checkpoint and model
         ckpt_vocab_size = state_dict['embed.weight'].shape[0] if 'embed.weight' in state_dict else None
         model_vocab_size = model.module.embed.weight.shape[0] if hasattr(model, 'module') else model.embed.weight.shape[0]
         if ckpt_vocab_size and ckpt_vocab_size != model_vocab_size:
-            DEBUG(f"Vocab size mismatch: checkpoint={ckpt_vocab_size}, model={model_vocab_size}. Auto resizing...")
+            logger.debug(f"Vocab size mismatch: checkpoint={ckpt_vocab_size}, model={model_vocab_size}. Auto resizing...")
             if hasattr(model, 'module'):
                 model.module.resize_token_embeddings(ckpt_vocab_size)
             else:
@@ -566,11 +566,11 @@ def _infer_impl(args: Any) -> None:
                 # Load LoRA weights
                 model = PeftModel.from_pretrained(model, args.ckpt)
                 lora_used = True
-                RIGHT(f"LoRA weights loaded from {args.ckpt}")
+                logger.success(f"LoRA weights loaded from {args.ckpt}")
             except ImportError:
-                ERROR("PEFT library not available for LoRA loading")
+                logger.error("PEFT library not available for LoRA loading")
             except Exception as e:
-                ERROR(f"Failed to load LoRA weights: {e}")
+                logger.error(f"Failed to load LoRA weights: {e}")
         else:
             # Load standard model weights
             model.load_state_dict(state_dict, strict=False)
@@ -592,15 +592,15 @@ def _infer_impl(args: Any) -> None:
                 )
                 model = get_peft_model(model, lora_config)
                 lora_used = True
-                RIGHT(f"LoRA configuration applied: r={lora_config.r}, alpha={lora_config.lora_alpha}, target_modules={lora_config.target_modules}")
+                logger.success(f"LoRA configuration applied: r={lora_config.r}, alpha={lora_config.lora_alpha}, target_modules={lora_config.target_modules}")
                 try:
                     model.print_trainable_parameters()
                 except Exception:
                     pass
             except ImportError:
-                ERROR("PEFT library not available for LoRA configuration")
+                logger.error("PEFT library not available for LoRA configuration")
             except Exception as e:
-                ERROR(f"Failed to apply LoRA configuration: {e}")
+                logger.error(f"Failed to apply LoRA configuration: {e}")
         elif not lora_used:
             # Load standard model weights if no LoRA is used
             model.load_state_dict(state_dict, strict=False)

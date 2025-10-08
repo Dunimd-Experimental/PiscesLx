@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright 漏 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of Pisces L1.
 # The PiscesL1 project belongs to the Dunimd project team.
@@ -32,13 +32,16 @@ import pandas as pd
 from torch import nn
 from PIL import Image
 from enum import Enum
-from utils import DEBUG, ERROR
 from datetime import datetime
 import torch.nn.functional as F
 from dataclasses import dataclass
 from collections import defaultdict
 from contextlib import contextmanager
 from typing import Optional, Tuple, List, Dict, Any, Callable, Union
+
+# 娣诲姞鏂扮殑鏃ュ織瀹炰緥
+from utils import PiscesLxCoreLog
+logger = PiscesLxCoreLog("Arctic.Model.Multimodal")
 
 class SpatioTemporalRoPE3D(nn.Module):
     """
@@ -207,7 +210,8 @@ class VisionEncoder(nn.Module):
         self.num_heads = cfg.n_head
         self.num_layers = cfg.n_layer
         
-        DEBUG(f"VisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        # 浣跨敤鏂扮殑鏃ュ織绯荤粺鏇挎崲鏃х殑鏃ュ織璋冪敤
+        logger.debug(f"VisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         # Image preprocessing: register mean and std for normalization (ImageNet stats)
         self.register_buffer('mean', torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
@@ -446,12 +450,13 @@ class VisionEncoder(nn.Module):
                 nn.SiLU(),
                 nn.Linear(128, 64),
                 nn.SiLU(),
-                nn.Linear(64, 2),  # Position uncertainty [σx, σy]
+                nn.Linear(64, 2),  # Position uncertainty [蟽x, 蟽y]
                 nn.Softplus()  # Ensure positive uncertainty
             )
         })
         
-        DEBUG("VisionEncoder: __init__ end")
+        # 浣跨敤鏂扮殑鏃ュ織绯荤粺鏇挎崲鏃х殑鏃ュ織璋冪敤
+        logger.debug("VisionEncoder: __init__ end")
     
     def process_image(self, image_path, target_size=None):
         """
@@ -464,7 +469,8 @@ class VisionEncoder(nn.Module):
         Returns:
             torch.Tensor: Processed image tensor, or None if an error occurs.
         """
-        DEBUG(f"Processing image: {image_path}")
+        # 浣跨敤鏂扮殑鏃ュ織绯荤粺鏇挎崲鏃х殑鏃ュ織璋冪敤
+        logger.debug(f"Processing image: {image_path}")
         try:
             # Use context manager to ensure file handle is properly closed
             with Image.open(image_path) as img:
@@ -478,7 +484,8 @@ class VisionEncoder(nn.Module):
                 image_tensor = (image_tensor - self.mean) / self.std
                 return image_tensor
         except Exception as e:
-            ERROR(f"Image processing error: {e}")
+            # 浣跨敤鏂扮殑鏃ュ織绯荤粺鏇挎崲鏃х殑鏃ュ織璋冪敤
+            logger.error(f"Image processing error: {e}")
             return None
 
     def interpolate_pos_encoding(self, pos_embed, h, w):
@@ -800,7 +807,8 @@ class AudioEncoder(nn.Module):
         self.hop_length = 512
         self.win_length = 1024
         
-        DEBUG(f"AudioEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        # 浣跨敤鏂扮殑鏃ュ織绯荤粺鏇挎崲鏃х殑鏃ュ織璋冪敤
+        logger.debug(f"AudioEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         # Mel filter bank
         self.mel_filters = self._create_mel_filters()
@@ -990,7 +998,8 @@ class AudioEncoder(nn.Module):
             )
         })
         
-        DEBUG("AudioEncoder: __init__ end")
+        # 浣跨敤鏂扮殑鏃ュ織绯荤粺鏇挎崲鏃х殑鏃ュ織璋冪敤
+        logger.debug("AudioEncoder: __init__ end")
     
     def _create_mel_filters(self):
         """Create Mel filter bank."""
@@ -1038,7 +1047,8 @@ class AudioEncoder(nn.Module):
         Returns:
             torch.Tensor: Processed audio features.
         """
-        DEBUG(f"Processing audio: {audio_path}")
+        # 浣跨敤鏂扮殑鏃ュ織绯荤粺鏇挎崲鏃х殑鏃ュ織璋冪敤
+        logger.debug(f"Processing audio: {audio_path}")
         try:
             # Load audio using librosa
             import librosa
@@ -1053,9 +1063,10 @@ class AudioEncoder(nn.Module):
             
             return mel_spec.unsqueeze(0)
         except Exception as e:
-            ERROR(f"Audio processing error: {e}")
+            # 浣跨敤鏂扮殑鏃ュ織绯荤粺鏇挎崲鏃х殑鏃ュ織璋冪敤
+            logger.error(f"Audio processing error: {e}")
             return torch.zeros(1, self.n_mels, 64)
-    
+
     def forward(self, audio_input):
         """
         Forward pass.
@@ -1105,7 +1116,8 @@ class DocEncoder(nn.Module):
         self.vocab_size = 50000
         self.max_length = 512
         
-        DEBUG(f"DocEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        # 浣跨敤鏂扮殑鏃ュ織绯荤粺鏇挎崲鏃х殑鏃ュ織璋冪敤
+        logger.debug(f"DocEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         # Enhanced text encoder with multi-language support
         self.text_encoder = nn.ModuleDict({
@@ -1357,7 +1369,8 @@ class DocEncoder(nn.Module):
             )
         })
         
-        DEBUG("DocEncoder: __init__ end")
+        # 浣跨敤鏂扮殑鏃ュ織绯荤粺鏇挎崲鏃х殑鏃ュ織璋冪敤
+        logger.debug("DocEncoder: __init__ end")
     
     def _tokenize_text(self, text):
         """Simple text tokenization and encoding."""
@@ -1439,7 +1452,8 @@ class VideoEncoder(nn.Module):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
-        DEBUG(f"VideoEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        # 浣跨敤鏂扮殑鏃ュ織绯荤粺鏇挎崲鏃х殑鏃ュ織璋冪敤
+        logger.debug(f"VideoEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         # Enhanced video encoding with 3D spatio-temporal support
         self.use_3d_rope = getattr(cfg, 'use_3d_spatio_temporal_rope', False)
@@ -1637,7 +1651,8 @@ class VideoEncoder(nn.Module):
                 'temporal_attention': nn.MultiheadAttention(cfg.hidden_size, cfg.n_head, batch_first=True)
             })
         
-        DEBUG("VideoEncoder: __init__ end")
+        # 浣跨敤鏂扮殑鏃ュ織绯荤粺鏇挎崲鏃х殑鏃ュ織璋冪敤
+        logger.debug("VideoEncoder: __init__ end")
     
     def forward(self, video_frames):
         """
@@ -3416,7 +3431,7 @@ class HardwareAdaptiveConfig:
                 'use_mixed_precision': True,
                 'checkpoint_segments': 4
             },
-            'conservative': {  # Single A100 40GB, V100×2
+            'conservative': {  # Single A100 40GB, V100脳2
                 'max_layers': 3,
                 'max_heads': 8,
                 'max_lstm_layers': 1,
@@ -3424,7 +3439,7 @@ class HardwareAdaptiveConfig:
                 'use_mixed_precision': True,
                 'checkpoint_segments': 2
             },
-            'medium': {  # Single A100 80GB, A100×2 40GB
+            'medium': {  # Single A100 80GB, A100脳2 40GB
                 'max_layers': 4,
                 'max_heads': 12,
                 'max_lstm_layers': 2,
@@ -3432,7 +3447,7 @@ class HardwareAdaptiveConfig:
                 'use_mixed_precision': False,
                 'checkpoint_segments': 1
             },
-            'high': {  # A100×2 80GB, A100×4 40GB
+            'high': {  # A100脳2 80GB, A100脳4 40GB
                 'max_layers': 6,
                 'max_heads': 16,
                 'max_lstm_layers': 3,
@@ -3440,7 +3455,7 @@ class HardwareAdaptiveConfig:
                 'use_mixed_precision': False,
                 'checkpoint_segments': 1
             },
-            'maximum': {  # A100×4+ 80GB, H100 cluster
+            'maximum': {  # A100脳4+ 80GB, H100 cluster
                 'max_layers': 8,
                 'max_heads': 24,
                 'max_lstm_layers': 4,
@@ -4718,7 +4733,7 @@ class MultiModalGenerator:
         
     def generate_from_text(self, text: str, modality: str = 'image', **kwargs) -> torch.Tensor:
         """Generate content from text prompt with 2025 mandatory watermark"""
-        from tools.watermark import watermark_manager
+        from tools.infer.watermark import watermark_manager
         
         condition = GenerationCondition()
         condition.text_prompt = text
@@ -4747,7 +4762,7 @@ class MultiModalGenerator:
     
     def generate_from_emotion(self, emotion: str, modality: str = 'image', **kwargs) -> torch.Tensor:
         """Generate content from emotion with 2025 mandatory watermark"""
-        from tools.watermark import watermark_manager
+        from tools.infer.watermark import watermark_manager
         
         # Map emotion to vector with valence/arousal
         emotion_map = {
@@ -4793,7 +4808,7 @@ class MultiModalGenerator:
     def cross_modal_generate(self, source_modality: str, target_modality: str, 
                            input_data: torch.Tensor, **kwargs) -> torch.Tensor:
         """Cross-modal generation (e.g., image to audio, text to video) with 2025 mandatory watermark"""
-        from tools.watermark import watermark_manager
+        from tools.infer.watermark import watermark_manager
         
         condition = GenerationCondition()
         
@@ -4838,7 +4853,7 @@ class MultiModalGenerator:
     def multimodal_fusion_generate(self, inputs: Dict[str, torch.Tensor], 
                                  target_modality: str, **kwargs) -> torch.Tensor:
         """Generate using multimodal fusion of all input modalities with 2025 mandatory watermark"""
-        from tools.watermark import watermark_manager
+        from tools.infer.watermark import watermark_manager
         
         condition = GenerationCondition()
         
@@ -4931,7 +4946,7 @@ class MCPGenerationServer:
                 "request_id": str(uuid.uuid4())
             }
             
-            from tools.watermark import watermark_manager
+            from tools.infer.watermark import watermark_manager
             watermarked_result = watermark_manager.add_watermark(result, metadata)
             
             # Enhanced response with metadata and watermark info
@@ -5042,7 +5057,7 @@ class MCPGenerationServer:
         @server.call_tool()
         async def cross_modal_generate(source_modality: str, target_modality: str, input_data: List, **kwargs):
             """Cross-modal generation endpoint with 2025 mandatory watermark"""
-            from tools.watermark import watermark_manager
+            from tools.infer.watermark import watermark_manager
             
             try:
                 input_tensor = torch.tensor(input_data)
@@ -5078,7 +5093,7 @@ class MCPGenerationServer:
         @server.call_tool()
         async def multimodal_fusion_generate(target_modality: str, **inputs):
             """Multimodal fusion generation endpoint with 2025 mandatory watermark"""
-            from tools.watermark import watermark_manager
+            from tools.infer.watermark import watermark_manager
             
             try:
                 # Parse input tensors

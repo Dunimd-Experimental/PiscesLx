@@ -71,8 +71,27 @@ try:
 except Exception as e:
     print(f"Warning: Error during module imports: {e}")
 
+# Initialize benchmark module
+PiscesL1Benchmark = None
+create_benchmark_config = None
+run_single_benchmark = None
+compare_multiple_models = None
+
+try:
+    if 'setup' not in sys.argv:
+        from .benchmark import (
+            PiscesL1Benchmark,
+            create_benchmark_config,
+            run_single_benchmark,
+            compare_multiple_models
+        )
+except ImportError as e:
+    print(f"Warning: Could not import benchmark module: {e}")
+
 __all__ = [
     'read_config',
     'watermark_manager', 'watermark_text',
     'get_cache_manager', 'PiscesLxCoreConfigManagerFacade',
+    'PiscesL1Benchmark', 'create_benchmark_config',
+    'run_single_benchmark', 'compare_multiple_models',
 ]

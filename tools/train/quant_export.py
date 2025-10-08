@@ -19,8 +19,8 @@
 # limitations under the License.
 
 from typing import List
-from utils import PiscesLxCoreLog as LOG
-RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+logger = PiscesLxCoreLog("pisceslx.data.download")
 from utils import PiscesLxCoreQuantizationFacade
 
 class PiscesLxToolsQuantExporter:
@@ -63,7 +63,7 @@ class PiscesLxToolsQuantExporter:
             SystemExit: If ckpt_path or save_path is not provided.
         """
         if not ckpt_path or not save_path:
-            ERROR("quantize requires ckpt_path and save_path")
+            logger.error("quantize requires ckpt_path and save_path")
             raise SystemExit(1)
         # Resolve bits: config-first, then CLI-provided argument
         resolved_bits = None
@@ -81,14 +81,14 @@ class PiscesLxToolsQuantExporter:
         try:
             resolved_bits = int(resolved_bits)
         except Exception:
-            ERROR("quant_bits must be integer (4 or 8)")
+            logger.error("quant_bits must be integer (4 or 8)")
             raise SystemExit(1)
         if resolved_bits not in (4, 8):
-            ERROR("quant_bits must be one of {4, 8}")
+            logger.error("quant_bits must be one of {4, 8}")
             raise SystemExit(1)
 
-        RIGHT(f"Quantizing model: bits={resolved_bits}, ckpt={ckpt_path} -> {save_path}")
-        RIGHT(f"Quantizing checkpoint {ckpt_path} -> {save_path} (bits={resolved_bits})")
+        logger.success(f"Quantizing model: bits={resolved_bits}, ckpt={ckpt_path} -> {save_path}")
+        logger.success(f"Quantizing checkpoint {ckpt_path} -> {save_path} (bits={resolved_bits})")
 
         # Use unified utils.quantization to perform quantization
         # Attempt to infer model_size from cfg if available
@@ -113,19 +113,17 @@ class PiscesLxToolsQuantExporter:
         """
         import os
         import torch
-        from utils import PiscesLxCoreLog as LOG
-        RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
 
         if not formats:
             return
         if not save_path or not os.path.exists(save_path):
-            ERROR(f"export: save_path not found: {save_path}")
+            logger.error(f"export: save_path not found: {save_path}")
             raise SystemExit(1)
 
         want_safetensors = any(f.lower() == 'safetensors' for f in formats)
         other_formats = [f for f in formats if f.lower() != 'safetensors']
         if other_formats:
-            RIGHT(f"Export formats not yet supported and will be skipped: {other_formats}")
+            logger.success(f"Export formats not yet supported and will be skipped: {other_formats}")
 
         if not want_safetensors:
             return
@@ -133,15 +131,15 @@ class PiscesLxToolsQuantExporter:
         try:
             from safetensors.torch import save_file as save_safetensors
         except Exception as e:
-            ERROR(f"safetensors not available: {e}. Please install 'safetensors' package.")
+            logger.error(f"safetensors not available: {e}. Please install 'safetensors' package.")
             raise SystemExit(1)
 
-        RIGHT(f"Exporting to safetensors from: {save_path}")
+        logger.success(f"Exporting to safetensors from: {save_path}")
         obj = torch.load(save_path, map_location='cpu')
         # Accept either raw state_dict or checkpoint with 'model'
         state_dict = obj['model'] if isinstance(obj, dict) and 'model' in obj else obj
         if not isinstance(state_dict, dict):
-            ERROR("export: state_dict must be a dict of tensors")
+            logger.error("export: state_dict must be a dict of tensors")
             raise SystemExit(1)
 
         # Filter to tensors only; drop non-tensor entries to satisfy safetensors
@@ -150,10 +148,10 @@ class PiscesLxToolsQuantExporter:
             if isinstance(v, torch.Tensor):
                 tensor_dict[k] = v.detach().cpu()
         if not tensor_dict:
-            ERROR("export: no tensor parameters found to export")
+            logger.error("export: no tensor parameters found to export")
             raise SystemExit(1)
 
         out_path = os.path.splitext(save_path)[0] + '.safetensors'
         os.makedirs(os.path.dirname(out_path) or '.', exist_ok=True)
         save_safetensors(tensor_dict, out_path)
-        RIGHT(f"Safetensors export complete: {out_path}")
+        logger.success(f"Safetensors export complete: {out_path}")

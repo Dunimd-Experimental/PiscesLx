@@ -20,7 +20,8 @@
 
 import sys
 from pathlib import Path
-from utils import PiscesLxCoreLog as LOG, PiscesLxCoreUL
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager, PiscesLxCoreUL
+logger = PiscesLxCoreLog("pisceslx.data.download")
 
 def show_version():
     """
@@ -34,14 +35,14 @@ def show_version():
         # Retrieve the current version of the project.
         current_version = PiscesLxCoreUL.get_current_version(project_root)
         if not current_version:
-            LOG.error("Could not determine current version")
+            logger.error("Could not determine current version")
             sys.exit(1)
         
         # Display the version information and changelog.
         PiscesLxCoreUL.display_version_changelog(project_root, current_version)
         
     except Exception as e:
-        LOG.error(f"Failed to display version information: {e}")
+        logger.error(f"Failed to display version information: {e}")
         sys.exit(1)
 
 def _display_version_changelog(project_root: Path, current_version: str):
@@ -57,14 +58,14 @@ def _display_version_changelog(project_root: Path, current_version: str):
     
     # Skip changelog display if the UL directory does not exist.
     if not ul_dir.exists():
-        LOG.debug("UL directory not found, skipping changelog display")
+        logger.debug("UL directory not found, skipping changelog display")
         return
     
     try:
         # Convert the version string to the UL filename format (e.g., "1.0.0150" -> "100150.UL").
         version_parts = current_version.split('.')
         if len(version_parts) != 3:
-            LOG.debug(f"Invalid version format: {current_version}")
+            logger.debug(f"Invalid version format: {current_version}")
             return
         
         # Format the version components into the UL filename: major + minor (2 digits) + patch (3 digits).
@@ -74,7 +75,7 @@ def _display_version_changelog(project_root: Path, current_version: str):
             patch = int(version_parts[2])
             ul_filename = f"{major:01d}{minor:02d}{patch:03d}.UL"
         except ValueError:
-            LOG.debug(f"Could not convert version to UL filename: {current_version}")
+            logger.debug(f"Could not convert version to UL filename: {current_version}")
             return
         
         # Construct the path to the UL file.
@@ -82,7 +83,7 @@ def _display_version_changelog(project_root: Path, current_version: str):
         
         # Skip changelog display if the UL file does not exist.
         if not ul_file_path.exists():
-            LOG.debug(f"\nNo changelog found for version {current_version}")
+            logger.debug(f"\nNo changelog found for version {current_version}")
             return
         
         # Read the content of the UL file.
@@ -106,7 +107,7 @@ def _display_version_changelog(project_root: Path, current_version: str):
                 break
         
         # Print the header of the changelog.
-        LOG.debug(f"Changelog for Version {current_version}")
+        logger.debug(f"Changelog for Version {current_version}")
         
         if changelog_lines:
             for item in changelog_lines:
@@ -114,8 +115,8 @@ def _display_version_changelog(project_root: Path, current_version: str):
                 clean_item = item.lstrip('- ').strip()
                 print(f"  🔸 {clean_item}")
         else:
-            LOG.debug("No changelog items found")
+            logger.debug("No changelog items found")
         
     except Exception as e:
-        LOG.debug(f"Error reading changelog: {e}")
-        LOG.error(f"\nFailed to read changelog for version {current_version}")
+        logger.debug(f"Error reading changelog: {e}")
+        logger.error(f"\nFailed to read changelog for version {current_version}")

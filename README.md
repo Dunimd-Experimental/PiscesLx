@@ -397,7 +397,7 @@ python manage.py benchmark --benchmark mmlu --config configs/1.5B.json
 - **Q: How do I see all available commands?**  
   A: `python manage.py help`
 - **Q: How do I add a new dataset?**  
-  A: Add the dataset name to the `DATASETS` list in `data/download.py` and rerun `python manage.py download`. For custom datasets, the format should be JSONL with a `text` field or Parquet with `input_ids` and `labels` columns.
+  A: Add the dataset name to the `DATASETS` list in `tools/data/download.py` and rerun `python manage.py download`. For custom datasets, the format should be JSONL with a `text` field or Parquet with `input_ids` and `labels` columns.
 - **Q: Getting out-of-memory errors?**  
   A: Use a smaller model size, reduce sequence length, or enable 4-bit quantization via `python manage.py quantize` before training.
 - **Q: How to resume training?**  

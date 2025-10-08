@@ -47,7 +47,7 @@ import streamlit as st, pyarrow as pa, pyarrow.json as paj, json, jsonlines, ast
 # Import data module from root
 sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), '..', '..')))
 try:
-    from data import TEXT_FIELD_KEYS
+    from tools.data import TEXT_FIELD_KEYS
 except ImportError:
     TEXT_FIELD_KEYS = ["system", "user", "assistant", "instruction", "input", "output", "question", "answer"]
 

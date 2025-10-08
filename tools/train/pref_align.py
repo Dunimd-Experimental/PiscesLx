@@ -18,8 +18,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from utils import PiscesLxCoreLog as LOG
-RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug; WARNING = LOG.warning
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+logger = PiscesLxCoreLog("pisceslx.data.download")
 
 class PiscesLxToolsPreferenceTrainer:
     """Unifies SFT/DPO/PPO preference alignment under a single facade.
@@ -78,7 +78,7 @@ class PiscesLxToolsPreferenceTrainer:
         except SystemExit:
             raise
         except Exception as e:
-            ERROR(f"RLHF failed: {e}")
+            logger.error(f"RLHF failed: {e}")
             raise
 
     # ---------------- RLHF (PPO) integrated implementation ----------------
@@ -92,13 +92,13 @@ class PiscesLxToolsPreferenceTrainer:
         from trl import PPOTrainer, PPOConfig
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        RIGHT("Starting RLHF training with PPO (integrated)...")
+        logger.success("Starting RLHF training with PPO (integrated)...")
 
         # -------- Validate and normalize args --------
         args = self._validate_rlhf_args(args)
 
         if not hasattr(args, 'model_path') or not args.model_path:
-            ERROR("Model path --model_path must be specified")
+            logger.error("Model path --model_path must be specified")
             raise SystemExit(1)
 
         # -------- Load model/tokenizer --------
@@ -133,9 +133,9 @@ class PiscesLxToolsPreferenceTrainer:
         try:
             from datasets import load_dataset
             dataset = load_dataset(args.rlhf_dataset, split="train")
-            RIGHT(f"Loaded RLHF dataset: {args.rlhf_dataset}")
+            logger.success(f"Loaded RLHF dataset: {args.rlhf_dataset}")
         except Exception as e:
-            ERROR(f"Failed to load RLHF dataset: {e}")
+            logger.error(f"Failed to load RLHF dataset: {e}")
             raise SystemExit(1)
 
         # -------- Reward function --------
@@ -247,29 +247,29 @@ class PiscesLxToolsPreferenceTrainer:
                         with torch.cuda.amp.autocast(enabled=True):
                             stats = ppo_trainer.step(query_tensors, response_tensors, rewards)
                         if torch.isnan(rewards).any() or torch.isinf(rewards).any():
-                            ERROR(f"Numerical instability detected in rewards at batch {batch_idx}")
+                            logger.error(f"Numerical instability detected in rewards at batch {batch_idx}")
                             rewards = torch.nan_to_num(rewards, nan=1.0, posinf=2.0, neginf=0.0)
                         epoch_rewards.append(rewards.mean().item())
                         total_steps += 1
                         if total_steps % 10 == 0:
-                            DEBUG(f"Step {total_steps}, Reward: {rewards.mean():.4f}, KL: {stats.get('objective/kl', 0):.4f}")
+                            logger.debug(f"Step {total_steps}, Reward: {rewards.mean():.4f}, KL: {stats.get('objective/kl', 0):.4f}")
                             if stats.get('objective/kl', 0) > ppo_config.target_kl:
-                                WARNING(f"KL divergence {stats['objective/kl']:.4f} exceeded target {ppo_config.target_kl}, considering early stopping")
+                                logger.warning(f"KL divergence {stats['objective/kl']:.4f} exceeded target {ppo_config.target_kl}, considering early stopping")
                     except RuntimeError as e:
                         if "out of memory" in str(e).lower():
-                            ERROR(f"OOM at batch {batch_idx}, clearing cache and continuing")
+                            logger.error(f"OOM at batch {batch_idx}, clearing cache and continuing")
                             torch.cuda.empty_cache()
                             continue
                         else:
-                            ERROR(f"Runtime error in batch {batch_idx}: {e}")
+                            logger.error(f"Runtime error in batch {batch_idx}: {e}")
                             continue
                     except Exception as e:
-                        ERROR(f"Error in batch {batch_idx}: {e}")
+                        logger.error(f"Error in batch {batch_idx}: {e}")
                         continue
                 avg_reward = sum(epoch_rewards) / len(epoch_rewards) if epoch_rewards else 0
-                RIGHT(f"Epoch {epoch+1}/{args.rlhf_epochs} completed, Avg Reward: {avg_reward:.4f}")
+                logger.success(f"Epoch {epoch+1}/{args.rlhf_epochs} completed, Avg Reward: {avg_reward:.4f}")
         except Exception as e:
-            ERROR(f"Critical error during RLHF training: {e}")
+            logger.error(f"Critical error during RLHF training: {e}")
             raise
 
         # -------- Save trained model (optional) --------
@@ -278,11 +278,11 @@ class PiscesLxToolsPreferenceTrainer:
             try:
                 model.save_pretrained(output_path)
                 tokenizer.save_pretrained(output_path)
-                RIGHT(f"RLHF model saved to: {output_path}")
+                logger.success(f"RLHF model saved to: {output_path}")
             except Exception as e:
-                ERROR(f"Error saving model: {e}")
+                logger.error(f"Error saving model: {e}")
                 raise
-        RIGHT("RLHF training completed successfully!")
+        logger.success("RLHF training completed successfully!")
 
     def _validate_rlhf_args(self, args):
         """Validate/normalize RLHF arguments (behavior-preserving)."""

@@ -25,8 +25,8 @@ import torch
 import warnings
 from utils import PiscesLxCoreEnhancedCacheManager
 from utils.device import PiscesLxCoreDeviceRunner, PiscesLxCoreDeviceManager, PiscesLxCoreDeviceFacade
-from utils import PiscesLxCoreLog as LOG, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
-RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+from utils import PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
 
 _HOOKS = None
 _PROFILER = None
@@ -85,6 +85,9 @@ def setup_distributed_training():
     import torch.distributed as dist
     from utils.device.dist import PiscesLxCoreDistConfig, PiscesLxCoreDistPlanner
     
+    # Initialize logger for this function
+    logger = PiscesLxCoreLog("pisceslx.tools.train.impl.setup_distributed_training")
+    
     # Automatically detect distributed training environment variables
     local_rank = int(os.environ.get('LOCAL_RANK', -1))
     world_size = int(os.environ.get('WORLD_SIZE', 1))
@@ -132,7 +135,7 @@ def setup_distributed_training():
               world_size=world_size, rank=rank, local_rank=local_rank,
               dp_size=dp_size, pp_size=pp_size, mp_size=mp_size)
             
-        RIGHT(f"3D Parallel: DP={dp_size}, PP={pp_size}, MP={mp_size}, rank {rank}/{world_size}")
+        logger.info(f"3D Parallel: DP={dp_size}, PP={pp_size}, MP={mp_size}, rank {rank}/{world_size}")
     else:
         # Single-GPU or multi-GPU non-distributed mode - use utils device facade
         device_facade = PiscesLxCoreDeviceFacade()
@@ -140,7 +143,7 @@ def setup_distributed_training():
         
         if device_config.get('device_type') == 'cpu':
             device = torch.device('cpu')
-            RIGHT("Training mode: CPU fallback (via device orchestrator)")
+            logger.info("Training mode: CPU fallback (via device orchestrator)")
         else:
             gpu_ids = device_config.get('gpu_ids', [])
             if gpu_ids:
@@ -148,7 +151,7 @@ def setup_distributed_training():
                 torch.cuda.set_device(gpu_ids[0])
             else:
                 device = torch.device('cuda')
-            RIGHT(f"Training mode: {device_config.get('strategy', 'single_gpu')}")
+            logger.info(f"Training mode: {device_config.get('strategy', 'single_gpu')}")
         
         # Emit device setup event for observability
         _emit("train.device.setup", device_config=device_config)
@@ -181,6 +184,9 @@ def create_ddp_model(model, device, is_distributed, local_rank):
     """
     from utils.device import PiscesLxCoreModelParallelizer
     
+    # Initialize logger for this function
+    logger = PiscesLxCoreLog("pisceslx.tools.train.impl.create_ddp_model")
+    
     if is_distributed:
         # Move the model to the specified device with utils-enhanced placement
         model = model.to(device)
@@ -208,7 +214,7 @@ def create_ddp_model(model, device, is_distributed, local_rank):
         # If multiple GPUs are available but not using distributed training, use DataParallel
         gpu_count = torch.cuda.device_count()
         if gpu_count > 1:
-            RIGHT(f"Detected {gpu_count} GPUs, using DataParallel")
+            logger.info(f"Detected {gpu_count} GPUs, using DataParallel")
             
             # Emit multi-GPU setup event for observability
             _emit("train.model.dataparallel", gpu_count=gpu_count)
@@ -238,6 +244,9 @@ def create_dataloader(dataset, batch_size, is_distributed, world_size=1, rank=0,
     import torch
     from torch.utils.data import DistributedSampler
     import multiprocessing as mp
+    
+    # Initialize logger for this function
+    logger = PiscesLxCoreLog("pisceslx.tools.train.impl.create_dataloader")
     
     # Handle empty dataset to avoid deadlock
     if len(dataset) == 0:
@@ -363,7 +372,7 @@ def _train_impl(args):
         args: Command line arguments or configuration object containing training parameters.
     """
     import torch
-    from data.dataset import PiscesDataset
+    from tools.data.dataset import PiscesDataset
     from torch.utils.data import DataLoader
     from model.tokenizer import get_tokenizer
     from model import PiscesModel, PiscesConfig
@@ -371,11 +380,14 @@ def _train_impl(args):
     from torch.optim.lr_scheduler import ReduceLROnPlateau
     from transformers import get_linear_schedule_with_warmup
     
+    # Initialize logger for this function
+    logger = PiscesLxCoreLog("pisceslx.tools.train.impl._train_impl")
+    
     # Get the model size and construct the configuration file path
     model_size = getattr(args, 'model_size', '0.5B').upper()
     config_path = f"configs/{model_size}.json"
     if not os.path.exists(config_path):
-        ERROR(f"Config file {config_path} not found. Please provide a valid --model_size.")
+        logger.error(f"Config file {config_path} not found. Please provide a valid --model_size.")
         sys.exit(1)
 
     # Load the full configuration file
@@ -383,7 +395,7 @@ def _train_impl(args):
         full_config = json.load(f)
     
     if 'training_config' not in full_config:
-        ERROR(f"training_config not found in {config_path}")
+        logger.error(f"training_config not found in {config_path}")
         sys.exit(1)
     
     # Extract training configuration parameters (config-first, with legacy defaults)
@@ -416,20 +428,20 @@ def _train_impl(args):
         try:
             quant_bits = int(args.quant_bits)
         except Exception:
-            ERROR("quant_bits must be integer; falling back to config/default")
+            logger.error("quant_bits must be integer; falling back to config/default")
         
     if hasattr(args, 'force_quant') and args.force_quant:
         force_quant = True
-        RIGHT(f"Command line override: force_quant = true ({quant_bits}-bit)")
+        logger.info(f"Command line override: force_quant = true ({quant_bits}-bit)")
     if hasattr(args, 'force_lora') and args.force_lora:
         force_lora = True
-        RIGHT("Command line override: force_lora = true")
+        logger.info("Command line override: force_lora = true")
     if hasattr(args, 'quant') and args.quant:
         force_quant = True
-        RIGHT(f"Command line override: quant = true ({quant_bits}-bit)")
+        logger.info(f"Command line override: quant = true ({quant_bits}-bit)")
     if hasattr(args, 'no_quant') and args.no_quant:
         force_quant = False
-        RIGHT("Command line override: force_quant = false")
+        logger.info("Command line override: force_quant = false")
     
     # Honor epochs from training_config. epochs=0 means no epoch cap (auto convergence)
     cache_manager = get_cache_manager()
@@ -506,18 +518,18 @@ def _train_impl(args):
     dataset_list = []
     if hasattr(args, 'dataset') and args.dataset:
         dataset_list = [args.dataset]
-        RIGHT(f"Using command line dataset: {args.dataset}")
+        logger.info(f"Using command line dataset: {args.dataset}")
     else:
         cache_manager = get_cache_manager()
         data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
         model_txt = os.path.join(data_cache_dir, "model.txt")
         if not os.path.exists(model_txt):
-            ERROR(f"{model_txt} not found! Please create it with one dataset name per line, or use --dataset argument.")
+            logger.error(f"{model_txt} not found! Please create it with one dataset name per line, or use --dataset argument.")
             sys.exit(1)
         with open(model_txt, "r", encoding="utf-8") as f:
             dataset_list = [line.strip() for line in f if line.strip() and not line.strip().startswith('#')]
         if not dataset_list:
-            ERROR(f"No dataset names found in {model_txt}! Please use --dataset argument instead.")
+            logger.error(f"No dataset names found in {model_txt}! Please use --dataset argument instead.")
             sys.exit(1)
     
     # Set up distributed training
@@ -529,7 +541,7 @@ def _train_impl(args):
         if effective_batch_size < 1:
             effective_batch_size = 1
             batch_size = world_size
-        RIGHT(f"Distributed training: global batch_size={batch_size}, per-GPU batch_size={effective_batch_size}")
+        logger.info(f"Distributed training: global batch_size={batch_size}, per-GPU batch_size={effective_batch_size}")
     else:
         # Use device orchestrator's batch_size directly unless CLI explicitly set one
         try:
@@ -555,17 +567,17 @@ def _train_impl(args):
     scaler = torch.amp.GradScaler('cuda') if _mp_enabled else None
     # Apply silently without printing suggestions
         
-    RIGHT(f"Device setup completed: {device}")
-    RIGHT("Loading PiscesConfig...")
+    logger.info(f"Device setup completed: {device}")
+    logger.info("Loading PiscesConfig...")
     config = f"configs/{model_size}.json"
     if not os.path.exists(config):
-        ERROR(f"Config file {config} not found. Please provide a valid --model_size")
+        logger.error(f"Config file {config} not found. Please provide a valid --model_size")
         sys.exit(1)
-    RIGHT(f"Loading config file: {config}")
+    logger.info(f"Loading config file: {config}")
     cfg = PiscesConfig.from_json(config)
-    RIGHT("PiscesConfig loaded.")
+    logger.info("PiscesConfig loaded.")
 
-    RIGHT("Initializing PiscesModel with Reasoner...")
+    logger.info("Initializing PiscesModel with Reasoner...")
     _emit('on_train_start', args=args)
     
     # Always - on Reasoner: Tokenizer setup
@@ -597,23 +609,23 @@ def _train_impl(args):
                     bnb_4bit_use_double_quant=True,
                     llm_int8_enable_fp32_cpu_offload=True
                 )
-                RIGHT(f"Using 2 - bit quantization (experimental, based on 4 - bit+compression)")
+                logger.info(f"Using 2 - bit quantization (experimental, based on 4 - bit+compression)")
             elif quant_bits == 4:
                 quant_config = BitsAndBytesConfig(
                     load_in_4bit=True,
                     bnb_4bit_compute_dtype=torch.float16,
-                    bnb_4bit_quant_type="nf4",
-                    bnb_4bit_use_double_quant=True
+                    bnb_4bit_use_double_quant=True,
+                    bnb_4bit_quant_type="nf4"
                 )
-                RIGHT(f"Using 4 - bit quantization (NF4)")
+                logger.info(f"Using 4 - bit quantization (NF4)")
             elif quant_bits == 8:
                 quant_config = BitsAndBytesConfig(
                     load_in_8bit=True,
                     llm_int8_enable_fp32_cpu_offload=False
                 )
-                RIGHT(f"Using 8 - bit quantization (INT8)")
+                logger.info(f"Using 8 - bit quantization (INT8)")
             else:
-                ERROR(f"Unsupported quantization bits: {quant_bits}. Supported: 2, 4, 8")
+                logger.error(f"Unsupported quantization bits: {quant_bits}. Supported: 2, 4, 8")
                 sys.exit(1)
         model = PiscesModel(cfg, quantization_config=quant_config) if quant_config else PiscesModel(cfg)
         if force_lora:
@@ -640,18 +652,18 @@ def _train_impl(args):
         raise ValueError("Special reasoning tokens could not be added to the tokenizer.")
     model.reasoner.start_thinking_id = start_id
     model.reasoner.end_thinking_id = end_id
-    RIGHT(f"Reasoner is integral and configured with token IDs: start={start_id}, end={end_id}")
+    logger.info(f"Reasoner is integral and configured with token IDs: start={start_id}, end={end_id}")
     
     if hasattr(model, 'gradient_checkpointing_enable'):
         model.gradient_checkpointing_enable()
-        RIGHT(f"Gradient Checkpointing enabled.")
+        logger.info(f"Gradient Checkpointing enabled.")
         
     model = model.to(device)
-    RIGHT("PiscesModel initialized.")
+    logger.info("PiscesModel initialized.")
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-        RIGHT(f"Using {torch.cuda.device_count()} GPUs")
+        logger.info(f"Using {torch.cuda.device_count()} GPUs")
         model = torch.nn.DataParallel(model)
-    RIGHT("Initializing optimizer and scheduler...")
+    logger.info("Initializing optimizer and scheduler...")
     
     def get_parameter_groups(model, base_lr):
         """
@@ -752,7 +764,7 @@ def _train_impl(args):
         if scheduler_obj is not None:
             modality_schedulers[modality] = scheduler_obj
     
-    RIGHT("Optimizer and modality-aware schedulers ready.")
+    logger.info("Optimizer and modality-aware schedulers ready.")
     
     clip_cfg = training_config.get('grad_clip', {})
     grad_clipper = AdaptiveGradientClipper(
@@ -769,34 +781,34 @@ def _train_impl(args):
     resume_ckpt = getattr(args, 'resume_ckpt', None)
     start_epoch = 0
     if resume_ckpt and os.path.exists(resume_ckpt):
-        RIGHT(f"Resuming from checkpoint: {resume_ckpt}")
+        logger.info(f"Resuming from checkpoint: {resume_ckpt}")
         start_epoch = load_ckpt(resume_ckpt, model, optimizer)
-        RIGHT(f"Resumed at epoch {start_epoch}")
+        logger.info(f"Resumed at epoch {start_epoch}")
 
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
-            RIGHT(f"Learning rate auto - reset to {lr}")
+            logger.info(f"Learning rate auto - reset to {lr}")
         min_lr_threshold = lr * 0.5
         for param_group in optimizer.param_groups:
             if param_group['lr'] < min_lr_threshold:
                 param_group['lr'] = lr
-                RIGHT(f"Learning rate auto - reset to {lr}")
+                logger.info(f"Learning rate auto - reset to {lr}")
     for dataset in dataset_list:
-        DEBUG(f"\n==============================")
-        RIGHT(f"Training dataset: {dataset}")
-        RIGHT(f"Batch size: {batch_size}, Epochs: {epochs}, LR: {lr}")
+        logger.debug(f"\n==============================")
+        logger.info(f"Training dataset: {dataset}")
+        logger.info(f"Batch size: {batch_size}, Epochs: {epochs}, LR: {lr}")
         cache_manager = get_cache_manager()
         data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
         cache_path = os.path.join(data_cache_dir, dataset)
         if not os.path.exists(cache_path):
-            ERROR(f"Local dataset not found: {cache_path}")
+            logger.error(f"Local dataset not found: {cache_path}")
             continue
         train_ds = PiscesDataset(subset=dataset, split="train", config=cfg)
         if len(train_ds) == 0:
-            DEBUG(f"Warning: Dataset '{dataset}' is empty after filtering. Skipping.")
+            logger.debug(f"Warning: Dataset '{dataset}' is empty after filtering. Skipping.")
             continue
-        RIGHT(f"Dataset loaded successfully, size: {len(train_ds)}")
-        RIGHT("Creating DataLoader...")
+        logger.info(f"Dataset loaded successfully, size: {len(train_ds)}")
+        logger.info("Creating DataLoader...")
         rank = int(os.environ.get('RANK', 0))
         train_loader = create_dataloader(
             train_ds,
@@ -806,9 +818,9 @@ def _train_impl(args):
             rank=rank,
             local_rank=local_rank if is_distributed else 0
         )
-        RIGHT("DataLoader created successfully")
+        logger.info("DataLoader created successfully")
         os.makedirs(save_dir, exist_ok=True)
-        RIGHT(f"Starting training loop...")
+        logger.info(f"Starting training loop...")
         model.train()
         scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
         torch.cuda.empty_cache()
@@ -824,7 +836,7 @@ def _train_impl(args):
                 if is_distributed:
                     train_loader.sampler.set_epoch(epoch)
                 
-                DEBUG(f"Starting epoch {epoch+1}")
+                logger.debug(f"Starting epoch {epoch+1}")
                 _emit('on_epoch_start', epoch=epoch+1)
                 total_loss = 0
                 step_loss = 0
@@ -866,7 +878,7 @@ def _train_impl(args):
                             if step % 100 == 0:
                                 uncertainties = torch.exp(model.log_vars)
                                 for i, uncertainty in enumerate(uncertainties):
-                                    DEBUG(f"Task {i} uncertainty: {uncertainty.item():.4f}")
+                                    logger.debug(f"Task {i} uncertainty: {uncertainty.item():.4f}")
                         
                         if loss is None and outputs.get("loss") is not None:
                             loss = outputs.get("loss")
@@ -907,9 +919,9 @@ def _train_impl(args):
                                 if step % 50 == 0:
                                     current_threshold = grad_clipper.get_current_threshold()
                                     clip_ratio = (1.0 - clip_coef) * 100 if was_clipped else 0.0
-                                    RIGHT(f"GradClip: norm={total_norm:.4f}, threshold={current_threshold:.4f}, clipped={was_clipped}, clip_ratio={clip_ratio:.1f}%")
+                                    logger.info(f"GradClip: norm={total_norm:.4f}, threshold={current_threshold:.4f}, clipped={was_clipped}, clip_ratio={clip_ratio:.1f}%")
                     else:
-                        DEBUG(f"Warning: Skipping step {step} due to invalid loss (None or no grad).")
+                        logger.debug(f"Warning: Skipping step {step} due to invalid loss (None or no grad).")
                         continue
 
                     if loss is not None:
@@ -925,10 +937,10 @@ def _train_impl(args):
                             if step % 10 == 0:
                                 effective_batch = batch_size * current_accum
                                 avg_loss = total_loss / (step + 1)
-                                RIGHT(f"Epoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e} | Accum: {current_accum} | Batch: {effective_batch}")
+                                logger.info(f"Epoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e} | Accum: {current_accum} | Batch: {effective_batch}")
                 
                 if not train_loader:
-                    DEBUG("Skipping epoch end logic for empty loader.")
+                    logger.debug("Skipping epoch end logic for empty loader.")
                     continue
 
                 if step_loss > 0:
@@ -945,21 +957,21 @@ def _train_impl(args):
                     if not is_distributed or local_rank == 0:
                         current_threshold = grad_clipper.get_current_threshold()
                         clip_ratio = (1.0 - clip_coef) * 100 if was_clipped else 0.0
-                        RIGHT(f"Final GradClip: norm={total_norm:.4f}, threshold={current_threshold:.4f}, clipped={was_clipped}, clip_ratio={clip_ratio:.1f}%")
+                        logger.info(f"Final GradClip: norm={total_norm:.4f}, threshold={current_threshold:.4f}, clipped={was_clipped}, clip_ratio={clip_ratio:.1f}%")
 
                 avg_loss = total_loss / (step + 1)
                 
                 if not is_distributed or local_rank == 0:
                     checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
                     save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
-                    RIGHT(f"Checkpoint saved: {checkpoint_path}")
+                    logger.info(f"Checkpoint saved: {checkpoint_path}")
                     _emit('on_checkpoint_saved', path=checkpoint_path, epoch=epoch+1)
-                    RIGHT(f"Epoch {epoch + 1} complete | Final accum: {grad_accumulator.get_current_accum()} | Avg grad norm: {sum(grad_accumulator.grad_norm_history[-5:])/min(5, len(grad_accumulator.grad_norm_history)):.4f}")
+                    logger.info(f"Epoch {epoch + 1} complete | Final accum: {grad_accumulator.get_current_accum()} | Avg grad norm: {sum(grad_accumulator.grad_norm_history[-5:])/min(5, len(grad_accumulator.grad_norm_history)):.4f}")
                     
                     if epoch+1 == min_plateau_epoch:
                         from torch.optim.lr_scheduler import ReduceLROnPlateau
                         scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-8)
-                        RIGHT(f"ReduceLROnPlateau scheduler enabled after {min_plateau_epoch} epochs.")
+                        logger.info(f"ReduceLROnPlateau scheduler enabled after {min_plateau_epoch} epochs.")
                     
                     # Stopping criteria: loss-driven with optional epoch caps.
                     # If epochs <= 0, epoch cap is disabled. If max_epochs_stop <= 0, that cap is disabled.
@@ -967,30 +979,30 @@ def _train_impl(args):
                     reached_max_epochs = (epochs > 0 and (epoch + 1) >= epochs)
                     reached_max_epochs_stop = (max_epochs_stop > 0 and (epoch + 1) >= max_epochs_stop)
                     if reached_loss or reached_max_epochs or reached_max_epochs_stop:
-                        RIGHT(f"Dataset {dataset} training complete (loss={avg_loss:.4f}, epochs={epoch+1}).")
+                        logger.info(f"Dataset {dataset} training complete (loss={avg_loss:.4f}, epochs={epoch+1}).")
                         _emit('on_epoch_end', epoch=epoch+1, avg_loss=float(avg_loss))
                         stop_training = True
                     else:
                         _emit('on_epoch_end', epoch=epoch+1, avg_loss=float(avg_loss))
                         epoch += 1
         except KeyboardInterrupt:
-            ERROR("Training interrupted by user (Ctrl - C). Saving checkpoint...")
+            logger.error("Training interrupted by user (Ctrl - C). Saving checkpoint...")
             interrupt_ckpt = f"{save_dir}/latest_interrupt.pt"
             save_ckpt(model, optimizer, epoch + 1, interrupt_ckpt)
-            RIGHT(f"Checkpoint saved: {interrupt_ckpt}")
-            RIGHT(f"You can resume training with: python manage.py train --model_size {model_size} --resume_ckpt {interrupt_ckpt}")
+            logger.info(f"Checkpoint saved: {interrupt_ckpt}")
+            logger.info(f"You can resume training with: python manage.py train --model_size {model_size} --resume_ckpt {interrupt_ckpt}")
             _emit('on_train_interrupted', epoch=epoch+1, ckpt=interrupt_ckpt)
             sys.exit(0)
-        RIGHT(f"Dataset {dataset} training completed!")
+        logger.info(f"Dataset {dataset} training completed!")
 
-    RIGHT("All datasets finished. Saving final model weights...")
+    logger.info("All datasets finished. Saving final model weights...")
 
     final_weight_path = os.path.join(save_dir, f"pisces-l1-{model_size.lower()}-final.pt")
     if hasattr(model, "module"):
         torch.save(model.module.state_dict(), final_weight_path)
     else:
         torch.save(model.state_dict(), final_weight_path)
-    RIGHT(f"All datasets finished. Final model weights saved to: {final_weight_path}")
+    logger.info(f"All datasets finished. Final model weights saved to: {final_weight_path}")
     _emit('on_train_end', final_weight_path=final_weight_path)
 
     # Optional: auto export to safetensors if enabled in config
@@ -1002,7 +1014,7 @@ def _train_impl(args):
         except SystemExit:
             raise
         except Exception as e:
-            ERROR(f"Auto safetensors export failed: {e}")
+            logger.error(f"Auto safetensors export failed: {e}")
 
 class AdaptiveGradientClipper:
     """

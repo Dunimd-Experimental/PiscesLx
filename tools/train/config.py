@@ -21,8 +21,8 @@
 import json
 from typing import Any, Optional
 from dataclasses import dataclass
-from utils import PiscesLxCoreLog as LOG, PiscesLxCoreConfigManager
-DEBUG = LOG.debug
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+logger = PiscesLxCoreLog("pisceslx.tools.train")
 
 @dataclass
 class PiscesLxToolsTrainConfig:

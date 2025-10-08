@@ -26,8 +26,6 @@ import platform
 from datetime import datetime
 from typing import Any, Optional, Dict, Tuple, List
 
-from utils import PiscesLxCoreLog as LOG
-RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
 from utils import PiscesLxCoreLog
 from utils import PiscesLxCoreObservabilityManager
 from utils import PiscesLxCoreHookBus

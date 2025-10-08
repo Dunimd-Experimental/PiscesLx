@@ -398,7 +398,7 @@ python manage.py benchmark --benchmark mmlu --config configs/1.5B.json
 - **问：如何查看所有可用命令？**
   答：`python manage.py help`
 - **问：如何添加新数据集？**
-  答：将数据集名称添加到`data/download.py`的`DATASETS`列表中，并重新运行`python manage.py download`。对于自定义数据集，格式应为带`text`字段的JSONL或带`input_ids`和`labels`列的Parquet。
+  答：将数据集名称添加到`tools/data/download.py`的`DATASETS`列表中，并重新运行`python manage.py download`。对于自定义数据集，格式应为带`text`字段的JSONL或带`input_ids`和`labels`列的Parquet。
 - **问：遇到内存不足错误？**
   答：使用更小的模型尺寸，减少序列长度，或通过`python manage.py quantize`在训练前启用4位量化。
 - **问：如何恢复训练？**

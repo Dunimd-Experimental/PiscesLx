@@ -21,7 +21,7 @@ import math
 import torch
 from torch import nn
 from .moe import MoELayer
-from utils import DEBUG, ERROR
+from utils.log.core import PiscesLxCoreLog
 import torch.nn.functional as F
 from .config import PiscesConfig
 from .multimodal import PiscesReasoner
@@ -32,6 +32,9 @@ from model.yarn_rope import YaRNRotaryEmbedding
 from .reasoner import MultiModalReasoningEnhancer
 from .multimodal import VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder, AgentEncoder, DynamicModalFusion, CrossModalAttention
 from model.speculative_decoder import SpeculativeDecoder, AdaptiveSpeculativeDecoder, SpeculativeConfig
+
+# 添加新的日志实例
+logger = PiscesLxCoreLog("Arctic.Model.Aurora")
 
 class UnifiedCacheManager:
     """
@@ -852,13 +855,11 @@ class TransformerBlock(nn.Module):
                         convert_linear_to_4bit(child)
             
             convert_linear_to_4bit(self)
-            try:
-                from utils import RIGHT
-                RIGHT("Fallback to 4-bit quantization successful")
-            except Exception:
-                pass
+            # 使用新的日志系统替换旧的日志调用
+            logger.info("Fallback to 4-bit quantization successful")
         except Exception as e:
-            ERROR(f"Fallback 4-bit quantization also failed: {e}")
+            # 使用新的日志系统替换旧的日志调用
+            logger.error(f"Fallback 4-bit quantization also failed: {e}")
         # No forward logic here; this method only converts modules.
     
     def _should_use_checkpoint(self):
@@ -994,7 +995,8 @@ class PiscesModel(nn.Module):
             lora_config (object, optional): Configuration for LoRA. Defaults to None.
         """
         super().__init__()
-        DEBUG("PiscesModel: __init__ start")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug("PiscesModel: __init__ start")
         self.cfg = cfg
         # Expose a transformers-style alias for downstream utilities
         self.config = cfg
@@ -1024,23 +1026,28 @@ class PiscesModel(nn.Module):
         })
         self.cache_manager = UnifiedCacheManager(cache_config)
         
-        DEBUG("PiscesModel: initializing embedding...")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug("PiscesModel: initializing embedding...")
         # Initialize token embedding layer
         self.embed = nn.Embedding(cfg.vocab_size, cfg.hidden_size, device=device, dtype=dtype)
-        DEBUG(f"PiscesModel: initializing {cfg.n_layer} transformer layers...")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug(f"PiscesModel: initializing {cfg.n_layer} transformer layers...")
         self.layers = nn.ModuleList([])
         for i in range(cfg.n_layer):
             if (i % 4 == 0) or (i == cfg.n_layer-1):
-                DEBUG(f"PiscesModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
+                # 使用新的日志系统替换旧的日志调用
+                logger.debug(f"PiscesModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
             # Add transformer blocks to the module list
             block = TransformerBlock(cfg, device=device, dtype=dtype, quantization_config=self.quantization_config)
             block.cache_manager = self.cache_manager
             block.layer_idx = i
             self.layers.append(block)
-        DEBUG("PiscesModel: initializing norm...")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug("PiscesModel: initializing norm...")
         # Initialize final normalization layer
         self.norm = RMSNorm(cfg.hidden_size)
-        DEBUG("PiscesModel: initializing multimodal encoders...")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug("PiscesModel: initializing multimodal encoders...")
         # Use unified VisionEncoder with NaViT native resolution support
         self.vision = VisionEncoder(cfg)
         self.video = VideoEncoder(cfg)
@@ -1052,7 +1059,8 @@ class PiscesModel(nn.Module):
         
         # Initialize dynamic modal fusion layer (share unified cache manager for consistent memory behavior)
         self.modal_fusion = DynamicModalFusion(cfg)
-        DEBUG("PiscesModel: initializing output heads...")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug("PiscesModel: initializing output heads...")
         # Initialize language model head
         self.lm_head = nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
         # Initialize task head
@@ -1064,26 +1072,31 @@ class PiscesModel(nn.Module):
         self.modal_token_count = getattr(cfg, 'modal_token_count', 8)
         self.fusion_proj = nn.Linear(cfg.hidden_size, cfg.hidden_size, bias=False, device=device, dtype=dtype)
         
-        DEBUG("PiscesModel: initializing reasoner...")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug("PiscesModel: initializing reasoner...")
         # Initialize reasoner
         self.reasoner = PiscesReasoner(cfg)
         # Initialize reasoning tokens for multi-path reasoning
         self.reasoner.initialize_reasoning_tokens(None)
         
         # Multi-modal reasoning enhancer for Arctic architecture
-        DEBUG("PiscesModel: initializing multi-modal reasoning enhancer...")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug("PiscesModel: initializing multi-modal reasoning enhancer...")
         self.mm_reasoning_enhancer = MultiModalReasoningEnhancer(cfg)
         
-        DEBUG("PiscesModel: initializing agent...")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug("PiscesModel: initializing agent...")
         from .multimodal import PiscesAgent
         self.agent = PiscesAgent(cfg, model=self)
         
         # Skipped global weight initialization to avoid lengthy CPU-bound stall.
         # self.apply(pisces_init_weights)
-        DEBUG("PiscesModel: skipped duplicate global weight initialization")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug("PiscesModel: skipped duplicate global weight initialization")
         
         # Initialize speculative decoder for efficient generation
-        DEBUG("PiscesModel: initializing speculative decoder...")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug("PiscesModel: initializing speculative decoder...")
         self.speculative_config = SpeculativeConfig(
             num_candidates=getattr(cfg, 'speculative_candidates', 4),
             draft_length=getattr(cfg, 'speculative_draft_length', 5),
@@ -1095,18 +1108,23 @@ class PiscesModel(nn.Module):
         self.speculative_decoder = AdaptiveSpeculativeDecoder(
             self.speculative_config, self, None
         )
-        DEBUG("PiscesModel: speculative decoder initialized")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug("PiscesModel: speculative decoder initialized")
         
         if lora_config is not None:
             try:
                 from peft import get_peft_model
                 self = get_peft_model(self, lora_config)
-                DEBUG("PiscesModel: LoRA adapters injected (peft)")
+                # 使用新的日志系统替换旧的日志调用
+                logger.debug("PiscesModel: LoRA adapters injected (peft)")
             except Exception as e:
-                ERROR(f"LoRA injection failed: {e}")
+                # 使用新的日志系统替换旧的日志调用
+                logger.error(f"LoRA injection failed: {e}")
         total_params = sum(p.numel() for p in self.parameters())
-        DEBUG(f"PiscesModel: total parameters = {total_params/1e6:.2f}M")
-        DEBUG("PiscesModel: __init__ end")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug(f"PiscesModel: total parameters = {total_params/1e6:.2f}M")
+        # 使用新的日志系统替换旧的日志调用
+        logger.debug("PiscesModel: __init__ end")
 
     def set_gradient_checkpointing(self, enabled: bool = True):
         """
@@ -1151,8 +1169,8 @@ class PiscesModel(nn.Module):
         
         # Note: The 'RIGHT' function is not defined, assuming it's a logging function
         try:
-            from utils.log import RIGHT
-            RIGHT(f"Resized token embeddings to {new_num_tokens}. Remember to update special token IDs in the reasoner.")
+            # 使用新的日志系统替换旧的日志调用
+            logger.info(f"Resized token embeddings to {new_num_tokens}. Remember to update special token IDs in the reasoner.")
         except ImportError:
             pass
 

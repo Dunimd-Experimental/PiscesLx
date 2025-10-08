@@ -22,8 +22,8 @@ import os
 import sys
 import importlib.util
 from types import ModuleType
-from utils import PiscesLxCoreLog as LOG, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
-RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+from utils import PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
 from utils import PiscesLxCoreHookBus
 from utils import PiscesLxCoreDeviceFacade, PiscesLxCoreDeviceManager
 from utils import PiscesLxCoreEnhancedCacheManager
@@ -32,6 +32,7 @@ from .profiler import PiscesLxToolsProfiler
 from .config import PiscesLxToolsTrainConfig
 from .quant_export import PiscesLxToolsQuantExporter
 from .pref_align import PiscesLxToolsPreferenceTrainer
+logger = PiscesLxCoreLog("pisceslx.data.download")
 
 class PiscesLxToolsTrainOrchestrator:
     """
@@ -55,6 +56,8 @@ class PiscesLxToolsTrainOrchestrator:
             args: Command line arguments or configuration object.
         """
         self.args = args
+        # Initialize logger
+        self._logger = PiscesLxCoreLog("pisceslx.tools.train.orchestrator")
         # Create a configuration object from the provided arguments
         self.cfg = PiscesLxToolsTrainConfig.from_args(args)
         # Initialize the hook bus for event handling
@@ -108,7 +111,7 @@ class PiscesLxToolsTrainOrchestrator:
         """
         # Get the training mode from the configuration, default to "standard"
         mode = self.cfg.get("train.mode", default="standard")
-        RIGHT(f"Train orchestrator mode: {mode}")
+        self._logger.info(f"Train orchestrator mode: {mode}")
         
         # Emit training start event for observability
         self.hooks.emit("train.start", mode=mode, config=self.cfg.dump_effective())
@@ -121,7 +124,7 @@ class PiscesLxToolsTrainOrchestrator:
             elif mode == "preference":
                 self.run_preference_alignment()
             else:
-                ERROR(f"Unknown train.mode: {mode}")
+                self._logger.error(f"Unknown train.mode: {mode}")
                 # Emit training error event
                 self.hooks.emit("train.error", error=f"Unknown train.mode: {mode}")
                 raise ValueError(f"Unknown train.mode: {mode}")
@@ -132,7 +135,7 @@ class PiscesLxToolsTrainOrchestrator:
         except Exception as e:
             # Emit training failure event with error details
             self.hooks.emit("train.failure", error=str(e), mode=mode)
-            ERROR(f"Training failed in mode {mode}: {e}")
+            self._logger.error(f"Training failed in mode {mode}: {e}")
             raise
 
     def run_standard_training(self) -> None:
@@ -149,12 +152,12 @@ class PiscesLxToolsTrainOrchestrator:
         # Validate device configuration before training
         device_config = self.device_facade.setup_devices(mode="auto")
         if device_config.get('device_type') == 'cpu':
-            RIGHT("Training on CPU - performance may be limited")
+            self._logger.info("Training on CPU - performance may be limited")
         
         # Setup distributed training configuration if available
         if self.dist_config.is_distributed():
             dist_setup = self.dist_config.setup_process_group()
-            RIGHT(f"Distributed training setup: {dist_setup}")
+            self._logger.info(f"Distributed training setup: {dist_setup}")
             self.hooks.emit("train.distributed.setup", config=dist_setup)
         
         # Setup cache for training data with intelligent preloading
@@ -164,19 +167,19 @@ class PiscesLxToolsTrainOrchestrator:
             cached_config = self.cache_manager.get(cache_key)
             if cached_config:
                 cache_hit = True
-                DEBUG(f"Cache hit: Using cached training configuration")
+                self._logger.debug(f"Cache hit: Using cached training configuration")
                 # Validate cached configuration compatibility
                 if self.config_manager.validate_config_compatibility(cached_config, self.cfg.dump_effective()):
-                    DEBUG("Cached configuration validated successfully")
+                    self._logger.debug("Cached configuration validated successfully")
                 else:
-                    DEBUG("Cached configuration incompatible, refreshing...")
+                    self._logger.debug("Cached configuration incompatible, refreshing...")
                     cache_hit = False
         
         # Initialize performance monitoring with baseline metrics
         if self.observability:
             baseline_metrics = self.observability.collect_system_metrics()
             self.metrics_registry.set_baseline("train.baseline", baseline_metrics)
-            DEBUG(f"Performance baseline established: {baseline_metrics}")
+            self._logger.debug(f"Performance baseline established: {baseline_metrics}")
         
         # Emit training standard start event with enhanced context
         training_context = {
@@ -207,16 +210,18 @@ class PiscesLxToolsTrainOrchestrator:
                 checkpoint_status = self.checkpoint_manager.validate_training_environment(
                     self.cfg.dump_effective(), device_config
                 )
-                DEBUG(f"Training environment validation: {checkpoint_status}")
+                self._logger.debug(f"Training environment validation: {checkpoint_status}")
             
             # Execute training with real-time monitoring
             runner.train()
             training_success = True
             
             # Post-training analysis and caching
+            # Post-training analysis and caching
             if self.observability:
                 final_metrics = self.observability.collect_system_metrics()
                 performance_delta = self.metrics_registry.calculate_delta("train.baseline", final_metrics)
+                self._logger.debug(f"Training performance delta: {performance_delta}")
                 self.hooks.emit("train.performance.analysis", delta=performance_delta)
                 
             # Cache successful configuration for future use
@@ -229,7 +234,7 @@ class PiscesLxToolsTrainOrchestrator:
                     "timestamp": self.config_manager.get_current_timestamp()
                 }
                 self.cache_manager.set(cache_key, cache_data, ttl=7200.0)  # 2小时TTL
-                DEBUG("Training configuration cached for future use")
+                self._logger.debug("Training configuration cached for future use")
                 
         except Exception as e:
             # Enhanced error handling with detailed diagnostics
@@ -244,7 +249,7 @@ class PiscesLxToolsTrainOrchestrator:
             
             # Attempt error recovery with cached configuration
             if self.cache_manager and not cache_hit:
-                DEBUG("Attempting error recovery with alternative configurations...")
+                self._logger.debug("Attempting error recovery with alternative configurations...")
                 # Implementation for recovery logic would go here
             
             raise
@@ -283,14 +288,14 @@ class PiscesLxToolsTrainOrchestrator:
         
         # Check if checkpoint and save paths are provided
         if not ckpt or not save:
-            ERROR("quant_export requires --ckpt and --save or corresponding config keys")
+            self._logger.error("quant_export requires --ckpt and --save or corresponding config keys")
             self.hooks.emit("train.quant.error", error="Missing checkpoint or save path")
             raise SystemExit(1)
         
         # Validate checkpoint using utils checkpoint manager
         checkpoint_manager = PiscesLxCoreCheckpointManager()
         if not checkpoint_manager.validate_checkpoint(ckpt):
-            ERROR(f"Invalid checkpoint file: {ckpt}")
+            self._logger.error(f"Invalid checkpoint file: {ckpt}")
             self.hooks.emit("train.quant.error", error=f"Invalid checkpoint: {ckpt}")
             raise SystemExit(1)
         
@@ -319,7 +324,7 @@ class PiscesLxToolsTrainOrchestrator:
         except Exception as e:
             # Emit quantization error event
             self.hooks.emit("train.quant.error", error=str(e))
-            ERROR(f"Quantization and export failed: {e}")
+            self._logger.error(f"Quantization and export failed: {e}")
             raise
 
     def run_preference_alignment(self) -> None:
@@ -338,7 +343,7 @@ class PiscesLxToolsTrainOrchestrator:
         
         # Get the preference alignment type from config, default to "sft"
         pref_type = self.cfg.get("train.pref.type", default="sft")
-        RIGHT(f"Running preference alignment: {pref_type}")
+        self._logger.info(f"Running preference alignment: {pref_type}")
         
         try:
             # Track alignment start in metrics registry
@@ -360,7 +365,7 @@ class PiscesLxToolsTrainOrchestrator:
             elif pref_type == "ppo":
                 pa.run_ppo(self.cfg)
             else:
-                ERROR(f"Unknown train.pref.type: {pref_type}")
+                self._logger.error(f"Unknown train.pref.type: {pref_type}")
                 self.hooks.emit("train.align.error", error=f"Unknown train.pref.type: {pref_type}")
                 raise SystemExit(1)
             
@@ -378,7 +383,7 @@ class PiscesLxToolsTrainOrchestrator:
             
             # Emit preference alignment error event
             self.hooks.emit("train.align.error", error=str(e), method=pref_type)
-            ERROR(f"Preference alignment failed: {e}")
+            self._logger.error(f"Preference alignment failed: {e}")
             raise
 
     def _load_legacy_train_module(self) -> ModuleType | None:

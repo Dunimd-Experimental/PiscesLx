@@ -19,8 +19,8 @@
 # limitations under the License.
 
 from typing import Any
-from utils import PiscesLxCoreLog as LOG
-RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+logger = PiscesLxCoreLog("pisceslx.data.download")
 from . import impl as _impl
 from .impl import PiscesLxToolsInferImpl
 
@@ -54,12 +54,12 @@ class PiscesLxToolsInferRunner:
 
     def infer(self) -> None:
         """Start inference using the implementation module."""
-        RIGHT("Starting inference via PiscesLxToolsInferRunner")
+        logger.success("Starting inference via PiscesLxToolsInferRunner")
         try:
             # Delegate to class facade to run inference
             self._impl.infer(self.args)
         except SystemExit:
             raise
         except Exception as e:
-            ERROR(f"Inference failed: {e}")
+            logger.error(f"Inference failed: {e}")
             raise

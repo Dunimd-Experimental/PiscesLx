@@ -24,7 +24,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict, Any
-from utils import DEBUG
+# from utils.log.core import PiscesLxCoreLog
+# DEBUG = PiscesLxCoreLog.debug
+
+# 添加新的日志实例
+from utils import PiscesLxCoreLog
+logger = PiscesLxCoreLog("Arctic.Model.SpeculativeDecoder")
 
 @dataclass
 class SpeculativeConfig:
@@ -215,7 +220,8 @@ class SpeculativeDecoder(nn.Module):
         
         # Telemetry: log summary and optionally call user callback
         try:
-            DEBUG(f"[SpecDecode] draft_len={self.config.draft_length}, candidates={self.config.num_candidates}, "
+            # 使用新的日志系统替换旧的日志调用
+            logger.debug(f"[SpecDecode] draft_len={self.config.draft_length}, candidates={self.config.num_candidates}, "
                   f"accept_rate={stats['draft_acceptance_rate']:.3f}, speedup={stats['speedup']:.2f}, "
                   f"time_ms={stats['total_time_ms']:.1f}, iters={len(stats['iter_accept'])}")
         except Exception:

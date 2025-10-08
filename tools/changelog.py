@@ -21,7 +21,8 @@
 import sys
 import argparse
 from pathlib import Path
-from utils import PiscesLxCoreLog as LOG, PiscesLxCoreUL
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager, PiscesLxCoreUL
+logger = PiscesLxCoreLog("pisceslx.data.download")
 
 def show_changelog(args=None):
     """
@@ -48,7 +49,7 @@ def show_changelog(args=None):
             PiscesLxCoreUL.display_all_versions(project_root)
 
     except Exception as e:
-        LOG.error(f"Failed to display changelog information: {e}")
+        logger.error(f"Failed to display changelog information: {e}")
         sys.exit(1)
 
 

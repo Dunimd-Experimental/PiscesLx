@@ -19,8 +19,8 @@
 # limitations under the License.
 
 from typing import Any, Optional
-from utils import PiscesLxCoreLog as LOG
-RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+logger = PiscesLxCoreLog("pisceslx.data.download")
 from utils import PiscesLxCoreHookBus, PiscesLxCoreDeviceFacade, PiscesLxCoreEnhancedCacheManager
 from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
 from utils import PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
@@ -44,25 +44,19 @@ except Exception:
             """Start profiling for a specific phase with optional metadata."""
             self._active = True
             self._phase_timers[phase_name] = time.perf_counter()
-            from utils import PiscesLxCoreLog as LOG
-            DEBUG = LOG.debug
-            print(f"{DEBUG} Profiler started for phase: {phase_name}")
+            logger.debug(f"Profiler started for phase: {phase_name}")
         
         def stop(self, phase_name: str = "infer", **kwargs) -> Optional[float]:
             """Stop profiling and return elapsed time for the specified phase."""
             if not self._active or phase_name not in self._phase_timers:
-                from utils import PiscesLxCoreLog as LOG
-                DEBUG = LOG.debug
-                print(f"{DEBUG} Profiler stop called for inactive phase: {phase_name}")
+                logger.debug(f"Profiler stop called for inactive phase: {phase_name}")
                 return None
             
             elapsed = time.perf_counter() - self._phase_timers[phase_name]
             self._phase_results[phase_name] = elapsed
             self._active = False
             
-            from utils import PiscesLxCoreLog as LOG
-            DEBUG = LOG.debug
-            print(f"{DEBUG} Profiler stopped for phase: {phase_name}, elapsed: {elapsed:.3f}s")
+            logger.debug(f"Profiler stopped for phase: {phase_name}, elapsed: {elapsed:.3f}s")
             return elapsed
 
 try:
@@ -135,7 +129,7 @@ class PiscesLxToolsInferOrchestrator:
 
     def run(self, args: Any) -> None:
         mode = self.cfg.get('infer.mode', default=(getattr(args, 'infer_mode', None) or 'standard'))
-        RIGHT(f"Infer orchestrator mode: {mode}")
+        logger.success(f"Infer orchestrator mode: {mode}")
         
         # Emit inference start event with enhanced context
         inference_context = {
@@ -150,7 +144,7 @@ class PiscesLxToolsInferOrchestrator:
             if mode in ('standard', 'vllm'):
                 self.run_standard_infer()
             else:
-                ERROR(f"Unknown infer.mode: {mode}")
+                logger.error(f"Unknown infer.mode: {mode}")
                 self.hooks.emit("infer.error", error=f"Unknown infer.mode: {mode}")
                 raise SystemExit(1)
                 
@@ -165,7 +159,7 @@ class PiscesLxToolsInferOrchestrator:
                 "device_config": inference_context.get("device_config", {})
             }
             self.hooks.emit("infer.failure", **error_context)
-            ERROR(f"Inference failed in mode {mode}: {e}")
+            logger.error(f"Inference failed in mode {mode}: {e}")
             raise
 
     def run_standard_infer(self) -> None:
@@ -178,7 +172,7 @@ class PiscesLxToolsInferOrchestrator:
         # Optimize device configuration for inference
         device_config = self.device_facade.setup_devices(mode="inference")
         if device_config.get('device_type') == 'cpu':
-            RIGHT("Inference on CPU - performance may be limited")
+            logger.success("Inference on CPU - performance may be limited")
         
         # Setup intelligent model caching
         cache_hit = False
@@ -187,23 +181,23 @@ class PiscesLxToolsInferOrchestrator:
             cached_model = self.cache_manager.get(model_key)
             if cached_model:
                 cache_hit = True
-                DEBUG(f"Model cache hit: Using cached model configuration")
+                logger.debug(f"Model cache hit: Using cached model configuration")
         
         # Initialize inference performance monitoring
         if self.observability:
             inference_baseline = self.observability.collect_system_metrics()
             self.metrics_registry.set_baseline("infer.baseline", inference_baseline)
-            DEBUG(f"Inference baseline established: GPU memory {inference_baseline.get('gpu_memory_used', 'N/A')}MB")
+            logger.debug(f"Inference baseline established: GPU memory {inference_baseline.get('gpu_memory_used', 'N/A')}MB")
         
         # Validate model checkpoint before inference
         model_path = self.cfg.get('infer.model_path') or getattr(self.args, 'model_path', None)
         if model_path and self.checkpoint_manager:
             checkpoint_valid = self.checkpoint_manager.validate_checkpoint(model_path)
             if not checkpoint_valid:
-                ERROR(f"Invalid model checkpoint: {model_path}")
+                logger.error(f"Invalid model checkpoint: {model_path}")
                 self.hooks.emit("infer.checkpoint.error", error="Invalid model checkpoint", path=model_path)
                 raise SystemExit(1)
-            DEBUG(f"Model checkpoint validated: {model_path}")
+            logger.debug(f"Model checkpoint validated: {model_path}")
         
         # Emit inference standard start event with enhanced context
         inference_context = {
@@ -253,7 +247,7 @@ class PiscesLxToolsInferOrchestrator:
                         "timestamp": self.config_manager.get_current_timestamp()
                     }
                     self.cache_manager.set(model_key, model_cache_data, ttl=3600.0)  # 1小时TTL
-                    DEBUG(f"Model configuration cached with efficiency score: {performance_analysis.get('efficiency_score', 0)}")
+                    logger.debug(f"Model configuration cached with efficiency score: {performance_analysis.get('efficiency_score', 0)}")
                 
                 self.hooks.emit("infer.performance.analysis", analysis=performance_analysis)
                 
@@ -270,7 +264,7 @@ class PiscesLxToolsInferOrchestrator:
             
             # Attempt recovery with alternative device configuration
             if self.device_facade and 'cuda' in str(e).lower():
-                DEBUG("Attempting CPU fallback due to CUDA error...")
+                logger.debug("Attempting CPU fallback due to CUDA error...")
                 # Implementation for device fallback would go here
             
             raise

@@ -22,7 +22,9 @@ import re
 import json
 import unicodedata
 import urllib.request
-from utils import RIGHT, ERROR
+from utils.log.core import PiscesLxCoreLog
+RIGHT = PiscesLxCoreLog.info
+ERROR = PiscesLxCoreLog.error
 
 class BPETokenizer:
     """A Byte Pair Encoding (BPE) tokenizer implementation.

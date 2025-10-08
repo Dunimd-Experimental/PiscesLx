@@ -21,9 +21,10 @@
 import sys
 import json
 import argparse
-from utils import PiscesLxCoreLog as LOG
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+logger = PiscesLxCoreLog("pisceslx.data.download")
 from typing import Dict, Any, Optional
-from tools.watermark import check_text_watermark
+from tools.infer.watermark import check_text_watermark
 
 def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
     """Detect hidden watermark information in the specified text.
@@ -61,7 +62,7 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
             result["compliance_status"] = "compliant"
 
             if verbose:
-                LOG.info("Valid watermark detected")
+                logger.info("Valid watermark detected")
                 print(f"\tModel: {watermark_info.get('model', 'unknown')}")
                 print(f"\tVersion: {watermark_info.get('version', 'unknown')}")
                 print(f"\tGeneration Time: {watermark_info.get('timestamp', 'unknown')}")
@@ -75,14 +76,14 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
             # Update result if no watermark is detected
             result["compliance_status"] = "no_watermark"
             if verbose:
-                LOG.error("No watermark detected")
+                logger.error("No watermark detected")
                 
     except Exception as e:
         # Update result if an error occurs during detection
         result["error"] = str(e)
         result["compliance_status"] = "error"
         if verbose:
-            LOG.error(f"Detection error: {e}")
+            logger.error(f"Detection error: {e}")
     
     return result
 
@@ -138,7 +139,7 @@ def batch_detect(file_path: str, verbose: bool = False) -> Dict[str, Any]:
         }
 
         if verbose:
-            LOG.info(f"Batch Detection Results:")
+            logger.info(f"Batch Detection Results:")
             print(f"\tTotal Lines: {total_lines}")
             print(f"\tLines with Watermark Detected: {detected_lines}")
             print(f"\tCompliant Lines: {compliant_lines}")

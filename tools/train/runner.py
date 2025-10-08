@@ -21,10 +21,11 @@
 import os
 import sys
 from types import ModuleType
-from utils import PiscesLxCoreLog as LOG, PiscesLxCoreDeviceFacade, PiscesLxCoreDeviceManager, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager, PiscesLxCoreEnhancedCacheManager
-RIGHT = LOG.info; ERROR = LOG.error; DEBUG = LOG.debug
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+from utils import PiscesLxCoreDeviceFacade, PiscesLxCoreDeviceManager, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager, PiscesLxCoreEnhancedCacheManager
 from . import impl as _impl
 from .impl import PiscesLxToolsTrainImpl
+logger = PiscesLxCoreLog("pisceslx.data.download")
 
 class PiscesLxToolsTrainRunner:
     """
@@ -44,6 +45,7 @@ class PiscesLxToolsTrainRunner:
             cfg (optional): Configuration object. Defaults to None.
         """
         self.args = args
+        self._logger = PiscesLxCoreLog("pisceslx.tools.train.runner")
         # Instantiate class-based facade for unified style
         self._impl = PiscesLxToolsTrainImpl()
         try:
@@ -65,7 +67,7 @@ class PiscesLxToolsTrainRunner:
         # Initialize checkpoint manager for model checkpoint handling
         self.checkpoint_manager = PiscesLxCoreCheckpointManager()
         
-        RIGHT("PiscesLxToolsTrainRunner utils components initialized")
+        self._logger.info("PiscesLxToolsTrainRunner utils components initialized")
         
         # Initialize utils-enhanced components
         self._init_utils_components()
@@ -79,18 +81,18 @@ class PiscesLxToolsTrainRunner:
         Raises:
             Exception: If the training arguments are invalid.
         """
-        RIGHT("Starting training via PiscesLxToolsTrainRunner (delegating to legacy _train_impl)")
+        self._logger.info("Starting training via PiscesLxToolsTrainRunner (delegating to legacy _train_impl)")
         
         # Validate device configuration before training
         device_config = self.device_facade.setup_devices(mode="auto")
         if device_config.get('device_type') == 'cpu':
-            RIGHT("Training on CPU - performance may be limited")
+            self._logger.info("Training on CPU - performance may be limited")
         
         # Validate configuration using utils config manager
         if hasattr(self, 'config_manager') and self.config_manager:
             validation_result = self.config_manager.validate(self.args)
             if not validation_result.is_valid:
-                ERROR(f"Configuration validation failed: {validation_result.errors}")
+                self._logger.error(f"Configuration validation failed: {validation_result.errors}")
                 raise ValueError(f"Invalid configuration: {validation_result.errors}")
         
         # Validate arguments before running the implementation to preserve legacy behavior
@@ -98,15 +100,15 @@ class PiscesLxToolsTrainRunner:
             try:
                 self.args = self._impl.validate_args(self.args)
             except Exception as e:
-                ERROR(f"Invalid training arguments: {e}")
+                self._logger.error(f"Invalid training arguments: {e}")
                 raise
         
         try:
             # Delegate to class facade to run training
             self._impl.train(self.args)
-            RIGHT("Training completed successfully")
+            self._logger.info("Training completed successfully")
         except Exception as e:
-            ERROR(f"Training failed: {e}")
+            self._logger.error(f"Training failed: {e}")
             raise
 
     def setup_distributed_training(self):
@@ -125,7 +127,7 @@ class PiscesLxToolsTrainRunner:
             if dist_config:
                 validation_result = self.config_manager.validate(dist_config)
                 if not validation_result.is_valid:
-                    ERROR(f"Distributed configuration validation failed: {validation_result.errors}")
+                    self._logger.error(f"Distributed configuration validation failed: {validation_result.errors}")
         
         # Setup devices using utils device facade
         device_config = self.device_facade.setup_devices(mode="distributed")
@@ -148,7 +150,7 @@ class PiscesLxToolsTrainRunner:
             # Emit distributed setup error event
             if hasattr(self, 'hooks') and self.hooks:
                 self.hooks.emit("train.distributed.setup.error", error=str(e))
-            ERROR(f"Distributed training setup failed: {e}")
+            self._logger.error(f"Distributed training setup failed: {e}")
             raise
 
     def create_dataloader(self, *a, **kw):
@@ -185,7 +187,7 @@ class PiscesLxToolsTrainRunner:
             # Emit dataloader creation error event
             if hasattr(self, 'hooks') and self.hooks:
                 self.hooks.emit("train.dataloader.create.error", error=str(e))
-            ERROR(f"DataLoader creation failed: {e}")
+            self._logger.error(f"DataLoader creation failed: {e}")
             raise
 
     def collate_fn(self, batch):
@@ -222,5 +224,5 @@ class PiscesLxToolsTrainRunner:
             # Emit collate function error event
             if hasattr(self, 'hooks') and self.hooks:
                 self.hooks.emit("train.collate.error", error=str(e))
-            ERROR(f"Collate function failed: {e}")
+            self._logger.error(f"Collate function failed: {e}")
             raise
