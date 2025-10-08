@@ -17,17 +17,18 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from .config import PiscesConfig
+
+from .config import ArcticConfig
 from .tokenizer import get_tokenizer
 from .h2o_attention import H2OAttention
 from .moe_dynamic import DynamicMoELayer
 from .modeling_aurora import PiscesModel
 from .yarn_rope import YaRNRotaryEmbedding
-from .multimodal import VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder
+from .multimodal import ArcticVisionEncoder, ArcticAudioEncoder, ArcticDocEncoder, ArcticVideoEncoder
 
 __all__ = [
-    'PiscesConfig', 'PiscesModel',
+    'ArcticConfig', 'PiscesModel',
     'get_tokenizer',
-    'VisionEncoder', 'AudioEncoder', 'DocEncoder', 'VideoEncoder',
+    'ArcticVisionEncoder', 'ArcticAudioEncoder', 'ArcticDocEncoder', 'ArcticVideoEncoder',
     'H2OAttention', 'DynamicMoELayer', 'YaRNRotaryEmbedding',
 ]

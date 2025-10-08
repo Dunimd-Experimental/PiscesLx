@@ -145,7 +145,7 @@ class PiscesLxCoreQuantizer:
         quantization_config: Optional[QuantizationConfig] = None,
     ) -> QuantizationMetrics:
         # Delayed import to avoid circular imports
-        from model import PiscesModel, PiscesConfig
+        from model import PiscesModel, ArcticConfig
         """
         Quantize a model checkpoint with the specified configuration and save the quantized model.
 
@@ -177,7 +177,7 @@ class PiscesLxCoreQuantizer:
         except Exception as log_e:
             _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
-        cfg = PiscesConfig.from_json(cfg_path)
+        cfg = ArcticConfig.from_json(cfg_path)
 
         try:
             model = PiscesModel(cfg)

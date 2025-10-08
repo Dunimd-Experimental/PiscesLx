@@ -17,12 +17,13 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import json
 from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
 
 @dataclass
-class PiscesConfig:
+class ArcticConfig:
     """Configuration for the Pisces L1 model with MoE load balancing improvements.
     
     Attributes:
@@ -146,7 +147,7 @@ class PiscesConfig:
             path (str): The path to the JSON file containing the configuration.
 
         Returns:
-            PiscesConfig: An instance of the PiscesConfig class initialized with the loaded configuration.
+            ArcticConfig: An instance of the ArcticConfig class initialized with the loaded configuration.
         """
         with open(path, 'r') as f:
             config_data = json.load(f)

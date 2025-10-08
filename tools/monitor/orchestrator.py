@@ -349,7 +349,7 @@ class PiscesLxToolsMonitorOrchestrator:
             
             # Validate resource availability
             if not self._validate_resource_availability(device_info, resource_requirements):
-                WARNING("Insufficient resources for optimal monitoring, adjusting parameters...")
+                logger.warning("Insufficient resources for optimal monitoring, adjusting parameters...")
                 self._adjust_monitoring_parameters(device_info, resource_requirements)
             
             # Emit enhanced setup hook

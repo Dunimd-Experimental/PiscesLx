@@ -1,0 +1,536 @@
+#!/usr/bin/env python3
+
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
+#
+# This file is part of Pisces L1.
+# The PiscesL1 project belongs to the Dunimd project team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import os
+import math
+import numpy as np
+from typing import Optional, Tuple, List, Dict, Any
+import torch
+from torch import nn
+from PIL import Image
+import torch.nn.functional as F
+
+from utils import PiscesLxCoreLog
+logger = PiscesLxCoreLog("Arctic.Model.Multimodal")
+
+
+class ArcticSpatioTemporalRoPE3D(nn.Module):
+    """
+    3D Spatio-Temporal Rotary Position Embedding for video frames.
+    Extends 2D RoPE to include temporal dimension for video understanding.
+    """
+    def __init__(self, dim: int, max_temporal_frames: int = 1024, 
+                 max_spatial_h: int = 64, max_spatial_w: int = 64,
+                 base: float = 10000.0, device: Optional[torch.device] = None):
+        super().__init__()
+        assert dim % 3 == 0, "Dimension must be divisible by 3 for 3D RoPE"
+        self.dim = dim
+        self.dim_per_axis = dim // 3
+        self.max_temporal_frames = max_temporal_frames
+        self.max_spatial_h = max_spatial_h
+        self.max_spatial_w = max_spatial_w
+        self.base = base
+        temp_freq = 1.0 / (base ** (torch.arange(0, self.dim_per_axis, 2).float() / self.dim_per_axis))
+        h_freq = 1.0 / (base ** (torch.arange(0, self.dim_per_axis, 2).float() / self.dim_per_axis))
+        w_freq = 1.0 / (base ** (torch.arange(0, self.dim_per_axis, 2).float() / self.dim_per_axis))
+        self.register_buffer('temp_freq', temp_freq, persistent=False)
+        self.register_buffer('h_freq', h_freq, persistent=False)
+        self.register_buffer('w_freq', w_freq, persistent=False)
+        self.register_buffer('cos_cache', None, persistent=False)
+        self.register_buffer('sin_cache', None, persistent=False)
+        self.register_buffer('max_seq_cached', torch.tensor(0), persistent=False)
+
+    def _compute_3d_positions(self, t: int, h: int, w: int) -> torch.Tensor:
+        temp_pos = torch.arange(t, dtype=torch.float32)
+        h_pos = torch.arange(h, dtype=torch.float32)
+        w_pos = torch.arange(w, dtype=torch.float32)
+        temp_grid, h_grid, w_grid = torch.meshgrid(temp_pos, h_pos, w_pos, indexing='ij')
+        positions = torch.stack([
+            temp_grid.flatten(),
+            h_grid.flatten(),
+            w_grid.flatten()
+        ], dim=1)
+        return positions
+
+    def _compute_3d_rope(self, positions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        device = positions.device
+        seq_len = positions.shape[0]
+        temp_pos = positions[:, 0]
+        h_pos = positions[:, 1]
+        w_pos = positions[:, 2]
+        temp_freqs = torch.outer(temp_pos, self.temp_freq.to(device))
+        h_freqs = torch.outer(h_pos, self.h_freq.to(device))
+        w_freqs = torch.outer(w_pos, self.w_freq.to(device))
+        freqs = torch.zeros(seq_len, self.dim, device=device)
+        freqs[:, :self.dim_per_axis] = torch.cat([
+            torch.sin(temp_freqs),
+            torch.cos(temp_freqs)
+        ], dim=1)[:, :self.dim_per_axis]
+        start_h = self.dim_per_axis
+        end_h = start_h + self.dim_per_axis
+        freqs[:, start_h:end_h] = torch.cat([
+            torch.sin(h_freqs),
+            torch.cos(h_freqs)
+        ], dim=1)[:, :self.dim_per_axis]
+        start_w = 2 * self.dim_per_axis
+        end_w = start_w + self.dim_per_axis
+        freqs[:, start_w:end_w] = torch.cat([
+            torch.sin(w_freqs),
+            torch.cos(w_freqs)
+        ], dim=1)[:, :self.dim_per_axis]
+        cos = torch.cos(freqs)
+        sin = torch.sin(freqs)
+        return cos, sin
+
+    def forward(self, x: torch.Tensor, video_shape: Tuple[int, int, int]) -> torch.Tensor:
+        t, h, w = video_shape
+        seq_len = t * h * w
+        if self.cos_cache is None or seq_len > self.max_seq_cached:
+            positions = self._compute_3d_positions(t, h, w)
+            positions = positions.to(x.device)
+            cos, sin = self._compute_3d_rope(positions)
+            self.cos_cache = cos
+            self.sin_cache = sin
+            self.max_seq_cached = torch.tensor(seq_len)
+        x_rotated = x * self.cos_cache[:seq_len] + self._rotate_half(x) * self.sin_cache[:seq_len]
+        return x_rotated
+
+    def _rotate_half(self, x: torch.Tensor) -> torch.Tensor:
+        x1 = x[..., :x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2:]
+        return torch.cat((-x2, x1), dim=-1)
+
+
+class ArcticVisionEncoder(nn.Module):
+    def __init__(self, cfg, cache_manager=None):
+        super().__init__()
+        self.enabled = True
+        self.cfg = cfg
+        self.patch_size = 14
+        self.hidden_size = cfg.hidden_size
+        self.num_heads = cfg.n_head
+        self.num_layers = cfg.n_layer
+        logger.debug(f"VisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        self.register_buffer('mean', torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.Tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+        self.patch_embed = nn.Conv2d(
+            in_channels=3,
+            out_channels=self.hidden_size,
+            kernel_size=self.patch_size,
+            stride=self.patch_size
+        )
+        max_patches_h = 1024 // self.patch_size
+        max_patches_w = 1024 // self.patch_size
+        self.pos_embed = nn.Parameter(torch.randn(1, max_patches_h * max_patches_w, self.hidden_size))
+        self.cls_token = nn.Parameter(torch.randn(1, 1, self.hidden_size))
+        use_sdpa_vision = bool(getattr(cfg, 'vision_use_sdpa', True))
+        self.transformer = nn.ModuleDict({
+            'layers': nn.ModuleList([
+                nn.ModuleDict({
+                    'norm1': nn.LayerNorm(self.hidden_size),
+                    **({
+                        'attn_type': 'sdpa',
+                        'attn': nn.ModuleDict({
+                            'q': nn.Linear(self.hidden_size, self.hidden_size),
+                            'k': nn.Linear(self.hidden_size, self.hidden_size),
+                            'v': nn.Linear(self.hidden_size, self.hidden_size),
+                            'o': nn.Linear(self.hidden_size, self.hidden_size),
+                            'drop': nn.Dropout(getattr(cfg, 'attention_dropout', 0.0))
+                        })
+                    } if use_sdpa_vision else {
+                        'attn_type': 'mha',
+                        'attn': nn.MultiheadAttention(
+                            embed_dim=self.hidden_size,
+                            num_heads=self.num_heads,
+                            batch_first=True
+                        )
+                    }),
+                    'norm2': nn.LayerNorm(self.hidden_size),
+                    'mlp': nn.Sequential(
+                        nn.Linear(self.hidden_size, 4 * self.hidden_size),
+                        nn.GELU(),
+                        nn.Linear(4 * self.hidden_size, self.hidden_size)
+                    )
+                }) for _ in range(self.num_layers)
+            ]),
+            'norm': nn.LayerNorm(self.hidden_size)
+        })
+        self.proj = nn.Linear(self.hidden_size, cfg.hidden_size)
+        self.use_3d_rope = getattr(cfg, 'use_3d_spatio_temporal_rope', False)
+        self.max_temporal_frames = getattr(cfg, 'max_temporal_frames', 64)
+        if self.use_3d_rope:
+            self.spatio_temporal_rope = ArcticSpatioTemporalRoPE3D(
+                dim=self.hidden_size,
+                max_temporal_frames=self.max_temporal_frames,
+                max_spatial_h=max_patches_h,
+                max_spatial_w=max_patches_w,
+                base=getattr(cfg, 'rope_theta', 10000.0)
+            )
+        self.num_classes = 1000
+        self.num_anchors = 9
+        self.detection_head = nn.ModuleDict({
+            'bbox_regressor': nn.Sequential(
+                nn.Linear(self.hidden_size, 512),
+                nn.LayerNorm(512),
+                nn.SiLU(),
+                nn.Dropout(0.1),
+                nn.Linear(512, 256),
+                nn.LayerNorm(256),
+                nn.SiLU(),
+                nn.Linear(256, 4 * self.num_anchors)
+            ),
+            'classifier': nn.Sequential(
+                nn.Linear(self.hidden_size, 512),
+                nn.LayerNorm(512),
+                nn.SiLU(),
+                nn.Dropout(0.1),
+                nn.Linear(512, 256),
+                nn.LayerNorm(256),
+                nn.SiLU(),
+                nn.Linear(256, self.num_classes * self.num_anchors)
+            ),
+            'objectness': nn.Sequential(
+                nn.Linear(self.hidden_size, 256),
+                nn.LayerNorm(256),
+                nn.SiLU(),
+                nn.Linear(256, 128),
+                nn.LayerNorm(128),
+                nn.SiLU(),
+                nn.Linear(128, self.num_anchors)
+            )
+        })
+        self.segmentation_head = nn.ModuleDict({
+            'fpn_layers': nn.ModuleList([
+                nn.Sequential(
+                    nn.Conv2d(self.hidden_size, 256, 1),
+                    nn.BatchNorm2d(256),
+                    nn.ReLU(),
+                    nn.Conv2d(256, 256, 3, padding=1),
+                    nn.BatchNorm2d(256),
+                    nn.ReLU()
+                ) for _ in range(3)
+            ]),
+            'decoder': nn.Sequential(
+                nn.Conv2d(256 * 3, 384, 3, padding=1),
+                nn.BatchNorm2d(384),
+                nn.ReLU(),
+                nn.Conv2d(384, 256, 3, padding=1),
+                nn.BatchNorm2d(256),
+                nn.ReLU(),
+                nn.Conv2d(256, 128, 3, padding=1),
+                nn.BatchNorm2d(128),
+                nn.ReLU(),
+                nn.Conv2d(128, 150, 1)
+            ),
+            'instance_head': nn.Sequential(
+                nn.Conv2d(256, 128, 3, padding=1),
+                nn.BatchNorm2d(128),
+                nn.ReLU(),
+                nn.Conv2d(128, 1, 1),
+                nn.Sigmoid()
+            )
+        })
+        self.low_light_enhancer = nn.ModuleDict({
+            'illumination_net': nn.Sequential(
+                nn.Conv2d(3, 32, 3, padding=1),
+                nn.BatchNorm2d(32),
+                nn.ReLU(),
+                nn.Conv2d(32, 16, 3, padding=1),
+                nn.BatchNorm2d(16),
+                nn.ReLU(),
+                nn.Conv2d(16, 1, 3, padding=1),
+                nn.Sigmoid()
+            ),
+            'reflectance_net': nn.Sequential(
+                nn.Conv2d(4, 32, 3, padding=1),
+                nn.BatchNorm2d(32),
+                nn.ReLU(),
+                nn.Conv2d(32, 16, 3, padding=1),
+                nn.BatchNorm2d(16),
+                nn.ReLU(),
+                nn.Conv2d(16, 3, 3, padding=1),
+                nn.Sigmoid()
+            ),
+            'gamma_predictor': nn.Sequential(
+                nn.AdaptiveAvgPool2d(1),
+                nn.Flatten(),
+                nn.Linear(self.hidden_size, 64),
+                nn.LayerNorm(64),
+                nn.ReLU(),
+                nn.Linear(64, 1),
+                nn.Sigmoid()
+            )
+        })
+        self.visual_reasoning = nn.ModuleDict({
+            'spatial_reasoner': nn.Sequential(
+                nn.Linear(self.hidden_size * 2, 256),
+                nn.LayerNorm(256),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(256, 9)
+            ),
+            'scene_graph_net': nn.ModuleDict({
+                'object_encoder': nn.Sequential(
+                    nn.Linear(self.hidden_size, 256),
+                    nn.LayerNorm(256),
+                    nn.ReLU()
+                ),
+                'relation_encoder': nn.Sequential(
+                    nn.Linear(512, 128),
+                    nn.LayerNorm(128),
+                    nn.ReLU()
+                ),
+                'predicate_classifier': nn.Sequential(
+                    nn.Linear(128, 50)
+                )
+            }),
+            'vqa_head': nn.Sequential(
+                nn.Linear(self.hidden_size + 512, 512),
+                nn.LayerNorm(512),
+                nn.ReLU(),
+                nn.Dropout(0.1),
+                nn.Linear(512, 3000)
+            )
+        })
+        self.coordinate_marker = nn.ModuleDict({
+            'position_head': nn.Sequential(
+                nn.Linear(self.hidden_size, 256),
+                nn.SiLU(),
+                nn.Dropout(0.1),
+                nn.Linear(256, 128),
+                nn.LayerNorm(128),
+                nn.SiLU(),
+                nn.Linear(128, 2)
+            ),
+            'uncertainty_head': nn.Sequential(
+                nn.Linear(self.hidden_size, 128),
+                nn.SiLU(),
+                nn.Linear(128, 64),
+                nn.SiLU(),
+                nn.Linear(64, 2),
+                nn.Softplus()
+            )
+        })
+        logger.debug("VisionEncoder: __init__ end")
+
+    def process_image(self, image_path, target_size=None):
+        logger.debug(f"Processing image: {image_path}")
+        try:
+            with Image.open(image_path) as img:
+                img = img.convert('RGB')
+                if target_size is not None:
+                    img = img.resize(target_size, Image.LANCZOS)
+                image_tensor = torch.tensor(np.array(img)).permute(2, 0, 1).float() / 255.0
+                image_tensor = (image_tensor - self.mean) / self.std
+                return image_tensor
+        except Exception as e:
+            logger.error(f"Image processing error: {e}")
+            return None
+
+    def interpolate_pos_encoding(self, pos_embed, h, w):
+        npatch = h * w
+        N = pos_embed.shape[1] - 1
+        if npatch == N:
+            return pos_embed
+        class_pos_embed = pos_embed[:, :1]
+        patch_pos_embed = pos_embed[:, 1:]
+        dim = self.hidden_size
+        w0 = w
+        h0 = h
+        sqrt_N = int(math.sqrt(N))
+        patch_pos_embed = F.interpolate(
+            patch_pos_embed.reshape(1, sqrt_N, sqrt_N, dim).permute(0, 3, 1, 2),
+            size=(h0, w0),
+            mode='bicubic',
+            align_corners=False
+        )
+        patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, h0 * w0, dim)
+        return torch.cat((class_pos_embed, patch_pos_embed), dim=1)
+
+    def forward(self, pixel_values, video_shape=None):
+        if pixel_values is None:
+            return torch.zeros(1, 1, self.cfg.hidden_size, device=self.proj.weight.device)
+        x = (pixel_values - self.mean) / self.std
+        B, C, H, W = x.shape
+        patch_size = self.patch_size
+        is_video = video_shape is not None and self.use_3d_rope
+        if is_video:
+            T, H_video, W_video = video_shape
+            x = x.view(-1, T, C, H, W)
+            B = x.shape[0]
+            x = x.view(B * T, C, H, W)
+        x = self.patch_embed(x)
+        h_patches, w_patches = x.shape[2], x.shape[3]
+        x = x.flatten(2).transpose(1, 2)
+        cls_tokens = self.cls_token.expand(x.shape[0], -1, -1)
+        x = torch.cat((cls_tokens, x), dim=1)
+        pos_embed = self.interpolate_pos_encoding(self.pos_embed, h_patches, w_patches)
+        x = x + pos_embed
+        if is_video:
+            x = x.view(B, T * (1 + h_patches * w_patches), self.hidden_size)
+            cls_tokens_video = x[:, :T]
+            patch_tokens = x[:, T:]
+            patch_tokens = self.spatio_temporal_rope(
+                patch_tokens,
+                video_shape=(T, h_patches, w_patches)
+            )
+            x = torch.cat([cls_tokens_video, patch_tokens], dim=1)
+        for layer in self.transformer['layers']:
+            x_norm = layer['norm1'](x)
+            if layer.get('attn_type', 'mha') == 'sdpa':
+                q_lin = layer['attn']['q'](x_norm)
+                k_lin = layer['attn']['k'](x_norm)
+                v_lin = layer['attn']['v'](x_norm)
+                Bq, Tq, D = q_lin.shape
+                Hh = self.num_heads
+                Dh = D // Hh
+                q = q_lin.view(Bq, Tq, Hh, Dh).transpose(1, 2).reshape(Bq * Hh, Tq, Dh)
+                k = k_lin.view(Bq, Tq, Hh, Dh).transpose(1, 2).reshape(Bq * Hh, Tq, Dh)
+                v = v_lin.view(Bq, Tq, Hh, Dh).transpose(1, 2).reshape(Bq * Hh, Tq, Dh)
+                attn_mask = None
+                if bool(getattr(self.cfg, 'use_sliding_window', False)):
+                    win = int(getattr(self.cfg, 'streaming_window', 16384))
+                    if win > 0 and win < Tq:
+                        key_pos = torch.arange(Tq, device=x.device)
+                        row_pos = torch.arange(Tq, device=x.device)
+                        lower_bound = (row_pos.view(-1, 1) - (win - 1))
+                        allowed = key_pos.view(1, -1) >= lower_bound
+                        disallow = ~allowed
+                        attn_mask = disallow.expand(Bq * Hh, Tq, Tq)
+                try:
+                    from torch.backends.cuda import sdp_kernel as _sdp
+                    use_flash = torch.cuda.is_available() and bool(getattr(self.cfg, 'sdpa_prefer_flash', True))
+                except Exception:
+                    use_flash = False
+                if use_flash:
+                    with _sdp(enable_math=False, enable_flash=True, enable_mem_efficient=False):
+                        out_ = F.scaled_dot_product_attention(
+                            q, k, v,
+                            attn_mask=attn_mask,
+                            dropout_p=layer['attn']['drop'].p if self.training else 0.0,
+                            is_causal=False
+                        )
+                else:
+                    out_ = F.scaled_dot_product_attention(
+                        q, k, v,
+                        attn_mask=attn_mask,
+                        dropout_p=layer['attn']['drop'].p if self.training else 0.0,
+                        is_causal=False
+                    )
+                out = out_.reshape(Bq, Hh, Tq, Dh).transpose(1, 2).contiguous().view(Bq, Tq, D)
+                out = layer['attn']['drop'](out)
+                attn_out = layer['attn']['o'](out)
+            else:
+                attn_out = layer['attn'](x_norm, x_norm, x_norm)[0]
+            x = x + attn_out
+            mlp_out = layer['mlp'](layer['norm2'](x))
+            x = x + mlp_out
+        x = self.transformer['norm'](x)
+        if is_video:
+            cls_tokens_video = x[:, :T]
+            patch_tokens = x[:, T:]
+            patch_tokens = patch_tokens.view(B, T, h_patches * w_patches, self.hidden_size)
+            pooled_features = patch_tokens.mean(dim=2)
+            xproj = self.proj(pooled_features)
+            cls_features = cls_tokens_video.mean(dim=2)
+            combined_features = xproj + cls_features
+            detection_results = {
+                'features': combined_features,
+                'bbox_coords': None,
+                'object_classes': None,
+                'confidence_scores': None,
+                'coordinate_markers': None,
+                'video_shape': video_shape
+            }
+        else:
+            cls_token = x[:, :1]
+            patch_features = x[:, 1:]
+            pooled_features = patch_features.mean(dim=1)
+            xproj = self.proj(pooled_features)
+            detection_results = {
+                'features': xproj.unsqueeze(1),
+                'bbox_coords': None,
+                'object_classes': None,
+                'confidence_scores': None,
+                'coordinate_markers': None
+            }
+        if self.training or hasattr(self, '_enable_detection'):
+            batch_size, num_patches, _ = patch_features.shape
+            h_patches_ = int(math.sqrt(num_patches))
+            w_patches_ = h_patches_
+            patch_features_2d = patch_features.view(batch_size, h_patches_, w_patches_, -1)
+            bbox_pred = self.detection_head['bbox_regressor'](patch_features)
+            class_pred = self.detection_head['classifier'](patch_features)
+            objectness_pred = self.detection_head['objectness'](patch_features)
+            coord_markers = self.coordinate_marker['position_head'](patch_features)
+            detection_results.update({
+                'bbox_coords': bbox_pred.view(batch_size, num_patches, self.num_anchors, 4),
+                'object_classes': class_pred.view(batch_size, num_patches, self.num_anchors, self.num_classes),
+                'confidence_scores': torch.sigmoid(objectness_pred),
+                'coordinate_markers': coord_markers.view(batch_size, num_patches, 2),
+                'spatial_shape': (h_patches_, w_patches_)
+            })
+        return detection_results
+
+    def convert_patch_to_image_coords(self, patch_coords, image_size, patch_size=14):
+        h, w = image_size
+        h_patches = h // patch_size
+        w_patches = w // patch_size
+        x_patch, y_patch = patch_coords
+        x_image = (x_patch + 0.5) * patch_size
+        y_image = (y_patch + 0.5) * patch_size
+        return [min(x_image, w-1), min(y_image, h-1)]
+
+    def get_object_locations(self, detection_results, image_size, confidence_threshold=0.5):
+        if not detection_results.get('bbox_coords'):
+            return []
+        bbox_coords = detection_results['bbox_coords']
+        object_classes = detection_results['object_classes']
+        confidence_scores = detection_results['confidence_scores']
+        objects = []
+        batch_size, num_patches, num_anchors, _ = bbox_coords.shape
+        h_patches = int(math.sqrt(num_patches))
+        for b in range(batch_size):
+            for p in range(num_patches):
+                patch_y = p // h_patches
+                patch_x = p % h_patches
+                for a in range(num_anchors):
+                    confidence = confidence_scores[b, p, a].item()
+                    if confidence > confidence_threshold:
+                        bbox = bbox_coords[b, p, a]
+                        center_x = (patch_x + bbox[0].item()) * self.patch_size
+                        center_y = (patch_y + bbox[1].item()) * self.patch_size
+                        width = bbox[2].item() * image_size[1]
+                        height = bbox[3].item() * image_size[0]
+                        class_probs = torch.softmax(object_classes[b, p, a], dim=0)
+                        class_id = torch.argmax(class_probs).item()
+                        class_name = f"class_{class_id}"
+                        objects.append({
+                            'coordinates': [center_x, center_y],
+                            'bbox': [center_x - width/2, center_y - height/2, 
+                                     center_x + width/2, center_y + height/2],
+                            'class': class_name,
+                            'confidence': confidence,
+                            'patch_coords': [patch_x, patch_y]
+                        })
+        return objects
+
+    def enable_detection(self, enable=True):
+        self._enable_detection = enable

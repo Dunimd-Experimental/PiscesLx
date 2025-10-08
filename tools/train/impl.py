@@ -375,7 +375,7 @@ def _train_impl(args):
     from tools.data.dataset import PiscesDataset
     from torch.utils.data import DataLoader
     from model.tokenizer import get_tokenizer
-    from model import PiscesModel, PiscesConfig
+    from model import PiscesModel, ArcticConfig
     from utils.checkpoint import save_ckpt, load_ckpt
     from torch.optim.lr_scheduler import ReduceLROnPlateau
     from transformers import get_linear_schedule_with_warmup
@@ -568,14 +568,14 @@ def _train_impl(args):
     # Apply silently without printing suggestions
         
     logger.info(f"Device setup completed: {device}")
-    logger.info("Loading PiscesConfig...")
+    logger.info("Loading ArcticConfig...")
     config = f"configs/{model_size}.json"
     if not os.path.exists(config):
         logger.error(f"Config file {config} not found. Please provide a valid --model_size")
         sys.exit(1)
     logger.info(f"Loading config file: {config}")
-    cfg = PiscesConfig.from_json(config)
-    logger.info("PiscesConfig loaded.")
+    cfg = ArcticConfig.from_json(config)
+    logger.info("ArcticConfig loaded.")
 
     logger.info("Initializing PiscesModel with Reasoner...")
     _emit('on_train_start', args=args)

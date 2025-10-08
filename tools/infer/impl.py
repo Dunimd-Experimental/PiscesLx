@@ -486,7 +486,7 @@ def _infer_impl(args: Any) -> None:
     import torch
     from PIL import Image
     from model.tokenizer import get_tokenizer
-    from model import PiscesModel, PiscesConfig
+    from model import PiscesModel, ArcticConfig
     from transformers import BitsAndBytesConfig
     from torchvision.transforms import functional as TF
     import torch.nn.functional as F
@@ -507,7 +507,7 @@ def _infer_impl(args: Any) -> None:
     # Load model configuration and inference settings
     model_size = getattr(args, "model_size", "0.5B").upper()
     config_path = f"configs/{model_size}.json"
-    cfg = PiscesConfig.from_json(config_path)
+    cfg = ArcticConfig.from_json(config_path)
     import json as _json
     with open(config_path, 'r', encoding='utf-8') as _f:
         _full_cfg = _json.load(_f)

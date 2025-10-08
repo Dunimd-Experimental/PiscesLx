@@ -17,20 +17,21 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import math
 import torch
 from torch import nn
 from .moe import MoELayer
 from utils.log.core import PiscesLxCoreLog
 import torch.nn.functional as F
-from .config import PiscesConfig
-from .multimodal import PiscesReasoner
+from .config import ArcticConfig
+from .multimodal import ArcticReasoner
 from model.h2o_attention import H2OAttention
 from model.moe_dynamic import DynamicMoELayer
 from typing import Optional, Tuple, Dict, Any
 from model.yarn_rope import YaRNRotaryEmbedding
 from .reasoner import MultiModalReasoningEnhancer
-from .multimodal import VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder, AgentEncoder, DynamicModalFusion, CrossModalAttention
+from .multimodal import ArcticVisionEncoder, ArcticAudioEncoder, ArcticDocEncoder, ArcticVideoEncoder, ArcticAgentEncoder, ArcticDynamicModalFusion, ArcticCrossModalAttention
 from model.speculative_decoder import SpeculativeDecoder, AdaptiveSpeculativeDecoder, SpeculativeConfig
 
 # 添加新的日志实例
@@ -45,7 +46,7 @@ class UnifiedCacheManager:
     - Speculative decoding cache
     """
     
-    def __init__(self, config: PiscesConfig):
+    def __init__(self, config: ArcticConfig):
         """Unified cache manager.
         Accepts a PiscesConfig or a plain dict of cache options for flexibility.
         """
@@ -1075,7 +1076,7 @@ class PiscesModel(nn.Module):
         # 使用新的日志系统替换旧的日志调用
         logger.debug("PiscesModel: initializing reasoner...")
         # Initialize reasoner
-        self.reasoner = PiscesReasoner(cfg)
+        self.reasoner = ArcticReasoner(cfg)
         # Initialize reasoning tokens for multi-path reasoning
         self.reasoner.initialize_reasoning_tokens(None)
         
@@ -1086,8 +1087,8 @@ class PiscesModel(nn.Module):
         
         # 使用新的日志系统替换旧的日志调用
         logger.debug("PiscesModel: initializing agent...")
-        from .multimodal import PiscesAgent
-        self.agent = PiscesAgent(cfg, model=self)
+        from .multimodal import ArcticAgent
+        self.agent = ArcticAgent(cfg, model=self)
         
         # Skipped global weight initialization to avoid lengthy CPU-bound stall.
         # self.apply(pisces_init_weights)
