@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,12 +20,10 @@
 
 import os
 import torch
-from utils.error import PiscesLxCoreIOError
 from utils.log.core import PiscesLxCoreLog
+from utils.error import PiscesLxCoreIOError
 
-_log = PiscesLxCoreLog("pisceslx.checkpoint")
-# Fallback debug logger for internal exception logging
-_LOGGER = PiscesLxCoreLog("pisceslx.checkpoint.debug")
+logger = PiscesLxCoreLog("PiscesLx.Utils.Checkpoint")
 
 class PiscesLxCoreCheckpointManager:
     """
@@ -41,7 +39,6 @@ class PiscesLxCoreCheckpointManager:
             checkpoint_dir (str): Directory to store checkpoints. Defaults to "checkpoints".
         """
         self.checkpoint_dir = checkpoint_dir
-        self.logger = PiscesLxCoreLog("pisceslx.checkpoint.manager")
         
     def save(self, model, optimizer, epoch: int, name: str = None) -> str:
         """
@@ -134,15 +131,15 @@ def save_ckpt(model, optimizer, epoch, path):
         os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
     except OSError as e:
         try:
-            _log.error(
+            logger.error(
                 "failed to create checkpoint directory",
                 event="checkpoint.mkdir.error",
                 path=path,
                 error=str(e),
                 error_class=type(e).__name__,
             )
-        except Exception as log_e:
-            _LOGGER.debug("CHECKPOINT_LOG_ERROR", error=str(log_e))
+        except Exception:
+            pass
         raise PiscesLxCoreIOError("failed to create checkpoint directory", context={"path": path}, cause=e)
 
     try:
@@ -153,25 +150,25 @@ def save_ckpt(model, optimizer, epoch, path):
             'epoch': epoch
         }, path)
         try:
-            _log.debug(
+            logger.debug(
                 "checkpoint saved",
                 event="checkpoint.save.ok",
                 path=path,
                 epoch=int(epoch) if isinstance(epoch, int) else epoch,
             )
-        except Exception as log_e:
-            _LOGGER.debug("CHECKPOINT_LOG_ERROR", error=str(log_e))
+        except Exception:
+            pass
     except Exception as e:
         try:
-            _log.error(
+            logger.error(
                 "failed to save checkpoint",
                 event="checkpoint.save.error",
                 path=path,
                 error=str(e),
                 error_class=type(e).__name__,
             )
-        except Exception as log_e:
-            _LOGGER.debug("CHECKPOINT_LOG_ERROR", error=str(log_e))
+        except Exception:
+            pass
         raise PiscesLxCoreIOError("failed to write checkpoint", context={"path": path}, cause=e)
 
 def load_ckpt(path, model, optimizer):
@@ -195,27 +192,27 @@ def load_ckpt(path, model, optimizer):
         ckpt = torch.load(path, map_location='cpu')
     except FileNotFoundError as e:
         try:
-            _log.error(
+            logger.error(
                 "checkpoint not found",
                 event="checkpoint.load.not_found",
                 path=path,
                 error=str(e),
                 error_class=type(e).__name__,
             )
-        except Exception as log_e:
-            _LOGGER.debug("CHECKPOINT_LOG_ERROR", error=str(log_e))
+        except Exception:
+            pass
         raise PiscesLxCoreIOError("checkpoint not found", context={"path": path}, cause=e)
     except Exception as e:
         try:
-            _log.error(
+            logger.error(
                 "failed to load checkpoint",
                 event="checkpoint.load.error",
                 path=path,
                 error=str(e),
                 error_class=type(e).__name__,
             )
-        except Exception as log_e:
-            _LOGGER.debug("CHECKPOINT_LOG_ERROR", error=str(log_e))
+        except Exception:
+            pass
         raise PiscesLxCoreIOError("failed to load checkpoint", context={"path": path}, cause=e)
 
     try:
@@ -224,36 +221,36 @@ def load_ckpt(path, model, optimizer):
         optimizer.load_state_dict(ckpt['optimizer'])
         epoch = ckpt['epoch']
         try:
-            _log.debug(
+            logger.debug(
                 "checkpoint loaded",
                 event="checkpoint.load.ok",
                 path=path,
                 epoch=int(epoch) if isinstance(epoch, int) else epoch,
             )
-        except Exception as log_e:
-            _LOGGER.debug("CHECKPOINT_LOG_ERROR", error=str(log_e))
+        except Exception:
+            pass
         return epoch
     except KeyError as e:
         try:
-            _log.error(
+            logger.error(
                 "invalid checkpoint format",
                 event="checkpoint.load.key_error",
                 path=path,
                 missing_key=str(e),
                 error_class=type(e).__name__,
             )
-        except Exception as log_e:
-            _LOGGER.debug("CHECKPOINT_LOG_ERROR", error=str(log_e))
+        except Exception:
+            pass
         raise PiscesLxCoreIOError("invalid checkpoint format", context={"path": path, "missing": str(e)}, cause=e)
     except Exception as e:
         try:
-            _log.error(
+            logger.error(
                 "failed to restore states from checkpoint",
                 event="checkpoint.restore.error",
                 path=path,
                 error=str(e),
                 error_class=type(e).__name__,
             )
-        except Exception as log_e:
-            _LOGGER.debug("CHECKPOINT_LOG_ERROR", error=str(log_e))
+        except Exception:
+            pass
         raise PiscesLxCoreIOError("failed to restore states from checkpoint", context={"path": path}, cause=e)

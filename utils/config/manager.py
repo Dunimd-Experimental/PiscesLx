@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -46,7 +46,7 @@ class PiscesLxCoreConfigManager:
             project_root (Optional[Path]): Path to the project root directory. If None, it will be detected automatically.
         """
         # Initialize the logger for the configuration manager.
-        self.logger = PiscesLxCoreLog("pisceslx.config.manager")
+        self.logger = PiscesLxCoreLog("PiscesLx.Utils.Config.Manager")
         # Set the project root directory. If not provided, detect it automatically.
         self.project_root = project_root or self._detect_project_root()
         # Dictionary to store loaded configurations.

@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,16 +24,31 @@ import sys
 import json
 import uuid
 import asyncio
+import importlib
+from pathlib import Path
 from dataclasses import dataclass
+from utils.log.core import PiscesLxCoreLog
 from typing import Dict, Any, List, Optional, Tuple
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+logger = PiscesLxCoreLog("Arctic.Core.MCP")
 
-from utils import RIGHT, DEBUG, ERROR
-
-# Config-driven MCP: load tools from configuration, no import-time discovery
-from tools import read_config
-import importlib
+def read_config(path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Read MCP tools configuration JSON without importing tools package.
+    Defaults to workspace MCP/MCP.json.
+    """
+    cfg_path = Path(path) if path else (Path(__file__).resolve().parents[2] / "MCP" / "MCP.json")
+    try:
+        if not cfg_path.exists():
+            return {"version": "1.0", "tools": {}, "meta": {}}
+        with open(cfg_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        data.setdefault("version", "1.0")
+        data.setdefault("tools", {})
+        data.setdefault("meta", {})
+        return data
+    except Exception:
+        return {"version": "1.0", "tools": {}, "meta": {}}
 
 _mcp_available = False
 _tools_cache: Dict[str, Any] = {}
@@ -54,7 +69,7 @@ def _load_tools_from_config() -> Dict[str, Any]:
     return {k: v for k, v in tools.items() if isinstance(v, dict) and v.get("enabled", True)}
 
 @dataclass
-class AgentCall:
+class ArcticAgentCall:
     """
     Represents a parsed agent call from model output.
 
@@ -71,7 +86,7 @@ class AgentCall:
     start_pos: int
     end_pos: int
 
-class MCPTranslationLayer:
+class ArcticMCPTranslationLayer:
     """
     MCP Translation Layer with Official SDK Integration.
 
@@ -93,7 +108,7 @@ class MCPTranslationLayer:
             _tools_cache = _load_tools_from_config()
             _mcp_available = len(_tools_cache) > 0
         except Exception as e:
-            ERROR(f"Failed to load MCP tools config: {e}")
+            logger.error(f"Failed to load MCP tools config: {e}")
             _mcp_available = False
         
     def _wait_for_ready(self, timeout: float = 0.0) -> bool:
@@ -133,7 +148,7 @@ class MCPTranslationLayer:
         """
         pass
     
-    def extract_agent_calls(self, text: str) -> List[AgentCall]:
+    def extract_agent_calls(self, text: str) -> List[ArcticAgentCall]:
         """
         Extract all <agent> tags from model output.
 
@@ -163,7 +178,7 @@ class MCPTranslationLayer:
                 param_value = param_match.group(2).strip()
                 parameters[f"ap{param_index}"] = param_value
             
-            agent_call = AgentCall(
+            agent_call = ArcticAgentCall(
                 tool_name=tool_name,
                 parameters=parameters,
                 raw_match=match.group(0),
@@ -221,13 +236,13 @@ class MCPTranslationLayer:
                         # Create a user-friendly result display
                         result_text = self._format_tool_result(call.tool_name, tool_result)
                     else:
-                        result_text = f"✅\t{call.tool_name} executed successfully: {tool_result}"
+                        result_text = f"🟢\t{call.tool_name} executed successfully: {tool_result}"
                 else:
                     # Format error result
                     error_msg = result.get('error_message', 'Unknown error')
-                    result_text = f"❌\t{call.tool_name} execution failed: {error_msg}"
+                    result_text = f"🔴\t{call.tool_name} execution failed: {error_msg}"
             else:
-                result_text = f"🟧\t{call.tool_name} is being executed..."
+                result_text = f"🔵\t{call.tool_name} is being executed..."
             
             # Replace the agent tag with the result
             modified_text = (
@@ -257,7 +272,7 @@ class MCPTranslationLayer:
             results = result.get('results', [])
             count = result.get('count', 0)
             
-            formatted = f"🟧\tWeb search for \"{query}\" completed, found {count} results:\n"
+            formatted = f"🔵\tWeb search for \"{query}\" completed, found {count} results:\n"
             for i, item in enumerate(results[:3], 1):  # Show top 3 results
                 title = item.get('title', 'No title')
                 snippet = item.get('snippet', 'No description')
@@ -272,7 +287,7 @@ class MCPTranslationLayer:
             expression = result.get('expression', '')
             calc_result = result.get('result', '')
             
-            return f"🟧\tCalculation result: {expression} = {calc_result}"
+            return f"🔵\tCalculation result: {expression} = {calc_result}"
             
         elif tool_name == "file_operations":
             operation = result.get('operation', '')
@@ -280,13 +295,13 @@ class MCPTranslationLayer:
             
             if operation == "read":
                 size = result.get('size', 0)
-                return f"🟧\tFile read completed: {filepath}, size: {size} characters"
+                return f"🔵\tFile read completed: {filepath}, size: {size} characters"
             elif operation == "write":
                 bytes_written = result.get('bytes_written', 0)
-                return f"🟧\tFile write completed: {filepath}, size: {bytes_written} bytes"
+                return f"🔵\tFile write completed: {filepath}, size: {bytes_written} bytes"
             elif operation == "list":
                 count = result.get('count', 0)
-                return f"🟧\tDirectory listing completed: {filepath}, found {count} files/folders"
+                return f"🔵\tDirectory listing completed: {filepath}, found {count} files/folders"
             
         elif tool_name == "image_analysis":
             analysis_type = result.get('analysis_type', '')
@@ -294,13 +309,13 @@ class MCPTranslationLayer:
             
             if analysis_type == "description":
                 description = result.get('description', 'No description')
-                return f"🟧\tImage analysis completed: {description}"
+                return f"🔵\tImage analysis completed: {description}"
             elif analysis_type == "objects":
                 total_objects = result.get('total_objects', 0)
-                return f"🟧\tObject detection completed, found {total_objects} objects"
+                return f"🔵\tObject detection completed, found {total_objects} objects"
             elif analysis_type == "text":
                 extracted_text = result.get('extracted_text', '')
-                return f"🟧\tText recognition completed: {extracted_text}"
+                return f"🔵\tText recognition completed: {extracted_text}"
                 
         elif tool_name == "text_processing":
             operation = result.get('operation', '')
@@ -308,19 +323,19 @@ class MCPTranslationLayer:
             if operation == "summary":
                 summary = result.get('summary', '')
                 word_count = result.get('word_count', 0)
-                return f"🟧\tText summarization completed ({word_count} words): {summary}"
+                return f"🔵\tText summarization completed ({word_count} words): {summary}"
             elif operation == "translate":
                 translated_text = result.get('translated_text', '')
                 source_lang = result.get('source_language', '')
                 target_lang = result.get('target_language', '')
-                return f"🟧\tTranslation completed ({source_lang} → {target_lang}): {translated_text}"
+                return f"🔵\tTranslation completed ({source_lang} → {target_lang}): {translated_text}"
             elif operation == "sentiment":
                 sentiment = result.get('sentiment', '')
                 confidence = result.get('confidence', 0)
-                return f"🟧\tSentiment analysis completed: {sentiment} (confidence: {confidence:.2f})"
+                return f"🔵\tSentiment analysis completed: {sentiment} (confidence: {confidence:.2f})"
         
         # Default formatting
-        return f"✅\t{tool_name} execution completed"
+        return f"🟢\t{tool_name} execution completed"
     
     async def execute_agent_calls(self, agent_calls: List[AgentCall], 
                                 session_id: str = "default", 
@@ -421,7 +436,7 @@ class MCPTranslationLayer:
         if not agent_calls:
             return model_output
         
-        DEBUG(f"Found {len(agent_calls)} agent calls in model output")
+        logger.debug(f"Found {len(agent_calls)} agent calls in model output")
         
         # Convert to official MCP requests and execute
         results = await self.execute_agent_calls(agent_calls, session_id, agent_id)
@@ -532,7 +547,7 @@ class MCPTranslationLayer:
                 "category": "config_tool"
             } for name, meta in _tools_cache.items()]
         except Exception as e:
-            ERROR(f"Error getting available tools: {e}")
+            logger.error(f"Error getting available tools: {e}")
             return []
 
 # Utility functions for standalone usage
@@ -549,10 +564,10 @@ async def process_text_with_mcp(text: str) -> str:
     Returns:
         str: Processed text with results.
     """
-    async with MCPTranslationLayer() as translator:
+    async with ArcticMCPTranslationLayer() as translator:
         return await translator.process_model_output(text)
 
-def extract_agent_calls_sync(text: str) -> List[AgentCall]:
+def extract_agent_calls_sync(text: str) -> List[ArcticAgentCall]:
     """
     Synchronous version of agent call extraction.
 
@@ -564,7 +579,7 @@ def extract_agent_calls_sync(text: str) -> List[AgentCall]:
     Returns:
         List[AgentCall]: Extracted agent calls.
     """
-    translator = MCPTranslationLayer()
+    translator = ArcticMCPTranslationLayer()
     return translator.extract_agent_calls(text)
 
 def execute_tool_call_sync(xml_tag: str) -> Dict[str, Any]:
@@ -580,7 +595,7 @@ def execute_tool_call_sync(xml_tag: str) -> Dict[str, Any]:
     Returns:
         Dict: Tool execution result.
     """
-    translator = MCPTranslationLayer()
+    translator = ArcticMCPTranslationLayer()
     
     # Extract agent calls
     agent_calls = translator.extract_agent_calls(xml_tag)

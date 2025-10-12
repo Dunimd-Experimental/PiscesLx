@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -133,7 +133,7 @@ class PiscesLxCoreReporter:
             str: Markdown content of the device report.
         """
         lines = [
-            f"# Pisces L1 Device Report",
+            f"# PiscesL1 Device Report",
             "",
             f"- Generated: {ts}",
             f"- Session: {session_id or '-'}",
@@ -182,7 +182,7 @@ class PiscesLxCoreReporter:
             str: Markdown content of the session report.
         """
         lines = [
-            f"# Pisces L1 Session Report",
+            f"# PiscesL1 Session Report",
             "",
             f"- Generated: {ts}",
             f"- Session: {session_id or '-'}",
@@ -368,3 +368,4 @@ class PiscesLxCoreReporter:
         except Exception as e:
             logging.error(f"Unexpected error while reading UL changelog: {str(e)}")
             return []
+

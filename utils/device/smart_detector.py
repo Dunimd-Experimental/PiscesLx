@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,13 +21,15 @@
 import time
 import torch
 import platform
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 from typing import Dict, Any, List, Optional
 from utils.hooks.bus import get_global_hook_bus
 from .cpu_detector import PiscesLxCoreDeviceCpuDetector
 from .nvidia_detector import PiscesLxCoreDeviceNvidiaDetector
 from utils.observability.service import PiscesLxCoreObservabilityService
 from utils.observability.decorators import PiscesLxCoreDecorators as ObsDec
+
+logger = PiscesLxCoreLog("PiscesLx.Utils.Device.SmartDetector")
 
 class PiscesLxCoreDeviceSmartDetector:
     """
@@ -46,7 +48,7 @@ class PiscesLxCoreDeviceSmartDetector:
         self.all_gpu_info = []
         self.cpu_info = {}
         self.detection_summary = {}
-        self.logger = PiscesLxCoreLog()
+
         
     @ObsDec.auto_cached_logged(namespace="device.detect", ttl=60)
     def detect_all_devices(self, model_size: str = None) -> Dict[str, Any]:
@@ -61,7 +63,7 @@ class PiscesLxCoreDeviceSmartDetector:
                            detection summary, recommended strategy, and device priority.
         """
         # Log start of device detection process
-        self.logger.info("Starting comprehensive device detection", event="DETECT", message="Starting comprehensive device detection")
+        logger.info("Starting comprehensive device detection", event="DETECT", message="Starting comprehensive device detection")
         
         # Get global hook bus instance for emitting events
         bus = get_global_hook_bus()
@@ -71,7 +73,7 @@ class PiscesLxCoreDeviceSmartDetector:
         try:
             bus.emit("device.detect.start", model_size=model_size)
         except Exception as e:
-            self.logger.debug("emit device.detect.start failed", event="DEVICE", message="emit device.detect.start failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("emit device.detect.start failed", event="DEVICE", message="emit device.detect.start failed", error=str(e), error_class=type(e).__name__)
         
         # Detect NVIDIA GPUs using dedicated detector
         nvidia_gpus = self.nvidia_detector.detect()
@@ -101,7 +103,7 @@ class PiscesLxCoreDeviceSmartDetector:
         }
         
         # Log completion of device detection
-        self.logger.info("Device detection completed", event="DETECT", message="Device detection completed", nvidia_gpus=nvidia_count, amd_gpus=amd_count, cpu_detected=True)
+        logger.info("Device detection completed", event="DETECT", message="Device detection completed", nvidia_gpus=nvidia_count, amd_gpus=amd_count, cpu_detected=True)
         
         # Determine optimal strategy based on detected hardware
         strategy = self._determine_optimal_strategy(model_size)
@@ -120,7 +122,7 @@ class PiscesLxCoreDeviceSmartDetector:
             obs = PiscesLxCoreObservabilityService.instance()
             obs.write_device_report(result)
         except Exception as e:
-            self.logger.debug("write_device_report failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("write_device_report failed", error=str(e), error_class=type(e).__name__)
         # emit end event
         try:
             duration = int((time.time() - t0) * 1000)
@@ -132,7 +134,7 @@ class PiscesLxCoreDeviceSmartDetector:
                 gpu_info=self.all_gpu_info,
             )
         except Exception as e:
-            self.logger.debug("emit device.detect.end failed", event="DEVICE", message="emit device.detect.end failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("emit device.detect.end failed", event="DEVICE", message="emit device.detect.end failed", error=str(e), error_class=type(e).__name__)
         return result
     
     def _determine_optimal_strategy(self, model_size: str = None) -> Dict[str, Any]:
@@ -467,7 +469,7 @@ class PiscesLxCoreDeviceSmartDetector:
         # Get NVIDIA-specific strategy
         nvidia_strategy = self.nvidia_detector.get_recommended_strategy(model_size)
         
-        # Enhance with Pisces L1 specific optimizations
+        # Enhance with PiscesL1 specific optimizations
         enhanced_strategy = {
             'device_type': 'cuda',
             'vendor': 'nvidia',
@@ -513,7 +515,7 @@ class PiscesLxCoreDeviceSmartDetector:
                     optimizations['mixed_precision'] = True
                     optimizations['flash_attention'] = True
             except Exception as e:
-                self.logger.debug("tensor core detection failed", event="DEVICE", message="tensor core detection failed", error=str(e), error_class=type(e).__name__)
+                logger.debug("tensor core detection failed", event="DEVICE", message="tensor core detection failed", error=str(e), error_class=type(e).__name__)
                 
         return optimizations
     
@@ -552,7 +554,7 @@ class PiscesLxCoreDeviceSmartDetector:
                 return True
                 
         except Exception as e:
-            self.logger.debug("WSL detection skipped", event="DEVICE", message="WSL detection skipped", error=type(e).__name__)
+            logger.debug("WSL detection skipped", event="DEVICE", message="WSL detection skipped", error=type(e).__name__)
             
         return False
     
@@ -608,10 +610,10 @@ class PiscesLxCoreDeviceSmartDetector:
                             'driver_version': self._get_rocm_driver_version()
                         })
                         
-                self.logger.info("ROCm detection", event="DEVICE", message="ROCm detection", amd_gpus=len([g for g in self.all_gpu_info if g.get('platform') == 'rocm']))
+                logger.info("ROCm detection", event="DEVICE", message="ROCm detection", amd_gpus=len([g for g in self.all_gpu_info if g.get('platform') == 'rocm']))
 
         except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError, ImportError) as e:
-            self.logger.debug("ROCm detection skipped", event="DEVICE", message="ROCm detection skipped", reason=type(e).__name__)
+            logger.debug("ROCm detection skipped", event="DEVICE", message="ROCm detection skipped", reason=type(e).__name__)
     
     def _detect_directml_devices(self) -> None:
         """
@@ -640,12 +642,12 @@ class PiscesLxCoreDeviceSmartDetector:
                     'driver_version': 'unknown'
                 })
                 
-            self.logger.info("DirectML detection", event="DEVICE", message="DirectML detection", gpu_count=device_count)
+            logger.info("DirectML detection", event="DEVICE", message="DirectML detection", gpu_count=device_count)
             
         except ImportError:
-            self.logger.debug("DirectML not available", event="DEVICE", message="DirectML not available")
+            logger.debug("DirectML not available", event="DEVICE", message="DirectML not available")
         except Exception as e:
-            self.logger.debug("DirectML detection failed", event="DEVICE", message="DirectML detection failed", error=str(e))
+            logger.debug("DirectML detection failed", event="DEVICE", message="DirectML detection failed", error=str(e))
     
     def _detect_wsl_devices(self) -> None:
         """
@@ -684,10 +686,10 @@ class PiscesLxCoreDeviceSmartDetector:
                                         'driver_version': 'unknown'
                                     })
                     
-                    self.logger.info("WSL GPU detection completed", event="DEVICE", message="WSL GPU detection completed")
+                    logger.info("WSL GPU detection completed", event="DEVICE", message="WSL GPU detection completed")
                     
         except Exception as e:
-            self.logger.debug("WSL detection failed or skipped", event="DEVICE", message="WSL detection failed or skipped", error=str(e), error_class=type(e).__name__)
+            logger.debug("WSL detection failed or skipped", event="DEVICE", message="WSL detection failed or skipped", error=str(e), error_class=type(e).__name__)
     
     def _parse_rocm_memory(self, memory_str: str) -> int:
         """
@@ -709,7 +711,7 @@ class PiscesLxCoreDeviceSmartDetector:
             else:
                 return int(memory_str) // (1024*1024)
         except Exception as e:
-            self.logger.debug("parse ROCm memory failed", event="DEVICE", message="parse ROCm memory failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("parse ROCm memory failed", event="DEVICE", message="parse ROCm memory failed", error=str(e), error_class=type(e).__name__)
             return 16368  # Default 16GB
     
     def _get_rocm_driver_version(self) -> str:
@@ -727,11 +729,11 @@ class PiscesLxCoreDeviceSmartDetector:
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip().split('\n')[0]
         except FileNotFoundError:
-            self.logger.debug("get ROCM driver version failed", event="DEVICE", message="get ROCM driver version failed", error="rocm-smi not found")
+            logger.debug("get ROCM driver version failed", event="DEVICE", message="get ROCM driver version failed", error="rocm-smi not found")
         except subprocess.TimeoutExpired:
-            self.logger.debug("get ROCM driver version failed", event="DEVICE", message="get ROCM driver version failed", error="timeout")
+            logger.debug("get ROCM driver version failed", event="DEVICE", message="get ROCM driver version failed", error="timeout")
         except Exception as e:
-            self.logger.debug("get ROCM driver version failed", event="DEVICE", message="get ROCM driver version failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("get ROCM driver version failed", event="DEVICE", message="get ROCM driver version failed", error=str(e), error_class=type(e).__name__)
         return 'unknown'
 
     def _check_rocm_availability(self) -> bool:
@@ -857,13 +859,13 @@ class PiscesLxCoreDeviceSmartDetector:
         Print a comprehensive detection summary of the detected devices and the recommended strategy.
         """
         # Print header section
-        self.logger.info("=" * 60, event="DEVICE", message="=" * 60)
-        self.logger.info("Pisces L1 Intelligent Device Detection Report", event="DEVICE", message="Pisces L1 Intelligent Device Detection Report")
-        self.logger.info("=" * 60, event="DEVICE", message="=" * 60)
+        logger.info("=" * 60, event="DEVICE", message="=" * 60)
+        logger.info("PiscesL1 Intelligent Device Detection Report", event="DEVICE", message="PiscesL1 Intelligent Device Detection Report")
+        logger.info("=" * 60, event="DEVICE", message="=" * 60)
         
         # GPU Summary
         if self.all_gpu_info:
-            self.logger.info("Detected GPUs", event="DEVICE", message="Detected GPUs", count=len(self.all_gpu_info))
+            logger.info("Detected GPUs", event="DEVICE", message="Detected GPUs", count=len(self.all_gpu_info))
             for gpu in self.all_gpu_info:
                 vendor = gpu.get('vendor', 'unknown').upper()
                 name = gpu.get('name', 'Unknown')
@@ -872,16 +874,16 @@ class PiscesLxCoreDeviceSmartDetector:
                 temp = gpu.get('temperature', 0)
                 
                 # Log GPU information
-                self.logger.info("GPU Info", event="DEVICE", message="GPU Info", vendor=vendor, index=gpu.get('index', '?'), name=name)
-                self.logger.info("GPU Memory", event="DEVICE", message="GPU Memory", total_gb=memory_gb, free_gb=free_gb)
-                self.logger.info("GPU Status", event="DEVICE", message="GPU Status", temperature=temp, utilization=gpu.get('utilization', 0))
+                logger.info("GPU Info", event="DEVICE", message="GPU Info", vendor=vendor, index=gpu.get('index', '?'), name=name)
+                logger.info("GPU Memory", event="DEVICE", message="GPU Memory", total_gb=memory_gb, free_gb=free_gb)
+                logger.info("GPU Status", event="DEVICE", message="GPU Status", temperature=temp, utilization=gpu.get('utilization', 0))
                 
                 # Log additional NVIDIA-specific info
                 if vendor == 'nvidia':
                     compute_cap = gpu.get('compute_capability', 'unknown')
-                    self.logger.info("Compute Capability", event="DEVICE", message="Compute Capability", capability=compute_cap)
+                    logger.info("Compute Capability", event="DEVICE", message="Compute Capability", capability=compute_cap)
         else:
-            self.logger.error("No GPUs detected", event="DEVICE", message="No GPUs detected")
+            logger.error("No GPUs detected", event="DEVICE", message="No GPUs detected")
         
         # CPU Summary
         if self.cpu_info:
@@ -897,24 +899,24 @@ class PiscesLxCoreDeviceSmartDetector:
             simd_level = arch_info.get('simd_level', 'basic')
             
             # Log CPU information
-            self.logger.info("CPU Info", event="DEVICE", message="CPU Info", brand=brand)
-            self.logger.info("CPU Cores", event="DEVICE", message="CPU Cores", physical_cores=physical_cores, logical_cores=logical_cores)
-            self.logger.info("CPU Memory", event="DEVICE", message="CPU Memory", memory_gb=memory_gb)
-            self.logger.info("CPU SIMD", event="DEVICE", message="CPU SIMD", simd_level=simd_level.upper())
-            self.logger.info("CPU AI Capability", event="DEVICE", message="CPU AI Capability", level=capability.get('level', 'unknown'), score=capability.get('score', 0))
+            logger.info("CPU Info", event="DEVICE", message="CPU Info", brand=brand)
+            logger.info("CPU Cores", event="DEVICE", message="CPU Cores", physical_cores=physical_cores, logical_cores=logical_cores)
+            logger.info("CPU Memory", event="DEVICE", message="CPU Memory", memory_gb=memory_gb)
+            logger.info("CPU SIMD", event="DEVICE", message="CPU SIMD", simd_level=simd_level.upper())
+            logger.info("CPU AI Capability", event="DEVICE", message="CPU AI Capability", level=capability.get('level', 'unknown'), score=capability.get('score', 0))
         
         # Strategy Recommendation
         if hasattr(self, 'current_strategy'):
             strategy = self.current_strategy
-            self.logger.info("Recommended Strategy", event="DEVICE", message="Recommended Strategy", device_type=strategy.get('device_type', 'unknown'))
-            self.logger.info("Strategy Reason", event="DEVICE", message="Strategy Reason", reason=strategy.get('reason', 'No recommendation'))
+            logger.info("Recommended Strategy", event="DEVICE", message="Recommended Strategy", device_type=strategy.get('device_type', 'unknown'))
+            logger.info("Strategy Reason", event="DEVICE", message="Strategy Reason", reason=strategy.get('reason', 'No recommendation'))
             
             # Log strategy warning if present
             if strategy.get('warning'):
-                self.logger.warning("Strategy Warning", event="DEVICE", message="Strategy Warning", warning=strategy['warning'])
+                logger.warning("Strategy Warning", event="DEVICE", message="Strategy Warning", warning=strategy['warning'])
         
         # Print footer section
-        self.logger.info("=" * 60, event="DEVICE", message="=" * 60)
+        logger.info("=" * 60, event="DEVICE", message="=" * 60)
 
     """
     An intelligent device detector that orchestrates the detection of NVIDIA, AMD GPUs, and CPUs.
@@ -932,7 +934,7 @@ class PiscesLxCoreDeviceSmartDetector:
         self.all_gpu_info = []
         self.cpu_info = {}
         self.detection_summary = {}
-        self.logger = PiscesLxCoreLog()
+
         
     @ObsDec.auto_cached_logged(namespace="device.detect", ttl=60)
     def detect_all_devices(self, model_size: str = None) -> Dict[str, Any]:
@@ -946,13 +948,13 @@ class PiscesLxCoreDeviceSmartDetector:
             Dict[str, Any]: A dictionary containing GPU information, CPU information, 
                            detection summary, recommended strategy, and device priority.
         """
-        self.logger.info("Starting comprehensive device detection", event="DETECT", message="Starting comprehensive device detection")
+        logger.info("Starting comprehensive device detection", event="DETECT", message="Starting comprehensive device detection")
         bus = get_global_hook_bus()
         t0 = time.time()
         try:
             bus.emit("device.detect.start", model_size=model_size)
         except Exception as e:
-            self.logger.debug("emit device.detect.start failed", event="DEVICE", message="emit device.detect.start failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("emit device.detect.start failed", event="DEVICE", message="emit device.detect.start failed", error=str(e), error_class=type(e).__name__)
         
         # Detect NVIDIA GPUs
         nvidia_gpus = self.nvidia_detector.detect()
@@ -981,7 +983,7 @@ class PiscesLxCoreDeviceSmartDetector:
             'device_capabilities': self._get_device_capabilities(self.all_gpu_info, cpu_info)
         }
         
-        self.logger.info("Device detection completed", event="DETECT", message="Device detection completed", nvidia_gpus=nvidia_count, amd_gpus=amd_count, cpu_detected=True)
+        logger.info("Device detection completed", event="DETECT", message="Device detection completed", nvidia_gpus=nvidia_count, amd_gpus=amd_count, cpu_detected=True)
         
         # Determine optimal strategy
         strategy = self._determine_optimal_strategy(model_size)
@@ -999,7 +1001,7 @@ class PiscesLxCoreDeviceSmartDetector:
             obs = PiscesLxCoreObservabilityService.instance()
             obs.write_device_report(result)
         except Exception as e:
-            self.logger.debug("write_device_report failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("write_device_report failed", error=str(e), error_class=type(e).__name__)
         # emit end event
         try:
             duration = int((time.time() - t0) * 1000)
@@ -1011,7 +1013,7 @@ class PiscesLxCoreDeviceSmartDetector:
                 gpu_info=self.all_gpu_info,
             )
         except Exception as e:
-            self.logger.debug("emit device.detect.end failed", event="DEVICE", message="emit device.detect.end failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("emit device.detect.end failed", event="DEVICE", message="emit device.detect.end failed", error=str(e), error_class=type(e).__name__)
         return result
     
     def _determine_optimal_strategy(self, model_size: str = None) -> Dict[str, Any]:
@@ -1326,7 +1328,7 @@ class PiscesLxCoreDeviceSmartDetector:
         # Get NVIDIA-specific strategy
         nvidia_strategy = self.nvidia_detector.get_recommended_strategy(model_size)
         
-        # Enhance with Pisces L1 specific optimizations
+        # Enhance with PiscesL1 specific optimizations
         enhanced_strategy = {
             'device_type': 'cuda',
             'vendor': 'nvidia',
@@ -1371,7 +1373,7 @@ class PiscesLxCoreDeviceSmartDetector:
                     optimizations['mixed_precision'] = True
                     optimizations['flash_attention'] = True
             except Exception as e:
-                self.logger.debug("tensor core detection failed", event="DEVICE", message="tensor core detection failed", error=str(e), error_class=type(e).__name__)
+                logger.debug("tensor core detection failed", event="DEVICE", message="tensor core detection failed", error=str(e), error_class=type(e).__name__)
                 
         return optimizations
     
@@ -1409,7 +1411,7 @@ class PiscesLxCoreDeviceSmartDetector:
                 return True
                 
         except Exception as e:
-            self.logger.debug("WSL detection skipped", event="DEVICE", message="WSL detection skipped", error=type(e).__name__)
+            logger.debug("WSL detection skipped", event="DEVICE", message="WSL detection skipped", error=type(e).__name__)
             
         return False
     
@@ -1462,10 +1464,10 @@ class PiscesLxCoreDeviceSmartDetector:
                             'driver_version': self._get_rocm_driver_version()
                         })
                         
-                self.logger.info("ROCm detection", event="DEVICE", message="ROCm detection", amd_gpus=len([g for g in self.all_gpu_info if g.get('platform') == 'rocm']))
+                logger.info("ROCm detection", event="DEVICE", message="ROCm detection", amd_gpus=len([g for g in self.all_gpu_info if g.get('platform') == 'rocm']))
 
         except (subprocess.TimeoutExpired, FileNotFoundError, json.JSONDecodeError, ImportError) as e:
-            self.logger.debug("ROCm detection skipped", event="DEVICE", message="ROCm detection skipped", reason=type(e).__name__)
+            logger.debug("ROCm detection skipped", event="DEVICE", message="ROCm detection skipped", reason=type(e).__name__)
     
     def _detect_directml_devices(self) -> None:
         """
@@ -1492,12 +1494,12 @@ class PiscesLxCoreDeviceSmartDetector:
                     'driver_version': 'unknown'
                 })
                 
-            self.logger.info("DirectML detection", event="DEVICE", message="DirectML detection", gpu_count=device_count)
+            logger.info("DirectML detection", event="DEVICE", message="DirectML detection", gpu_count=device_count)
             
         except ImportError:
-            self.logger.debug("DirectML not available", event="DEVICE", message="DirectML not available")
+            logger.debug("DirectML not available", event="DEVICE", message="DirectML not available")
         except Exception as e:
-            self.logger.debug("DirectML detection failed", event="DEVICE", message="DirectML detection failed", error=str(e))
+            logger.debug("DirectML detection failed", event="DEVICE", message="DirectML detection failed", error=str(e))
     
     def _detect_wsl_devices(self) -> None:
         """
@@ -1535,10 +1537,10 @@ class PiscesLxCoreDeviceSmartDetector:
                                         'driver_version': 'unknown'
                                     })
                     
-                    self.logger.info("WSL GPU detection completed", event="DEVICE", message="WSL GPU detection completed")
+                    logger.info("WSL GPU detection completed", event="DEVICE", message="WSL GPU detection completed")
                     
         except Exception as e:
-            self.logger.debug("WSL detection failed or skipped", event="DEVICE", message="WSL detection failed or skipped", error=str(e), error_class=type(e).__name__)
+            logger.debug("WSL detection failed or skipped", event="DEVICE", message="WSL detection failed or skipped", error=str(e), error_class=type(e).__name__)
     
     def _parse_rocm_memory(self, memory_str: str) -> int:
         """
@@ -1559,7 +1561,7 @@ class PiscesLxCoreDeviceSmartDetector:
             else:
                 return int(memory_str) // (1024*1024)
         except Exception as e:
-            self.logger.debug("parse ROCm memory failed", event="DEVICE", message="parse ROCm memory failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("parse ROCm memory failed", event="DEVICE", message="parse ROCm memory failed", error=str(e), error_class=type(e).__name__)
             return 16368  # Default 16GB
     
     def _get_rocm_driver_version(self) -> str:
@@ -1576,11 +1578,11 @@ class PiscesLxCoreDeviceSmartDetector:
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip().split('\n')[0]
         except FileNotFoundError:
-            self.logger.debug("get ROCM driver version failed", event="DEVICE", message="get ROCM driver version failed", error="rocm-smi not found")
+            logger.debug("get ROCM driver version failed", event="DEVICE", message="get ROCM driver version failed", error="rocm-smi not found")
         except subprocess.TimeoutExpired:
-            self.logger.debug("get ROCM driver version failed", event="DEVICE", message="get ROCM driver version failed", error="timeout")
+            logger.debug("get ROCM driver version failed", event="DEVICE", message="get ROCM driver version failed", error="timeout")
         except Exception as e:
-            self.logger.debug("get ROCM driver version failed", event="DEVICE", message="get ROCM driver version failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("get ROCM driver version failed", event="DEVICE", message="get ROCM driver version failed", error=str(e), error_class=type(e).__name__)
         return 'unknown'
 
     # Removed duplicate _check_rocm_availability method - use unified implementation
@@ -1626,13 +1628,13 @@ class PiscesLxCoreDeviceSmartDetector:
         """
         Print a comprehensive detection summary of the detected devices and the recommended strategy.
         """
-        self.logger.info("=" * 60, event="DEVICE", message="=" * 60)
-        self.logger.info("Pisces L1 Intelligent Device Detection Report", event="DEVICE", message="Pisces L1 Intelligent Device Detection Report")
-        self.logger.info("=" * 60, event="DEVICE", message="=" * 60)
+        logger.info("=" * 60, event="DEVICE", message="=" * 60)
+        logger.info("PiscesL1 Intelligent Device Detection Report", event="DEVICE", message="PiscesL1 Intelligent Device Detection Report")
+        logger.info("=" * 60, event="DEVICE", message="=" * 60)
         
         # GPU Summary
         if self.all_gpu_info:
-            self.logger.info("Detected GPUs", event="DEVICE", message="Detected GPUs", count=len(self.all_gpu_info))
+            logger.info("Detected GPUs", event="DEVICE", message="Detected GPUs", count=len(self.all_gpu_info))
             for gpu in self.all_gpu_info:
                 vendor = gpu.get('vendor', 'unknown').upper()
                 name = gpu.get('name', 'Unknown')
@@ -1640,15 +1642,15 @@ class PiscesLxCoreDeviceSmartDetector:
                 free_gb = gpu.get('free_memory', 0) / 1024
                 temp = gpu.get('temperature', 0)
                 
-                self.logger.info("GPU Info", event="DEVICE", message="GPU Info", vendor=vendor, index=gpu.get('index', '?'), name=name)
-                self.logger.info("GPU Memory", event="DEVICE", message="GPU Memory", total_gb=memory_gb, free_gb=free_gb)
-                self.logger.info("GPU Status", event="DEVICE", message="GPU Status", temperature=temp, utilization=gpu.get('utilization', 0))
+                logger.info("GPU Info", event="DEVICE", message="GPU Info", vendor=vendor, index=gpu.get('index', '?'), name=name)
+                logger.info("GPU Memory", event="DEVICE", message="GPU Memory", total_gb=memory_gb, free_gb=free_gb)
+                logger.info("GPU Status", event="DEVICE", message="GPU Status", temperature=temp, utilization=gpu.get('utilization', 0))
                 
                 if vendor == 'nvidia':
                     compute_cap = gpu.get('compute_capability', 'unknown')
-                    self.logger.info("Compute Capability", event="DEVICE", message="Compute Capability", capability=compute_cap)
+                    logger.info("Compute Capability", event="DEVICE", message="Compute Capability", capability=compute_cap)
         else:
-            self.logger.error("No GPUs detected", event="DEVICE", message="No GPUs detected")
+            logger.error("No GPUs detected", event="DEVICE", message="No GPUs detected")
         
         # CPU Summary
         if self.cpu_info:
@@ -1662,19 +1664,19 @@ class PiscesLxCoreDeviceSmartDetector:
             brand = arch_info.get('brand_raw', 'Unknown')
             simd_level = arch_info.get('simd_level', 'basic')
             
-            self.logger.info("CPU Info", event="DEVICE", message="CPU Info", brand=brand)
-            self.logger.info("CPU Cores", event="DEVICE", message="CPU Cores", physical_cores=physical_cores, logical_cores=logical_cores)
-            self.logger.info("CPU Memory", event="DEVICE", message="CPU Memory", memory_gb=memory_gb)
-            self.logger.info("CPU SIMD", event="DEVICE", message="CPU SIMD", simd_level=simd_level.upper())
-            self.logger.info("CPU AI Capability", event="DEVICE", message="CPU AI Capability", level=capability.get('level', 'unknown'), score=capability.get('score', 0))
+            logger.info("CPU Info", event="DEVICE", message="CPU Info", brand=brand)
+            logger.info("CPU Cores", event="DEVICE", message="CPU Cores", physical_cores=physical_cores, logical_cores=logical_cores)
+            logger.info("CPU Memory", event="DEVICE", message="CPU Memory", memory_gb=memory_gb)
+            logger.info("CPU SIMD", event="DEVICE", message="CPU SIMD", simd_level=simd_level.upper())
+            logger.info("CPU AI Capability", event="DEVICE", message="CPU AI Capability", level=capability.get('level', 'unknown'), score=capability.get('score', 0))
         
         # Strategy Recommendation
         if hasattr(self, 'current_strategy'):
             strategy = self.current_strategy
-            self.logger.info("Recommended Strategy", event="DEVICE", message="Recommended Strategy", device_type=strategy.get('device_type', 'unknown'))
-            self.logger.info("Strategy Reason", event="DEVICE", message="Strategy Reason", reason=strategy.get('reason', 'No recommendation'))
+            logger.info("Recommended Strategy", event="DEVICE", message="Recommended Strategy", device_type=strategy.get('device_type', 'unknown'))
+            logger.info("Strategy Reason", event="DEVICE", message="Strategy Reason", reason=strategy.get('reason', 'No recommendation'))
             
             if strategy.get('warning'):
-                self.logger.warning("Strategy Warning", event="DEVICE", message="Strategy Warning", warning=strategy['warning'])
+                logger.warning("Strategy Warning", event="DEVICE", message="Strategy Warning", warning=strategy['warning'])
         
-        self.logger.info("=" * 60, event="DEVICE", message="=" * 60)
+        logger.info("=" * 60, event="DEVICE", message="=" * 60)

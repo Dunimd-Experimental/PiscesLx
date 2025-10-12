@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-# Copyright æ¼ 2025 Wenze Wei. All Rights Reserved.
+# Copyright æ¼?2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -707,3 +707,4 @@ def enhanced_trend_summary(values: List[float], window: int = 50) -> Dict[str, A
         return {"rolling_p50": rp50, "rolling_p95": rp95, "stability": stab}
     except Exception:
         return {"rolling_p50": [], "rolling_p95": [], "stability": 0.5}
+

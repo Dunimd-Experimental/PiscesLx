@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,16 +19,55 @@
 # limitations under the License.
 
 from .config import ArcticConfig
-from .tokenizer import get_tokenizer
-from .h2o_attention import H2OAttention
-from .moe_dynamic import DynamicMoELayer
-from .modeling_aurora import PiscesModel
-from .yarn_rope import YaRNRotaryEmbedding
-from .multimodal import ArcticVisionEncoder, ArcticAudioEncoder, ArcticDocEncoder, ArcticVideoEncoder
+from .h2o_attention import ArcticH2OAttention
+from .moe_dynamic import ArcticDynamicMoELayer, ArcticExpertChoiceRouter
+from .moe import ArcticMoEGate, ArcticStableMoEGate, ArcticMoELayer
+from .yarn_rope import ArcticYaRNRotaryEmbedding
+from .speculative_decoder import ArcticSpeculativeConfig, ArcticSpeculativeDecoder, ArcticAdaptiveSpeculativeDecoder
+from .modeling import (
+    ArcticUnifiedCacheManager,
+    ArcticRMSNorm,
+    ArcticRotaryEmbedding,
+    ArcticAttention,
+    ArcticTransformerBlock,
+    ArcticModel,
+)
+from .reasoner import (
+    ArcticMultiPathReasoningEngine,
+    ArcticMultiPathInferenceEngine,
+    ArcticMultiPathMetaLearner,
+    ArcticUnifiedMultiPathReasoningSystem,
+    ArcticMultiModalReasoningEnhancer,
+)
+
+# Merge MCP public classes into model package exports
+from .mcp.server import ArcticOptimizedMCPServer
+from .mcp.translator import ArcticMCPTranslationLayer, ArcticAgentCall
 
 __all__ = [
-    'ArcticConfig', 'PiscesModel',
-    'get_tokenizer',
-    'ArcticVisionEncoder', 'ArcticAudioEncoder', 'ArcticDocEncoder', 'ArcticVideoEncoder',
-    'H2OAttention', 'DynamicMoELayer', 'YaRNRotaryEmbedding',
+    "ArcticConfig",
+    "ArcticH2OAttention",
+    "ArcticDynamicMoELayer",
+    "ArcticExpertChoiceRouter",
+    "ArcticMoEGate",
+    "ArcticStableMoEGate",
+    "ArcticMoELayer",
+    "ArcticYaRNRotaryEmbedding",
+    "ArcticSpeculativeConfig",
+    "ArcticSpeculativeDecoder",
+    "ArcticAdaptiveSpeculativeDecoder",
+    "ArcticUnifiedCacheManager",
+    "ArcticRMSNorm",
+    "ArcticRotaryEmbedding",
+    "ArcticAttention",
+    "ArcticTransformerBlock",
+    "ArcticModel",
+    "ArcticMultiPathReasoningEngine",
+    "ArcticMultiPathInferenceEngine",
+    "ArcticMultiPathMetaLearner",
+    "ArcticUnifiedMultiPathReasoningSystem",
+    "ArcticMultiModalReasoningEnhancer",
+    "ArcticOptimizedMCPServer",
+    "ArcticMCPTranslationLayer",
+    "ArcticAgentCall",
 ]

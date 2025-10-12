@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,13 +19,12 @@
 # limitations under the License.
 
 import uuid
-from dataclasses import dataclass, asdict
+import torch
 from enum import Enum
+from dataclasses import dataclass, asdict
 from typing import Optional, Tuple, List, Dict, Any
 
-import torch
-
-class AgentState(Enum):
+class ArcticAgentState(Enum):
     IDLE = "idle"
     THINKING = "thinking"
     ACTING = "acting"
@@ -33,7 +32,7 @@ class AgentState(Enum):
     COMPLETED = "completed"
     ERROR = "error"
 
-class MCPMessageType(Enum):
+class ArcticMCPMessageType(Enum):
     OBSERVATION = "observation"
     ACTION = "action"
     TOOL_CALL = "tool_call"
@@ -45,14 +44,14 @@ class MCPMessageType(Enum):
     SYNC_RESPONSE = "sync_response"
 
 @dataclass
-class GenerationCondition:
+class ArcticGenerationCondition:
     text_prompt: str = ""
     emotion_vector: Optional[torch.Tensor] = None
     style_params: Optional[Dict[str, float]] = None
     generation_params: Optional[Dict[str, Any]] = None
 
 @dataclass
-class MCPMessage:
+class ArcticMCPMessage:
     message_type: str
     agent_id: str
     payload: Dict[str, Any]
@@ -61,22 +60,22 @@ class MCPMessage:
     priority: str = "normal"
 
 @dataclass
-class AgentAction:
+class ArcticAgentAction:
     action_type: str
     parameters: Dict[str, Any]
     confidence: float = 1.0
     reasoning: str = ""
 
 @dataclass
-class AgentObservation:
+class ArcticAgentObservation:
     modality: str  # "text", "image", "audio", "tool_result"
     content: Any
     metadata: Dict[str, Any]
 
 @dataclass
-class AgentMemory:
-    observations: List[AgentObservation]
-    actions: List[AgentAction]
+class ArcticAgentMemory:
+    observations: List[ArcticAgentObservation]
+    actions: List[ArcticAgentAction]
     reflections: List[str]
     
     def __post_init__(self):
@@ -85,7 +84,7 @@ class AgentMemory:
         self.max_memory_size = 1000
         self.compression_threshold = 0.7
     
-    def add_observation(self, observation: AgentObservation):
+    def add_observation(self, observation: ArcticAgentObservation):
         self.observations.append(observation)
         try:
             from sentence_transformers import SentenceTransformer
@@ -110,7 +109,7 @@ class AgentMemory:
         if len(self.observations) > self.max_memory_size:
             self.compress_memory()
     
-    def add_action(self, action: AgentAction):
+    def add_action(self, action: ArcticAgentAction):
         self.actions.append(action)
         embedding = torch.randn(768)
         self.embeddings.append(embedding)
@@ -177,4 +176,4 @@ class AgentMemory:
         return {"recent_observations": self.observations[-k:],"recent_actions": self.actions[-k:],"recent_reflections": self.reflections[-k:],"total_count": len(self.observations) + len(self.actions) + len(self.reflections),"memory_summary": {"observations": len(self.observations),"actions": len(self.actions),"reflections": len(self.reflections)}}
 
 # 旧名别名
-PiscesAgentState = AgentState
+PiscesAgentState = ArcticAgentState

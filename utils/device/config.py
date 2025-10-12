@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -19,6 +19,9 @@
 # limitations under the License.
 
 from typing import Any, Optional
+from utils.log.core import PiscesLxCoreLog
+
+logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Config")
 
 class PiscesLxCoreDeviceConfig:
     """A lightweight facade for device configuration, maintaining parity with inference and training configurations.

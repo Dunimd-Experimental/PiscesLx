@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -67,7 +67,7 @@ def main():
     Returns:
         None
     """
-    parser = argparse.ArgumentParser(description="Pisces L1 Management Tool (manage.py)")
+    parser = argparse.ArgumentParser(description="PiscesL1 Management Tool (manage.py)")
     parser.add_argument('command', nargs='?', choices=COMMANDS, help="Command to execute")
     parser.add_argument('--ckpt', default='', help='Checkpoint file (for inference)')
     parser.add_argument('--prompt', default='Hello, please introduce yourself', help='Prompt (for inference)')

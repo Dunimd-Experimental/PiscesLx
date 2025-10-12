@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -26,10 +26,12 @@ import subprocess
 import subprocess
 import time
 import numpy as np
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 from typing import Dict, Any, Optional
 from .config import PiscesLxCoreDeviceConfig
 from .smart_detector import PiscesLxCoreDeviceSmartDetector
+
+logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Manager")
 
 class PiscesLxCoreDeviceManager:
     """
@@ -49,7 +51,7 @@ class PiscesLxCoreDeviceManager:
         self.strategy = {}
         self.system_memory = {}
         self.smart_detector = PiscesLxCoreDeviceSmartDetector()
-        self.logger = PiscesLxCoreLog()
+
         self._detect_hardware()
         self._determine_strategy()
 
@@ -90,7 +92,7 @@ class PiscesLxCoreDeviceManager:
                 'memory_pressure': self._calculate_memory_pressure(memory, swap)
             }
             
-            self.logger.info("System memory detected", {
+            logger.info("System memory detected", {
                 "total_gb": memory.total // (1024**3),
                 "available_gb": memory.available // (1024**3),
                 "swap_gb": swap.total // (1024**3),
@@ -98,10 +100,10 @@ class PiscesLxCoreDeviceManager:
             })
             
         except ImportError:
-            self.logger.warning("psutil not available", message="Using fallback memory detection")
+            logger.warning("psutil not available", message="Using fallback memory detection")
             self._detect_memory_fallback()
         except Exception as e:
-            self.logger.error("System memory detection failed", error=str(e))
+            logger.error("System memory detection failed", error=str(e))
             self._detect_memory_fallback()
     
     def _calculate_memory_pressure(self, memory, swap) -> str:
@@ -209,7 +211,7 @@ class PiscesLxCoreDeviceManager:
                     }
                     
         except Exception as e:
-            self.logger.error("Fallback memory detection failed", error=str(e))
+            logger.error("Fallback memory detection failed", error=str(e))
             self.system_memory = {
                 'total': 0, 'available': 0, 'used': 0, 'free': 0, 'percent': 0,
                 'swap_total': 0, 'swap_used': 0, 'swap_free': 0, 'swap_percent': 0,
@@ -236,7 +238,7 @@ class PiscesLxCoreDeviceManager:
         # Store detection summary
         self.detection_summary = detection_result.get('detection_summary', {})
         
-        self.logger.info("Smart detection complete", {"gpu_count": len(self.gpu_info), "cpu_detected": bool(self.cpu_info)})
+        logger.info("Smart detection complete", {"gpu_count": len(self.gpu_info), "cpu_detected": bool(self.cpu_info)})
         
         # Detect system memory
         self._detect_system_memory()
@@ -297,15 +299,15 @@ class PiscesLxCoreDeviceManager:
                     'memory_bandwidth': 0
                 })
                         
-                self.logger.info("ROCm detection", {"amd_gpu_count": len([g for g in self.gpu_info if g.get('platform') == 'rocm'])})
+                logger.info("ROCm detection", {"amd_gpu_count": len([g for g in self.gpu_info if g.get('platform') == 'rocm'])})
                 
         except (subprocess.TimeoutExpired, FileNotFoundError):
-            self.logger.debug("ROCm detection skipped", {"reason": "TimeoutExpired or FileNotFoundError"})
+            logger.debug("ROCm detection skipped", {"reason": "TimeoutExpired or FileNotFoundError"})
         except json.JSONDecodeError:
-            self.logger.debug("ROCm detection skipped", {"reason": "JSONDecodeError"})
+            logger.debug("ROCm detection skipped", {"reason": "JSONDecodeError"})
         except Exception as e:
             # Log unexpected errors for debugging
-            self.logger.error("Unexpected error in ROCm detection", error=str(e))
+            logger.error("Unexpected error in ROCm detection", error=str(e))
             
     def _detect_directml_gpus(self):
         """
@@ -350,13 +352,13 @@ class PiscesLxCoreDeviceManager:
                     'memory_bandwidth': 0
                 })
                 
-            self.logger.info("DirectML detection", {"gpu_count": device_count})
+            logger.info("DirectML detection", {"gpu_count": device_count})
             
         except ImportError:
-            self.logger.debug("DirectML not available")
+            logger.debug("DirectML not available")
         except Exception as e:
             # Elevate to warning for first failure visibility; downstream fallbacks stay debug
-            self.logger.warning("DirectML detection failed", error=str(e), error_class=type(e).__name__)
+            logger.warning("DirectML detection failed", error=str(e), error_class=type(e).__name__)
             
     def _detect_wsl_gpus(self):
         """
@@ -398,10 +400,10 @@ class PiscesLxCoreDeviceManager:
                                         'memory_bandwidth': 0
                                     })
                     
-                    self.logger.success("WSL GPU detection completed")
+                    logger.success("WSL GPU detection completed")
                     
         except Exception as e:
-            self.logger.debug("WSL detection failed or skipped", {"error": str(e), "error_class": type(e).__name__})
+            logger.debug("WSL detection failed or skipped", {"error": str(e), "error_class": type(e).__name__})
             
     def _get_rocm_temperature(self, gpu_id: str) -> int:
         """Get ROCm GPU temperature using rocm-smi."""
@@ -470,7 +472,7 @@ class PiscesLxCoreDeviceManager:
                 pass
                 
         except Exception as e:
-            self.logger.warning("DirectML temperature detection failed", error=str(e), device_index=device_index)
+            logger.warning("DirectML temperature detection failed", error=str(e), device_index=device_index)
             
         return 0  # Return 0 to indicate temperature unavailable instead of fake estimate
         
@@ -508,7 +510,7 @@ class PiscesLxCoreDeviceManager:
                 pass
                 
         except Exception as e:
-            self.logger.warning("DirectML utilization detection failed", error=str(e), device_index=device_index)
+            logger.warning("DirectML utilization detection failed", error=str(e), device_index=device_index)
             
         return 0  # Return actual 0 utilization instead of fake estimate
         
@@ -616,7 +618,7 @@ class PiscesLxCoreDeviceManager:
                     else:
                         return int(value)
         except (ValueError, AttributeError) as e:
-            self.logger.debug("ROCm memory parse failed", {"error": str(e), "memory_str": memory_str[:50]})
+            logger.debug("ROCm memory parse failed", {"error": str(e), "memory_str": memory_str[:50]})
             return 0
 
     def _detect_cpu(self):
@@ -656,7 +658,7 @@ class PiscesLxCoreDeviceManager:
             # Find nvidia-smi path
             nvidia_smi_path = self._find_nvidia_smi()
             if not nvidia_smi_path:
-                self.logger.warning("NVIDIA_DETECTION_FAILED", {
+                logger.warning("NVIDIA_DETECTION_FAILED", {
                     "message": "nvidia-smi not found, falling back to torch enumeration"
                 })
                 self._torch_fallback_enumeration()
@@ -682,7 +684,7 @@ class PiscesLxCoreDeviceManager:
             
             if result.returncode != 0:
                 error_msg = result.stderr.strip() if result.stderr else "Unknown error"
-                self.logger.error("NVIDIA_QUERY_FAILED", {
+                logger.error("NVIDIA_QUERY_FAILED", {
                     "error": error_msg,
                     "message": "nvidia-smi query failed, using torch fallback"
                 })
@@ -698,7 +700,7 @@ class PiscesLxCoreDeviceManager:
                 try:
                     parts = [p.strip() for p in line.split(',')]
                     if len(parts) < len(query_fields):
-                        self.logger.warning("NVIDIA_PARSE_INCOMPLETE", {
+                        logger.warning("NVIDIA_PARSE_INCOMPLETE", {
                             "line": line_num,
                             "expected_fields": len(query_fields),
                             "actual_fields": len(parts)
@@ -718,7 +720,7 @@ class PiscesLxCoreDeviceManager:
                     
                     # Validate parsed data
                     if gpu_index < 0 or total_memory <= 0:
-                        self.logger.warning("NVIDIA_PARSE_INVALID", {
+                        logger.warning("NVIDIA_PARSE_INVALID", {
                             "line": line_num,
                             "gpu_index": gpu_index,
                             "total_memory": total_memory
@@ -749,33 +751,33 @@ class PiscesLxCoreDeviceManager:
                     })
                     
                 except (ValueError, IndexError) as e:
-                    self.logger.error("NVIDIA_PARSE_LINE_FAILED", {
+                    logger.error("NVIDIA_PARSE_LINE_FAILED", {
                         "line": line_num,
                         "error": str(e),
                         "line_content": line[:100]  # Truncate long lines
                     })
                     continue
             
-            self.logger.success("NVIDIA_DETECTION_COMPLETE", {
+            logger.success("NVIDIA_DETECTION_COMPLETE", {
                 "gpu_count": len([g for g in self.gpu_info if g['type'] == 'nvidia']),
                 "detection_method": "nvidia-smi"
             })
             
         except subprocess.TimeoutExpired:
-            self.logger.error("NVIDIA_DETECTION_TIMEOUT", {
+            logger.error("NVIDIA_DETECTION_TIMEOUT", {
                 "timeout": 30,
                 "message": "NVIDIA GPU detection timed out"
             })
             self._torch_fallback_enumeration()
             
         except FileNotFoundError:
-            self.logger.warning("NVIDIA_DETECTION_NOT_FOUND", {
+            logger.warning("NVIDIA_DETECTION_NOT_FOUND", {
                 "message": "nvidia-smi not found"
             })
             self._torch_fallback_enumeration()
             
         except Exception as e:
-            self.logger.error("NVIDIA_DETECTION_UNEXPECTED_ERROR", {
+            logger.error("NVIDIA_DETECTION_UNEXPECTED_ERROR", {
                 "error": str(e),
                 "error_type": type(e).__name__,
                 "message": "Unexpected error during NVIDIA GPU detection"
@@ -814,7 +816,7 @@ class PiscesLxCoreDeviceManager:
                 return f"{capability[0]}.{capability[1]}"
         except Exception as e:
             # Log CUDA capability detection failures for debugging
-            self.logger.debug("CUDA_CAPABILITY_DETECTION_FAILED", {"gpu_index": gpu_index, "error": str(e)})
+            logger.debug("CUDA_CAPABILITY_DETECTION_FAILED", {"gpu_index": gpu_index, "error": str(e)})
         return "unknown"
 
     def _find_nvidia_smi(self) -> Optional[str]:
@@ -885,14 +887,14 @@ class PiscesLxCoreDeviceManager:
                                     capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 driver_version = result.stdout.strip()
-                self.logger.info("NVIDIA_DRIVER_VERSION", {"version": driver_version})
+                logger.info("NVIDIA_DRIVER_VERSION", {"version": driver_version})
             else:
-                self.logger.warning("NVIDIA_DRIVER_CHECK_FAILED", {
+                logger.warning("NVIDIA_DRIVER_CHECK_FAILED", {
                     "message": "Failed to get NVIDIA driver version"
                 })
                 
         except Exception as e:
-            self.logger.error("NVIDIA_DRIVER_STATUS_CHECK_FAILED", {
+            logger.error("NVIDIA_DRIVER_STATUS_CHECK_FAILED", {
                 "error": str(e),
                 "message": "NVIDIA driver status check failed"
             })
@@ -918,7 +920,7 @@ class PiscesLxCoreDeviceManager:
                     used = max(total - free, 0)
                 except Exception as e:
                     # Log memory info retrieval failures for debugging
-                    self.logger.debug("CUDA_MEMORY_INFO_FAILED", {"gpu_index": i, "error": str(e)})
+                    logger.debug("CUDA_MEMORY_INFO_FAILED", {"gpu_index": i, "error": str(e)})
                 self.gpu_info.append({
                     'index': i,
                     'name': torch.cuda.get_device_name(i),
@@ -953,9 +955,9 @@ class PiscesLxCoreDeviceManager:
         enhanced_strategy = self._enhance_parallel_strategy(smart_strategy, model_params)
         self.strategy = enhanced_strategy
         
-        self.logger.info("Smart strategy determined", {"device_type": enhanced_strategy.get('device_type', 'unknown')})
+        logger.info("Smart strategy determined", {"device_type": enhanced_strategy.get('device_type', 'unknown')})
         if enhanced_strategy.get('parallel_strategy'):
-            self.logger.info("Parallel strategy", {"strategy": enhanced_strategy['parallel_strategy']})
+            logger.info("Parallel strategy", {"strategy": enhanced_strategy['parallel_strategy']})
 
     def _get_model_size_string(self, model_params: float) -> str:
         """
@@ -1148,14 +1150,14 @@ class PiscesLxCoreDeviceManager:
             # Select best available backend
             if backends:
                 best_backend = max(backends, key=lambda x: x[1])[0]
-                self.logger.info("Communication backend selected", {"backend": best_backend, "available": [b[0] for b in backends]})
+                logger.info("Communication backend selected", {"backend": best_backend, "available": [b[0] for b in backends]})
                 return best_backend
             else:
-                self.logger.error("No communication backend available, falling back to gloo")
+                logger.error("No communication backend available, falling back to gloo")
                 return 'gloo'
                 
         except Exception as e:
-            self.logger.error("Backend selection failed", error=str(e), fallback="gloo")
+            logger.error("Backend selection failed", error=str(e), fallback="gloo")
             return 'gloo'
     
     def _test_nccl_backend(self) -> bool:
@@ -1323,7 +1325,7 @@ class PiscesLxCoreDeviceManager:
         # Calculate final steps (minimum 1)
         final_steps = max(1, int(base_steps * multiplier))
         
-        self.logger.info("Gradient accumulation steps calculated", {
+        logger.info("Gradient accumulation steps calculated", {
             "model_params_b": model_params,
             "gpu_count": gpu_count,
             "comm_performance": comm_performance,
@@ -1356,7 +1358,7 @@ class PiscesLxCoreDeviceManager:
                 'test_timestamp': time.time()
             }
         except Exception as e:
-            self.logger.warning("Communication profiling failed", error=str(e))
+            logger.warning("Communication profiling failed", error=str(e))
             # Return conservative defaults based on typical hardware
             return {
                 'intra_node_bandwidth': 25.0,  # Conservative NVLink estimate
@@ -1386,7 +1388,7 @@ class PiscesLxCoreDeviceManager:
                 'test_timestamp': time.time()
             }
         except Exception as e:
-            self.logger.warning("Memory profiling failed", error=str(e))
+            logger.warning("Memory profiling failed", error=str(e))
             return {
                 'bandwidth_gb_s': 50.0,  # Conservative HBM estimate
                 'latency_ns': 100.0,     # 100 nanoseconds
@@ -1414,7 +1416,7 @@ class PiscesLxCoreDeviceManager:
                 'test_timestamp': time.time()
             }
         except Exception as e:
-            self.logger.warning("CPU profiling failed", error=str(e))
+            logger.warning("CPU profiling failed", error=str(e))
             return {
                 'memory_bandwidth': 25.0,  # Conservative DDR4 estimate
                 'compute_performance': 50.0,  # Conservative CPU estimate
@@ -1456,7 +1458,7 @@ class PiscesLxCoreDeviceManager:
             return min(target_tp, gpu_count)
             
         except Exception as e:
-            self.logger.warning("Optimal TP size calculation failed", error=str(e))
+            logger.warning("Optimal TP size calculation failed", error=str(e))
             # Use actual GPU profiling data instead of simple heuristic
             return self._get_optimal_tp_size_from_profiling(gpu_count)
     
@@ -1501,7 +1503,7 @@ class PiscesLxCoreDeviceManager:
                 return 1  # No tensor parallelism for older GPUs
                 
         except Exception as e:
-            self.logger.warning("Failed to determine optimal TP size from profiling", error=str(e))
+            logger.warning("Failed to determine optimal TP size from profiling", error=str(e))
             return min(2, gpu_count)  # Conservative fallback
 
     def _get_detailed_gpu_info(self) -> list:
@@ -1524,7 +1526,7 @@ class PiscesLxCoreDeviceManager:
             
             return detailed_info
         except Exception as e:
-            self.logger.warning("Failed to get detailed GPU info", error=str(e))
+            logger.warning("Failed to get detailed GPU info", error=str(e))
             return self.gpu_info if self.gpu_info else []
 
     def _test_intra_node_bandwidth(self) -> float:
@@ -1578,7 +1580,7 @@ class PiscesLxCoreDeviceManager:
                 return 50.0  # Conservative fallback
                 
         except Exception as e:
-            self.logger.warning("Failed to test intra-node bandwidth", error=str(e))
+            logger.warning("Failed to test intra-node bandwidth", error=str(e))
             return 50.0  # Conservative fallback
     
     def _test_inter_node_bandwidth(self) -> float:
@@ -1648,7 +1650,7 @@ class PiscesLxCoreDeviceManager:
             return 1.0  # Conservative single-node estimate
             
         except Exception as e:
-            self.logger.warning("Failed to test inter-node bandwidth", error=str(e))
+            logger.warning("Failed to test inter-node bandwidth", error=str(e))
             return 25.0  # Conservative InfiniBand estimate
     
     def _test_communication_latency(self) -> float:
@@ -1718,7 +1720,7 @@ class PiscesLxCoreDeviceManager:
             return 0.001  # 1ms conservative estimate
             
         except Exception as e:
-            self.logger.warning("Failed to test communication latency", error=str(e))
+            logger.warning("Failed to test communication latency", error=str(e))
             return 0.001  # Conservative estimate: 1ms
     
     def _test_memory_bandwidth(self) -> float:
@@ -1781,7 +1783,7 @@ class PiscesLxCoreDeviceManager:
                     return bandwidth_gbps
                     
                 except Exception as e:
-                    self.logger.warning("Failed to perform memory bandwidth test", error=str(e))
+                    logger.warning("Failed to perform memory bandwidth test", error=str(e))
                     
                     # Fallback to GPU generation-based estimates
                     compute_capability = f"{gpu_properties.major}.{gpu_properties.minor}"
@@ -1800,7 +1802,7 @@ class PiscesLxCoreDeviceManager:
                 return 100.0
                 
         except Exception as e:
-            self.logger.warning("Failed to test memory bandwidth", error=str(e))
+            logger.warning("Failed to test memory bandwidth", error=str(e))
             return 100.0  # Conservative HBM estimate in GB/s
     
     def _test_memory_latency(self) -> float:
@@ -1845,7 +1847,7 @@ class PiscesLxCoreDeviceManager:
                     return average_latency * 1e9  # Convert to nanoseconds
                     
                 except Exception as e:
-                    self.logger.warning("Failed to perform memory latency test", error=str(e))
+                    logger.warning("Failed to perform memory latency test", error=str(e))
                     
                     # Fallback to GPU generation-based estimates
                     gpu_properties = torch.cuda.get_device_properties(0)
@@ -1865,7 +1867,7 @@ class PiscesLxCoreDeviceManager:
                 return 200.0
                 
         except Exception as e:
-            self.logger.warning("Failed to test memory latency", error=str(e))
+            logger.warning("Failed to test memory latency", error=str(e))
             return 200.0  # 200 nanoseconds conservative estimate
     
     def _test_cpu_memory_bandwidth(self) -> float:
@@ -1911,7 +1913,7 @@ class PiscesLxCoreDeviceManager:
                 return bandwidth_gbps
                 
             except Exception as e:
-                self.logger.warning("Failed to perform CPU memory bandwidth test", error=str(e))
+                logger.warning("Failed to perform CPU memory bandwidth test", error=str(e))
                 
                 # Try to get system memory info for theoretical calculation
                 try:
@@ -1934,7 +1936,7 @@ class PiscesLxCoreDeviceManager:
                     return 10.0   # Conservative fallback
                     
         except Exception as e:
-            self.logger.warning("Failed to test CPU memory bandwidth", error=str(e))
+            logger.warning("Failed to test CPU memory bandwidth", error=str(e))
             return 25.0  # Conservative DDR4 estimate in GB/s
     
     def _test_cpu_compute_performance(self) -> float:
@@ -1980,7 +1982,7 @@ class PiscesLxCoreDeviceManager:
                 return gflops
                 
             except Exception as e:
-                self.logger.warning("Failed to perform CPU compute performance test", error=str(e))
+                logger.warning("Failed to perform CPU compute performance test", error=str(e))
                 
                 # Try to get CPU info for theoretical calculation
                 try:
@@ -2009,7 +2011,7 @@ class PiscesLxCoreDeviceManager:
                     return 15.0   # Conservative fallback
                     
         except Exception as e:
-            self.logger.warning("Failed to test CPU compute performance", error=str(e))
+            logger.warning("Failed to test CPU compute performance", error=str(e))
             return 50.0  # Conservative CPU estimate in GFLOPS
 
     def _determine_cpu_strategy(self, model_params: float):
@@ -2392,11 +2394,11 @@ class PiscesLxCoreDeviceManager:
         
         # Add current strategy info
         if self.strategy:
-            self.logger.info("Current strategy", {"device_type": self.strategy.get('device_type', 'unknown')})
-            self.logger.info("Strategy reason", {"reason": self.strategy.get('reason', 'No specific reason')})
+            logger.info("Current strategy", {"device_type": self.strategy.get('device_type', 'unknown')})
+            logger.info("Strategy reason", {"reason": self.strategy.get('reason', 'No specific reason')})
             
             if self.strategy.get('warning'):
-                self.logger.error("Strategy warning", warning=self.strategy['warning'])
+                logger.error("Strategy warning", warning=self.strategy['warning'])
 
     def get_recommended_strategy(self) -> Dict[str, Any]:
         """
@@ -2698,7 +2700,7 @@ class PiscesLxCoreDeviceManager:
         
         # STRICT VALIDATION: Check if model fits in GPU memory
         if model_memory > available_memory:
-            self.logger.error("Insufficient GPU memory for model", model_params=model_params, required_memory=model_memory, available_memory=available_memory)
+            logger.error("Insufficient GPU memory for model", model_params=model_params, required_memory=model_memory, available_memory=available_memory)
             raise RuntimeError(f"Insufficient GPU memory for {model_params:.1f}B model. Required: {model_memory:.0f}MB, Available: {available_memory:.0f}MB")
         
         # Calculate safe batch size
@@ -2768,7 +2770,7 @@ class PiscesLxCoreDeviceManager:
         
         # STRICT VALIDATION: Check if model fits in total GPU memory
         if model_memory > total_memory:
-            self.logger.error("Insufficient total GPU memory for model", model_params=model_params, required_memory=model_memory, available_memory=total_memory, gpu_count=len(gpus))
+            logger.error("Insufficient total GPU memory for model", model_params=model_params, required_memory=model_memory, available_memory=total_memory, gpu_count=len(gpus))
             raise RuntimeError(f"Insufficient total GPU memory for {model_params:.1f}B model. Required: {model_memory:.0f}MB, Available: {total_memory:.0f}MB across {len(gpus)} GPUs")
         
         # Calculate safe batch size

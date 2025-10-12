@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,17 +18,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import annotations
-
 from pathlib import Path
 from typing import Optional
-
 from utils.fs.core import PiscesLxCoreFS
 from utils.log.core import PiscesLxCoreLog
 from utils.cache.enhanced import PiscesLxCoreEnhancedCacheManager
 from utils.config.manager import PiscesLxCoreConfigManagerFacade as _ConfigFacade
 
-_logger = PiscesLxCoreLog("pisceslx.cache.facade")
+logger = PiscesLxCoreLog("PiscesLx.Utils.Cache.Facade")
 
 class PiscesLxCoreCacheManagerFacade:
     """Lightweight facade exposing filesystem cache directories.

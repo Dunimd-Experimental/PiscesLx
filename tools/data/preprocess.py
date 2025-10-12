@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -73,7 +73,6 @@ def build_splits(subset):
     
     dataset_dict = DatasetDict(split_data)
     dataset_dict.save_to_disk(subset_path)
-    # Removed invalid line: RIGHT(f"{subset} split completed �?{subset_path}")
 
 if __name__ == "__main__":
     SUBSETS = get_subsets_from_model_txt()

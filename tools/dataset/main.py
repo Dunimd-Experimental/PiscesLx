@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -232,7 +232,7 @@ def dataset(args=None):
     # remember recent path
     if path_input and path_input != st.session_state.get('last_path') and _early_settings.remember_recent_path:
         st.session_state['last_path'] = path_input
-    # Second row: action buttons (rescan, convert) — tighten spacing
+    # Second row: action buttons (rescan, convert) �?tighten spacing
     try:
         c_rescan, c_arrow = st.columns([1, 1], gap="small")
     except TypeError:
@@ -1051,7 +1051,7 @@ def dataset(args=None):
     # Copyright information at the bottom of the main page
     st.divider()
     st.markdown(
-        "<div style='text-align:center;color:gray;'>© 2025 Wenze Wei · Pisces L1 / Dunimd Project Team. All Rights Reserved.</div>",
+        "<div style='text-align:center;color:gray;'>© 2025 Wenze Wei · PiscesL1 / Dunimd Project Team. All Rights Reserved.</div>",
         unsafe_allow_html=True,
     )
 
@@ -1110,7 +1110,7 @@ def dataset(args=None):
         
         with button_col:
             # Toggle main-page settings view
-            if st.button("⚙", help=t("sidebar.settings_hint"), key="btn_settings_min"):
+            if st.button("�?, help=t("sidebar.settings_hint"), key="btn_settings_min"):
                 st.session_state["show_settings_page"] = True
                 st.rerun()
 

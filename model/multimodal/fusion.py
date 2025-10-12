@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,8 +21,8 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
-from .memory import MemoryManager
 from typing import Dict, Optional
+from .memory import ArcticMemoryManager
 from .hw import ArcticHardwareAdaptiveConfig
 from .attention import ArcticCrossModalAttention
 
@@ -46,7 +46,7 @@ class ArcticDynamicModalFusion(nn.Module):
         self.weight_cache: Dict[str, torch.Tensor] = {}
         self.cache_size_limit = 1000
         self.cache_manager = cache_manager
-        self.memory_manager = MemoryManager(enable_background=(cache_manager is None))
+        self.memory_manager = ArcticMemoryManager(enable_background=(cache_manager is None))
         self.memory_manager.start_monitoring()
         # Initialize hardware adaptive configuration
         self.hw = ArcticHardwareAdaptiveConfig()

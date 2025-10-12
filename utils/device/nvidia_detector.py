@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,8 +20,10 @@
 
 import torch
 import subprocess
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 from typing import List, Dict, Any
+
+logger = PiscesLxCoreLog("PiscesLx.Utils.Device.NvidiaDetector")
 
 class PiscesLxCoreDeviceNvidiaDetector:
     """
@@ -41,7 +43,7 @@ class PiscesLxCoreDeviceNvidiaDetector:
         self.gpu_info = []  # List to store information about detected GPUs
         self.cuda_available = torch.cuda.is_available()  # Flag indicating whether CUDA is available
         self.cuda_version = torch.version.cuda if self.cuda_available else None  # CUDA version if available, otherwise None
-        self.logger = PiscesLxCoreLog()  # Structured logger
+
         
     def detect(self) -> List[Dict[str, Any]]:
         """
@@ -55,7 +57,7 @@ class PiscesLxCoreDeviceNvidiaDetector:
                                 Returns an empty list if CUDA is not available.
         """
         if not self.cuda_available:
-            self.logger.warning("CUDA not available, skipping NVIDIA GPU detection")
+            logger.warning("CUDA not available, skipping NVIDIA GPU detection")
             return self.gpu_info
             
         try:
@@ -86,14 +88,14 @@ class PiscesLxCoreDeviceNvidiaDetector:
                             'driver_version': self._get_driver_version()
                         })
                         
-                self.logger.info("NVIDIA GPU detection", {"count": len(self.gpu_info), "method": "nvidia-smi"})
+                logger.info("NVIDIA GPU detection", {"count": len(self.gpu_info), "method": "nvidia-smi"})
             else:
                 # Fallback if nvidia-smi returned no data
-                self.logger.debug("nvidia-smi returned no data, falling back to torch.cuda", {"returncode": result.returncode})
+                logger.debug("nvidia-smi returned no data, falling back to torch.cuda", {"returncode": result.returncode})
                 self._detect_via_torch_cuda()
                 
         except Exception as e:
-            self.logger.error("nvidia-smi detection failed", error=str(e), error_class=type(e).__name__)
+            logger.error("nvidia-smi detection failed", error=str(e), error_class=type(e).__name__)
             # Fallback to torch-based detection
             self._detect_via_torch_cuda()
             
@@ -131,13 +133,13 @@ class PiscesLxCoreDeviceNvidiaDetector:
                     })
                     
                 except Exception as e:
-                    self.logger.error("Failed to detect CUDA device", device_index=i, error=str(e))
+                    logger.error("Failed to detect CUDA device", device_index=i, error=str(e))
                     continue
                     
-            self.logger.info("NVIDIA GPU detection", {"count": len(self.gpu_info), "method": "pytorch-cuda"})
+            logger.info("NVIDIA GPU detection", {"count": len(self.gpu_info), "method": "pytorch-cuda"})
             
         except Exception as e:
-            self.logger.error("PyTorch CUDA detection failed", error=str(e), error_class=type(e).__name__)
+            logger.error("PyTorch CUDA detection failed", error=str(e), error_class=type(e).__name__)
             
     def _add_cuda_compute_info(self) -> None:
         """
@@ -168,7 +170,7 @@ class PiscesLxCoreDeviceNvidiaDetector:
                         gpu['memory_bandwidth_gbps'] = 0.0
                         
             except Exception as e:
-                self.logger.error("Failed to get compute info for GPU", gpu_index=device_idx, error=str(e))
+                logger.error("Failed to get compute info for GPU", gpu_index=device_idx, error=str(e))
                 gpu['compute_capability'] = 'unknown'
                 gpu['is_modern'] = False
                 gpu['memory_bandwidth_gbps'] = 0.0
@@ -238,9 +240,9 @@ class PiscesLxCoreDeviceNvidiaDetector:
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip().split('\n')[0]
         except subprocess.CalledProcessError as e:
-            self.logger.debug("Failed to get NVIDIA driver version", {"error": str(e), "error_class": type(e).__name__})
+            logger.debug("Failed to get NVIDIA driver version", {"error": str(e), "error_class": type(e).__name__})
         except Exception as e:
-            self.logger.debug("Failed to get NVIDIA driver version", {"error": str(e), "error_class": type(e).__name__})
+            logger.debug("Failed to get NVIDIA driver version", {"error": str(e), "error_class": type(e).__name__})
         return 'unknown'
         
     def get_recommended_strategy(self, model_size: str = None) -> Dict[str, Any]:

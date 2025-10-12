@@ -1,8 +1,8 @@
-﻿#!/usr/bin/env python3
+??#!/usr/bin/env python3
 
-# Copyright 漏 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -433,3 +433,4 @@ class PiscesLxToolsDatasetDownload:
         except Exception as e:
             # Keep it low-noise; not fatal
             logger.debug(f"Cache cleanup failed: {e}")
+

@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -35,8 +35,8 @@ from .formatters import PiscesLxCoreLogJsonFormatter,PiscesLxCoreLogConsoleForma
 SUCCESS_LEVEL = 25
 logging.addLevelName(SUCCESS_LEVEL, "SUCCESS")
 
-_CONSOLE_HANDLER_NAME = "pisces_console"
-_FILE_HANDLER_NAME = "pisces_file"
+_CONSOLE_HANDLER_NAME = "PiscesLxConsole"
+_FILE_HANDLER_NAME = "PiscesLxFile"
 
 @dataclass
 class LogPattern:

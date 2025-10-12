@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,6 +17,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 import os
 import sys
 import json
@@ -69,7 +70,7 @@ class ToolStats:
     last_used: Optional[datetime] = None
 
 class PiscesL1MCPPlaza:
-    """Pisces L1 MCP Plaza - An advanced integrated system."""
+    """PiscesL1 MCP Plaza - An advanced integrated system."""
     
     def __init__(self):
         self.core_server = CoreMCPServer()
@@ -102,12 +103,10 @@ class PiscesL1MCPPlaza:
         self._watcher_thread = None
         self._stop_watcher = threading.Event()
         
-        # 文档处理器集成
-        self.document_processor = None
+        # 文档处理器集�?        self.document_processor = None
         self._init_document_processor()
         
-        # FastMCP兼容层
-        self._fastmcp_instance = None
+        # FastMCP兼容�?        self._fastmcp_instance = None
         
         self._setup_logging()
         self._discover_and_register_tools()
@@ -130,8 +129,7 @@ class PiscesL1MCPPlaza:
             
             while not self._stop_watcher.is_set():
                 try:
-                    # 检查文件修改
-                    for py_file in mcp_dir.glob("*.py"):
+                    # 检查文件修�?                    for py_file in mcp_dir.glob("*.py"):
                         if py_file.name != "__init__.py" and py_file.name in last_check:
                             try:
                                 current_mtime = py_file.stat().st_mtime
@@ -139,15 +137,13 @@ class PiscesL1MCPPlaza:
                                     self.logger.info("File changed", {"file": py_file.name})
                                     last_check[py_file.name] = current_mtime
                                     
-                                    # 标记缓存无效并触发重载
-                                    with self._lock:
+                                    # 标记缓存无效并触发重�?                                    with self._lock:
                                         self._discovery_cache_valid = False
                                         self._discover_and_register_tools()
                             except OSError:
                                 continue
                     
-                    time.sleep(2)  # 每2秒检查一次
-                    
+                    time.sleep(2)  # �?秒检查一�?                    
                 except Exception as e:
                     self.logger.error("File watcher error", {"error": str(e)})
                     time.sleep(5)
@@ -235,19 +231,17 @@ class PiscesL1MCPPlaza:
             return ToolStats(module_name, time.time() - start_time, 0, "error", str(e))
     
     def _discover_and_register_tools(self):
-        """优化后的工具发现逻辑 - 智能缓存和增量更新"""
+        """优化后的工具发现逻辑 - 智能缓存和增量更�?""
         current_time = time.time()
         
-        # 快速返回：如果缓存有效且间隔未到
-        if (current_time - self._last_discovery < self.discovery_interval and 
+        # 快速返回：如果缓存有效且间隔未�?        if (current_time - self._last_discovery < self.discovery_interval and 
             hasattr(self, '_discovery_cache_valid') and self._discovery_cache_valid):
             return
         
         mcp_dir = Path(__file__).parent
         py_files = [f for f in mcp_dir.glob("*.py") if f.name != "__init__.py"]
         
-        # 智能扫描：只检查修改过的文件
-        modified_files = []
+        # 智能扫描：只检查修改过的文�?        modified_files = []
         for py_file in py_files:
             try:
                 mtime = py_file.stat().st_mtime
@@ -282,26 +276,22 @@ class PiscesL1MCPPlaza:
         
         # 更新统计信息
         if hasattr(self, '_discovery_cache_valid'):
-            # 增量更新：替换修改过的文件统计
-            for new_stat in new_stats:
+            # 增量更新：替换修改过的文件统�?            for new_stat in new_stats:
                 self.tool_stats = [s for s in self.tool_stats if s.name != new_stat.name]
                 self.tool_stats.append(new_stat)
         else:
-            # 首次加载：完整替换
-            self.tool_stats = new_stats
+            # 首次加载：完整替�?            self.tool_stats = new_stats
         
         self._last_discovery = current_time
         self._discovery_cache_valid = True
         
-        # 智能日志：只在有变化时输出
-        successful = [s for s in new_stats if s.status == "success" and s.tool_count > 0]
+        # 智能日志：只在有变化时输�?        successful = [s for s in new_stats if s.status == "success" and s.tool_count > 0]
         if successful:
             total_tools = sum(s.tool_count for s in self.tool_stats if s.status == "success")
             self.logger.info("MCP Plaza updated", {"tools": total_tools, "files": len(successful)})
 
     # FastMCP兼容API
-    # 在PiscesL1MCPPlaza类中添加FastMCP兼容装饰器
-    def tool(self, name: str = None, description: str = None):
+    # 在PiscesL1MCPPlaza类中添加FastMCP兼容装饰�?    def tool(self, name: str = None, description: str = None):
         """FastMCP兼容的装饰器 - 100%官方语法兼容"""
         def decorator(func):
             tool_name = name or func.__name__
@@ -318,7 +308,7 @@ class PiscesL1MCPPlaza:
     
     def register_custom_tool(self, name: str, description: str, func: Callable, 
                            category: str = "custom", **kwargs):
-        """企业级工具注册 - 内部核心"""
+        """企业级工具注�?- 内部核心"""
         tool_metadata = ToolMetadata(
             name=name,
             description=description,
@@ -335,21 +325,19 @@ class PiscesL1MCPPlaza:
         # 注册到核心服务器
         self.core_server.mcp_server.tools[name] = func
         
-        # 企业级增强
-        self._enhance_tool(name, func)
+        # 企业级增�?        self._enhance_tool(name, func)
         
         return func
     
     def _enhance_tool(self, name: str, func: Callable):
-        """企业级功能增强"""
+        """企业级功能增�?""
         # 添加性能监控
         original_func = func
         
         def enhanced_wrapper(*args, **kwargs):
             start_time = time.time()
             
-            # 工具级会话内存
-            if name not in self.tool_session_memory:
+            # 工具级会话内�?            if name not in self.tool_session_memory:
                 self.tool_session_memory[name] = {}
             
             try:
@@ -415,8 +403,7 @@ class PiscesL1MCPPlaza:
                 if python_type in type_mapping:
                     param_type = type_mapping[python_type]
                 elif hasattr(python_type, '__origin__'):
-                    # 处理List[str], Dict[str, int]等
-                    if python_type.__origin__ is list:
+                    # 处理List[str], Dict[str, int]�?                    if python_type.__origin__ is list:
                         param_type = "array"
                     elif python_type.__origin__ is dict:
                         param_type = "object"
@@ -434,14 +421,13 @@ class PiscesL1MCPPlaza:
     def resource(self, uri: str):
         """FastMCP兼容的资源装饰器"""
         def decorator(func: Callable):
-            # 资源实现待扩展
-            return func
+            # 资源实现待扩�?            return func
         return decorator
     
     def prompt(self, name: str):
         """FastMCP兼容的提示装饰器"""
         def decorator(func: Callable):
-            # 提示实现待扩展  
+            # 提示实现待扩�? 
             return func
         return decorator
     
@@ -697,9 +683,7 @@ plaza = PiscesL1MCPPlaza()
 # FastMCP兼容API - 秘密增强
 class FastMCP:
     """
-    100% FastMCP兼容API，秘密增强为Pisces企业级
-    用户以为在用官方FastMCP，实际运行在Pisces增强引擎上
-    """
+    100% FastMCP兼容API，秘密增强为Pisces企业�?    用户以为在用官方FastMCP，实际运行在Pisces增强引擎�?    """
     
     def __init__(self, name: str = "PiscesMCP"):
         self.name = name
@@ -710,7 +694,7 @@ class FastMCP:
         self._cleanup()
     
     def _cleanup(self):
-        """优雅清理所有资源"""
+        """优雅清理所有资�?""
         try:
             # 停止文件监控
             if self._watcher_thread and self._watcher_thread.is_alive():
@@ -718,8 +702,7 @@ class FastMCP:
                 self._watcher_thread.join(timeout=1)
                 self.logger.info("File watcher stopped")
             
-            # 清理线程池
-            if self._executor:
+            # 清理线程�?            if self._executor:
                 self._executor.shutdown(wait=True)
                 
             # 清理缓存
@@ -747,12 +730,11 @@ class FastMCP:
         return self._plaza.prompt(name)
     
     def run(self):
-        """运行MCP服务器"""
+        """运行MCP服务�?""
         self._plaza.logger.info("Enhanced FastMCP running on Pisces engine", {"name": self.name})
         return self._plaza.get_system_status()
 
-# 向后兼容的便捷接口
-def get_available_tools() -> Dict[str, Any]:
+# 向后兼容的便捷接�?def get_available_tools() -> Dict[str, Any]:
     """Get all available tools."""
     return plaza.get_available_tools()
 
@@ -790,3 +772,4 @@ __all__ = [
 
 # 自动发现工具
 plaza._discover_and_register_tools()
+

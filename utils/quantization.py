@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 
-# Copyright 漏 2025 Wenze Wei. All Rights Reserved.
+# Copyright �© 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,10 +32,10 @@ from typing import Optional, Dict, Any, List, Union, Tuple
 from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError, PiscesLxCoreMemoryError
 
 # Define constants locally to avoid circular imports
-RIGHT = "✅"
 ERROR = "🔴"
+RIGHT = "✅"
 
-_log = PiscesLxCoreLog("pisceslx.quantize")
+logger = PiscesLxCoreLog("PiscesLx.Utils.Quantization")
 
 class QuantizationMethod(Enum):
     """Enumeration of available quantization methods."""
@@ -145,7 +145,7 @@ class PiscesLxCoreQuantizer:
         quantization_config: Optional[QuantizationConfig] = None,
     ) -> QuantizationMetrics:
         # Delayed import to avoid circular imports
-        from model import PiscesModel, ArcticConfig
+        from model import ArcticModel, ArcticConfig
         """
         Quantize a model checkpoint with the specified configuration and save the quantized model.
 
@@ -173,26 +173,26 @@ class PiscesLxCoreQuantizer:
         
         start_time = time.time()
         try:
-            _log.info("starting quantization", event="quant.start", method=config.method.value, bits=config.bits, granularity=config.granularity.value, checkpoint=checkpoint_path, save_path=save_path)
+            logger.info("starting quantization", event="quant.start", method=config.method.value, bits=config.bits, granularity=config.granularity.value, checkpoint=checkpoint_path, save_path=save_path)
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         cfg = ArcticConfig.from_json(cfg_path)
 
         try:
-            model = PiscesModel(cfg)
+            model = ArcticModel(cfg)
             state = torch.load(checkpoint_path, map_location="cpu")
         except FileNotFoundError as e:
             try:
-                _log.error("checkpoint not found", event="quant.load.not_found", path=checkpoint_path, error=str(e), error_class=type(e).__name__)
+                logger.error("checkpoint not found", event="quant.load.not_found", path=checkpoint_path, error=str(e), error_class=type(e).__name__)
             except Exception as log_e:
-                _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
             raise PiscesLxCoreIOError("checkpoint not found", context={"path": checkpoint_path}, cause=e)
         except Exception as e:
             try:
-                _log.error("failed to load checkpoint", event="quant.load.error", path=checkpoint_path, error=str(e), error_class=type(e).__name__)
+                logger.error("failed to load checkpoint", event="quant.load.error", path=checkpoint_path, error=str(e), error_class=type(e).__name__)
             except Exception as log_e:
-                _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
             raise
 
         model_state = state["model"] if isinstance(state, dict) and "model" in state else state
@@ -205,14 +205,14 @@ class PiscesLxCoreQuantizer:
             missing = len(getattr(ret, 'missing_keys', []) or [])
             unexpected = len(getattr(ret, 'unexpected_keys', []) or [])
             try:
-                _log.info("loaded model state (non-strict)", event="quant.load.state", missing_keys=int(missing), unexpected_keys=int(unexpected))
+                logger.info("loaded model state (non-strict)", event="quant.load.state", missing_keys=int(missing), unexpected_keys=int(unexpected))
             except Exception as log_e:
-                _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         except Exception as e:
             try:
-                _log.warning("failed to load model state (non-strict)", event="quant.load.state.error", error=str(e), error_class=type(e).__name__)
+                logger.warning("failed to load model state (non-strict)", event="quant.load.state.error", error=str(e), error_class=type(e).__name__)
             except Exception as log_e:
-                _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
             raise
 
         # Apply quantization based on the specified method
@@ -265,15 +265,15 @@ class PiscesLxCoreQuantizer:
             torch.save(quantized_state, save_path)
             
             try:
-                _log.info("quantization completed successfully", event="quant.save.ok", path=save_path, method=config.method.value, original_size_mb=round(self._metrics.original_size_mb, 2), quantized_size_mb=round(self._metrics.quantized_size_mb, 2), compression_ratio=round(self._metrics.compression_ratio, 2), time_seconds=round(self._metrics.quantization_time_seconds, 2))
+                logger.info("quantization completed successfully", event="quant.save.ok", path=save_path, method=config.method.value, original_size_mb=round(self._metrics.original_size_mb, 2), quantized_size_mb=round(self._metrics.quantized_size_mb, 2), compression_ratio=round(self._metrics.compression_ratio, 2), time_seconds=round(self._metrics.quantization_time_seconds, 2))
             except Exception as log_e:
-                _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
                 
         except OSError as e:
             try:
-                _log.error("failed to write quantized weights", event="quant.save.error", path=save_path, error=str(e), error_class=type(e).__name__)
+                logger.error("failed to write quantized weights", event="quant.save.error", path=save_path, error=str(e), error_class=type(e).__name__)
             except Exception as log_e:
-                _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
             raise PiscesLxCoreIOError("failed to write quantized weights", context={"path": save_path}, cause=e)
         
         return self._metrics
@@ -283,29 +283,29 @@ class PiscesLxCoreQuantizer:
         Apply BitsAndBytes quantization to the model.
 
         Args:
-            model (PiscesModel): The original model to be quantized.
+            model (ArcticModel): The original model to be quantized.
             config (QuantizationConfig): Quantization configuration.
 
         Returns:
-            PiscesModel: The quantized model if quantization succeeds, otherwise the original model.
+            ArcticModel: The quantized model if quantization succeeds, otherwise the original model.
         """
         try:
-            _log.info("applying bitsandbytes quantization", event="quant.apply.bnb", bits=config.bits, granularity=config.granularity.value)
+            logger.info("applying bitsandbytes quantization", event="quant.apply.bnb", bits=config.bits, granularity=config.granularity.value)
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         bnb_config = self._build_bnb_config(config.bits)
         if bnb_config is not None:
             # Create a new model with the BitsAndBytes quantization config
-            quantized_model = PiscesModel(model.config, quantization_config=bnb_config)
+            quantized_model = ArcticModel(model.config, quantization_config=bnb_config)
             try:
                 quantized_model.load_state_dict(model.state_dict(), strict=False)
                 return quantized_model
             except Exception as e:
                 try:
-                    _log.warning("failed to load into quantized model, falling back to original", event="quant.apply.bnb.fallback", error=str(e), error_class=type(e).__name__)
+                    logger.warning("failed to load into quantized model, falling back to original", event="quant.apply.bnb.fallback", error=str(e), error_class=type(e).__name__)
                 except Exception as log_e:
-                    _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                    logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         return model
     
@@ -314,16 +314,16 @@ class PiscesLxCoreQuantizer:
         Apply dynamic quantization to the model.
 
         Args:
-            model (PiscesModel): The original model to be quantized.
+            model (ArcticModel): The original model to be quantized.
             config (QuantizationConfig): Quantization configuration.
 
         Returns:
-            PiscesModel: The dynamically quantized model.
+            ArcticModel: The dynamically quantized model.
         """
         try:
-            _log.info("applying dynamic quantization", event="quant.apply.dynamic", bits=config.bits, granularity=config.granularity.value)
+            logger.info("applying dynamic quantization", event="quant.apply.dynamic", bits=config.bits, granularity=config.granularity.value)
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         # Perform dynamic quantization on PyTorch models
         quantized_model = torch.quantization.quantize_dynamic(
@@ -338,16 +338,16 @@ class PiscesLxCoreQuantizer:
         Apply static quantization with calibration to the model.
 
         Args:
-            model (PiscesModel): The original model to be quantized.
+            model (ArcticModel): The original model to be quantized.
             config (QuantizationConfig): Quantization configuration.
 
         Returns:
-            PiscesModel: The statically quantized model.
+            ArcticModel: The statically quantized model.
         """
         try:
-            _log.info("applying static quantization", event="quant.apply.static", bits=config.bits, granularity=config.granularity.value, calibration_samples=config.num_calibration_samples)
+            logger.info("applying static quantization", event="quant.apply.static", bits=config.bits, granularity=config.granularity.value, calibration_samples=config.num_calibration_samples)
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         # Prepare the model for static quantization
         model.eval()
@@ -368,16 +368,16 @@ class PiscesLxCoreQuantizer:
         If the calibration dataset is not available or an error occurs, fall back to BitsAndBytes quantization.
 
         Args:
-            model (PiscesModel): The original model to be quantized.
+            model (ArcticModel): The original model to be quantized.
             config (QuantizationConfig): Quantization configuration.
 
         Returns:
-            PiscesModel: The GPTQ-quantized model if successful, otherwise the model quantized by BitsAndBytes.
+            ArcticModel: The GPTQ-quantized model if successful, otherwise the model quantized by BitsAndBytes.
         """
         try:
-            _log.info("applying GPTQ quantization", event="quant.apply.gptq", bits=config.bits, group_size=config.group_size)
+            logger.info("applying GPTQ quantization", event="quant.apply.gptq", bits=config.bits, group_size=config.group_size)
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         try:
             from auto_gptq import AutoGPTQForCausalLM, BaseQuantizeConfig
@@ -386,9 +386,9 @@ class PiscesLxCoreQuantizer:
             calibration_dataset = self._prepare_calibration_dataset(config)
             if not calibration_dataset:
                 try:
-                    _log.warning("GPTQ requires calibration data, falling back to bitsandbytes", event="quant.apply.gptq.no_calib")
+                    logger.warning("GPTQ requires calibration data, falling back to bitsandbytes", event="quant.apply.gptq.no_calib")
                 except Exception as log_e:
-                    _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                    logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
                 return self._apply_bitsandbytes_quantization(model, config)
             
             quantize_config = BaseQuantizeConfig(
@@ -416,35 +416,35 @@ class PiscesLxCoreQuantizer:
                     gptq_model = AutoGPTQForCausalLM.from_pretrained(temp_model_path, quantize_config, device_map="cpu")
                     gptq_model.quantize(calibration_dataset, use_triton=False, batch_size=1)
                     
-                    # Extract the quantized state dict and load it back into the PiscesModel
+                    # Extract the quantized state dict and load it back into the ArcticModel
                     quantized_state = gptq_model.state_dict()
                     model.load_state_dict(quantized_state, strict=False)
                     
                     try:
-                        _log.info("GPTQ quantization completed", event="quant.apply.gptq.success", bits=config.bits, group_size=config.group_size)
+                        logger.info("GPTQ quantization completed", event="quant.apply.gptq.success", bits=config.bits, group_size=config.group_size)
                     except Exception as log_e:
-                        _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                        logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
                     
                     return model
                 
             except Exception as e:
                 try:
-                    _log.error("GPTQ quantization failed", event="quant.apply.gptq.error", error=str(e), error_class=type(e).__name__)
+                    logger.error("GPTQ quantization failed", event="quant.apply.gptq.error", error=str(e), error_class=type(e).__name__)
                 except Exception as log_e:
-                    _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                    logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
                 return self._apply_bitsandbytes_quantization(model, config)
                 
         except ImportError:
             try:
-                _log.warning("auto-gptq not installed, falling back to bitsandbytes", event="quant.apply.gptq.no_lib")
+                logger.warning("auto-gptq not installed, falling back to bitsandbytes", event="quant.apply.gptq.no_lib")
             except Exception as log_e:
-                _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
             return self._apply_bitsandbytes_quantization(model, config)
         except Exception as e:
             try:
-                _log.error("GPTQ quantization failed, falling back to bitsandbytes", event="quant.apply.gptq.error", error=str(e), error_class=type(e).__name__)
+                logger.error("GPTQ quantization failed, falling back to bitsandbytes", event="quant.apply.gptq.error", error=str(e), error_class=type(e).__name__)
             except Exception as log_e:
-                _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
             return self._apply_bitsandbytes_quantization(model, config)
     
     def _apply_awq_quantization(self, model: Any, config: QuantizationConfig) -> Any:
@@ -453,16 +453,16 @@ class PiscesLxCoreQuantizer:
         If the calibration dataset is not available or an error occurs, fall back to BitsAndBytes quantization.
 
         Args:
-            model (PiscesModel): The original model to be quantized.
+            model (ArcticModel): The original model to be quantized.
             config (QuantizationConfig): Quantization configuration.
 
         Returns:
-            PiscesModel: The AWQ-quantized model if successful, otherwise the model quantized by BitsAndBytes.
+            ArcticModel: The AWQ-quantized model if successful, otherwise the model quantized by BitsAndBytes.
         """
         try:
-            _log.info("applying AWQ quantization", event="quant.apply.awq", bits=config.bits, group_size=config.group_size)
+            logger.info("applying AWQ quantization", event="quant.apply.awq", bits=config.bits, group_size=config.group_size)
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         try:
             from awq import AutoAWQForCausalLM
@@ -471,9 +471,9 @@ class PiscesLxCoreQuantizer:
             calibration_dataset = self._prepare_calibration_dataset(config)
             if not calibration_dataset:
                 try:
-                    _log.warning("AWQ requires calibration data, falling back to bitsandbytes", event="quant.apply.awq.no_calib")
+                    logger.warning("AWQ requires calibration data, falling back to bitsandbytes", event="quant.apply.awq.no_calib")
                 except Exception as log_e:
-                    _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                    logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
                 return self._apply_bitsandbytes_quantization(model, config)
             
             # Use in-memory model serialization for AWQ quantization
@@ -502,35 +502,35 @@ class PiscesLxCoreQuantizer:
                         }
                     )
                     
-                    # Extract the quantized state dict and load it back into the PiscesModel
+                    # Extract the quantized state dict and load it back into the ArcticModel
                     quantized_state = awq_model.state_dict()
                     model.load_state_dict(quantized_state, strict=False)
                     
                     try:
-                        _log.info("AWQ quantization completed", event="quant.apply.awq.success", bits=config.bits, group_size=config.group_size)
+                        logger.info("AWQ quantization completed", event="quant.apply.awq.success", bits=config.bits, group_size=config.group_size)
                     except Exception as log_e:
-                        _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                        logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
                     
                     return model
                 
             except Exception as e:
                 try:
-                    _log.error("AWQ quantization failed", event="quant.apply.awq.error", error=str(e), error_class=type(e).__name__)
+                    logger.error("AWQ quantization failed", event="quant.apply.awq.error", error=str(e), error_class=type(e).__name__)
                 except Exception as log_e:
-                    _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                    logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
                 return self._apply_bitsandbytes_quantization(model, config)
                 
         except ImportError:
             try:
-                _log.warning("awq not installed, falling back to bitsandbytes", event="quant.apply.awq.no_lib")
+                logger.warning("awq not installed, falling back to bitsandbytes", event="quant.apply.awq.no_lib")
             except Exception as log_e:
-                _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
             return self._apply_bitsandbytes_quantization(model, config)
         except Exception as e:
             try:
-                _log.error("AWQ quantization failed, falling back to bitsandbytes", event="quant.apply.awq.error", error=str(e), error_class=type(e).__name__)
+                logger.error("AWQ quantization failed, falling back to bitsandbytes", event="quant.apply.awq.error", error=str(e), error_class=type(e).__name__)
             except Exception as log_e:
-                _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
             return self._apply_bitsandbytes_quantization(model, config)
     
     def _prepare_calibration_dataset(self, config: QuantizationConfig) -> List[str]:
@@ -560,10 +560,10 @@ class PiscesLxCoreQuantizer:
                     else:
                         return []
             else:
-                _log.warning("CALIBRATION_DATA_NOT_FOUND", path=calib_path, message="Calibration data file does not exist, using default data")
+                logger.warning("CALIBRATION_DATA_NOT_FOUND", path=calib_path, message="Calibration data file does not exist, using default data")
                 return self._get_default_calibration_data()
         except Exception as e:
-            _log.error("CALIBRATION_DATA_PREPARE_FAILED", error=str(e), message="Calibration data preparation failed, using default data")
+            logger.error("CALIBRATION_DATA_PREPARE_FAILED", error=str(e), message="Calibration data preparation failed, using default data")
             return self._get_default_calibration_data()
     
     def _get_default_calibration_data(self) -> List[str]:
@@ -593,16 +593,16 @@ class PiscesLxCoreQuantizer:
         Apply KV-cache quantization to the model.
 
         Args:
-            model (PiscesModel): The original model to be quantized.
+            model (ArcticModel): The original model to be quantized.
             config (QuantizationConfig): Quantization configuration.
 
         Returns:
-            PiscesModel: The model with KV-cache quantization applied.
+            ArcticModel: The model with KV-cache quantization applied.
         """
         try:
-            _log.info("applying KV-cache quantization", event="quant.apply.kv_cache", bits=config.kv_cache_bits)
+            logger.info("applying KV-cache quantization", event="quant.apply.kv_cache", bits=config.kv_cache_bits)
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         # Implement KV-cache quantization
         if hasattr(model, 'enable_kv_cache_quantization'):
@@ -619,9 +619,9 @@ class PiscesLxCoreQuantizer:
             config (QuantizationConfig): Quantization configuration containing calibration parameters.
         """
         try:
-            _log.info("calibrating model", event="quant.calibrate.start", samples=config.num_calibration_samples, dataset=config.calibration_dataset)
+            logger.info("calibrating model", event="quant.calibrate.start", samples=config.num_calibration_samples, dataset=config.calibration_dataset)
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         # Simplified calibration - actual dataset would be used in production
         calibration_start = time.time()
@@ -655,9 +655,9 @@ class PiscesLxCoreQuantizer:
         self._metrics.calibration_time_seconds = time.time() - calibration_start
         
         try:
-            _log.info("calibration completed", event="quant.calibrate.complete", time_seconds=round(self._metrics.calibration_time_seconds, 2))
+            logger.info("calibration completed", event="quant.calibrate.complete", time_seconds=round(self._metrics.calibration_time_seconds, 2))
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
     
     def _build_bnb_config(self, bits: int) -> Optional[BitsAndBytesConfig]:
         """
@@ -729,7 +729,7 @@ class PiscesLxCoreQuantizer:
         Analyze the sensitivity of model layers to quantization.
 
         Args:
-            model (PiscesModel): The model to be analyzed.
+            model (ArcticModel): The model to be analyzed.
             test_data (Optional[torch.Tensor]): Test data for the model. If None, realistic test data will be generated. Defaults to None.
             layer_names (Optional[List[str]]): List of layer names to analyze. If None, all layers will be analyzed. Defaults to None.
             bits (int, optional): The number of bits for quantization simulation. Defaults to 8.
@@ -738,9 +738,9 @@ class PiscesLxCoreQuantizer:
             Dict[str, float]: A dictionary containing the sensitivity of each layer to quantization.
         """
         try:
-            _log.info("analyzing model sensitivity", event="quant.analyze.start", layers=len(layer_names) if layer_names else "all")
+            logger.info("analyzing model sensitivity", event="quant.analyze.start", layers=len(layer_names) if layer_names else "all")
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         sensitivity_analysis = {}
         
@@ -794,14 +794,14 @@ class PiscesLxCoreQuantizer:
                 
             except Exception as e:
                 try:
-                    _log.warning(f"failed to analyze layer {layer_name}", event="quant.analyze.layer_error", layer=layer_name, error=str(e), error_class=type(e).__name__)
+                    logger.warning(f"failed to analyze layer {layer_name}", event="quant.analyze.layer_error", layer=layer_name, error=str(e), error_class=type(e).__name__)
                 except Exception as log_e:
-                    _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                    logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         try:
-            _log.info("sensitivity analysis completed", event="quant.analyze.complete", layers_analyzed=len(sensitivity_analysis), most_sensitive=max(sensitivity_analysis.items(), key=lambda x: x[1])[0] if sensitivity_analysis else "none")
+            logger.info("sensitivity analysis completed", event="quant.analyze.complete", layers_analyzed=len(sensitivity_analysis), most_sensitive=max(sensitivity_analysis.items(), key=lambda x: x[1])[0] if sensitivity_analysis else "none")
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         return sensitivity_analysis
     
@@ -843,7 +843,7 @@ class PiscesLxCoreQuantizer:
             # Fallback to manual quantization if PyTorch quantization is not available
             return self._apply_manual_quantization(tensor, bits)
         except Exception as e:
-            _log.warning(f"Real quantization failed, using fallback: {str(e)}")
+            logger.warning(f"Real quantization failed, using fallback: {str(e)}")
             return self._apply_manual_quantization(tensor, bits)
     
     def _apply_manual_quantization(self, tensor: torch.Tensor, bits: int) -> torch.Tensor:
@@ -891,7 +891,7 @@ class PiscesLxCoreQuantizer:
         Estimate the memory usage of a quantized model based on its configuration and quantization settings.
 
         Args:
-            model_config (PiscesConfig): The configuration of the model.
+            model_config (ArcticConfig): The configuration of the model.
             quantization_config (QuantizationConfig): The quantization configuration.
 
         Returns:
@@ -928,7 +928,7 @@ class PiscesLxCoreQuantizer:
         Estimate the total number of parameters in a transformer-based model based on its configuration.
 
         Args:
-            model_config (PiscesConfig): The configuration of the model.
+            model_config (ArcticConfig): The configuration of the model.
 
         Returns:
             int: The estimated total number of parameters in the model.
@@ -981,9 +981,9 @@ class PiscesLxCoreQuantizer:
                               minimum, and maximum inference times in milliseconds.
         """
         try:
-            _log.info("benchmarking quantized model", event="quant.benchmark.start", model_path=quantized_model_path, num_runs=num_runs)
+            logger.info("benchmarking quantized model", event="quant.benchmark.start", model_path=quantized_model_path, num_runs=num_runs)
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         # Load the quantized model state from the specified path
         quantized_state = torch.load(quantized_model_path, map_location="cpu")
@@ -996,10 +996,10 @@ class PiscesLxCoreQuantizer:
         # Check if actual model is available for benchmarking
         if "model" not in quantized_state:
             try:
-                _log.warning("no actual model found for benchmarking, returning stored metrics", 
+                logger.warning("no actual model found for benchmarking, returning stored metrics", 
                            event="quant.benchmark.no_model", model_path=quantized_model_path)
             except Exception as log_e:
-                _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
             return metrics
         
         # Load the actual quantized model
@@ -1060,11 +1060,11 @@ class PiscesLxCoreQuantizer:
                 
         except Exception as e:
             try:
-                _log.error("benchmark failed during model inference", 
+                logger.error("benchmark failed during model inference", 
                           event="quant.benchmark.inference_failed", 
                           error=str(e), error_class=type(e).__name__)
             except Exception as log_e:
-                _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+                logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
             return metrics
         
         if inference_times:
@@ -1074,11 +1074,11 @@ class PiscesLxCoreQuantizer:
             metrics["max_inference_time_ms"] = np.max(inference_times) * 1000
         
         try:
-            _log.info("benchmark completed", event="quant.benchmark.complete", 
+            logger.info("benchmark completed", event="quant.benchmark.complete", 
                      avg_inference_time_ms=round(metrics.get("avg_inference_time_ms", 0), 2), 
                      completed_runs=len(inference_times))
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         return metrics
     
@@ -1120,7 +1120,7 @@ class PiscesLxCoreQuantizer:
     
     def get_optimal_config(
         self,
-        model_config: Any,  # Changed from PiscesConfig to Any to avoid import
+        model_config: Any,  # Changed from ArcticConfig to Any to avoid import
         target_memory_mb: Optional[float] = None,
         target_accuracy: Optional[float] = None,
         device_constraints: Optional[Dict[str, Any]] = None
@@ -1129,7 +1129,7 @@ class PiscesLxCoreQuantizer:
         Get the optimal quantization configuration based on memory constraints, accuracy requirements, and device constraints.
 
         Args:
-            model_config (PiscesConfig): The configuration of the model.
+            model_config (ArcticConfig): The configuration of the model.
             target_memory_mb (Optional[float]): Target memory usage in megabytes. Defaults to None.
             target_accuracy (Optional[float]): Target accuracy for the quantized model. Defaults to None.
             device_constraints (Optional[Dict[str, Any]]): Device constraints, such as device type and memory. Defaults to None.
@@ -1138,9 +1138,9 @@ class PiscesLxCoreQuantizer:
             QuantizationConfig: The optimal quantization configuration.
         """
         try:
-            _log.info("finding optimal quantization config", event="quant.optimize.start", target_memory_mb=target_memory_mb, target_accuracy=target_accuracy)
+            logger.info("finding optimal quantization config", event="quant.optimize.start", target_memory_mb=target_memory_mb, target_accuracy=target_accuracy)
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         # Initialize with default configuration
         optimal_config = QuantizationConfig()
@@ -1166,9 +1166,9 @@ class PiscesLxCoreQuantizer:
                 optimal_config.enable_kv_cache_quant = True
         
         try:
-            _log.info("optimal configuration found", event="quant.optimize.complete", method=optimal_config.method.value, bits=optimal_config.bits, estimated_memory_mb=self.estimate_memory_usage(model_config, optimal_config)["total_memory_mb"])
+            logger.info("optimal configuration found", event="quant.optimize.complete", method=optimal_config.method.value, bits=optimal_config.bits, estimated_memory_mb=self.estimate_memory_usage(model_config, optimal_config)["total_memory_mb"])
         except Exception as log_e:
-            _log.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
+            logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
         return optimal_config
 

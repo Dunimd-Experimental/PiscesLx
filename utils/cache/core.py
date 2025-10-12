@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -30,7 +30,7 @@ from utils.log.core import PiscesLxCoreLog
 from typing import Any, Dict, Optional, Callable, Tuple, List
 
 _DEFAULT_CACHE: Optional["PiscesLxCoreCache"] = None
-_log = PiscesLxCoreLog("pisceslx.cache")
+logger = PiscesLxCoreLog("PiscesLx.Utils.Cache")
 
 class PiscesLxCoreCache:
     """
@@ -57,7 +57,7 @@ class PiscesLxCoreCache:
         try:
             os.makedirs(self.cache_dir, exist_ok=True)
         except Exception as e:
-            _log.warning("failed to create cache directory", event="cache.init.mkdir_error", cache_dir=self.cache_dir, error=str(e))
+            logger.warning("failed to create cache directory", event="cache.init.mkdir_error", cache_dir=self.cache_dir, error=str(e))
 
         self._mem: Dict[str, Dict[str, Any]] = {}  # In-memory index to store cached data
         self._mem_access: Dict[str, Dict[str, float]] = {}  # In-memory access records to track last access time
@@ -121,7 +121,7 @@ class PiscesLxCoreCache:
             try:
                 self._hits += 1
             except Exception as e:
-                _log.debug("failed to increment hit counter", event="cache.hit_counter.error", error=str(e))
+                logger.debug("failed to increment hit counter", event="cache.hit_counter.error", error=str(e))
             self._emit("cache.get.hit", namespace=namespace, key=key)
             return node
 
@@ -132,13 +132,13 @@ class PiscesLxCoreCache:
             try:
                 self._hits += 1
             except Exception as e:
-                _log.debug("failed to increment hit counter from disk", event="cache.disk_hit.error", error=str(e))
+                logger.debug("failed to increment hit counter from disk", event="cache.disk_hit.error", error=str(e))
             self._emit("cache.get.hit", namespace=namespace, key=key)
         else:
             try:
                 self._misses += 1
             except Exception as e:
-                _log.debug("failed to increment miss counter", event="cache.miss.error", error=str(e))
+                logger.debug("failed to increment miss counter", event="cache.miss.error", error=str(e))
             self._emit("cache.get.miss", namespace=namespace, key=key)
         return node
 
@@ -195,7 +195,7 @@ class PiscesLxCoreCache:
             try:
                 self.metrics["soft_expired_served"] += 1
             except Exception as e:
-                _log.debug("failed to increment soft_expired_served counter", event="cache.soft_expired.error", error=str(e))
+                logger.debug("failed to increment soft_expired_served counter", event="cache.soft_expired.error", error=str(e))
             self._emit("cache.soft_expired.served", namespace=namespace, key=key)
             if async_refresh:
                 self._emit("cache.refresh.async.start", namespace=namespace, key=key)
@@ -246,7 +246,7 @@ class PiscesLxCoreCache:
             try:
                 self.metrics["soft_expired_served"] += 1
             except Exception as e:
-                _log.debug("failed to increment soft_expired_served counter in get_with_soft_expiry", event="cache.soft_expiry.error", error=str(e))
+                logger.debug("failed to increment soft_expired_served counter in get_with_soft_expiry", event="cache.soft_expiry.error", error=str(e))
             return node.get("value")
         return node.get("value")
 
@@ -263,7 +263,7 @@ class PiscesLxCoreCache:
                 return 0.0
             return float(self._hits) / float(total)
         except Exception as e:
-            _log.debug("failed to calculate hit rate", event="cache.hit_rate.error", error=str(e))
+            logger.debug("failed to calculate hit rate", event="cache.hit_rate.error", error=str(e))
             return 0.0
 
     def invalidate(self, namespace: str, key: Optional[str] = None) -> None:
@@ -289,9 +289,9 @@ class PiscesLxCoreCache:
                     try:
                         os.remove(os.path.join(ns_dir, fn))
                     except Exception as e:
-                        _log.debug("failed to remove cache file during namespace invalidation", event="cache.invalidate.file_error", file=os.path.join(ns_dir, fn), error=str(e))
+                        logger.debug("failed to remove cache file during namespace invalidation", event="cache.invalidate.file_error", file=os.path.join(ns_dir, fn), error=str(e))
             except Exception as e:
-                _log.debug("failed to list namespace directory during invalidation", event="cache.invalidate.listdir_error", ns_dir=ns_dir, error=str(e))
+                logger.debug("failed to list namespace directory during invalidation", event="cache.invalidate.listdir_error", ns_dir=ns_dir, error=str(e))
                 return
 
         # Remove a specific item
@@ -306,7 +306,7 @@ class PiscesLxCoreCache:
             if os.path.exists(path):
                 os.remove(path)
         except Exception as e:
-            _log.debug("failed to remove cache file during key invalidation", event="cache.invalidate.key_error", path=path, error=str(e))
+            logger.debug("failed to remove cache file during key invalidation", event="cache.invalidate.key_error", path=path, error=str(e))
 
     def _emit(self, event: str, **kwargs) -> None:
         """
@@ -317,10 +317,10 @@ class PiscesLxCoreCache:
             **kwargs: Additional event data (namespace, key, etc.).
         """
         try:
-            _log.info(f"Cache event: {event}", event=event, **kwargs)
+            logger.info(f"Cache event: {event}", event=event, **kwargs)
         except Exception as e:
             # Best effort: ignore logging errors
-            _log.debug("failed to emit cache event", event="cache.emit.error", original_event=event, error=str(e))
+            logger.debug("failed to emit cache event", event="cache.emit.error", original_event=event, error=str(e))
 
     def _is_expired(self, node: Dict[str, Any]) -> bool:
         """
@@ -396,7 +396,7 @@ class PiscesLxCoreCache:
                 try:
                     self.metrics["disk_reads"] += 1
                 except Exception as e:
-                    _log.debug("failed to increment disk_reads counter", event="cache.disk_reads.error", error=str(e))
+                    logger.debug("failed to increment disk_reads counter", event="cache.disk_reads.error", error=str(e))
                 self._emit("cache.disk.read", namespace=namespace, key=key)
                 return data
         except json.JSONDecodeError:
@@ -404,30 +404,30 @@ class PiscesLxCoreCache:
             try:
                 os.remove(path)
             except Exception as e:
-                _log.debug("failed to remove corrupted cache file", event="cache.corrupt.remove_error", path=path, error=str(e))
+                logger.debug("failed to remove corrupted cache file", event="cache.corrupt.remove_error", path=path, error=str(e))
             try:
                 self.metrics["corrupt_files"] += 1
             except Exception as e:
-                _log.debug("failed to increment corrupt_files counter", event="cache.corrupt.counter_error", error=str(e))
+                logger.debug("failed to increment corrupt_files counter", event="cache.corrupt.counter_error", error=str(e))
             try:
-                _log.warning(
+                logger.warning(
                     "corrupted cache file removed",
                     event="cache.disk.corrupt",
                     path=path,
                 )
             except Exception as e:
-                _log.debug("failed to log corrupted cache file removal", event="cache.corrupt.log_error", path=path, error=str(e))
+                logger.debug("failed to log corrupted cache file removal", event="cache.corrupt.log_error", path=path, error=str(e))
             self._emit("cache.disk.corrupt", namespace=namespace, key=key)
             return None
         except Exception:
             try:
-                _log.warning(
+                logger.warning(
                     "cache disk read error",
                     event="cache.disk.error",
                     path=path,
                 )
             except Exception as e:
-                _log.debug("failed to log cache disk read error", event="cache.disk.error_log_error", path=path, error=str(e))
+                logger.debug("failed to log cache disk read error", event="cache.disk.error_log_error", path=path, error=str(e))
             self._emit("cache.disk.error", namespace=namespace, key=key)
             return None
 
@@ -453,7 +453,7 @@ class PiscesLxCoreCache:
                 try:
                     self.metrics["disk_writes"] += 1
                 except Exception as e:
-                    _log.debug("failed to increment disk_writes counter", event="cache.disk_writes.error", error=str(e))
+                    logger.debug("failed to increment disk_writes counter", event="cache.disk_writes.error", error=str(e))
                 self._emit("cache.disk.write", namespace=namespace, key=key)
                 # Track file in index and update size estimate
                 try:
@@ -461,20 +461,20 @@ class PiscesLxCoreCache:
                     sz = os.path.getsize(path)
                     self._disk_bytes_est = max(0, self._disk_bytes_est) + int(sz)
                 except Exception as e:
-                    _log.debug("failed to update path index and size estimate", event="cache.disk.index_error", path=path, error=str(e))
+                    logger.debug("failed to update path index and size estimate", event="cache.disk.index_error", path=path, error=str(e))
                 # Throttled disk capacity enforcement (auto-tuned interval)
                 if self._max_disk_bytes is not None and self._disk_bytes_est > self._max_disk_bytes:
                     now = time.time()
-                    if now - self._last_cap_check > self._cap_interval():
+                    if now - self._last_cap_check > PiscesLxCoreCache._cap_interval(self):
                         self._enforce_disk_cap()
             except Exception:
                 try:
                     os.remove(tmp)
                 except Exception as e:
-                    _log.debug("failed to remove temporary file after disk write error", event="cache.disk.cleanup_error", tmp_file=tmp, error=str(e))
+                    logger.debug("failed to remove temporary file after disk write error", event="cache.disk.cleanup_error", tmp_file=tmp, error=str(e))
         except Exception as e:
             try:
-                _log.error(
+                logger.error(
                     "cache disk write error",
                     event="cache.disk.write.error",
                     path=path,
@@ -482,7 +482,7 @@ class PiscesLxCoreCache:
                     error_class=type(e).__name__,
                 )
             except Exception as e2:
-                _log.debug("failed to log cache disk write error", event="cache.disk.write.log_error", path=path, original_error=str(e), log_error=str(e2))
+                logger.debug("failed to log cache disk write error", event="cache.disk.write.log_error", path=path, original_error=str(e), log_error=str(e2))
 
     def _path(self, namespace: str, key: str) -> str:
         """
@@ -530,9 +530,9 @@ class PiscesLxCoreCache:
                     try:
                         self.metrics["evictions"] += 1
                     except Exception as e:
-                        _log.debug("failed to increment evictions counter", event="cache.evictions.error", error=str(e))
+                        logger.debug("failed to increment evictions counter", event="cache.evictions.error", error=str(e))
                 except Exception as e:
-                    _log.debug("failed to evict LRU item", event="cache.eviction.error", oldest_ns=oldest_ns, oldest_key=oldest_key, error=str(e))
+                    logger.debug("failed to evict LRU item", event="cache.eviction.error", oldest_ns=oldest_ns, oldest_key=oldest_key, error=str(e))
 
     # -------------------- helpers & advanced features --------------------
     def _apply_jitter(self, ttl: int) -> int:
@@ -552,7 +552,7 @@ class PiscesLxCoreCache:
             jitter_span = int(ttl * self._ttl_jitter)
             return max(1, ttl + random.randint(-jitter_span, jitter_span))
         except Exception as e:
-            _log.debug("failed to apply TTL jitter", event="cache.jitter.error", original_ttl=ttl, error=str(e))
+            logger.debug("failed to apply TTL jitter", event="cache.jitter.error", original_ttl=ttl, error=str(e))
             return int(ttl)
 
     def _single_flight_compute(self, namespace: str, key: str, ttl: int, producer: Callable[[], Any]) -> Any:
@@ -588,7 +588,7 @@ class PiscesLxCoreCache:
                     try:
                         self.metrics["inflight_waiters"] += 1
                     except Exception as e:
-                        _log.debug("failed to increment inflight_waiters counter", event="cache.inflight_waiters.error", error=str(e))
+                        logger.debug("failed to increment inflight_waiters counter", event="cache.inflight_waiters.error", error=str(e))
                     is_producer = False
                 else:
                     # Previous round finished; start a new production
@@ -653,7 +653,7 @@ class PiscesLxCoreCache:
                     "max_disk_bytes": self._max_disk_bytes,
                 }
         except Exception as e:
-            _log.debug("failed to get cache stats", event="cache.stats.error", error=str(e))
+            logger.debug("failed to get cache stats", event="cache.stats.error", error=str(e))
             return {
                 "hit_rate": 0.0,
                 "hits": self._hits,
@@ -678,7 +678,7 @@ class PiscesLxCoreCache:
         except Exception as e:
             # Best effort: emit error and exit
             self._emit("cache.refresh.async.error", namespace=namespace, key=key)
-            _log.debug("failed to refresh cache in background", event="cache.refresh.error", namespace=namespace, key=key, error=str(e))
+            logger.debug("failed to refresh cache in background", event="cache.refresh.error", namespace=namespace, key=key, error=str(e))
             return
 
     def _cleanup_loop(self) -> None:
@@ -688,7 +688,7 @@ class PiscesLxCoreCache:
         while not self._stop_cleanup.wait(self._cleanup_interval):
             try:
                 # Disk cleanup (bounded work per cycle; auto-tuned)
-                max_check = self._cleanup_max_check()
+                max_check = PiscesLxCoreCache._cleanup_max_check(self)
                 checked = 0
                 for ns in os.listdir(self.cache_dir):
                     ns_dir = os.path.join(self.cache_dir, ns)
@@ -715,17 +715,17 @@ class PiscesLxCoreCache:
                                             with self._lock:
                                                 self._keylocks.pop(ns_key, None)
                                     except Exception as e:
-                                        _log.debug("failed to cleanup path index and key locks", event="cache.cleanup.index_error", path=path, error=str(e))
+                                        logger.debug("failed to cleanup path index and key locks", event="cache.cleanup.index_error", path=path, error=str(e))
                             except Exception:
                                 # Ignore file errors but trace in debug
                                 try:
-                                    _log.debug(
+                                    logger.debug(
                                         "cleanup: failed to inspect or remove file",
                                         event="cache.cleanup.file_error",
                                         path=path,
                                     )
                                 except Exception as e:
-                                    _log.debug("failed to log cleanup file error", event="cache.cleanup.log_error", path=path, error=str(e))
+                                    logger.debug("failed to log cleanup file error", event="cache.cleanup.log_error", path=path, error=str(e))
                             checked += 1
                             if checked >= max_check:
                                 break
@@ -750,9 +750,35 @@ class PiscesLxCoreCache:
                         with self._lock:
                             self._inflight.pop(k, None)
                 except Exception as e:
-                    _log.debug("failed to cleanup inflight entries", event="cache.inflight.cleanup_error", error=str(e))
+                    logger.debug("failed to cleanup inflight entries", event="cache.inflight.cleanup_error", error=str(e))
             except Exception as e:
-                _log.debug("failed to run cleanup loop", event="cache.cleanup.loop_error", error=str(e))
+                logger.debug("failed to run cleanup loop", event="cache.cleanup.loop_error", error=str(e))
+
+    def _cap_interval(self) -> float:
+        """
+        Calculate the interval for checking disk capacity.
+        Direct instance method (no alias binding).
+        """
+        try:
+            return _auto_cap_interval(self)
+        except Exception as e:
+            logger.debug("failed to calculate auto cap interval", event="cache.cap_interval.error", error=str(e))
+            return 30.0
+
+    def _cleanup_max_check(self) -> int:
+        """
+        Calculate the maximum number of files to check during cleanup.
+        Direct instance method (no alias binding).
+        """
+        try:
+            # Prefer estimate; if unknown, do a quick partial count
+            if self._disk_bytes_est <= 0:
+                approx = _list_json_count(self.cache_dir)
+                return _clamp(approx // 2 + 200, 200, 2000)
+            return _auto_cleanup_max_check(self)
+        except Exception as e:
+            logger.debug("failed to calculate cleanup max check", event="cache.cleanup_max.error", error=str(e))
+            return 500
 
     @classmethod
     def _resolve_cache_dir(cls, cache_dir: Optional[str]) -> str:
@@ -792,7 +818,6 @@ def get_default_cache(cache_dir: Optional[str] = None) -> PiscesLxCoreCache:
     _DEFAULT_CACHE = PiscesLxCoreCache(cache_dir=cache_dir)
     return _DEFAULT_CACHE
 
-# --------------- internal: auto-tuning helpers -----------------
 def _clamp(v: int, lo: int, hi: int) -> int:
     """
     Clamp a value between a lower and upper bound.
@@ -820,7 +845,7 @@ def _mb(nbytes: int) -> float:
     try:
         return float(nbytes) / (1024.0 * 1024.0)
     except Exception as e:
-        _log.debug("failed to convert bytes to MB", event="cache.util.mb_error", bytes=nbytes, error=str(e))
+        logger.debug("failed to convert bytes to MB", event="cache.util.mb_error", bytes=nbytes, error=str(e))
         return 0.0
 
 def _gb(nbytes: int) -> float:
@@ -836,7 +861,7 @@ def _gb(nbytes: int) -> float:
     try:
         return float(nbytes) / (1024.0 * 1024.0 * 1024.0)
     except Exception as e:
-        _log.debug("failed to convert bytes to GB", event="cache.util.gb_error", bytes=nbytes, error=str(e))
+        logger.debug("failed to convert bytes to GB", event="cache.util.gb_error", bytes=nbytes, error=str(e))
         return 0.0
 
 def _safe_ratio(a: Optional[int], b: Optional[int]) -> float:
@@ -855,7 +880,7 @@ def _safe_ratio(a: Optional[int], b: Optional[int]) -> float:
             return 0.0
         return float(a) / float(b)
     except Exception as e:
-        _log.debug("failed to calculate safe ratio", event="cache.util.ratio_error", a=a, b=b, error=str(e))
+        logger.debug("failed to calculate safe ratio", event="cache.util.ratio_error", a=a, b=b, error=str(e))
         return 0.0
 
 def _list_json_count(root: str, max_dirs: int = 50) -> int:
@@ -882,10 +907,10 @@ def _list_json_count(root: str, max_dirs: int = 50) -> int:
                 try:
                     count += sum(1 for fn in os.listdir(shard_dir) if fn.endswith('.json'))
                 except Exception as e:
-                    _log.debug("failed to list shard directory during json count", event="cache.util.shard_list_error", shard_dir=shard_dir, error=str(e))
+                    logger.debug("failed to list shard directory during json count", event="cache.util.shard_list_error", shard_dir=shard_dir, error=str(e))
                     continue
     except Exception as e:
-        _log.debug("failed to list json files", event="cache.util.list_error", root=root, error=str(e))
+        logger.debug("failed to list json files", event="cache.util.list_error", root=root, error=str(e))
         pass
     return count
 
@@ -943,7 +968,7 @@ def _cap_interval(self: "PiscesLxCoreCache") -> float:
     try:
         return _auto_cap_interval(self)
     except Exception as e:
-        _log.debug("failed to calculate auto cap interval", event="cache.cap_interval.error", error=str(e))
+        logger.debug("failed to calculate auto cap interval", event="cache.cap_interval.error", error=str(e))
         return 30.0
 
 def _cleanup_max_check(self: "PiscesLxCoreCache") -> int:
@@ -963,9 +988,5 @@ def _cleanup_max_check(self: "PiscesLxCoreCache") -> int:
             return _clamp(approx // 2 + 200, 200, 2000)
         return _auto_cleanup_max_check(self)
     except Exception as e:
-        _log.debug("failed to calculate cleanup max check", event="cache.cleanup_max.error", error=str(e))
+        logger.debug("failed to calculate cleanup max check", event="cache.cleanup_max.error", error=str(e))
         return 500
-
-# Attach to class
-PiscesLxCoreCache._cap_interval = _cap_interval  # type: ignore[attr-defined]
-PiscesLxCoreCache._cleanup_max_check = _cleanup_max_check  # type: ignore[attr-defined]

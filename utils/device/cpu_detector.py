@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,8 +21,10 @@
 import psutil
 import platform
 import multiprocessing
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 from typing import Dict, Any, Optional
+
+logger = PiscesLxCoreLog("PiscesLx.Utils.Device.CpuDetector")
 
 class PiscesLxCoreDeviceCpuDetector:
     """
@@ -39,7 +41,7 @@ class PiscesLxCoreDeviceCpuDetector:
         self.cpu_info: Dict[str, Any] = {}  # Stores basic CPU information
         self.architecture_info: Dict[str, Any] = {}  # Stores CPU architecture details
         self.performance_metrics: Dict[str, Any] = {}  # Stores performance measurements
-        self.logger = PiscesLxCoreLog()  # Logger instance for structured logging
+
         
     def detect(self) -> Dict[str, Any]:
         """
@@ -92,7 +94,7 @@ class PiscesLxCoreDeviceCpuDetector:
             }
             
         except Exception as e:
-            self.logger.error("Failed to detect basic CPU info", error=str(e))
+            logger.error("Failed to detect basic CPU info", error=str(e))
             self.cpu_info = {
                 'physical_cores': multiprocessing.cpu_count(),
                 'logical_cores': multiprocessing.cpu_count(),
@@ -125,7 +127,7 @@ class PiscesLxCoreDeviceCpuDetector:
                     'max': freq.max or 0
                 }
         except Exception as e:
-            self.logger.debug(
+            logger.debug(
                 "get cpu_freq failed",
                 event="CPU",
                 message="get cpu_freq failed",
@@ -201,7 +203,7 @@ class PiscesLxCoreDeviceCpuDetector:
                     )
                     _ = sum(results)
             except Exception as e:
-                self.logger.debug(
+                logger.debug(
                     "multiprocessing pool unavailable, fallback to sequential",
                     event="CPU",
                     message="multiprocessing pool unavailable, fallback to sequential",
@@ -220,7 +222,7 @@ class PiscesLxCoreDeviceCpuDetector:
             }
             
         except Exception as e:
-            self.logger.error(
+            logger.error(
                 "Failed to detect performance metrics",
                 event="CPU",
                 message="Failed to detect performance metrics",
@@ -295,7 +297,7 @@ class PiscesLxCoreDeviceCpuDetector:
             }
             
         except Exception as e:
-            self.logger.error(
+            logger.error(
                 "Failed to detect memory info",
                 event="CPU",
                 message="Failed to detect memory info",
@@ -342,7 +344,7 @@ class PiscesLxCoreDeviceCpuDetector:
                                     for entry in entries
                                 ]
             except (ImportError, AttributeError, NotImplementedError, PermissionError) as e:
-                self.logger.debug(
+                logger.debug(
                     "thermal sensors unavailable",
                     event="CPU",
                     message="thermal sensors unavailable",
@@ -362,7 +364,7 @@ class PiscesLxCoreDeviceCpuDetector:
                                 for entry in entries
                             ]
             except (ImportError, AttributeError, NotImplementedError, PermissionError) as e:
-                self.logger.debug(
+                logger.debug(
                     "fan sensors unavailable",
                     event="CPU",
                     message="fan sensors unavailable",
@@ -371,7 +373,7 @@ class PiscesLxCoreDeviceCpuDetector:
                 )
                             
         except Exception as e:
-            self.logger.debug(
+            logger.debug(
                 "thermal info retrieval failed or unsupported",
                 event="CPU",
                 message="thermal info retrieval failed or unsupported",
@@ -538,7 +540,7 @@ class PiscesLxCoreDeviceCpuDetector:
                 'model_params_b': params_b
             }
         except Exception as e:
-            self.logger.debug(
+            logger.debug(
                 "parse model_size failed",
                 event="CPU",
                 message="parse model_size failed",

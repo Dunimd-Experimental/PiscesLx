@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +29,7 @@ from utils import get_cache_manager
 
 class JSONLCreator:
     """
-    A specialized creator for JSONL files designed for managing the Pisces L1 dataset.
+    A specialized creator for JSONL files designed for managing the PiscesL1 dataset.
     Supports the creation of new .json files in JSONL format (newline-delimited JSON).
     """
     

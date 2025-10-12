@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,7 +23,7 @@ import pandas as pd
 from torch import nn
 from typing import Optional
 from typing import Dict, Any, List
-from .types import GenerationCondition
+from .types import ArcticGenerationCondition
 
 class ArcticUnifiedGeneration(nn.Module):
     """
@@ -55,12 +55,12 @@ class ArcticUnifiedGeneration(nn.Module):
             "format": nn.Sequential(nn.Linear(H, 128)),
         })
 
-    def _latent(self, condition: GenerationCondition) -> torch.Tensor:
+    def _latent(self, condition: ArcticGenerationCondition) -> torch.Tensor:
         """
         Generate a stable latent tensor based on the given condition.
 
         Args:
-            condition (GenerationCondition): The generation condition containing text prompt and emotion vector.
+            condition (ArcticGenerationCondition): The generation condition containing text prompt and emotion vector.
 
         Returns:
             torch.Tensor: A randomly generated latent tensor of shape (1, hidden_size).
@@ -74,12 +74,12 @@ class ArcticUnifiedGeneration(nn.Module):
         torch.manual_seed(int(seed * 10000) % 2147483647)
         return torch.randn(1, self.cfg.hidden_size)
 
-    def generate_image(self, condition: GenerationCondition, steps: int = 8) -> torch.Tensor:
+    def generate_image(self, condition: ArcticGenerationCondition, steps: int = 8) -> torch.Tensor:
         """
         Generate an image tensor based on the given condition.
 
         Args:
-            condition (GenerationCondition): The generation condition.
+            condition (ArcticGenerationCondition): The generation condition.
             steps (int, optional): The number of generation steps. Defaults to 8.
 
         Returns:
@@ -93,12 +93,12 @@ class ArcticUnifiedGeneration(nn.Module):
             x = 0.9 * x + 0.1 * img
         return x
 
-    def generate_video(self, condition: GenerationCondition, frames: int = 8, steps: int = 8) -> torch.Tensor:
+    def generate_video(self, condition: ArcticGenerationCondition, frames: int = 8, steps: int = 8) -> torch.Tensor:
         """
         Generate a video tensor based on the given condition.
 
         Args:
-            condition (GenerationCondition): The generation condition.
+            condition (ArcticGenerationCondition): The generation condition.
             frames (int, optional): The number of frames in the video. Defaults to 8.
             steps (int, optional): The number of generation steps. Defaults to 8.
 
@@ -113,12 +113,12 @@ class ArcticUnifiedGeneration(nn.Module):
             x = 0.9 * x + 0.1 * vid
         return x
 
-    def generate_audio(self, condition: GenerationCondition, length: int = 1024, steps: int = 8) -> torch.Tensor:
+    def generate_audio(self, condition: ArcticGenerationCondition, length: int = 1024, steps: int = 8) -> torch.Tensor:
         """
         Generate an audio tensor based on the given condition.
 
         Args:
-            condition (GenerationCondition): The generation condition.
+            condition (ArcticGenerationCondition): The generation condition.
             length (int, optional): The length of the audio tensor. Defaults to 1024.
             steps (int, optional): The number of generation steps. Defaults to 8.
 
@@ -133,12 +133,12 @@ class ArcticUnifiedGeneration(nn.Module):
             x = 0.9 * x + 0.1 * aud[:, :, :length]
         return x
 
-    def generate_document(self, condition: GenerationCondition, max_length: int = 100) -> Dict[str, torch.Tensor]:
+    def generate_document(self, condition: ArcticGenerationCondition, max_length: int = 100) -> Dict[str, torch.Tensor]:
         """
         Generate a document represented as a dictionary of tensors based on the given condition.
 
         Args:
-            condition (GenerationCondition): The generation condition.
+            condition (ArcticGenerationCondition): The generation condition.
             max_length (int, optional): The maximum length of the document content. Defaults to 100.
 
         Returns:
@@ -217,7 +217,7 @@ class ArcticMultiModalGenerator:
         Raises:
             ValueError: If the specified modality is not supported.
         """
-        condition = GenerationCondition(text_prompt=text, generation_params=kwargs)
+        condition = ArcticGenerationCondition(text_prompt=text, generation_params=kwargs)
         metadata = {
             'prompt': text,
             'modality': modality,
@@ -255,7 +255,7 @@ class ArcticMultiModalGenerator:
         Raises:
             ValueError: If the specified target modality is not supported.
         """
-        condition = GenerationCondition(generation_params=kwargs)
+        condition = ArcticGenerationCondition(generation_params=kwargs)
         if source_modality == "image":
             condition.image_reference = input_data
         elif source_modality == "audio":
@@ -301,7 +301,7 @@ class ArcticMultiModalGenerator:
         Raises:
             ValueError: If the specified target modality is not supported.
         """
-        condition = GenerationCondition(generation_params=kwargs)
+        condition = ArcticGenerationCondition(generation_params=kwargs)
         if "image" in inputs:
             condition.image_reference = inputs["image"]
         if "audio" in inputs:
@@ -347,7 +347,7 @@ class ArcticMultiModalGenerator:
         Raises:
             ValueError: If the specified modality is not supported.
         """
-        condition = GenerationCondition(generation_params=kwargs)
+        condition = ArcticGenerationCondition(generation_params=kwargs)
         metadata = {
             'emotion': emotion,
             'modality': modality,

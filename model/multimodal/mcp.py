@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,9 +21,9 @@
 import uuid
 from datetime import datetime
 from typing import Dict, Any, Callable, List
-from .types import MCPMessageType, MCPMessage
+from .types import ArcticMCPMessageType, ArcticMCPMessage
 
-class MCPToolRegistry:
+class ArcticMCPToolRegistry:
     """A registry for managing MCP tools and capabilities.
     
     This class provides functionality to store and manage tools and capabilities,
@@ -77,7 +77,7 @@ class MCPToolRegistry:
         else:
             raise ValueError(f"Tool {tool_name} not found")
 
-class MCPProtocol:
+class ArcticMCPProtocol:
     """An implementation of the MCP protocol for agent communication.
     
     This class provides static methods for creating MCP messages.
@@ -85,24 +85,24 @@ class MCPProtocol:
     
     @staticmethod
     def create_message(
-        message_type: MCPMessageType,
+        message_type: ArcticMCPMessageType,
         agent_id: str,
         payload: Dict[str, Any],
         correlation_id: str = ""
-    ) -> MCPMessage:
+    ) -> ArcticMCPMessage:
         """Create a new MCP message.
 
         Args:
-            message_type (MCPMessageType): The type of the message.
+            message_type (ArcticMCPMessageType): The type of the message.
             agent_id (str): The ID of the agent sending the message.
             payload (Dict[str, Any]): The payload of the message.
             correlation_id (str, optional): The correlation ID of the message. 
                 If not provided, a new UUID will be generated. Defaults to "".
 
         Returns:
-            MCPMessage: A new MCPMessage instance.
+            ArcticMCPMessage: A new ArcticMCPMessage instance.
         """
-        return MCPMessage(
+        return ArcticMCPMessage(
             message_type=message_type.value,
             agent_id=agent_id,
             payload=payload,
@@ -110,7 +110,7 @@ class MCPProtocol:
             correlation_id=correlation_id or str(uuid.uuid4())
         )
 
-class TreeSearchReasoner:
+class ArcticTreeSearchReasoner:
     """A tree search reasoning module for advanced planning.
     
     This class implements a simplified tree search algorithm for complex reasoning tasks.
@@ -142,6 +142,6 @@ class TreeSearchReasoner:
         return [{"solution": "tree_search_result", "confidence": 0.8}]
 
 # Aliases for old names
-PiscesMCPProtocol = MCPProtocol
-PiscesTreeSearchReasoner = TreeSearchReasoner
-PiscesMCPToolRegistry = MCPToolRegistry
+PiscesMCPProtocol = ArcticMCPProtocol
+PiscesTreeSearchReasoner = ArcticTreeSearchReasoner
+PiscesMCPToolRegistry = ArcticMCPToolRegistry

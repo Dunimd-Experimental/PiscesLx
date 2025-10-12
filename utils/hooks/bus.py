@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,6 +21,7 @@
 import time
 import threading
 from utils.log.core import PiscesLxCoreLog
+logger = PiscesLxCoreLog("PiscesLx.Utils.Hooks.Bus")
 from .types import PiscesLxCoreEventMetrics
 from typing import Any, Dict, Optional, List
 from .executor import PiscesLxCoreHookExecutor
@@ -39,7 +40,7 @@ class PiscesLxCoreHookBus:
         self.executor = PiscesLxCoreHookExecutor()
         self._metrics: Dict[str, PiscesLxCoreEventMetrics] = {}
         self._lock = threading.RLock()
-        self.logger = PiscesLxCoreLog()
+
     
     def emit(self, event_type: str, **kwargs: Any) -> None:
         """Emit an event: execute the listeners and merge execution statistics into metrics.
@@ -67,7 +68,7 @@ class PiscesLxCoreHookBus:
                     m.total_time += float(summary.get('total_time', 0.0))
                     m.errors += int(summary.get('errors', 0))
                 except Exception as e:
-                    self.logger.debug("METRICS_UPDATE_FAILED", {"event_type": event_type, "error": str(e), "summary": summary})
+                    logger.debug("METRICS_UPDATE_FAILED", {"event_type": event_type, "error": str(e), "summary": summary})
     
     def get_listeners(self, event_type: str) -> List:
         """Get the listeners for a specified event.

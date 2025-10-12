@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -375,7 +375,7 @@ def _train_impl(args):
     from tools.data.dataset import PiscesDataset
     from torch.utils.data import DataLoader
     from model.tokenizer import get_tokenizer
-    from model import PiscesModel, ArcticConfig
+    from model import ArcticModel, ArcticConfig
     from utils.checkpoint import save_ckpt, load_ckpt
     from torch.optim.lr_scheduler import ReduceLROnPlateau
     from transformers import get_linear_schedule_with_warmup
@@ -577,7 +577,7 @@ def _train_impl(args):
     cfg = ArcticConfig.from_json(config)
     logger.info("ArcticConfig loaded.")
 
-    logger.info("Initializing PiscesModel with Reasoner...")
+    logger.info("Initializing ArcticModel with Reasoner...")
     _emit('on_train_start', args=args)
     
     # Always - on Reasoner: Tokenizer setup
@@ -627,7 +627,7 @@ def _train_impl(args):
             else:
                 logger.error(f"Unsupported quantization bits: {quant_bits}. Supported: 2, 4, 8")
                 sys.exit(1)
-        model = PiscesModel(cfg, quantization_config=quant_config) if quant_config else PiscesModel(cfg)
+        model = ArcticModel(cfg, quantization_config=quant_config) if quant_config else ArcticModel(cfg)
         if force_lora:
             lora_config = LoraConfig(
                 r=8, lora_alpha=32, target_modules=["q_proj", "v_proj", "o_proj"],
@@ -643,7 +643,7 @@ def _train_impl(args):
             except Exception:
                 pass
     else:
-        model = PiscesModel(cfg)
+        model = ArcticModel(cfg)
 
     model.resize_token_embeddings(len(tokenizer))
     start_id = tokenizer.encoder.get("<think>")
@@ -659,7 +659,7 @@ def _train_impl(args):
         logger.info(f"Gradient Checkpointing enabled.")
         
     model = model.to(device)
-    logger.info("PiscesModel initialized.")
+    logger.info("ArcticModel initialized.")
     if torch.cuda.is_available() and torch.cuda.device_count() > 1:
         logger.info(f"Using {torch.cuda.device_count()} GPUs")
         model = torch.nn.DataParallel(model)

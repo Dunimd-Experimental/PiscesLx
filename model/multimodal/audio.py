@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,9 +23,9 @@ import numpy as np
 from torch import nn
 from typing import Dict, Any
 import torch.nn.functional as F
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("Arctic.Model.Multimodal")
+logger = PiscesLxCoreLog("Arctic.Core.Multimodal")
 
 class ArcticAudioEncoder(nn.Module):
     """A PyTorch module for audio encoding with multi-task capabilities.

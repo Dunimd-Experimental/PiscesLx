@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -17,25 +17,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-MCPServer = None
-MCPRequest = None
-MCPResponse = None
-ToolCapability = None
-MCPTranslationLayer = None
-AgentCall = None
-process_text_with_mcp = None
-extract_agent_calls_sync = None
-
-# Define the public API of this module. 
-# Objects listed here are the ones that will be imported when `from . import *` is used.
-__all__ = [
-    "MCPServer",
-    "MCPRequest", 
-    "MCPResponse",
-    "ToolCapability",
-    "MCPTranslationLayer",
-    "AgentCall",
-    "process_text_with_mcp",
-    "extract_agent_calls_sync"
-]

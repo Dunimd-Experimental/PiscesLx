@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -1875,7 +1875,7 @@ class PiscesLxCoreObservabilityService:
                     service = PiscesLxCoreObservabilityService.instance()
                     health = service.get_health_snapshot()
                     response = {
-                        "service": "Pisces L1 Observability Service",
+                        "service": "PiscesL1 Observability Service",
                         "status": "running",
                         "health": health,
                         "timestamp": datetime.utcnow().isoformat() + "Z"
@@ -2255,3 +2255,4 @@ class PiscesLxCoreObservabilityService:
             self.logger.info("observability.service.cleaned.up")
         except Exception as e:
             self.logger.error("observability.service.cleanup.error", error=str(e))
+

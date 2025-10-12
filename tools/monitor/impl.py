@@ -1,8 +1,8 @@
-﻿#!/usr/bin/env python3
+?#!/usr/bin/env python3
 
-# Copyright 漏 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -65,7 +65,7 @@ class PiscesLxToolsMonitorImpl:
         self.observability_manager = PiscesLxCoreObservabilityManager()
         
         # Configuration
-        self.UPDATE_INTERVAL = 1  # 1绉掗噰鏍?        self.LOG_INTERVAL = 60   # 60绉掕褰曚竴娆℃棩蹇?        self.ANOMALY_THRESHOLD = {
+        self.UPDATE_INTERVAL = 1  # 1秒采�?        self.LOG_INTERVAL = 60   # 60秒记录一次日�?        self.ANOMALY_THRESHOLD = {
             'cpu_percent_total': 20,
             'memory_percent': 10,
             'gpu_util': 15,
@@ -323,3 +323,4 @@ class PiscesLxToolsMonitorImpl:
 
 # Only expose the main implementation class
 # All functionality is accessed through PiscesLxToolsMonitorImpl class
+

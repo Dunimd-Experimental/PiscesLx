@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,10 +24,10 @@ from typing import Any, Dict, Optional
 from utils.log.core import PiscesLxCoreLog
 
 # Module-level fallback logger for debug paths where delayed logger may fail
-_LOGGER = PiscesLxCoreLog(name="pisceslx.errors")
+logger = PiscesLxCoreLog("PiscesLx.Utils.Error")
 
 class PiscesLxCoreErrorCode(Enum):
-    """Enumeration of error codes for Pisces L1 utilities."""
+    """Enumeration of error codes for PiscesL1 utilities."""
     UNKNOWN = "unknown"  # Unknown error
     VALIDATION = "validation"  # Input/data/schema validation error
     CONFIG = "config"  # Configuration loading/merging error
@@ -47,7 +47,7 @@ class PiscesLxCoreErrorCode(Enum):
 
 
 class PiscesLxCoreError(Exception):
-    """Base error class for all Pisces L1 utilities.
+    """Base error class for all PiscesL1 utilities.
     
     Prefer raising a subclass with an appropriate error code.
     Automatically logs errors to the project's logging system.
@@ -58,16 +58,8 @@ class PiscesLxCoreError(Exception):
     
     @classmethod
     def _get_logger(cls) -> "PiscesLxCoreLog":
-        """Get or create logger instance lazily to avoid circular imports.
-
-        Returns:
-            PiscesLxCoreLog: Logger instance for error logging.
-        """
-        if cls._logger is None:
-            # Delayed import to avoid circular imports
-            from utils.log.core import PiscesLxCoreLog
-            cls._logger = PiscesLxCoreLog(name="pisceslx.errors")
-        return cls._logger
+        """Get module-level logger (standardized)."""
+        return logger
 
     def __init__(
         self,
@@ -153,7 +145,7 @@ class PiscesLxCoreError(Exception):
             try:
                 data["cause_traceback"] = traceback.format_exception_only(type(self.cause), self.cause)[-1].strip()
             except Exception as log_e:
-                _LOGGER.debug("ERROR_TRACEBACK_FAILED", error=str(log_e))
+                logger.debug("ERROR_TRACEBACK_FAILED", error=str(log_e))
         return data
 
     @classmethod

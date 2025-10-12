@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,6 +24,8 @@ from typing import Any, Optional
 from utils.log.core import PiscesLxCoreLog
 from utils.error import PiscesLxCoreError, PiscesLxCoreIOError, PiscesLxCoreFilesystemError
 
+logger = PiscesLxCoreLog("PiscesLx.Utils.Fs.Core")
+
 class PiscesLxCoreFS:
     """Object-oriented filesystem helper with safe operations.
 
@@ -41,7 +43,6 @@ class PiscesLxCoreFS:
                 If None, it will be automatically detected.
         """
         self._project_root = project_root or self._detect_project_root()
-        self.logger = PiscesLxCoreLog()
 
     def project_root(self) -> Path:
         """Get the project root directory.
@@ -121,7 +122,7 @@ class PiscesLxCoreFS:
                 if tmp and os.path.exists(tmp):
                     os.remove(tmp)
             except Exception as cleanup_e:
-                self.logger.debug("TEMP_FILE_CLEANUP_FAILED", {"tmp_file": tmp, "error": str(cleanup_e)})
+                logger.debug("TEMP_FILE_CLEANUP_FAILED", {"tmp_file": tmp, "error": str(cleanup_e)})
             raise PiscesLxCoreIOError("atomic_write_text failed", context={"path": str(p)}, cause=e)
 
     def atomic_write_bytes(self, path: os.PathLike | str, data: bytes) -> None:
@@ -148,7 +149,7 @@ class PiscesLxCoreFS:
                 if tmp and os.path.exists(tmp):
                     os.remove(tmp)
             except Exception as cleanup_e:
-                self.logger.debug("TEMP_FILE_CLEANUP_FAILED", {"tmp_file": tmp, "error": str(cleanup_e)})
+                logger.debug("TEMP_FILE_CLEANUP_FAILED", {"tmp_file": tmp, "error": str(cleanup_e)})
             raise PiscesLxCoreIOError("atomic_write_bytes failed", context={"path": str(p)}, cause=e)
 
     def read_json(self, path: os.PathLike | str, encoding: str = "utf-8") -> Any:

@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -117,9 +117,9 @@ def setup_inference_device(device_pref: str):
 
 class VLLMEngine:
     """
-    VLLM-based high-performance inference engine for Pisces L1 models.
+    VLLM-based high-performance inference engine for PiscesL1 models.
 
-    This class provides a wrapper around the VLLM library to perform inference on Pisces L1 models.
+    This class provides a wrapper around the VLLM library to perform inference on PiscesL1 models.
     If VLLM is not available, it falls back to native inference.
     """
     def __init__(self, model_path: str, dtype: str = "auto", gpu_memory_utilization: float = 0.9, tensor_parallel_size: int = 1) -> None:
@@ -486,7 +486,7 @@ def _infer_impl(args: Any) -> None:
     import torch
     from PIL import Image
     from model.tokenizer import get_tokenizer
-    from model import PiscesModel, ArcticConfig
+    from model import ArcticModel, ArcticConfig
     from transformers import BitsAndBytesConfig
     from torchvision.transforms import functional as TF
     import torch.nn.functional as F
@@ -502,7 +502,7 @@ def _infer_impl(args: Any) -> None:
     except Exception as e:
         logger.error(f"Invalid inference arguments: {e}")
         raise
-    logger.success("Starting Pisces L1 Inference with MCP Integration...")
+    logger.success("Starting PiscesL1 Inference with MCP Integration...")
     _emit('on_infer_start', args=args)
     # Load model configuration and inference settings
     model_size = getattr(args, "model_size", "0.5B").upper()

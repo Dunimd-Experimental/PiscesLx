@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,21 +23,21 @@ import json
 import torch
 import numpy as np
 from torch import nn
-from .types import MCPMessage
 from dataclasses import asdict
-from utils import PiscesLxCoreLog
-from .reasoner import ArcticReasoner
+from .types import ArcticMCPMessage
+from .reasoner import ArcticUnifiedReasoner
 from .audio import ArcticAudioEncoder
 from .vision import ArcticVisionEncoder
+from utils.log.core import PiscesLxCoreLog
 from typing import Dict, Any, Union, List, Callable
-from .mcp import MCPProtocol, MCPToolRegistry, TreeSearchReasoner
-from .types import AgentState, AgentAction, AgentObservation, AgentMemory
+from .mcp import ArcticMCPProtocol, ArcticMCPToolRegistry, ArcticTreeSearchReasoner
+from .types import ArcticAgentState, ArcticAgentAction, ArcticAgentObservation, ArcticAgentMemory, ArcticMCPMessageType
 
-logger = PiscesLxCoreLog("Arctic.Model.Agent")
+logger = PiscesLxCoreLog("Arctic.Core.Agent")
 
 class ArcticAgent(nn.Module):
     """
-    Represents an agent in the Pisces L1 system with integrated reasoning, perception, and action capabilities.
+    Represents an agent in the PiscesL1 system with integrated reasoning, perception, and action capabilities.
     Supports multimodal perception, advanced reasoning, tool usage, memory management, and MCP protocol.
     """
     
@@ -67,16 +67,16 @@ class ArcticAgent(nn.Module):
             # Stand - alone agent: no linked PiscesModel to avoid reference cycles
             self._base_model_ref = None
             self._model_ref = None
-            self._reasoner = ArcticReasoner(cfg)
+            self._reasoner = ArcticUnifiedReasoner(cfg)
             self._vision_encoder = ArcticVisionEncoder(cfg)
             self._audio_encoder = ArcticAudioEncoder(cfg)
         
-        self.tree_reasoner = TreeSearchReasoner(None, tokenizer) if tokenizer else None
+        self.tree_reasoner = ArcticTreeSearchReasoner(None, tokenizer) if tokenizer else None
 
         # MCP Agent infrastructure
-        self.memory = AgentMemory([], [], [])
-        self.mcp_tools = MCPToolRegistry(self.agent_id, self._handle_mcp_message)
-        self.state = AgentState.IDLE
+        self.memory = ArcticAgentMemory([], [], [])
+        self.mcp_tools = ArcticMCPToolRegistry(self.agent_id, self._handle_mcp_message)
+        self.state = ArcticAgentState.IDLE
         self.mcp_peers: Dict[str, Dict[str, Any]] = {}
         self.mcp_capabilities: Dict[str, Dict[str, Any]] = {}
         
@@ -90,13 +90,13 @@ class ArcticAgent(nn.Module):
         
         # MCP message handlers
         self.mcp_handlers = {
-            MCPMessageType.OBSERVATION.value: self._handle_observation,
-            MCPMessageType.ACTION.value: self._handle_action,
-            MCPMessageType.TOOL_CALL.value: self._handle_tool_call,
-            MCPMessageType.TOOL_RESULT.value: self._handle_tool_result,
-            MCPMessageType.CAPABILITY_REGISTER.value: self._handle_capability_register,
-            MCPMessageType.SYNC_REQUEST.value: self._handle_sync_request,
-            MCPMessageType.SYNC_RESPONSE.value: self._handle_sync_response,
+            ArcticMCPMessageType.OBSERVATION.value: self._handle_observation,
+            ArcticMCPMessageType.ACTION.value: self._handle_action,
+            ArcticMCPMessageType.TOOL_CALL.value: self._handle_tool_call,
+            ArcticMCPMessageType.TOOL_RESULT.value: self._handle_tool_result,
+            ArcticMCPMessageType.CAPABILITY_REGISTER.value: self._handle_capability_register,
+            ArcticMCPMessageType.SYNC_REQUEST.value: self._handle_sync_request,
+            ArcticMCPMessageType.SYNC_RESPONSE.value: self._handle_sync_response,
         }
 
     @property
@@ -161,7 +161,7 @@ class ArcticAgent(nn.Module):
         """
         await self.mcp_tools.register_capability(name, description, parameters, handler)
 
-    async def _handle_mcp_message(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_mcp_message(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
         """
         Handle incoming MCP messages.
 
@@ -176,13 +176,13 @@ class ArcticAgent(nn.Module):
         if handler:
             return await handler(message)
         else:
-            return MCPProtocol.create_message(
-                MCPMessageType.STATE_UPDATE,
+            return ArcticMCPProtocol.create_message(
+                ArcticMCPMessageType.STATE_UPDATE,
                 self.agent_id,
                 {"error": f"Unknown message type: {message.message_type}"}
             )
 
-    async def _handle_observation(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_observation(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
         """
         Handle MCP observation messages.
 
@@ -193,7 +193,7 @@ class ArcticAgent(nn.Module):
             An MCP observation message indicating the processing status.
         """
         observation_data = message.payload
-        observation = AgentObservation(
+        observation = ArcticAgentObservation(
             modality=observation_data["modality"],
             content=observation_data["content"],
             metadata=observation_data.get("metadata", {})
@@ -202,8 +202,8 @@ class ArcticAgent(nn.Module):
         self.memory.add_observation(observation)
         obs_embedding = self.process_observation(observation)
         
-        return MCPProtocol.create_message(
-            MCPMessageType.OBSERVATION,
+        return ArcticMCPProtocol.create_message(
+            ArcticMCPMessageType.OBSERVATION,
             self.agent_id,
             {
                 "status": "processed",
@@ -212,7 +212,7 @@ class ArcticAgent(nn.Module):
             }
         )
 
-    async def _handle_action(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_action(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
         """
         Handle MCP action messages.
 
@@ -231,8 +231,8 @@ class ArcticAgent(nn.Module):
         action = await self.plan_action(context)
         self.memory.add_action(action)
         
-        return MCPProtocol.create_message(
-            MCPMessageType.ACTION,
+        return ArcticMCPProtocol.create_message(
+            ArcticMCPMessageType.ACTION,
             self.agent_id,
             {
                 "action": asdict(action),
@@ -240,7 +240,7 @@ class ArcticAgent(nn.Module):
             }
         )
 
-    async def _handle_tool_call(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_tool_call(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
         """
         Handle MCP tool call messages.
 
@@ -259,8 +259,8 @@ class ArcticAgent(nn.Module):
             handler = self.mcp_capabilities[tool_name]["handler"]
             result = await handler(**parameters)
             
-            return MCPProtocol.create_message(
-                MCPMessageType.TOOL_RESULT,
+            return ArcticMCPProtocol.create_message(
+                ArcticMCPMessageType.TOOL_RESULT,
                 self.agent_id,
                 {
                     "tool_name": tool_name,
@@ -269,8 +269,8 @@ class ArcticAgent(nn.Module):
                 }
             )
         else:
-            return MCPProtocol.create_message(
-                MCPMessageType.TOOL_RESULT,
+            return ArcticMCPProtocol.create_message(
+                ArcticMCPMessageType.TOOL_RESULT,
                 self.agent_id,
                 {
                     "tool_name": tool_name,
@@ -279,7 +279,7 @@ class ArcticAgent(nn.Module):
                 }
             )
 
-    async def _handle_tool_result(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_tool_result(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
         """
         Handle MCP tool result messages.
 
@@ -291,7 +291,7 @@ class ArcticAgent(nn.Module):
         """
         result_data = message.payload
         
-        observation = AgentObservation(
+        observation = ArcticAgentObservation(
             modality="tool_result",
             content=result_data,
             metadata={"source": message.agent_id}
@@ -299,13 +299,13 @@ class ArcticAgent(nn.Module):
         
         self.memory.add_observation(observation)
         
-        return MCPProtocol.create_message(
-            MCPMessageType.STATE_UPDATE,
+        return ArcticMCPProtocol.create_message(
+            ArcticMCPMessageType.STATE_UPDATE,
             self.agent_id,
             {"status": "tool_result_processed", "result_id": str(uuid.uuid4())}
         )
 
-    async def _handle_capability_register(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_capability_register(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
         """
         Handle capability registration from other agents.
 
@@ -321,13 +321,13 @@ class ArcticAgent(nn.Module):
         if message.agent_id != self.agent_id:
             self.mcp_capabilities[f"{message.agent_id}.{capability_name}"] = capability_data
         
-        return MCPProtocol.create_message(
-            MCPMessageType.STATE_UPDATE,
+        return ArcticMCPProtocol.create_message(
+            ArcticMCPMessageType.STATE_UPDATE,
             self.agent_id,
             {"status": "capability_registered", "capability": capability_name}
         )
 
-    async def _handle_sync_request(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_sync_request(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
         """
         Handle synchronization requests.
 
@@ -341,8 +341,8 @@ class ArcticAgent(nn.Module):
         sync_type = message.payload.get("type")
         
         if sync_type == "capability_discovery":
-            return MCPProtocol.create_message(
-                MCPMessageType.SYNC_RESPONSE,
+            return ArcticMCPProtocol.create_message(
+                ArcticMCPMessageType.SYNC_RESPONSE,
                 self.agent_id,
                 {
                     "type": "capabilities",
@@ -350,8 +350,8 @@ class ArcticAgent(nn.Module):
                 }
             )
         elif sync_type == "state_sync":
-            return MCPProtocol.create_message(
-                MCPMessageType.SYNC_RESPONSE,
+            return ArcticMCPProtocol.create_message(
+                ArcticMCPMessageType.SYNC_RESPONSE,
                 self.agent_id,
                 {
                     "type": "state",
@@ -360,13 +360,13 @@ class ArcticAgent(nn.Module):
                 }
             )
         
-        return MCPProtocol.create_message(
-            MCPMessageType.SYNC_RESPONSE,
+        return ArcticMCPProtocol.create_message(
+            ArcticMCPMessageType.SYNC_RESPONSE,
             self.agent_id,
             {"error": "Unknown sync type"}
         )
 
-    async def _handle_sync_response(self, message: MCPMessage) -> MCPMessage:
+    async def _handle_sync_response(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
         """
         Handle synchronization responses.
 
@@ -383,18 +383,18 @@ class ArcticAgent(nn.Module):
                 "capabilities": response_data.get("capabilities", [])
             }
         
-        return MCPProtocol.create_message(
-            MCPMessageType.STATE_UPDATE,
+        return ArcticMCPProtocol.create_message(
+            ArcticMCPMessageType.STATE_UPDATE,
             self.agent_id,
             {"status": "sync_completed", "peer_id": message.agent_id}
         )
 
-    def process_observation(self, observation: AgentObservation) -> torch.Tensor:
+    def process_observation(self, observation: ArcticAgentObservation) -> torch.Tensor:
         """
         Process multimodal observations into a unified representation.
 
         Args:
-            observation: An AgentObservation instance containing observation data.
+            observation: An ArcticAgentObservation instance containing observation data.
 
         Returns:
             A torch.Tensor representing the observation embedding. 
@@ -441,7 +441,7 @@ class ArcticAgent(nn.Module):
         # Fallback to zero tensor
         return torch.zeros(1, 1, self.cfg.hidden_size)
 
-    async def plan_action(self, context: Dict[str, Any]) -> AgentAction:
+    async def plan_action(self, context: Dict[str, Any]) -> ArcticAgentAction:
         """
         Generate an action based on the current context and enhanced reasoning.
 
@@ -449,7 +449,7 @@ class ArcticAgent(nn.Module):
             context: A dictionary containing the current context and available tools.
 
         Returns:
-            An AgentAction instance representing the planned action.
+            An ArcticAgentAction instance representing the planned action.
         """
         # Get enhanced context from memory with semantic search
         memory_context = self.memory.get_context_with_retrieval(
@@ -552,7 +552,7 @@ class ArcticAgent(nn.Module):
                 relevant_memories=relevant_memories
             )
             
-            return AgentAction(
+            return ArcticAgentAction(
                 action_type=action_type,
                 parameters=action_params,
                 confidence=confidence,
@@ -963,3 +963,4 @@ class ArcticAgent(nn.Module):
         self._coordinate_detection_enabled = enabled
         if hasattr(self.vision_encoder, 'enable_detection'):
             self.vision_encoder.enable_detection(enabled)
+

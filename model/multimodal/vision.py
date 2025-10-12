@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -20,25 +20,35 @@
 
 import os
 import math
-import numpy as np
-from typing import Optional, Tuple, List, Dict, Any
 import torch
+import numpy as np
 from torch import nn
 from PIL import Image
 import torch.nn.functional as F
+from utils.log.core import PiscesLxCoreLog
+from typing import Optional, Tuple, List, Dict, Any
 
-from utils import PiscesLxCoreLog
-logger = PiscesLxCoreLog("Arctic.Model.Multimodal")
-
+logger = PiscesLxCoreLog("Arctic.Core.Multimodal")
 
 class ArcticSpatioTemporalRoPE3D(nn.Module):
     """
-    3D Spatio-Temporal Rotary Position Embedding for video frames.
-    Extends 2D RoPE to include temporal dimension for video understanding.
+    A PyTorch module for 3D Spatio-Temporal Rotary Position Embedding for video frames.
+    Extends 2D RoPE by incorporating a temporal dimension to handle video data.
     """
     def __init__(self, dim: int, max_temporal_frames: int = 1024, 
                  max_spatial_h: int = 64, max_spatial_w: int = 64,
                  base: float = 10000.0, device: Optional[torch.device] = None):
+        """
+        Initialize the 3D Spatio-Temporal Rotary Position Embedding module.
+
+        Args:
+            dim (int): Dimension of the input features. Must be divisible by 3.
+            max_temporal_frames (int, optional): Maximum number of temporal frames. Defaults to 1024.
+            max_spatial_h (int, optional): Maximum height of the spatial dimension. Defaults to 64.
+            max_spatial_w (int, optional): Maximum width of the spatial dimension. Defaults to 64.
+            base (float, optional): Base value for frequency calculation. Defaults to 10000.0.
+            device (Optional[torch.device], optional): Device to store the tensors. Defaults to None.
+        """
         super().__init__()
         assert dim % 3 == 0, "Dimension must be divisible by 3 for 3D RoPE"
         self.dim = dim
@@ -47,8 +57,11 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         self.max_spatial_h = max_spatial_h
         self.max_spatial_w = max_spatial_w
         self.base = base
+        # Compute frequency values for temporal dimension
         temp_freq = 1.0 / (base ** (torch.arange(0, self.dim_per_axis, 2).float() / self.dim_per_axis))
+        # Compute frequency values for height dimension
         h_freq = 1.0 / (base ** (torch.arange(0, self.dim_per_axis, 2).float() / self.dim_per_axis))
+        # Compute frequency values for width dimension
         w_freq = 1.0 / (base ** (torch.arange(0, self.dim_per_axis, 2).float() / self.dim_per_axis))
         self.register_buffer('temp_freq', temp_freq, persistent=False)
         self.register_buffer('h_freq', h_freq, persistent=False)
@@ -58,6 +71,17 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         self.register_buffer('max_seq_cached', torch.tensor(0), persistent=False)
 
     def _compute_3d_positions(self, t: int, h: int, w: int) -> torch.Tensor:
+        """
+        Compute 3D positions for temporal, height, and width dimensions.
+
+        Args:
+            t (int): Number of temporal frames.
+            h (int): Height of the spatial dimension.
+            w (int): Width of the spatial dimension.
+
+        Returns:
+            torch.Tensor: A tensor containing flattened 3D positions.
+        """
         temp_pos = torch.arange(t, dtype=torch.float32)
         h_pos = torch.arange(h, dtype=torch.float32)
         w_pos = torch.arange(w, dtype=torch.float32)
@@ -70,6 +94,15 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         return positions
 
     def _compute_3d_rope(self, positions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute 3D Rotary Position Embedding (RoPE) cosine and sine values.
+
+        Args:
+            positions (torch.Tensor): Tensor containing 3D positions.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: Cosine and sine values for RoPE.
+        """
         device = positions.device
         seq_len = positions.shape[0]
         temp_pos = positions[:, 0]
@@ -100,6 +133,16 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         return cos, sin
 
     def forward(self, x: torch.Tensor, video_shape: Tuple[int, int, int]) -> torch.Tensor:
+        """
+        Apply 3D Spatio-Temporal Rotary Position Embedding to the input tensor.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+            video_shape (Tuple[int, int, int]): Shape of the video (temporal, height, width).
+
+        Returns:
+            torch.Tensor: Tensor with RoPE applied.
+        """
         t, h, w = video_shape
         seq_len = t * h * w
         if self.cos_cache is None or seq_len > self.max_seq_cached:
@@ -113,6 +156,15 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         return x_rotated
 
     def _rotate_half(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Rotate the last dimension of the input tensor by half and negate the second half.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Rotated tensor.
+        """
         x1 = x[..., :x.shape[-1] // 2]
         x2 = x[..., x.shape[-1] // 2:]
         return torch.cat((-x2, x1), dim=-1)
@@ -120,6 +172,13 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
 
 class ArcticVisionEncoder(nn.Module):
     def __init__(self, cfg, cache_manager=None):
+        """
+        Initialize the ArcticVisionEncoder module.
+
+        Args:
+            cfg: Configuration object containing hyperparameters.
+            cache_manager: Cache manager object. Defaults to None.
+        """
         super().__init__()
         self.enabled = True
         self.cfg = cfg
@@ -128,7 +187,9 @@ class ArcticVisionEncoder(nn.Module):
         self.num_heads = cfg.n_head
         self.num_layers = cfg.n_layer
         logger.debug(f"VisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        # Register mean values for normalization
         self.register_buffer('mean', torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        # Register standard deviation values for normalization
         self.register_buffer('std', torch.Tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
         self.patch_embed = nn.Conv2d(
             in_channels=3,
@@ -331,6 +392,16 @@ class ArcticVisionEncoder(nn.Module):
         logger.debug("VisionEncoder: __init__ end")
 
     def process_image(self, image_path, target_size=None):
+        """
+        Process an image from the given path, including normalization.
+
+        Args:
+            image_path (str): Path to the image file.
+            target_size (Optional[Tuple[int, int]]): Target size to resize the image. Defaults to None.
+
+        Returns:
+            Optional[torch.Tensor]: Processed image tensor. Returns None if an error occurs.
+        """
         logger.debug(f"Processing image: {image_path}")
         try:
             with Image.open(image_path) as img:
@@ -345,6 +416,17 @@ class ArcticVisionEncoder(nn.Module):
             return None
 
     def interpolate_pos_encoding(self, pos_embed, h, w):
+        """
+        Interpolate position embeddings to match the given height and width.
+
+        Args:
+            pos_embed (torch.Tensor): Position embeddings.
+            h (int): Target height.
+            w (int): Target width.
+
+        Returns:
+            torch.Tensor: Interpolated position embeddings.
+        """
         npatch = h * w
         N = pos_embed.shape[1] - 1
         if npatch == N:
@@ -365,6 +447,16 @@ class ArcticVisionEncoder(nn.Module):
         return torch.cat((class_pos_embed, patch_pos_embed), dim=1)
 
     def forward(self, pixel_values, video_shape=None):
+        """
+        Forward pass of the ArcticVisionEncoder.
+
+        Args:
+            pixel_values (torch.Tensor): Input pixel values.
+            video_shape (Optional[Tuple[int, int, int]]): Shape of the video (temporal, height, width). Defaults to None.
+
+        Returns:
+            Dict: A dictionary containing detection results.
+        """
         if pixel_values is None:
             return torch.zeros(1, 1, self.cfg.hidden_size, device=self.proj.weight.device)
         x = (pixel_values - self.mean) / self.std
@@ -490,6 +582,17 @@ class ArcticVisionEncoder(nn.Module):
         return detection_results
 
     def convert_patch_to_image_coords(self, patch_coords, image_size, patch_size=14):
+        """
+        Convert patch coordinates to image coordinates.
+
+        Args:
+            patch_coords (Tuple[int, int]): Patch coordinates (x, y).
+            image_size (Tuple[int, int]): Size of the image (height, width).
+            patch_size (int, optional): Size of each patch. Defaults to 14.
+
+        Returns:
+            List[int]: Image coordinates [x, y].
+        """
         h, w = image_size
         h_patches = h // patch_size
         w_patches = w // patch_size
@@ -499,6 +602,17 @@ class ArcticVisionEncoder(nn.Module):
         return [min(x_image, w-1), min(y_image, h-1)]
 
     def get_object_locations(self, detection_results, image_size, confidence_threshold=0.5):
+        """
+        Get object locations from detection results based on confidence threshold.
+
+        Args:
+            detection_results (Dict): Dictionary containing detection results.
+            image_size (Tuple[int, int]): Size of the image (height, width).
+            confidence_threshold (float, optional): Confidence threshold for object selection. Defaults to 0.5.
+
+        Returns:
+            List[Dict]: List of dictionaries containing object information.
+        """
         if not detection_results.get('bbox_coords'):
             return []
         bbox_coords = detection_results['bbox_coords']
@@ -533,4 +647,10 @@ class ArcticVisionEncoder(nn.Module):
         return objects
 
     def enable_detection(self, enable=True):
+        """
+        Enable or disable detection functionality.
+
+        Args:
+            enable (bool, optional): Whether to enable detection. Defaults to True.
+        """
         self._enable_detection = enable

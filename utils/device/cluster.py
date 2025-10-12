@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,9 +18,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 from typing import Any, Dict, Literal
 from .facade import PiscesLxCoreDeviceFacade
+
+logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Cluster")
 
 class PiscesLxCoreDeviceUnifiedPlanner:
     @staticmethod
@@ -38,7 +40,7 @@ class PiscesLxCoreDeviceUnifiedPlanner:
         Returns:
             Dict[str, Any]: A unified device plan containing device and distribution configurations.
         """
-        logger = PiscesLxCoreLog()
+
         
         # Retrieve per-host device recommendations using facade
         dev = PiscesLxCoreDeviceFacade(args=args)
@@ -141,7 +143,7 @@ class PiscesLxCoreDeviceUnifiedPlanner:
         Raises:
             Exception: If the process group initialization fails.
         """
-        logger = PiscesLxCoreLog()
+
         from utils.device import PiscesLxCoreProcessGroupManager
         
         # Attempt to initialize the process group
@@ -159,7 +161,7 @@ class PiscesLxCoreDeviceUnifiedPlanner:
         Raises:
             Exception: If the process group finalization fails.
         """
-        logger = PiscesLxCoreLog()
+
         from utils.device import PiscesLxCoreProcessGroupManager
         
         # Attempt to finalize the process group

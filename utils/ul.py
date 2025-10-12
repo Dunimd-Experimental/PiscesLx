@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import Optional, List
 from utils.log.core import PiscesLxCoreLog
 
-# Module-level logger for debug paths
-_LOGGER = PiscesLxCoreLog(name="pisceslx.ul")
+# 模块级统一日志
+logger = PiscesLxCoreLog("PiscesLx.Utils.UL")
 
 def get_current_version(project_root: Path) -> str:
     """
@@ -49,7 +49,7 @@ def get_current_version(project_root: Path) -> str:
         if version_match:
             return version_match.group(1)
     except Exception as log_e:
-        _LOGGER.debug("UL_VERSION_PARSE_FAILED", error=str(log_e))
+        logger.debug("UL_VERSION_PARSE_FAILED", error=str(log_e))
     
     return "Unknown"
 
@@ -111,7 +111,7 @@ def parse_ul_file(ul_file_path: Path) -> List[str]:
         return changelog_entries
     
     except Exception as log_e:
-        _LOGGER.debug("UL_PARSE_FILE_FAILED", error=str(log_e))
+        logger.debug("UL_PARSE_FILE_FAILED", error=str(log_e))
         return []
 
 def display_version_changelog(project_root: Path, current_version: str):
@@ -123,7 +123,7 @@ def display_version_changelog(project_root: Path, current_version: str):
         current_version (str): The current version to display.
     """
     print("")
-    print("🟢\tPisces L1 - Arctic Architecture")
+    print("🟢\tPiscesL1 - Arctic Architecture")
     print(f"🟢\tVersion: {current_version}")
     print("🟢\tProject: PiscesLx Series by Dunimd Project Group")
     print("")
@@ -179,7 +179,7 @@ def get_all_versions(project_root: Path) -> List[str]:
         versions.sort(key=lambda x: [int(part) for part in x.split('.')], reverse=True)
         
     except Exception as log_e:
-        _LOGGER.debug("UL_VERSION_SCAN_FAILED", error=str(log_e))
+        logger.debug("UL_VERSION_SCAN_FAILED", error=str(log_e))
     
     return versions
 
@@ -198,7 +198,7 @@ def display_all_versions(project_root: Path):
         return
     
     print("")
-    print("🟢\tPisces L1 - Arctic Architecture")
+    print("🟢\tPiscesL1 - Arctic Architecture")
     print("🟢\tAll Version History")
     print("🟢\tProject: PiscesLx Series by Dunimd Project Group")
     print("")

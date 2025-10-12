@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +21,7 @@
 import os
 import time
 import torch
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 from typing import Any, Dict, Optional
 from .config import PiscesLxCoreDeviceConfig
 from .manager import PiscesLxCoreDeviceManager
@@ -30,9 +30,11 @@ from utils.hooks.bus import PiscesLxCoreHookBus, get_global_hook_bus
 from utils.observability.decorators import PiscesLxCoreDecorators as ObsDec
 from utils.error import PiscesLxCoreDeviceError, PiscesLxCoreNoGPUError, PiscesLxCoreGPUInsufficientError
 
+logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Facade")
+
 class PiscesLxCoreDeviceFacade:
     """
-    Unified device management facade for Pisces L1.
+    Unified device management facade for PiscesL1.
     
     Consolidates device detection, configuration, and orchestration into a single
     entry point, eliminating redundant abstraction layers.
@@ -47,7 +49,7 @@ class PiscesLxCoreDeviceFacade:
         """
         self.args = args or {}
         self._config_cache = None
-        self.logger = PiscesLxCoreLog()
+
         self.hooks = get_global_hook_bus()
         
         # Detect and store project root for local file lookups
@@ -63,7 +65,7 @@ class PiscesLxCoreDeviceFacade:
         try:
             self.gpu_manager = PiscesLxCoreDeviceManager(self.cfg)
         except PiscesLxCoreNoGPUError:
-            self.logger.error("GPU detection failed. Pisces L1 requires CUDA-capable GPU for optimal performance.")
+            logger.error("GPU detection failed. PiscesL1 requires CUDA-capable GPU for optimal performance.")
             self.gpu_manager = PiscesLxCoreDeviceManager.__new__(PiscesLxCoreDeviceManager)
             self.gpu_manager.cfg = self.cfg
             self.gpu_manager.gpu_info = []
@@ -141,7 +143,7 @@ class PiscesLxCoreDeviceFacade:
         if strategy.get('mode') == 'cpu':
             config["device_type"] = 'cpu'
         
-        self.logger.info("Auto device config", config)
+        logger.info("Auto device config", config)
         return config
     
     def _manual_setup(self) -> dict:
@@ -176,24 +178,24 @@ class PiscesLxCoreDeviceFacade:
             available_gpu_ids = [gpu["index"] for gpu in gpu_info]
             for gpu_id in gpu_ids:
                 if gpu_id not in available_gpu_ids:
-                    self.logger.error("GPU not found", requested_gpu=gpu_id, available_gpus=available_gpu_ids)
+                    logger.error("GPU not found", requested_gpu=gpu_id, available_gpus=available_gpu_ids)
                     raise RuntimeError(f"Requested GPU {gpu_id} not available. Available: {available_gpu_ids}")
             
             if not gpu_info:
-                self.logger.error("No GPU detected but CUDA device requested", requested_device="cuda", available_devices="cpu")
+                logger.error("No GPU detected but CUDA device requested", requested_device="cuda", available_devices="cpu")
                 raise RuntimeError("Configuration requires CUDA but no GPUs detected")
         
         elif device_type == "cpu":
             gpu_ids = []
         else:
-            self.logger.error("Unknown device type", device_type=device_type)
+            logger.error("Unknown device type", device_type=device_type)
             raise ValueError(f"Unknown device type: {device_type}")
         
         # Large model batch size validation
         if batch_size is not None and batch_size > 1:
             model_params = self._get_model_params_from_config()
             if model_params > 100:
-                self.logger.error("Large model batch size validation failed", 
+                logger.error("Large model batch size validation failed", 
                                 model_params=model_params, batch_size=batch_size)
                 raise RuntimeError(f"Large model ({model_params:.1f}B) requires batch_size=1, got {batch_size}")
         
@@ -206,7 +208,7 @@ class PiscesLxCoreDeviceFacade:
             "reason": "Manual configuration (validated)"
         }
         
-        self.logger.info("Manual device config", config)
+        logger.info("Manual device config", config)
         return config
     
     def _distributed_setup(self) -> dict:
@@ -237,7 +239,7 @@ class PiscesLxCoreDeviceFacade:
             if k in recommendation:
                 config[k] = recommendation[k]
         
-        self.logger.info("Distributed device config", config)
+        logger.info("Distributed device config", config)
         return config
     
     def _cluster_setup(self) -> dict:
@@ -303,7 +305,7 @@ class PiscesLxCoreDeviceFacade:
                     self.hooks.publish(event_name, payload)
         except Exception as e:
             # Keep failures non-fatal and only debug-log
-            self.logger.debug("hook emit failed", event=event_name, error=str(e))
+            logger.debug("hook emit failed", event=event_name, error=str(e))
     
     @ObsDec.log_span("device.setup")
     def setup_devices(self, mode: str = "auto") -> dict:
@@ -332,7 +334,7 @@ class PiscesLxCoreDeviceFacade:
             elif mode == "cluster":
                 config = self._cluster_setup()
             else:
-                self.logger.error("Unknown setup mode", mode=mode)
+                logger.error("Unknown setup mode", mode=mode)
                 raise ValueError(f"Unknown setup mode: {mode}")
             
             # Emit hook event
@@ -345,11 +347,11 @@ class PiscesLxCoreDeviceFacade:
             return config
             
         except Exception as e:
-            self.logger.error("Device setup failed", error=str(e), mode=mode)
+            logger.error("Device setup failed", error=str(e), mode=mode)
             
             # Fallback to CPU if GPU setup fails
             if mode != "manual" and "gpu" in str(e).lower():
-                self.logger.warning("GPU setup failed, falling back to CPU")
+                logger.warning("GPU setup failed, falling back to CPU")
                 return self.setup_devices("manual")
             
             raise RuntimeError(f"Device setup failed: {str(e)}") from e
@@ -390,14 +392,14 @@ class PiscesLxCoreDeviceFacade:
             
             # Validate cluster setup
             if cluster_config["world_size"] > 1 and not self.gpu_manager.gpu_info:
-                self.logger.error("Cluster setup requires GPUs but none detected")
+                logger.error("Cluster setup requires GPUs but none detected")
                 raise RuntimeError("Cluster training requires GPU devices")
             
-            self.logger.info("Cluster setup completed", cluster_config)
+            logger.info("Cluster setup completed", cluster_config)
             return cluster_config
             
         except Exception as e:
-            self.logger.error("Cluster setup failed", error=str(e))
+            logger.error("Cluster setup failed", error=str(e))
             raise RuntimeError(f"Cluster setup failed: {str(e)}") from e
     
     def get_gpu_info(self) -> list:
@@ -480,7 +482,7 @@ class PiscesLxCoreDeviceFacade:
         # Check GPU count
         available_gpus = len(gpu_info)
         if available_gpus < required_gpu_count:
-            self.logger.warning("Insufficient GPUs", {
+            logger.warning("Insufficient GPUs", {
                 "available": available_gpus,
                 "required": required_gpu_count
             })
@@ -492,16 +494,17 @@ class PiscesLxCoreDeviceFacade:
             max_available_gb = max_available / 1024**3
             
             if max_available_gb < required_memory_gb:
-                self.logger.warning("Insufficient memory", {
+                logger.warning("Insufficient memory", {
                     "available_gb": max_available_gb,
                     "required_gb": required_memory_gb
                 })
                 return False
         
-        self.logger.info("Device requirements validated", {
+        logger.info("Device requirements validated", {
             "required_memory_gb": required_memory_gb,
             "required_gpu_count": required_gpu_count,
             "available_gpus": available_gpus,
             "max_available_gb": max_available_gb if required_memory_gb > 0 else "N/A"
         })
         return True
+

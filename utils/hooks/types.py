@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,6 +23,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from utils.log.core import PiscesLxCoreLog
+logger = PiscesLxCoreLog("PiscesLx.Utils.Hooks.Types")
 from typing import Any, Callable, Dict, List, Optional, Union, Awaitable
 
 @dataclass
@@ -111,7 +112,6 @@ class PiscesLxCoreAlgorithmicListener(ABC):
         self._executions = 0
         self._created_at = time.time()
         self._last_executed: Optional[float] = None
-        self.logger = PiscesLxCoreLog()
     
     @property
     @abstractmethod

@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -36,7 +36,7 @@ logger = PiscesLxCoreLog("pisceslx.data.download")
 
 class PiscesLxToolsTrainOrchestrator:
     """
-    Orchestrates training workflows for Pisces L1, including:
+    Orchestrates training workflows for PiscesL1, including:
     - Standard supervised training (legacy-compatible)
     - Quantization and export (via unified interface)
     - Human preference alignment (SFT/DPO/PPO)
@@ -411,3 +411,4 @@ class PiscesLxToolsTrainOrchestrator:
         # Execute the module
         spec.loader.exec_module(mod)
         return mod
+

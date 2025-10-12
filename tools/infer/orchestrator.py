@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -81,7 +81,7 @@ except Exception:
             return cur
 
 class PiscesLxToolsInferOrchestrator:
-    """Orchestrates inference workflows for Pisces L1.
+    """Orchestrates inference workflows for PiscesL1.
 
     Modes (phase-1):
     - standard: native Pisces inference (behavior preserved)
@@ -277,3 +277,4 @@ class PiscesLxToolsInferOrchestrator:
             "performance_monitored": self.observability is not None
         }
         self.hooks.emit("infer.standard.complete", **completion_context)
+

@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -23,10 +23,9 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from collections import OrderedDict
+from utils.log.core import PiscesLxCoreLog
 
-# 添加新的日志实例
-from utils import PiscesLxCoreLog
-logger = PiscesLxCoreLog("Arctic.Model.MoE")
+logger = PiscesLxCoreLog("Arctic.Core.MoE")
 
 def moe_init_weights(m):
     """
@@ -42,7 +41,7 @@ def moe_init_weights(m):
             # Initialize bias to zero
             nn.init.zeros_(m.bias)
 
-class MoEGate(nn.Module):
+class ArcticMoEGate(nn.Module):
     """
     Expert routing gate for MoE (top-k configurable) with load balancing.
     This gate is responsible for routing inputs to experts and maintaining load balance.
@@ -271,7 +270,7 @@ class MoEGate(nn.Module):
             
         return basic_loss + capacity_loss
 
-class StableMoEGate(nn.Module):
+class ArcticStableMoEGate(nn.Module):
     """
     Stable MoE routing gate to prevent routing collapse with load prediction.
     This gate uses load prediction and dynamic capacity adjustment to improve stability.
@@ -529,7 +528,7 @@ class StableMoEGate(nn.Module):
         
         return torch.cat(final_scores), torch.cat(final_indices), torch.tensor(0.0, device=x.device)
 
-class MoELayer(nn.Module):
+class ArcticMoELayer(nn.Module):
     """
     Mixture of Experts layer with improved load balancing and stability.
     This layer combines multiple experts and uses a routing gate to distribute inputs.
@@ -549,7 +548,7 @@ class MoELayer(nn.Module):
             use_stable_gate (bool, optional): Whether to use stable gate. Defaults to True.
         """
         super().__init__()
-        MoELayer._layer_count += 1
+        ArcticMoELayer._layer_count += 1
         self.cfg = cfg
         self.top_k = getattr(cfg, 'moe_top_k', 2)
         self.num_experts = getattr(cfg, 'moe_num_experts', 8)
@@ -558,7 +557,7 @@ class MoELayer(nn.Module):
         if use_stable_gate:
             # Enable fixed shape mode for small models to avoid gradient checkpointing issues
             fixed_shape_mode = (cfg.hidden_size <= 768)
-            self.gate = StableMoEGate(
+            self.gate = ArcticStableMoEGate(
                 cfg.hidden_size, self.num_experts, top_k=self.top_k,
                 device=device, dtype=dtype,
                 capacity_factor=getattr(cfg, 'moe_capacity_factor', 1.0),
@@ -574,7 +573,7 @@ class MoELayer(nn.Module):
             if hasattr(self.gate, 'expert_load_balance_threshold'):
                 self.gate.expert_load_balance_threshold = getattr(cfg, 'expert_load_balance_threshold', 0.15)
         else:
-            self.gate = MoEGate(
+            self.gate = ArcticMoEGate(
                 cfg.hidden_size, self.num_experts, top_k=self.top_k,
                 device=device, dtype=dtype,
                 load_balance_alpha=getattr(cfg, 'moe_load_balance_alpha', 0.01),
@@ -595,10 +594,10 @@ class MoELayer(nn.Module):
             expert.apply(moe_init_weights)
         
         # Print layer information for the first layer
-        if MoELayer._layer_count == 1:
+        if ArcticMoELayer._layer_count == 1:
             gate_type = "Stable" if use_stable_gate else "Standard"
             # 使用新的日志系统替换旧的日志调用
-            logger.info(f"MoELayer: {self.num_experts} experts, top-{self.top_k} routing, {gate_type} gate")
+            logger.info(f"ArcticMoELayer: {self.num_experts} experts, top-{self.top_k} routing, {gate_type} gate")
 
         self.max_gpu_experts = max_gpu_experts
         # Ordered dictionary to record the last used step of each expert
@@ -699,7 +698,7 @@ class MoELayer(nn.Module):
         h = x.view(-1, d)  # [B*T, d]
         
         # Use different processing modes based on the type of routing gate
-        if isinstance(self.gate, StableMoEGate) and hasattr(self.gate, 'fixed_shape_mode') and self.gate.fixed_shape_mode:
+        if isinstance(self.gate, ArcticStableMoEGate) and hasattr(self.gate, 'fixed_shape_mode') and self.gate.fixed_shape_mode:
             # Fixed shape mode: simpler processing
             scores, idx, aux_loss = self.gate(x)
             self._monitor_expert_balance(idx)
@@ -719,7 +718,7 @@ class MoELayer(nn.Module):
                         y[mask] += s_sel.unsqueeze(1) * expert(h_sel)
             
             return y.view(b, t, d), aux_loss
-        elif isinstance(self.gate, StableMoEGate):
+        elif isinstance(self.gate, ArcticStableMoEGate):
             scores, idx, aux_loss = self.gate(x)
             # Handle the output of StableMoEGate with capacity limitation
             
@@ -745,7 +744,7 @@ class MoELayer(nn.Module):
             expert_assignment = [(scores, idx)]
         
         # Monitor expert load balance
-        if isinstance(self.gate, StableMoEGate):
+        if isinstance(self.gate, ArcticStableMoEGate):
             # Create a representative idx for monitoring
             monitor_idx = torch.zeros(h.size(0), dtype=torch.long, device=h.device)
             for expert_id in range(self.num_experts):
@@ -759,7 +758,7 @@ class MoELayer(nn.Module):
         
         # Manage expert placement on GPU with predictive loading
         if self.num_experts > 8 and h.device.type == 'cuda':
-            if isinstance(self.gate, StableMoEGate):
+            if isinstance(self.gate, ArcticStableMoEGate):
                 needed_experts = set(range(len(expert_assignment)))
                 # Predict future expert needs
                 if hasattr(self.gate, '_predict_future_load') and self.training:
@@ -795,7 +794,7 @@ class MoELayer(nn.Module):
         y = torch.zeros_like(h)
         expert_counts = torch.zeros(self.num_experts, device=h.device)
         
-        if isinstance(self.gate, StableMoEGate):
+        if isinstance(self.gate, ArcticStableMoEGate):
             # Handle StableMoEGate output
             for expert_id in range(self.num_experts):
                 expert_found = False

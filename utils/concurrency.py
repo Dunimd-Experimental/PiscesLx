@@ -1,8 +1,8 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 
-# Copyright 漏 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,7 +33,7 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple, Type, Dict, Union, Set
 from utils.error import PiscesLxCoreTimeoutError, PiscesLxCoreConcurrencyError, PiscesLxCoreMemoryError
 
-_module_log = PiscesLxCoreLog("pisceslx.concurrency")
+logger = PiscesLxCoreLog("PiscesLx.Utils.Concurrency")
 
 class TaskPriority(Enum):
     """Enumeration representing different task priority levels.
@@ -237,7 +237,7 @@ class PiscesLxCoreRetry:
     It also includes a circuit breaker mechanism to prevent repeated failed attempts.
     """
 
-    _log = PiscesLxCoreLog("pisceslx.concurrency")
+    # use module-level logger (standardized)
 
     def __init__(
         self, 
@@ -327,7 +327,7 @@ class PiscesLxCoreRetry:
                             attempts=attempt + 1,
                         )
                     except Exception as log_e:
-                        _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+                        logger.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
                 return result
                 
             except self.exceptions as e:
@@ -503,7 +503,7 @@ class PiscesLxCoreRetry:
 class PiscesLxCoreAsyncManager:
     """Advanced async task manager with priority queues and resource limits."""
 
-    _log = PiscesLxCoreLog("pisceslx.concurrency")
+
 
     def __init__(self, 
                  max_concurrent: int = 100,
@@ -551,7 +551,7 @@ class PiscesLxCoreAsyncManager:
         self._task_counter += 1
 
         try:
-            PiscesLxCoreAsyncManager._log.debug(
+            logger.debug(
                 "submitting async task",
                 event="concurrency.async.submit",
                 priority=priority.value,
@@ -592,7 +592,7 @@ class PiscesLxCoreAsyncManager:
         """
         self._running_tasks.discard(task)
         try:
-            PiscesLxCoreAsyncManager._log.debug(
+            logger.debug(
                 "task completed",
                 event="concurrency.async.completed",
                 running_tasks=len(self._running_tasks),
@@ -614,7 +614,7 @@ class PiscesLxCoreAsyncManager:
         self._shutdown = True
         
         try:
-            PiscesLxCoreAsyncManager._log.info(
+            logger.info(
                 "shutting down async manager",
                 event="concurrency.async.shutdown",
                 running_tasks=len(self._running_tasks),
@@ -633,7 +633,7 @@ class PiscesLxCoreAsyncManager:
             
             if pending:
                 try:
-                    PiscesLxCoreAsyncManager._log.warning(
+                    logger.warning(
                         "some tasks did not complete during shutdown",
                         event="concurrency.async.shutdown_timeout",
                         pending_tasks=len(pending),
@@ -646,12 +646,12 @@ class PiscesLxCoreAsyncManager:
                     task.cancel()
         
         try:
-            PiscesLxCoreAsyncManager._log.info(
+            logger.info(
                 "async manager shutdown complete",
                 event="concurrency.async.shutdown_complete",
             )
         except Exception as log_e:
-            _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
     
     def get_stats(self) -> Dict[str, Any]:
         """
@@ -692,7 +692,7 @@ class PiscesLxCoreAsyncManager:
 class PiscesLxCoreResourcePool:
     """Manages a pool of limited resources such as connections and file handles."""
 
-    _log = PiscesLxCoreLog("pisceslx.concurrency")
+
 
     def __init__(
         self,
@@ -725,7 +725,7 @@ class PiscesLxCoreResourcePool:
     async def initialize(self) -> None:
         """Initialize the pool by creating the minimum number of resources."""
         try:
-            self._log.info(
+            logger.info(
                 "Initializing resource pool",
                 event="concurrency.pool.initialize",
                 min_size=self.min_size,
@@ -740,7 +740,7 @@ class PiscesLxCoreResourcePool:
                 await self._pool.put(resource)
             except Exception as e:
                 try:
-                    self._log.error(
+                    logger.error(
                         "Failed to create initial resource",
                         event="concurrency.pool.init_failed",
                         error=str(e),
@@ -765,7 +765,7 @@ class PiscesLxCoreResourcePool:
         self._created_count += 1
 
         try:
-            self._log.debug(
+            logger.debug(
                 "Created new resource",
                 event="concurrency.pool.resource_created",
                 total_created=self._created_count,
@@ -810,7 +810,7 @@ class PiscesLxCoreResourcePool:
                 # Perform health check if the check function is provided
                 if self.health_check and not self.health_check(resource):
                     try:
-                        self._log.warning(
+                        logger.warning(
                             "Resource failed health check, creating new one",
                             event="concurrency.pool.health_check_failed",
                         )
@@ -932,7 +932,7 @@ class PiscesLxCoreResourcePool:
 class PiscesLxCoreConcurrencyManager:
     """A centralized manager for all concurrency primitives."""
 
-    _log = PiscesLxCoreLog("pisceslx.concurrency")
+
 
     def __init__(self, config: Optional['ConcurrencyConfig'] = None):
         """Initialize the concurrency manager.
@@ -1165,7 +1165,7 @@ class PiscesLxCoreConcurrencyManager:
 class PiscesLxCoreParallel:
     """Performs advanced parallel execution using ThreadPoolExecutor and ProcessPoolExecutor."""
 
-    _log = PiscesLxCoreLog("pisceslx.concurrency")
+
 
     def __init__(
         self,

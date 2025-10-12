@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +24,8 @@ import torch
 from .memory import MemoryMonitor
 from torch.utils.data import IterableDataset
 from typing import Iterator, Dict, List, Optional
-from model import get_tokenizer, VisionEncoder, AudioEncoder, DocEncoder, VideoEncoder
+from model.tokenizer import get_tokenizer
+from model.multimodal import ArcticVisionEncoder as VisionEncoder, ArcticAudioEncoder as AudioEncoder, ArcticDocEncoder as DocEncoder, ArcticVideoEncoder as VideoEncoder
 
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
 AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]
