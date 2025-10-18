@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -21,19 +20,19 @@
 import os
 import yaml
 from i18n import t, set_lang
-from utils import get_config_manager
+from utils import PiscesLxCoreConfigManagerFacade
 from typing import Any, Dict, Optional
 from dataclasses import dataclass, field, asdict
 from func_templates import FunctionTemplateManager
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 
-from utils import get_cache_manager
-cache_manager = get_cache_manager()
+from utils import PiscesLxCoreCacheManager
+cache_manager = PiscesLxCoreCacheManager()
 DATA_CACHE_DIR = cache_manager.get_cache_dir("data_cache")
 
 # Use centralized config manager
-_config_manager = get_config_manager(PROJECT_ROOT)
+_config_manager = PiscesLxCoreConfigManagerFacade(PROJECT_ROOT)
 
 @dataclass
 class AppSettings:
@@ -450,10 +449,10 @@ def render_settings_page(initial_settings: AppSettings) -> None:
 
     with t_cache:
         with st.expander(t("cache.section_stats"), expanded=initial_settings.expand_panels_by_default):
-            from utils import get_cache_manager
+            from utils import PiscesLxCoreCacheManager
             import os
             from pathlib import Path
-            cache_mgr = get_cache_manager()
+            cache_mgr = PiscesLxCoreCacheManager()
             stats = cache_mgr.get_cache_stats()
             cache_dir = Path(str(stats.get("base_dir", "-")))
             cache_root = cache_dir.parent if cache_dir.name == 'cache' else cache_dir
@@ -543,8 +542,8 @@ def render_settings_page(initial_settings: AppSettings) -> None:
                 st.rerun()
 
         with st.expander(t("cache.section_clean"), expanded=initial_settings.expand_panels_by_default):
-            from utils import get_cache_manager
-            cache_mgr = get_cache_manager()
+            from utils import PiscesLxCoreCacheManager
+            cache_mgr = PiscesLxCoreCacheManager()
             import os, shutil
 
             st.warning(t("cache.caution_detailed"))

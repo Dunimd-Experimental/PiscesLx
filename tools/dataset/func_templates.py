@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -22,25 +21,39 @@ import os
 import json
 import yaml
 import uuid
+import hashlib
+import logging
+import time
 from pathlib import Path
 from datetime import datetime
-from utils import get_config_manager
 from typing import Dict, List, Optional, Any
+from utils.config import PiscesLxCoreConfigManagerFacade
+from utils import PiscesLxCoreDeviceFacade
+from utils.observability import PiscesLxCoreObservabilityFacade
+from utils.metrics import PiscesLxCoreMetricsRegistry
+from utils import PiscesLxCoreCacheManager
 
 class FunctionTemplateManager:
-    """Manages function templates with versioning, categories, and tags."""
-
-    def __init__(self, base_dir: str = None):
-        """Initialize the template manager.
+    """Manager for function templates with comprehensive utils integration."""
+    
+    def __init__(self, base_dir: str = None, config_manager=None, device_manager=None, 
+                 observability=None, metrics_registry=None):
+        """Initialize the template manager with comprehensive utils support.
 
         Args:
             base_dir (str): Base directory for templates. If None, uses cache manager for flexible storage.
+            config_manager: Optional config manager instance.
+            device_manager: Optional device manager instance.
+            observability: Optional observability facade.
+            metrics_registry: Optional metrics registry.
         """
+        # Initialize utils components
+        self.config_manager = config_manager or PiscesLxCoreConfigManagerFacade()
+        # Use cache manager to get a flexible directory for template storage
+        cache_manager = PiscesLxCoreCacheManager()
+        
         if base_dir is None:
-            # Use cache manager to get a flexible directory for template storage
-            from utils.cache import get_cache_manager
-            cache_manager = get_cache_manager()
-            self.base_dir = cache_manager.get_cache_dir("func_templates")
+            self.base_dir = Path(cache_manager.get_cache_dir("func_templates"))
         else:
             self.base_dir = Path(base_dir)
         
@@ -52,10 +65,62 @@ class FunctionTemplateManager:
         # Create necessary directories if they don't exist
         self.templates_dir.mkdir(parents=True, exist_ok=True)
         self.versions_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.device_manager = device_manager
+        self.observability = observability
+        self.metrics_registry = metrics_registry
+        self.templates = {}
+        self.logger = logging.getLogger(__name__)
+        
+        # Collect initialization metrics
+        if self.observability:
+            init_metrics = {
+                "cache_dir_size": self._get_cache_size(),
+                "available_templates": len(self.list_templates()),
+                "device_info": self.device_manager.get_device_info() if self.device_manager else {}
+            }
+            self.observability.record_event("func_templates.init", init_metrics)
+        
+        self.logger.info(f"FunctionTemplateManager initialized with comprehensive utils support")
+    
+    def _get_cache_size(self) -> int:
+        """Get cache directory size in bytes."""
+        try:
+            total_size = 0
+            for dirpath, dirnames, filenames in os.walk(self.base_dir):
+                for filename in filenames:
+                    filepath = os.path.join(dirpath, filename)
+                    if os.path.exists(filepath):
+                        total_size += os.path.getsize(filepath)
+            return total_size
+        except OSError:
+            return 0
+    
+    def _validate_template_integrity(self, template: dict) -> bool:
+        """Validate template integrity and compliance."""
+        required_fields = ["name", "version", "parameters", "return_type"]
+        return all(field in template for field in required_fields)
+    
+    def _optimize_template_storage(self, template: dict) -> dict:
+        """Optimize template for storage based on device capabilities."""
+        if not self.device_manager:
+            return template
+        
+        device_info = self.device_manager.get_device_info()
+        
+        # Optimize based on available memory
+        if device_info.get('memory_available_mb', 4096) < 2048:  # Less than 2GB
+            # Remove large metadata for memory-constrained devices
+            optimized = template.copy()
+            optimized.pop('detailed_description', None)
+            optimized.pop('examples', None)
+            return optimized
+        
+        return template
     
     def save_template(self, name: str, function_code: str, category: str = "default", 
                      description: str = "", tags: List[str] = None) -> str:
-        """Save a new function template.
+        """Save a new function template with comprehensive metadata and utils integration.
 
         Args:
             name (str): Name of the function template.
@@ -67,6 +132,9 @@ class FunctionTemplateManager:
         Returns:
             str: ID of the newly saved template.
         """
+        import time
+        start_time = time.time()
+        
         if tags is None:
             tags = []
             
@@ -80,16 +148,46 @@ class FunctionTemplateManager:
             "tags": tags,
             "created_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
-            "version": 1
+            "version": 1,
+            "size": len(function_code),
+            "hash": __import__('hashlib').sha256(function_code.encode()).hexdigest()[:16],
+            "parameters": [],  # Will be extracted from code
+            "return_type": "unknown",  # Will be extracted from code
+            "device_optimized": False
         }
+        
+        # Validate template before saving
+        if not self._validate_template_integrity(template_data):
+            self.logger.error(f"Template {name} failed integrity validation, not saving")
+            return None
+        
+        # Optimize for storage
+        optimized_template = self._optimize_template_storage(template_data)
         
         template_file = self.templates_dir / f"{template_id}.json"
         with open(template_file, 'w', encoding='utf-8') as f:
-            json.dump(template_data, f, ensure_ascii=False, indent=2)
+            json.dump(optimized_template, f, ensure_ascii=False, indent=2)
         
         # Create the initial version of the template
-        self._save_version(template_id, template_data)
+        self._save_version(template_id, optimized_template)
         
+        save_time = time.time() - start_time
+        
+        # Record metrics
+        if self.metrics_registry:
+            self.metrics_registry.record_metric("func_templates.saved", 1, {"template": name})
+            self.metrics_registry.record_metric("func_templates.save_time", save_time, {"template": name})
+        
+        # Record observability event
+        if self.observability:
+            self.observability.record_event("func_templates.saved", {
+                "template_name": name,
+                "save_time": save_time,
+                "optimized": optimized_template != template_data,
+                "cache_size": self._get_cache_size()
+            })
+        
+        self.logger.info(f"Saved template: {name} (optimized: {optimized_template != template_data})")
         return template_id
     
     def update_template(self, template_id: str, name: str = None, function_code: str = None,
@@ -139,7 +237,7 @@ class FunctionTemplateManager:
         return True
     
     def get_template(self, template_id: str) -> Optional[Dict[str, Any]]:
-        """Get a template by ID.
+        """Get a template by ID with utils integration.
 
         Args:
             template_id (str): ID of the template to retrieve.
@@ -147,15 +245,44 @@ class FunctionTemplateManager:
         Returns:
             Optional[Dict[str, Any]]: Template data if found, None otherwise.
         """
-        template_file = self.templates_dir / f"{template_id}.json"
-        if not template_file.exists():
-            return None
+        import time
+        start_time = time.time()
         
-        with open(template_file, 'r', encoding='utf-8') as f:
-            return json.load(f)
+        try:
+            template_file = self.templates_dir / f"{template_id}.json"
+            if not template_file.exists():
+                if self.metrics_registry:
+                    self.metrics_registry.record_metric("func_templates.not_found", 1, {"template": template_id})
+                return None
+            
+            with open(template_file, 'r', encoding='utf-8') as f:
+                template = json.load(f)
+            
+            load_time = time.time() - start_time
+            
+            # Record metrics
+            if self.metrics_registry:
+                self.metrics_registry.record_metric("func_templates.loaded", 1, {"template": template_id})
+                self.metrics_registry.record_metric("func_templates.load_time", load_time, {"template": template_id})
+            
+            # Record observability event
+            if self.observability:
+                self.observability.record_event("func_templates.loaded", {
+                    "template_id": template_id,
+                    "load_time": load_time,
+                    "template_size": len(json.dumps(template))
+                })
+            
+            return template
+            
+        except (json.JSONDecodeError, IOError) as e:
+            self.logger.error(f"Failed to load template {template_id}: {e}")
+            if self.metrics_registry:
+                self.metrics_registry.record_metric("func_templates.load_error", 1, {"template": template_id, "error_type": type(e).__name__})
+            return None
     
     def list_templates(self, category: str = None) -> List[Dict[str, Any]]:
-        """List all templates, optionally filtered by category.
+        """List all templates with utils integration, optionally filtered by category.
 
         Args:
             category (str, optional): Category to filter templates. Defaults to None.
@@ -163,21 +290,46 @@ class FunctionTemplateManager:
         Returns:
             List[Dict[str, Any]]: List of template data.
         """
+        import time
+        start_time = time.time()
         templates = []
         
-        for template_file in self.templates_dir.glob("*.json"):
-            try:
-                with open(template_file, 'r', encoding='utf-8') as f:
-                    template = json.load(f)
-                    
-                if category is None or template.get("category") == category:
-                    templates.append(template)
-            except (json.JSONDecodeError, IOError):
-                continue
-        
-        # Sort templates by the updated time in descending order
-        templates.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
-        return templates
+        try:
+            for template_file in self.templates_dir.glob("*.json"):
+                try:
+                    with open(template_file, 'r', encoding='utf-8') as f:
+                        template = json.load(f)
+                        if category is None or template.get("category") == category:
+                            templates.append(template)
+                except (json.JSONDecodeError, IOError) as e:
+                    self.logger.error(f"Failed to load template file {template_file}: {e}")
+            
+            list_time = time.time() - start_time
+            
+            # Record metrics
+            if self.metrics_registry:
+                self.metrics_registry.record_metric("func_templates.listed", 1, {"category": category or "all"})
+                self.metrics_registry.record_metric("func_templates.list_time", list_time, {"category": category or "all"})
+                self.metrics_registry.record_metric("func_templates.total_count", len(templates))
+            
+            # Record observability event
+            if self.observability:
+                self.observability.record_event("func_templates.listed", {
+                    "template_count": len(templates),
+                    "list_time": list_time,
+                    "category": category or "all",
+                    "cache_size": self._get_cache_size()
+                })
+            
+            # Sort templates by the updated time in descending order
+            templates.sort(key=lambda x: x.get("updated_at", ""), reverse=True)
+            return templates
+            
+        except OSError as e:
+            self.logger.error(f"Failed to list templates: {e}")
+            if self.metrics_registry:
+                self.metrics_registry.record_metric("func_templates.list_error", 1, {"category": category or "all", "error_type": type(e).__name__})
+            return []
     
     def delete_template(self, template_id: str) -> bool:
         """Delete a template and all its versions.

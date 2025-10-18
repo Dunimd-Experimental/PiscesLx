@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -19,7 +18,9 @@
 # limitations under the License.
 
 import torch
-from utils import RIGHT, DEBUG, ERROR
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+
+logger = PiscesLxCoreLog("PiscesLx.Tools.Check")
 
 def check(args=None, extra=None):
     """
@@ -36,31 +37,31 @@ def check(args=None, extra=None):
     try:
         validate_check_args(args, extra)
     except Exception as e:
-        ERROR(f"Invalid check arguments: {e}")
+        logger.error(f"Invalid check arguments: {e}")
 
     # Log the start of GPU status check
-    RIGHT("GPU Status Check")
+    logger.success("GPU Status Check")
 
     # Check PyTorch CUDA availability
     cuda_available = torch.cuda.is_available()
-    RIGHT(f"PyTorch CUDA available: {cuda_available}")
+    logger.success(f"PyTorch CUDA available: {cuda_available}")
 
     if cuda_available:
         # Log CUDA version
-        RIGHT(f"CUDA version: {torch.version.cuda}")
+        logger.success(f"CUDA version: {torch.version.cuda}")
         # Log the number of available GPUs
         gpu_count = torch.cuda.device_count()
-        RIGHT(f"Number of GPUs: {gpu_count}")
+        logger.success(f"Number of GPUs: {gpu_count}")
 
         for i in range(gpu_count):
             # Get properties of the current GPU
             props = torch.cuda.get_device_properties(i)
             # Log GPU name
-            RIGHT(f"GPU {i}: {props.name}")
+            logger.success(f"GPU {i}: {props.name}")
             # Log total GPU memory in GB
-            RIGHT(f"  Memory: {props.total_memory / 1024**3:.1f} GB")
+            logger.success(f"  Memory: {props.total_memory / 1024**3:.1f} GB")
             # Log GPU compute capability
-            RIGHT(f"  Compute Capability: {props.major}.{props.minor}")
+            logger.success(f"  Compute Capability: {props.major}.{props.minor}")
 
             if i == 0:
                 # Clear CUDA cache
@@ -70,18 +71,18 @@ def check(args=None, extra=None):
                 # Get currently reserved memory in GB
                 cached = torch.cuda.memory_reserved(i) / 1024**3
                 # Log allocated memory
-                RIGHT(f"  Allocated: {allocated:.2f} GB")
+                logger.success(f"  Allocated: {allocated:.2f} GB")
                 # Log cached memory
-                RIGHT(f"  Cached: {cached:.2f} GB")
+                logger.success(f"  Cached: {cached:.2f} GB")
     else:
         # Log that no CUDA-capable GPU was found
-        ERROR("No CUDA-capable GPU found")
+        logger.error("No CUDA-capable GPU found")
         # Log that training will fall back to CPU
-        ERROR("Training will use CPU (slower but functional)")
+        logger.error("Training will use CPU (slower but functional)")
 
     # Log the start of tensor operation testing
-    RIGHT("=" * 50)
-    RIGHT("Testing tensor operations...")
+    logger.success("=" * 50)
+    logger.success("Testing tensor operations...")
 
     try:
         # Select device: CUDA if available, otherwise CPU
@@ -92,11 +93,11 @@ def check(args=None, extra=None):
         # Perform matrix multiplication
         z = torch.mm(x, y)
         # Log successful tensor operations
-        RIGHT(f"Tensor operations successful on {device}")
+        logger.success(f"Tensor operations successful on {device}")
         return True
     except Exception as e:
         # Log failed tensor operations
-        ERROR(f"Tensor operations failed: {e}")
+        logger.error(f"Tensor operations failed: {e}")
         return False
 
 

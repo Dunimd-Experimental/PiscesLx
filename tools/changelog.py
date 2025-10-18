@@ -2,7 +2,7 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,7 +21,9 @@
 import sys
 import argparse
 from pathlib import Path
-from utils import ERROR, display_all_versions, display_specific_version
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager, PiscesLxCoreUL
+
+logger = PiscesLxCoreLog("PiscesLx.Tools.Changelog")
 
 def show_changelog(args=None):
     """
@@ -39,16 +41,16 @@ def show_changelog(args=None):
 
         if args and hasattr(args, 'all') and args.all:
             # Display changelog information for all versions
-            display_all_versions(project_root)
+            PiscesLxCoreUL.display_all_versions(project_root)
         elif args and hasattr(args, 'version') and args.version:
             # Display changelog information for a specific version
-            display_specific_version(project_root, args.version)
+            PiscesLxCoreUL.display_specific_version(project_root, args.version)
         else:
             # Display changelog information for all versions by default
-            display_all_versions(project_root)
+            PiscesLxCoreUL.display_all_versions(project_root)
 
     except Exception as e:
-        ERROR(f"Failed to display changelog information: {e}")
+        logger.error(f"Failed to display changelog information: {e}")
         sys.exit(1)
 
 

@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -354,3 +353,4 @@ def search_by_extension(extension: str, directory: str = None, limit: int = 100)
             "error": str(e),
             "error_type": type(e).__name__
         }
+        

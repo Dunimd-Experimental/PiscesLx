@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -40,14 +39,14 @@ from field_manager import init_field_rules, add_new_field, manage_fields
 
 # Import root utils functions
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from utils import get_config_manager, get_cache_manager
+from utils import PiscesLxCoreConfigManagerFacade, PiscesLxCoreCacheManager
 
 import streamlit as st, pyarrow as pa, pyarrow.json as paj, json, jsonlines, ast, time, shutil
 
 # Import data module from root
 sys.path.insert(0, os.path.abspath(os.path.join(os.getcwd(), '..', '..')))
 try:
-    from data import TEXT_FIELD_KEYS
+    from tools.data import TEXT_FIELD_KEYS
 except ImportError:
     TEXT_FIELD_KEYS = ["system", "user", "assistant", "instruction", "input", "output", "question", "answer"]
 
@@ -60,11 +59,11 @@ from tools.dataset.settings import get_settings, set_settings, AppSettings, Sett
 CHUNK_SIZE = 2000
 
 # Initialize config manager for centralized file management
-config_manager = get_config_manager(PROJECT_ROOT)
+config_manager = PiscesLxCoreConfigManagerFacade(PROJECT_ROOT)
 st.session_state.config_manager = config_manager
 
 # Cache manager already imported above
-cache_manager = get_cache_manager()
+cache_manager = PiscesLxCoreCacheManager()
 st.session_state.cache_manager = cache_manager
 
 # Apply language before setting page config so title is localized at first paint
@@ -145,7 +144,7 @@ def dataset(args=None):
             if _early_settings.default_open_path:
                 _default_path = _early_settings.default_open_path
             else:
-                cache_manager = get_cache_manager()
+                cache_manager = PiscesLxCoreCacheManager()
                 _default_path = cache_manager.get_or_create_cache_dir("data_cache")
 
         # Initialize new dataset name in session state if not present
@@ -225,14 +224,14 @@ def dataset(args=None):
         if _early_settings.default_open_path:
             _default_path = _early_settings.default_open_path
         else:
-                from utils import get_cache_manager
-                cache_manager = get_cache_manager()
+                from utils import PiscesLxCoreCacheManager
+                cache_manager = PiscesLxCoreCacheManager()
                 _default_path = cache_manager.get_or_create_cache_dir("data_cache")
     path_input = st.text_input(t("input.path_label"), _default_path, placeholder=t("ph.path_input"))
     # remember recent path
     if path_input and path_input != st.session_state.get('last_path') and _early_settings.remember_recent_path:
         st.session_state['last_path'] = path_input
-    # Second row: action buttons (rescan, convert) — tighten spacing
+    # Second row: action buttons (rescan, convert) �?tighten spacing
     try:
         c_rescan, c_arrow = st.columns([1, 1], gap="small")
     except TypeError:
@@ -1051,7 +1050,7 @@ def dataset(args=None):
     # Copyright information at the bottom of the main page
     st.divider()
     st.markdown(
-        "<div style='text-align:center;color:gray;'>© 2025 Wenze Wei · Pisces L1 / Dunimd Project Team. All Rights Reserved.</div>",
+        "<div style='text-align:center;color:gray;'>© 2025 Wenze Wei · PiscesL1 / Dunimd Project Team. All Rights Reserved.</div>",
         unsafe_allow_html=True,
     )
 
@@ -1110,7 +1109,7 @@ def dataset(args=None):
         
         with button_col:
             # Toggle main-page settings view
-            if st.button("⚙", help=t("sidebar.settings_hint"), key="btn_settings_min"):
+            if st.button("�?, help=t("sidebar.settings_hint"), key="btn_settings_min"):
                 st.session_state["show_settings_page"] = True
                 st.rerun()
 

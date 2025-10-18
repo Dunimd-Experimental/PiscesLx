@@ -1,0 +1,38 @@
+#!/usr/bin/env/python3
+
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd project team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+from torch.optim.lr_scheduler import CosineAnnealingWarmRestarts
+
+def get_scheduler(optimizer, T_0=1000):
+    """
+    Create and return an instance of the CosineAnnealingWarmRestarts learning rate scheduler.
+
+    This function initializes a CosineAnnealingWarmRestarts scheduler with the given optimizer 
+    and the number of iterations for the first restart.
+
+    Args:
+        optimizer (torch.optim.Optimizer): The optimizer to be wrapped by the scheduler.
+        T_0 (int, optional): Number of iterations for the first restart. The scheduler will restart 
+                            the cosine annealing process every T_0 iterations. Defaults to 1000.
+
+    Returns:
+        torch.optim.lr_scheduler.CosineAnnealingWarmRestarts: An instance of the 
+                                                             CosineAnnealingWarmRestarts scheduler.
+    """
+    return CosineAnnealingWarmRestarts(optimizer, T_0)

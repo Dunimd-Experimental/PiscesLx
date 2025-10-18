@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -18,20 +17,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+
 import os
 import sys
 import json
 import argparse
 from pathlib import Path
 from configs.version import VERSION
-from utils import RIGHT, DEBUG, ERROR
 
 ROOT = os.path.abspath(os.path.dirname(__file__))
+
+_LOG = None
+
+def get_logger():
+    global _LOG
+    if _LOG is None:
+        from utils.log.core import PiscesLxCoreLog
+        _LOG = PiscesLxCoreLog("pisceslx.manage")
+    return _LOG
 
 # List of available commands with their purposes
 COMMANDS = [
     'setup',      # Set up the environment
-    'source',     # Activate the virtual environment
     'update',     # Pull the latest code from the remote repository
     'version',    # Display the current version and changelog
     'changelog',  # Show the version history and specific version changelog
@@ -40,51 +47,13 @@ COMMANDS = [
     'check',      # Check GPU and dependencies
     'monitor',    # Monitor the system
     'download',   # Download datasets
-    'quantize',   # Quantize the model
     'benchmark',  # Evaluate and benchmark the model
     'mcp',        # Perform MCP server operations
-    'rlhf',       # Conduct RLHF training
     'help',       # Show help information for commands
     'dataset',    # Manage datasets
     'watermark',  # Detect and manage watermarks
     'cache',      # Maintain the cache
 ]
-
-def ensure_venv_activated():
-    """
-    Ensure the virtual environment is activated. If not, activate it automatically.
-    This function is called before executing each command.
-    """
-    # Check if already in a virtual environment
-    if sys.prefix != sys.base_prefix:
-        return True  # Already in a virtual environment
-    
-    # Get the virtual environment path
-    venv_dir = os.path.join(ROOT, ".pisceslx", "env")
-    if not os.path.exists(venv_dir):
-        venv_dir = os.path.join(ROOT, "venv")  # Compatibility with old version paths
-    
-    if not os.path.exists(venv_dir):
-        return False  # Virtual environment does not exist
-    
-    # Check if the system is Windows
-    is_windows = os.name == 'nt'
-    
-    # Get the Python interpreter path of the virtual environment
-    if is_windows:
-        venv_python = os.path.join(venv_dir, "Scripts", "python.exe")
-    else:
-        venv_python = os.path.join(venv_dir, "bin", "python")
-    
-    if not os.path.exists(venv_python):
-        return False  # Virtual environment Python interpreter does not exist
-    
-    # If not currently in the virtual environment, restart within the virtual environment
-    if sys.executable != venv_python:
-        RIGHT("Detected that the virtual environment is not activated. Restarting within the virtual environment...")
-        os.execv(venv_python, [venv_python] + sys.argv)
-    
-    return True
 
 def main():
     """
@@ -98,7 +67,7 @@ def main():
     Returns:
         None
     """
-    parser = argparse.ArgumentParser(description="Pisces L1 Management Tool (manage.py)")
+    parser = argparse.ArgumentParser(description="PiscesL1 Management Tool (manage.py)")
     parser.add_argument('command', nargs='?', choices=COMMANDS, help="Command to execute")
     parser.add_argument('--ckpt', default='', help='Checkpoint file (for inference)')
     parser.add_argument('--prompt', default='Hello, please introduce yourself', help='Prompt (for inference)')
@@ -116,6 +85,7 @@ def main():
     parser.add_argument('--benchmark', type=str, help='Run a specific benchmark evaluation (for benchmarking)')
     parser.add_argument('--model', type=str, help='Model checkpoint path (for benchmarking)')
     parser.add_argument('--perf', action='store_true', help='Run a performance benchmark (for benchmarking)')
+    parser.add_argument('--selftest', action='store_true', help='Run built-in benchmark tests (for benchmarking)')
     parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g., 0.5B, 1.5B, 7B, 70B, 128B')
     parser.add_argument('--dataset', default='Chinese2', type=str, help='Dataset name for training')
     parser.add_argument('--resume_ckpt', default='', type=str, help='Path to the checkpoint to resume training')
@@ -143,108 +113,93 @@ def main():
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output (for watermark detection)')
     parser.add_argument('--json', action='store_true', help='Output results in JSON format (for watermark detection)')
     parser.add_argument('--cache_action', type=str, choices=['stats', 'clear-all', 'clear-dataset', 'clear-downloads'], default='stats', help='Cache action to perform: stats, clear-all, clear-dataset, or clear-downloads (for cache maintenance)')
+    # Monitor options
+    parser.add_argument('--monitor_mode', type=str, choices=['standard'], help='Monitor mode (for system/tools observability)')
+    parser.add_argument('--update_interval', type=float, help='Monitor screen update interval seconds')
+    parser.add_argument('--log_interval', type=float, help='Monitor log aggregation interval seconds')
 
     args, unknown = parser.parse_known_args()
     
-    # Display version information if not running the version or changelog command
-    if args.command not in ['version', 'changelog']:
-        RIGHT("PiscesL1 Model Version: " + VERSION)
-    
-    # Ensure the virtual environment is activated (except for 'setup', 'source', and 'help' commands)
-    if args.command and args.command not in ['setup', 'source', 'help']:
-        if not ensure_venv_activated():
-            ERROR("Virtual environment not found. Please run 'python manage.py setup' first to create the virtual environment.")
-            sys.exit(1)
+    if args.command == 'setup':
+        print(f"✅\tPiscesL1 Model Version: {VERSION}")
+    if args.command not in ['version', 'changelog', 'setup']:
+        print(f"✅\tPiscesL1 Model Version: {VERSION}")
     if args.command is None or args.command == 'help':
         from tools.help import help
         help()
     elif args.command == 'train':
-        from tools.train import train
-        train(args)
+        from tools.train.orchestrator import PiscesLxToolsTrainOrchestrator
+        orchestrator = PiscesLxToolsTrainOrchestrator(args)
+        orchestrator.run(args)
     elif args.command == 'infer':
-        from tools.infer import infer
-        infer(args)
+        from tools.infer.orchestrator import PiscesLxToolsInferOrchestrator
+        orchestrator = PiscesLxToolsInferOrchestrator(args)
+        orchestrator.run(args)
     elif args.command == 'check':
         from tools.check import check
         check(args)
     elif args.command == 'monitor':
-        from tools.monitor import monitor
-        monitor()
+        from tools.monitor.orchestrator import PiscesLxToolsMonitorOrchestrator
+        orchestrator = PiscesLxToolsMonitorOrchestrator(args)
+        orchestrator.run(args)
     elif args.command == 'download':
-        from data.download import download_datasets, optimize_datasets
-        download_datasets(args.max_samples)
-        optimize_datasets(max_keep=5000)
+        from tools.data.download import PiscesLxToolsDatasetDownload
+        tool = PiscesLxToolsDatasetDownload()
+        tool.download(args.max_samples)
+        tool.optimize(max_keep=5000)
     elif args.command == 'dataset':
         from tools.dataset import dataset
         dataset(args)
     elif args.command == 'setup':
         from tools.setup import setup
         setup(args)
-    elif args.command == 'source':
-        from tools.source import source
-        source()
     elif args.command == 'update':
-        from tools.update import update
-        update()
+        from utils import PiscesLxCoreInfoUpdate
+        updater = PiscesLxCoreInfoUpdate()
+        updater.update()
     elif args.command == 'version':
-        from tools.version import show_version
-        show_version()
+        from utils import PiscesLxCoreInfoVersion
+        version_manager = PiscesLxCoreInfoVersion()
+        version_manager.show_version()
     elif args.command == 'changelog':
-        from tools.changelog import show_changelog, parse_changelog_args
+        from utils import PiscesLxCoreInfoChangelog
+        changelog_manager = PiscesLxCoreInfoChangelog()
         
         # Parse changelog-specific arguments from unknown arguments
-        changelog_parser = parse_changelog_args()
+        changelog_parser = changelog_manager.parse_changelog_args()
         
         try:
             changelog_args = changelog_parser.parse_args(unknown)
-            show_changelog(changelog_args)
+            changelog_manager.show_changelog(changelog_args)
         except SystemExit:
             # argparse calls sys.exit() on help or error
             pass
-    elif args.command == 'quantize':
-        from tools.quantize import quantize
-        if not args.ckpt or not args.save:
-            ERROR("quantize requires --ckpt and --save arguments")
-            sys.exit(1)
-        quantize(args.ckpt, args.save, args.bits)
+    
     elif args.command == 'benchmark':
-        from tools.benchmark import list_benchmarks, benchmark_info, performance_benchmark, run_benchmark
-        
-        if args.list:
-            list_benchmarks()
-        elif args.info:
-            benchmark_info(args.info)
-        elif args.perf:
-            performance_benchmark(args.config, args.seq_len, args.model)
-        elif args.benchmark:
-            run_benchmark(args.benchmark, args.model, args.config)
+        from tools.benchmark.orchestrator import PiscesLxToolsBenchmarkOrchestrator
+        orchestrator = PiscesLxToolsBenchmarkOrchestrator(args)
+        if args.selftest:
+            orchestrator.run_tests(args)
         else:
-            performance_benchmark(args.config, args.seq_len)
+            orchestrator.run(args)
     elif args.command == 'mcp':
         from tools.mcp import status as mcp_status, background_refresh, read_config, write_config, discover_tools, merge_to_config
         if args.mcp_action == 'status':
-            RIGHT("MCP config status")
+            _LOG.success("MCP config status", event="manage.right")
             s = mcp_status()
             print(json.dumps(s, indent=2, ensure_ascii=False))
         elif args.mcp_action == 'warmup':
-            RIGHT("Starting MCP background discovery (non-blocking)...")
+            _LOG.success("Starting MCP background discovery (non-blocking)...", event="manage.right")
             background_refresh()
-            RIGHT("MCP background discovery started")
+            _LOG.success("MCP background discovery started", event="manage.right")
         elif args.mcp_action == 'refresh-cache':
-            RIGHT("Refreshing MCP tools cache (blocking)...")
+            _LOG.success("Refreshing MCP tools cache (blocking)...", event="manage.right")
             cfg = read_config()
             discovered = discover_tools()
             merged = merge_to_config(cfg, discovered)
             write_config(merged)
-            RIGHT("MCP tools cache refreshed")
-    elif args.command == 'rlhf':
-        from tools.rlhf import rlhf_train
-
-        if not hasattr(args, 'model_path') or not args.model_path:
-            args.model_path = f"configs/{args.model_size}"
-        
-        rlhf_train(args)
-        RIGHT("RLHF training completed!")
+            _LOG.success("MCP tools cache refreshed", event="manage.right")
+    
     elif args.command == 'watermark':
         from tools.watermark_check import detect_watermark, batch_detect
         
@@ -258,7 +213,7 @@ def main():
         elif args.text:
             result = detect_watermark(args.text, args.verbose)
         else:
-            ERROR("Watermark command requires --text or --file argument")
+            _LOG.error("Watermark command requires --text or --file argument", event="manage.error")
             sys.exit(1)
             
         if args.json:
@@ -276,7 +231,7 @@ def main():
             clear_downloads_cache()
 
     else:
-        ERROR(f"Unknown command: {args.command}")
+        _LOG.error(f"Unknown command: {args.command}", event="manage.error")
         sys.exit(1)
 
 if __name__ == "__main__":

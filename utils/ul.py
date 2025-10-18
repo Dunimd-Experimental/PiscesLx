@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -21,37 +20,40 @@
 import re
 from pathlib import Path
 from typing import Optional, List
+from utils.log.core import PiscesLxCoreLog
+
+logger = PiscesLxCoreLog("PiscesLx.Utils.UL")
 
 def get_current_version(project_root: Path) -> str:
     """
-    Retrieve the current version from the configs/version.py file.
+    Retrieves the current version from the configs/version.py file.
 
     Args:
         project_root (Path): The root path of the project.
 
     Returns:
-        str: The current version if found, otherwise "Unknown".
+        str: The current version if found; otherwise, returns "Unknown".
     """
     version_file = project_root / "configs" / "version.py"
     
-    # Return "Unknown" if version file does not exist
+    # Return "Unknown" if the version file does not exist
     if not version_file.exists():
         return "Unknown"
     
     try:
         content = version_file.read_text(encoding='utf-8')
-        # Use regex to extract the VERSION value
+        # Use regular expression to extract the VERSION value
         version_match = re.search(r'VERSION\s*=\s*["\']([^"\']+)["\']', content)
         if version_match:
             return version_match.group(1)
-    except Exception:
-        pass
+    except Exception as log_e:
+        logger.debug("UL_VERSION_PARSE_FAILED", error=str(log_e))
     
     return "Unknown"
 
 def version_to_ul_filename(version: str) -> str:
     """
-    Convert a version string to a UL filename.
+    Converts a version string to a UL filename.
 
     Args:
         version (str): The version string (e.g., '0.0.0150').
@@ -65,7 +67,7 @@ def version_to_ul_filename(version: str) -> str:
 
 def parse_ul_file(ul_file_path: Path) -> List[str]:
     """
-    Parse a UL file and extract changelog entries.
+    Parses a UL file and extracts changelog entries.
 
     Args:
         ul_file_path (Path): The path to the UL file.
@@ -106,23 +108,24 @@ def parse_ul_file(ul_file_path: Path) -> List[str]:
         
         return changelog_entries
     
-    except Exception:
+    except Exception as log_e:
+        logger.debug("UL_PARSE_FILE_FAILED", error=str(log_e))
         return []
 
 def display_version_changelog(project_root: Path, current_version: str):
     """
-    Display version information and changelog in a specified format.
+    Displays version information and changelog in a specified format.
 
     Args:
         project_root (Path): The root path of the project.
         current_version (str): The current version to display.
     """
     print("")
-    print("✅\tPisces L1 - Arctic Architecture")
-    print(f"✅\tVersion: {current_version}")
-    print("✅\tProject: PiscesLx Series by Dunimd Project Group")
+    print("🟢\tPiscesL1 - Arctic Architecture")
+    print(f"🟢\tVersion: {current_version}")
+    print("🟢\tProject: PiscesLx Series by Dunimd Project Group")
     print("")
-    print(f"🟧\tChangelog for Version {current_version}")
+    print(f"🔵\tChangelog for Version {current_version}")
     
     # Generate UL filename and get file path
     ul_filename = version_to_ul_filename(current_version)
@@ -138,7 +141,7 @@ def display_version_changelog(project_root: Path, current_version: str):
 
 def get_all_versions(project_root: Path) -> List[str]:
     """
-    Retrieve all available versions from the UL directory.
+    Retrieves all available versions from the UL directory.
 
     Args:
         project_root (Path): The root path of the project.
@@ -173,14 +176,14 @@ def get_all_versions(project_root: Path) -> List[str]:
         # Sort versions in descending order (newest first)
         versions.sort(key=lambda x: [int(part) for part in x.split('.')], reverse=True)
         
-    except Exception:
-        pass
+    except Exception as log_e:
+        logger.debug("UL_VERSION_SCAN_FAILED", error=str(log_e))
     
     return versions
 
 def display_all_versions(project_root: Path):
     """
-    Display all available versions and their corresponding changelogs.
+    Displays all available versions and their corresponding changelogs.
 
     Args:
         project_root (Path): The root path of the project.
@@ -189,16 +192,17 @@ def display_all_versions(project_root: Path):
     
     # Print a message if no version history is found
     if not versions:
-        print("\n❌\tNo version history found")
+        print("🔴\tNo version history found")
         return
     
-    print("\n✅\tPisces L1 - Arctic Architecture")
-    print("✅\tAll Version History")
-    print("✅\tProject: PiscesLx Series by Dunimd Project Group")
-    print()
+    print("")
+    print("🟢\tPiscesL1 - Arctic Architecture")
+    print("🟢\tAll Version History")
+    print("🟢\tProject: PiscesLx Series by Dunimd Project Group")
+    print("")
     
     for version in versions:
-        print(f"🟧\tVersion {version}")
+        print(f"🔵\tVersion {version}")
         
         # Generate UL filename and get file path
         ul_filename = version_to_ul_filename(version)
@@ -216,7 +220,7 @@ def display_all_versions(project_root: Path):
 
 def display_specific_version(project_root: Path, target_version: str):
     """
-    Display the changelog for a specific version.
+    Displays the changelog for a specific version.
 
     Args:
         project_root (Path): The root path of the project.
@@ -224,8 +228,8 @@ def display_specific_version(project_root: Path, target_version: str):
     """
     # Validate the version format
     if not target_version or not target_version.replace('.', '').isdigit():
-        print(f"\n❌\tInvalid version format: {target_version}")
-        print("\n🟧\tExpected format: x.x.xxxx (e.g., 1.0.0150)")
+        print(f"\n🔴\tInvalid version format: {target_version}")
+        print("\n🔵\tExpected format: x.x.xxxx (e.g., 1.0.0150)")
         return
     
     # Generate UL filename and get file path
@@ -234,12 +238,12 @@ def display_specific_version(project_root: Path, target_version: str):
     
     # Check if the version file exists
     if not ul_file_path.exists():
-        print(f"\n❌\tVersion {target_version} not found")
+        print(f"\n🔴\tVersion {target_version} not found")
         
         # Display available versions
         available_versions = get_all_versions(project_root)
         if available_versions:
-            print("\n🟧\tAvailable versions:")
+            print("\n🔵\tAvailable versions:")
             for version in available_versions[:5]:  # Show the first 5 versions
                 print(f"  🔸 {version}")
             if len(available_versions) > 5:
@@ -251,10 +255,107 @@ def display_specific_version(project_root: Path, target_version: str):
 
 def display_update_log(project_root: Path):
     """
-    Display the update log after a successful update.
+    Displays the update log after a successful update.
 
     Args:
         project_root (Path): The root path of the project.
     """
     current_version = get_current_version(project_root)
     display_version_changelog(project_root, current_version)
+
+class PiscesLxCoreUL:
+    """UL utilities wrapped in an OOP style, providing access to module functions."""
+ 
+    @staticmethod
+    def get_current_version(project_root: Path) -> str:
+        """
+        Retrieves the current version from the configs/version.py file.
+
+        Args:
+            project_root (Path): The root path of the project.
+
+        Returns:
+            str: The current version if found; otherwise, returns "Unknown".
+        """
+        return get_current_version(project_root)
+ 
+    @staticmethod
+    def version_to_ul_filename(version: str) -> str:
+        """
+        Converts a version string to a UL filename.
+
+        Args:
+            version (str): The version string (e.g., '0.0.0150').
+
+        Returns:
+            str: The corresponding UL filename (e.g., '000150.UL').
+        """
+        return version_to_ul_filename(version)
+ 
+    @staticmethod
+    def parse_ul_file(ul_file_path: Path) -> List[str]:
+        """
+        Parses a UL file and extracts changelog entries.
+
+        Args:
+            ul_file_path (Path): The path to the UL file.
+
+        Returns:
+            List[str]: A list of changelog entries. Returns an empty list if the file does not exist or an error occurs.
+        """
+        return parse_ul_file(ul_file_path)
+ 
+    @classmethod
+    def display_version_changelog(cls, project_root: Path, current_version: str) -> None:
+        """
+        Displays version information and changelog in a specified format.
+
+        Args:
+            project_root (Path): The root path of the project.
+            current_version (str): The current version to display.
+        """
+        return display_version_changelog(project_root, current_version)
+ 
+    @classmethod
+    def get_all_versions(cls, project_root: Path) -> List[str]:
+        """
+        Retrieves all available versions from the UL directory.
+
+        Args:
+            project_root (Path): The root path of the project.
+
+        Returns:
+            List[str]: A list of version strings sorted in descending order. Returns an empty list if the UL directory does not exist or an error occurs.
+        """
+        return get_all_versions(project_root)
+ 
+    @classmethod
+    def display_all_versions(cls, project_root: Path) -> None:
+        """
+        Displays all available versions and their corresponding changelogs.
+
+        Args:
+            project_root (Path): The root path of the project.
+        """
+        return display_all_versions(project_root)
+ 
+    @classmethod
+    def display_specific_version(cls, project_root: Path, target_version: str) -> None:
+        """
+        Displays the changelog for a specific version.
+
+        Args:
+            project_root (Path): The root path of the project.
+            target_version (str): The target version to display.
+        """
+        return display_specific_version(project_root, target_version)
+ 
+    @classmethod
+    def display_update_log(cls, project_root: Path) -> None:
+        """
+        Displays the update log after a successful update.
+
+        Args:
+            project_root (Path): The root path of the project.
+        """
+        return display_update_log(project_root)

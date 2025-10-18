@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -21,9 +20,10 @@
 import sys
 import json
 import argparse
-from utils import RIGHT, DEBUG, ERROR
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+logger = PiscesLxCoreLog("PiscesLx.Tools.WatermarkCheck")
 from typing import Dict, Any, Optional
-from tools.watermark import check_text_watermark
+from utils import PiscesLxUtilsWatermarkManager as PiscesLxWatermarkManager
 
 def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
     """Detect hidden watermark information in the specified text.
@@ -52,7 +52,7 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
     
     try:
         # Check for watermark in the text
-        watermark_info = check_text_watermark(text)
+        watermark_info = PiscesLxWatermarkManager().check_watermark(text)
         
         if watermark_info:
             # Update result if a watermark is detected
@@ -61,7 +61,7 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
             result["compliance_status"] = "compliant"
 
             if verbose:
-                RIGHT("Valid watermark detected")
+                logger.info("Valid watermark detected")
                 print(f"\tModel: {watermark_info.get('model', 'unknown')}")
                 print(f"\tVersion: {watermark_info.get('version', 'unknown')}")
                 print(f"\tGeneration Time: {watermark_info.get('timestamp', 'unknown')}")
@@ -75,14 +75,14 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
             # Update result if no watermark is detected
             result["compliance_status"] = "no_watermark"
             if verbose:
-                ERROR("No watermark detected")
+                logger.error("No watermark detected")
                 
     except Exception as e:
         # Update result if an error occurs during detection
         result["error"] = str(e)
         result["compliance_status"] = "error"
         if verbose:
-            ERROR(f"Detection error: {e}")
+            logger.error(f"Detection error: {e}")
     
     return result
 
@@ -138,7 +138,7 @@ def batch_detect(file_path: str, verbose: bool = False) -> Dict[str, Any]:
         }
 
         if verbose:
-            RIGHT(f"Batch Detection Results:")
+            logger.info(f"Batch Detection Results:")
             print(f"\tTotal Lines: {total_lines}")
             print(f"\tLines with Watermark Detected: {detected_lines}")
             print(f"\tCompliant Lines: {compliant_lines}")

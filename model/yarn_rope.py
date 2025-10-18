@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -23,10 +22,10 @@ import torch
 import torch.nn as nn
 from typing import Optional
 
-class YaRNRotaryEmbedding(nn.Module):
-    """Implementation of YaRN long-context positional encoding with DynamicNTK.
-    Based on RoPE (Rotary Position Embedding) and extended with YaRN (Yet Another RoPE Extension) method.
-    Supports ultra-long context lengths up to 10M tokens with dynamic NTK scaling.
+class ArcticYaRNRotaryEmbedding(nn.Module):
+    """
+    A module implementing YaRN (Yet Another RoPE Extension) with DynamicNTK for long-context positional encoding.
+    Based on RoPE (Rotary Position Embedding), it supports dynamic scaling for handling different sequence lengths.
     """
     def __init__(self,
                  dim: int,
@@ -35,7 +34,8 @@ class YaRNRotaryEmbedding(nn.Module):
                  scale: float = 32.0,
                  original_max_position_embeddings: int = 4096,
                  device: Optional[torch.device] = None):
-        """Initialize the YaRNRotaryEmbedding module.
+        """
+        Initialize the ArcticYaRNRotaryEmbedding module.
 
         Args:
             dim (int): Dimension of the embeddings.
@@ -52,46 +52,48 @@ class YaRNRotaryEmbedding(nn.Module):
         self.scale = scale
         self.original_max_position_embeddings = original_max_position_embeddings
         
-        # Calculate frequency factors
+        # Calculate the frequency factors for position encoding
         self.freq_factors = 1.0 / (base ** (torch.arange(0, dim, 2).float().to(device) / dim))
         
-        # Cache position embeddings
+        # Cache the inverse frequency for efficient computation
         self.register_buffer("inv_freq", self.freq_factors, persistent=False)
         
-        # Dynamic NTK parameters
+        # Register buffers for dynamic NTK parameters
         self.register_buffer("dynamic_base", torch.tensor(float(base), device=device), persistent=False)
         self.register_buffer("max_seq_len_seen", torch.tensor(0, device=device), persistent=False)
         
     def _compute_dynamic_ntk_scale(self, seq_len: int) -> float:
-        """Compute dynamic NTK scaling factor based on sequence length.
-        
+        """
+        Compute the dynamic NTK scaling factor based on the input sequence length.
+
         Args:
             seq_len (int): Current sequence length.
-            
+
         Returns:
             float: Dynamic scaling factor.
         """
         if seq_len <= self.original_max_position_embeddings:
             return 1.0
         
-        # Ultra-long context scaling with adaptive NTK
+        # Compute the ratio of current sequence length to original maximum position embeddings
         ratio = seq_len / self.original_max_position_embeddings
         
-        # Use logarithmic scaling for ultra-long contexts (>1M)
         if seq_len > 1000000:
-            # Logarithmic scaling for 1M-10M range
+            # Apply logarithmic scaling for sequences longer than 1 million tokens
             log_scale = math.log(ratio) / math.log(10) + 1.0
             scale = ratio ** (self.dim / (self.dim - 2)) * log_scale
         else:
-            # Standard NTK scaling for shorter contexts
+            # Apply standard NTK scaling for shorter sequences
             scale = ratio ** (self.dim / (self.dim - 2))
         
-        # Ensure minimum resolution for ultra-long contexts
+        # Ensure the scaling factor is at least 1.0
         scale = max(scale, 1.0)
-        return min(scale, self.scale * 2)  # Allow 2x scale for 10M context
+        # Limit the scaling factor to twice the predefined scale
+        return min(scale, self.scale * 2)
     
     def _compute_scale_factors(self, seq_len: int, device: Optional[torch.device] = None) -> torch.Tensor:
-        """Compute YaRN scaling factors with dynamic NTK adjustment.
+        """
+        Compute the YaRN scaling factors with dynamic NTK adjustment.
 
         Args:
             seq_len (int): Current sequence length.
@@ -100,31 +102,32 @@ class YaRNRotaryEmbedding(nn.Module):
         Returns:
             torch.Tensor: YaRN scaling factors with dynamic NTK.
         """
-        # Update max sequence length seen
+        # Update the maximum sequence length seen so far
         if seq_len > self.max_seq_len_seen:
             self.max_seq_len_seen = torch.tensor(seq_len, device=device)
         
-        # Calculate dynamic NTK scaling
+        # Compute the dynamic NTK scaling factor
         ntk_scale = self._compute_dynamic_ntk_scale(seq_len)
         
-        # Generate position indices
+        # Generate position indices from 0 to seq_len - 1
         positions = torch.arange(seq_len, device=device)
         
-        # Apply combined YaRN + DynamicNTK scaling
+        # Initialize scale factors with ones
         scale_factors = torch.ones(seq_len, device=device)
         
         if ntk_scale > 1.0:
-            # Calculate crossover point (similar to original YaRN but with NTK adjustment)
+            # Calculate the crossover point for applying YaRN extension
             crossover = int(math.sqrt(self.original_max_position_embeddings))
             if seq_len > crossover:
-                # Apply YaRN extension with NTK scaling
+                # Apply YaRN extension with NTK scaling to positions beyond the crossover point
                 high_positions = positions[crossover:]
                 scale_factors[crossover:] = crossover * (high_positions / crossover) ** (1.0 / (ntk_scale * self.scale))
         
         return scale_factors
     
     def forward(self, x: torch.Tensor, seq_len: int = None) -> torch.Tensor:
-        """Forward pass of the YaRNRotaryEmbedding module with dynamic NTK.
+        """
+        Perform the forward pass of the YaRNRotaryEmbedding module with dynamic NTK.
 
         Args:
             x (torch.Tensor): Input tensor with shape [batch, n_head, seq_len, head_dim] or [batch, seq_len, dim].
@@ -132,39 +135,42 @@ class YaRNRotaryEmbedding(nn.Module):
 
         Returns:
             torch.Tensor: Tensor with YaRN rotary embeddings applied with dynamic NTK scaling.
+
+        Raises:
+            ValueError: If the input tensor is not 3D or 4D.
         """
-        # Get device and determine dimensions based on input shape
+        # Get the device of the input tensor
         device = x.device
         
         if x.dim() == 4:  # [batch, n_head, seq_len, head_dim]
             actual_seq_len = seq_len or x.shape[2]
             head_dim = x.shape[3]
-            embedding_dim = head_dim  # Use head_dim for 4D tensor
+            # Use head_dim as embedding dimension for 4D tensor
+            embedding_dim = head_dim  
         elif x.dim() == 3:  # [batch, seq_len, dim]
             actual_seq_len = seq_len or x.shape[1]
             embedding_dim = x.shape[2]
         else:
             raise ValueError(f"Input tensor must be 3D or 4D, got {x.dim()}D")
         
-        # Compute dynamic scale factors based on current sequence length
+        # Compute dynamic scale factors based on the actual sequence length
         scale_factors = self._compute_scale_factors(actual_seq_len, device)
         
-        # Get position indices for the actual sequence
+        # Generate position indices for the actual sequence
         t = torch.arange(actual_seq_len, device=device, dtype=torch.float32)
         
-        # Apply dynamic YaRN + NTK scaling
+        # Apply dynamic YaRN and NTK scaling to position indices
         t = t * scale_factors
         
-        # Calculate frequencies for the appropriate dimension
-        # Use embedding_dim instead of self.dim for proper dimension matching
+        # Calculate dynamic frequencies for the appropriate dimension
         dynamic_freq = 1.0 / (self.dynamic_base ** (torch.arange(0, embedding_dim, 2).float().to(device) / embedding_dim))
         freqs = torch.outer(t, dynamic_freq)
         
-        # Get cos and sin for the actual input length and dimension
+        # Compute cosine and sine values for the frequencies
         cos = freqs.cos()  # [actual_seq_len, embedding_dim//2]
         sin = freqs.sin()  # [actual_seq_len, embedding_dim//2]
         
-        # Trim to actual sequence length of input
+        # Trim cosine and sine values to match the input sequence length
         if x.dim() == 4:
             cos = cos[:x.shape[2], :]
             sin = sin[:x.shape[2], :]
@@ -172,12 +178,13 @@ class YaRNRotaryEmbedding(nn.Module):
             cos = cos[:x.shape[1], :]
             sin = sin[:x.shape[1], :]
         
-        # Apply rotation
+        # Apply rotation to the input tensor
         return self._rotate_half(x, cos, sin)
     
     @staticmethod
     def _rotate_half(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
-        """Rotate the input tensor by half.
+        """
+        Rotate the input tensor by half using the provided cosine and sine values.
 
         Args:
             x (torch.Tensor): Input tensor with shape [batch, n_head, seq_len, head_dim] or [batch, seq_len, dim].
@@ -187,28 +194,27 @@ class YaRNRotaryEmbedding(nn.Module):
         Returns:
             torch.Tensor: Rotated tensor.
         """
-        # Handle different input shapes
         if x.dim() == 4:  # [batch, n_head, seq_len, head_dim]
-            # Add batch and head dimensions for broadcasting: [1, 1, seq_len, head_dim//2]
+            # Add batch and head dimensions for broadcasting
             cos = cos.unsqueeze(0).unsqueeze(0)
             sin = sin.unsqueeze(0).unsqueeze(0)
-            
         elif x.dim() == 3:  # [batch, seq_len, dim]
-            # Add batch dimension for broadcasting: [1, seq_len, dim//2]
+            # Add batch dimension for broadcasting
             cos = cos.unsqueeze(0)
             sin = sin.unsqueeze(0)
         
-        # Split the tensor into two halves
+        # Split the input tensor into two halves
         x1 = x[..., :x.shape[-1] // 2]
         x2 = x[..., x.shape[-1] // 2:]
         
-        # Apply rotation with proper broadcasting
+        # Apply rotation operation and concatenate the results
         rotated = torch.cat((-x2 * sin + x1 * cos, x1 * sin + x2 * cos), dim=-1)
         
         return rotated
     
     def extra_repr(self) -> str:
-        """Return extra representation information of the module.
+        """
+        Return extra representation information of the module.
 
         Returns:
             str: String containing module parameters.

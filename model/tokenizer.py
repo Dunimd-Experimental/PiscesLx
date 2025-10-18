@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -23,17 +22,16 @@ import re
 import json
 import unicodedata
 import urllib.request
-from utils import RIGHT, ERROR
+from utils.log.core import PiscesLxCoreLog
 
-class BPETokenizer:
-    """A Byte Pair Encoding (BPE) tokenizer implementation.
+logger = PiscesLxCoreLog("Arctic.Core.Tokenizer")
 
-    This tokenizer is used to convert text into a sequence of tokens and vice versa.
+class ArcticBPETokenizer:
+    """An implementation of Byte Pair Encoding (BPE) tokenizer.
+
+    This tokenizer is used to convert text to a sequence of tokens and vice versa.
     It supports loading pre-trained vocabulary and merge rules, as well as adding new tokens.
-
-    With the byte-level fallback enabled, it robustly supports multilingual text
-    including the six United Nations languages (Arabic, Chinese, English, French,
-    Russian, Spanish) by encoding out-of-vocabulary segments as UTF-8 byte tokens.
+    When byte-level fallback is enabled, it encodes out-of-vocabulary segments as UTF-8 byte tokens.
     """
     def __init__(self, vocab_path=None, merges_path=None, special_tokens=None, byte_fallback=True):
         """Initialize the BPETokenizer.
@@ -49,7 +47,7 @@ class BPETokenizer:
         self.byte_fallback = byte_fallback
 
         if vocab_path and os.path.exists(vocab_path):
-            # Load the vocabulary from the specified file
+            # Load vocabulary from the specified file
             with open(vocab_path, "r", encoding="utf-8") as f:
                 self.encoder = json.load(f)
             # Create a decoder by inverting the encoder mapping
@@ -59,7 +57,7 @@ class BPETokenizer:
             base_tokens = [chr(i) for i in range(32, 127)]
             self.encoder = {tok: i for i, tok in enumerate(base_tokens)}
             self.decoder = {i: tok for tok, i in self.encoder.items()}
-            ERROR("No vocab.json found, using dummy vocab.")
+            logger.error("No vocab.json found, using dummy vocab.")
 
         if merges_path and os.path.exists(merges_path):
             # Load merge rules from the specified file
@@ -68,7 +66,7 @@ class BPETokenizer:
             # Assign ranks to each merge pair
             self.bpe_ranks = {pair: i for i, pair in enumerate(merges)}
         else:
-            ERROR("No merges.txt found, using char-level BPE.")
+            logger.error("No merges.txt found, using char-level BPE.")
 
         # Set default special tokens if not provided
         self.special_tokens = special_tokens or ["<s>", "</s>", "<unk>", "<pad>"]
@@ -97,11 +95,15 @@ class BPETokenizer:
         self.eos_id = self.encoder["</s>"]
 
     def __len__(self):
-        """Returns the size of the vocabulary."""
+        """Return the size of the vocabulary.
+
+        Returns:
+            int: The size of the vocabulary.
+        """
         return len(self.encoder)
 
     def add_tokens(self, new_tokens):
-        """Adds new tokens to the vocabulary.
+        """Add new tokens to the vocabulary.
 
         Args:
             new_tokens (list): List of new tokens to add.
@@ -121,7 +123,7 @@ class BPETokenizer:
         return added_count
 
     def save_pretrained(self, save_directory):
-        """Saves tokenizer files (vocab, merges) to a directory.
+        """Save tokenizer files (vocab, merges) to a specified directory.
 
         Args:
             save_directory (str): Directory to save the tokenizer files.
@@ -233,7 +235,6 @@ class BPETokenizer:
                             ids.append(self.byte_to_id[b])
                     else:
                         ids.append(self.unk_id)
-                    # print(f"[Tokenizer] OOV token: {bpe_tok}")
 
         if return_tensors == "pt":
             import torch
@@ -294,22 +295,38 @@ class BPETokenizer:
 
     @property
     def pad_token_id(self):
-        """Get the ID of the padding token."""
+        """Get the ID of the padding token.
+
+        Returns:
+            int: The ID of the padding token.
+        """
         return self.pad_id
 
     @property
     def eos_token_id(self):
-        """Get the ID of the end-of-sequence token."""
+        """Get the ID of the end-of-sequence token.
+
+        Returns:
+            int: The ID of the end-of-sequence token.
+        """
         return self.eos_id
 
     @property
     def bos_token_id(self):
-        """Get the ID of the beginning-of-sequence token."""
+        """Get the ID of the beginning-of-sequence token.
+
+        Returns:
+            int: The ID of the beginning-of-sequence token.
+        """
         return self.bos_id
 
     @property
     def unk_token_id(self):
-        """Get the ID of the unknown token."""
+        """Get the ID of the unknown token.
+
+        Returns:
+            int: The ID of the unknown token.
+        """
         return self.unk_id
 
 def download_if_missing(url, local_path):
@@ -320,15 +337,15 @@ def download_if_missing(url, local_path):
         local_path (str): Local path to save the file.
     """
     if not os.path.exists(local_path):
-        RIGHT(f"Downloading {os.path.basename(local_path)} ...")
+        logger.info(f"Downloading {os.path.basename(local_path)} ...")
         urllib.request.urlretrieve(url, local_path)
-        RIGHT(f"Downloaded {local_path}")
+        logger.info(f"Downloaded {local_path}")
 
 def get_tokenizer():
-    """Get a BPETokenizer instance with pre-trained vocabulary and merge rules.
+    """Get an ArcticBPETokenizer instance with pre-trained vocabulary and merge rules.
 
     Returns:
-        BPETokenizer: A BPETokenizer instance.
+        ArcticBPETokenizer: An ArcticBPETokenizer instance.
 
     Raises:
         FileNotFoundError: If vocab.json or merges.txt is not found.
@@ -348,8 +365,8 @@ def get_tokenizer():
 
     if vocab_path is None or merges_path is None:
         raise FileNotFoundError(
-            "❌\tPisces BPETokenizer: vocab.json or merges.txt not found! "
+            "🔴\tPisces BPETokenizer: vocab.json or merges.txt not found! "
             "Please put them in the 'tokenizer/' directory."
         )
 
-    return BPETokenizer(vocab_path, merges_path)
+    return ArcticBPETokenizer(vocab_path, merges_path)

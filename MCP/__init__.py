@@ -38,14 +38,11 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 # Import core functionality from model/mcp
-from model.mcp.server import OptimizedMCPServer as CoreMCPServer
-from model.mcp.translator import MCPTranslationLayer
-
-# FastMCP兼容导入
-T = TypeVar('T')
+from model.mcp.server import ArcticOptimizedMCPServer as CoreMCPServer
+from model.mcp.translator import ArcticMCPTranslationLayer
 
 @dataclass
-class ToolMetadata:
+class PiscesLxMCPToolMetadata:
     """Structure for tool metadata."""
     name: str
     description: str
@@ -57,9 +54,10 @@ class ToolMetadata:
     performance_score: float = 1.0
     usage_count: int = 0
     error_rate: float = 0.0
+    last_used: Optional[datetime] = None
 
 @dataclass
-class ToolStats:
+class PiscesLxMCPToolStats:
     """Structure for tool statistics."""
     name: str
     load_time: float
@@ -69,17 +67,17 @@ class ToolStats:
     memory_usage: Optional[int] = None
     last_used: Optional[datetime] = None
 
-class PiscesL1MCPPlaza:
+class PiscesLxMCPPlaza:
     """Pisces L1 MCP Plaza - An advanced integrated system."""
     
     def __init__(self):
         self.core_server = CoreMCPServer()
-        self.translation_layer = MCPTranslationLayer()
+        self.translation_layer = ArcticMCPTranslationLayer()
         
         # Tool management
         self.tools: Dict[str, Any] = {}
-        self.tool_metadata: Dict[str, ToolMetadata] = {}
-        self.tool_stats: List[ToolStats] = []
+        self.tool_metadata: Dict[str, PiscesLxMCPToolMetadata] = {}
+        self.tool_stats: List[PiscesLxMCPToolStats] = []
         self.blacklisted_tools: Set[str] = {
             'calculator',  # Duplicates with PiscesL1's math module
             'translator',  # Duplicates with PiscesL1's multilingual module
@@ -106,9 +104,6 @@ class PiscesL1MCPPlaza:
         # 文档处理器集成
         self.document_processor = None
         self._init_document_processor()
-        
-        # FastMCP兼容层
-        self._fastmcp_instance = None
         
         self._setup_logging()
         self._discover_and_register_tools()
@@ -173,8 +168,8 @@ class PiscesL1MCPPlaza:
     def _init_document_processor(self):
         """Initialize document processor for PDF/DOCX/PPTX handling."""
         try:
-            from MCP.document_processor import DocumentProcessor
-            self.document_processor = DocumentProcessor()
+            from MCP import document_processor
+            self.document_processor = document_processor.document_processor
             self.logger.info("📄 Document processor initialized")
         except ImportError as e:
             self.logger.warning(f"Document processor not available: {e}")
@@ -191,13 +186,13 @@ class PiscesL1MCPPlaza:
             return False
         return True
     
-    def _load_module_with_stats(self, py_file: Path) -> ToolStats:
+    def _load_module_with_stats(self, py_file: Path) -> PiscesLxMCPToolStats:
         """Load a module with statistics."""
         start_time = time.time()
         module_name = py_file.stem
         
         if module_name in ["__init__", "__pycache__"]:
-            return ToolStats(module_name, 0, 0, "skipped")
+            return PiscesLxMCPToolStats(module_name, 0, 0, "skipped")
         
         try:
             if module_name in sys.modules:
@@ -206,7 +201,7 @@ class PiscesL1MCPPlaza:
             module = importlib.import_module(f"MCP.{module_name}")
             
             if not self._is_tool_compatible(module_name, module):
-                return ToolStats(module_name, time.time() - start_time, 0, "incompatible")
+                return PiscesLxMCPToolStats(module_name, time.time() - start_time, 0, "incompatible")
             
             tool_count = 0
             if hasattr(module, 'pisces_tool'):
@@ -214,7 +209,7 @@ class PiscesL1MCPPlaza:
                 self.tools[tool.name] = tool
                 tool_count += 1
                 
-                self.tool_metadata[tool.name] = ToolMetadata(
+                self.tool_metadata[tool.name] = PiscesLxMCPToolMetadata(
                     name=tool.name,
                     description=tool.description,
                     category="PiscesL1 Extension",
@@ -226,14 +221,14 @@ class PiscesL1MCPPlaza:
             
             if hasattr(module, 'mcp') and hasattr(module.mcp, 'tools'):
                 for tool_name, tool_func in module.mcp.tools.items():
-                    self.core_server.mcp_server.tools[tool_name] = tool_func
+                    self.core_server.mcp_server._tool_manager._tools[tool_name] = tool_func
                     tool_count += 1
             
             load_time = time.time() - start_time
-            return ToolStats(module_name, load_time, tool_count, "success")
+            return PiscesLxMCPToolStats(module_name, load_time, tool_count, "success")
             
         except Exception as e:
-            return ToolStats(module_name, time.time() - start_time, 0, "error", str(e))
+            return PiscesLxMCPToolStats(module_name, time.time() - start_time, 0, "error", str(e))
     
     def _discover_and_register_tools(self):
         """优化后的工具发现逻辑 - 智能缓存和增量更新"""
@@ -303,27 +298,10 @@ class PiscesL1MCPPlaza:
                 f"{len(successful)} files processed"
             )
 
-    # FastMCP兼容API
-    # 在PiscesL1MCPPlaza类中添加FastMCP兼容装饰器
-    def tool(self, name: str = None, description: str = None):
-        """FastMCP兼容的装饰器 - 100%官方语法兼容"""
-        def decorator(func):
-            tool_name = name or func.__name__
-            tool_desc = description or func.__doc__ or f"Tool: {tool_name}"
-            
-            # 使用register_custom_tool注册，但对外表现为FastMCP
-            return self.register_custom_tool(
-                name=tool_name,
-                description=tool_desc,
-                func=func,
-                category="FastMCP兼容"
-            )
-        return decorator
-    
     def register_custom_tool(self, name: str, description: str, func: Callable, 
                            category: str = "custom", **kwargs):
         """企业级工具注册 - 内部核心"""
-        tool_metadata = ToolMetadata(
+        tool_metadata = PiscesLxMCPToolMetadata(
             name=name,
             description=description,
             category=category,
@@ -337,7 +315,7 @@ class PiscesL1MCPPlaza:
         self.tools[name] = func
         
         # 注册到核心服务器
-        self.core_server.mcp_server.tools[name] = func
+        self.core_server.mcp_server.add_tool(func, name=name)
         
         # 企业级增强
         self._enhance_tool(name, func)
@@ -376,6 +354,9 @@ class PiscesL1MCPPlaza:
                 
                 execution_time = time.time() - start_time
                 
+                # 更新最后使用时间
+                self.tool_metadata[name].last_used = datetime.now()
+                
                 return {
                     'result': result,
                     '_enhanced': {
@@ -391,7 +372,7 @@ class PiscesL1MCPPlaza:
         
         # 替换原始函数
         self.tools[name] = enhanced_wrapper
-        self.core_server.mcp_server.tools[name] = enhanced_wrapper
+        self.core_server.mcp_server.add_tool(enhanced_wrapper, name=name)
     
     def _generate_schema(self, func: Callable) -> Dict[str, Any]:
         """基于类型注解自动生成JSON Schema"""
@@ -435,20 +416,6 @@ class PiscesL1MCPPlaza:
         
         return schema
     
-    def resource(self, uri: str):
-        """FastMCP兼容的资源装饰器"""
-        def decorator(func: Callable):
-            # 资源实现待扩展
-            return func
-        return decorator
-    
-    def prompt(self, name: str):
-        """FastMCP兼容的提示装饰器"""
-        def decorator(func: Callable):
-            # 提示实现待扩展  
-            return func
-        return decorator
-    
     # 现有功能保持不变
     def get_tool_session_context(self, session_id: str) -> Dict[str, Any]:
         return self.tool_session_memory.get(session_id, {})
@@ -467,22 +434,22 @@ class PiscesL1MCPPlaza:
         for name, tool in self.tools.items():
             tools_info[name] = {
                 "type": "PiscesL1 Extension",
-                "description": tool.description,
-                "parameters": tool.parameters,
-                "metadata": asdict(self.tool_metadata.get(name, ToolMetadata(
+                "description": getattr(tool, '__doc__', ''),
+                "parameters": {},
+                "metadata": asdict(self.tool_metadata.get(name, PiscesLxMCPToolMetadata(
                     name=name, description="", category="", version="", 
                     author="", last_updated=datetime.now(), dependencies=[]
                 )))
             }
         
         # FastMCP集成工具
-        for tool_name in self.core_server.mcp_server.tools.keys():
+        for tool_name in self.core_server.mcp_server._tool_manager._tools.keys():
             if tool_name not in tools_info:
                 tools_info[tool_name] = {
                     "type": "FastMCP Integrated",
                     "description": f"FastMCP tool: {tool_name}",
                     "parameters": {},
-                    "metadata": asdict(ToolMetadata(
+                    "metadata": asdict(PiscesLxMCPToolMetadata(
                         name=tool_name, description="", category="FastMCP", 
                         version="1.0.0", author="MCP", last_updated=datetime.now(), dependencies=[]
                     ))
@@ -498,7 +465,7 @@ class PiscesL1MCPPlaza:
                         "file_path": {"type": "string", "description": "Path to document file"},
                         "include_full_content": {"type": "boolean", "description": "Include full content or summary"}
                     },
-                    "metadata": asdict(ToolMetadata(
+                    "metadata": asdict(PiscesLxMCPToolMetadata(
                         name="extract_document_content", 
                         description="Advanced document content extraction", 
                         category="Document Processing", 
@@ -512,7 +479,7 @@ class PiscesL1MCPPlaza:
                     "type": "Document Processor",
                     "description": "List all supported document formats",
                     "parameters": {},
-                    "metadata": asdict(ToolMetadata(
+                    "metadata": asdict(PiscesLxMCPToolMetadata(
                         name="list_supported_formats", 
                         description="Document format support information", 
                         category="Document Processing", 
@@ -529,7 +496,7 @@ class PiscesL1MCPPlaza:
                         "directory_path": {"type": "string", "description": "Directory containing documents"},
                         "recursive": {"type": "boolean", "description": "Search subdirectories"}
                     },
-                    "metadata": asdict(ToolMetadata(
+                    "metadata": asdict(PiscesLxMCPToolMetadata(
                         name="batch_process_documents", 
                         description="Batch document processing", 
                         category="Document Processing", 
@@ -548,30 +515,26 @@ class PiscesL1MCPPlaza:
         
         # 文档处理工具
         if self.document_processor:
-            doc_tools = {
-                "extract_document_content": self.document_processor.extract_document_content,
-                "list_supported_formats": self.document_processor.list_supported_formats,
-                "batch_process_documents": self.document_processor.batch_process_documents
-            }
-            
-            if tool_name in doc_tools:
+            if tool_name in ["extract_document_content", "list_supported_formats", "batch_process_documents"]:
                 try:
                     start_time = time.time()
+                    result = None
                     
                     if tool_name == "extract_document_content":
-                        result = self.document_processor.extract_document_content(
+                        from MCP.document_processor import extract_document_content
+                        result = extract_document_content(
                             parameters.get("file_path", ""),
                             parameters.get("include_full_content", True)
                         )
                     elif tool_name == "list_supported_formats":
-                        result = self.document_processor.list_supported_formats()
+                        from MCP.document_processor import list_supported_formats
+                        result = list_supported_formats()
                     elif tool_name == "batch_process_documents":
-                        result = self.document_processor.batch_process_documents(
+                        from MCP.document_processor import batch_process_documents
+                        result = batch_process_documents(
                             parameters.get("directory_path", ""),
                             parameters.get("recursive", False)
                         )
-                    else:
-                        result = doc_tools[tool_name](**parameters)
                     
                     # 性能统计
                     execution_time = time.time() - start_time
@@ -582,7 +545,14 @@ class PiscesL1MCPPlaza:
                         if execution_time > 0:
                             meta.performance_score = max(0.1, min(1.0, 1.0 / (execution_time * 10)))
                     
-                    return result
+                    # 确保返回值是字典类型
+                    if result is not None:
+                        if isinstance(result, dict):
+                            return result
+                        else:
+                            return {"result": result}
+                    else:
+                        return {"error": "Tool execution failed"}
                     
                 except Exception as e:
                     self.logger.error(f"Document tool execution failed {tool_name}: {e}")
@@ -596,7 +566,11 @@ class PiscesL1MCPPlaza:
             tool = self.tools[tool_name]
             try:
                 start_time = time.time()
-                result = tool.function(parameters)
+                result = None
+                if callable(tool):
+                    result = tool(parameters)
+                else:
+                    result = getattr(tool, 'function', lambda x: {})(parameters)
                 
                 # 性能统计
                 if tool_name in self.tool_metadata:
@@ -608,7 +582,14 @@ class PiscesL1MCPPlaza:
                     if execution_time > 0:
                         meta.performance_score = max(0.1, min(1.0, 1.0 / (execution_time * 10)))
                 
-                return result
+                # 确保返回值是字典类型
+                if result is not None:
+                    if isinstance(result, dict):
+                        return result
+                    else:
+                        return {"result": result}
+                else:
+                    return {"error": "Tool execution failed"}
             except Exception as e:
                 self.logger.error(f"Tool execution failed {tool_name}: {e}")
                 if tool_name in self.tool_metadata:
@@ -617,59 +598,44 @@ class PiscesL1MCPPlaza:
                 return {"error": str(e)}
         
         # FastMCP工具执行
-        if tool_name in self.core_server.mcp_server.tools:
+        if tool_name in self.core_server.mcp_server._tool_manager._tools:
             try:
-                tool_func = self.core_server.mcp_server.tools[tool_name]
-                return tool_func(parameters)
+                tool_func = self.core_server.mcp_server._tool_manager._tools[tool_name]
+                # 直接调用工具函数而不是Tool对象
+                try:
+                    if hasattr(tool_func, 'function'):
+                        # 尝试直接调用tool_func
+                        if callable(tool_func):
+                            return tool_func(parameters)
+                        else:
+                            return {"error": "Tool is not callable"}
+                    else:
+                        # 如果tool_func是一个可调用对象，直接调用它
+                        if callable(tool_func):
+                            return tool_func(parameters)
+                        else:
+                            return {"error": "Tool is not callable"}
+                except Exception as e:
+                    self.logger.error(f"FastMCP tool execution failed {tool_name}: {e}")
+                    return {"error": str(e)}
             except Exception as e:
                 self.logger.error(f"FastMCP tool execution failed {tool_name}: {e}")
                 return {"error": str(e)}
         
         return {"error": f"Tool '{tool_name}' not found"}
     
-    def register_custom_tool(self, name: str, description: str, parameters: Dict[str, Any], 
-                           function: Callable, category: str = "Custom") -> bool:
-        """Register a custom tool with Pisces enterprise features."""
-        try:
-            @dataclass
-            class CustomTool:
-                name: str
-                description: str
-                parameters: Dict[str, Any]
-                function: Callable
-            
-            tool = CustomTool(name, description, parameters, function)
-            self.tools[name] = tool
-            
-            self.tool_metadata[name] = ToolMetadata(
-                name=name,
-                description=description,
-                category=category,
-                version="1.0.0",
-                author="PiscesL1",
-                last_updated=datetime.now(),
-                dependencies=[]
-            )
-            
-            self.logger.info(f"📝 Enhanced tool registered: {name}")
-            return True
-            
-        except Exception as e:
-            self.logger.error(f"Failed to register custom tool: {e}")
-            return False
-    
     def get_system_status(self) -> Dict[str, Any]:
         """Get comprehensive system status."""
         self._discover_and_register_tools()
         
-        total_tools = len(self.tools) + len(self.core_server.mcp_server.tools)
+        total_tools = len(self.tools) + len(self.core_server.mcp_server._tool_manager._tools)
         doc_tools_count = 3 if self.document_processor else 0
         
         return {
             "status": "running",
             "total_tools": total_tools + doc_tools_count,
             "piscesl1_tools": len(self.tools),
-            "fastmcp_tools": len(self.core_server.mcp_server.tools),
+            "fastmcp_tools": len(self.core_server.mcp_server._tool_manager._tools),
             "document_processor_tools": doc_tools_count,
             "document_processor_available": self.document_processor is not None,
             "enhancement_level": "enterprise",
@@ -696,100 +662,14 @@ class PiscesL1MCPPlaza:
             self.logger.info("🔄 Enhanced tool reloading completed")
 
 # 全局单例
-plaza = PiscesL1MCPPlaza()
+plaza = PiscesLxMCPPlaza()
 
-# FastMCP兼容API - 秘密增强
-class FastMCP:
-    """
-    100% FastMCP兼容API，秘密增强为Pisces企业级
-    用户以为在用官方FastMCP，实际运行在Pisces增强引擎上
-    """
-    
-    def __init__(self, name: str = "PiscesMCP"):
-        self.name = name
-        self._plaza = plaza
-    
-    def __del__(self):
-        """清理资源"""
-        self._cleanup()
-    
-    def _cleanup(self):
-        """优雅清理所有资源"""
-        try:
-            # 停止文件监控
-            if self._watcher_thread and self._watcher_thread.is_alive():
-                self._stop_watcher.set()
-                self._watcher_thread.join(timeout=1)
-                self.logger.info("🛑 File watcher stopped")
-            
-            # 清理线程池
-            if self._executor:
-                self._executor.shutdown(wait=True)
-                
-            # 清理缓存
-            with self._lock:
-                self._cache.clear()
-                
-        except Exception as e:
-            self.logger.error(f"Cleanup error: {e}")
-    
-    def stop(self):
-        """手动停止MCP Plaza"""
-        self._cleanup()
-        self.logger.info("🎯 MCP Plaza stopped gracefully")
-    
-    def tool(self, name: Optional[str] = None, description: Optional[str] = None):
-        """FastMCP兼容的装饰器"""
-        return self._plaza.tool(name, description)
-    
-    def resource(self, uri: str):
-        """FastMCP兼容的资源装饰器"""
-        return self._plaza.resource(uri)
-    
-    def prompt(self, name: str):
-        """FastMCP兼容的提示装饰器"""
-        return self._plaza.prompt(name)
-    
-    def run(self):
-        """运行MCP服务器"""
-        self._plaza.logger.info(f"🚀 Enhanced FastMCP '{self.name}' running on Pisces engine")
-        return self._plaza.get_system_status()
-
-# 向后兼容的便捷接口
-def get_available_tools() -> Dict[str, Any]:
-    """Get all available tools."""
-    return plaza.get_available_tools()
-
-def execute_tool(tool_name: str, arguments: Dict[str, Any]) -> Any:
-    """Execute a tool with enhancement."""
-    return plaza.execute_tool(tool_name, arguments)
-
-def get_system_status() -> Dict[str, Any]:
-    """Get enhanced system status."""
-    return plaza.get_system_status()
-
-def reload_tools():
-    """Reload tools with enhancement."""
-    plaza.reload_tools()
-
-def register_custom_tool(name: str, description: str, parameters: Dict[str, Any], 
-                        function: Callable, category: str = "Custom") -> bool:
-    """Register custom tool with enhancement."""
-    return plaza.register_custom_tool(name, description, parameters, function, category)
-
-# 秘密增强：创建FastMCP兼容实例
-mcp = FastMCP("PiscesEnhanced")
-
-# 导出接口 - 既支持传统方式也支持FastMCP方式
+# 导出接口
 __all__ = [
-    'get_available_tools',
-    'execute_tool',
-    'get_system_status', 
-    'reload_tools',
-    'register_custom_tool',
     'plaza',
-    'mcp',
-    'FastMCP'
+    'PiscesLxMCPPlaza',
+    'PiscesLxMCPToolMetadata',
+    'PiscesLxMCPToolStats'
 ]
 
 # 自动发现工具

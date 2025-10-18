@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -21,8 +20,10 @@
 import os
 import json
 from pathlib import Path
-from utils import RIGHT, DEBUG, ERROR
 from typing import Dict, Any, Optional
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+
+logger = PiscesLxCoreLog("PiscesLx.Tools.MCP")
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "MCP" / "MCP.json"
 DEFAULT_SOURCE_DIR = Path(__file__).resolve().parents[1] / "MCP"

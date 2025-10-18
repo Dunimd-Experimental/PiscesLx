@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -18,38 +17,129 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-from .log import DEBUG, ERROR, RIGHT
-from .progress import progress_bar, get_progress_bar
-from .ul import (
-    display_update_log,
-    display_all_versions,
-    display_specific_version,
-    display_version_changelog,
-    get_current_version,
-)
-
+from utils.fs.core import PiscesLxCoreFS
+from utils.log.core import PiscesLxCoreLog
+from utils.cache.core import PiscesLxCoreCacheManagerFacade
+from utils.device.facade import PiscesLxCoreDeviceFacade
+from utils.observability.metrics import PiscesLxCoreMetricsRegistry
+from utils.observability.facade import PiscesLxCoreObservabilityFacade
+from utils.watermark.manager import PiscesWatermarkManager as PiscesLxUtilsWatermarkManager
+from utils.watermark.watermark import PiscesLxWatermark as PiscesLxUtilsWatermark
+# Expose logits processor via utils facade
 try:
-    if 'setup' not in sys.argv:
-        from .gpu_manager import GPUManager
-        from .cache import PiscesCache, get_cache_manager, get_config_manager
-    else:
-        GPUManager = None
-        PiscesCache = None
-        get_cache_manager = None
-        get_config_manager = None
-except ImportError as e:
-    # Handle import errors gracefully during setup or when modules are not available
-    GPUManager = None
-    PiscesCache = None
-    get_cache_manager = None
-    get_config_manager = None
+    from utils.watermark.logits_processor import PiscesWatermarkLogitsProcessor as PiscesLxUtilsLogitsProcessor
+except Exception:
+    PiscesLxUtilsLogitsProcessor = None
+from utils.watermark.protocol import (
+    create_payload as PiscesLxUtilsCreatePayload,
+    sign_payload as PiscesLxUtilsSignPayload,
+    verify_payload as PiscesLxUtilsVerifyPayload,
+)
+from utils.config.manager import PiscesLxCoreConfigManager, PiscesLxCoreConfigManagerFacade
+from utils.cache.enhanced import PiscesLxCoreEnhancedCache, PiscesLxCoreEnhancedCacheManager
+from utils.checkpoint import PiscesLxCoreCheckpointManager
+from utils.concurrency import (
+    PiscesLxCoreTimeout,
+    PiscesLxCoreRetry,
+    PiscesLxCoreAsyncManager,
+    PiscesLxCoreResourcePool,
+    PiscesLxCoreConcurrencyManager,
+    PiscesLxCoreParallel,
+)
+from utils.error import (
+    PiscesLxCoreErrorCode,
+    PiscesLxCoreError,
+    PiscesLxCoreValidationError,
+    PiscesLxCoreConfigError,
+    PiscesLxCoreIOError,
+    PiscesLxCoreFilesystemError,
+    PiscesLxCoreConcurrencyError,
+    PiscesLxCoreTimeoutError,
+    PiscesLxCoreNetworkError,
+    PiscesLxCoreMemoryError,
+    PiscesLxCoreCacheError,
+    PiscesLxCoreLogError,
+    PiscesLxCoreHooksError,
+    PiscesLxCoreObservabilityError,
+    PiscesLxCoreReporterError,
+    PiscesLxCoreMetricsError,
+    PiscesLxCoreExporterError,
+    PiscesLxCoreDeviceError,
+    PiscesLxCoreNoGPUError,
+    PiscesLxCoreGPUInsufficientError,
+    PiscesLxCorePlatformDetectionError,
+    PiscesLxCoreDistributedSetupError,
+    PiscesLxCoreDeviceOrchestrationError,
+    PiscesLxCoreConfigurationError,
+)
+from utils.quantization import PiscesLxCoreQuantizer, PiscesLxCoreQuantizationFacade
+from utils.ul import PiscesLxCoreUL
+from utils.validate import PiscesLxCoreValidator
 
 __all__ = [
-    'GPUManager',
-    'DEBUG', 'ERROR', 'RIGHT',
-    'progress_bar', 'get_progress_bar',
-    'display_version_changelog', 'get_current_version',
-    'PiscesCache', 'get_cache_manager', 'get_config_manager',
-    'display_update_log', 'display_all_versions', 'display_specific_version',
+    # Config
+    "PiscesLxCoreConfigManager",
+    "PiscesLxCoreConfigManagerFacade",
+    # Cache
+    "PiscesLxCoreEnhancedCache",
+    "PiscesLxCoreEnhancedCacheManager",
+    "PiscesLxCoreCacheManagerFacade",
+    # Device
+    "PiscesLxCoreDeviceFacade",
+    # Filesystem
+    "PiscesLxCoreFS",
+    # Logging
+    "PiscesLxCoreLog",
+    # Observability
+    "PiscesLxCoreObservabilityFacade",
+    # Metrics
+    "PiscesLxCoreMetricsRegistry",
+    # Watermark
+    "PiscesLxUtilsWatermark",
+    "PiscesLxUtilsWatermarkManager",
+    "PiscesLxUtilsCreatePayload",
+    "PiscesLxUtilsSignPayload",
+    "PiscesLxUtilsVerifyPayload",
+    "PiscesLxUtilsLogitsProcessor",
+    # Checkpoint
+    "PiscesLxCoreCheckpointManager",
+    # Concurrency
+    "PiscesLxCoreTimeout",
+    "PiscesLxCoreRetry",
+    "PiscesLxCoreAsyncManager",
+    "PiscesLxCoreResourcePool",
+    "PiscesLxCoreConcurrencyManager",
+    "PiscesLxCoreParallel",
+    # Error classes
+    "PiscesLxCoreErrorCode",
+    "PiscesLxCoreError",
+    "PiscesLxCoreValidationError",
+    "PiscesLxCoreConfigError",
+    "PiscesLxCoreIOError",
+    "PiscesLxCoreFilesystemError",
+    "PiscesLxCoreConcurrencyError",
+    "PiscesLxCoreTimeoutError",
+    "PiscesLxCoreNetworkError",
+    "PiscesLxCoreMemoryError",
+    "PiscesLxCoreCacheError",
+    "PiscesLxCoreLogError",
+    "PiscesLxCoreHooksError",
+    "PiscesLxCoreObservabilityError",
+    "PiscesLxCoreReporterError",
+    "PiscesLxCoreMetricsError",
+    "PiscesLxCoreExporterError",
+    "PiscesLxCoreDeviceError",
+    "PiscesLxCoreNoGPUError",
+    "PiscesLxCoreGPUInsufficientError",
+    "PiscesLxCorePlatformDetectionError",
+    "PiscesLxCoreDistributedSetupError",
+    "PiscesLxCoreDeviceOrchestrationError",
+    "PiscesLxCoreConfigurationError",
+    # Quantization
+    "PiscesLxCoreQuantizer",
+    "PiscesLxCoreQuantizationFacade",
+    # UL
+    "PiscesLxCoreUL",
+    # Validate
+    "PiscesLxCoreValidator",
 ]

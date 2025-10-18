@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -22,7 +21,87 @@ import os
 import sys
 import platform
 import subprocess
-from utils import RIGHT
+import datetime
+
+def _log(level, message):
+    """
+    A simple logging function that doesn't depend on utility modules.
+
+    Args:
+        level (str): Logging level, e.g., 'info', 'success', 'error', 'warning', 'debug'.
+        message (str): The message to be logged.
+
+    Returns:
+        None
+    """
+    # Skip self-logging when invoked through manage.py to avoid duplicate logging
+    if 'manage.py' in sys.argv[0]:
+        return  
+
+    # Get the current timestamp
+    now = datetime.datetime.now()
+    local_ts = now.strftime("%m%d %H:%M:%S")
+    iso_ts = now.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+    # Mapping of logging levels to emojis
+    level_emojis = {
+        'info': '🟢',
+        'success': '✅',
+        'error': '🔴',
+        'warning': '🟡',
+        'debug': '🔵'
+    }
+
+    emoji = level_emojis.get(level, '🟢')
+    print(f"{local_ts} | {iso_ts} | {emoji} | [PiscesLx Core] | {message}")
+
+def logger_info(message):
+    """
+    Log an info-level message.
+
+    Args:
+        message (str): The info message to be logged.
+
+    Returns:
+        None
+    """
+    _log('info', message)
+
+def logger_success(message):
+    """
+    Log a success-level message.
+
+    Args:
+        message (str): The success message to be logged.
+
+    Returns:
+        None
+    """
+    _log('success', message)
+
+def logger_error(message):
+    """
+    Log an error-level message.
+
+    Args:
+        message (str): The error message to be logged.
+
+    Returns:
+        None
+    """
+    _log('error', message)
+
+def logger_warning(message):
+    """
+    Log a warning-level message.
+
+    Args:
+        message (str): The warning message to be logged.
+
+    Returns:
+        None
+    """
+    _log('warning', message)
 
 def setup(args):
     """
@@ -35,85 +114,101 @@ def setup(args):
     Returns:
         None
     """
-    # Validate input arguments, continue setup even if validation fails
+    # Validate input arguments. Continue setup even if validation fails.
     try:
         args = validate_setup_args(args)
     except Exception as e:
-        RIGHT(f"Invalid setup arguments: {e}")
+        logger_error(f"Invalid setup arguments: {e}")
+        return
 
-    RIGHT("Pisces auto environment setup...")
-    
-    if 'setup' in sys.argv:
-        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        venv_dir = os.path.join(project_root, ".pisceslx", "env")
-        os.makedirs(venv_dir, exist_ok=True)
-    else:
-        from utils import get_cache_manager
-        cache_manager = get_cache_manager()
-        env_dir = cache_manager.get_cache_dir("env")
-        venv_dir = str(env_dir)
-    
+    logger_info("Pisces auto environment setup...")
+
+    # Determine the project root directory and virtual environment directory
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    venv_dir = os.path.join(project_root, ".pisceslx", "env")
+    os.makedirs(venv_dir, exist_ok=True)
+
     # Determine if the current operating system is Windows
     is_windows = platform.system().lower().startswith("win")
 
     # Check if the script is running outside a virtual environment
     if sys.prefix == sys.base_prefix:
-        RIGHT("Not in virtual environment. Creating venv...")
+        logger_info("Not in virtual environment. Creating venv...")
         # Create a new virtual environment
         python_executable = sys.executable
         subprocess.check_call([python_executable, "-m", "venv", venv_dir])
-        RIGHT(f"Virtual environment created at {venv_dir}")
-        
+        logger_success(f"Virtual environment created at {venv_dir}")
+
         # Get the Python interpreter path within the virtual environment
         python_bin = os.path.join(venv_dir, "Scripts" if is_windows else "bin", "python" + (".exe" if is_windows else ""))
-        RIGHT("Re-running setup in venv...")
+        logger_info("Re-running setup in venv...")
         # Re-run the script using the Python interpreter in the virtual environment
         os.execv(python_bin, [python_bin] + sys.argv)
         return
     else:
-        RIGHT("Already in virtual environment.")
+        logger_info("Already in virtual environment.")
 
     # Upgrade the pip package manager
-    RIGHT("Upgrading pip...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
+    logger_info("Upgrading pip...")
+    try:
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
+        logger_success("Pip upgraded successfully")
+    except subprocess.CalledProcessError as e:
+        logger_error(f"Failed to upgrade pip: {e}")
+        return
 
     # Install packages from requirements.txt
-    RIGHT("Installing requirements.txt...")
-    subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
-    RIGHT("Pisces environment setup complete!")
+    logger_info("Installing requirements.txt...")
+    try:
+        # Try to install all dependencies at once
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
+        logger_success("Requirements installed successfully")
+    except subprocess.CalledProcessError as e:
+        logger_warning("Failed to install all requirements, trying fallback approach...")
 
-    # Automatically enter the virtual environment shell
-    if is_windows:
-        # Get the Windows command shell path
-        shell = os.environ.get("COMSPEC", "cmd.exe")
-        # Check if the current shell is PowerShell
-        if "powershell.exe" in shell.lower() or "pwsh.exe" in shell.lower():
-            activate = os.path.join(venv_dir, "Scripts", "Activate.ps1")
-            RIGHT("Auto-entering Pisces venv shell (PowerShell)...")
-            # Enter the virtual environment using PowerShell
-            os.execv(shell, [shell, "-NoExit", "-Command", f". '{activate}'"])
-        else:
-            activate = os.path.join(venv_dir, "Scripts", "activate.bat")
-            RIGHT("Auto-entering Pisces venv shell (Windows cmd)...")
-            # Enter the virtual environment using Windows cmd
-            os.execv(shell, [shell, "/K", activate])
-    else:
-        # Get the Unix-like shell path
-        shell = os.environ.get("SHELL", "/bin/bash")
-        activate = os.path.join(venv_dir, "bin", "activate")
-        RIGHT("Auto-entering Pisces venv shell (Linux/Mac)...")
-        # Enter the virtual environment using Unix-like shell
-        os.execv(shell, [shell, "-i", "-c", f"source '{activate}'; exec {shell}"])
+        # Read requirements.txt and install packages one by one, skipping failed ones
+        requirements_path = os.path.join(project_root, "requirements.txt")
+
+        try:
+            with open(requirements_path, 'r', encoding='utf-8') as f:
+                requirements = f.readlines()
+
+            failed_packages = []
+            installed_packages = []
+
+            for line in requirements:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                
+                try:
+                    subprocess.check_call([sys.executable, "-m", "pip", "install", line])
+                    installed_packages.append(line)
+                    logger_success(f"Installed: {line}")
+                except subprocess.CalledProcessError:
+                    failed_packages.append(line)
+                    logger_warning(f"Failed to install: {line}")
+            
+            if installed_packages:
+                logger_success(f"Successfully installed {len(installed_packages)} packages")
+            if failed_packages:
+                logger_warning(f"Failed to install {len(failed_packages)} packages: {failed_packages}")
+                
+        except FileNotFoundError:
+            logger_error("requirements.txt not found")
+            return
+        except Exception as e:
+            logger_error(f"Error reading requirements.txt: {e}")
+            return
 
 def validate_setup_args(args):
     """
-    Validate and normalize setup arguments. Currently a no-op placeholder.
-    Ensures args is at least a SimpleNamespace-like object.
-
+    Validate setup arguments.
+    
     Args:
-        args: Command line arguments to be validated.
-
+        args: Command line arguments
+        
     Returns:
-        args: The original or normalized arguments.
+        Validated arguments
     """
     return args

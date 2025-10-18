@@ -2,12 +2,11 @@
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
-# This file is part of Pisces L1.
+# This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -28,15 +27,14 @@ from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass
 from mcp.server.fastmcp import FastMCP
+from utils.log.core import PiscesLxCoreLog
 from typing import Dict, List, Optional, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-from utils import RIGHT, DEBUG, ERROR
+logger = PiscesLxCoreLog("Arctic.Core.MCP.Server")
 
 @dataclass
-class ToolStats:
+class ArcticToolStats:
     """
     Data class for storing tool loading statistics.
 
@@ -53,7 +51,7 @@ class ToolStats:
     status: str
     error: Optional[str] = None
 
-class OptimizedMCPServer:
+class ArcticOptimizedMCPServer:
     """
     An optimized MCP server with advanced features, designed to efficiently manage and load MCP tools.
     """
@@ -65,14 +63,14 @@ class OptimizedMCPServer:
         Creates a FastMCP server, initializes tool statistics and loaded modules sets,
         sets up a thread pool executor, enables hot-reload, and records the initial check time.
         """
-        self.mcp_server = FastMCP("PiscesL1 Optimized MCP Server")
-        self.tool_stats: List[ToolStats] = []
+        self.mcp_server = FastMCP("PiscesL1 MCP Server")
+        self.tool_stats: List[ArcticToolStats] = []
         self.loaded_modules: Set[str] = set()
         self._executor = ThreadPoolExecutor(max_workers=4)
         self._hot_reload_enabled = True
         self._last_check_time = 0
         
-    def _load_module_async(self, py_file: Path) -> ToolStats:
+    def _load_module_async(self, py_file: Path) -> ArcticToolStats:
         """
         Asynchronously load a single Python module and update the MCP server with its tools.
 
@@ -87,7 +85,7 @@ class OptimizedMCPServer:
         
         # Skip __init__.py file as it's usually used for package initialization
         if module_name == "__init__":
-            return ToolStats(module_name, 0, 0, "skipped")
+            return ArcticToolStats(module_name, 0, 0, "skipped")
             
         try:
             # Invalidate cache for hot-reload to ensure the latest module version is loaded
@@ -104,14 +102,14 @@ class OptimizedMCPServer:
                     self.mcp_server.tools.update(tool_mcp.tools)
                     tool_count = len(tool_mcp.tools)
                     load_time = time.time() - start_time
-                    return ToolStats(module_name, load_time, tool_count, "success")
+                    return ArcticToolStats(module_name, load_time, tool_count, "success")
                 else:
-                    return ToolStats(module_name, time.time() - start_time, 0, "no_tools")
+                    return ArcticToolStats(module_name, time.time() - start_time, 0, "no_tools")
             else:
-                return ToolStats(module_name, time.time() - start_time, 0, "no_mcp")
+                return ArcticToolStats(module_name, time.time() - start_time, 0, "no_mcp")
                 
         except Exception as e:
-            return ToolStats(module_name, time.time() - start_time, 0, "error", str(e))
+            return ArcticToolStats(module_name, time.time() - start_time, 0, "error", str(e))
     
     def auto_discover_tools(self, force_reload: bool = False):
         """
@@ -128,7 +126,7 @@ class OptimizedMCPServer:
         
         # Check if the MCP directory exists. If not, log an error and exit the function
         if not mcp_dir.exists():
-            ERROR(f"MCP directory not found: {mcp_dir}")
+            logger.error(f"MCP directory not found: {mcp_dir}")
             return
         
         # Skip discovery if no changes and not forced to reload to improve performance
@@ -154,28 +152,21 @@ class OptimizedMCPServer:
         successful = [s for s in self.tool_stats if s.status == "success"]
         total_tools = sum(s.tool_count for s in successful)
         
-        RIGHT(f"Optimized auto-discovery: {total_tools} tools from {len(successful)}/{len(py_files)} modules")
+        logger.info(f"Optimized auto-discovery: {total_tools} tools from {len(successful)}/{len(py_files)} modules")
         
         # Log detailed loading statistics for debugging and monitoring
         for stats in sorted(self.tool_stats, key=lambda x: x.load_time, reverse=True):
             if stats.status == "success":
-                DEBUG(f"{stats.name}: {stats.tool_count} tools ({stats.load_time:.3f}s)")
+                logger.debug(f"{stats.name}: {stats.tool_count} tools ({stats.load_time:.3f}s)")
             elif stats.error:
-                ERROR(f"{stats.name}: {stats.error}")
-
-# Global optimized server instance
-optimized_server = OptimizedMCPServer()
-
-# Background tool discovery with timeout
-import threading
-import time
+                logger.error(f"{stats.name}: {stats.error}")
 
 def _async_tool_discovery():
     """Run tool discovery in background thread"""
     try:
-        optimized_server.auto_discover_tools()
+        ArcticOptimizedMCPServer().auto_discover_tools()
     except Exception as e:
-        ERROR(f"Background tool discovery failed: {e}")
+        logger.error(f"Background tool discovery failed: {e}")
 
 # Start background discovery
 discovery_thread = threading.Thread(target=_async_tool_discovery, daemon=True)
@@ -197,11 +188,11 @@ def wait_for_tools(timeout=5):
 # Backward compatibility function
 def auto_discover_tools():
     """
-    Legacy interface for backward compatibility. Calls the auto_discover_tools method of the global optimized server.
+    Legacy interface for backward compatibility. Directly instantiates server and runs discovery.
     """
-    optimized_server.auto_discover_tools()
+    ArcticOptimizedMCPServer().auto_discover_tools()
 
-mcp_server = optimized_server.mcp_server
+mcp_server = ArcticOptimizedMCPServer().mcp_server
 
 # Additional server configuration
 @mcp_server.resource("status://server")

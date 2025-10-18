@@ -1,434 +1,305 @@
 # ⚠️ Compliance Notice
 
-**Please be advised that PiscesL1 does not provide model filing services in accordance with the provisions of China’s "Interim Measures for the Management of Generative Artificial Intelligence Services" and other relevant regulations; if services are provided to the public in any form within the territory of China, please complete the required filings independently.**
+**Please be advised that PiscesL1 does not provide model filing services in accordance with China’s "Interim Measures for the Management of Generative Artificial Intelligence Services" and related regulations; if services are provided to the public within the territory of China, please complete the required filings independently.**
 
 ---
 
-# Pisces L1
+<div align="center">
+
+# PiscesL1
 
 English | [简体中文](README.zh.md)
 
-A next-generation lightweight multimodal Mixture-of-Experts (MoE) model with **Arctic Architecture**, supporting text, image, audio, video, document, and agent understanding. Designed for both research and practical applications, Pisces L1 (PiscesLx Series by Dunimd Project Group) can run on a single RTX 4090 and scale up to 314B parameters with breakthrough innovations.
+<a href="https://space.bilibili.com/3493284091529457" target="_blank">
+    <img alt="BiliBili" src="https://img.shields.io/badge/BiliBili-PiscesL1-00A1D6?style=flat-square&logo=bilibili"/>
+</a>
+<a href="https://gitee.com/dunimd" target="_blank">
+    <img alt="Gitee" src="https://img.shields.io/badge/Gitee-Dunimd-C71D23?style=flat-square&logo=gitee"/>
+</a>
+<a href="https://github.com/mf2023/piscesl1" target="_blank">
+    <img alt="GitHub" src="https://img.shields.io/badge/GitHub-PiscesL1-181717?style=flat-square&logo=github"/>
+</a>
+<a href="https://huggingface.co/dunimd" target="_blank">
+    <img alt="Hugging Face" src="https://img.shields.io/badge/Hugging%20Face-dunimd-FFD21E?style=flat-square&logo=huggingface"/>
+</a>
+<a href="https://modelscope.cn/organization/dunimd" target="_blank">
+    <img alt="ModelScope" src="https://img.shields.io/badge/ModelScope-dunimd-1E6CFF?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTcuMDA2IDBDMy4xNDIgMCAwIDMuMTQyIDAgNy4wMDZTMy4xNDIgMTQuMDEyIDcuMDA2IDE0LjAxMkMxMC44NyAxNC4wMTIgMTQuMDEyIDEwLjg3IDE0LjAxMiA3LjAwNkMxNC4wMTIgMy4xNDIgMTAuODcgMCA3LjAwNiAwWiIgZmlsbD0iIzFFNkNGRiIvPgo8L3N2Zz4K"/>
+</a>
+
+</div>
+
+A next-generation lightweight multimodal Mixture-of-Experts (MoE) model with Arctic Architecture, supporting text, image, audio, video, document, and agent understanding. Designed for both research and practical applications, PiscesL1 (PiscesLx Series by Dunimd Project Group) can run on a single RTX 4090 and scale up to 1T parameters with modular innovations.
 
 ## ❄️ Arctic Architecture Innovations
 
 ### 🧠 Multi-Path Reasoning Engine (PiscesReasoner)
-- **Hierarchical Reasoning Chains (HRC)**: Multi-layer abstraction processing
-- **Parallel Hypothesis Thinking**: 8 concurrent reasoning streams with dynamic selection
-- **Dynamic Fact Verification**: Real-time truth checking and consistency scoring  
-- **Meta-cognitive Reflection**: Self-awareness of reasoning process with uncertainty quantification
-- **Reasoning Special Tokens**: `<|start_hypothesis|>`, `<|start_evidence|>`, `<|start_conclusion|>`, `<|hypothesis_split|>`, `<|hypothesis_merge|>`
+- Hierarchical Reasoning Chains (HRC): multi-layer abstraction
+- Parallel hypothesis thinking: up to 8 concurrent streams with dynamic selection
+- Dynamic fact verification: real-time truth checking and consistency scoring
+- Meta-cognitive reflection: uncertainty quantification over reasoning
+- Reasoning special tokens: `<|start_hypothesis|>`, `<|start_evidence|>`, `<|start_conclusion|>`, `<|hypothesis_split|>`, `<|hypothesis_merge|>`
 
 ### 🔧 MoE Expert System
-- **8 Expert Top-2 Routing**: Intelligent load balancing with StableMoEGate
-- **LSTM Load Prediction**: Dynamic capacity adjustment and expert allocation
-- **Gradient Checkpoint Compatible**: Fixed shape mode for memory efficiency
-- **Stable Expert Gates**: Advanced routing with noise injection and capacity control
+- 8 experts Top-2 routing with StableMoEGate
+- LSTM load prediction: dynamic capacity and allocation
+- Gradient-checkpoint friendly fixed-shape mode
+- Stable gates: noise injection and capacity control
 
 ### 🌐 5-Modal Encoding System
-- **VisionEncoder**: NaViT native resolution support (up to 1024px)
-- **VideoEncoder**: Temporal visual understanding with frame-level attention
-- **AudioEncoder**: Advanced audio feature extraction and processing
-- **DocEncoder**: Document structure understanding with LayoutLMv3 integration
-- **AgentEncoder**: Comprehensive agent behavior modeling (observations, actions, reflections)
+- VisionEncoder: NaViT native resolution (up to 1024px)
+- VideoEncoder: temporal visual understanding, frame-level attention
+- AudioEncoder: advanced audio feature extraction
+- DocEncoder: document structure understanding (LayoutLMv3)
+- AgentEncoder: agent behavior modeling (observations/actions/reflections)
 
-### ⚛️ Advanced Multi-Modal Fusion
-- **DynamicModalFusion**: Native multimodal fusion with unified token-level processing
-- **Native Cross-Modal Attention**: Token-level cross-modal fusion without tensor networks
-- **Hardware Adaptive Configuration**: Intelligent hardware detection and optimization
-- **Quality-aware Fusion Gates**: Adaptive fusion based on content quality
+### ⚛️ Advanced Multimodal Fusion
+- DynamicModalFusion: unified token-level multimodal fusion
+- Native cross-modal attention (no tensor network requirement)
+- Hardware-adaptive configuration
+- Quality-aware fusion gates
 
-### 📏 Ultra-Long Context System
-- **YaRN RoPE**: 10M+ token support with dynamic NTK scaling
-- **H2O Attention**: Streaming attention for 128B+ parameter models
-- **Dynamic Position Encoding**: Adaptive position encoding with long factor scaling
-- **Memory-efficient Context**: Sliding window and compression techniques
+### 📏 Ultra-Long Context
+- YaRN RoPE: 10M+ token support with dynamic NTK scaling
+- H2O attention: streaming attention for large models
+- Dynamic position encoding with long-factor scaling
+- Memory-efficient sliding window and compression
 
 ### 🤖 Advanced Agent System
-- **PiscesAgent**: Native multimodal agent with MCP protocol support
-- **Tool Integration**: Built-in tool use capabilities and environment interaction
-- **Persistent Memory**: Context management and experience accumulation
-- **MCP Communication**: Multi-Agent Communication Protocol for distributed reasoning
+- PiscesAgent: native multimodal agent with MCP protocol support
+- Tool integration and environment interaction
+- Persistent memory and experience accumulation
+- Multi-agent communication for distributed reasoning
 
 ### 🎯 Advanced Optimization (K-FAC Enhanced)
-- **Second-order Optimization**: Memory-efficient diagonal Fisher matrix approximation with K-FAC
-- **Adaptive Gradient Clipping**: Dynamic threshold adjustment based on gradient history
-- **Natural Gradient Descent**: Curvature-aware training for faster convergence
-- **Memory Optimization**: 99%+ memory reduction vs full second-order methods
-- **Automatic Stability**: Handles 280K+ gradient norms seamlessly
+- Second-order optimization via K-FAC diagonal Fisher approximation
+- Adaptive gradient clipping
+- Natural gradient descent
+- Large memory savings vs full second-order methods
 
 ---
 
 ## 🚀 Features
 
-- **Arctic Architecture**: Revolutionary multimodal architecture with advanced reasoning capabilities
-- **Multi-Path Reasoning Engine**: Beyond traditional Chain-of-Thought with hierarchical abstraction
-- **5-Modal Understanding**: Unified processing of text, image, audio, video, document, and agent inputs
-- **MoE Expert System**: 8 experts with intelligent Top-2 routing and load prediction
-- **Ultra-Long Context**: Up to 10M+ tokens with YaRN RoPE and H2O attention
-- **Advanced Quantization**: 2-bit, 4-bit, 8-bit quantization options with gradient stability
-- **Memory Optimization**: Runs 0.5B model on 14.58GB GPU with QLoRA + gradient checkpointing
-- **Advanced Optimization**: K-FAC-enhanced second-order optimization with automatic stability
-- **Native Agent Support**: Built-in MCP protocol and tool integration
-- **One-command Workflow**: Complete management via `python manage.py`
+- Arctic architecture with multi-path reasoning
+- Unified 5-modal understanding and cross-modal fusion
+- 8-expert Top-2 routing and load prediction
+- 10M+ context window
+- Multi-bit quantization (2/4/8)
+- 0.5B–1.5B training feasible on ~14.6GB GPUs (QLoRA + checkpointing)
+- Native MCP agent integration
+- One-command workflow via `python manage.py`
 
 ---
 
 ## 🛠️ Installation & Environment
 
-- **Python**: 3.11 recommended
-- **CUDA**: 11.8+ (for GPU training/inference)
-- **Dependencies**: All required packages are listed in `requirements.txt`
+- Python: 3.11 recommended
+- CUDA: 11.8+ (for GPU training/inference)
+- Dependencies: see `requirements.txt`
 
 ### Quick Setup
 ```bash
-git clone https://gitee.com/dunimd/piscesl1.git or git clone https://github.com/mf2023/piscesl1.git
+git clone https://gitee.com/dunimd/piscesl1.git
+# or
+git clone https://github.com/mf2023/piscesl1.git
 cd piscesl1
 python manage.py setup
 ```
-This will create a virtual environment and install all dependencies automatically.
 
 ---
 
 ## ⚡ Command Line Usage
 
-All commands are managed via `python manage.py <command>`. For help:
+All commands are managed via:
+```bash
+python manage.py <command>
+```
+For help:
 ```bash
 python manage.py help
 ```
 
 ### Main Commands
-| Command    | Description                                                          |
-|------------|----------------------------------------------------------------------|
-| setup      | Environment setup and dependency install                             |
-| source     | Activate virtual environment                                         |
-| update     | Pull latest code from remote repository                              |
-| version    | Show current version and changelog                                   |
-| changelog  | Show version history (--all for all, --version X.X.XXXX for specific)|
-| rlhf       | Reinforcement Learning from Human Feedback training                  |
-| watermark  | Detect if content was generated by PiscesLx series models            |
-| train      | Train the model                                                      |
-| infer      | Run inference with a trained model                                   |
-| check      | Check GPU and dependencies                                           |
-| monitor    | System monitor (GPU/CPU/memory)                                      |
-| download   | Download datasets for training                                       |
-| dataset    | Arrow/JSON dataset conversion                                        |
-| cache      | Cache maintenance (stats / clear-dataset / clear-downloads / clear-all) |
-| quantize   | Quantize model to 4/8-bit for efficiency                             |
-| benchmark  | Run performance benchmarking                                         |
-| mcp        | MCP server operations (status / warmup / refresh-cache)              |
-| help       | Show help message                                                    |
+| Command   | Description                                                            |
+|-----------|------------------------------------------------------------------------|
+| setup     | Environment setup and dependency installation                          |
+| update    | Pull latest code from remote repository                                |
+| version   | Show current version and changelog summary                             |
+| changelog | Show version history (--all or --version X.X.XXXX)                     |
+| train     | Train the model (supports quant/LoRA/RLHF via flags)                   |
+| infer     | Run inference (supports MCP integration and speculative decoding)      |
+| check     | Check GPU and dependencies                                             |
+| monitor   | System monitor (GPU/CPU/memory)                                        |
+| download  | Download datasets                                                      |
+| dataset   | Dataset management and conversion                                      |
+| cache     | Cache maintenance (stats / clear-dataset / clear-downloads / clear-all)|
+| benchmark | Model evaluation and benchmarking                                      |
+| mcp       | MCP tool management (status / warmup / refresh-cache)                  |
+| watermark | Watermark detection (text/file, batch, verbose, JSON)                  |
+| help      | Show help message                                                      |
 
-#### Example
+#### Examples
 ```bash
-python manage.py download
-python manage.py version          # Show current version
-python manage.py changelog --all    # Show all versions
-python manage.py changelog --version 1.0.0150  # Show specific version
-python manage.py train
+# Basics
+python manage.py version
+python manage.py changelog --all
+python manage.py changelog --version 1.0.0150
+
+# Dataset
+python manage.py download --max_samples 50000
+
+# Training
+python manage.py train --model_size 0.5B --dataset Chinese2
+python manage.py train --model_size 1.5B --dataset Chinese2 --resume_ckpt runs/last.pt --reset_lr
+python manage.py train --model_size 7B --dataset Chinese2 --force_quant --quant_bits 4 --force_lora
+python manage.py train --model_size 7B --dataset Chinese2 --rlhf --rlhf_dataset dunimd/human_feedback --rlhf_lr 1e-5
+
+# Inference
 python manage.py infer --ckpt ckpt/latest.pt --prompt "Hello, Pisces!"
+python manage.py infer --ckpt ckpt/model.pt --prompt "Hi" --speculative --draft_model ckpt/draft.pt --spec_gamma 4
+
+# Benchmark
+python manage.py benchmark --list
+python manage.py benchmark --info mmlu
+python manage.py benchmark --benchmark mmlu --config configs/0.5B.json --seq_len 4096 --model ckpt/model.pt
+python manage.py benchmark --perf --config configs/0.5B.json --selftest
+
+# MCP
+python manage.py mcp --mcp_action status
+python manage.py mcp --mcp_action warmup
+python manage.py mcp --mcp_action refresh-cache
+
+# Cache
+python manage.py cache --cache_action stats
+python manage.py cache --cache_action clear-dataset
+python manage.py cache --cache_action clear-downloads
+python manage.py cache --cache_action clear-all
 ```
 
 ---
 
 ## 🧠 Model Architecture & Configurations
 
-### Arctic Architecture Components
-- **Core Transformer**: RMSNorm, YaRN RoPE, Grouped-Query Attention
-- **Multi-Path Reasoning**: 4-layer hierarchical abstraction with meta-cognitive reflection
-- **Multimodal Fusion**: Advanced cross-modal attention with correlation networks
-- **MoE System**: Dynamic expert routing with LSTM load prediction
-- **Memory Optimization**: Gradient checkpointing, mixed precision, K-FAC optimization
+Core components are implemented under `model/` and `model/multimodal/`. Default model configs are in `configs/model/*.json`.
 
-| Model Size | Layers | Hidden | Heads | KV Heads | MoE Experts | Params (Actual) | Context | Quantization |
-|------------|--------|--------|-------|----------|-------------|-----------------|---------|-------------|
-| 0.5B       | 16     | 640    | 10    | 5        | 6           | 0.5B            | 256K    | 2/4/8-bit   |
-| 1.5B       | 16     | 896    | 14    | 7        | 6           | 1.5B            | 256K    | 2/4/8-bit   |
-| 7B         | 28     | 3584   | 32    | 8        | 8           | 7B              | 1M      | 2/4/8-bit   |
-| 32B        | 64     | 5120   | 40    | 8        | 8           | 32B             | 1M      | 2/4/8-bit   |
-| 64B        | 80     | 6656   | 52    | 8        | 8           | 64B             | 10M     | 2/4/8-bit   |
-| 70B        | 80     | 8192   | 64    | 8        | 8           | 70B             | 10M     | 2/4/8-bit   |
-| 128B       | 120    | 10240  | 80    | 8        | 8           | 128B            | 10M     | 2/4/8-bit   |
-| 314B       | 160    | 12288  | 96    | 12       | 16          | 314B            | 10M     | 2/4/8-bit   |
+| Model Size | Layers | Hidden | Heads | KV Heads | MoE Experts | Context | Quantization (default) |
+|------------|--------|--------|-------|----------|-------------|---------|------------------------|
+| 0.5B       | 16     | 640    | 10    | 5        | 6           | 256K    | Off (optional)         |
+| 1.5B       | 16     | 896    | 14    | 7        | 6           | 256K    | Off (optional)         |
+| 7B         | 28     | 3584   | 32    | 8        | 8           | 1M      | On (LoRA default)      |
+| 32B        | 64     | 5120   | 40    | 8        | 8           | 1M      | On (LoRA default)      |
+| 64B        | 80     | 6656   | 52    | 8        | 8           | 10M     | On (LoRA default)      |
+| 70B        | 80     | 8192   | 64    | 8        | 8           | 10M     | On (LoRA default)      |
+| 128B       | 120    | 10240  | 80    | 8        | 8           | 10M     | On (LoRA default)      |
+| 314B       | 160    | 12288  | 96    | 12       | 16          | 10M     | On (LoRA default)      |
+| 671B       | 200    | 16384  | 128   | 16       | 32          | 10M     | On (LoRA default)      |
+| 1T         | 240    | 20480  | 160   | 20       | 64          | 10M     | On (LoRA default)      |
 
-### Parameter Breakdown (0.5B Configuration)
-- **Core Transformer**: ~500M parameters
-- **Multimodal Encoders**: Optimized and balanced
-  - VisionEncoder: ~120M, VideoEncoder: ~150M, AudioEncoder: ~80M
-  - DocEncoder: ~80M, AgentEncoder: ~70M
-- **Multi-path Reasoning Engine**: Integrated within core parameters
-- **Modal Fusion System**: Lightweight design for efficiency
+Notes:
+- Quantization defaults follow `configs/model/*.json`. Use training flags to override: `--force_quant --quant_bits {2,4,8}`, `--force_lora`.
 
-### Quantization Options
+### Quantization Examples
 ```bash
-# 2-bit quantization (experimental, maximum memory saving)
-python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 2
+# 2-bit (experimental, max memory saving)
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 2 --force_lora
 
-# 4-bit quantization (default, balanced performance)
-python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 4
+# 4-bit (balanced)
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 4 --force_lora
 
-# 8-bit quantization (stable, minimal quality loss)
-python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 8
-```
-
----
-
-## 📦 Datasets[Default ModelScope(https://www.modelscope.cn/)]
-Datasets are automatically downloaded and cached. The following datasets are supported:
-
-### Chinese Language
-- **Chinese1** (baicai003/Llama3-Chinese-dataset): Chinese language corpus
-- **Chinese2** (liucong/Chinese-DeepSeek-R1-Distill-data-110k-SFT): Chinese instruction tuning
-- **Chinese3** (AI-ModelScope/OpenOrca-Chinese): Chinese instruction data
-- **Chinese4** (AI-ModelScope/ultrachat_200k): Chinese dialogue data
-
-### English Language
-- **English1** (YorickHe/CoT): Chain-of-thought reasoning data
-- **English2** (DAMO_ConvAI/EnDoc2BotDialogue): English dialogue dataset
-- **English3** (Intelligent-Internet/wikipedia_en): Wikipedia English corpus
-
-### Math & Reasoning
-- **Math1** (swift/MetaMathQA): Mathematical reasoning dataset
-- **Math2** (AI-MO/NuminaMath-CoT): Mathematical reasoning with chain-of-thought
-- **Math3** (AI-ModelScope/NuminaMath-CoT): Mathematical problem solving
-- **Math4** (xpengx/EleutherAI-proof-pile-2): Mathematical proof data
-- **Math5** (tastelikefeet/competition_math): Competition mathematics
-
-### Code & Programming
-- **Code1** (HuggingFaceH4/CodeAlpaca_20K): Code instruction tuning
-- **Code2** (jablonkagroup/codeparrot_github-code-chemistry-python): Python code corpus
-- **Code3** (jablonkagroup/codeparrot_github-code-chemistry-python): Additional Python code
-- **Code4** (codefuse-ai/CodeExercise-Python-27k): Python exercise dataset
-
-### Web & General Knowledge
-- **Web1** (AI-ModelScope/webvid-10M): Web video data
-- **Web2** (prithivMLmods/OpenWeb888K): Web crawl data
-- **Web3** (OmniData/Pile-OpenWebText2): Web text corpus
-
-### Audio Processing
-- **Audio1** (OmniData/Clotho): Audio captioning dataset
-- **Audio2** (modelscope/Libri2Mix_8k): Audio mixing dataset
-- **Audio3** (lmms-lab/AudioSetCaps_350k_converted): Audio captioning
-
-### Image Understanding
-- **Image1** (modelscope/coco_captions_small_slice): COCO image captions
-- **Image2** (FreedomIntelligence/ShareGPT-4o-Image): Image-dialogue pairs
-
-### Document & Visual Understanding
-- **VQAv2** (swift/VQAv2): Visual question answering
-- **FinQA** (OmniData/FinQA): Financial question answering
-- **DocVQA** (swift/DocVQA): Document visual question answering
-- **Exam** (modelscope/ceval-exam): Chinese exam questions
-- **SG1** (AI-ModelScope/LAION-SG): Semantic graph dataset
-- **Chat1** (HuggingFaceH4/ultrachat_200k): Chat-based instruction tuning
-- **PubLayNet1** (OpenDataLab/PubLayNet): Document layout analysis
-- **Medical1** (krisfu/delicate_medical_r1_data): Medical instruction data
-- **Financial1** (BJQW14B/bs_challenge_financial_14b_dataset): Financial dataset
-
-### Agent & Behavior Understanding
-- **Agent1** (AI-ModelScope/agent-instruct): Agent instruction tuning dataset
-- **Agent2** (OmniData/agent-dialogue): Multi-turn agent conversation data
-- **Agent3** (swift/agent-reasoning): Agent reasoning and planning tasks
-- **Agent4** (HuggingFaceH4/agent-tool-use): Tool-using agent behavior dataset
-- **Agent5** (modelscope/agent-environment): Agent-environment interaction data
-
-Datasets are auto-downloaded and cached via:
-```bash
-python manage.py download
-```
-
----
-
-## 🏆 Advanced Training on 14.58GB GPU
-Pisces L1 Arctic architecture supports **training 1.5B parameter models on 14.58GB GPU** using advanced quantization, LoRA, and memory optimization techniques.
-
-### Memory Optimization Strategies
-- **Multi-bit Quantization**: 2-bit (experimental), 4-bit (default), 8-bit (stable)
-- **LoRA Adaptation**: Only 0.024% parameters trainable (360K out of 1.5B)
-- **Gradient Checkpointing**: Reduces activation memory by 50%+
-- **Advanced Optimization**: K-FAC-enhanced second-order methods
-- **Adaptive Gradient Clipping**: Handles gradient explosion automatically
-
-### Training Examples
-
-#### 1.5B Model with 4-bit Quantization
-```bash
-python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --force_lora
-```
-
-#### 1.5B Model with 8-bit for Stability
-```bash
+# 8-bit (stable)
 python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 8 --force_lora
 ```
 
-#### Memory Usage Comparison
-| Configuration | Memory Usage | Trainable % | Gradient Stability |
-|---------------|--------------|-------------|--------------------|
-| Full Precision | >40GB | 100% | Stable |
-| 8-bit + LoRA | ~18GB | 0.024% | Very Stable |
-| 4-bit + LoRA | ~14.5GB | 0.024% | Manageable |
-| 2-bit + LoRA | ~11GB | 0.024% | Experimental |
+---
 
-### Training Performance
-- **Loss Convergence**: 35.38 → 31.62 in 140 steps (10.6% improvement)
-- **Gradient Clipping**: Automatic handling of 280K+ gradient norms
-- **Memory Efficiency**: Stable training on 14.58GB GPU
-- **Speed**: Proportional to model complexity (1.5B slower than 0.5B as expected)
+## 📦 Datasets
+
+Datasets are configured in `configs/dataset.json` and downloaded via:
+```bash
+python manage.py download
+```
+Default source preference: ModelScope -> HuggingFace (with auto mirror if needed).
+
+Examples (see `configs/dataset.json` for full list):
+- Chinese: Chinese1, Chinese2, Chinese3, Chinese4, Chinese5, Chinese6
+- English: English1, English2, English3, English4
+- Math: Math1, Math2, Math4, Math5
+- Code: Code1, Code2, Code4
+- Web: Web1, Web2, Web3
+- Audio: Audio1, Audio2, Audio3
+- Image: Image1, Image2
+- Document/Visual: VQAv2, FinQA, DocVQ1A, Exam, SG1, Chat1, Publaynet1, Medical1, Financial1
+
+---
+
+## 🏆 Training on ~14.6GB GPU
+
+PiscesL1 supports training 0.5B–1.5B models on ~14.6GB GPUs using quantization, LoRA, and memory optimizations.
+
+- Multi-bit quantization: 2/4/8-bit
+- LoRA: ~0.024% trainable params for 1.5B
+- Gradient checkpointing
+- K-FAC enhanced second-order methods
+- Adaptive gradient clipping
+
+Examples:
+```bash
+# 4-bit + LoRA
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 4 --force_lora
+
+# 8-bit + LoRA
+python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quant_bits 8 --force_lora
+```
 
 ---
 
 ## ⚡ Quick Start
-After installation, try this 6-step workflow:
 ```bash
 # 1. Environment setup
 python manage.py setup
 
-# 2. Activate environment
-python manage.py source
-
-# 3. Pull latest code (optional)
+# 2. Pull latest code (optional)
 python manage.py update
 
-# 4. Download default datasets
+# 3. Download default datasets
 python manage.py download
 
-# 5. Train a small model (0.5B)
+# 4. Train a small model (0.5B)
 python manage.py train --model_size 0.5B
 
-# 6. Run inference
-python manage.py infer --prompt "Explain machine learning in simple terms" --ckpt ckpt/latest.pt
+# 5. Run inference
+python manage.py infer --ckpt ckpt/latest.pt --prompt "Explain machine learning in simple terms"
 ```
 
 ## 🤖 MCP Native Agent Support [Beta]
-Pisces L1 now includes **native MCP (Model Context Protocol)** support, enabling seamless agent-to-agent communication and distributed task execution.
-
-### MCP Features
-- **Native Integration**: Built-in MCP protocol support in `model/mcp/`
-- **Async Communication**: All agent methods support async/await
-- **Multimodal MCP**: Full support for text, image, audio via MCP protocol
-- **Zero Dependencies**: No additional libraries required
-
-### MCP Command Examples
+MCP support is implemented under `model/mcp/` and tools/mcp.
 ```bash
-# Show MCP config status
 python manage.py mcp --mcp_action status
-
-# Start background discovery (non-blocking)
 python manage.py mcp --mcp_action warmup
-
-# Refresh MCP tools cache (blocking)
 python manage.py mcp --mcp_action refresh-cache
 ```
 
-## 🎯 Model Evaluation & Benchmarking
-Pisces L1 includes comprehensive benchmarking support for 26 standardized evaluation benchmarks covering Chinese, English, mathematics, coding, and reasoning tasks.
-
-### Available Benchmarks
-
-#### Core Benchmarks
-| Benchmark | Language | Focus Areas | Questions |
-|-----------|----------|-------------|-----------|
-| **MMLU** | English | 57 disciplines (STEM/Humanities/Social Sciences) | Multi-choice |
-| **C-Eval** | Chinese | 52 Chinese disciplines | Multi-choice |
-| **C-Eval Hard** | Chinese | College/postgraduate entrance exams | Hard |
-| **SuperCLUE** | Chinese | General, reasoning, agent, hard tasks | Mixed |
-| **SuperBench** | Chinese/English | Semantics, alignment, code, agent, safety | 32 tasks |
-| **OpenCompass 2.0** | Chinese/English | Language, knowledge, reasoning, math, code, agent | 15k questions |
-
-#### Code & Programming
-| Benchmark | Language | Focus | Problems |
-|-----------|----------|--------|----------|
-| **HumanEval** | English | Python function completion | 164 |
-| **MBPP** | English | Basic Python programming | 974 |
-| **LiveCodeBench v5** | English | Real-time programming contests | Continuous |
-| **MBPP-Plus** | English | Advanced programming | 974 |
-| **DS-1000** | English | Data science code | 1000 |
-| **CRUXEval** | English | Code execution & reasoning | 800 |
-
-#### Mathematics & Reasoning
-| Benchmark | Language | Focus | Problems |
-|-----------|----------|--------|----------|
-| **GSM8K** | English | Elementary math word problems | 8500 |
-| **AIME 2024-2025** | English | High school math competition | 15 |
-| **CMATH** | Chinese | Chinese math (elementary to high school) | 5800 |
-| **BBH** | English | 23 advanced reasoning tasks | 6500 |
-| **DROP** | English | Reading comprehension + numerical reasoning | 96k |
-
-#### Chinese Language
-| Benchmark | Language | Focus | Problems |
-|-----------|----------|--------|----------|
-| **CMMLU** | Chinese | 67 Chinese disciplines | 11.7k |
-| **AGI-Eval** | Chinese/English | College entrance, postgraduate, law, CPA | 8.1k |
-
-#### Evaluation & Safety
-| Benchmark | Language | Focus | Problems |
-|-----------|----------|--------|----------|
-| **HellaSwag** | English | Commonsense reasoning | Sentence completion |
-| **ARC-Challenge** | English | Scientific reasoning | Multi-choice |
-| **MT-Bench** | Multi-turn | 8-turn conversation evaluation | 80 |
-| **IFEval** | English | Instruction following | 541 |
-| **TruthfulQA** | English | Factuality & hallucination | 817 |
-| **SafetyBench** | Chinese/English | Safety alignment | 11k |
-| **Chatbot Arena** | Multi-turn | Human blind testing (Elo) | Real-time |
-
-### Usage Examples
-
-#### List all benchmarks
-```bash
-python manage.py benchmark --list
-```
-
-#### Get benchmark details
-```bash
-python manage.py benchmark --info mmlu
-```
-
-#### Run performance benchmark
-```bash
-python manage.py benchmark --perf --config configs/1.5B.json --seq_len 4096
-```
-
-#### Run specific benchmark
-```bash
-python manage.py benchmark --benchmark mmlu --config configs/1.5B.json
-```
+---
 
 ## ❓ FAQ
-- **Q: How do I see all available commands?**  
-  A: `python manage.py help`
-- **Q: How do I add a new dataset?**  
-  A: Add the dataset name to the `DATASETS` list in `data/download.py` and rerun `python manage.py download`. For custom datasets, the format should be JSONL with a `text` field or Parquet with `input_ids` and `labels` columns.
-- **Q: Getting out-of-memory errors?**  
-  A: Use a smaller model size, reduce sequence length, or enable 4-bit quantization via `python manage.py quantize` before training.
-- **Q: How to resume training?**  
-  A: Use `--resume_ckpt path/to/checkpoint.pt` to continue from a saved checkpoint.
-- **Q: Where are model configs?**  
-  A: See `configs/` directory for all model sizes.
-- **Q: How to run on CPU only?**  
-  A: Most features require GPU, but you can try with `--device cpu` (performance will be slow).
-- **Q: How to run model evaluation?**  
-  A: Use `python manage.py benchmark` with available benchmarks. See the Model Evaluation section above.
+- How do I see all commands? `python manage.py help`
+- How to add a dataset? Edit `configs/dataset.json` and run `python manage.py download`. For custom datasets, prefer JSONL with `text` or Parquet with `input_ids`/`labels`.
+- OOM? Use a smaller model, reduce sequence length, or enable 4-bit quantization (`--force_quant --quant_bits 4`, often with `--force_lora`).
+- Resume training? `--resume_ckpt path/to/ckpt.pt` (optionally `--reset_lr`)
+- CPU-only? `--device cpu` works for some features (slower).
+- Benchmarking? `python manage.py benchmark ...` with `--config`, `--seq_len`, `--model` etc.
 
 ---
 
 ## 📄 License
-This project is licensed under the **Apache License 2.0** - see the [LICENSE](LICENSE) file for details.
-
-### License Summary
-- **Commercial Use**: ✅ Permitted
-- **Modification**: ✅ Permitted  
-- **Distribution**: ✅ Permitted
-- **Attribution**: ✅ Required
-- **Patent Grant**: ✅ Included
+This project is licensed under the Apache License 2.0 — see [LICENSE](LICENSE).
 
 ---
 
 ## 🌏 Community & Citation
 - Issues & PRs welcome!
-- [PiscesL1 in Gitee](https://gitee.com/dunimd/piscesl1.git)
-- [PiscesL1 in GitHub](https://github.com/mf2023/piscesl1.git)
-- [PiscesL1 in ModelScope](https://www.modelscope.cn/models/mfchina2024/PiscesL1)
+- Gitee: https://gitee.com/dunimd/piscesl1.git
+- GitHub: https://github.com/mf2023/piscesl1.git
+- ModelScope: https://www.modelscope.cn/models/mfchina2024/PiscesL1
 
-<h3 align="center">Where intuition navigates the depths of data And empathy gives form to intelligence</h3>
-
-![summary](./icons/PD.png)
+<h3 align="center">Where intuition navigates the depths of data · And empathy gives form to intelligence</h3>
