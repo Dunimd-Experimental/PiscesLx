@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -23,7 +24,7 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
 
-logger = PiscesLxCoreLog("PiscesLx.Tools.MCP")
+logger = PiscesLxCoreLog("pisceslx.data.download")
 
 DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[1] / "MCP" / "MCP.json"
 DEFAULT_SOURCE_DIR = Path(__file__).resolve().parents[1] / "MCP"

@@ -22,8 +22,7 @@ import sys
 import argparse
 from pathlib import Path
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager, PiscesLxCoreUL
-
-logger = PiscesLxCoreLog("PiscesLx.Tools.Changelog")
+logger = PiscesLxCoreLog("pisceslx.data.download")
 
 def show_changelog(args=None):
     """

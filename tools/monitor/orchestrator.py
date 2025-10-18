@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -21,13 +22,12 @@ import logging
 import time
 from typing import Any, Optional
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+logger = PiscesLxCoreLog("pisceslx.data.download")
 from utils import PiscesLxCoreHookBus
 from utils import PiscesLxCoreEnhancedCacheManager
 from utils import PiscesLxCoreTimeout, PiscesLxCoreRetry
-from utils import PiscesLxCoreDeviceFacade
+from utils import PiscesLxCoreDeviceManager
 from utils import PiscesLxCoreFS
-
-logger = PiscesLxCoreLog("PiscesLx.Tools.Monitor.Orchestrator")
 
 # Reuse the training profiler to avoid duplication
 try:
@@ -96,7 +96,7 @@ class PiscesLxToolsMonitorOrchestrator:
         
         # Initialize utils components
         self._cache_manager = PiscesLxCoreEnhancedCacheManager()
-        self._device_manager = PiscesLxCoreDeviceFacade()
+        self._device_manager = PiscesLxCoreDeviceManager()
         self._fs_manager = PiscesLxCoreFS()
         
         # Orchestrator state

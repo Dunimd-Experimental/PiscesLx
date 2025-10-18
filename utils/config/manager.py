@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -321,3 +322,16 @@ class PiscesLxCoreConfigManagerFacade:
             PiscesLxCoreConfigManager: The configuration manager instance.
         """
         return self._manager
+
+
+def get_config_manager(project_root: Optional[Path] = None) -> PiscesLxCoreConfigManager:
+    """
+    Get an instance of the configuration manager.
+
+    Args:
+        project_root (Optional[Path]): Path to the project root directory.
+
+    Returns:
+        PiscesLxCoreConfigManager: Instance of the configuration manager.
+    """
+    return PiscesLxCoreConfigManager.get_instance(project_root)

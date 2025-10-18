@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -30,52 +31,6 @@ from typing import Any, Dict, Optional, Callable, Tuple, List
 
 _DEFAULT_CACHE: Optional["PiscesLxCoreCache"] = None
 logger = PiscesLxCoreLog("PiscesLx.Utils.Cache")
-
-class PiscesLxCoreCacheManagerFacade:
-    """Lightweight facade exposing filesystem cache directories.
-
-    - Provides a stable API for directory access used across tools and data modules
-    - Keeps compatibility with pre-existing code expecting `.base_cache_dir` and `.get_cache_dir(subdir)`
-    - Internally, resolves base cache dir via `utils.fs.core.PiscesLxCoreFS`
-    - Optionally exposes the enhanced cache instance for advanced use
-    """
-
-    _instance: Optional["PiscesLxCoreCacheManagerFacade"] = None
-
-    def __init__(self) -> None:
-        # Local imports to avoid expanding top-level dependencies of this module
-        from utils.fs.core import PiscesLxCoreFS
-        from utils.cache.enhanced import PiscesLxCoreEnhancedCacheManager
-        self._fs = PiscesLxCoreFS()
-        self._base_cache_dir: Optional[Path] = None
-        self._enhanced_cache_mgr = PiscesLxCoreEnhancedCacheManager.get_instance()
-
-    @property
-    def base_cache_dir(self) -> Path:
-        if self._base_cache_dir is None:
-            base = self._fs.cache_dir()
-            try:
-                base.mkdir(parents=True, exist_ok=True)
-            except Exception:
-                # Best-effort; downstream will attempt mkdir again if needed
-                pass
-            self._base_cache_dir = base
-        return self._base_cache_dir
-
-    def get_cache_dir(self, subdir: str) -> Path:
-        p = self.base_cache_dir / subdir
-        p.mkdir(parents=True, exist_ok=True)
-        return p
-
-    def get_default_cache(self):
-        # Expose the enhanced cache for value caching if needed
-        return self._enhanced_cache_mgr.get_default_cache()
-
-    @classmethod
-    def get_instance(cls) -> "PiscesLxCoreCacheManagerFacade":
-        if cls._instance is None:
-            cls._instance = cls()
-        return cls._instance
 
 class PiscesLxCoreCache:
     """

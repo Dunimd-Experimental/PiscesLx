@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -20,12 +21,11 @@
 import time
 import threading
 from utils.log.core import PiscesLxCoreLog
+logger = PiscesLxCoreLog("PiscesLx.Utils.Hooks.Bus")
 from .types import PiscesLxCoreEventMetrics
 from typing import Any, Dict, Optional, List
 from .executor import PiscesLxCoreHookExecutor
 from .registry import PiscesLxCoreListenerRegistry
-
-logger = PiscesLxCoreLog("PiscesLx.Utils.Hooks.Bus")
 
 class PiscesLxCoreHookBus:
     """HookBus - Unified event bus implementation."""

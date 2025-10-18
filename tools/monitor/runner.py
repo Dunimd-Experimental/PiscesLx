@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -18,11 +19,10 @@
 # limitations under the License.
 
 from typing import Any
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+logger = PiscesLxCoreLog("pisceslx.data.download")
 from . import impl as _impl
 from .impl import PiscesLxToolsMonitorImpl
-from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-
-logger = PiscesLxCoreLog("PiscesLx.Tools.Monitor.Runner")
 
 class PiscesLxToolsMonitorRunner:
     """Encapsulates the complete monitoring workflow (legacy-compatible).

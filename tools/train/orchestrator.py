@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -24,15 +25,14 @@ from types import ModuleType
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
 from utils import PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
 from utils import PiscesLxCoreHookBus
-from utils import PiscesLxCoreDeviceFacade
+from utils import PiscesLxCoreDeviceFacade, PiscesLxCoreDeviceManager
 from utils import PiscesLxCoreEnhancedCacheManager
 from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
 from .profiler import PiscesLxToolsProfiler
 from .config import PiscesLxToolsTrainConfig
 from .quant_export import PiscesLxToolsQuantExporter
 from .pref_align import PiscesLxToolsPreferenceTrainer
-
-logger = PiscesLxCoreLog("PiscesLx.Tools.Train.Orchestrator")
+logger = PiscesLxCoreLog("pisceslx.data.download")
 
 class PiscesLxToolsTrainOrchestrator:
     """
@@ -57,7 +57,7 @@ class PiscesLxToolsTrainOrchestrator:
         """
         self.args = args
         # Initialize logger
-        self._logger = PiscesLxCoreLog("PiscesLx.Tools.Train.Orchestrator")
+        self._logger = PiscesLxCoreLog("pisceslx.tools.train.orchestrator")
         # Create a configuration object from the provided arguments
         self.cfg = PiscesLxToolsTrainConfig.from_args(args)
         # Initialize the hook bus for event handling
@@ -255,12 +255,11 @@ class PiscesLxToolsTrainOrchestrator:
             raise
         
         # Emit training standard completion event with results
-        _perf_delta = locals().get('performance_delta', {}) if self.observability else {}
         completion_context = {
             "success": training_success,
             "cache_utilized": cache_hit,
             "distributed_coordination": self.dist_config.is_distributed(),
-            "performance_improved": (_perf_delta.get('improvement', False) if self.observability else None)
+            "performance_improved": performance_delta.get('improvement', False) if self.observability else None
         }
         self.hooks.emit("train.standard.complete", **completion_context)
 

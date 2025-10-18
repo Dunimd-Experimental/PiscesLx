@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -20,7 +21,6 @@
 import torch
 from typing import Any
 import torch.distributed as dist
-from utils.log.core import PiscesLxCoreLog
 
 class PiscesLxCoreModelParallelizer:
     """A utility class for wrapping models with parallelization for training and inference."""
@@ -74,9 +74,10 @@ class PiscesLxCoreModelParallelizer:
         except Exception as e:
             # Log failure of DistributedDataParallel and proceed to fallback
             if hasattr(model, 'module') or hasattr(model, 'device'):
-                PiscesLxCoreLog("PiscesLx.Utils.Device.Dist.Wrap").debug(
-                    "DistributedDataParallel failed, falling back to DataParallel",
-                    error=str(e),
+                import logging
+                logging.getLogger(__name__).debug(
+                    "DistributedDataParallel failed, falling back to DataParallel: %s", 
+                    e, 
                     exc_info=True
                 )
 

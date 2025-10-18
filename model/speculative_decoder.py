@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -144,10 +145,7 @@ class ArcticSpeculativeDecoder(nn.Module):
             'draft_acceptance_rate': 0.0,
             'speedup': 1.0,
             'iter_accept': [],
-            'total_time_ms': 0.0,
-            # added fine-grained timing
-            'total_draft_time_ms': 0.0,
-            'total_verify_time_ms': 0.0,
+            'total_time_ms': 0.0
         }
         _t0 = time.time()
         
@@ -157,17 +155,13 @@ class ArcticSpeculativeDecoder(nn.Module):
                 if cached is not None:
                     return cached, {'from_cache': True}
             
-            _td0 = time.time()
             draft_ids, draft_logits = self._generate_draft_sequence(
                 generated_ids, attention_mask, cache_manager=cache_manager, **model_kwargs
             )
-            stats['total_draft_time_ms'] += (time.time() - _td0) * 1000.0
             
-            _tv0 = time.time()
             accepted_ids, num_accepted = self._verify_draft_tokens(
                 generated_ids, draft_ids, draft_logits, attention_mask, **model_kwargs
             )
-            stats['total_verify_time_ms'] += (time.time() - _tv0) * 1000.0
             
             generated_ids = torch.cat([generated_ids, accepted_ids], dim=1)
             if attention_mask is None:
@@ -183,21 +177,6 @@ class ArcticSpeculativeDecoder(nn.Module):
             stats['accepted_tokens'] += num_accepted
             stats['rejected_tokens'] += (draft_ids.shape[1] - num_accepted)
             stats['iter_accept'].append(int(num_accepted))
-            # lightweight on-the-fly adaptation per-iteration
-            try:
-                iter_accept_rate = float(num_accepted) / max(1, draft_ids.shape[1])
-                if iter_accept_rate >= 0.8:
-                    # gently explore more aggressive drafting
-                    self.config.draft_length = min(10, self.config.draft_length + 1)
-                    if hasattr(self.config, 'num_candidates'):
-                        self.config.num_candidates = min(8, self.config.num_candidates + 1)
-                elif iter_accept_rate <= 0.3:
-                    # back off to reduce verification overhead
-                    self.config.draft_length = max(2, self.config.draft_length - 1)
-                    if hasattr(self.config, 'num_candidates'):
-                        self.config.num_candidates = max(2, self.config.num_candidates - 1)
-            except Exception:
-                pass
             
             if num_accepted == 0:
                 streak = stats.get('_zero_accept_streak', 0) + 1
@@ -242,16 +221,9 @@ class ArcticSpeculativeDecoder(nn.Module):
             cache_manager.set_speculative_cache(self.config.draft_length, generated_ids)
         
         try:
-            logger.debug(
-                f"[SpecDecode] draft_len={self.config.draft_length}, "
-                f"candidates={self.config.num_candidates}, "
-                f"accept_rate={stats['draft_acceptance_rate']:.3f}, "
-                f"speedup={stats['speedup']:.2f}, "
-                f"time_ms={stats['total_time_ms']:.1f}, "
-                f"draft_ms={stats['total_draft_time_ms']:.1f}, "
-                f"verify_ms={stats['total_verify_time_ms']:.1f}, "
-                f"iters={len(stats['iter_accept'])}"
-            )
+            logger.debug(f"[SpecDecode] draft_len={self.config.draft_length}, candidates={self.config.num_candidates}, "
+                  f"accept_rate={stats['draft_acceptance_rate']:.3f}, speedup={stats['speedup']:.2f}, "
+                  f"time_ms={stats['total_time_ms']:.1f}, iters={len(stats['iter_accept'])}")
         except Exception:
             pass
         if self.on_stats is not None:

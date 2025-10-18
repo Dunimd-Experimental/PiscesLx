@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -17,38 +18,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+# Core utilities
+from utils.ul import PiscesLxCoreUL
 from utils.fs.core import PiscesLxCoreFS
-from utils.log.core import PiscesLxCoreLog
-from utils.cache.core import PiscesLxCoreCacheManagerFacade
-from utils.device.facade import PiscesLxCoreDeviceFacade
-from utils.observability.metrics import PiscesLxCoreMetricsRegistry
-from utils.observability.facade import PiscesLxCoreObservabilityFacade
-from utils.watermark.manager import PiscesWatermarkManager as PiscesLxUtilsWatermarkManager
-from utils.watermark.watermark import PiscesLxWatermark as PiscesLxUtilsWatermark
-# Expose logits processor via utils facade
-try:
-    from utils.watermark.logits_processor import PiscesWatermarkLogitsProcessor as PiscesLxUtilsLogitsProcessor
-except Exception:
-    PiscesLxUtilsLogitsProcessor = None
-from utils.watermark.protocol import (
-    create_payload as PiscesLxUtilsCreatePayload,
-    sign_payload as PiscesLxUtilsSignPayload,
-    verify_payload as PiscesLxUtilsVerifyPayload,
-)
-from utils.config.manager import PiscesLxCoreConfigManager, PiscesLxCoreConfigManagerFacade
-from utils.cache.enhanced import PiscesLxCoreEnhancedCache, PiscesLxCoreEnhancedCacheManager
+from utils.validate import PiscesLxCoreValidator
+from utils.config.loader import PiscesLxCoreConfigLoader
+from utils.config.manager import PiscesLxCoreConfigManager
 from utils.checkpoint import PiscesLxCoreCheckpointManager
-from utils.concurrency import (
-    PiscesLxCoreTimeout,
-    PiscesLxCoreRetry,
-    PiscesLxCoreAsyncManager,
-    PiscesLxCoreResourcePool,
-    PiscesLxCoreConcurrencyManager,
-    PiscesLxCoreParallel,
-)
+from utils.concurrency import PiscesLxCoreTimeout, PiscesLxCoreRetry, PiscesLxCoreParallel
+
+# Error taxonomy
 from utils.error import (
-    PiscesLxCoreErrorCode,
     PiscesLxCoreError,
+    PiscesLxCoreErrorCode,
     PiscesLxCoreValidationError,
     PiscesLxCoreConfigError,
     PiscesLxCoreIOError,
@@ -56,7 +38,6 @@ from utils.error import (
     PiscesLxCoreConcurrencyError,
     PiscesLxCoreTimeoutError,
     PiscesLxCoreNetworkError,
-    PiscesLxCoreMemoryError,
     PiscesLxCoreCacheError,
     PiscesLxCoreLogError,
     PiscesLxCoreHooksError,
@@ -67,79 +48,181 @@ from utils.error import (
     PiscesLxCoreDeviceError,
     PiscesLxCoreNoGPUError,
     PiscesLxCoreGPUInsufficientError,
-    PiscesLxCorePlatformDetectionError,
-    PiscesLxCoreDistributedSetupError,
-    PiscesLxCoreDeviceOrchestrationError,
-    PiscesLxCoreConfigurationError,
+    PiscesLxCoreMemoryError,
 )
+
+# Cache module
+from utils.cache.core import PiscesLxCoreCache
+from utils.cache.enhanced import PiscesLxCoreEnhancedCache, PiscesLxCoreEnhancedCacheManager
+from utils.cache import PiscesLxCoreCacheManagerFacade
+
+# Backward compatibility alias
+PiscesLxCoreCacheManager = PiscesLxCoreEnhancedCacheManager
+
+# Log module
+from utils.log.core import PiscesLxCoreLog, PiscesLxCoreLogManager
+from utils.log.context import PiscesLxCoreLogContext
+from utils.log.analytics import (
+    PiscesLxCoreLogPatternAnalyzer,
+    PiscesLxCoreLogPredictor,
+    PiscesLxCoreLogForecaster,
+    PiscesLxCoreLogCorrelator
+)
+from utils.log.config import (
+    PiscesLxCoreLogConfig,
+    PiscesLxCoreLogConfigBuilder
+)
+
+# Hooks module - import before device to ensure get_global_hook_bus is available
+from utils.hooks.types import (
+    PiscesLxCoreAlgorithmicListener,
+    PiscesLxCoreFunctionListener,
+    PiscesLxCoreEventMetrics,
+    PiscesLxCoreExecutionResult
+)
+from utils.hooks.registry import PiscesLxCoreListenerRegistry, PiscesLxCoreRegistryEntry
+from utils.hooks.executor import PiscesLxCoreHookExecutor
+from utils.hooks.bus import PiscesLxCoreHookBus, PiscesLxCoreGlobalHookBusFacade
+
+# Device module
+from utils.device.config import PiscesLxCoreDeviceConfig
+from utils.device.facade import PiscesLxCoreDeviceFacade
+from utils.device.runner import PiscesLxCoreDeviceRunner
+from utils.device.manager import PiscesLxCoreDeviceManager
+from utils.device.cluster import PiscesLxCoreDeviceUnifiedPlanner
+from utils.device.cpu_detector import PiscesLxCoreDeviceCpuDetector
+
+from utils.device.smart_detector import PiscesLxCoreDeviceSmartDetector
+from utils.device.nvidia_detector import PiscesLxCoreDeviceNvidiaDetector
+from utils.device.dist import (
+    PiscesLxCoreDistConfig,
+    PiscesLxCoreDistPlan,
+    PiscesLxCoreDistPlanner,
+    PiscesLxCoreProcessGroupManager,
+    PiscesLxCoreModelParallelizer,
+    PiscesLxCoreClusterEnv,
+    PiscesLxCoreTopologyOptimizer,
+    PiscesLxCoreLaunchSpec,
+    PiscesLxCoreDistributedSamplerBuilder,
+)
+
+# Observability module
+from utils.observability.decorators import PiscesLxCoreDecorators
+from utils.observability.metrics import PiscesLxCoreMetricsRegistry
+from utils.observability.facade import PiscesLxCoreObservabilityFacade
+from utils.observability.manager import PiscesLxCoreObservabilityManager
+from utils.observability.service import PiscesLxCoreObservabilityService
+
+# Quantization module
 from utils.quantization import PiscesLxCoreQuantizer, PiscesLxCoreQuantizationFacade
-from utils.ul import PiscesLxCoreUL
-from utils.validate import PiscesLxCoreValidator
+
+# Config module
+from utils.config.manager import PiscesLxCoreConfigManager, PiscesLxCoreConfigManagerFacade
 
 __all__ = [
-    # Config
-    "PiscesLxCoreConfigManager",
-    "PiscesLxCoreConfigManagerFacade",
+    # Core utilities
+    'PiscesLxCoreUL',
+    'PiscesLxCoreFS',
+    'PiscesLxCoreValidator',
+    'PiscesLxCoreConfigLoader',
+    'PiscesLxCoreConfigManager',
+    'PiscesLxCoreConfigManagerFacade',
+    'PiscesLxCoreTimeout', 
+    'PiscesLxCoreRetry', 
+    'PiscesLxCoreParallel',
+    'PiscesLxCoreCheckpointManager',
+
+    
+    # Error taxonomy
+    'PiscesLxCoreError',
+    'PiscesLxCoreErrorCode',
+    'PiscesLxCoreValidationError',
+    'PiscesLxCoreConfigError',
+    'PiscesLxCoreIOError',
+    'PiscesLxCoreFilesystemError',
+    'PiscesLxCoreConcurrencyError',
+    'PiscesLxCoreTimeoutError',
+    'PiscesLxCoreNetworkError',
+    'PiscesLxCoreCacheError',
+    'PiscesLxCoreLogError',
+    'PiscesLxCoreHooksError',
+    'PiscesLxCoreObservabilityError',
+    'PiscesLxCoreReporterError',
+    'PiscesLxCoreMetricsError',
+    'PiscesLxCoreExporterError',
+    'PiscesLxCoreDeviceError',
+    'PiscesLxCoreNoGPUError',
+    'PiscesLxCoreGPUInsufficientError',
+    'PiscesLxCoreMemoryError',
+    
     # Cache
-    "PiscesLxCoreEnhancedCache",
-    "PiscesLxCoreEnhancedCacheManager",
-    "PiscesLxCoreCacheManagerFacade",
-    # Device
-    "PiscesLxCoreDeviceFacade",
-    # Filesystem
-    "PiscesLxCoreFS",
+    'PiscesLxCoreCache',
+    'PiscesLxCoreEnhancedCache',
+    'PiscesLxCoreEnhancedCacheManager',
+    'PiscesLxCoreCacheManager',  # Backward compatibility alias
+    'PiscesLxCoreCacheManagerFacade',
+    
     # Logging
-    "PiscesLxCoreLog",
+    'PiscesLxCoreLog',
+    'PiscesLxCoreLogManager',
+    'PiscesLxCoreLogContext',
+    
+    # Log analytics
+    'PiscesLxCoreLogPatternAnalyzer',
+    'PiscesLxCoreLogPredictor',
+    'PiscesLxCoreLogForecaster',
+    'PiscesLxCoreLogCorrelator',
+    
+    # Log configuration
+    'PiscesLxCoreLogConfig',
+    'PiscesLxCoreLogConfigBuilder',
+    
+    # Device
+    'PiscesLxCoreDeviceConfig',
+    'PiscesLxCoreDeviceManager', 
+    
+    'PiscesLxCoreDeviceFacade',
+    'PiscesLxCoreDeviceNvidiaDetector',
+    'PiscesLxCoreDeviceCpuDetector',
+    'PiscesLxCoreDeviceSmartDetector',
+    'PiscesLxCoreDeviceRunner',
+    # Device-specific error types are already exported in the taxonomy section above
+    
+    # Unified planner facade
+    'PiscesLxCoreDeviceUnifiedPlanner',
+    
+    # Distributed
+    'PiscesLxCoreDistConfig',
+    'PiscesLxCoreDistPlan',
+    'PiscesLxCoreDistPlanner',
+    'PiscesLxCoreProcessGroupManager',
+    'PiscesLxCoreModelParallelizer',
+    'PiscesLxCoreClusterEnv',
+
+    'PiscesLxCoreTopologyOptimizer',
+    'PiscesLxCoreLaunchSpec',
+    'PiscesLxCoreDistributedSamplerBuilder',
+    
+    # Hooks
+    'PiscesLxCoreAlgorithmicListener',
+    'PiscesLxCoreFunctionListener',
+    'PiscesLxCoreEventMetrics',
+    'PiscesLxCoreExecutionResult',
+    'PiscesLxCoreListenerRegistry',
+    'PiscesLxCoreRegistryEntry',
+    'PiscesLxCoreHookExecutor',
+    'PiscesLxCoreHookBus',
+    'PiscesLxCoreGlobalHookBusFacade',
+    
     # Observability
-    "PiscesLxCoreObservabilityFacade",
-    # Metrics
-    "PiscesLxCoreMetricsRegistry",
-    # Watermark
-    "PiscesLxUtilsWatermark",
-    "PiscesLxUtilsWatermarkManager",
-    "PiscesLxUtilsCreatePayload",
-    "PiscesLxUtilsSignPayload",
-    "PiscesLxUtilsVerifyPayload",
-    "PiscesLxUtilsLogitsProcessor",
-    # Checkpoint
-    "PiscesLxCoreCheckpointManager",
-    # Concurrency
-    "PiscesLxCoreTimeout",
-    "PiscesLxCoreRetry",
-    "PiscesLxCoreAsyncManager",
-    "PiscesLxCoreResourcePool",
-    "PiscesLxCoreConcurrencyManager",
-    "PiscesLxCoreParallel",
-    # Error classes
-    "PiscesLxCoreErrorCode",
-    "PiscesLxCoreError",
-    "PiscesLxCoreValidationError",
-    "PiscesLxCoreConfigError",
-    "PiscesLxCoreIOError",
-    "PiscesLxCoreFilesystemError",
-    "PiscesLxCoreConcurrencyError",
-    "PiscesLxCoreTimeoutError",
-    "PiscesLxCoreNetworkError",
-    "PiscesLxCoreMemoryError",
-    "PiscesLxCoreCacheError",
-    "PiscesLxCoreLogError",
-    "PiscesLxCoreHooksError",
-    "PiscesLxCoreObservabilityError",
-    "PiscesLxCoreReporterError",
-    "PiscesLxCoreMetricsError",
-    "PiscesLxCoreExporterError",
-    "PiscesLxCoreDeviceError",
-    "PiscesLxCoreNoGPUError",
-    "PiscesLxCoreGPUInsufficientError",
-    "PiscesLxCorePlatformDetectionError",
-    "PiscesLxCoreDistributedSetupError",
-    "PiscesLxCoreDeviceOrchestrationError",
-    "PiscesLxCoreConfigurationError",
+    'PiscesLxCoreObservabilityService',
+    'PiscesLxCoreDecorators',
+    'PiscesLxCoreMetricsRegistry',
+    'PiscesLxCoreObservabilityFacade',
+    'PiscesLxCoreObservabilityManager',
+    
     # Quantization
-    "PiscesLxCoreQuantizer",
-    "PiscesLxCoreQuantizationFacade",
-    # UL
-    "PiscesLxCoreUL",
-    # Validate
-    "PiscesLxCoreValidator",
+    'PiscesLxCoreQuantizer',
+
+    'PiscesLxCoreQuantizationFacade',
 ]

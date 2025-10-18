@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -19,10 +20,19 @@
 
 import os
 import time
+import logging
 from pathlib import Path
-from utils.log.core import PiscesLxCoreLog
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
+
+# Configure the logging system
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler()
+    ]
+)
 
 @dataclass
 class PiscesL1CoreMonitoringConfig:
@@ -49,7 +59,7 @@ class PiscesL1CoreMonitoringConfig:
         metrics (List[str]): List of metrics to monitor. Defaults to an empty list.
     """
     
-    logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.Config")
+    logger = logging.getLogger('PiscesL1CoreMonitoringConfig')
     
     # Basic configuration
     session_id: str = ""

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -21,22 +22,9 @@ import os
 import sys
 import time
 import contextlib
-from typing import Any, Optional, List
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-
-logger = PiscesLxCoreLog("PiscesLx.Tools.Infer.Impl")
-
-# Attention backend toggles helper
-def _enable_attention_backends(enable_sdpa: bool = True, enable_flash: bool = True) -> None:
-    try:
-        import torch
-        # PyTorch 2.x SDP controls
-        if hasattr(torch.backends, "cuda") and hasattr(torch.backends.cuda, "sdp"):
-            torch.backends.cuda.sdp.enable_math_sdp(True)  # always allow math fallback
-            torch.backends.cuda.sdp.enable_flash_sdp(bool(enable_flash))
-            torch.backends.cuda.sdp.enable_mem_efficient_sdp(bool(enable_sdpa))
-    except Exception:
-        pass
+logger = PiscesLxCoreLog("pisceslx.data.download")
+from typing import Any, Optional, List
 
 # Runtime context
 _HOOKS = None
@@ -79,30 +67,53 @@ def _emit(event: str, **kwargs: Any) -> None:
 
 def setup_inference_device(device_pref: str):
     """
-    Unified device selection via utils.device.setup_devices (SSOT).
-    Only maps utils config to torch.device; no本地策略重复。
+    Choose an inference device based on the preference with GPUManager fallback.
+    
+    This function selects an appropriate device for inference according to the provided 
+    preference. It supports "auto", "cpu", and "cuda[:id]" as device preferences. 
+    When "auto" is selected, it tries to use GPUManager to determine the best strategy.
+    
+    Args:
+        device_pref (str): Device preference. Options: "auto", "cpu", "cuda[:id]".
+    Returns:
+        torch.device: The selected device for inference.
     """
     import torch
-    try:
-        from utils import PiscesLxCoreDeviceFacade
-        dev_cfg = PiscesLxCoreDeviceFacade().setup_devices(mode="inference")
-        if device_pref != "auto":
-            # Respect explicit preference minimally
-            return torch.device(device_pref)
-        if dev_cfg.get("device_type") == "cpu" or not torch.cuda.is_available():
+
+    if device_pref == "auto":
+        # Check if CUDA is available
+        if not torch.cuda.is_available():
             device = torch.device("cpu")
+            logger.success("CUDA not available, falling back to CPU inference mode")
+            logger.success("Inference mode: cpu")
         else:
-            gpu_ids = dev_cfg.get("gpu_ids", [])
-            if gpu_ids:
-                torch.cuda.set_device(gpu_ids[0])
-                device = torch.device(f"cuda:{gpu_ids[0]}")
-            else:
-                device = torch.device("cuda")
-        logger.success(f"Using device (utils): {device}")
-        return device
-    except Exception:
-        # Safe fallback without本地策略扩展
-        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            try:
+                from utils.device import setup_devices
+                device_config = setup_devices()
+                # Apply device selection from orchestrator
+                if device_config.get('device_type') == 'cpu':
+                    device = torch.device("cpu")
+                    logger.success("CPU inference mode (via device orchestrator)")
+                else:
+                    gpu_ids = device_config.get('gpu_ids', [])
+                    if gpu_ids:
+                        device = torch.device(f"cuda:{gpu_ids[0]}")
+                        torch.cuda.set_device(gpu_ids[0])
+                    else:
+                        device = torch.device("cuda")
+                # Apply silently without printing suggestions
+            except Exception as e:
+                if torch.cuda.is_available():
+                    device = torch.device("cuda")
+                    logger.success(f"DeviceOrchestrator unavailable, using default CUDA device: {e}")
+                else:
+                    device = torch.device("cpu")
+                    logger.success(f"DeviceOrchestrator unavailable and CUDA not available, using CPU: {e}")
+    else:
+        device = torch.device(device_pref)
+
+    logger.success(f"Using device: {device}")
+    return device
 
 class VLLMEngine:
     """
@@ -138,8 +149,8 @@ class VLLMEngine:
         # Determine dtype and tensor_parallel from device orchestrator if dtype is auto
         try:
             if dtype == "auto":
-                from utils import PiscesLxCoreDeviceFacade
-                _dev_cfg = PiscesLxCoreDeviceFacade().setup_devices()
+                from utils.device import setup_devices as _setup_devices_for_vllm
+                _dev_cfg = _setup_devices_for_vllm()
                 _dtype = str(_dev_cfg.get('dtype', 'fp16')).lower()
                 # Map to vLLM dtype names
                 dtype = 'bfloat16' if _dtype == 'bf16' else ('float16' if _dtype == 'fp16' else 'float32')
@@ -197,9 +208,8 @@ class VLLMEngine:
             "user_id": "vllm_user",
             "timestamp": str(int(time.time()))
         }
-        from utils import PiscesLxUtilsWatermarkManager
-        _wm = PiscesLxUtilsWatermarkManager()
-        return _wm.add_watermark(generated_text, watermark_metadata)
+        from tools.infer.watermark import watermark_text
+        return watermark_text(generated_text, prompt, watermark_metadata)
 
 def _get_attr(obj: Any, name: str, default: Any) -> Any:
     """
@@ -480,10 +490,6 @@ def _infer_impl(args: Any) -> None:
     from transformers import BitsAndBytesConfig
     from torchvision.transforms import functional as TF
     import torch.nn.functional as F
-    # Unified KV cache manager
-    from model.modeling.cache import ArcticUnifiedCacheManager
-    # Inference config facade
-    from tools.infer.config import PiscesLxToolsInferConfig
     # Start the profiler if available
     if _PROFILER is not None and hasattr(_PROFILER, 'start'):
         try:
@@ -496,13 +502,6 @@ def _infer_impl(args: Any) -> None:
     except Exception as e:
         logger.error(f"Invalid inference arguments: {e}")
         raise
-    # Bind speculative stats callback from runner (if any)
-    try:
-        _spec_cb = getattr(args, "spec_on_stats_cb", None)
-        if _spec_cb is not None:
-            _emit("infer.spec.callback.bound", bound=True)
-    except Exception:
-        _spec_cb = None
     logger.success("Starting PiscesL1 Inference with MCP Integration...")
     _emit('on_infer_start', args=args)
     # Load model configuration and inference settings
@@ -513,28 +512,12 @@ def _infer_impl(args: Any) -> None:
     with open(config_path, 'r', encoding='utf-8') as _f:
         _full_cfg = _json.load(_f)
     inference_cfg = _full_cfg.get('inference_config', {})
-    # CLI config facade (Stage-1 flags)
-    _infer_cfg = PiscesLxToolsInferConfig.from_args(args)
-    _enable_attention_backends(
-        enable_sdpa=bool(_infer_cfg.get("infer.enable_sdpa", True)),
-        enable_flash=bool(_infer_cfg.get("infer.enable_flash_attention", True))
-    )
-    # Initialize KV cache manager with paged config
-    _kv_cfg = {
-        "kv_cache_max_size": int(_full_cfg.get("kv_cache_max_size", getattr(cfg, "max_cache_size", 8192))),
-        "kv_cache_block_size": int(_infer_cfg.get("infer.kv_page_size", 512)),
-        "quantization_enabled": bool(getattr(cfg, "cache_quantization", True)),
-        "streaming_window": int(getattr(cfg, "streaming_window", 2048)),
-        "kv_paged_enabled": bool(_infer_cfg.get("infer.enable_paged_kv", False)),
-        "kv_soft_cap_factor": float(_infer_cfg.get("infer.kv_soft_cap_factor", 1.5))
-    }
-    _cache_manager = ArcticUnifiedCacheManager(_kv_cfg)
     # Automatically select the inference device (GPU if available, otherwise CPU)
     device = setup_inference_device('auto')
     # Prepare mixed precision settings from device orchestrator
     try:
-        from utils import PiscesLxCoreDeviceFacade
-        _dev_cfg = PiscesLxCoreDeviceFacade().setup_devices()
+        from utils.device import setup_devices as _setup_devices_for_infer
+        _dev_cfg = _setup_devices_for_infer()
         _mp_enabled = bool(_dev_cfg.get('mixed_precision', torch.cuda.is_available())) and torch.cuda.is_available()
         _dtype_str = str(_dev_cfg.get('dtype', 'fp16')).lower()
         _amp_dtype = torch.float16 if _dtype_str == 'fp16' else (torch.bfloat16 if _dtype_str == 'bf16' else torch.float32)
@@ -546,29 +529,12 @@ def _infer_impl(args: Any) -> None:
         model = model.to(device, dtype=_amp_dtype if _mp_enabled else None)
     except Exception:
         pass
-    # Attach cache manager to model/context if supported
-    try:
-        setattr(model, "_kv_cache_manager", _cache_manager)
-    except Exception:
-        pass
-    # Enable DataParallel if multiple GPUs are available (from utils config)
-    try:
-        from utils import PiscesLxCoreDeviceFacade
-        _dev_cfg_dp = PiscesLxCoreDeviceFacade().setup_devices(mode="inference")
-        _gpu_ids = _dev_cfg_dp.get('gpu_ids', [])
-        if device.type == 'cuda' and isinstance(_gpu_ids, list) and len(_gpu_ids) > 1:
-            logger.success(f"Detected {len(_gpu_ids)} GPUs (utils), enabling DataParallel inference")
-            model = torch.nn.DataParallel(model, device_ids=_gpu_ids)
-    except Exception:
-        pass
+    # Enable DataParallel if multiple GPUs are available
+    if torch.cuda.device_count() > 1 and device.type == 'cuda':
+        logger.success(f"Detected {torch.cuda.device_count()} GPUs, enabling DataParallel inference")
+        model = torch.nn.DataParallel(model)
     lora_used = False
-    # Emit initial cache stats (observability pipeline consumes this)
-    try:
-        _emit("infer.cache.init", stats=_cache_manager.get_cache_stats())
-    except Exception:
-        pass
-    # Note: removed invalid placeholder to avoid syntax error.
-    with contextlib.ExitStack() as _fix_indent:
+{{ ... }}
         logger.success(f"Loading model: {args.ckpt}")
         checkpoint = torch.load(args.ckpt, map_location=device)
         state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
@@ -638,86 +604,3 @@ def _infer_impl(args: Any) -> None:
         elif not lora_used:
             # Load standard model weights if no LoRA is used
             model.load_state_dict(state_dict, strict=False)
-
-        # ==== Generation path (Stage-1 hookup) ====
-        try:
-            tokenizer = get_tokenizer()
-            import torch as _torch
-            # Encode prompt
-            input_ids = tokenizer.encode(args.prompt, return_tensors='pt').to(device)
-            attention_mask = _torch.ones_like(input_ids, device=device, dtype=_torch.long)
-
-            if bool(getattr(args, "speculative", False)):
-                # Speculative decoding with callback and cache manager
-                from model.speculative_decoder import ArcticSpeculativeConfig, ArcticSpeculativeDecoder
-                spec_cfg = ArcticSpeculativeConfig(
-                    num_candidates=int(getattr(args, "spec_num_candidates", _infer_cfg.get("infer.spec_num_candidates", 4))),
-                    draft_length=int(getattr(args, "spec_gamma", _infer_cfg.get("infer.spec_draft_length", 4))),
-                    acceptance_threshold=0.8,
-                    temperature=float(getattr(args, "temperature", 0.7)),
-                    top_k=50,
-                    top_p=float(getattr(args, "top_p", 0.95))
-                )
-                decoder = ArcticSpeculativeDecoder(spec_cfg, model, tokenizer=tokenizer, on_stats=_spec_cb)
-                gen_ids, spec_stats = decoder.speculative_generate(
-                    input_ids,
-                    attention_mask=attention_mask,
-                    max_length=int(getattr(args, "max_length", 512)),
-                    cache_manager=_cache_manager
-                )
-                _emit("infer.spec.done", stats=spec_stats)
-            else:
-                # Simple greedy decoding as baseline
-                with _torch.no_grad():
-                    cur_ids = input_ids
-                    max_len = int(getattr(args, "max_length", 512))
-                    while cur_ids.shape[1] < max_len:
-                        outputs = model(cur_ids, attention_mask=None, use_cache=True)
-                        logits = outputs['logits'] if isinstance(outputs, dict) else outputs
-                        # Apply watermark logits bias before selecting next token
-                        try:
-                            from utils import PiscesLxUtilsLogitsProcessor as PiscesWatermarkLogitsProcessor
-                            _seed = str(hash(getattr(args, "prompt", "")))
-                            _lp = PiscesWatermarkLogitsProcessor(seed=_seed)
-                            _biased_last = _lp.process(cur_ids, logits[:, -1, :])
-                            _last_logits = _biased_last
-                        except Exception:
-                            _last_logits = logits[:, -1, :]
-                        next_token = _torch.argmax(_last_logits, dim=-1, keepdim=True)
-                        cur_ids = _torch.cat([cur_ids, next_token], dim=1)
-                    gen_ids = cur_ids
-
-            # Decode and emit output
-            text = tokenizer.decode(gen_ids[0].tolist())
-            # Add signed watermark to output text (native path)
-            try:
-                from utils import PiscesLxUtilsWatermarkManager
-                _wm = PiscesLxUtilsWatermarkManager()
-                _wm_meta = {
-                    "prompt": getattr(args, "prompt", ""),
-                    "params": {
-                        "temperature": float(getattr(args, "temperature", 0.7)),
-                        "max_tokens": int(getattr(args, "max_length", 512)),
-                        "top_p": float(getattr(args, "top_p", 0.95)),
-                        "use_vllm": False
-                    },
-                    "user_id": "native_user",
-                    "timestamp": str(int(time.time()))
-                }
-                text = _wm.add_watermark(text, _wm_meta)
-                # Detect and log watermark score for observability
-                try:
-                    det = _wm.check_watermark(text)
-                    score = (det or {}).get("score", None)
-                    if score is not None:
-                        _emit("infer.watermark.score", score=float(score))
-                        logger.debug(f"Watermark detect score: {float(score):.4f}")
-                except Exception:
-                    pass
-            except Exception:
-                pass
-            _emit("infer.output", text=text)
-            logger.success(text)
-        except Exception as _gen_e:
-            logger.error(f"Inference generation failed: {_gen_e}")
-            _emit("infer.generation.error", error=str(_gen_e))

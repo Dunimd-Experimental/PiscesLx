@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -47,10 +48,7 @@ def load_dashboard_config(dashboard_name: str) -> Dict[str, Any]:
         raise ValueError(f"Unknown dashboard name: {dashboard_name}")
     
     config_file = GRAFANA_DASHBOARD_CONFIG[dashboard_name]
-    # Resolve to project root configs/observability/
-    base_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
-    project_root = os.path.dirname(base_dir)
-    config_path = os.path.join(project_root, "configs", "observability", config_file)
+    config_path = os.path.join(os.path.dirname(__file__), config_file)
     
     from utils.config.loader import load_config_from_file
     return load_config_from_file(config_path)

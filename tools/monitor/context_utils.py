@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -22,7 +23,7 @@ import sys
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
 from utils import PiscesLxCoreCacheManager
-from utils import PiscesLxCoreDeviceFacade
+from utils import PiscesLxCoreDeviceManager
 from utils import PiscesLxCoreFS
 from utils import PiscesLxCoreDecorators
 from utils import PiscesLxCoreLog
@@ -55,7 +56,7 @@ class PiscesLxMonitorContext:
             except Exception as e:
                 # Use project's log system for error reporting
                 from utils import PiscesLxCoreLog
-                error_logger = PiscesLxCoreLog("PiscesLx.Tools.Monitor.Context")
+                error_logger = PiscesLxCoreLog("pisceslx.monitor.context")
                 error_logger.error(f"Hook error: {e}")
 
 
@@ -66,7 +67,7 @@ class PiscesLxMonitorUtils:
         """Initialize utility components."""
         self.fs_manager = PiscesLxCoreFS()
         self.cache_manager = PiscesLxCoreCacheManager()
-        self.device_manager = PiscesLxCoreDeviceFacade()
+        self.device_manager = PiscesLxCoreDeviceManager()
         
         # Build log paths dynamically
         monitor_log_dir = self.fs_manager.logs_dir()
@@ -87,7 +88,7 @@ class PiscesLxMonitorUtils:
         """Get cache manager."""
         return self.cache_manager
     
-    def get_device_manager(self) -> PiscesLxCoreDeviceFacade:
+    def get_device_manager(self) -> PiscesLxCoreDeviceManager:
         """Get device manager."""
         return self.device_manager
     
@@ -128,7 +129,7 @@ class PiscesLxMonitorContextManager:
         """Get global cache manager."""
         return self._utils_manager.get_cache_manager()
     
-    def get_device_manager(self) -> PiscesLxCoreDeviceFacade:
+    def get_device_manager(self) -> PiscesLxCoreDeviceManager:
         """Get global device manager."""
         return self._utils_manager.get_device_manager()
     

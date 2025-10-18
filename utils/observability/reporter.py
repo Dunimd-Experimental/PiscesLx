@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -23,9 +24,7 @@ from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, Optional, List
 
-from utils.log.core import PiscesLxCoreLog
-
-logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.Reporter")
+import logging
 
 class PiscesLxCoreReporter:
     """A class for generating markdown and lightweight HTML reports in a specified directory.
@@ -44,7 +43,7 @@ class PiscesLxCoreReporter:
         try:
             os.makedirs(self.reports_dir, exist_ok=True)
         except Exception as e:
-            logger.error(f"Failed to create reports directory {self.reports_dir}: {str(e)}")
+            logging.error(f"Failed to create reports directory {self.reports_dir}: {str(e)}")
 
     def write_device_report(self, data: Dict[str, Any], session_id: Optional[str] = None) -> str:
         """Generate device reports in both markdown and HTML formats.
@@ -274,7 +273,7 @@ class PiscesLxCoreReporter:
                     shown += 1
                 lines.append("")
         except Exception as e:
-            logger.error(f"Failed to get GPU metrics: {str(e)}")
+            logging.error(f"Failed to get GPU metrics: {str(e)}")
 
         anomalies = data.get("anomaly_detection")
         if isinstance(anomalies, list) and anomalies:
@@ -307,7 +306,7 @@ class PiscesLxCoreReporter:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
         except Exception as e:
-            logger.error(f"Failed to write text to file {path}: {str(e)}")
+            logging.error(f"Failed to write text to file {path}: {str(e)}")
 
     def _wrap_html(self, md_text: str) -> str:
         """Wrap markdown text in a lightweight HTML format.
@@ -360,13 +359,13 @@ class PiscesLxCoreReporter:
                     if isinstance(data, list):
                         return [str(x) for x in data]
                 except Exception as e:
-                    logger.debug(f"Failed to parse changelog as JSON: {str(e)}")
+                    logging.debug(f"Failed to parse changelog as JSON: {str(e)}")
                 items = [ln.strip() for ln in content.splitlines() if ln.strip()]
                 return items[:200]
             except Exception as e:
-                logger.error(f"Failed to read changelog from {path}: {str(e)}")
+                logging.error(f"Failed to read changelog from {path}: {str(e)}")
                 return []
         except Exception as e:
-            logger.error(f"Unexpected error while reading UL changelog: {str(e)}")
+            logging.error(f"Unexpected error while reading UL changelog: {str(e)}")
             return []
 

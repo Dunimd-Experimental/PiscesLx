@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright �© 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.

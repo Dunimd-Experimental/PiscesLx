@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -21,9 +22,9 @@ import sys
 import json
 import argparse
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-logger = PiscesLxCoreLog("PiscesLx.Tools.WatermarkCheck")
+logger = PiscesLxCoreLog("pisceslx.data.download")
 from typing import Dict, Any, Optional
-from utils import PiscesLxUtilsWatermarkManager as PiscesLxWatermarkManager
+from tools.infer.watermark import check_text_watermark
 
 def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
     """Detect hidden watermark information in the specified text.
@@ -52,7 +53,7 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
     
     try:
         # Check for watermark in the text
-        watermark_info = PiscesLxWatermarkManager().check_watermark(text)
+        watermark_info = check_text_watermark(text)
         
         if watermark_info:
             # Update result if a watermark is detected

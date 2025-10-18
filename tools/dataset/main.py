@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright Â© 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -39,7 +40,7 @@ from field_manager import init_field_rules, add_new_field, manage_fields
 
 # Import root utils functions
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from utils import PiscesLxCoreConfigManagerFacade, PiscesLxCoreCacheManager
+from utils import PiscesLxCoreConfigManagerFacade, get_cache_manager
 
 import streamlit as st, pyarrow as pa, pyarrow.json as paj, json, jsonlines, ast, time, shutil
 
@@ -63,7 +64,7 @@ config_manager = PiscesLxCoreConfigManagerFacade(PROJECT_ROOT)
 st.session_state.config_manager = config_manager
 
 # Cache manager already imported above
-cache_manager = PiscesLxCoreCacheManager()
+cache_manager = get_cache_manager()
 st.session_state.cache_manager = cache_manager
 
 # Apply language before setting page config so title is localized at first paint
@@ -144,7 +145,7 @@ def dataset(args=None):
             if _early_settings.default_open_path:
                 _default_path = _early_settings.default_open_path
             else:
-                cache_manager = PiscesLxCoreCacheManager()
+                cache_manager = get_cache_manager()
                 _default_path = cache_manager.get_or_create_cache_dir("data_cache")
 
         # Initialize new dataset name in session state if not present
@@ -224,14 +225,14 @@ def dataset(args=None):
         if _early_settings.default_open_path:
             _default_path = _early_settings.default_open_path
         else:
-                from utils import PiscesLxCoreCacheManager
-                cache_manager = PiscesLxCoreCacheManager()
+                from utils import get_cache_manager
+                cache_manager = get_cache_manager()
                 _default_path = cache_manager.get_or_create_cache_dir("data_cache")
     path_input = st.text_input(t("input.path_label"), _default_path, placeholder=t("ph.path_input"))
     # remember recent path
     if path_input and path_input != st.session_state.get('last_path') and _early_settings.remember_recent_path:
         st.session_state['last_path'] = path_input
-    # Second row: action buttons (rescan, convert) ï¿½?tighten spacing
+    # Second row: action buttons (rescan, convert) â€?tighten spacing
     try:
         c_rescan, c_arrow = st.columns([1, 1], gap="small")
     except TypeError:
@@ -1109,7 +1110,7 @@ def dataset(args=None):
         
         with button_col:
             # Toggle main-page settings view
-            if st.button("ï¿½?, help=t("sidebar.settings_hint"), key="btn_settings_min"):
+            if st.button("âš?, help=t("sidebar.settings_hint"), key="btn_settings_min"):
                 st.session_state["show_settings_page"] = True
                 st.rerun()
 

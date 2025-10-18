@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -28,10 +29,10 @@ from pathlib import Path
 from datetime import datetime
 from typing import Dict, List, Optional, Any
 from utils.config import PiscesLxCoreConfigManagerFacade
-from utils import PiscesLxCoreDeviceFacade
+from utils.device import PiscesLxCoreDeviceFacade
 from utils.observability import PiscesLxCoreObservabilityFacade
 from utils.metrics import PiscesLxCoreMetricsRegistry
-from utils import PiscesLxCoreCacheManager
+from utils.cache import get_cache_manager
 
 class FunctionTemplateManager:
     """Manager for function templates with comprehensive utils integration."""
@@ -50,7 +51,8 @@ class FunctionTemplateManager:
         # Initialize utils components
         self.config_manager = config_manager or PiscesLxCoreConfigManagerFacade()
         # Use cache manager to get a flexible directory for template storage
-        cache_manager = PiscesLxCoreCacheManager()
+        from utils.cache import get_cache_manager
+        cache_manager = get_cache_manager()
         
         if base_dir is None:
             self.base_dir = Path(cache_manager.get_cache_dir("func_templates"))

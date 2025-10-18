@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -27,8 +28,8 @@ from func_templates import FunctionTemplateManager
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 
-from utils import PiscesLxCoreCacheManager
-cache_manager = PiscesLxCoreCacheManager()
+from utils import get_cache_manager
+cache_manager = get_cache_manager()
 DATA_CACHE_DIR = cache_manager.get_cache_dir("data_cache")
 
 # Use centralized config manager
@@ -449,10 +450,10 @@ def render_settings_page(initial_settings: AppSettings) -> None:
 
     with t_cache:
         with st.expander(t("cache.section_stats"), expanded=initial_settings.expand_panels_by_default):
-            from utils import PiscesLxCoreCacheManager
+            from utils import get_cache_manager
             import os
             from pathlib import Path
-            cache_mgr = PiscesLxCoreCacheManager()
+            cache_mgr = get_cache_manager()
             stats = cache_mgr.get_cache_stats()
             cache_dir = Path(str(stats.get("base_dir", "-")))
             cache_root = cache_dir.parent if cache_dir.name == 'cache' else cache_dir
@@ -542,8 +543,8 @@ def render_settings_page(initial_settings: AppSettings) -> None:
                 st.rerun()
 
         with st.expander(t("cache.section_clean"), expanded=initial_settings.expand_panels_by_default):
-            from utils import PiscesLxCoreCacheManager
-            cache_mgr = PiscesLxCoreCacheManager()
+            from utils import get_cache_manager
+            cache_mgr = get_cache_manager()
             import os, shutil
 
             st.warning(t("cache.caution_detailed"))

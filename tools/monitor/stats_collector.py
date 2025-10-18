@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -21,13 +22,14 @@ import psutil
 from typing import Dict, Any, Optional, List
 from utils.concurrency import PiscesLxCoreRetry
 from utils import PiscesLxCoreEnhancedCacheManager
-from utils import PiscesLxCoreDeviceFacade
+from utils import PiscesLxCoreDeviceManager
+
 
 class PiscesLxMonitorStatsCollector:
     """System statistics collector with caching and retry mechanisms."""
     
     def __init__(self, cache_manager: PiscesLxCoreEnhancedCacheManager, 
-                 device_manager: PiscesLxCoreDeviceFacade):
+                 device_manager: PiscesLxCoreDeviceManager):
         """Initialize the stats collector with cache and device managers."""
         self.cache_manager = cache_manager
         self.device_manager = device_manager

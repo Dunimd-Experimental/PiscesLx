@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -33,7 +34,7 @@ if current_dir not in sys.path:
 # Initialize variables with None as fallback
 read_config = None
 watermark_manager = None
-
+watermark_text = None
 get_cache_manager = None
 PiscesLxCoreConfigManagerFacade = None
 
@@ -42,7 +43,7 @@ try:
         # Import local modules first
         try:
             from .mcp import read_config
-
+            from .watermark import watermark_manager, watermark_text
         except ImportError as e:
             print(f"Warning: Could not import local modules: {e}")
         
@@ -89,7 +90,7 @@ except ImportError as e:
 
 __all__ = [
     'read_config',
-    'watermark_manager',
+    'watermark_manager', 'watermark_text',
     'get_cache_manager', 'PiscesLxCoreConfigManagerFacade',
     'PiscesL1Benchmark', 'create_benchmark_config',
     'run_single_benchmark', 'compare_multiple_models',

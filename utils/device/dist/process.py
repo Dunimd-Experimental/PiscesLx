@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -19,7 +20,7 @@
 
 import os
 import time
-from utils.log.core import PiscesLxCoreLog
+import logging
 import torch
 from typing import Optional
 import torch.distributed as dist
@@ -87,10 +88,7 @@ class PiscesLxCoreProcessGroupManager:
                 if hasattr(torch, 'timedelta'):
                     init_kwargs["timeout"] = torch.timedelta(seconds=timeout_seconds)  # type: ignore[attr-defined]
             except Exception as e:
-                PiscesLxCoreLog("PiscesLx.Utils.Device.Dist.Process").debug(
-                    "Timedelta initialization failed, continuing without timeout",
-                    error=str(e)
-                )
+                logging.getLogger(__name__).debug("Timedelta initialization failed, continuing without timeout: %s", e)
 
         # Attempt initialization with primary backend and fallback to 'gloo'
         backends_to_try = [backend]
@@ -110,11 +108,7 @@ class PiscesLxCoreProcessGroupManager:
                         if 0 <= local_rank < device_count:
                             torch.cuda.set_device(local_rank)
                     except Exception as e:
-                        PiscesLxCoreLog("PiscesLx.Utils.Device.Dist.Process").debug(
-                            "Failed to set CUDA device for local_rank",
-                            local_rank=str(local_rank),
-                            error=str(e)
-                        )
+                        logging.getLogger(__name__).debug("Failed to set CUDA device for local_rank %s: %s", local_rank, e)
                 cls._initialized = True
                 break
             except BaseException as e:
@@ -137,9 +131,6 @@ class PiscesLxCoreProcessGroupManager:
             try:
                 dist.destroy_process_group()
             except Exception as e:
-                PiscesLxCoreLog("PiscesLx.Utils.Device.Dist.Process").debug(
-                    "Failed to destroy process group",
-                    error=str(e)
-                )
+                logging.getLogger(__name__).debug("Failed to destroy process group: %s", e)
         cls._initialized = False
         cls._backend_used = None

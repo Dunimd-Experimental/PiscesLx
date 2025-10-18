@@ -21,7 +21,7 @@
 import sys
 from pathlib import Path
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager, PiscesLxCoreUL
-logger = PiscesLxCoreLog("PiscesLx.Tools.Version")
+logger = PiscesLxCoreLog("pisceslx.data.download")
 
 def show_version():
     """

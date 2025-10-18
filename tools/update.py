@@ -24,7 +24,7 @@ from pathlib import Path
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager, display_update_log
 
 # Initialize logger
-logger = PiscesLxCoreLog("PiscesLx.Tools.Update")
+logger = PiscesLxCoreLog("pisceslx.data.download")
 
 # Try to import GitPython. If unavailable, use subprocess as fallback.
 try:

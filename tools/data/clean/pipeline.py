@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -26,7 +27,7 @@ from .quality import calculate_text_quality_score
 from typing import Optional, Dict, Any, List, Tuple
 from datasets import load_from_disk, Dataset, concatenate_datasets
 
-_log = PiscesLxCoreLog("PiscesLx.Tools.Data.Clean")
+_log = PiscesLxCoreLog("PiscesLx.DataClean")
 
 class DatasetCleaner:
     @staticmethod

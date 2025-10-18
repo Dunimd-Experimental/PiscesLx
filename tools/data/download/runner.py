@@ -1,4 +1,4 @@
-??#!/usr/bin/env/python3
+??#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -46,7 +47,7 @@ def save_dataset(ds: Any, data_dir: str, name: str, max_samples: Optional[int] =
         bool: True if the dataset is saved successfully, False otherwise.
     """
     import os
-    logger = PiscesLxCoreLog("PiscesLx.Tools.Data.Download.Runner")
+    logger = PiscesLxCoreLog("pisceslx.data.download")
     try:
         # Ensure dataset is in HuggingFace format if needed
         try:
@@ -93,7 +94,7 @@ def download_worker(task: Tuple[str, str, str, list[str], str, Optional[int]]) -
     # Set up HuggingFace mirror if needed in child process
     setup_hf_mirror()
     
-    logger = PiscesLxCoreLog("PiscesLx.Tools.Data.Download.Runner")
+    logger = PiscesLxCoreLog("pisceslx.data.download")
     logger.info(f"Starting download: {dataset_name} -> {save_name}")
     max_retries = 3
     
@@ -314,7 +315,7 @@ class PiscesLxToolsDatasetDownload:
             cfg (DownloadConfig): Download configuration object.
         """
         # Logger for this run
-        logger = PiscesLxCoreLog("PiscesLx.Tools.Data.Download.Runner")
+        logger = PiscesLxCoreLog("pisceslx.data.download")
 
         # Collect the names of already downloaded datasets
         downloaded: Set[str] = set()
@@ -424,7 +425,7 @@ class PiscesLxToolsDatasetDownload:
 
     def _cleanup_caches(self) -> None:
         """Clean temporary caches after a run."""
-        logger = PiscesLxCoreLog("PiscesLx.Tools.Data.Download.Runner")
+        logger = PiscesLxCoreLog("pisceslx.data.download")
         try:
             # Delegate to cache context cleanup
             self._cache.cleanup_cache()

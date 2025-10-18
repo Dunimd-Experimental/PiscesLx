@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -18,7 +19,7 @@
 # limitations under the License.
 
 import psutil
-from utils.log.core import PiscesLxCoreLog
+import logging
 from datetime import datetime
 from .base import BaseCollector
 from dataclasses import dataclass
@@ -63,7 +64,7 @@ class PiscesLxCoreMemoryCollector(BaseCollector):
             registry (Optional[PiscesLxCoreMetricsRegistry]): Metrics registry to register collected metrics. Defaults to None.
         """
         super().__init__("memory", registry)
-        self.logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.Memory")
+        self.logger = logging.getLogger("pisceslx.observability.memory")
         self._process = psutil.Process()
         
     def collect(self) -> Dict[str, Any]:

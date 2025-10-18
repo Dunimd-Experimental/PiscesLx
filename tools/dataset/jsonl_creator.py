@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -24,7 +25,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from utils import PiscesLxCoreCacheManager
+from utils import get_cache_manager
 
 class JSONLCreator:
     """
@@ -41,7 +42,7 @@ class JSONLCreator:
                                      If None, use the data cache directory from the cache manager.
         """
         if base_path is None:
-            cache_manager = PiscesLxCoreCacheManager()
+            cache_manager = get_cache_manager()
             base_path = cache_manager.get_cache_dir("data_cache")
         self.base_path = Path(base_path)
         # Create the base directory if it doesn't exist
@@ -342,7 +343,8 @@ def create_template_dataset(template_type: str, record_count: int = 10, base_pat
         str: Full path of the created file.
     """
     if base_path is None:
-        cache_manager = PiscesLxCoreCacheManager()
+        from utils import get_cache_manager
+        cache_manager = get_cache_manager()
         base_path = cache_manager.get_or_create_cache_dir("data_cache")
     creator = JSONLCreator(base_path)
     return creator.create_from_template(template_type, record_count)

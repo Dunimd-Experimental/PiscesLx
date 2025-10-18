@@ -1,4 +1,4 @@
-?#!/usr/bin/env/python3
+?#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -31,7 +32,7 @@ from utils import PiscesLxCoreHookBus
 from utils import PiscesLxCoreEnhancedCacheManager
 from utils import PiscesLxCoreTimeout, PiscesLxCoreRetry
 from utils import PiscesLxCoreFS
-from utils import PiscesLxCoreDeviceFacade
+from utils import PiscesLxCoreDeviceManager
 
 # Import new modular components
 from .context_utils import PiscesLxMonitorGlobalContext
@@ -64,7 +65,7 @@ class PiscesLxToolsMonitorImpl:
         self.observability_manager = PiscesLxCoreObservabilityManager()
         
         # Configuration
-        self.UPDATE_INTERVAL = 1  # 1秒采�?        self.LOG_INTERVAL = 60   # 60秒记录一次日�?        self.ANOMALY_THRESHOLD = {
+        self.UPDATE_INTERVAL = 1  # 1秒采�?        self.LOG_INTERVAL = 60   # 60秒记录一次日�?        self.ANOMALY_THRESHOLD = {
             'cpu_percent_total': 20,
             'memory_percent': 10,
             'gpu_util': 15,
@@ -118,7 +119,7 @@ class PiscesLxToolsMonitorImpl:
             console=False, 
             enable_file=True
         )
-        self.obs_logger = PiscesLxCoreLog("PiscesLx.Tools.Monitor.Observability")
+        self.obs_logger = PiscesLxCoreLog("pisceslx.monitor.observability")
     
     @PiscesLxCoreRetry(max_attempts=3, delay=1.0)
     def get_observability_metrics(self):

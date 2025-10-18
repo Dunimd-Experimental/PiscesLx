@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -46,15 +47,11 @@ class ArcticUnifiedCacheManager:
             self.cache_quantization = config.get('quantization_enabled', True)
             self.cache_window_size = config.get('streaming_window', 2048)
             self.block_size = config.get('kv_cache_block_size', 512)
-            self.paging_enabled = bool(config.get('kv_paged_enabled', False))
-            self.soft_cap_factor = float(config.get('kv_soft_cap_factor', 1.5))
         else:
             self.max_cache_size = getattr(config, 'max_cache_size', 8192)
             self.cache_quantization = getattr(config, 'cache_quantization', True)
             self.cache_window_size = getattr(config, 'streaming_window', 2048)
             self.block_size = getattr(config, 'kv_cache_block_size', 512)
-            self.paging_enabled = bool(getattr(config, 'kv_paged_enabled', False))
-            self.soft_cap_factor = float(getattr(config, 'kv_soft_cap_factor', 1.5))
 
         self.kv_cache: Dict[int, Dict[str, Any]] = {}
         self.generation_cache: Dict[str, Any] = {}
@@ -105,7 +102,7 @@ class ArcticUnifiedCacheManager:
                 entry['blocks'].append((kb, vb))
                 entry['total_len'] += (e - s)
 
-        soft_cap = int(self.max_cache_size * (self.soft_cap_factor if hasattr(self, 'soft_cap_factor') else 1.5))
+        soft_cap = int(self.max_cache_size * 1.5)
         while entry['total_len'] > soft_cap and entry['blocks']:
             kb, vb = entry['blocks'].pop(0)
             entry['total_len'] -= kb.shape[2]
@@ -286,8 +283,5 @@ class ArcticUnifiedCacheManager:
             'speculative_cache_size': len(self.speculative_cache),
             'h2o_cache_entries': len(self.h2o_cache),
             'cache_window_size': self.cache_window_size,
-            'quantization_enabled': bool(self.cache_quantization),
-            'paging_enabled': bool(getattr(self, 'paging_enabled', False)),
-            'kv_page_size': int(getattr(self, 'block_size', 512)),
-            'soft_cap_factor': float(getattr(self, 'soft_cap_factor', 1.5))
+            'quantization_enabled': bool(self.cache_quantization)
         }

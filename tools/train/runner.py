@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -21,11 +22,10 @@ import os
 import sys
 from types import ModuleType
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-from utils import PiscesLxCoreDeviceFacade, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager, PiscesLxCoreEnhancedCacheManager
+from utils import PiscesLxCoreDeviceFacade, PiscesLxCoreDeviceManager, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager, PiscesLxCoreEnhancedCacheManager
 from . import impl as _impl
 from .impl import PiscesLxToolsTrainImpl
-
-logger = PiscesLxCoreLog("PiscesLx.Tools.Train.Runner")
+logger = PiscesLxCoreLog("pisceslx.data.download")
 
 class PiscesLxToolsTrainRunner:
     """
@@ -45,10 +45,7 @@ class PiscesLxToolsTrainRunner:
             cfg (optional): Configuration object. Defaults to None.
         """
         self.args = args
-        self.hooks = hooks
-        self.profiler = profiler
-        self.cfg = cfg
-        self._logger = PiscesLxCoreLog("PiscesLx.Tools.Train.Runner")
+        self._logger = PiscesLxCoreLog("pisceslx.tools.train.runner")
         # Instantiate class-based facade for unified style
         self._impl = PiscesLxToolsTrainImpl()
         try:
@@ -56,32 +53,24 @@ class PiscesLxToolsTrainRunner:
         except Exception:
             # Best-effort context wiring; do not block training
             pass
-        # Initialize utils components up-front for SSOT usage throughout
-        self._init_utils_components()
         # Keep a reference to the module for helper delegations (no behavior change)
         self._impl_module = _impl
     
     def _init_utils_components(self):
-        """Initialize utils-enhanced components for device, config, checkpoint, and observability."""
-        # Device management facade
+        """Initialize utils-enhanced components for device management and configuration."""
+        # Initialize device facade for device management
         self.device_facade = PiscesLxCoreDeviceFacade()
-        # Config manager
+        
+        # Initialize config manager for enhanced configuration handling
         self.config_manager = PiscesLxCoreConfigManager()
-        # Checkpoint manager
+        
+        # Initialize checkpoint manager for model checkpoint handling
         self.checkpoint_manager = PiscesLxCoreCheckpointManager()
-        # Optional: cache and observability for training-side hooks
-        try:
-            self.cache_manager = PiscesLxCoreEnhancedCacheManager.get_instance()
-        except Exception:
-            self.cache_manager = PiscesLxCoreEnhancedCacheManager()
-        try:
-            from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
-            self.observability = PiscesLxCoreObservabilityFacade()
-            self.metrics_registry = PiscesLxCoreMetricsRegistry()
-        except Exception:
-            self.observability = None
-            self.metrics_registry = None
+        
         self._logger.info("PiscesLxToolsTrainRunner utils components initialized")
+        
+        # Initialize utils-enhanced components
+        self._init_utils_components()
 
     def train(self) -> None:
         """

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -22,8 +23,7 @@ from typing import Any, Optional
 class PiscesLxToolsInferConfig:
     """Lightweight facade for inference configuration (parity with train config).
 
-    For now it normalizes CLI inputs into a namespaced dictionary and exposes
-    key inference optimization flags (attention backend, paged KV, speculative).
+    For now it only normalizes CLI inputs into a namespaced dictionary.
     Later, we can extend it to merge configs from JSON (inference_config).
     """
 
@@ -37,23 +37,19 @@ class PiscesLxToolsInferConfig:
 
     @classmethod
     def from_args(cls, args: Any) -> "PiscesLxToolsInferConfig":
-        """Create a config object from CLI args (no JSON merge yet)."""
+        """Create a config object from CLI args (no JSON merge yet).
+
+        Args:
+            args (Any): Command line arguments object.
+
+        Returns:
+            PiscesLxToolsInferConfig: A new instance of the configuration object.
+        """
         d: dict = {}
-        d.setdefault("infer", {})
-        # mode
+        # If infer_mode is provided in args, add it to the config dictionary
         if getattr(args, "infer_mode", None):
+            d.setdefault("infer", {})
             d["infer"]["mode"] = args.infer_mode
-        # attention backend flags
-        d["infer"]["enable_sdpa"] = bool(getattr(args, "enable_sdpa", True))
-        d["infer"]["enable_flash_attention"] = bool(getattr(args, "enable_flash_attention", True))
-        # paged KV
-        d["infer"]["enable_paged_kv"] = bool(getattr(args, "enable_paged_kv", False))
-        d["infer"]["kv_page_size"] = int(getattr(args, "kv_page_size", 512))
-        d["infer"]["kv_soft_cap_factor"] = float(getattr(args, "kv_soft_cap_factor", 1.5))
-        # speculative decoding
-        d["infer"]["speculative_enable"] = bool(getattr(args, "speculative", False))
-        d["infer"]["spec_draft_length"] = int(getattr(args, "spec_draft_length", getattr(args, "spec_gamma", 4)))
-        d["infer"]["spec_num_candidates"] = int(getattr(args, "spec_num_candidates", 4))
         return cls(d)
 
     def get(self, key: str, default: Optional[Any] = None) -> Any:
@@ -74,5 +70,9 @@ class PiscesLxToolsInferConfig:
         return cur
 
     def dump_effective(self) -> dict:
-        """Return a shallow copy of the effective configuration."""
+        """Return a shallow copy of the effective configuration.
+
+        Returns:
+            dict: A shallow copy of the current configuration data.
+        """
         return dict(self.data)

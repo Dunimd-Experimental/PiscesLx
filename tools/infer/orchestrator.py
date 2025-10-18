@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -19,11 +20,10 @@
 
 from typing import Any, Optional
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-from utils import PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
-from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
+logger = PiscesLxCoreLog("pisceslx.data.download")
 from utils import PiscesLxCoreHookBus, PiscesLxCoreDeviceFacade, PiscesLxCoreEnhancedCacheManager
-
-logger = PiscesLxCoreLog("PiscesLx.Tools.Infer.Orchestrator")
+from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
+from utils import PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
 
 # Reuse the training profiler to avoid duplication
 try:
@@ -95,70 +95,6 @@ class PiscesLxToolsInferOrchestrator:
         self.hooks = PiscesLxCoreHookBus()
         self.profiler = PiscesLxToolsProfiler()
         self.cfg = PiscesLxToolsInferConfig.from_args(args)
-        # Speculative stats rolling window and policy thresholds (inline closures)
-        self._spec_window = []
-        self._policy = {
-            "spec_accept_floor": self.cfg.get("infer.spec_accept_floor", 0.4),
-            "spec_speedup_floor": self.cfg.get("infer.spec_speedup_floor", 1.2),
-            "spec_window_size": self.cfg.get("infer.spec_window_size", 10)
-        }
-        def _summ():
-            if not self._spec_window:
-                return None
-            n = len(self._spec_window)
-            avg_accept = sum(x["accept"] for x in self._spec_window) / n
-            avg_speedup = sum(x["speedup"] for x in self._spec_window) / n
-            avg_time = sum(x["time_ms"] for x in self._spec_window) / n
-            avg_draft_ms = sum(x.get("draft_ms", 0.0) for x in self._spec_window) / n
-            avg_verify_ms = sum(x.get("verify_ms", 0.0) for x in self._spec_window) / n
-            return {
-                "avg_accept": round(avg_accept, 4),
-                "avg_speedup": round(avg_speedup, 4),
-                "avg_time_ms": round(avg_time, 2),
-                "avg_draft_time_ms": round(avg_draft_ms, 2),
-                "avg_verify_time_ms": round(avg_verify_ms, 2),
-                "window_len": n
-            }
-        def _cb(stats: dict):
-            try:
-                accept_rate = float(stats.get("draft_acceptance_rate", 0.0))
-                speedup = float(stats.get("speedup", 1.0))
-                iter_accept = stats.get("iter_accept", [])
-                total_ms = float(stats.get("total_time_ms", 0.0))
-                draft_ms = float(stats.get("total_draft_time_ms", 0.0))
-                verify_ms = float(stats.get("total_verify_time_ms", 0.0))
-                # push into window
-                self._spec_window.append({
-                    "accept": accept_rate,
-                    "speedup": speedup,
-                    "iters": len(iter_accept),
-                    "time_ms": total_ms,
-                    "draft_ms": draft_ms,
-                    "verify_ms": verify_ms
-                })
-                # trim window
-                win_size = int(self._policy.get("spec_window_size", 10))
-                if len(self._spec_window) > win_size:
-                    self._spec_window = self._spec_window[-win_size:]
-                # summarize and emit
-                summary = _summ()
-                if summary is not None:
-                    self.hooks.emit("infer.spec.stats", **summary)
-                # policy suggestion
-                if summary and (summary["avg_accept"] < float(self._policy["spec_accept_floor"]) or summary["avg_speedup"] < float(self._policy["spec_speedup_floor"])):
-                    suggestion = {
-                        "adjust_draft_length": -1,
-                        "adjust_num_candidates": -1,
-                        "reason": "Low acceptance or speedup observed",
-                        "avg_accept": summary["avg_accept"],
-                        "avg_speedup": summary["avg_speedup"]
-                    }
-                    self.hooks.emit("infer.policy.suggest", **suggestion)
-            except Exception:
-                pass
-        # bind closures to instance for external use
-        self._summarize_spec_window = _summ
-        self.get_on_stats_callback = lambda: _cb
         
         # Initialize utils-enhanced components for inference optimization
         self._init_utils_components()
@@ -206,11 +142,6 @@ class PiscesLxToolsInferOrchestrator:
         
         try:
             if mode in ('standard', 'vllm'):
-                # Expose speculative stats callback via hooks for cooperation
-                try:
-                    self.hooks.emit("infer.spec.callback", callback=self.get_on_stats_callback())
-                except Exception:
-                    pass
                 self.run_standard_infer()
             else:
                 logger.error(f"Unknown infer.mode: {mode}")
@@ -286,8 +217,7 @@ class PiscesLxToolsInferOrchestrator:
             cfg=self.cfg,
             cache_manager=self.cache_manager,
             device_manager=self.device_facade,
-            observability=self.observability,
-            on_stats_cb=self.get_on_stats_callback() if hasattr(self, "get_on_stats_callback") else None
+            observability=self.observability
         )
         
         # Execute inference with comprehensive monitoring
@@ -301,13 +231,6 @@ class PiscesLxToolsInferOrchestrator:
             # Run inference
             runner.infer()
             inference_success = True
-            # Emit speculative summary if any stats were recorded
-            try:
-                summary = self._summarize_spec_window()
-                if summary is not None:
-                    self.hooks.emit("infer.spec.summary", **summary)
-            except Exception:
-                pass
             
             # Post-inference analysis and caching
             if self.observability:

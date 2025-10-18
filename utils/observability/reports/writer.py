@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -17,12 +18,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from utils.log.core import PiscesLxCoreLog
+import logging
 from typing import Any, Dict
 from datetime import datetime
 
 # Set up logging for the module
-logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.Reports.Writer")
+logger = logging.getLogger(__name__)
 
 def build_device_report_payload(service: Any, data: Dict[str, Any]) -> Dict[str, Any]:
     """

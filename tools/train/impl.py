@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -23,15 +24,21 @@ import json
 import torch
 import warnings
 from utils import PiscesLxCoreEnhancedCacheManager
+from utils.device import PiscesLxCoreDeviceRunner, PiscesLxCoreDeviceManager, PiscesLxCoreDeviceFacade
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
 from utils import PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
-from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
-from utils import PiscesLxCoreDeviceFacade
 
 _HOOKS = None
 _PROFILER = None
 _CFG = None
 COLLATE_MAX_SEQ_LEN = 96
+
+# Local compatibility wrapper to avoid importing utils functions
+def get_cache_manager():
+    try:
+        return PiscesLxCoreEnhancedCacheManager.get_instance()
+    except Exception:
+        return PiscesLxCoreEnhancedCacheManager()
 
 def set_context(*, hooks=None, profiler=None, cfg=None):
     """
@@ -79,7 +86,7 @@ def setup_distributed_training():
     from utils.device.dist import PiscesLxCoreDistConfig, PiscesLxCoreDistPlanner
     
     # Initialize logger for this function
-    logger = PiscesLxCoreLog("PiscesLx.Tools.Train.Impl.SetupDistributed")
+    logger = PiscesLxCoreLog("pisceslx.tools.train.impl.setup_distributed_training")
     
     # Automatically detect distributed training environment variables
     local_rank = int(os.environ.get('LOCAL_RANK', -1))
@@ -175,9 +182,10 @@ def create_ddp_model(model, device, is_distributed, local_rank):
     Returns:
         torch.nn.Module: The wrapped model.
     """
-
+    from utils.device import PiscesLxCoreModelParallelizer
+    
     # Initialize logger for this function
-    logger = PiscesLxCoreLog("PiscesLx.Tools.Train.Impl.CreateDDPModel")
+    logger = PiscesLxCoreLog("pisceslx.tools.train.impl.create_ddp_model")
     
     if is_distributed:
         # Move the model to the specified device with utils-enhanced placement
@@ -203,18 +211,15 @@ def create_ddp_model(model, device, is_distributed, local_rank):
         # Move the model to the specified device
         model = model.to(device)
         
-        # If multiple GPUs are available but not using distributed training, use DataParallel (utils.device)
-        try:
-            _dev_cfg_dp = PiscesLxCoreDeviceFacade().setup_devices(mode="train")
-            _gpu_ids = _dev_cfg_dp.get('gpu_ids', [])
-            gpu_count = len(_gpu_ids) if isinstance(_gpu_ids, list) else 0
-            if gpu_count > 1:
-                logger.info(f"Detected {gpu_count} GPUs (utils), using DataParallel")
-                # Emit multi-GPU setup event for observability
-                _emit("train.model.dataparallel", gpu_count=gpu_count)
-                model = torch.nn.DataParallel(model, device_ids=_gpu_ids)
-        except Exception:
-            pass
+        # If multiple GPUs are available but not using distributed training, use DataParallel
+        gpu_count = torch.cuda.device_count()
+        if gpu_count > 1:
+            logger.info(f"Detected {gpu_count} GPUs, using DataParallel")
+            
+            # Emit multi-GPU setup event for observability
+            _emit("train.model.dataparallel", gpu_count=gpu_count)
+            
+            model = torch.nn.DataParallel(model)
         
         # Emit model placement event for observability
         _emit("train.model.place", device=str(device), gpu_count=gpu_count)
@@ -241,7 +246,7 @@ def create_dataloader(dataset, batch_size, is_distributed, world_size=1, rank=0,
     import multiprocessing as mp
     
     # Initialize logger for this function
-    logger = PiscesLxCoreLog("PiscesLx.Tools.Train.Impl.CreateDataLoader")
+    logger = PiscesLxCoreLog("pisceslx.tools.train.impl.create_dataloader")
     
     # Handle empty dataset to avoid deadlock
     if len(dataset) == 0:
@@ -265,12 +270,7 @@ def create_dataloader(dataset, batch_size, is_distributed, world_size=1, rank=0,
     num_workers = min(mp.cpu_count(), 8)  # Use up to 8 CPU cores
     prefetch_factor = 4 if num_workers > 0 else 2  # Increase prefetch for better GPU utilization
     persistent_workers = num_workers > 0  # Keep workers alive between epochs
-    try:
-        from utils import PiscesLxCoreDeviceFacade
-        _dev_cfg_pin = PiscesLxCoreDeviceFacade().setup_devices(mode="train")
-        pin_memory = bool(_dev_cfg_pin.get('pin_memory', False)) or (torch.cuda.is_available())
-    except Exception:
-        pin_memory = torch.cuda.is_available()  # fallback
+    pin_memory = torch.cuda.is_available()  # Enable pin memory for GPU training
     
     # Async data augmentation for multimodal inputs
     def async_collate_fn(batch):
@@ -373,29 +373,15 @@ def _train_impl(args):
     """
     import torch
     from tools.data.dataset import PiscesDataset
-    # Initialize train-side observability baseline via utils (if available)
-    _obs = None
-    _metrics = None
-    try:
-        if PiscesLxCoreObservabilityFacade:
-            _obs = PiscesLxCoreObservabilityFacade()
-        if PiscesLxCoreMetricsRegistry:
-            _metrics = PiscesLxCoreMetricsRegistry()
-        if _obs and _metrics:
-            _baseline = _obs.collect_system_metrics()
-            _metrics.set_baseline("train.baseline", _baseline)
-            _emit("train.baseline", metrics=_baseline)
-    except Exception:
-        pass
     from torch.utils.data import DataLoader
     from model.tokenizer import get_tokenizer
     from model import ArcticModel, ArcticConfig
-    from utils import PiscesLxCoreCheckpointManager
+    from utils.checkpoint import save_ckpt, load_ckpt
     from torch.optim.lr_scheduler import ReduceLROnPlateau
     from transformers import get_linear_schedule_with_warmup
     
     # Initialize logger for this function
-    logger = PiscesLxCoreLog("PiscesLx.Tools.Train.Impl")
+    logger = PiscesLxCoreLog("pisceslx.tools.train.impl._train_impl")
     
     # Get the model size and construct the configuration file path
     model_size = getattr(args, 'model_size', '0.5B').upper()
@@ -458,7 +444,7 @@ def _train_impl(args):
         logger.info("Command line override: force_quant = false")
     
     # Honor epochs from training_config. epochs=0 means no epoch cap (auto convergence)
-    cache_manager = PiscesLxCoreEnhancedCacheManager.get_instance()
+    cache_manager = get_cache_manager()
     save_dir = cache_manager.get_or_create_cache_dir("ckpt")
     
     class DynamicGradientAccumulator:
@@ -534,7 +520,7 @@ def _train_impl(args):
         dataset_list = [args.dataset]
         logger.info(f"Using command line dataset: {args.dataset}")
     else:
-        cache_manager = PiscesLxCoreEnhancedCacheManager.get_instance()
+        cache_manager = get_cache_manager()
         data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
         model_txt = os.path.join(data_cache_dir, "model.txt")
         if not os.path.exists(model_txt):
@@ -559,8 +545,8 @@ def _train_impl(args):
     else:
         # Use device orchestrator's batch_size directly unless CLI explicitly set one
         try:
-            from utils import PiscesLxCoreDeviceFacade
-            _dev_cfg_b = PiscesLxCoreDeviceFacade().setup_devices()
+            from utils.device import setup_devices as _setup_devices_for_batch
+            _dev_cfg_b = _setup_devices_for_batch()
             _dev_bs = int(_dev_cfg_b.get('batch_size', batch_size))
             # If args has an explicit CLI batch override, respect it; else use device batch
             _cli_batch = getattr(args, 'batch_size', None)
@@ -573,8 +559,8 @@ def _train_impl(args):
         effective_batch_size = batch_size
     
     # Set up mixed precision training based on device recommendations
-    from utils import PiscesLxCoreDeviceFacade
-    _dev_cfg = PiscesLxCoreDeviceFacade().setup_devices()
+    from utils.device import setup_devices as _setup_devices_for_train
+    _dev_cfg = _setup_devices_for_train()
     _mp_enabled = bool(_dev_cfg.get('mixed_precision', torch.cuda.is_available())) and torch.cuda.is_available()
     _dtype_str = str(_dev_cfg.get('dtype', 'fp16')).lower()
     _amp_dtype = torch.float16 if _dtype_str == 'fp16' else (torch.bfloat16 if _dtype_str == 'bf16' else torch.float32)
@@ -674,14 +660,9 @@ def _train_impl(args):
         
     model = model.to(device)
     logger.info("ArcticModel initialized.")
-    try:
-        _dev_cfg_dp2 = PiscesLxCoreDeviceFacade().setup_devices(mode="train")
-        _gpu_ids2 = _dev_cfg_dp2.get('gpu_ids', [])
-        if isinstance(_gpu_ids2, list) and len(_gpu_ids2) > 1:
-            logger.info(f"Using {len(_gpu_ids2)} GPUs (utils)")
-            model = torch.nn.DataParallel(model, device_ids=_gpu_ids2)
-    except Exception:
-        pass
+    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
+        logger.info(f"Using {torch.cuda.device_count()} GPUs")
+        model = torch.nn.DataParallel(model)
     logger.info("Initializing optimizer and scheduler...")
     
     def get_parameter_groups(model, base_lr):
@@ -801,7 +782,7 @@ def _train_impl(args):
     start_epoch = 0
     if resume_ckpt and os.path.exists(resume_ckpt):
         logger.info(f"Resuming from checkpoint: {resume_ckpt}")
-        start_epoch = PiscesLxCoreCheckpointManager.load(resume_ckpt, model, optimizer)
+        start_epoch = load_ckpt(resume_ckpt, model, optimizer)
         logger.info(f"Resumed at epoch {start_epoch}")
 
         for param_group in optimizer.param_groups:
@@ -816,7 +797,7 @@ def _train_impl(args):
         logger.debug(f"\n==============================")
         logger.info(f"Training dataset: {dataset}")
         logger.info(f"Batch size: {batch_size}, Epochs: {epochs}, LR: {lr}")
-        cache_manager = PiscesLxCoreEnhancedCacheManager.get_instance()
+        cache_manager = get_cache_manager()
         data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
         cache_path = os.path.join(data_cache_dir, dataset)
         if not os.path.exists(cache_path):
@@ -841,13 +822,9 @@ def _train_impl(args):
         os.makedirs(save_dir, exist_ok=True)
         logger.info(f"Starting training loop...")
         model.train()
-        scaler = torch.amp.GradScaler('cuda') if _mp_enabled else None
+        scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
         torch.cuda.empty_cache()
-        try:
-            if torch.cuda.is_available():
-                torch.cuda.reset_peak_memory_stats()
-        except Exception:
-            pass
+        torch.cuda.reset_peak_memory_stats()
         stop_training = False
         epoch = start_epoch
         
@@ -961,19 +938,6 @@ def _train_impl(args):
                                 effective_batch = batch_size * current_accum
                                 avg_loss = total_loss / (step + 1)
                                 logger.info(f"Epoch {epoch + 1} | Step {step} | Loss: {avg_loss:.4f} | LR: {optimizer.param_groups[0]['lr']:.2e} | Accum: {current_accum} | Batch: {effective_batch}")
-                                # Emit per-step metrics for observability (SSOT)
-                                try:
-                                    gpu_mem_used = torch.cuda.memory_allocated() / (1024**2) if torch.cuda.is_available() else None
-                                    _emit('train.step.metrics',
-                                          epoch=epoch+1,
-                                          step=step,
-                                          avg_loss=float(avg_loss),
-                                          lr=float(optimizer.param_groups[0]['lr']),
-                                          accum=int(current_accum),
-                                          effective_batch=int(effective_batch),
-                                          gpu_mem_mb=float(gpu_mem_used) if gpu_mem_used is not None else None)
-                                except Exception:
-                                    pass
                 
                 if not train_loader:
                     logger.debug("Skipping epoch end logic for empty loader.")
@@ -999,7 +963,7 @@ def _train_impl(args):
                 
                 if not is_distributed or local_rank == 0:
                     checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
-                    PiscesLxCoreCheckpointManager.save(model, optimizer, epoch + 1, checkpoint_path)
+                    save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
                     logger.info(f"Checkpoint saved: {checkpoint_path}")
                     _emit('on_checkpoint_saved', path=checkpoint_path, epoch=epoch+1)
                     logger.info(f"Epoch {epoch + 1} complete | Final accum: {grad_accumulator.get_current_accum()} | Avg grad norm: {sum(grad_accumulator.grad_norm_history[-5:])/min(5, len(grad_accumulator.grad_norm_history)):.4f}")
@@ -1024,7 +988,7 @@ def _train_impl(args):
         except KeyboardInterrupt:
             logger.error("Training interrupted by user (Ctrl - C). Saving checkpoint...")
             interrupt_ckpt = f"{save_dir}/latest_interrupt.pt"
-            PiscesLxCoreCheckpointManager.save(model, optimizer, epoch + 1, interrupt_ckpt)
+            save_ckpt(model, optimizer, epoch + 1, interrupt_ckpt)
             logger.info(f"Checkpoint saved: {interrupt_ckpt}")
             logger.info(f"You can resume training with: python manage.py train --model_size {model_size} --resume_ckpt {interrupt_ckpt}")
             _emit('on_train_interrupted', epoch=epoch+1, ckpt=interrupt_ckpt)
@@ -1039,14 +1003,6 @@ def _train_impl(args):
     else:
         torch.save(model.state_dict(), final_weight_path)
     logger.info(f"All datasets finished. Final model weights saved to: {final_weight_path}")
-    # Collect final metrics and emit performance delta (SSOT via utils)
-    try:
-        if _obs and _metrics:
-            _final = _obs.collect_system_metrics()
-            _delta = _metrics.calculate_delta("train.baseline", _final)
-            _emit("train.performance.analysis", delta=_delta, final=_final)
-    except Exception:
-        pass
     _emit('on_train_end', final_weight_path=final_weight_path)
 
     # Optional: auto export to safetensors if enabled in config
@@ -1293,7 +1249,7 @@ def validate_train_args(args):
 
     # Check dataset presence
     if not getattr(args, 'dataset', None):
-        cache_manager = PiscesLxCoreEnhancedCacheManager.get_instance()
+        cache_manager = get_cache_manager()
         data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
         model_txt = os.path.join(data_cache_dir, "model.txt")
         if not os.path.exists(model_txt):

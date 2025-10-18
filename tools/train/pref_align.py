@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -18,7 +19,7 @@
 # limitations under the License.
 
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-logger = PiscesLxCoreLog("PiscesLx.Tools.Train.Preference")
+logger = PiscesLxCoreLog("pisceslx.data.download")
 
 class PiscesLxToolsPreferenceTrainer:
     """Unifies SFT/DPO/PPO preference alignment under a single facade.
@@ -42,12 +43,20 @@ class PiscesLxToolsPreferenceTrainer:
         self.args = args
 
     def run_sft(self, cfg) -> None:
-        """Run the SFT (Supervised Fine-Tuning) mode with watermark integration."""
-        self._run_sft(self.args or cfg)
+        """Run the SFT (Supervised Fine-Tuning) mode.
+
+        Args:
+            cfg: Configuration object.
+        """
+        self._delegate_legacy("sft")
 
     def run_dpo(self, cfg) -> None:
-        """Run the DPO (Direct Preference Optimization) mode with watermark integration."""
-        self._run_dpo(self.args or cfg)
+        """Run the DPO (Direct Preference Optimization) mode.
+
+        Args:
+            cfg: Configuration object.
+        """
+        self._delegate_legacy("dpo")
 
     def run_ppo(self, cfg) -> None:
         """Run the PPO (Proximal Policy Optimization) mode.
@@ -212,18 +221,6 @@ class PiscesLxToolsPreferenceTrainer:
             return torch.clamp(final_rewards, 0.0, 2.0)
 
         # -------- PPO training loop (simplified behavior-preserving) --------
-        # AMP/mixed precision from utils.device (SSOT)
-        try:
-            from utils import PiscesLxCoreDeviceFacade
-            _dev_cfg_amp = PiscesLxCoreDeviceFacade().setup_devices(mode="train")
-            _mp_enabled = bool(_dev_cfg_amp.get('mixed_precision', False))
-            _dtype_str = str(_dev_cfg_amp.get('dtype', 'fp16')).lower()
-            import torch as _torch
-            _amp_dtype = _torch.float16 if _dtype_str == 'fp16' else (_torch.bfloat16 if _dtype_str == 'bf16' else _torch.float32)
-        except Exception:
-            import torch as _torch
-            _mp_enabled = _torch.cuda.is_available()
-            _amp_dtype = _torch.float16
         total_steps = 0
         try:
             from datasets import load_dataset
@@ -235,49 +232,19 @@ class PiscesLxToolsPreferenceTrainer:
                 for batch_idx, batch in enumerate(dataset.select(range(max_len))):
                     inputs = tokenizer(batch["prompt"], return_tensors="pt", padding=True, truncation=True)
                     query_tensors = inputs["input_ids"]
-                    # Watermark-aware generation: apply logits processor (lexical control)
-                    from utils import PiscesLxUtilsLogitsProcessor as PiscesWatermarkLogitsProcessor
-                    wm_seed = int(torch.randint(0, 2**31-1, (1,)).item())
-                    logits_proc = [PiscesWatermarkLogitsProcessor(seed=wm_seed, boost=float(self.cfg.get("watermark.boost", 0.15)))]
                     response_tensors = ppo_trainer.generate(
                         query_tensors,
                         max_new_tokens=args.rlhf_max_length,
                         do_sample=True,
                         temperature=0.7,
-                        logits_processor=logits_proc
                     )
-                    # Add signed payload watermark to decoded text for traceability and monitor detect score
-                    try:
-                        from utils import PiscesLxUtilsWatermarkManager
-                        texts = tokenizer.batch_decode(response_tensors, skip_special_tokens=True)
-                        _wmgr = PiscesLxUtilsWatermarkManager()
-                        texts_wm = [_wmgr.add_watermark(t, {"user_id": "training"}) for t in texts]
-                        # Detect and summarize watermark scores for observability
-                        try:
-                            scores = []
-                            for tw in texts_wm:
-                                det = _wmgr.check_watermark(tw)
-                                s = (det or {}).get("score", None)
-                                if s is not None:
-                                    scores.append(float(s))
-                            if scores:
-                                avg_s = sum(scores) / len(scores)
-                                logger.debug(f"Training watermark detect score avg: {avg_s:.4f} (n={len(scores)})")
-                                try:
-                                    self.hooks.emit("train.watermark.score", avg=float(avg_s), count=len(scores))
-                                except Exception:
-                                    pass
-                        except Exception:
-                            pass
-                    except Exception:
-                        pass
                     human_feedback = batch.get("human_score", [1.0] * len(response_tensors))
                     ai_feedback = batch.get("ai_score", None)
                     safety_score = batch.get("safety_score", None)
                     adversarial_score = batch.get("adversarial_score", None)
                     rewards = compute_reward(response_tensors, human_feedback, ai_feedback, safety_score, adversarial_score)
                     try:
-                        with torch.amp.autocast('cuda', enabled=_mp_enabled, dtype=_amp_dtype):
+                        with torch.cuda.amp.autocast(enabled=True):
                             stats = ppo_trainer.step(query_tensors, response_tensors, rewards)
                         if torch.isnan(rewards).any() or torch.isinf(rewards).any():
                             logger.error(f"Numerical instability detected in rewards at batch {batch_idx}")
@@ -291,12 +258,7 @@ class PiscesLxToolsPreferenceTrainer:
                     except RuntimeError as e:
                         if "out of memory" in str(e).lower():
                             logger.error(f"OOM at batch {batch_idx}, clearing cache and continuing")
-                            try:
-                                import torch as _torch
-                                if _torch.cuda.is_available():
-                                    _torch.cuda.empty_cache()
-                            except Exception:
-                                pass
+                            torch.cuda.empty_cache()
                             continue
                         else:
                             logger.error(f"Runtime error in batch {batch_idx}: {e}")
@@ -321,114 +283,6 @@ class PiscesLxToolsPreferenceTrainer:
                 logger.error(f"Error saving model: {e}")
                 raise
         logger.success("RLHF training completed successfully!")
-
-    # ---------------- SFT integrated implementation ----------------
-    def _run_sft(self, args) -> None:
-        """Run SFT with watermark-aware generation (logits processor + signed payload + detect score)."""
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        try:
-            assert hasattr(args, 'model_path') and args.model_path
-        except Exception:
-            logger.error("SFT requires --model_path")
-            raise SystemExit(1)
-        model = AutoModelForCausalLM.from_pretrained(args.model_path, torch_dtype=torch.float16, device_map="auto")
-        tokenizer = AutoTokenizer.from_pretrained(args.model_path)
-
-        # Simple demonstration: take a sample prompt from args or fallback
-        prompt = getattr(args, 'sft_prompt', None) or "Explain the significance of watermarks in AI-generated content."
-        inputs = tokenizer(prompt, return_tensors="pt")
-        query_tensors = inputs["input_ids"]
-
-        # Watermark-aware logits processor
-        try:
-            from utils import PiscesLxUtilsLogitsProcessor as PiscesWatermarkLogitsProcessor
-            wm_seed = int(torch.randint(0, 2**31-1, (1,)).item())
-            logits_proc = [PiscesWatermarkLogitsProcessor(seed=wm_seed)]
-        except Exception:
-            logits_proc = None
-
-        # Generate with watermark control
-        gen_ids = model.generate(
-            query_tensors,
-            max_new_tokens=int(getattr(args, 'sft_max_length', 256)),
-            do_sample=True,
-            temperature=float(getattr(args, 'sft_temperature', 0.7)),
-            top_p=float(getattr(args, 'sft_top_p', 0.95)),
-            logits_processor=logits_proc
-        )
-        text = tokenizer.decode(gen_ids[0], skip_special_tokens=True)
-
-        # Add signed payload and detect score
-        try:
-            from utils import PiscesLxUtilsWatermarkManager
-            _wmgr = PiscesLxUtilsWatermarkManager()
-            text_wm = _wmgr.add_watermark(text, {"user_id": "sft"})
-            det = _wmgr.check_watermark(text_wm)
-            score = (det or {}).get("score", None)
-            if score is not None:
-                logger.debug(f"SFT watermark detect score: {float(score):.4f}")
-                try:
-                    self.hooks.emit("train.sft.watermark.score", score=float(score))
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        logger.success("SFT generation with watermark completed.")
-
-    # ---------------- DPO integrated implementation ----------------
-    def _run_dpo(self, args) -> None:
-        """Run DPO with watermark-aware generation (logits processor + signed payload + detect score)."""
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-        try:
-            assert hasattr(args, 'model_path') and args.model_path
-        except Exception:
-            logger.error("DPO requires --model_path")
-            raise SystemExit(1)
-        model = AutoModelForCausalLM.from_pretrained(args.model_path, torch_dtype=torch.float16, device_map="auto")
-        tokenizer = AutoTokenizer.from_pretrained(args.model_path)
-
-        # Sample prompt; in real DPO you'd use preference pairs; here we demonstrate generation integration
-        prompt = getattr(args, 'dpo_prompt', None) or "Provide a concise summary of AI watermark compliance."
-        inputs = tokenizer(prompt, return_tensors="pt")
-        query_tensors = inputs["input_ids"]
-
-        # Watermark-aware logits processor
-        try:
-            from utils import PiscesLxUtilsLogitsProcessor as PiscesWatermarkLogitsProcessor
-            wm_seed = int(torch.randint(0, 2**31-1, (1,)).item())
-            logits_proc = [PiscesWatermarkLogitsProcessor(seed=wm_seed)]
-        except Exception:
-            logits_proc = None
-
-        # Generate with watermark control
-        gen_ids = model.generate(
-            query_tensors,
-            max_new_tokens=int(getattr(args, 'dpo_max_length', 256)),
-            do_sample=True,
-            temperature=float(getattr(args, 'dpo_temperature', 0.7)),
-            top_p=float(getattr(args, 'dpo_top_p', 0.95)),
-            logits_processor=logits_proc
-        )
-        text = tokenizer.decode(gen_ids[0], skip_special_tokens=True)
-
-        # Add signed payload and detect score
-        try:
-            from utils import PiscesLxUtilsWatermarkManager
-            _wmgr = PiscesLxUtilsWatermarkManager()
-            text_wm = _wmgr.add_watermark(text, {"user_id": "dpo"})
-            det = _wmgr.check_watermark(text_wm)
-            score = (det or {}).get("score", None)
-            if score is not None:
-                logger.debug(f"DPO watermark detect score: {float(score):.4f}")
-                try:
-                    self.hooks.emit("train.dpo.watermark.score", score=float(score))
-                except Exception:
-                    pass
-        except Exception:
-            pass
-        logger.success("DPO generation with watermark completed.")
 
     def _validate_rlhf_args(self, args):
         """Validate/normalize RLHF arguments (behavior-preserving)."""

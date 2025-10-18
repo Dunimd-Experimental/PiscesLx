@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -7,6 +7,7 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -22,6 +23,7 @@ from pathlib import Path
 from typing import Optional, List
 from utils.log.core import PiscesLxCoreLog
 
+# 模块级统一日志
 logger = PiscesLxCoreLog("PiscesLx.Utils.UL")
 
 def get_current_version(project_root: Path) -> str:
