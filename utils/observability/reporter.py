@@ -23,8 +23,9 @@ import json
 from pathlib import Path
 from datetime import datetime
 from typing import Any, Dict, Optional, List
+from utils.log.core import PiscesLxCoreLog
 
-import logging
+logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.Reporter")
 
 class PiscesLxCoreReporter:
     """A class for generating markdown and lightweight HTML reports in a specified directory.
@@ -43,7 +44,7 @@ class PiscesLxCoreReporter:
         try:
             os.makedirs(self.reports_dir, exist_ok=True)
         except Exception as e:
-            logging.error(f"Failed to create reports directory {self.reports_dir}: {str(e)}")
+            logger.error(f"Failed to create reports directory {self.reports_dir}: {str(e)}")
 
     def write_device_report(self, data: Dict[str, Any], session_id: Optional[str] = None) -> str:
         """Generate device reports in both markdown and HTML formats.
@@ -273,7 +274,7 @@ class PiscesLxCoreReporter:
                     shown += 1
                 lines.append("")
         except Exception as e:
-            logging.error(f"Failed to get GPU metrics: {str(e)}")
+            logger.error(f"Failed to get GPU metrics: {str(e)}")
 
         anomalies = data.get("anomaly_detection")
         if isinstance(anomalies, list) and anomalies:
@@ -306,7 +307,7 @@ class PiscesLxCoreReporter:
             with open(path, "w", encoding="utf-8") as f:
                 f.write(text)
         except Exception as e:
-            logging.error(f"Failed to write text to file {path}: {str(e)}")
+            logger.error(f"Failed to write text to file {path}: {str(e)}")
 
     def _wrap_html(self, md_text: str) -> str:
         """Wrap markdown text in a lightweight HTML format.
@@ -359,13 +360,13 @@ class PiscesLxCoreReporter:
                     if isinstance(data, list):
                         return [str(x) for x in data]
                 except Exception as e:
-                    logging.debug(f"Failed to parse changelog as JSON: {str(e)}")
+                    logger.debug(f"Failed to parse changelog as JSON: {str(e)}")
                 items = [ln.strip() for ln in content.splitlines() if ln.strip()]
                 return items[:200]
             except Exception as e:
-                logging.error(f"Failed to read changelog from {path}: {str(e)}")
+                logger.error(f"Failed to read changelog from {path}: {str(e)}")
                 return []
         except Exception as e:
-            logging.error(f"Unexpected error while reading UL changelog: {str(e)}")
+            logger.error(f"Unexpected error while reading UL changelog: {str(e)}")
             return []
 

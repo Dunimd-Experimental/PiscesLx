@@ -70,7 +70,6 @@ class PiscesLxCoreCacheManagerFacade:
             cls._instance = cls()
         return cls._instance
 
-
 def get_cache_manager() -> PiscesLxCoreCacheManagerFacade:
     """Public accessor expected by multiple modules (tools/data).
     Returns a singleton facade with directory helpers.

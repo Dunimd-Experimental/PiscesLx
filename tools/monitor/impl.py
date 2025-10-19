@@ -1,4 +1,4 @@
-?#!/usr/bin/env python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -65,7 +65,9 @@ class PiscesLxToolsMonitorImpl:
         self.observability_manager = PiscesLxCoreObservabilityManager()
         
         # Configuration
-        self.UPDATE_INTERVAL = 1  # 1秒采�?        self.LOG_INTERVAL = 60   # 60秒记录一次日�?        self.ANOMALY_THRESHOLD = {
+        self.UPDATE_INTERVAL = 1  # 1 second sampling interval
+        self.LOG_INTERVAL = 60   # 60 seconds logging interval
+        self.ANOMALY_THRESHOLD = {
             'cpu_percent_total': 20,
             'memory_percent': 10,
             'gpu_util': 15,
@@ -296,7 +298,7 @@ class PiscesLxToolsMonitorImpl:
                     self.context_manager.emit_event("monitor_iteration", {
                         'iteration': iteration,
                         'stats': stats,
-                        'alomalies': alerts,
+                        'anomalies': alerts,
                         'logged': logged
                     })
                     

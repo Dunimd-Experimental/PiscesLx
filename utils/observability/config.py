@@ -20,19 +20,42 @@
 
 import os
 import time
-import logging
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
+from utils.log.core import PiscesLxCoreLog
 
-# Configure the logging system
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
-)
+logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.Config")
+
+# Basic configuration
+    session_id: str = ""
+    mode: str = "auto"
+    monitoring_level: str = "performance"
+    
+    # Model-related
+    model_size: str = "7B"
+    batch_size: int = 1
+    sequence_length: int = 2048
+    
+    # Distributed-related
+    world_size: int = 1
+    rank: int = 0
+    
+    # Runtime configuration
+    interval: float = 10.0
+    cache_enabled: bool = True
+    sampling_rate: float = 1.0
+    
+    # Feature switches
+    latency_tracking: bool = True
+    memory_tracking: bool = True
+    throughput_tracking: bool = True
+    communication_tracking: bool = False
+    synchronization_tracking: bool = False
+    fault_tolerance: bool = False
+    
+    # Metrics list
+    metrics: List[str] = field(default_factory=list)
 
 @dataclass
 class PiscesL1CoreMonitoringConfig:
@@ -59,7 +82,7 @@ class PiscesL1CoreMonitoringConfig:
         metrics (List[str]): List of metrics to monitor. Defaults to an empty list.
     """
     
-    logger = logging.getLogger('PiscesL1CoreMonitoringConfig')
+    logger = logger
     
     # Basic configuration
     session_id: str = ""

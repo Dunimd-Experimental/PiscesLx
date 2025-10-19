@@ -25,7 +25,7 @@ import time
 import platform
 import threading
 from dataclasses import dataclass
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 from typing import Optional, Dict, Any, Tuple
 from utils.error import PiscesLxCoreObservabilityError
 

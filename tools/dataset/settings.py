@@ -133,8 +133,9 @@ class SettingsStore:
                     expand_template_panels_by_default=bool(settings_data.get('expand_template_panels_by_default', True)),
                 )
         except Exception as e:
-            import logging
-            logging.warning(f"Failed to load settings from config: {e}")
+            from utils.log.core import PiscesLxCoreLog
+            logger = PiscesLxCoreLog("PiscesLx.Tools.Dataset.Settings")
+            logger.warning(f"Failed to load settings from config: {e}")
         
         return AppSettings()
 

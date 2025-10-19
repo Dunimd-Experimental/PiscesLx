@@ -18,12 +18,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
 from typing import Any, Dict
 from datetime import datetime
+from utils.log.core import PiscesLxCoreLog
 
-# Set up logging for the module
-logger = logging.getLogger(__name__)
+logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.Reports.Writer")
 
 def build_device_report_payload(service: Any, data: Dict[str, Any]) -> Dict[str, Any]:
     """

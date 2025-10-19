@@ -1,4 +1,4 @@
-??#!/usr/bin/env python3
+#!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
@@ -26,12 +26,14 @@ from tqdm import tqdm
 import multiprocessing
 from typing import Any, Tuple
 from utils import PiscesLxCoreLog
-from tools.data.clean import DatasetCleaner
 from .caches import DownloadCacheContext
 from datasets import load_from_disk, Dataset
 from typing import Optional, Set, List, Tuple
+from tools.data.clean import DatasetCleaner
 from .config import ConfigLoader, DownloadConfig, DatasetItem
 from .sources import SourceRouter, to_hf_if_needed, detect_available_splits
+
+logger = PiscesLxCoreLog("PiscesLx.Tools.DataDownload")
 
 def save_dataset(ds: Any, data_dir: str, name: str, max_samples: Optional[int] = None) -> bool:
     """
@@ -47,7 +49,7 @@ def save_dataset(ds: Any, data_dir: str, name: str, max_samples: Optional[int] =
         bool: True if the dataset is saved successfully, False otherwise.
     """
     import os
-    logger = PiscesLxCoreLog("pisceslx.data.download")
+    
     try:
         # Ensure dataset is in HuggingFace format if needed
         try:
@@ -155,7 +157,7 @@ def download_worker(task: Tuple[str, str, str, list[str], str, Optional[int]]) -
                 continue
             return None
 
-class PiscesLxToolsDatasetDownload:
+class DatasetDownload:
     def __init__(self) -> None:
         """
         Initialize the dataset download tool.

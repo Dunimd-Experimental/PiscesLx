@@ -24,7 +24,8 @@ import urllib.error
 from utils import PiscesLxCoreLog
 from typing import Any, Dict, List, Optional
 
-_logger = PiscesLxCoreLog("pisceslx.data.download.sources")
+logger = PiscesLxCoreLog("PiscesLx.Tools.DataDownload.Sources")
+
 # Verbose switch: set PISCESLX_DOWNLOAD_VERBOSE=1 to see detailed debug logs
 _VERBOSE = (os.getenv("PISCESLX_DOWNLOAD_VERBOSE", "0") == "1")
 
@@ -43,7 +44,7 @@ def check_huggingface_connectivity() -> bool:
         return True
     except Exception as e:
         if _VERBOSE:
-            _logger.debug(f"HuggingFace connectivity check failed: {e}")
+            logger.debug(f"HuggingFace connectivity check failed: {e}")
         return False
 
 def setup_hf_mirror() -> None:
@@ -51,14 +52,14 @@ def setup_hf_mirror() -> None:
     Set up HuggingFace mirror if the main site is not accessible.
     """
     if not check_huggingface_connectivity():
-        _logger.info("HuggingFace is not accessible, using mirror: " + HF_MIRROR_URL)
+        logger.info("HuggingFace is not accessible, using mirror: " + HF_MIRROR_URL)
         # Set environment variable for HuggingFace mirror
         os.environ['HF_ENDPOINT'] = HF_MIRROR_URL
         # Also set for datasets library compatibility
         os.environ['HUGGINGFACE_HUB_ENDPOINT'] = HF_MIRROR_URL
     else:
         if _VERBOSE:
-            _logger.debug("HuggingFace is accessible, using main site")
+            logger.debug("HuggingFace is accessible, using main site")
 
 class SourceRouter:
     """
@@ -70,7 +71,7 @@ class SourceRouter:
         # Check HuggingFace connectivity and set up mirror if needed
         setup_hf_mirror()
         if _VERBOSE:
-            _logger.debug("SourceRouter initialized")
+            logger.debug("SourceRouter initialized")
     
     def load(self, dataset_name: str, kwargs: Dict[str, Any] = None, 
              preferred_sources: List[str] = None) -> Optional[Any]:
@@ -100,7 +101,7 @@ class SourceRouter:
                     return self._load_from_huggingface(dataset_name, kwargs)
             except Exception as e:
                 if _VERBOSE:
-                    _logger.debug(f"Router load error: source={source} dataset={dataset_name} kwargs={kwargs}: {e}")
+                    logger.debug(f"Router load error: source={source} dataset={dataset_name} kwargs={kwargs}: {e}")
                 continue
                 
         return None
@@ -122,7 +123,7 @@ class SourceRouter:
             return MsDataset.load(dataset_name, **kwargs)
         except Exception as e:
             if _VERBOSE:
-                _logger.debug(f"ModelScope load failed for {dataset_name} with kwargs={kwargs}: {e}")
+                logger.debug(f"ModelScope load failed for {dataset_name} with kwargs={kwargs}: {e}")
             return None
     
     def _load_from_huggingface(self, dataset_name: str, kwargs: Dict[str, Any]) -> Optional[Any]:
@@ -143,7 +144,7 @@ class SourceRouter:
             return load_dataset(dataset_name, **kwargs)
         except Exception as e:
             if _VERBOSE:
-                _logger.debug(f"HuggingFace load failed for {dataset_name} with kwargs={kwargs}: {e}")
+                logger.debug(f"HuggingFace load failed for {dataset_name} with kwargs={kwargs}: {e}")
             return None
 
 def detect_available_splits(dataset_name: str, source: str | None = None) -> list[str]:
@@ -183,7 +184,7 @@ def detect_available_splits(dataset_name: str, source: str | None = None) -> lis
             available.append(split)
         except Exception as e:
             if _VERBOSE:
-                _logger.debug(f"Split probe failed: source={src} dataset={dataset_name} split={split}: {e}")
+                logger.debug(f"Split probe failed: source={src} dataset={dataset_name} split={split}: {e}")
             continue
 
     if not available:
@@ -199,7 +200,7 @@ def detect_available_splits(dataset_name: str, source: str | None = None) -> lis
         except Exception as e:
             # No available splits or direct load
             if _VERBOSE:
-                _logger.debug(f"Direct probe failed: source={src} dataset={dataset_name}: {e}")
+                logger.debug(f"Direct probe failed: source={src} dataset={dataset_name}: {e}")
 
     return available
 
@@ -227,8 +228,8 @@ def to_hf_if_needed(ds: Any) -> Any:
                 return ds.to_hf_dataset()  # type: ignore[attr-defined]
             except Exception as e:
                 if _VERBOSE:
-                    _logger.debug(f"to_hf_if_needed conversion failed: {e}")
+                    logger.debug(f"to_hf_if_needed conversion failed: {e}")
     except Exception as e:
         if _VERBOSE:
-            _logger.debug(f"to_hf_if_needed conversion failed: {e}")
+            logger.debug(f"to_hf_if_needed conversion failed: {e}")
     return ds

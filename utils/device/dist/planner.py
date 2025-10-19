@@ -23,6 +23,9 @@ import torch
 from .env import PiscesLxCoreClusterEnv
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, Optional, Literal
+from utils.log.core import PiscesLxCoreLog
+
+logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Dist.Planner")
 
 @dataclass
 class PiscesLxCoreDistConfig:
@@ -196,8 +199,7 @@ class PiscesLxCoreDistPlanner:
                     return "bf16"
             except Exception as e:
                 # Log bfloat16 detection failures for debugging purposes
-                import logging
-                logging.getLogger(__name__).debug("bfloat16 detection failed, fallback to fp16: %s", e)
+                logger.debug("bfloat16 detection failed, fallback to fp16: %s", e)
             return "fp16"
         return "fp32"
 

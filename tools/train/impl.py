@@ -23,8 +23,9 @@ import sys
 import json
 import torch
 import warnings
-from utils import PiscesLxCoreEnhancedCacheManager
-from utils.device import PiscesLxCoreDeviceRunner, PiscesLxCoreDeviceManager, PiscesLxCoreDeviceFacade
+from utils.cache import get_cache_manager
+from utils.device.facade import PiscesLxCoreDeviceFacade
+from utils.device.manager import PiscesLxCoreDeviceManager
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
 from utils import PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
 
@@ -36,9 +37,11 @@ COLLATE_MAX_SEQ_LEN = 96
 # Local compatibility wrapper to avoid importing utils functions
 def get_cache_manager():
     try:
-        return PiscesLxCoreEnhancedCacheManager.get_instance()
+        from utils.cache import get_cache_manager as get_cache_manager_facade
+        return get_cache_manager_facade()
     except Exception:
-        return PiscesLxCoreEnhancedCacheManager()
+        from utils.cache import PiscesLxCoreCacheManagerFacade
+        return PiscesLxCoreCacheManagerFacade.get_instance()
 
 def set_context(*, hooks=None, profiler=None, cfg=None):
     """
@@ -71,101 +74,62 @@ def _emit(event: str, **kwargs):
 
 def setup_distributed_training():
     """
-    Set up the distributed training environment with 3D parallel support.
-    Enhanced with utils.device.PiscesLxCoreDeviceFacade for unified device management.
-
-    Returns:
-        torch.device: The device to use for training.
-        bool: Whether the training is distributed.
-        int: The local rank of the current process.
-        int: The total number of processes in the distributed training.
-        dict: 3D parallel configuration.
+    Unified distributed training setup via utils.device.PiscesLxCoreDeviceFacade.
+    Initializes process group, selects device, and recommends simple 3D parallel config.
     """
     import torch
-    import torch.distributed as dist
-    from utils.device.dist import PiscesLxCoreDistConfig, PiscesLxCoreDistPlanner
-    
-    # Initialize logger for this function
+    from utils.device.facade import PiscesLxCoreDeviceFacade
+
     logger = PiscesLxCoreLog("pisceslx.tools.train.impl.setup_distributed_training")
-    
-    # Automatically detect distributed training environment variables
-    local_rank = int(os.environ.get('LOCAL_RANK', -1))
-    world_size = int(os.environ.get('WORLD_SIZE', 1))
-    rank = int(os.environ.get('RANK', 0))
-    
-    # Determine if the current training is in distributed mode
-    is_distributed = local_rank >= 0 and world_size > 1
-    
-    # Initialize 3D parallel configuration
-    dp_size = max(1, world_size)  # Data parallel size
-    pp_size = 1  # Pipeline parallel size
-    mp_size = 1  # Model parallel size
-    
-    if is_distributed:
-        # Use utils distributed configuration for enhanced setup
-        dist_config = PiscesLxCoreDistConfig(
-            world_size=world_size,
-            rank=rank,
-            local_rank=local_rank,
-            master_addr=os.environ.get('MASTER_ADDR', 'localhost'),
-            master_port=int(os.environ.get('MASTER_PORT', 29500))
-        )
-        
-        # Initialize the distributed training process group using utils
-        dist.init_process_group(backend='nccl')
-        # Set the current CUDA device
-        torch.cuda.set_device(local_rank)
-        device = torch.device(f'cuda:{local_rank}')
-        
-        # Use utils device facade for intelligent 3D parallel configuration
-        device_facade = PiscesLxCoreDeviceFacade()
-        num_gpus = torch.cuda.device_count()
-        
-        # Enhanced parallel configuration using utils device manager
-        if num_gpus >= 8:
-            dp_size = max(1, num_gpus // 4)
-            pp_size = 2
-            mp_size = 2
-        elif num_gpus >= 4:
-            dp_size = max(1, num_gpus // 2)
-            pp_size = 2
-        
-        # Emit distributed setup event for observability
-        _emit("train.distributed.setup", 
-              world_size=world_size, rank=rank, local_rank=local_rank,
-              dp_size=dp_size, pp_size=pp_size, mp_size=mp_size)
-            
-        logger.info(f"3D Parallel: DP={dp_size}, PP={pp_size}, MP={mp_size}, rank {rank}/{world_size}")
+
+    # Use facade for device + distributed init
+    facade = PiscesLxCoreDeviceFacade()
+    dev_cfg = facade.setup_devices(mode="distributed")
+    dist_cfg = facade.init_distributed(backend="nccl")
+
+    is_distributed = bool(dist_cfg.get("distributed", dev_cfg.get("world_size", 1) > 1))
+    local_rank = int(dist_cfg.get("local_rank", dev_cfg.get("local_rank", 0)))
+    world_size = int(dist_cfg.get("world_size", dev_cfg.get("world_size", 1)))
+    rank = int(dist_cfg.get("rank", dev_cfg.get("rank", 0)))
+
+    # Select device based on facade config
+    if dev_cfg.get("device_type") == "cpu" or not torch.cuda.is_available():
+        device = torch.device("cpu")
+        logger.info("Training mode: CPU (Device Facade)")
     else:
-        # Single-GPU or multi-GPU non-distributed mode - use utils device facade
-        device_facade = PiscesLxCoreDeviceFacade()
-        device_config = device_facade.setup_devices(mode="auto")
-        
-        if device_config.get('device_type') == 'cpu':
-            device = torch.device('cpu')
-            logger.info("Training mode: CPU fallback (via device orchestrator)")
-        else:
-            gpu_ids = device_config.get('gpu_ids', [])
-            if gpu_ids:
-                device = torch.device(f"cuda:{gpu_ids[0]}")
-                torch.cuda.set_device(gpu_ids[0])
-            else:
-                device = torch.device('cuda')
-            logger.info(f"Training mode: {device_config.get('strategy', 'single_gpu')}")
-        
-        # Emit device setup event for observability
-        _emit("train.device.setup", device_config=device_config)
-        
-    # Construct 3D parallel configuration dictionary
+        device = torch.device(f"cuda:{local_rank}")
+        try:
+            torch.cuda.set_device(local_rank)
+        except Exception:
+            pass
+        logger.info(f"Training mode: CUDA device {local_rank} (Device Facade)")
+
+    # Simple 3D parallel suggestion (engine-agnostic)
+    num_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    dp_size = max(1, world_size) if is_distributed else 1
+    pp_size = 1
+    mp_size = 1
+    if num_gpus >= 8 and is_distributed:
+        dp_size = max(1, world_size // 2)
+        pp_size = 2
+        mp_size = 2
+    elif num_gpus >= 4 and is_distributed:
+        dp_size = max(1, world_size // 2)
+        pp_size = 2
+
+    _emit("train.distributed.setup",
+          world_size=world_size, rank=rank, local_rank=local_rank,
+          dp_size=dp_size, pp_size=pp_size, mp_size=mp_size)
+
     parallel_config = {
-        'dp_size': dp_size,
-        'pp_size': pp_size,
-        'mp_size': mp_size,
-        'total_gpus': dp_size * pp_size * mp_size,
-        'device_type': device.type,
-        'device_index': device.index if hasattr(device, 'index') else 0
+        "dp_size": dp_size,
+        "pp_size": pp_size,
+        "mp_size": mp_size,
+        "total_gpus": dp_size * pp_size * mp_size,
+        "device_type": device.type,
+        "device_index": device.index if hasattr(device, "index") else 0
     }
-    
+
     return device, is_distributed, local_rank, world_size, parallel_config
 
 def create_ddp_model(model, device, is_distributed, local_rank):
@@ -182,7 +146,7 @@ def create_ddp_model(model, device, is_distributed, local_rank):
     Returns:
         torch.nn.Module: The wrapped model.
     """
-    from utils.device import PiscesLxCoreModelParallelizer
+    # from utils.device import PiscesLxCoreModelParallelizer  # Commented out as it's not available
     
     # Initialize logger for this function
     logger = PiscesLxCoreLog("pisceslx.tools.train.impl.create_ddp_model")
@@ -250,7 +214,13 @@ def create_dataloader(dataset, batch_size, is_distributed, world_size=1, rank=0,
     
     # Handle empty dataset to avoid deadlock
     if len(dataset) == 0:
-        return torch.utils.data.DataLoader([], batch_size=1)
+        from torch.utils.data import Dataset
+        class EmptyDataset(Dataset):
+            def __len__(self):
+                return 0
+            def __getitem__(self, idx):
+                return {}
+        return torch.utils.data.DataLoader(EmptyDataset(), batch_size=1)
     
     if is_distributed:
         # Create a distributed sampler for distributed training
@@ -372,13 +342,13 @@ def _train_impl(args):
         args: Command line arguments or configuration object containing training parameters.
     """
     import torch
-    from tools.data.dataset import PiscesDataset
+    from tools.data.dataset.core import PiscesDataset
     from torch.utils.data import DataLoader
     from model.tokenizer import get_tokenizer
     from model import ArcticModel, ArcticConfig
     from utils.checkpoint import save_ckpt, load_ckpt
     from torch.optim.lr_scheduler import ReduceLROnPlateau
-    from transformers import get_linear_schedule_with_warmup
+    from transformers.optimization import get_linear_schedule_with_warmup
     
     # Initialize logger for this function
     logger = PiscesLxCoreLog("pisceslx.tools.train.impl._train_impl")
@@ -422,13 +392,13 @@ def _train_impl(args):
     except Exception:
         COLLATE_MAX_SEQ_LEN = seq_len
     
-    # Override quantization and LoRA settings (config-first, CLI override)
-    quant_bits = int(training_config.get('quant_bits', 4))
+    # Quantization settings - only from command line or auto-detection, not from config
+    quant_bits = 4  # Default quantization bits
     if hasattr(args, 'quant_bits') and args.quant_bits is not None:
         try:
             quant_bits = int(args.quant_bits)
         except Exception:
-            logger.error("quant_bits must be integer; falling back to config/default")
+            logger.error("quant_bits must be integer; falling back to default (4)")
         
     if hasattr(args, 'force_quant') and args.force_quant:
         force_quant = True
@@ -443,9 +413,26 @@ def _train_impl(args):
         force_quant = False
         logger.info("Command line override: force_quant = false")
     
+    # Auto-detect quantization needs based on hardware resources (only if not explicitly disabled)
+    if not hasattr(args, 'no_quant') and not hasattr(args, 'force_quant') and not hasattr(args, 'quant'):
+        try:
+            from utils.device.manager import PiscesLxCoreDeviceManager
+            device_manager = PiscesLxCoreDeviceManager()
+            # Get inference strategy to check quantization recommendations
+            strategy = device_manager.get_inference_strategy(model_size=model_size)
+            if strategy.get('quantization_needed', False):
+                recommended_bits = strategy.get('recommended_quant_bits', 4)
+                if recommended_bits in [2, 4, 8]:
+                    quant_bits = recommended_bits
+                    force_quant = True
+                    logger.info(f"Auto-detected quantization need: {quant_bits}-bit quantization recommended based on hardware resources")
+        except Exception as e:
+            logger.debug(f"Failed to auto-detect quantization needs: {e}")
+    
     # Honor epochs from training_config. epochs=0 means no epoch cap (auto convergence)
     cache_manager = get_cache_manager()
-    save_dir = cache_manager.get_or_create_cache_dir("ckpt")
+    save_dir = str(cache_manager.get_cache_dir("ckpt"))
+    os.makedirs(save_dir, exist_ok=True)
     
     class DynamicGradientAccumulator:
         """
@@ -521,7 +508,8 @@ def _train_impl(args):
         logger.info(f"Using command line dataset: {args.dataset}")
     else:
         cache_manager = get_cache_manager()
-        data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
+        data_cache_dir = str(cache_manager.get_cache_dir("data_cache"))
+        os.makedirs(data_cache_dir, exist_ok=True)
         model_txt = os.path.join(data_cache_dir, "model.txt")
         if not os.path.exists(model_txt):
             logger.error(f"{model_txt} not found! Please create it with one dataset name per line, or use --dataset argument.")
@@ -543,28 +531,25 @@ def _train_impl(args):
             batch_size = world_size
         logger.info(f"Distributed training: global batch_size={batch_size}, per-GPU batch_size={effective_batch_size}")
     else:
-        # Use device orchestrator's batch_size directly unless CLI explicitly set one
+        # Use unified device facade's batch_size unless CLI explicitly overrides
         try:
-            from utils.device import setup_devices as _setup_devices_for_batch
-            _dev_cfg_b = _setup_devices_for_batch()
-            _dev_bs = int(_dev_cfg_b.get('batch_size', batch_size))
-            # If args has an explicit CLI batch override, respect it; else use device batch
-            _cli_batch = getattr(args, 'batch_size', None)
-            if _cli_batch is not None:
-                batch_size = int(_cli_batch)
-            else:
-                batch_size = _dev_bs
+            from utils.device.facade import PiscesLxCoreDeviceFacade
+            f = PiscesLxCoreDeviceFacade(args)
+            dev_cfg_b = f.setup_devices(mode="auto")
+            dev_bs = int(dev_cfg_b.get("batch_size", batch_size))
+            cli_batch = getattr(args, "batch_size", None)
+            batch_size = int(cli_batch) if cli_batch is not None else dev_bs
         except Exception:
             pass
         effective_batch_size = batch_size
     
-    # Set up mixed precision training based on device recommendations
-    from utils.device import setup_devices as _setup_devices_for_train
-    _dev_cfg = _setup_devices_for_train()
-    _mp_enabled = bool(_dev_cfg.get('mixed_precision', torch.cuda.is_available())) and torch.cuda.is_available()
-    _dtype_str = str(_dev_cfg.get('dtype', 'fp16')).lower()
-    _amp_dtype = torch.float16 if _dtype_str == 'fp16' else (torch.bfloat16 if _dtype_str == 'bf16' else torch.float32)
-    scaler = torch.amp.GradScaler('cuda') if _mp_enabled else None
+    # Set up mixed precision training via unified device facade
+    from utils.device.facade import PiscesLxCoreDeviceFacade
+    f = PiscesLxCoreDeviceFacade(args)
+    _dev_cfg = f.setup_devices(mode="distributed" if is_distributed else "auto")
+    _amp_dtype = f.amp_dtype(_dev_cfg.get("dtype", "auto"))
+    _mp_enabled = bool(_dev_cfg.get("mixed_precision", torch.cuda.is_available())) and torch.cuda.is_available()
+    scaler = torch.cuda.amp.GradScaler() if _mp_enabled else None
     # Apply silently without printing suggestions
         
     logger.info(f"Device setup completed: {device}")
@@ -597,8 +582,20 @@ def _train_impl(args):
     
     model = None
     if use_quant or force_lora:
-        from transformers import BitsAndBytesConfig
-        from peft import get_peft_model, LoraConfig, TaskType
+        from transformers.utils.quantization_config import BitsAndBytesConfig
+        try:
+            from peft import get_peft_model, LoraConfig, TaskType
+        except ImportError:
+            # If peft is not available, create dummy classes
+            class LoraConfig:
+                def __init__(self, **kwargs):
+                    pass
+            
+            def get_peft_model(model, config):
+                return model
+            
+            class TaskType:
+                CAUSAL_LM = "CAUSAL_LM"
         quant_config = None
         if use_quant:
             if quant_bits == 2:
@@ -639,30 +636,37 @@ def _train_impl(args):
                     setattr(lora_model, attr, getattr(model, attr))
             model = lora_model
             try:
-                model.print_trainable_parameters()
+                if hasattr(model, 'print_trainable_parameters'):
+                    model.print_trainable_parameters()
             except Exception:
-                pass
+                # If print_trainable_parameters is not available, calculate manually
+                trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+                total_params = sum(p.numel() for p in model.parameters())
+                logger.info(f"Trainable parameters: {trainable_params:,} / {total_params:,} ({100 * trainable_params / total_params:.2f}%)")
     else:
         model = ArcticModel(cfg)
 
-    model.resize_token_embeddings(len(tokenizer))
-    start_id = tokenizer.encoder.get("<think>")
-    end_id = tokenizer.encoder.get("</think>")
-    if start_id is None or end_id is None:
-        raise ValueError("Special reasoning tokens could not be added to the tokenizer.")
-    model.reasoner.start_thinking_id = start_id
-    model.reasoner.end_thinking_id = end_id
-    logger.info(f"Reasoner is integral and configured with token IDs: start={start_id}, end={end_id}")
+    if model is not None:
+        model.resize_token_embeddings(len(tokenizer))
+        start_id = tokenizer.encoder.get("<think>")
+        end_id = tokenizer.encoder.get("</think>")
+        if start_id is None or end_id is None:
+            raise ValueError("Special reasoning tokens could not be added to the tokenizer.")
+        if hasattr(model, 'reasoner') and hasattr(model.reasoner, 'start_thinking_id'):
+            model.reasoner.start_thinking_id = start_id
+        if hasattr(model, 'reasoner') and hasattr(model.reasoner, 'end_thinking_id'):
+            model.reasoner.end_thinking_id = end_id
+        logger.info(f"Reasoner is integral and configured with token IDs: start={start_id}, end={end_id}")
     
     if hasattr(model, 'gradient_checkpointing_enable'):
         model.gradient_checkpointing_enable()
         logger.info(f"Gradient Checkpointing enabled.")
+    else:
+        logger.info(f"Gradient Checkpointing not available for this model.")
         
     model = model.to(device)
     logger.info("ArcticModel initialized.")
-    if torch.cuda.is_available() and torch.cuda.device_count() > 1:
-        logger.info(f"Using {torch.cuda.device_count()} GPUs")
-        model = torch.nn.DataParallel(model)
+    # DataParallel removed; rely on DDP when is_distributed=True
     logger.info("Initializing optimizer and scheduler...")
     
     def get_parameter_groups(model, base_lr):
@@ -798,12 +802,20 @@ def _train_impl(args):
         logger.info(f"Training dataset: {dataset}")
         logger.info(f"Batch size: {batch_size}, Epochs: {epochs}, LR: {lr}")
         cache_manager = get_cache_manager()
-        data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
+        data_cache_dir = str(cache_manager.get_cache_dir("data_cache"))
+        os.makedirs(data_cache_dir, exist_ok=True)
         cache_path = os.path.join(data_cache_dir, dataset)
         if not os.path.exists(cache_path):
             logger.error(f"Local dataset not found: {cache_path}")
             continue
-        train_ds = PiscesDataset(subset=dataset, split="train", config=cfg)
+        # Convert ArcticConfig to dict if needed
+        if hasattr(cfg, 'to_dict'):
+            config_dict = cfg.__dict__ if hasattr(cfg, '__dict__') else {}
+        elif hasattr(cfg, '__dict__'):
+            config_dict = cfg.__dict__
+        else:
+            config_dict = {}
+        train_ds = PiscesDataset(subset=dataset, split="train", config=config_dict)
         if len(train_ds) == 0:
             logger.debug(f"Warning: Dataset '{dataset}' is empty after filtering. Skipping.")
             continue
@@ -822,14 +834,15 @@ def _train_impl(args):
         os.makedirs(save_dir, exist_ok=True)
         logger.info(f"Starting training loop...")
         model.train()
-        scaler = torch.amp.GradScaler('cuda') if torch.cuda.is_available() else None
+        scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
         stop_training = False
         epoch = start_epoch
         
         if is_distributed:
-            train_loader.sampler.set_epoch(epoch)
+            if hasattr(train_loader, 'sampler') and hasattr(train_loader.sampler, 'set_epoch'):
+                train_loader.sampler.set_epoch(epoch)
         
         try:
             while not stop_training:
@@ -1250,7 +1263,8 @@ def validate_train_args(args):
     # Check dataset presence
     if not getattr(args, 'dataset', None):
         cache_manager = get_cache_manager()
-        data_cache_dir = cache_manager.get_or_create_cache_dir("data_cache")
+        data_cache_dir = str(cache_manager.get_cache_dir("data_cache"))
+        os.makedirs(data_cache_dir, exist_ok=True)
         model_txt = os.path.join(data_cache_dir, "model.txt")
         if not os.path.exists(model_txt):
             raise ValueError("dataset not provided and data_cache/model.txt not found")

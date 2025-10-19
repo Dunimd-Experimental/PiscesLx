@@ -23,7 +23,7 @@ import threading
 import platform
 import subprocess
 from dataclasses import dataclass
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 from typing import Dict, Optional, List, Tuple, Any
 from utils.error import PiscesLxCoreObservabilityError
 

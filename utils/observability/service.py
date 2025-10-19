@@ -31,7 +31,7 @@ from enum import Enum
 from pathlib import Path
 from datetime import datetime
 import threading as _threading
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 from dataclasses import dataclass, field
 from .reporter import PiscesLxCoreReporter
 from collections import defaultdict, deque

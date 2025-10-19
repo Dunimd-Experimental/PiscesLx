@@ -21,18 +21,18 @@
 import os
 import json
 import torch
-from .memory import MemoryMonitor
+from .memory import PiscesLxToolsMemoryMonitor
 from torch.utils.data import IterableDataset
 from typing import Iterator, Dict, List, Optional
 from model.tokenizer import get_tokenizer
-from model.multimodal import ArcticVisionEncoder as VisionEncoder, ArcticAudioEncoder as AudioEncoder, ArcticDocEncoder as DocEncoder, ArcticVideoEncoder as VideoEncoder
+from model.multimodal import ArcticVisionEncoder, ArcticAudioEncoder, ArcticDocEncoder, ArcticVideoEncoder
 
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
 AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]
 DOC_KEYS = ["doc", "document", "doc_path", "pdf"]
 VIDEO_KEYS = ["video", "video_path", "mp4", "avi", "mov", "mkv"]
 
-class LargeScaleStreamingDataset(IterableDataset):
+class PiscesLxToolsLargeScaleStreamingDataset(IterableDataset):
     """An iterable dataset for large-scale streaming data processing.
     
     This dataset supports reading data from multiple sources, including directories and files,
@@ -40,7 +40,7 @@ class LargeScaleStreamingDataset(IterableDataset):
     for multimodal data processing.
     """
     def __init__(self, data_sources: List[str], config: Optional[dict] = None):
-        """Initialize the LargeScaleStreamingDataset.
+        """Initialize the PiscesLxToolsLargeScaleStreamingDataset.
 
         Args:
             data_sources (List[str]): List of paths to data sources, which can be files or directories.
@@ -51,12 +51,12 @@ class LargeScaleStreamingDataset(IterableDataset):
         self.data_sources = data_sources
         self.tokenizer = get_tokenizer()
         self.config = config or {}
-        self.memory = MemoryMonitor(threshold_gb=8.0)
+        self.memory = PiscesLxToolsMemoryMonitor(threshold_gb=8.0)
         # Initialize multimodal encoders if config is provided
-        self.vision_encoder = VisionEncoder(config) if config else None
-        self.audio_encoder = AudioEncoder(config) if config else None
-        self.doc_encoder = DocEncoder(config) if config else None
-        self.video_encoder = VideoEncoder(config) if config else None
+        self.vision_encoder = ArcticVisionEncoder(config) if config else None
+        self.audio_encoder = ArcticAudioEncoder(config) if config else None
+        self.doc_encoder = ArcticDocEncoder(config) if config else None
+        self.video_encoder = ArcticVideoEncoder(config) if config else None
         self._index: List[Dict] = self._build_index()
 
     def _build_index(self) -> List[Dict]:

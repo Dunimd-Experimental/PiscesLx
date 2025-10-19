@@ -73,5 +73,4 @@ class DatasetRegistry:
             raise KeyError(f"Dataset builder not found: {name}")
         return builder(**kwargs)
 
-# Default singleton instance of DatasetRegistry
 REGISTRY = DatasetRegistry()

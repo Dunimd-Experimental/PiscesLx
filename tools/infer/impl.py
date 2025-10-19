@@ -67,51 +67,28 @@ def _emit(event: str, **kwargs: Any) -> None:
 
 def setup_inference_device(device_pref: str):
     """
-    Choose an inference device based on the preference with GPUManager fallback.
-    
-    This function selects an appropriate device for inference according to the provided 
-    preference. It supports "auto", "cpu", and "cuda[:id]" as device preferences. 
-    When "auto" is selected, it tries to use GPUManager to determine the best strategy.
-    
-    Args:
-        device_pref (str): Device preference. Options: "auto", "cpu", "cuda[:id]".
-    Returns:
-        torch.device: The selected device for inference.
+    Choose an inference device using unified Device Facade.
     """
     import torch
-
+    from utils.device.facade import PiscesLxCoreDeviceFacade
+    facade = PiscesLxCoreDeviceFacade(args=None)
     if device_pref == "auto":
-        # Check if CUDA is available
-        if not torch.cuda.is_available():
+        dev_cfg = facade.setup_devices(mode="auto")
+        if dev_cfg.get("device_type") == "cpu" or not torch.cuda.is_available():
             device = torch.device("cpu")
-            logger.success("CUDA not available, falling back to CPU inference mode")
-            logger.success("Inference mode: cpu")
+            logger.success("Inference mode: cpu (via Device Facade)")
         else:
-            try:
-                from utils.device import setup_devices
-                device_config = setup_devices()
-                # Apply device selection from orchestrator
-                if device_config.get('device_type') == 'cpu':
-                    device = torch.device("cpu")
-                    logger.success("CPU inference mode (via device orchestrator)")
-                else:
-                    gpu_ids = device_config.get('gpu_ids', [])
-                    if gpu_ids:
-                        device = torch.device(f"cuda:{gpu_ids[0]}")
-                        torch.cuda.set_device(gpu_ids[0])
-                    else:
-                        device = torch.device("cuda")
-                # Apply silently without printing suggestions
-            except Exception as e:
-                if torch.cuda.is_available():
-                    device = torch.device("cuda")
-                    logger.success(f"DeviceOrchestrator unavailable, using default CUDA device: {e}")
-                else:
-                    device = torch.device("cpu")
-                    logger.success(f"DeviceOrchestrator unavailable and CUDA not available, using CPU: {e}")
+            gpu_ids = dev_cfg.get("gpu_ids", [])
+            if gpu_ids:
+                device = torch.device(f"cuda:{gpu_ids[0]}")
+                try:
+                    torch.cuda.set_device(gpu_ids[0])
+                except Exception:
+                    pass
+            else:
+                device = torch.device("cuda")
     else:
         device = torch.device(device_pref)
-
     logger.success(f"Using device: {device}")
     return device
 
@@ -149,15 +126,14 @@ class VLLMEngine:
         # Determine dtype and tensor_parallel from device orchestrator if dtype is auto
         try:
             if dtype == "auto":
-                from utils.device import setup_devices as _setup_devices_for_vllm
-                _dev_cfg = _setup_devices_for_vllm()
-                _dtype = str(_dev_cfg.get('dtype', 'fp16')).lower()
-                # Map to vLLM dtype names
-                dtype = 'bfloat16' if _dtype == 'bf16' else ('float16' if _dtype == 'fp16' else 'float32')
-                # If not explicitly set, derive TP from gpu_ids length
+                from utils.device.facade import PiscesLxCoreDeviceFacade
+                f = PiscesLxCoreDeviceFacade(args=None)
+                dev_cfg = f.setup_devices(mode="auto")
+                torch_dtype = f.amp_dtype(dev_cfg.get("dtype", "auto"))
+                dtype = f.map_vllm_dtype(torch_dtype)
                 if not tensor_parallel_size or tensor_parallel_size == 1:
-                    _gpu_ids = _dev_cfg.get('gpu_ids', [])
-                    tensor_parallel_size = max(1, len(_gpu_ids) or 1)
+                    gpu_ids = dev_cfg.get("gpu_ids", [])
+                    tensor_parallel_size = max(1, len(gpu_ids) or 1)
         except Exception:
             pass
         # Initialize the VLLM LLM with the provided parameters
@@ -514,25 +490,18 @@ def _infer_impl(args: Any) -> None:
     inference_cfg = _full_cfg.get('inference_config', {})
     # Automatically select the inference device (GPU if available, otherwise CPU)
     device = setup_inference_device('auto')
-    # Prepare mixed precision settings from device orchestrator
-    try:
-        from utils.device import setup_devices as _setup_devices_for_infer
-        _dev_cfg = _setup_devices_for_infer()
-        _mp_enabled = bool(_dev_cfg.get('mixed_precision', torch.cuda.is_available())) and torch.cuda.is_available()
-        _dtype_str = str(_dev_cfg.get('dtype', 'fp16')).lower()
-        _amp_dtype = torch.float16 if _dtype_str == 'fp16' else (torch.bfloat16 if _dtype_str == 'bf16' else torch.float32)
-    except Exception:
-        _mp_enabled = torch.cuda.is_available()
-        _amp_dtype = torch.float16
+    # Prepare mixed precision settings from unified Device Facade
+    from utils.device.facade import PiscesLxCoreDeviceFacade
+    f = PiscesLxCoreDeviceFacade(args)
+    _dev_cfg = f.setup_devices(mode="auto")
+    _amp_dtype = f.amp_dtype(_dev_cfg.get("dtype", "auto"))
+    _mp_enabled = bool(_dev_cfg.get("mixed_precision", torch.cuda.is_available())) and torch.cuda.is_available()
     # Ensure model is on the selected device and uses mixed precision if available
     try:
         model = model.to(device, dtype=_amp_dtype if _mp_enabled else None)
     except Exception:
         pass
-    # Enable DataParallel if multiple GPUs are available
-    if torch.cuda.device_count() > 1 and device.type == 'cuda':
-        logger.success(f"Detected {torch.cuda.device_count()} GPUs, enabling DataParallel inference")
-        model = torch.nn.DataParallel(model)
+    # DataParallel is removed; rely on engine tensor-parallel or single-device execution via unified device facade
     lora_used = False
 {{ ... }}
         logger.success(f"Loading model: {args.ckpt}")

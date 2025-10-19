@@ -18,7 +18,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import logging
+from utils.log.core import PiscesLxCoreLog
 import time
 from typing import Any, Optional
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
@@ -105,7 +105,7 @@ class PiscesLxToolsMonitorOrchestrator:
         self._error_count = 0
         
         # Initialize logger
-        self.logger = logging.getLogger(__name__)
+        self.logger = PiscesLxCoreLog(__name__)
 
     def run(self, mode: str = "standard") -> None:
         """Main entry point to run monitoring with enhanced utils integration and intelligent adaptation."""

@@ -22,10 +22,10 @@ import os
 import sys
 from types import ModuleType
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-from utils import PiscesLxCoreDeviceFacade, PiscesLxCoreDeviceManager, PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager, PiscesLxCoreEnhancedCacheManager
+from utils import PiscesLxCoreDeviceFacade, PiscesLxCoreCheckpointManager, PiscesLxCoreEnhancedCacheManager
 from . import impl as _impl
 from .impl import PiscesLxToolsTrainImpl
-logger = PiscesLxCoreLog("pisceslx.data.download")
+logger = PiscesLxCoreLog("pisceslx.tools.train.runner")
 
 class PiscesLxToolsTrainRunner:
     """
@@ -34,18 +34,25 @@ class PiscesLxToolsTrainRunner:
     allowing for a smooth transition while maintaining backward compatibility.
     """
 
-    def __init__(self, args, hooks=None, profiler=None, cfg=None):
+    def __init__(self, args, hooks=None, profiler=None, cfg=None, cache_manager=None, device_manager=None, observability=None):
         """
-        Initialize the training runner.
+        Initialize the training runner with enhanced device management.
 
         Args:
             args: Training arguments.
             hooks (optional): Training hooks. Defaults to None.
             profiler (optional): Profiler instance. Defaults to None.
             cfg (optional): Configuration object. Defaults to None.
+            cache_manager (optional): Cache manager instance. Defaults to None.
+            device_manager (optional): Device manager instance. Defaults to None.
+            observability (optional): Observability facade. Defaults to None.
         """
         self.args = args
         self._logger = PiscesLxCoreLog("pisceslx.tools.train.runner")
+        
+        # Initialize utils-enhanced components
+        self._init_utils_components(cache_manager, device_manager, observability)
+        
         # Instantiate class-based facade for unified style
         self._impl = PiscesLxToolsTrainImpl()
         try:
@@ -56,10 +63,10 @@ class PiscesLxToolsTrainRunner:
         # Keep a reference to the module for helper delegations (no behavior change)
         self._impl_module = _impl
     
-    def _init_utils_components(self):
+    def _init_utils_components(self, cache_manager=None, device_manager=None, observability=None):
         """Initialize utils-enhanced components for device management and configuration."""
         # Initialize device facade for device management
-        self.device_facade = PiscesLxCoreDeviceFacade()
+        self.device_facade = device_manager or PiscesLxCoreDeviceFacade(self.args)
         
         # Initialize config manager for enhanced configuration handling
         self.config_manager = PiscesLxCoreConfigManager()
@@ -67,10 +74,13 @@ class PiscesLxToolsTrainRunner:
         # Initialize checkpoint manager for model checkpoint handling
         self.checkpoint_manager = PiscesLxCoreCheckpointManager()
         
-        self._logger.info("PiscesLxToolsTrainRunner utils components initialized")
+        # Initialize cache manager if provided
+        self.cache_manager = cache_manager
         
-        # Initialize utils-enhanced components
-        self._init_utils_components()
+        # Initialize observability if provided
+        self.observability = observability
+        
+        self._logger.info("PiscesLxToolsTrainRunner utils components initialized with device management")
 
     def train(self) -> None:
         """

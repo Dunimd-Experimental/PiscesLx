@@ -21,7 +21,9 @@
 import os
 from contextlib import contextmanager
 from typing import Any, Dict, Optional
-import logging
+from utils.log.core import PiscesLxCoreLog
+
+logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.OtelHelper")
 
 # Get environment variable to determine if OpenTelemetry tracing is enabled
 _OTEL_ENABLED = os.environ.get("PISCES_OTEL_ENABLE", "0").lower() in ("1", "true")
@@ -37,7 +39,7 @@ except ImportError:
     _OTEL_ENABLED = False
     _otel_trace = None  # type: ignore
     _SpanKind = None  # type: ignore
-    logging.warning("Failed to import OpenTelemetry packages. Tracing will be disabled.")
+    logger.warning("Failed to import OpenTelemetry packages. Tracing will be disabled.")
 
 def is_enabled() -> bool:
     """Check if OpenTelemetry tracing is enabled and the tracer is available.
@@ -61,7 +63,7 @@ def get_tracer(instrumentation_name: str = "pisceslx.observability") -> Any:
         try:
             return _otel_trace.get_tracer(instrumentation_name)  # type: ignore
         except Exception as e:
-            logging.warning(f"Failed to get OpenTelemetry tracer: {str(e)}. Using no-op tracer instead.")
+            logger.warning(f"Failed to get OpenTelemetry tracer: {str(e)}. Using no-op tracer instead.")
     # No-op tracer class
     class _NoopTracer:
         def start_as_current_span(self, name: str, kind: Optional[Any] = None) -> Any:
@@ -115,7 +117,7 @@ def start_span(name: str, kind: Optional[str] = None, attributes: Optional[Dict[
                     }
                     _kind = kind_map.get(kind.lower())
                 except Exception as e:
-                    logging.warning(f"Failed to map span kind: {str(e)}. Using None as span kind.")
+                    logger.warning(f"Failed to map span kind: {str(e)}. Using None as span kind.")
                     _kind = None
             with tracer.start_as_current_span(name, kind=_kind) as span:  # type: ignore
                 if attributes and span is not None:
@@ -124,13 +126,13 @@ def start_span(name: str, kind: Optional[str] = None, attributes: Optional[Dict[
                             try:
                                 span.set_attribute(k, v)  # type: ignore
                             except Exception as e:
-                                logging.warning(f"Failed to set attribute {k}: {str(e)}")
+                                logger.warning(f"Failed to set attribute {k}: {str(e)}")
                     except Exception as e:
-                        logging.warning(f"Failed to set span attributes: {str(e)}")
+                        logger.warning(f"Failed to set span attributes: {str(e)}")
                 yield span
             return
         except Exception as e:
-            logging.warning(f"Failed to start OpenTelemetry span: {str(e)}. Using no-op context instead.")
+            logger.warning(f"Failed to start OpenTelemetry span: {str(e)}. Using no-op context instead.")
     # Fallback to no-op context
     with _noop_context():
         yield None

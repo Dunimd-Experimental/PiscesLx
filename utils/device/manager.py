@@ -23,7 +23,6 @@ import json
 import torch
 import platform
 import subprocess
-import subprocess
 import time
 import numpy as np
 from utils.log.core import PiscesLxCoreLog
@@ -92,7 +91,7 @@ class PiscesLxCoreDeviceManager:
                 'memory_pressure': self._calculate_memory_pressure(memory, swap)
             }
             
-            logger.info("System memory detected", {
+            logger.info("System memory detected", extra={
                 "total_gb": memory.total // (1024**3),
                 "available_gb": memory.available // (1024**3),
                 "swap_gb": swap.total // (1024**3),
@@ -144,7 +143,7 @@ class PiscesLxCoreDeviceManager:
             
             if os.name == 'nt':  # Windows
                 import ctypes
-                class MEMORYSTATUSEX(ctypes.Structure):
+                class _MEMORYSTATUSEX(ctypes.Structure):
                     _fields_ = [
                         ('dwLength', ctypes.c_ulong),
                         ('dwMemoryLoad', ctypes.c_ulong),
@@ -157,8 +156,8 @@ class PiscesLxCoreDeviceManager:
                         ('ullAvailExtendedVirtual', ctypes.c_ulonglong)
                     ]
                 
-                memoryStatus = MEMORYSTATUSEX()
-                memoryStatus.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
+                memoryStatus = _MEMORYSTATUSEX()
+                memoryStatus.dwLength = ctypes.sizeof(_MEMORYSTATUSEX)
                 ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(memoryStatus))
                 
                 self.system_memory = {
@@ -238,7 +237,7 @@ class PiscesLxCoreDeviceManager:
         # Store detection summary
         self.detection_summary = detection_result.get('detection_summary', {})
         
-        logger.info("Smart detection complete", {"gpu_count": len(self.gpu_info), "cpu_detected": bool(self.cpu_info)})
+        logger.info("Smart detection complete", extra={"gpu_count": len(self.gpu_info), "cpu_detected": bool(self.cpu_info)})
         
         # Detect system memory
         self._detect_system_memory()
@@ -299,15 +298,16 @@ class PiscesLxCoreDeviceManager:
                     'memory_bandwidth': 0
                 })
                         
-                logger.info("ROCm detection", {"amd_gpu_count": len([g for g in self.gpu_info if g.get('platform') == 'rocm'])})
+                logger.info("ROCm detection", extra={"amd_gpu_count": len([g for g in self.gpu_info if g.get('platform') == 'rocm'])})
                 
         except (subprocess.TimeoutExpired, FileNotFoundError):
-            logger.debug("ROCm detection skipped", {"reason": "TimeoutExpired or FileNotFoundError"})
-        except json.JSONDecodeError:
-            logger.debug("ROCm detection skipped", {"reason": "JSONDecodeError"})
+            logger.debug("ROCm detection skipped", extra={"reason": "TimeoutExpired or FileNotFoundError"})
         except Exception as e:
             # Log unexpected errors for debugging
-            logger.error("Unexpected error in ROCm detection", error=str(e))
+            if 'JSONDecodeError' in str(e):
+                logger.debug("ROCm detection skipped", extra={"reason": "JSONDecodeError"})
+            else:
+                logger.error("Unexpected error in ROCm detection", error=str(e))
             
     def _detect_directml_gpus(self):
         """
@@ -352,7 +352,7 @@ class PiscesLxCoreDeviceManager:
                     'memory_bandwidth': 0
                 })
                 
-            logger.info("DirectML detection", {"gpu_count": device_count})
+            logger.info("DirectML detection", extra={"gpu_count": device_count})
             
         except ImportError:
             logger.debug("DirectML not available")
@@ -403,7 +403,7 @@ class PiscesLxCoreDeviceManager:
                     logger.success("WSL GPU detection completed")
                     
         except Exception as e:
-            logger.debug("WSL detection failed or skipped", {"error": str(e), "error_class": type(e).__name__})
+            logger.debug("WSL detection failed or skipped", extra={"error": str(e), "error_class": type(e).__name__})
             
     def _get_rocm_temperature(self, gpu_id: str) -> int:
         """Get ROCm GPU temperature using rocm-smi."""
@@ -570,7 +570,8 @@ class PiscesLxCoreDeviceManager:
                 pynvml.nvmlInit()
                 handle = pynvml.nvmlDeviceGetHandleByIndex(device_index)
                 util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                return util.gpu
+                if hasattr(util, 'gpu'):
+                    return int(util.gpu)
             except ImportError:
                 pass
                 
@@ -617,8 +618,10 @@ class PiscesLxCoreDeviceManager:
                         return int(value * 1024)
                     else:
                         return int(value)
+                else:
+                    return 0
         except (ValueError, AttributeError) as e:
-            logger.debug("ROCm memory parse failed", {"error": str(e), "memory_str": memory_str[:50]})
+            logger.debug("ROCm memory parse failed", extra={"error": str(e), "memory_str": memory_str[:50]})
             return 0
 
     def _detect_cpu(self):
@@ -658,7 +661,7 @@ class PiscesLxCoreDeviceManager:
             # Find nvidia-smi path
             nvidia_smi_path = self._find_nvidia_smi()
             if not nvidia_smi_path:
-                logger.warning("NVIDIA_DETECTION_FAILED", {
+                logger.warning("NVIDIA_DETECTION_FAILED", extra={
                     "message": "nvidia-smi not found, falling back to torch enumeration"
                 })
                 self._torch_fallback_enumeration()
@@ -684,7 +687,7 @@ class PiscesLxCoreDeviceManager:
             
             if result.returncode != 0:
                 error_msg = result.stderr.strip() if result.stderr else "Unknown error"
-                logger.error("NVIDIA_QUERY_FAILED", {
+                logger.error("NVIDIA_QUERY_FAILED", extra={
                     "error": error_msg,
                     "message": "nvidia-smi query failed, using torch fallback"
                 })
@@ -700,7 +703,7 @@ class PiscesLxCoreDeviceManager:
                 try:
                     parts = [p.strip() for p in line.split(',')]
                     if len(parts) < len(query_fields):
-                        logger.warning("NVIDIA_PARSE_INCOMPLETE", {
+                        logger.warning("NVIDIA_PARSE_INCOMPLETE", extra={
                             "line": line_num,
                             "expected_fields": len(query_fields),
                             "actual_fields": len(parts)
@@ -720,7 +723,7 @@ class PiscesLxCoreDeviceManager:
                     
                     # Validate parsed data
                     if gpu_index < 0 or total_memory <= 0:
-                        logger.warning("NVIDIA_PARSE_INVALID", {
+                        logger.warning("NVIDIA_PARSE_INVALID", extra={
                             "line": line_num,
                             "gpu_index": gpu_index,
                             "total_memory": total_memory
@@ -751,33 +754,33 @@ class PiscesLxCoreDeviceManager:
                     })
                     
                 except (ValueError, IndexError) as e:
-                    logger.error("NVIDIA_PARSE_LINE_FAILED", {
+                    logger.error("NVIDIA_PARSE_LINE_FAILED", extra={
                         "line": line_num,
                         "error": str(e),
                         "line_content": line[:100]  # Truncate long lines
                     })
                     continue
             
-            logger.success("NVIDIA_DETECTION_COMPLETE", {
+            logger.success("NVIDIA_DETECTION_COMPLETE", extra={
                 "gpu_count": len([g for g in self.gpu_info if g['type'] == 'nvidia']),
                 "detection_method": "nvidia-smi"
             })
             
         except subprocess.TimeoutExpired:
-            logger.error("NVIDIA_DETECTION_TIMEOUT", {
+            logger.error("NVIDIA_DETECTION_TIMEOUT", extra={
                 "timeout": 30,
                 "message": "NVIDIA GPU detection timed out"
             })
             self._torch_fallback_enumeration()
             
         except FileNotFoundError:
-            logger.warning("NVIDIA_DETECTION_NOT_FOUND", {
+            logger.warning("NVIDIA_DETECTION_NOT_FOUND", extra={
                 "message": "nvidia-smi not found"
             })
             self._torch_fallback_enumeration()
             
         except Exception as e:
-            logger.error("NVIDIA_DETECTION_UNEXPECTED_ERROR", {
+            logger.error("NVIDIA_DETECTION_UNEXPECTED_ERROR", extra={
                 "error": str(e),
                 "error_type": type(e).__name__,
                 "message": "Unexpected error during NVIDIA GPU detection"
@@ -816,7 +819,7 @@ class PiscesLxCoreDeviceManager:
                 return f"{capability[0]}.{capability[1]}"
         except Exception as e:
             # Log CUDA capability detection failures for debugging
-            logger.debug("CUDA_CAPABILITY_DETECTION_FAILED", {"gpu_index": gpu_index, "error": str(e)})
+            logger.debug("CUDA_CAPABILITY_DETECTION_FAILED", extra={"gpu_index": gpu_index, "error": str(e)})
         return "unknown"
 
     def _find_nvidia_smi(self) -> Optional[str]:
@@ -887,14 +890,14 @@ class PiscesLxCoreDeviceManager:
                                     capture_output=True, text=True, timeout=10)
             if result.returncode == 0:
                 driver_version = result.stdout.strip()
-                logger.info("NVIDIA_DRIVER_VERSION", {"version": driver_version})
+                logger.info("NVIDIA_DRIVER_VERSION", extra={"version": driver_version})
             else:
-                logger.warning("NVIDIA_DRIVER_CHECK_FAILED", {
+                logger.warning("NVIDIA_DRIVER_CHECK_FAILED", extra={
                     "message": "Failed to get NVIDIA driver version"
                 })
                 
         except Exception as e:
-            logger.error("NVIDIA_DRIVER_STATUS_CHECK_FAILED", {
+            logger.error("NVIDIA_DRIVER_STATUS_CHECK_FAILED", extra={
                 "error": str(e),
                 "message": "NVIDIA driver status check failed"
             })
@@ -920,7 +923,7 @@ class PiscesLxCoreDeviceManager:
                     used = max(total - free, 0)
                 except Exception as e:
                     # Log memory info retrieval failures for debugging
-                    logger.debug("CUDA_MEMORY_INFO_FAILED", {"gpu_index": i, "error": str(e)})
+                    logger.debug("CUDA_MEMORY_INFO_FAILED", extra={"gpu_index": i, "error": str(e)})
                 self.gpu_info.append({
                     'index': i,
                     'name': torch.cuda.get_device_name(i),
@@ -955,9 +958,9 @@ class PiscesLxCoreDeviceManager:
         enhanced_strategy = self._enhance_parallel_strategy(smart_strategy, model_params)
         self.strategy = enhanced_strategy
         
-        logger.info("Smart strategy determined", {"device_type": enhanced_strategy.get('device_type', 'unknown')})
+        logger.info("Smart strategy determined", extra={"device_type": enhanced_strategy.get('device_type', 'unknown')})
         if enhanced_strategy.get('parallel_strategy'):
-            logger.info("Parallel strategy", {"strategy": enhanced_strategy['parallel_strategy']})
+            logger.info("Parallel strategy", extra={"strategy": enhanced_strategy['parallel_strategy']})
 
     def _get_model_size_string(self, model_params: float) -> str:
         """
@@ -1150,7 +1153,7 @@ class PiscesLxCoreDeviceManager:
             # Select best available backend
             if backends:
                 best_backend = max(backends, key=lambda x: x[1])[0]
-                logger.info("Communication backend selected", {"backend": best_backend, "available": [b[0] for b in backends]})
+                logger.info("Communication backend selected", extra={"backend": best_backend, "available": [b[0] for b in backends]})
                 return best_backend
             else:
                 logger.error("No communication backend available, falling back to gloo")
@@ -1325,7 +1328,7 @@ class PiscesLxCoreDeviceManager:
         # Calculate final steps (minimum 1)
         final_steps = max(1, int(base_steps * multiplier))
         
-        logger.info("Gradient accumulation steps calculated", {
+        logger.info("Gradient accumulation steps calculated", extra={
             "model_params_b": model_params,
             "gpu_count": gpu_count,
             "comm_performance": comm_performance,
@@ -1534,7 +1537,6 @@ class PiscesLxCoreDeviceManager:
         try:
             # Try to perform actual GPU-to-GPU bandwidth test
             if torch.cuda.is_available() and len(self.gpu_info) >= 2:
-                import torch
                 
                 # Use first two GPUs for testing
                 gpu0 = torch.cuda.device(0)
@@ -1994,7 +1996,7 @@ class PiscesLxCoreDeviceManager:
                         # Rough estimate based on CPU frequency and core count
                         # This is very approximate but better than fixed value
                         base_gflops_per_core = cpu_freq.current / 1000.0  # GHz to GFLOPS per core
-                        total_gflops = base_gflops_per_core * cpu_count * 2  # Assume 2 FLOPS per cycle
+                        total_gflops = base_gflops_per_core * (cpu_count or 1) * 2  # Assume 2 FLOPS per cycle
                         return min(total_gflops, 200.0)  # Cap at reasonable limit
                 except (ImportError, AttributeError):
                     pass
@@ -2381,6 +2383,93 @@ class PiscesLxCoreDeviceManager:
             return 16
         else:
             return 8
+    
+    def _estimate_model_memory(self, model_params: float, sequence_length: int = 1024) -> int:
+        """
+        Estimate model memory requirements based on model parameters and sequence length.
+        
+        Args:
+            model_params (float): Number of model parameters in billions
+            sequence_length (int): Sequence length for inference/training
+            
+        Returns:
+            int: Estimated memory requirement in MB
+        """
+        # Model parameters memory (assuming FP16/BF16 for inference)
+        param_memory = model_params * 1e9 * 2 / (1024**2)  # Convert to MB
+        
+        # KV cache memory (rough estimation)
+        kv_cache_memory = 2 * sequence_length * 4096 * 32 * 2 / (1024**2)  # Convert to MB
+        
+        # Activation memory (rough estimation)
+        activation_memory = sequence_length * 4096 * 32 * 4 / (1024**2)  # Convert to MB
+        
+        # Total memory estimate with some overhead
+        total_memory = (param_memory + kv_cache_memory + activation_memory) * 1.2
+        
+        return int(total_memory)
+    
+    def _check_quantization_need(self, model_memory: float) -> bool:
+        """
+        Check if quantization is needed based on memory pressure.
+        
+        Args:
+            model_memory (float): Estimated model memory requirement in MB
+            
+        Returns:
+            bool: True if quantization is recommended, False otherwise
+        """
+        # Get total system memory
+        total_system_memory = self.system_memory.get('total', 0) / (1024**2)  # Convert to MB
+        
+        # Get available GPU memory (if any GPU is available)
+        available_gpu_memory = 0
+        if self.gpu_info:
+            available_gpu_memory = sum(gpu.get('free_memory', 0) for gpu in self.gpu_info)
+        
+        # Total available memory
+        total_available_memory = total_system_memory + available_gpu_memory
+        
+        # Check if model memory exceeds available memory by a significant margin
+        # If model memory is more than 80% of available memory, recommend quantization
+        memory_pressure_ratio = model_memory / max(total_available_memory, 1)
+        
+        return memory_pressure_ratio > 0.8
+    
+    def _recommend_quantization_bits(self, model_memory: float) -> int:
+        """
+        Recommend quantization bits based on memory pressure.
+        
+        Args:
+            model_memory (float): Estimated model memory requirement in MB
+            
+        Returns:
+            int: Recommended quantization bits (2, 4, or 8)
+        """
+        # Get total system memory
+        total_system_memory = self.system_memory.get('total', 0) / (1024**2)  # Convert to MB
+        
+        # Get available GPU memory (if any GPU is available)
+        available_gpu_memory = 0
+        if self.gpu_info:
+            available_gpu_memory = sum(gpu.get('free_memory', 0) for gpu in self.gpu_info)
+        
+        # Total available memory
+        total_available_memory = total_system_memory + available_gpu_memory
+        
+        # Calculate memory pressure ratio
+        memory_pressure_ratio = model_memory / max(total_available_memory, 1)
+        
+        # Recommend quantization bits based on memory pressure
+        if memory_pressure_ratio > 1.5:
+            # Severe memory pressure - recommend 2-bit quantization
+            return 2
+        elif memory_pressure_ratio > 1.0:
+            # High memory pressure - recommend 4-bit quantization
+            return 4
+        else:
+            # Moderate memory pressure - recommend 8-bit quantization
+            return 8
 
     def print_summary(self) -> None:
         """
@@ -2394,11 +2483,11 @@ class PiscesLxCoreDeviceManager:
         
         # Add current strategy info
         if self.strategy:
-            logger.info("Current strategy", {"device_type": self.strategy.get('device_type', 'unknown')})
-            logger.info("Strategy reason", {"reason": self.strategy.get('reason', 'No specific reason')})
+            logger.info("Current strategy", extra={"device_type": self.strategy.get('device_type', 'unknown')})
+            logger.info("Strategy reason", extra={"reason": self.strategy.get('reason', 'No specific reason')})
             
             if self.strategy.get('warning'):
-                logger.error("Strategy warning", warning=self.strategy['warning'])
+                logger.error("Strategy warning", extra={"warning": self.strategy['warning']})
 
     def get_recommended_strategy(self) -> Dict[str, Any]:
         """
@@ -2500,7 +2589,7 @@ class PiscesLxCoreDeviceManager:
             'device_count': torch.cuda.device_count() if torch.cuda.is_available() else 0,
         }
 
-    def get_inference_strategy(self, model_size: str = None, sequence_length: int = 1024) -> dict:
+    def get_inference_strategy(self, model_size: Optional[str] = None, sequence_length: int = 1024) -> dict:
         """
         Universal intelligent inference strategy - CPU/GPU/Cluster auto-selection.
         
@@ -2590,7 +2679,7 @@ class PiscesLxCoreDeviceManager:
         if safe_memory > 0:
             # CPU batch size based on memory and core count
             memory_based_batch = max(1, int(safe_memory / (model_memory * 0.1)))
-            core_based_batch = max(1, cpu_cores // 2)  # Conservative core usage
+            core_based_batch = max(1, (cpu_cores or 1) // 2)  # Conservative core usage
             batch_size = min(memory_based_batch, core_based_batch)
         else:
             batch_size = 1
@@ -2729,6 +2818,22 @@ class PiscesLxCoreDeviceManager:
         
         batch_size = min(batch_size, max_batch)
         
+        # Calculate memory margin
+        memory_margin_mb = max(0, int(safe_memory - activation_memory * batch_size))
+        warning = None
+        if batch_size == 1 and memory_margin_mb < 256:
+            warning = "Low memory headroom; consider reducing sequence length"
+        
+        # Check if quantization is needed based on memory pressure
+        quantization_needed = self._check_quantization_need(model_memory)
+        recommended_bits = None
+        if quantization_needed:
+            recommended_bits = self._recommend_quantization_bits(model_memory)
+            if warning:
+                warning += f"; Quantization recommended: {recommended_bits}-bit"
+            else:
+                warning = f"Quantization recommended: {recommended_bits}-bit"
+        
         return {
             'mode': 'single_gpu',
             'gpu_ids': [gpu['index']],
@@ -2740,6 +2845,8 @@ class PiscesLxCoreDeviceManager:
             'sequence_length': sequence_length,
             'estimated_memory': model_memory + (activation_memory * batch_size),
             'memory_margin_mb': memory_margin_mb,
+            'quantization_needed': quantization_needed,
+            'recommended_quant_bits': recommended_bits,
             **({'warning': warning} if warning else {}),
         }
 

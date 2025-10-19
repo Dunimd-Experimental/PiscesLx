@@ -343,6 +343,8 @@ class PiscesLxCoreDeviceFacade:
                 "config": config,
                 "timestamp": time.time()
             })
+            # Cache current config for downstream consumers (dtype/ids decisions)
+            self._config_cache = config
             
             return config
             
@@ -507,4 +509,89 @@ class PiscesLxCoreDeviceFacade:
             "max_available_gb": max_available_gb if required_memory_gb > 0 else "N/A"
         })
         return True
+
+    def init_distributed(self, backend: str = "nccl") -> dict:
+        """
+        Initialize torch.distributed process group and set current device.
+        Returns a dictionary with distributed metadata that train/infer can consume.
+        """
+        import torch
+        import torch.distributed as dist
+        try:
+            world_size = int(os.environ.get('WORLD_SIZE', self.cfg.get("distributed.world_size", 1)))
+            rank = int(os.environ.get('RANK', self.cfg.get("distributed.rank", 0)))
+            local_rank = int(os.environ.get('LOCAL_RANK', self.cfg.get("distributed.local_rank", 0)))
+            master_addr = os.environ.get('MASTER_ADDR', self.cfg.get("distributed.master_addr", "localhost"))
+            master_port = os.environ.get('MASTER_PORT', str(self.cfg.get("distributed.master_port", "29500")))
+
+            distributed = world_size > 1 and dist.is_available()
+            if distributed and not dist.is_initialized():
+                os.environ.setdefault('MASTER_ADDR', master_addr)
+                os.environ.setdefault('MASTER_PORT', master_port)
+                dist.init_process_group(backend=backend, rank=rank, world_size=world_size, init_method="env://")
+                if torch.cuda.is_available():
+                    try:
+                        torch.cuda.set_device(local_rank)
+                    except Exception as e:
+                        logger.debug("set_device failed", error=str(e))
+
+            cfg = {
+                "distributed": distributed,
+                "backend": backend if distributed else None,
+                "world_size": world_size,
+                "rank": rank,
+                "local_rank": local_rank,
+                "master_addr": master_addr,
+                "master_port": master_port,
+            }
+            self._emit_hook_event("device.distributed_initialized", cfg)
+            return cfg
+        except Exception as e:
+            logger.error("Distributed init failed", error=str(e))
+            return {
+                "distributed": False,
+                "backend": None,
+                "world_size": 1,
+                "rank": 0,
+                "local_rank": 0,
+            }
+
+    def amp_dtype(self, dtype_str: str = "auto"):
+        """
+        Map precision preference to torch.dtype, with 'auto' selecting BF16 on Ampere+ else FP16,
+        and FP32 on CPU.
+        """
+        import torch
+        s = (dtype_str or "auto").lower()
+        if s == "fp16":
+            return torch.float16
+        if s == "bf16":
+            return torch.bfloat16
+        if s == "fp32":
+            return torch.float32
+        # auto decision
+        if not torch.cuda.is_available():
+            return torch.float32
+        try:
+            gpu_ids = []
+            if self._config_cache and self._config_cache.get("gpu_ids"):
+                gpu_ids = self._config_cache["gpu_ids"]
+            elif getattr(self, "gpu_manager", None) and self.gpu_manager.gpu_info:
+                gpu_ids = [self.gpu_manager.gpu_info[0].get("index", 0)]
+            idx = gpu_ids[0] if gpu_ids else 0
+            major, _ = torch.cuda.get_device_capability(idx)
+            return torch.bfloat16 if major >= 8 else torch.float16
+        except Exception:
+            return torch.float16
+
+    def map_vllm_dtype(self, torch_dtype) -> str:
+        """
+        Convert torch.dtype to vLLM dtype string.
+        """
+        import torch
+        if torch_dtype == torch.bfloat16:
+            return "bfloat16"
+        if torch_dtype == torch.float16:
+            return "float16"
+        return "float32"
 

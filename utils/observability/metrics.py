@@ -24,7 +24,7 @@ import time
 import json
 import threading
 from pathlib import Path
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 from collections import defaultdict
 from utils.error import PiscesLxCoreObservabilityError
 from typing import Dict, Any, Optional, List, Union, DefaultDict

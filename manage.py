@@ -143,8 +143,8 @@ def main():
         orchestrator = PiscesLxToolsMonitorOrchestrator(args)
         orchestrator.run(args)
     elif args.command == 'download':
-        from tools.data.download import PiscesLxToolsDatasetDownload
-        tool = PiscesLxToolsDatasetDownload()
+        from tools.data.download import _DatasetDownload
+        tool = _DatasetDownload()
         tool.download(args.max_samples)
         tool.optimize(max_keep=5000)
     elif args.command == 'dataset':

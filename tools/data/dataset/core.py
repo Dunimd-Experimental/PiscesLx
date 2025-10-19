@@ -23,8 +23,8 @@ import torch
 from datasets import load_from_disk
 from torch.utils.data import Dataset
 from typing import Optional, Dict, Any
-from utils import PiscesLxCoreCacheManagerFacade
 from model.tokenizer import get_tokenizer
+from utils import PiscesLxCoreCacheManagerFacade
 from model.multimodal import ArcticVisionEncoder as VisionEncoder, ArcticAudioEncoder as AudioEncoder, ArcticDocEncoder as DocEncoder, ArcticVideoEncoder as VideoEncoder
 
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
@@ -32,21 +32,25 @@ AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]
 DOC_KEYS = ["doc", "document", "doc_path", "pdf"]
 VIDEO_KEYS = ["video", "video_path", "mp4", "avi", "mov", "mkv"]
 
-class PiscesDataset(Dataset):
-    """A custom dataset class for loading and processing multi-modal data for the Pisces project."""
+class Dataset:
+    """A dataset class for Pisces that supports both text and multimodal data.
 
-    def __init__(self, subset: str = "tiny", split: str = "train", config: Optional[Dict[str, Any]] = None, max_samples: Optional[int] = None):
-        """Initialize the PiscesDataset instance.
+    This class provides a unified interface for handling different types of data
+    including text, images, audio, and video. It supports various data formats
+    and provides efficient data loading and processing capabilities.
+    """
+
+    def __init__(self, name: str, subset: Optional[str] = None, split: str = "train", config: Optional[Dict[str, Any]] = None, cache_dir: Optional[str] = None):
+        """Initialize the Dataset instance.
 
         Args:
-            subset (str, optional): The subset of the dataset to load. Defaults to "tiny".
-            split (str, optional): The data split to load, e.g., "train", "val", or "test". Defaults to "train".
-            config (Optional[Dict[str, Any]], optional): Configuration dictionary for the dataset. Defaults to None.
-            max_samples (Optional[int], optional): Maximum number of samples to load. If None, load all samples. Defaults to None.
-
-        Raises:
-            FileNotFoundError: If the dataset cache directory does not exist.
+            name: Name of the dataset.
+            subset: Subset of the dataset (optional).
+            split: Data split to use (e.g., 'train', 'test', 'validation').
+            config: Configuration dictionary (optional).
+            cache_dir: Directory to cache the dataset (optional).
         """
+        
         self.subset = subset
         self.split = split
         self.config = config or {}

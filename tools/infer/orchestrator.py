@@ -20,10 +20,11 @@
 
 from typing import Any, Optional
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-logger = PiscesLxCoreLog("pisceslx.data.download")
 from utils import PiscesLxCoreHookBus, PiscesLxCoreDeviceFacade, PiscesLxCoreEnhancedCacheManager
 from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
-from utils import PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
+from utils import PiscesLxCoreCheckpointManager
+
+logger = PiscesLxCoreLog("pisceslx.tools.infer.orchestrator")
 
 # Reuse the training profiler to avoid duplication
 try:

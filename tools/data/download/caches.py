@@ -19,7 +19,7 @@
 # limitations under the License.
 
 import os
-import logging
+from utils.log.core import PiscesLxCoreLog
 import warnings
 from pathlib import Path
 from utils import PiscesLxCoreCacheManagerFacade
@@ -77,6 +77,8 @@ class DownloadCacheContext:
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         
         # Reduce the log level of third-party libraries
+        # Reduce the log level of third-party libraries
+        import logging
         logging.getLogger("modelscope").setLevel(logging.ERROR)
         logging.getLogger("datasets").setLevel(logging.WARNING)
         logging.getLogger("transformers").setLevel(logging.WARNING)

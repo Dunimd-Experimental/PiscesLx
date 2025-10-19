@@ -20,10 +20,12 @@
 
 import os
 import time
-import logging
 import torch
 from typing import Optional
 import torch.distributed as dist
+from utils.log.core import PiscesLxCoreLog
+
+logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Dist.Process")
 
 class PiscesLxCoreProcessGroupManager:
     """Manages the process group for distributed training in PiscesLx Core."""
@@ -88,7 +90,7 @@ class PiscesLxCoreProcessGroupManager:
                 if hasattr(torch, 'timedelta'):
                     init_kwargs["timeout"] = torch.timedelta(seconds=timeout_seconds)  # type: ignore[attr-defined]
             except Exception as e:
-                logging.getLogger(__name__).debug("Timedelta initialization failed, continuing without timeout: %s", e)
+                logger.debug("Timedelta initialization failed, continuing without timeout: %s", e)
 
         # Attempt initialization with primary backend and fallback to 'gloo'
         backends_to_try = [backend]
@@ -108,7 +110,7 @@ class PiscesLxCoreProcessGroupManager:
                         if 0 <= local_rank < device_count:
                             torch.cuda.set_device(local_rank)
                     except Exception as e:
-                        logging.getLogger(__name__).debug("Failed to set CUDA device for local_rank %s: %s", local_rank, e)
+                        logger.debug("Failed to set CUDA device for local_rank %s: %s", local_rank, e)
                 cls._initialized = True
                 break
             except BaseException as e:
@@ -131,6 +133,6 @@ class PiscesLxCoreProcessGroupManager:
             try:
                 dist.destroy_process_group()
             except Exception as e:
-                logging.getLogger(__name__).debug("Failed to destroy process group: %s", e)
+                logger.debug("Failed to destroy process group: %s", e)
         cls._initialized = False
         cls._backend_used = None

@@ -19,12 +19,12 @@
 # limitations under the License.
 
 import psutil
-import logging
 from datetime import datetime
 from .base import BaseCollector
 from dataclasses import dataclass
 from typing import Dict, Any, Optional
 from ..registry import PiscesLxCoreMetricsRegistry
+from utils.log.core import PiscesLxCoreLog
 
 @dataclass
 class MemoryMetrics:
@@ -64,7 +64,7 @@ class PiscesLxCoreMemoryCollector(BaseCollector):
             registry (Optional[PiscesLxCoreMetricsRegistry]): Metrics registry to register collected metrics. Defaults to None.
         """
         super().__init__("memory", registry)
-        self.logger = logging.getLogger("pisceslx.observability.memory")
+        self.logger = PiscesLxCoreLog("pisceslx.observability.memory")
         self._process = psutil.Process()
         
     def collect(self) -> Dict[str, Any]:

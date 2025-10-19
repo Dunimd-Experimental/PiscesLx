@@ -22,7 +22,7 @@ import os
 import json
 import time
 import threading
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 from typing import Dict, Any, Optional, List
 from ..metrics import PiscesLxCoreMetricsRegistry
 

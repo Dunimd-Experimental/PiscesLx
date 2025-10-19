@@ -23,7 +23,7 @@ import json
 import yaml
 import uuid
 import hashlib
-import logging
+from utils.log.core import PiscesLxCoreLog
 import time
 from pathlib import Path
 from datetime import datetime
@@ -72,7 +72,7 @@ class FunctionTemplateManager:
         self.observability = observability
         self.metrics_registry = metrics_registry
         self.templates = {}
-        self.logger = logging.getLogger(__name__)
+        self.logger = PiscesLxCoreLog(__name__)
         
         # Collect initialization metrics
         if self.observability:

@@ -19,6 +19,6 @@
 # limitations under the License.
 
 from .pipeline import DatasetCleaner
-from .core import PiscesLxToolsDatasetClean
+from .core import DatasetClean
 
-__all__ = ["PiscesLxToolsDatasetClean", "DatasetCleaner"]
+__all__ = ["DatasetClean", "DatasetCleaner"]

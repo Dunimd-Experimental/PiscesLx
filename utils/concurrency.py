@@ -35,7 +35,7 @@ from utils.error import PiscesLxCoreTimeoutError, PiscesLxCoreConcurrencyError, 
 
 logger = PiscesLxCoreLog("PiscesLx.Utils.Concurrency")
 
-class TaskPriority(Enum):
+class _TaskPriority(Enum):
     """Enumeration representing different task priority levels.
     
     Values are ordered from highest to lowest priority.
@@ -46,7 +46,7 @@ class TaskPriority(Enum):
     LOW = 3
     BACKGROUND = 4
 
-class ConcurrencyBackend(Enum):
+class _ConcurrencyBackend(Enum):
     """Enumeration representing different concurrency backend types."""
     THREADING = "threading"
     MULTIPROCESSING = "multiprocessing"
@@ -85,14 +85,15 @@ class ConcurrencyConfig:
         timeout_seconds (float, optional): The overall timeout in seconds. Defaults to 300.0.
         retry_attempts (int, optional): The number of retry attempts for failed tasks. Defaults to 3.
         retry_delay (float, optional): The delay between retry attempts in seconds. Defaults to 1.0.
-        backend (ConcurrencyBackend, optional): The concurrency backend to use. Defaults to ConcurrencyBackend.THREADING.
+        backend (_ConcurrencyBackend, optional): The concurrency backend to use. Defaults to _ConcurrencyBackend.THREADING.
         enable_profiling (bool, optional): Whether to enable profiling. Defaults to False.
         enable_memory_monitoring (bool, optional): Whether to enable memory monitoring. Defaults to False.
         task_timeout (float, optional): The timeout for individual tasks in seconds. Defaults to 60.0.
         queue_size (int, optional): The size of the task queue. Defaults to 1000.
         max_async_tasks (int, optional): The maximum number of asynchronous tasks. Defaults to 100.
         max_queue_size (int, optional): The maximum size of the task queue. Defaults to 1000.
-        default_priority (TaskPriority, optional): The default priority for tasks. Defaults to TaskPriority.NORMAL.
+        backend: _ConcurrencyBackend = _ConcurrencyBackend.THREADING
+        default_priority: _TaskPriority = _TaskPriority.NORMAL
         default_max_workers (int, optional): The default maximum number of workers. Defaults to 4.
         default_timeout (float, optional): The default timeout for tasks in seconds. Defaults to 60.0.
         resource_pools (Dict[str, Dict[str, Any]], optional): The resource pools configuration. Defaults to None.
@@ -102,14 +103,14 @@ class ConcurrencyConfig:
     timeout_seconds: float = 300.0
     retry_attempts: int = 3
     retry_delay: float = 1.0
-    backend: ConcurrencyBackend = ConcurrencyBackend.THREADING
+    backend: _ConcurrencyBackend = _ConcurrencyBackend.THREADING
     enable_profiling: bool = False
     enable_memory_monitoring: bool = False
     task_timeout: float = 60.0
     queue_size: int = 1000
     max_async_tasks: int = 100
     max_queue_size: int = 1000
-    default_priority: TaskPriority = TaskPriority.NORMAL
+    default_priority: _TaskPriority = _TaskPriority.NORMAL
     default_max_workers: int = 4
     default_timeout: float = 60.0
     resource_pools: Dict[str, Dict[str, Any]] = None  # type: ignore
@@ -505,17 +506,17 @@ class PiscesLxCoreAsyncManager:
 
 
 
-    def __init__(self, 
+    def __init__(self,
                  max_concurrent: int = 100,
                  max_queue_size: int = 1000,
-                 default_priority: TaskPriority = TaskPriority.NORMAL):
+                 default_priority: _TaskPriority = _TaskPriority.NORMAL):
         """
         Initialize the async task manager.
 
         Args:
             max_concurrent (int, optional): The maximum number of concurrent tasks. Defaults to 100.
             max_queue_size (int, optional): The maximum size of the task queue. Defaults to 1000.
-            default_priority (TaskPriority, optional): The default priority for tasks. Defaults to TaskPriority.NORMAL.
+            default_priority (_TaskPriority, optional): The default priority for tasks. Defaults to _TaskPriority.NORMAL.
         """
         self.max_concurrent = max_concurrent
         self.max_queue_size = max_queue_size
@@ -528,14 +529,14 @@ class PiscesLxCoreAsyncManager:
 
     async def submit(self, 
                     coro: Callable[[], Any], 
-                    priority: Optional[TaskPriority] = None,
+                    priority: Optional[_TaskPriority] = None,
                     timeout: Optional[float] = None) -> asyncio.Task[Any]:
         """
         Submit an async task with a specified priority.
 
         Args:
             coro (Callable[[], Any]): The coroutine to execute.
-            priority (Optional[TaskPriority], optional): The priority of the task. Defaults to the default priority of the manager.
+            priority (Optional[_TaskPriority], optional): The priority of the task. Defaults to the default priority of the manager.
             timeout (Optional[float], optional): The timeout for the task in seconds. Defaults to None.
 
         Returns:
@@ -1011,7 +1012,7 @@ class PiscesLxCoreConcurrencyManager:
     def create_parallel_executor(
         self,
         name: str,
-        backend: ConcurrencyBackend = ConcurrencyBackend.THREADING,
+        backend: _ConcurrencyBackend = _ConcurrencyBackend.THREADING,
         max_workers: Optional[int] = None,
         **kwargs
     ) -> 'PiscesLxCoreParallel':
@@ -1019,7 +1020,7 @@ class PiscesLxCoreConcurrencyManager:
 
         Args:
             name (str): The name to identify the parallel executor.
-            backend (ConcurrencyBackend, optional): The concurrency backend to use. Defaults to ConcurrencyBackend.THREADING.
+            backend (_ConcurrencyBackend, optional): The concurrency backend to use. Defaults to _ConcurrencyBackend.THREADING.
             max_workers (Optional[int], optional): The maximum number of workers. If None, use the default value from config. Defaults to None.
             **kwargs: Additional arguments to pass to the parallel executor.
 
@@ -1169,7 +1170,7 @@ class PiscesLxCoreParallel:
 
     def __init__(
         self,
-        backend: ConcurrencyBackend = ConcurrencyBackend.THREADING,
+        backend: _ConcurrencyBackend = _ConcurrencyBackend.THREADING,
         max_workers: Optional[int] = None,
         chunk_size: int = 1,
         timeout: Optional[float] = None,
@@ -1179,7 +1180,7 @@ class PiscesLxCoreParallel:
         """Initialize the parallel executor.
 
         Args:
-            backend (ConcurrencyBackend, optional): The concurrency backend to use. Defaults to ConcurrencyBackend.THREADING.
+            backend (_ConcurrencyBackend, optional): The concurrency backend to use. Defaults to _ConcurrencyBackend.THREADING.
             max_workers (Optional[int], optional): The maximum number of workers. Defaults to None.
             chunk_size (int, optional): The number of items to process in each chunk. Defaults to 1.
             timeout (Optional[float], optional): The timeout for each task. Defaults to None.
@@ -1230,9 +1231,9 @@ class PiscesLxCoreParallel:
         errors: List[Tuple[Exception, Any]] = []
 
         try:
-            if self.backend == ConcurrencyBackend.THREADING:
+            if self.backend == _ConcurrencyBackend.THREADING:
                 results = self._execute_threaded(func, items, errors)
-            elif self.backend == ConcurrencyBackend.MULTIPROCESSING:
+            elif self.backend == _ConcurrencyBackend.MULTIPROCESSING:
                 results = self._execute_multiprocess(func, items, errors)
             else:
                 raise PiscesLxCoreConcurrencyError(
@@ -1417,7 +1418,7 @@ class PiscesLxCoreParallel:
             List[Any]: The results of the function execution.
         """
         parallel = PiscesLxCoreParallel(
-            backend=ConcurrencyBackend.THREADING,
+            backend=_ConcurrencyBackend.THREADING,
             max_workers=max_workers
         )
         return parallel.map(fn, list(items))

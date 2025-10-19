@@ -20,7 +20,7 @@
 
 from typing import Any
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-logger = PiscesLxCoreLog("pisceslx.data.download")
+logger = PiscesLxCoreLog("pisceslx.tools.infer.runner")
 from . import impl as _impl
 from .impl import PiscesLxToolsInferImpl
 
@@ -30,18 +30,39 @@ class PiscesLxToolsInferRunner:
     This runner mirrors the style of the training runner: it delegates to
     the implementation module while providing a place to wire hooks, profiler,
     and configuration context.
+    
+    Enhanced with utils device management, caching, and observability.
     """
 
-    def __init__(self, args: Any, hooks=None, profiler=None, cfg=None) -> None:
-        """Initialize the inference runner.
+    def _init_utils_components(self, cache_manager=None, device_manager=None, observability=None):
+        """Initialize utils-enhanced components for inference optimization."""
+        # Initialize device facade for device management
+        self.device_facade = device_manager or PiscesLxCoreDeviceFacade(self.args)
+        
+        # Initialize cache manager for model caching
+        self.cache_manager = cache_manager
+        
+        # Initialize observability for performance monitoring
+        self.observability = observability
+        
+        logger.info("PiscesLxToolsInferRunner utils components initialized with device management")
+
+    def __init__(self, args: Any, hooks=None, profiler=None, cfg=None, cache_manager=None, device_manager=None, observability=None) -> None:
+        """Initialize the inference runner with enhanced device management.
 
         Args:
             args: Parsed CLI arguments (e.g., argparse.Namespace)
             hooks: Hook bus instance for lifecycle events
             profiler: Profiler instance
             cfg: Inference configuration facade (optional)
+            cache_manager: Cache manager instance (optional)
+            device_manager: Device manager instance (optional)
+            observability: Observability facade (optional)
         """
         self.args = args
+        # Initialize utils-enhanced components
+        self._init_utils_components(cache_manager, device_manager, observability)
+        
         # Instantiate class-based facade for unified style
         self._impl = PiscesLxToolsInferImpl()
         try:

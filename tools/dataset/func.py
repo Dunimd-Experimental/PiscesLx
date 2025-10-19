@@ -81,7 +81,7 @@ _ALLOWED_AST_NODES = (
 
 _DEFUSED_ATTR_PREFIX = "_"
 
-class _SafeValidator(ast.NodeVisitor):
+class SafeValidator(ast.NodeVisitor):
     def generic_visit(self, node):
         if not isinstance(node, _ALLOWED_AST_NODES):
             raise ValueError(f"Disallowed node: {type(node).__name__}")
@@ -1358,7 +1358,7 @@ def eval_expr_safe(expr: str, rec: Dict[str, Any], idx: int = 0) -> Any:
     if not isinstance(expr, str) or not expr.strip():
         return None
     tree = ast.parse(expr, mode='eval')
-    _SafeValidator().visit(tree)
+    SafeValidator().visit(tree)
     code = compile(tree, '<expr>', 'eval')
     ctx = _build_ctx({
         'rec': rec,

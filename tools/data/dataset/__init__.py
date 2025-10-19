@@ -18,6 +18,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .manager import PiscesLxToolsDatasetManager
+from .manager import DatasetManager
 
-__all__ = ["PiscesLxToolsDatasetManager"]
+__all__ = ["DatasetManager"]

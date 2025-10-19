@@ -25,12 +25,12 @@ import threading
 from queue import Queue, Empty
 from typing import Dict, Optional, List
 
-class MemoryMonitor:
+class PiscesLxToolsMemoryMonitor:
     """A class for monitoring memory usage of the current process, system, and GPUs, 
     and performing memory cleanup operations when necessary."""
 
     def __init__(self, threshold_gb: float = 8.0):
-        """Initialize the MemoryMonitor instance.
+        """Initialize the PiscesLxToolsMemoryMonitor instance.
 
         Args:
             threshold_gb (float, optional): Memory threshold in gigabytes. 
@@ -107,11 +107,11 @@ class MemoryMonitor:
             # Silently handle exceptions during cleanup
             pass
 
-class StreamingDataBuffer:
+class PiscesLxToolsStreamingDataBuffer:
     """A class for buffering streaming data using a thread-safe queue."""
 
     def __init__(self, buffer_size: int = 1000):
-        """Initialize the StreamingDataBuffer instance.
+        """Initialize the PiscesLxToolsStreamingDataBuffer instance.
 
         Args:
             buffer_size (int, optional): Maximum size of the buffer queue. Defaults to 1000.

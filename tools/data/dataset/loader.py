@@ -21,7 +21,7 @@
 from typing import Optional
 from torch.utils.data import DataLoader
 
-class BatchConfig:
+class PiscesLxToolsBatchConfig:
     """Stores configuration parameters for batch processing in data loading.
     
     These parameters are used to configure the PyTorch DataLoader.
@@ -34,7 +34,7 @@ class BatchConfig:
         drop_last: bool = False,
         prefetch_factor: int = 2
     ):
-        """Initialize a BatchConfig object with batch processing parameters.
+        """Initialize a PiscesLxToolsBatchConfig object with batch processing parameters.
 
         Args:
             batch_size (int, optional): Number of samples per batch to load. Defaults to 32.
@@ -49,21 +49,21 @@ class BatchConfig:
         self.drop_last = drop_last
         self.prefetch_factor = prefetch_factor
 
-class OptimizedDataLoader:
+class PiscesLxToolsOptimizedDataLoader:
     """A wrapper class for PyTorch's DataLoader with optimized configuration.
     
     Provides different data loading mechanisms based on the dataset type.
     """
-    def __init__(self, dataset, batch_config: Optional[BatchConfig] = None):
-        """Initialize an OptimizedDataLoader object.
+    def __init__(self, dataset, batch_config: Optional[PiscesLxToolsBatchConfig] = None):
+        """Initialize an PiscesLxToolsOptimizedDataLoader object.
 
         Args:
             dataset: Dataset from which to load the data.
-            batch_config (Optional[BatchConfig], optional): Batch configuration object. 
-                If None, a default BatchConfig will be used. Defaults to None.
+            batch_config (Optional[PiscesLxToolsBatchConfig], optional): Batch configuration object. 
+                If None, a default PiscesLxToolsBatchConfig will be used. Defaults to None.
         """
         self.dataset = dataset
-        self.cfg = batch_config or BatchConfig()
+        self.cfg = batch_config or PiscesLxToolsBatchConfig()
 
     def get(self) -> DataLoader:
         """Get a configured PyTorch DataLoader instance based on the dataset type.

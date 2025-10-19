@@ -24,7 +24,7 @@ import json
 import threading
 import subprocess
 from dataclasses import dataclass
-from utils import PiscesLxCoreLog
+from utils.log.core import PiscesLxCoreLog
 from typing import Dict, Any, Optional, List, Tuple
 from utils.error import PiscesLxCoreObservabilityError
 

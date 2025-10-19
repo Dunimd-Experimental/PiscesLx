@@ -232,7 +232,7 @@ def dataset(args=None):
     # remember recent path
     if path_input and path_input != st.session_state.get('last_path') and _early_settings.remember_recent_path:
         st.session_state['last_path'] = path_input
-    # Second row: action buttons (rescan, convert) â€?tighten spacing
+    # Second row: action buttons (rescan, convert) ï¿½?tighten spacing
     try:
         c_rescan, c_arrow = st.columns([1, 1], gap="small")
     except TypeError:
@@ -1110,7 +1110,7 @@ def dataset(args=None):
         
         with button_col:
             # Toggle main-page settings view
-            if st.button("âš?, help=t("sidebar.settings_hint"), key="btn_settings_min"):
+            if st.button("ï¿½?, help=t("sidebar.settings_hint"), key="btn_settings_min"):
                 st.session_state["show_settings_page"] = True
                 st.rerun()
 

@@ -130,7 +130,7 @@ class StreamCleaner:
             from .media import MediaCleaner
             if media_type == "image":
                 from PIL import Image
-                with Image.open(media_path) as img:
+                with Image.open(img_path) as img:
                     return MediaCleaner._calculate_image_quality(img)
             if media_type == "audio":
                 return MediaCleaner._calculate_audio_quality(media_path)

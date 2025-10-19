@@ -21,7 +21,7 @@
 from typing import Optional
 from utils import PiscesLxCoreLog
 
-_log = PiscesLxCoreLog("PiscesLx.DataClean.Media")
+logger = PiscesLxCoreLog("PiscesLx.Tools.DataClean.Media")
 
 class MediaCleaner:
     @staticmethod
@@ -65,12 +65,12 @@ class MediaCleaner:
                 img = img.convert("RGB")
                 if img.size[0] < min_size[0] or img.size[1] < min_size[1]:
                     return None
-                score = MediaCleaner._calculate_image_quality(img)
+                score = _MediaCleaner._calculate_image_quality(img)
                 if score < min_quality_score:
                     return None
             return image_path
         except Exception as e:
-            _log.debug(f"Image quality cleaning failed for {image_path}: {e}")
+            logger.debug(f"Image quality cleaning failed for {image_path}: {e}")
             return None
 
     @staticmethod
@@ -152,12 +152,12 @@ class MediaCleaner:
             dur = len(y) / float(sr)
             if dur < min_duration or dur > max_duration:
                 return None
-            score = MediaCleaner._calculate_audio_quality(y, sr)
+            score = _MediaCleaner._calculate_audio_quality(y, sr)
             if score < min_quality_score:
                 return None
             return audio_path
         except Exception as e:
-            _log.debug(f"Audio quality cleaning failed for {audio_path}: {e}")
+            logger.debug(f"Audio quality cleaning failed for {audio_path}: {e}")
             return None
 
     @staticmethod
@@ -246,13 +246,13 @@ class MediaCleaner:
             if (frames / fps if fps and fps > 0 else 0) < min_duration or frames < min_frames:
                 cap.release()
                 return None
-            score = MediaCleaner._calculate_video_quality(cap, frames)
+            score = _MediaCleaner._calculate_video_quality(cap, frames)
             cap.release()
             if score < min_quality_score:
                 return None
             return video_path
         except Exception as e:
-            _log.debug(f"Video quality cleaning failed for {video_path}: {e}")
+            logger.debug(f"Video quality cleaning failed for {video_path}: {e}")
             return None
 
     @staticmethod
@@ -280,7 +280,7 @@ class MediaCleaner:
                     continue
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil_img = Image.fromarray(frame_rgb)
-                scores.append(MediaCleaner._calculate_image_quality(pil_img))
+                scores.append(_MediaCleaner._calculate_image_quality(pil_img))
             if not scores:
                 return 0.0
             import numpy as _np
@@ -333,13 +333,13 @@ class MediaCleaner:
             if len(doc) > max_pages:
                 doc.close()
                 return None
-            score = MediaCleaner._calculate_document_quality(doc)
+            score = _MediaCleaner._calculate_document_quality(doc)
             doc.close()
             if score < min_quality_score:
                 return None
             return doc_path
         except Exception as e:
-            _log.debug(f"Document quality cleaning failed for {doc_path}: {e}")
+            logger.debug(f"Document quality cleaning failed for {doc_path}: {e}")
             return None
 
     @staticmethod

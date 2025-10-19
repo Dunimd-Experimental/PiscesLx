@@ -18,6 +18,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .runner import PiscesLxToolsDatasetDownload
+from .runner import DatasetDownload
 
-__all__ = ["PiscesLxToolsDatasetDownload"]
+__all__ = ["DatasetDownload"]

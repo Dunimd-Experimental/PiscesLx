@@ -21,6 +21,9 @@
 import torch
 from typing import Any
 import torch.distributed as dist
+from utils.log.core import PiscesLxCoreLog
+
+logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Dist.Wrap")
 
 class PiscesLxCoreModelParallelizer:
     """A utility class for wrapping models with parallelization for training and inference."""
@@ -74,8 +77,7 @@ class PiscesLxCoreModelParallelizer:
         except Exception as e:
             # Log failure of DistributedDataParallel and proceed to fallback
             if hasattr(model, 'module') or hasattr(model, 'device'):
-                import logging
-                logging.getLogger(__name__).debug(
+                logger.debug(
                     "DistributedDataParallel failed, falling back to DataParallel: %s", 
                     e, 
                     exc_info=True
