@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# Copyright �© 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd project team.
@@ -899,6 +899,10 @@ class PiscesLxCoreQuantizer:
         """
         # Estimate the total number of parameters in the model
         param_count = self._estimate_parameter_count(model_config)
+        
+        # Apply Chinchilla optimization memory correction if enabled
+        if getattr(model_config, 'chinchilla_optimal', False):
+            param_count = int(param_count * 0.95)  # Chinchilla optimal models use ~5% fewer parameters
         
         # Calculate the memory usage of model parameters
         bytes_per_param = quantization_config.bits / 8

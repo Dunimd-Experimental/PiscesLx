@@ -466,6 +466,7 @@ def _infer_impl(args: Any) -> None:
     from transformers import BitsAndBytesConfig
     from torchvision.transforms import functional as TF
     import torch.nn.functional as F
+    import asyncio
     # Start the profiler if available
     if _PROFILER is not None and hasattr(_PROFILER, 'start'):
         try:
@@ -480,6 +481,17 @@ def _infer_impl(args: Any) -> None:
         raise
     logger.success("Starting PiscesL1 Inference with MCP Integration...")
     _emit('on_infer_start', args=args)
+    
+    # 初始化MCP集成
+    try:
+        from .agentic.integration import initialize_mcp_for_inference
+        mcp_initialized = asyncio.run(initialize_mcp_for_inference())
+        if mcp_initialized:
+            logger.success("MCP集成初始化成功")
+        else:
+            logger.warning("MCP集成初始化失败，继续推理流程")
+    except Exception as e:
+        logger.warning(f"MCP集成初始化异常: {e}，继续推理流程")
     # Load model configuration and inference settings
     model_size = getattr(args, "model_size", "0.5B").upper()
     config_path = f"configs/{model_size}.json"

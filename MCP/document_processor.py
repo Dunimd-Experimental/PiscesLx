@@ -32,6 +32,7 @@ class DocumentProcessor:
     """
     Advanced document processing for PDF, DOCX, PPTX files with MCP integration.
     Provides text extraction, structure analysis, and metadata extraction.
+    Server-safe version with security restrictions.
     """
     
     def __init__(self):
@@ -42,21 +43,55 @@ class DocumentProcessor:
             '.pptx': 'PowerPoint Presentation',
             '.ppt': 'PowerPoint 97-2003 Presentation'
         }
+        # Security limits for server environment
+        self.max_file_size = 50 * 1024 * 1024  # 50MB limit
+        self.max_pages = 100  # Maximum pages per document
+        self.max_extract_chars = 100000  # Maximum characters to extract per document
+        self.allowed_mime_types = {
+            '.pdf': 'application/pdf',
+            '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            '.doc': 'application/msword',
+            '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            '.ppt': 'application/vnd.ms-powerpoint'
+        }
     
     def _validate_file(self, file_path: str) -> Path:
-        """Validate file path and check if it exists."""
+        """Validate file path and check if it exists with security checks."""
         path = Path(file_path)
+        
+        # Check if file exists
         if not path.exists():
             raise FileNotFoundError(f"File not found: {file_path}")
+        
+        # Check file format support
         if path.suffix.lower() not in self.supported_formats:
             raise ValueError(f"Unsupported format: {path.suffix}")
+        
+        # Security checks
+        file_size = path.stat().st_size
+        if file_size > self.max_file_size:
+            raise ValueError(f"File too large: {file_size} bytes (max: {self.max_file_size})")
+        
+        # Additional security: check for potential path traversal
+        try:
+            resolved_path = path.resolve()
+            if not str(resolved_path).startswith(str(Path.cwd())):
+                raise ValueError("File path outside allowed directory")
+        except Exception:
+            raise ValueError("Invalid file path")
+        
         return path
     
     def extract_pdf_content(self, file_path: str) -> Dict[str, Any]:
-        """Extract content from PDF file."""
+        """Extract content from PDF file with security limits."""
         try:
             path = self._validate_file(file_path)
             doc = fitz.open(str(path))
+            
+            # Security check: limit pages
+            if len(doc) > self.max_pages:
+                doc.close()
+                raise ValueError(f"PDF too long: {len(doc)} pages (max: {self.max_pages})")
             
             content = {
                 "pages": [],
@@ -65,20 +100,27 @@ class DocumentProcessor:
                 "file_size": path.stat().st_size
             }
             
+            total_chars = 0
             for page_num in range(len(doc)):
                 page = doc[page_num]
                 text = page.get_text()
                 
-                # Extract tables and images
+                # Security check: limit extracted text
+                total_chars += len(text)
+                if total_chars > self.max_extract_chars:
+                    doc.close()
+                    raise ValueError(f"Text content too large (max: {self.max_extract_chars} chars)")
+                
+                # Extract tables and images (simplified for security)
                 blocks = page.get_text("dict")
                 tables = self._extract_tables_from_page(blocks)
                 images = self._extract_images_from_page(page)
                 
                 content["pages"].append({
                     "page_number": page_num + 1,
-                    "text": text,
-                    "tables": tables,
-                    "images": images,
+                    "text": text[:10000],  # Limit text per page
+                    "tables": tables[:5],   # Limit tables per page
+                    "images": images[:10],  # Limit images per page
                     "word_count": len(text.split())
                 })
             
@@ -98,7 +140,7 @@ class DocumentProcessor:
             return {"success": False, "error": str(e)}
     
     def extract_docx_content(self, file_path: str) -> Dict[str, Any]:
-        """Extract content from DOCX file."""
+        """Extract content from DOCX file with security limits."""
         try:
             path = self._validate_file(file_path)
             doc = docx.Document(str(path))
@@ -118,16 +160,26 @@ class DocumentProcessor:
                 "file_size": path.stat().st_size
             }
             
-            # Extract paragraphs
-            for para in doc.paragraphs:
-                content["paragraphs"].append({
-                    "text": para.text,
-                    "style": para.style.name if para.style else "Normal",
-                    "alignment": str(para.alignment) if para.alignment else None
-                })
+            # Security: limit paragraphs and tables
+            max_paragraphs = 1000
+            max_tables = 50
             
-            # Extract tables
+            # Extract paragraphs (with limit)
+            for i, para in enumerate(doc.paragraphs):
+                if i >= max_paragraphs:
+                    break
+                if para.text.strip():  # Only include non-empty paragraphs
+                    content["paragraphs"].append({
+                        "text": para.text[:5000],  # Limit text length per paragraph
+                        "style": para.style.name if para.style else "Normal",
+                        "alignment": str(para.alignment) if para.alignment else None
+                    })
+            
+            # Extract tables (with limit)
             for table_idx, table in enumerate(doc.tables):
+                if table_idx >= max_tables:
+                    break
+                    
                 table_data = {
                     "table_index": table_idx,
                     "rows": [],
@@ -135,10 +187,14 @@ class DocumentProcessor:
                     "row_count": len(table.rows)
                 }
                 
-                for row in table.rows:
+                # Limit rows per table
+                max_rows = 100
+                for i, row in enumerate(table.rows):
+                    if i >= max_rows:
+                        break
                     row_data = []
                     for cell in row.cells:
-                        row_data.append(cell.text)
+                        row_data.append(cell.text[:1000])  # Limit cell text
                     table_data["rows"].append(row_data)
                 
                 content["tables"].append(table_data)
@@ -158,10 +214,14 @@ class DocumentProcessor:
             return {"success": False, "error": str(e)}
     
     def extract_pptx_content(self, file_path: str) -> Dict[str, Any]:
-        """Extract content from PPTX file."""
+        """Extract content from PPTX file with security limits."""
         try:
             path = self._validate_file(file_path)
             prs = Presentation(str(path))
+            
+            # Security check: limit slides
+            if len(prs.slides) > self.max_pages:
+                raise ValueError(f"Presentation too long: {len(prs.slides)} slides (max: {self.max_pages})")
             
             content = {
                 "slides": [],
@@ -173,30 +233,42 @@ class DocumentProcessor:
                 "file_size": path.stat().st_size
             }
             
-            for slide_idx, slide in enumerate(prs.slides):
+            # Security: limit slides processed
+            max_slides = min(len(prs.slides), self.max_pages)
+            
+            for slide_idx in range(max_slides):
+                slide = prs.slides[slide_idx]
                 slide_content = {
                     "slide_number": slide_idx + 1,
                     "title": "",
                     "text_content": [],
                     "tables": [],
-                    "notes": slide.notes_slide.notes_text_frame.text if slide.has_notes_slide else ""
+                    "notes": slide.notes_slide.notes_text_frame.text[:1000] if slide.has_notes_slide else ""
                 }
                 
-                # Extract text from shapes
-                for shape in slide.shapes:
-                    if hasattr(shape, "text") and shape.text:
+                # Extract text from shapes (with limits)
+                text_count = 0
+                max_text_items = 50
+                max_shapes = 100
+                
+                for shape_idx, shape in enumerate(slide.shapes):
+                    if shape_idx >= max_shapes:
+                        break
+                        
+                    if hasattr(shape, "text") and shape.text and text_count < max_text_items:
                         if shape.text_frame and shape.text_frame.paragraphs:
                             first_para = shape.text_frame.paragraphs[0]
                             if first_para.level == 0 and not slide_content["title"]:
-                                slide_content["title"] = shape.text
+                                slide_content["title"] = shape.text[:200]  # Limit title length
                             else:
                                 slide_content["text_content"].append({
-                                    "text": shape.text,
+                                    "text": shape.text[:1000],  # Limit text length
                                     "level": first_para.level if first_para else 0
                                 })
+                            text_count += 1
                     
-                    # Extract tables
-                    if shape.has_table:
+                    # Extract tables (with limits)
+                    if shape.has_table and len(slide_content["tables"]) < 10:
                         table = shape.table
                         table_data = {
                             "rows": [],
@@ -204,8 +276,12 @@ class DocumentProcessor:
                             "row_count": len(table.rows)
                         }
                         
-                        for row in table.rows:
-                            row_data = [cell.text for cell in row.cells]
+                        # Limit rows per table
+                        max_table_rows = 50
+                        for i, row in enumerate(table.rows):
+                            if i >= max_table_rows:
+                                break
+                            row_data = [cell.text[:500] for cell in row.cells]  # Limit cell text
                             table_data["rows"].append(row_data)
                         
                         slide_content["tables"].append(table_data)
@@ -300,14 +376,20 @@ document_processor = DocumentProcessor()
 @mcp.tool()
 def extract_document_content(file_path: str, include_full_content: bool = True) -> Dict[str, Any]:
     """
-    Extract content from PDF, DOCX, or PPTX files.
+    Extract content from PDF, DOCX, or PPTX files with security restrictions.
     
     Args:
-        file_path: Path to the document file
+        file_path: Path to the document file (max 50MB, 100 pages/slides)
         include_full_content: Whether to include full content or just summary
     
     Returns:
         Dictionary containing extracted content and metadata
+    
+    Security limits:
+        - Maximum file size: 50MB
+        - Maximum pages/slides: 100
+        - Maximum extracted characters: 100,000
+        - Path must be within current working directory
     """
     if not include_full_content:
         return document_processor.get_document_summary(file_path)
@@ -340,7 +422,7 @@ def list_supported_formats() -> Dict[str, Any]:
 @mcp.tool()
 def batch_process_documents(directory_path: str, recursive: bool = False) -> Dict[str, Any]:
     """
-    Process multiple documents in a directory.
+    Process multiple documents in a directory with security restrictions.
     
     Args:
         directory_path: Path to the directory containing documents
@@ -348,16 +430,37 @@ def batch_process_documents(directory_path: str, recursive: bool = False) -> Dic
     
     Returns:
         List of processed documents with summaries
+    
+    Security restrictions:
+        - Only processes files within the specified directory
+        - Maximum 100 documents per batch
+        - No recursive directory traversal outside base path
     """
     try:
         path = Path(directory_path)
         if not path.exists() or not path.is_dir():
             return {"success": False, "error": "Directory not found"}
         
+        # Security: resolve and validate directory path
+        resolved_path = path.resolve()
+        if not str(resolved_path).startswith(str(Path.cwd())):
+            return {"success": False, "error": "Directory path outside allowed location"}
+        
         documents = []
         pattern = "**/*" if recursive else "*"
         
+        # Security: limit number of files processed
+        max_documents = 100
+        file_count = 0
+        
         for file_path in path.glob(pattern):
+            if file_count >= max_documents:
+                documents.append({
+                    "file_path": "LIMIT_REACHED",
+                    "summary": {"error": "Maximum document limit reached (100)"}
+                })
+                break
+                
             if file_path.suffix.lower() in document_processor.supported_formats:
                 result = document_processor.get_document_summary(str(file_path))
                 if result["success"]:
@@ -365,12 +468,14 @@ def batch_process_documents(directory_path: str, recursive: bool = False) -> Dic
                         "file_path": str(file_path),
                         "summary": result["summary"]
                     })
+                    file_count += 1
         
         return {
             "success": True,
             "directory": str(path),
             "documents": documents,
-            "count": len(documents)
+            "count": len(documents),
+            "security_notice": "Limited to 100 documents per batch for server safety"
         }
         
     except Exception as e:

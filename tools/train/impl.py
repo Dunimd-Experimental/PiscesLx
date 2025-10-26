@@ -28,6 +28,16 @@ from utils.device.facade import PiscesLxCoreDeviceFacade
 from utils.device.manager import PiscesLxCoreDeviceManager
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
 from utils import PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
+from utils.optim.galore import GaLoreOptimizer, GaLoreConfig, create_galore_optimizer
+# Optional weight watermark utilities
+try:
+    from utils.watermark.weights import watermarked_regularizer, verify_weights
+except Exception:  # fallback stubs to avoid breaking training
+    def watermarked_regularizer(*args, **kwargs):
+        import torch
+        return torch.tensor(0.0)
+    def verify_weights(*args, **kwargs):
+        return 0.0, False
 
 _HOOKS = None
 _PROFILER = None
@@ -368,6 +378,26 @@ def _train_impl(args):
         logger.error(f"training_config not found in {config_path}")
         sys.exit(1)
     
+    # Load watermark configuration (optional)
+    wm_cfg = {}
+    try:
+        with open('configs/watermark.json', 'r', encoding='utf-8') as wf:
+            wm_cfg = json.load(wf)
+    except Exception:
+        wm_cfg = {}
+    wm_2025 = wm_cfg.get('watermark_2025', {}) if isinstance(wm_cfg, dict) else {}
+    wm_weights_cfg = wm_2025.get('weights', {}) if isinstance(wm_2025, dict) else {}
+    wm_weights_enabled = bool(wm_weights_cfg.get('enabled', False))
+    wm_owner_id = str(wm_weights_cfg.get('owner_id', 'piscesl1'))
+    try:
+        wm_seed = int(wm_weights_cfg.get('seed', 2025))
+    except Exception:
+        wm_seed = 2025
+    try:
+        wm_reg_strength = float(wm_weights_cfg.get('regularizer_strength', 1e-5))
+    except Exception:
+        wm_reg_strength = 1e-5
+
     # Extract training configuration parameters (config-first, with legacy defaults)
     training_config = full_config['training_config']
     batch_size = training_config.get('batch_size', 1)
@@ -561,12 +591,39 @@ def _train_impl(args):
     logger.info(f"Loading config file: {config}")
     cfg = ArcticConfig.from_json(config)
     logger.info("ArcticConfig loaded.")
+    
+    # Apply Chinchilla scaling law optimization if enabled
+    if cfg.chinchilla_optimal and cfg.chinchilla_c_budget > 0:
+        logger.info("Applying Chinchilla scaling law optimization...")
+        try:
+            from utils.chinchilla import optimal_nd, scale_to_existing_block
+            optimal_n, optimal_d = optimal_nd(cfg.chinchilla_c_budget, unit="gpu_hours")
+            
+            # Find nearest existing configuration
+            layers, hidden_size = scale_to_existing_block(optimal_n)
+            
+            # Store original values for memory correction
+            original_params = sum(p.numel() for p in model.parameters()) if 'model' in locals() else 0
+            
+            # Update configuration
+            cfg.n_layer = layers
+            cfg.hidden_size = hidden_size
+            cfg.max_train_tokens = int(optimal_d)
+            cfg.chinchilla_d_ratio = optimal_d / optimal_n
+            
+            logger.info(f"Chinchilla optimization: N={optimal_n:.1e} params, D={optimal_d:.1e} tokens")
+            logger.info(f"Updated config: layers={layers}, hidden_size={hidden_size}, max_tokens={int(optimal_d)}")
+            
+        except Exception as e:
+            logger.warning(f"Chinchilla optimization failed: {e}. Using original configuration.")
 
     logger.info("Initializing ArcticModel with Reasoner...")
     _emit('on_train_start', args=args)
     
     # Always - on Reasoner: Tokenizer setup
-    tokenizer = get_tokenizer()
+    # Support H-Network tokenizer-free mode
+    tokenizer_type = training_config.get('tokenizer_type', 'standard')
+    tokenizer = get_tokenizer(tokenizer_type=tokenizer_type)
     special_tokens = training_config.get('special_tokens', ["<think>", "</think>"])
     tokenizer.add_tokens(special_tokens)
 
@@ -718,18 +775,68 @@ def _train_impl(args):
     
     param_groups = get_parameter_groups(model, lr)
     
-    optimizer = torch.optim.AdamW(
-        param_groups,
-        weight_decay=0.01,
-        betas=(0.9, 0.999),
-        eps=1e-8,
-        amsgrad=False,
-        maximize=False,
-        foreach=False,
-        capturable=False,
-        differentiable=False,
-        fused=False
-    )
+    # Check for GaLore configuration in training config
+    galore_config = training_config.get('galore', {})
+    galore_enabled = galore_config.get('galore_enabled', False)
+    
+    if galore_enabled:
+        logger.info("GaLore optimization enabled for training")
+        
+        # Create GaLore configuration from training config
+        galore_cfg = GaLoreConfig(
+            enabled=galore_enabled,
+            rank=galore_config.get('galore_rank', 128),
+            update_interval=galore_config.get('galore_update_interval', 200),
+            target_modules=galore_config.get('galore_target_modules', None),
+            lr_ratio=galore_config.get('galore_lr_ratio', 1.0),
+            min_rank=galore_config.get('galore_min_rank', 32),
+            max_rank=galore_config.get('galore_max_rank', 512),
+            rank_adapt_interval=galore_config.get('galore_rank_adapt_interval', 1000),
+            rank_adapt_threshold=galore_config.get('galore_rank_adapt_threshold', 0.1),
+            quantization_bits=galore_config.get('galore_quantization_bits', 0),
+            memory_efficient=galore_config.get('galore_memory_efficient', True),
+            moe_expert_only=galore_config.get('galore_moe_expert_only', False),
+            multimodal_modules=galore_config.get('galore_multimodal_modules', None),
+            sequence_threshold=galore_config.get('galore_sequence_threshold', 4096),
+            gradient_accumulation_sync=galore_config.get('galore_gradient_accumulation_sync', True)
+        )
+        
+        # Create base AdamW optimizer
+        base_optimizer = torch.optim.AdamW(
+            param_groups,
+            weight_decay=0.01,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+            amsgrad=False,
+            maximize=False,
+            foreach=False,
+            capturable=False,
+            differentiable=False,
+            fused=False
+        )
+        
+        # Wrap with GaLore optimizer
+        optimizer = GaLoreOptimizer(base_optimizer, galore_cfg)
+        
+        # Log memory savings estimate
+        model_size_mb = sum(p.numel() for p in model.parameters()) * 4 / (1024 * 1024)  # Assuming float32
+        memory_savings = get_galore_memory_savings(galore_cfg, model_size_mb)
+        logger.info(f"Estimated GaLore memory savings: {memory_savings:.1%}")
+        
+    else:
+        logger.info("Using standard AdamW optimizer")
+        optimizer = torch.optim.AdamW(
+            param_groups,
+            weight_decay=0.01,
+            betas=(0.9, 0.999),
+            eps=1e-8,
+            amsgrad=False,
+            maximize=False,
+            foreach=False,
+            capturable=False,
+            differentiable=False,
+            fused=False
+        )
     
     def create_modality_scheduler(optimizer, modality_name, base_scheduler_config):
         """
@@ -899,6 +1006,21 @@ def _train_impl(args):
                     if loss is not None and loss.requires_grad:
                         if is_distributed or torch.cuda.device_count() > 1:
                             loss = loss.mean()
+                        # Apply optional weight-level watermark regularizer (very low strength)
+                        if wm_weights_enabled and loss is not None:
+                            reg_loss = None
+                            count = 0
+                            for name, param in model.named_parameters():
+                                if not param.requires_grad:
+                                    continue
+                                if ('weight' in name.lower()) and (param.dim() in (2, 4)):
+                                    cur = watermarked_regularizer(param, wm_owner_id, wm_seed, strength=wm_reg_strength)
+                                    reg_loss = cur if reg_loss is None else (reg_loss + cur)
+                                    count += 1
+                                    if count >= 8:
+                                        break
+                            if reg_loss is not None:
+                                loss = loss + reg_loss
                         
                         current_accum = grad_accumulator.get_current_accum()
                         
@@ -975,6 +1097,24 @@ def _train_impl(args):
                 avg_loss = total_loss / (step + 1)
                 
                 if not is_distributed or local_rank == 0:
+                    # Optional weight watermark verification and reporting
+                    try:
+                        if wm_weights_enabled:
+                            target_model = model.module if hasattr(model, 'module') else model
+                            score, passed = verify_weights(target_model, wm_owner_id, wm_seed)
+                            report = {
+                                "epoch": int(epoch + 1),
+                                "score": float(score),
+                                "passed": bool(passed),
+                                "owner_id": wm_owner_id,
+                                "seed": wm_seed,
+                                "threshold": float(wm_weights_cfg.get('verify_threshold', 0.02)),
+                            }
+                            os.makedirs('artifacts/watermark', exist_ok=True)
+                            with open(f"artifacts/watermark/weights_verify_epoch{epoch+1}.json", 'w', encoding='utf-8') as rf:
+                                json.dump(report, rf, ensure_ascii=False, indent=2)
+                    except Exception:
+                        pass
                     checkpoint_path = f"{save_dir}/pisces_{dataset}_epoch{epoch + 1}.pt"
                     save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
                     logger.info(f"Checkpoint saved: {checkpoint_path}")

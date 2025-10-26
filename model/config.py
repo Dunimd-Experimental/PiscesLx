@@ -180,6 +180,48 @@ class ArcticConfig:
     enable_debug_outputs: bool = False  # If True, model.forward returns a 'debug' section with shapes/dtypes
     debug_verbose: bool = False  # If True, include extra debug like modality presence and fusion shapes
     
+    # Mamba-3 integration configurations
+    use_mamba3: bool = False  # Whether to enable Mamba-3 state space model integration
+    mamba3_layers: list = field(default_factory=list)  # List of layer indices to use Mamba-3, empty means use in all layers
+    mamba3_d_state: int = 128  # State dimension for Mamba-3 SSM
+    mamba3_d_conv: int = 4  # Convolution kernel size for Mamba-3
+    mamba3_expand: int = 2  # Expansion factor for Mamba-3
+    mamba3_dt_rank: str = "auto"  # Time step rank, "auto" means ceil(hidden_size/16)
+    mamba3_conv_bias: bool = True  # Whether to use bias in convolution
+    mamba3_proj_bias: bool = False  # Whether to use bias in projections
+    mamba3_use_fast_path: bool = True  # Whether to use fast path optimization
+    mamba3_layer_norm_eps: float = 1e-5  # Layer normalization epsilon for Mamba-3
+    mamba3_sequence_threshold: int = 8192  # Sequence length threshold to switch between attention and Mamba-3
+    mamba3_gate_mode: str = "adaptive"  # Gate mode: "learned", "adaptive", "fixed"
+    mamba3_gate_init: float = 0.5  # Initial gate value for learned mode
+    mamba3_gate_temperature: float = 1.0  # Temperature for adaptive gate mode
+    mamba3_complex_state: bool = True  # Whether to enable complex state space
+    mamba3_trapezoidal: bool = True  # Whether to enable trapezoidal discretization
+    mamba3_mimo: bool = True  # Whether to enable MIMO architecture
+    
+    # GaLore training optimization configurations
+    galore_enabled: bool = False  # Whether to enable GaLore gradient low-rank projection
+    galore_rank: int = 128  # Low-rank dimension for gradient projection (typically 64-256)
+    galore_update_interval: int = 200  # Steps between low-rank projection updates
+    galore_target_modules: list = field(default_factory=lambda: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"])  # Target modules for GaLore optimization
+    galore_lr_ratio: float = 1.0  # Learning rate ratio for GaLore vs full parameters
+    galore_min_rank: int = 32  # Minimum rank for adaptive rank adjustment
+    galore_max_rank: int = 512  # Maximum rank for adaptive rank adjustment
+    galore_rank_adapt_interval: int = 1000  # Steps between rank adaptation
+    galore_rank_adapt_threshold: float = 0.1  # Gradient norm threshold for rank adaptation
+    galore_quantization_bits: int = 0  # Quantization bits for GaLore states (0=disable, 8=8-bit)
+    galore_memory_efficient: bool = True  # Enable memory-efficient implementation
+    galore_moe_expert_only: bool = False  # Apply GaLore only to MoE experts
+    galore_multimodal_modules: list = field(default_factory=lambda: ["vision_encoder", "audio_encoder", "multimodal_fusion"])  # Multimodal modules for GaLore
+    galore_sequence_threshold: int = 4096  # Sequence length threshold to enable GaLore
+    galore_gradient_accumulation_sync: bool = True  # Sync GaLore projections across gradient accumulation steps
+    mamba3_dropout: float = 0.0  # Dropout rate for Mamba-3 layers
+    
+    # Chinchilla scaling law configurations
+    chinchilla_optimal: bool = False  # Whether to enable Chinchilla scaling law optimization
+    chinchilla_c_budget: float = 0.0  # Training compute budget in FLOPs or GPU hours
+    chinchilla_d_ratio: float = 1.0  # Internal cache for optimal D/N ratio
+    
     @classmethod
     def from_json(cls, path: str) -> 'ArcticConfig':
         """Load the model configuration from a JSON file.

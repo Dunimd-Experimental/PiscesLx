@@ -25,9 +25,10 @@ from .norms import ArcticRMSNorm
 from ..config import ArcticConfig
 from utils.log.core import PiscesLxCoreLog
 from .blocks import ArcticTransformerBlock
+from .hybrid import ArcticHybridBlock
 from .cache import ArcticUnifiedCacheManager
 from typing import Optional, Tuple, Dict, Any
-from ..reasoner import ArcticMultiModalReasoningEnhancer
+from ..multimodal.reasoner.enhancer import ArcticMultiModalReasoningEnhancer
 from ..speculative_decoder import ArcticSpeculativeDecoder, ArcticAdaptiveSpeculativeDecoder, ArcticSpeculativeConfig
 from ..multimodal import ArcticUnifiedReasoner, ArcticVisionEncoder, ArcticAudioEncoder, ArcticDocEncoder, ArcticVideoEncoder, ArcticAgentEncoder, ArcticDynamicModalFusion
 
@@ -76,7 +77,20 @@ class ArcticModel(nn.Module):
         for i in range(cfg.n_layer):
             if (i % 4 == 0) or (i == cfg.n_layer-1):
                 logger.debug(f"ArcticModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
-            block = ArcticTransformerBlock(cfg, device=device, dtype=dtype, quantization_config=self.quantization_config)
+            
+            # 根据配置决定是否使用混合块
+            use_hybrid = getattr(cfg, 'use_mamba3', False)
+            if use_hybrid:
+                # 检查是否在指定层使用Mamba-3
+                mamba3_layers = getattr(cfg, 'mamba3_layers', [])
+                if not mamba3_layers or i in mamba3_layers:
+                    logger.debug(f"ArcticModel: using ArcticHybridBlock for layer {i+1}")
+                    block = ArcticHybridBlock(cfg, device=device, dtype=dtype, quantization_config=self.quantization_config)
+                else:
+                    block = ArcticTransformerBlock(cfg, device=device, dtype=dtype, quantization_config=self.quantization_config)
+            else:
+                block = ArcticTransformerBlock(cfg, device=device, dtype=dtype, quantization_config=self.quantization_config)
+            
             block.cache_manager = self.cache_manager
             block.layer_idx = i
             self.layers.append(block)
@@ -339,11 +353,28 @@ class ArcticModel(nn.Module):
                     h = xc
                     aux = 0.0
                     new_caches = []
+                    seq_len = xc.shape[1]
+                    
                     for layer_idx, layer in enumerate(self.layers):
+                        # 序列长度感知：根据配置和序列长度动态选择处理方式
+                        use_mamba3_for_layer = False
+                        if getattr(self.cfg, 'use_mamba3', False):
+                            threshold = getattr(self.cfg, 'mamba3_sequence_threshold', 8192)
+                            mamba3_layers = getattr(self.cfg, 'mamba3_layers', [])
+                            
+                            # 检查是否在指定层使用Mamba-3，或序列长度超过阈值
+                            if (not mamba3_layers or layer_idx in mamba3_layers) and seq_len >= threshold:
+                                use_mamba3_for_layer = True
+                        
                         past_kv = self.cache_manager.get_kv_cache(layer_idx, layer_past_key_values[layer_idx] if layer_past_key_values is not None else None)
                         if past_kv is not None and cache_quant_bits < 16:
                             past_kv = tuple(tensor.to(cache_dtype) if tensor is not None else None for tensor in past_kv)
+                        
                         if use_cache:
+                            # 传递序列长度信息给混合块
+                            if hasattr(layer, 'set_sequence_length'):
+                                layer.set_sequence_length(seq_len)
+                            
                             h, aux_loss, cache = layer(h, msk, past_key_values=past_kv, use_cache=True)
                             if cache is not None:
                                 key_states, value_states = cache
@@ -353,6 +384,10 @@ class ArcticModel(nn.Module):
                                     cache = tuple(tensor.to(torch.float16) if tensor is not None else None for tensor in cache)
                             new_caches.append(cache)
                         else:
+                            # 传递序列长度信息给混合块
+                            if hasattr(layer, 'set_sequence_length'):
+                                layer.set_sequence_length(seq_len)
+                            
                             h, aux_loss = layer(h, msk, past_key_values=past_kv, use_cache=False)
                         aux = aux + (aux_loss if aux_loss is not None else 0.0)
                     if use_cache:

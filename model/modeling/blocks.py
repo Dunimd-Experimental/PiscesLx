@@ -20,7 +20,7 @@
 
 import torch
 from torch import nn
-from ..moe import MoELayer
+from ..moe import ArcticMoELayer as MoELayer
 from typing import Optional
 from .norms import ArcticRMSNorm
 from .attention import ArcticAttention

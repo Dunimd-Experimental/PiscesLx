@@ -27,7 +27,34 @@ from utils.log.core import PiscesLxCoreLog
 
 logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.Config")
 
-# Basic configuration
+@dataclass
+class PiscesL1CoreMonitoringConfig:
+    """A data class encapsulating monitoring configuration parameters.
+
+    Attributes:
+        session_id (str): Session ID for monitoring. Defaults to an empty string.
+        mode (str): Monitoring mode. Defaults to "auto".
+        monitoring_level (str): Level of monitoring. Defaults to "performance".
+        model_size (str): Size of the model. Defaults to "7B".
+        batch_size (int): Batch size. Defaults to 1.
+        sequence_length (int): Sequence length. Defaults to 2048.
+        world_size (int): Number of processes in distributed training. Defaults to 1.
+        rank (int): Rank of the current process. Defaults to 0.
+        interval (float): Monitoring interval in seconds. Defaults to 10.0.
+        cache_enabled (bool): Indicates whether caching is enabled. Defaults to True.
+        sampling_rate (float): Sampling rate for monitoring. Defaults to 1.0.
+        latency_tracking (bool): Indicates whether to track latency. Defaults to True.
+        memory_tracking (bool): Indicates whether to track memory. Defaults to True.
+        throughput_tracking (bool): Indicates whether to track throughput. Defaults to True.
+        communication_tracking (bool): Indicates whether to track communication. Defaults to False.
+        synchronization_tracking (bool): Indicates whether to track synchronization. Defaults to False.
+        fault_tolerance (bool): Indicates whether fault tolerance is enabled. Defaults to False.
+        metrics (List[str]): List of metrics to monitor. Defaults to an empty list.
+    """
+    
+    logger = logger
+    
+    # Basic configuration
     session_id: str = ""
     mode: str = "auto"
     monitoring_level: str = "performance"

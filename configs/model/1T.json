@@ -54,6 +54,13 @@
       "<think>",
       "</think>"
     ],
+    "tokenizer_type": "standard",
+    "h_network": {
+      "compression_ratio": 20,
+      "render_dpi": 150,
+      "font_path": null,
+      "fallback_enabled": true
+    },
     "grad_clip": {
       "initial_max_norm": 1.0,
       "history_length": 100,
@@ -125,5 +132,23 @@
   "speculative_acceptance_threshold": 0.9,
   "speculative_temperature": 0.5,
   "speculative_top_k": 30,
-  "speculative_top_p": 0.8
+  "speculative_top_p": 0.8,
+  "galore_enabled": true,
+  "galore_rank": 512,
+  "galore_update_interval": 200,
+  "galore_target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj", "moe_gate", "moe_experts"],
+  "galore_lr_ratio": 1.0,
+  "galore_min_rank": 128,
+  "galore_max_rank": 1024,
+  "galore_rank_adapt_interval": 1000,
+  "galore_rank_adapt_threshold": 0.1,
+  "galore_quantization_bits": 8,
+  "galore_memory_efficient": true,
+  "galore_moe_expert_only": false,
+  "galore_multimodal_modules": ["vision_encoder", "audio_encoder", "multimodal_fusion"],
+  "galore_sequence_threshold": 32768,
+  "galore_gradient_accumulation_sync": true,
+  "chinchilla_optimal": false,
+  "chinchilla_c_budget": 0,
+  "chinchilla_d_ratio": 1.0
 }

@@ -21,7 +21,7 @@
 from typing import List
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
 logger = PiscesLxCoreLog("pisceslx.data.download")
-from utils import PiscesLxCoreQuantizationFacade
+from utils.quantization import PiscesLxCoreQuantizer
 
 class PiscesLxToolsQuantExporter:
     """Unified quantization and export facade for train pipeline.
@@ -98,8 +98,8 @@ class PiscesLxToolsQuantExporter:
         except Exception:
             model_size = None
         
-        # Use the new facade class instead of the function
-        quantizer = PiscesLxCoreQuantizationFacade()
+        # Use the quantizer for checkpoint quantization
+        quantizer = PiscesLxCoreQuantizer()
         quantizer.quantize_checkpoint(ckpt_path, save_path, resolved_bits, model_size=model_size)
 
     def export(self, save_path: str, formats: List[str]) -> None:

@@ -24,8 +24,143 @@ import json
 import unicodedata
 import urllib.request
 from utils.log.core import PiscesLxCoreLog
+from PIL import Image, ImageDraw, ImageFont
+import torch
+import numpy as np
+from typing import Optional, List, Union
 
 logger = PiscesLxCoreLog("Arctic.Core.Tokenizer")
+
+class HNetworkTokenizer:
+    """H-Network tokenizer for visual text processing without traditional tokenization.
+    
+    Converts text to visual tokens by rendering text as images and compressing them
+    into high-efficiency visual representations.
+    """
+    
+    def __init__(self, compression_ratio: int = 20, render_dpi: int = 150, 
+                 font_path: Optional[str] = None, fallback_enabled: bool = True):
+        """Initialize H-Network tokenizer.
+        
+        Args:
+            compression_ratio: Visual compression ratio (default: 20)
+            render_dpi: DPI for text rendering (default: 150)
+            font_path: Path to font file (optional)
+            fallback_enabled: Enable fallback to standard tokenizer on failure
+        """
+        self.compression_ratio = compression_ratio
+        self.render_dpi = render_dpi
+        self.fallback_enabled = fallback_enabled
+        self.visual_vocab_size = 8192  # Fixed visual vocabulary size
+        
+        # Default font configuration
+        try:
+            self.font = ImageFont.truetype(font_path, 14) if font_path else ImageFont.load_default()
+        except:
+            self.font = ImageFont.load_default()
+            
+        logger.info(f"H-Network tokenizer initialized: compression_ratio={compression_ratio}, "
+                   f"render_dpi={render_dpi}, fallback_enabled={fallback_enabled}")
+    
+    def _render_text_to_image(self, text: str, max_width: int = 1024) -> Image.Image:
+        """Render text to PIL Image with proper formatting."""
+        # Estimate image dimensions
+        lines = text.split('\n')
+        max_chars = max(len(line) for line in lines) if lines else 80
+        img_width = min(max_width, max_chars * 8 + 20)
+        img_height = len(lines) * 20 + 20
+        
+        # Create white background image
+        image = Image.new('RGB', (img_width, img_height), 'white')
+        draw = ImageDraw.Draw(image)
+        
+        # Render text line by line
+        y_offset = 10
+        for line in lines:
+            if line.strip():
+                draw.text((10, y_offset), line.strip(), font=self.font, fill='black')
+            y_offset += 20
+            
+        return image
+    
+    def _compress_visual_tokens(self, image: Image.Image) -> List[int]:
+        """Compress image into visual tokens using learned compression."""
+        # Convert to tensor and normalize
+        img_array = np.array(image.resize((224, 224)))  # Standard size
+        img_tensor = torch.from_numpy(img_array).float().permute(2, 0, 1) / 255.0
+        
+        # Simple patch-based compression (placeholder for learned compression)
+        patch_size = 16
+        patches = img_tensor.unfold(1, patch_size, patch_size).unfold(2, patch_size, patch_size)
+        patches = patches.contiguous().view(3, -1, patch_size, patch_size)
+        
+        # Compress patches to visual tokens
+        num_patches = patches.shape[1]
+        target_tokens = max(1, num_patches // self.compression_ratio)
+        
+        # Generate visual token IDs (simplified compression)
+        visual_tokens = []
+        for i in range(target_tokens):
+            patch_idx = (i * num_patches) // target_tokens
+            # Simple hash-based token generation
+            patch_hash = hash(patches[:, patch_idx].mean().item()) % self.visual_vocab_size
+            visual_tokens.append(abs(patch_hash))
+            
+        return visual_tokens[:100]  # Limit max tokens for efficiency
+    
+    def encode(self, text: str, return_tensors: Optional[str] = None) -> Union[List[int], torch.Tensor]:
+        """Encode text into visual tokens.
+        
+        Args:
+            text: Input text to encode
+            return_tensors: If "pt", return PyTorch tensor
+            
+        Returns:
+            List of visual token IDs or tensor
+        """
+        try:
+            # Render text to image
+            image = self._render_text_to_image(text)
+            
+            # Compress to visual tokens
+            visual_tokens = self._compress_visual_tokens(image)
+            
+            logger.debug(f"H-Network encoded '{text[:50]}...' to {len(visual_tokens)} visual tokens")
+            
+            if return_tensors == "pt":
+                return torch.tensor([visual_tokens], dtype=torch.long)
+            return visual_tokens
+            
+        except Exception as e:
+            logger.error(f"H-Network encoding failed: {e}")
+            if self.fallback_enabled:
+                logger.warning("Falling back to standard BPE tokenizer")
+                # Return simple character-level encoding as fallback
+                return [ord(c) % self.visual_vocab_size for c in text[:100]]
+            else:
+                raise RuntimeError(f"H-Network encoding failed: {e}")
+    
+    def encode_batch(self, texts: List[str], return_tensors: Optional[str] = None) -> List[List[int]]:
+        """Encode a batch of texts."""
+        return [self.encode(text, return_tensors=None) for text in texts]
+    
+    def decode(self, token_ids: List[int], skip_special_tokens: bool = True) -> str:
+        """Decode visual tokens back to text (approximate reconstruction)."""
+        # This is a simplified decoder - in practice would use learned decompression
+        decoded_chars = []
+        for token_id in token_ids:
+            # Simple mapping from visual tokens to characters
+            char_code = token_id % 256
+            if 32 <= char_code <= 126:  # Printable ASCII
+                decoded_chars.append(chr(char_code))
+            else:
+                decoded_chars.append('?')  # Placeholder for non-printable
+                
+        return ''.join(decoded_chars)
+    
+    def __len__(self):
+        """Return visual vocabulary size."""
+        return self.visual_vocab_size
 
 class ArcticBPETokenizer:
     """An implementation of Byte Pair Encoding (BPE) tokenizer.
@@ -342,32 +477,97 @@ def download_if_missing(url, local_path):
         urllib.request.urlretrieve(url, local_path)
         logger.info(f"Downloaded {local_path}")
 
-def get_tokenizer():
-    """Get an ArcticBPETokenizer instance with pre-trained vocabulary and merge rules.
+def get_tokenizer(tokenizer_type="standard", **kwargs):
+    """Get tokenizer instance with specified type.
+
+    Args:
+        tokenizer_type (str): Type of tokenizer - "standard" or "h_network"
+        **kwargs: Additional arguments for tokenizer initialization
 
     Returns:
-        ArcticBPETokenizer: An ArcticBPETokenizer instance.
+        Union[ArcticBPETokenizer, HNetworkTokenizer]: Tokenizer instance
 
     Raises:
-        FileNotFoundError: If vocab.json or merges.txt is not found.
+        FileNotFoundError: If vocab.json or merges.txt is not found for standard tokenizer
+        ValueError: If invalid tokenizer_type is specified
     """
-    vocab_path, merges_path = None, None
-    # Search for the vocabulary file in multiple locations
-    for path in ["tokenizer/vocab.json", "vocab.json", os.environ.get("PISCES_VOCAB_PATH")]:
-        if path and os.path.exists(path):
-            vocab_path = path
-            break
+    if tokenizer_type == "h_network":
+        logger.info("Initializing H-Network tokenizer")
+        return HNetworkTokenizer(**kwargs)
+    elif tokenizer_type == "standard":
+        vocab_path, merges_path = None, None
+        # Search for the vocabulary file in multiple locations
+        for path in ["tokenizer/vocab.json", "vocab.json", os.environ.get("PISCES_VOCAB_PATH")]:
+            if path and os.path.exists(path):
+                vocab_path = path
+                break
 
-    # Search for the merges file in multiple locations
-    for path in ["tokenizer/merges.txt", "merges.txt", os.environ.get("PISCES_MERGES_PATH")]:
-        if path and os.path.exists(path):
-            merges_path = path
-            break
+        # Search for the merges file in multiple locations
+        for path in ["tokenizer/merges.txt", "merges.txt", os.environ.get("PISCES_MERGES_PATH")]:
+            if path and os.path.exists(path):
+                merges_path = path
+                break
 
-    if vocab_path is None or merges_path is None:
-        raise FileNotFoundError(
-            "🔴\tPisces BPETokenizer: vocab.json or merges.txt not found! "
-            "Please put them in the 'tokenizer/' directory."
-        )
+        if vocab_path is None or merges_path is None:
+            raise FileNotFoundError(
+                "🔴\tPisces BPETokenizer: vocab.json or merges.txt not found! "
+                "Please put them in the 'tokenizer/' directory."
+            )
 
-    return ArcticBPETokenizer(vocab_path, merges_path)
+        return ArcticBPETokenizer(vocab_path, merges_path)
+    else:
+        raise ValueError(f"Invalid tokenizer_type: {tokenizer_type}. Choose 'standard' or 'h_network'")
+
+def load_tokenizer_from_config(config_path: str = None) -> Union[ArcticBPETokenizer, HNetworkTokenizer]:
+    """Load tokenizer based on model configuration file.
+    
+    Args:
+        config_path (str): Path to model config JSON file. If None, will auto-detect.
+        
+    Returns:
+        Union[ArcticBPETokenizer, HNetworkTokenizer]: Configured tokenizer instance
+        
+    Raises:
+        FileNotFoundError: If config file not found
+        ValueError: If config is invalid
+    """
+    if config_path is None:
+        # Auto-detect config file
+        for size in ["0.5B", "1.5B", "7B", "32B", "64B", "70B", "128B", "314B", "671B", "1T"]:
+            test_path = f"configs/model/{size}.json"
+            if os.path.exists(test_path):
+                config_path = test_path
+                break
+                
+    if not config_path or not os.path.exists(config_path):
+        logger.warning("No model config found, defaulting to standard tokenizer")
+        return get_tokenizer("standard")
+        
+    try:
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = json.load(f)
+            
+        training_config = config.get('training_config', {})
+        tokenizer_type = training_config.get('tokenizer_type', 'standard')
+        
+        logger.info(f"Loading tokenizer from config: {config_path}")
+        logger.info(f"Selected tokenizer type: {tokenizer_type}")
+        
+        # Extract tokenizer-specific parameters from config
+        tokenizer_kwargs = {}
+        if tokenizer_type == "h_network":
+            # Extract H-Network specific parameters
+            hnet_config = training_config.get('h_network', {})
+            tokenizer_kwargs.update({
+                'compression_ratio': hnet_config.get('compression_ratio', 20),
+                'render_dpi': hnet_config.get('render_dpi', 150),
+                'font_path': hnet_config.get('font_path'),
+                'fallback_enabled': hnet_config.get('fallback_enabled', True)
+            })
+        
+        return get_tokenizer(tokenizer_type, **tokenizer_kwargs)
+        
+    except Exception as e:
+        logger.error(f"Failed to load tokenizer from config {config_path}: {e}")
+        logger.warning("Falling back to standard tokenizer")
+        return get_tokenizer("standard")

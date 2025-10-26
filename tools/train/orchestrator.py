@@ -24,6 +24,11 @@ import importlib.util
 from types import ModuleType
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
 from utils import PiscesLxCoreCheckpointManager
+try:
+    # optional watermark integration (enabled via env toggles)
+    from utils.watermark.integration import get_watermark_manager_from_env
+except Exception:
+    get_watermark_manager_from_env = lambda: None  # type: ignore
 from utils import PiscesLxCoreHookBus
 from utils import PiscesLxCoreDeviceFacade
 from utils import PiscesLxCoreEnhancedCacheManager
@@ -91,6 +96,9 @@ class PiscesLxToolsTrainOrchestrator:
         # Initialize distributed manager for multi-GPU coordination
         from utils.device.dist import PiscesLxCoreDistConfig
         self.dist_config = PiscesLxCoreDistConfig()
+
+        # Initialize watermark manager (optional, controlled by env)
+        self.wm_manager = get_watermark_manager_from_env() if 'get_watermark_manager_from_env' in globals() else None
         
         # Emit orchestrator initialization event with enhanced metadata
         device_config = self.device_facade.setup_devices(mode="auto") if hasattr(self.device_facade, 'setup_devices') else {}
@@ -99,7 +107,8 @@ class PiscesLxToolsTrainOrchestrator:
                        device_config=device_config,
                        cache_enabled=self.cache_manager is not None,
                        observability_enabled=self.observability is not None,
-                       distributed_enabled=self.dist_config.is_distributed())
+                       distributed_enabled=self.dist_config.is_distributed(),
+                       watermark_enabled=bool(self.wm_manager))
 
     def run(self, args) -> None:
         """
@@ -114,7 +123,7 @@ class PiscesLxToolsTrainOrchestrator:
         self._logger.info(f"Train orchestrator mode: {mode}")
         
         # Emit training start event for observability
-        self.hooks.emit("train.start", mode=mode, config=self.cfg.dump_effective())
+        self.hooks.emit("train.start", mode=mode, config=self.cfg.dump_effective(), watermark_enabled=bool(getattr(self, 'wm_manager', None)))
         
         try:
             if mode == "standard":

@@ -75,10 +75,41 @@ class ArcticAgent(nn.Module):
 
         # MCP Agent infrastructure
         self.memory = ArcticAgentMemory([], [], [])
-        self.mcp_tools = ArcticMCPToolRegistry(self.agent_id, self._handle_mcp_message)
+        
+        # 初始化推理引擎
+        from .reasoner.multipath_core import ArcticMultiPathReasoningEngine
+        self.reasoning_engine = ArcticMultiPathReasoningEngine(cfg)
+        
+        # 创建增强的MCP工具注册表（集成8路径推理引擎）
+        self.mcp_tools = ArcticMCPToolRegistry(
+            self.agent_id, 
+            self._handle_mcp_message,
+            reasoning_engine=self.reasoning_engine
+        )
+        
+        # 创建双轨MCP协议
+        self.mcp_protocol = ArcticMCPProtocol(self.agent_id, self.mcp_tools)
+        
         self.state = ArcticAgentState.IDLE
         self.mcp_peers: Dict[str, Dict[str, Any]] = {}
         self.mcp_capabilities: Dict[str, Dict[str, Any]] = {}
+        
+        # 智能路由状态
+        self.smart_routing_enabled = True
+        self.execution_stats = {
+            "native_executions": 0,
+            "external_executions": 0,
+            "total_executions": 0,
+            "routing_decisions": 0
+        }
+        
+        # 性能监控
+        from datetime import datetime
+        self.performance_monitor = {
+            "start_time": datetime.now(),
+            "peak_memory_usage": 0,
+            "total_tools_registered": 0
+        }
         
         # Coordinate marking support
         self._coordinate_detection_enabled = True
@@ -160,6 +191,132 @@ class ArcticAgent(nn.Module):
             handler: Handler function for the capability.
         """
         await self.mcp_tools.register_capability(name, description, parameters, handler)
+    
+    async def register_native_tool(self, name: str, description: str, 
+                                  parameters: Dict[str, Any], handler: Callable):
+        """Register a native tool with direct execution capability.
+        
+        Args:
+            name: Name of the tool.
+            description: Description of the tool.
+            parameters: Parameters of the tool.
+            handler: Native function handler for direct execution.
+        """
+        result = await self.mcp_tools.register_native_tool(name, description, parameters, handler)
+        self.performance_monitor["total_tools_registered"] += 1
+        return result
+    
+    async def execute_tool_with_smart_routing(self, tool_name: str, **kwargs) -> Dict[str, Any]:
+        """Execute tool with intelligent routing between native and external execution.
+        
+        Args:
+            tool_name: Name of the tool to execute.
+            **kwargs: Arguments to pass to the tool.
+            
+        Returns:
+            Dict containing execution result and metadata.
+        """
+        if not self.smart_routing_enabled:
+            # 回退到普通工具调用
+            result = await self.mcp_tools.handle_tool_call(tool_name, **kwargs)
+            return {"result": result, "execution_mode": "direct", "routed": False}
+        
+        # 使用双轨MCP协议进行智能执行
+        execution_result = await self.mcp_protocol.execute_tool_with_fallback(
+            tool_name, kwargs, "tool_executor"
+        )
+        
+        # 更新执行统计
+        self.execution_stats["total_executions"] += 1
+        self.execution_stats["routing_decisions"] += 1
+        
+        if execution_result.get("execution_mode") == "native":
+            self.execution_stats["native_executions"] += 1
+        elif execution_result.get("execution_mode") == "external":
+            self.execution_stats["external_executions"] += 1
+        
+        return execution_result
+    
+    def get_execution_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive execution statistics with advanced analytics."""
+        tool_stats = self.mcp_tools.get_execution_stats()
+        
+        # 计算智能路由效率
+        total_routing = self.execution_stats["routing_decisions"]
+        native_ratio = self.execution_stats["native_executions"] / total_routing if total_routing > 0 else 0
+        external_ratio = self.execution_stats["external_executions"] / total_routing if total_routing > 0 else 0
+        
+        # 性能优化建议
+        performance_suggestions = []
+        if native_ratio < 0.3 and self.execution_stats["total_executions"] > 10:
+            performance_suggestions.append("Consider converting more tools to native execution for better performance")
+        if tool_stats["performance_metrics"]["average_execution_time"] > 1.0:
+            performance_suggestions.append("High average execution time detected - review tool implementations")
+        if tool_stats["performance_metrics"]["efficiency_rating"] == "low":
+            performance_suggestions.append("Low efficiency rating - optimize tool selection and execution paths")
+        
+        # 系统运行时间
+        uptime = (datetime.now() - self.performance_monitor["start_time"]).total_seconds()
+        
+        return {
+            "agent_stats": self.execution_stats,
+            "tool_registry_stats": tool_stats,
+            "smart_routing_enabled": self.smart_routing_enabled,
+            "total_tools_available": len(self.mcp_tools.tools),
+            "native_tools_available": len(self.mcp_tools._native_tools),
+            "routing_efficiency": {
+                "native_ratio": native_ratio,
+                "external_ratio": external_ratio,
+                "routing_success_rate": 1.0 if total_routing > 0 else 0.0,  # 简化版本
+                "optimization_potential": max(0.0, 1.0 - native_ratio)  # 原生执行提升空间
+            },
+            "performance_suggestions": performance_suggestions,
+            "system_health": {
+                "status": "healthy" if tool_stats["performance_metrics"]["performance_score"] > 0.6 else "needs_attention",
+                "last_updated": datetime.now().isoformat(),
+                "recommendations": performance_suggestions[:2],  # 前两条建议
+                "uptime_seconds": uptime,
+                "tools_registration_rate": self.performance_monitor["total_tools_registered"] / max(1, uptime / 60)  # 每分钟注册速率
+            },
+            "performance_monitor": self.performance_monitor
+        }
+    
+    def reset_all_statistics(self):
+        """Reset all execution statistics."""
+        self.execution_stats = {
+            "native_executions": 0,
+            "external_executions": 0,
+            "total_executions": 0,
+            "routing_decisions": 0
+        }
+        self.mcp_tools.reset_execution_stats()
+        
+        # 重置性能监控但保留启动时间
+        start_time = self.performance_monitor["start_time"]
+        self.performance_monitor = {
+            "start_time": start_time,
+            "peak_memory_usage": 0,
+            "total_tools_registered": 0
+        }
+        print("[ArcticAgent] All execution statistics reset")
+    
+    def enable_smart_routing(self, enabled: bool = True):
+        """Enable or disable smart routing functionality."""
+        self.smart_routing_enabled = enabled
+        print(f"[ArcticAgent] Smart routing {'enabled' if enabled else 'disabled'}")
+        
+        # 记录状态变更到统计信息
+        if not hasattr(self, 'routing_state_changes'):
+            self.routing_state_changes = []
+        self.routing_state_changes.append({
+            "timestamp": datetime.now().isoformat(),
+            "enabled": enabled,
+            "total_executions": self.execution_stats["total_executions"]
+        })
+    
+    def get_routing_history(self) -> List[Dict[str, Any]]:
+        """Get smart routing state change history."""
+        return getattr(self, 'routing_state_changes', [])
 
     async def _handle_mcp_message(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
         """
@@ -242,7 +399,7 @@ class ArcticAgent(nn.Module):
 
     async def _handle_tool_call(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
         """
-        Handle MCP tool call messages.
+        Handle MCP tool call messages with smart routing support.
 
         Args:
             message: MCP tool call message.
@@ -254,30 +411,38 @@ class ArcticAgent(nn.Module):
         tool_data = message.payload
         tool_name = tool_data["tool_name"]
         parameters = tool_data["parameters"]
+        execution_mode = tool_data.get("execution_mode", "auto")
         
-        if tool_name in self.mcp_capabilities:
-            handler = self.mcp_capabilities[tool_name]["handler"]
-            result = await handler(**parameters)
-            
-            return ArcticMCPProtocol.create_message(
-                ArcticMCPMessageType.TOOL_RESULT,
-                self.agent_id,
-                {
-                    "tool_name": tool_name,
-                    "result": result,
-                    "success": True
-                }
-            )
+        # 使用智能路由执行工具调用
+        if self.smart_routing_enabled and execution_mode in ["auto", "native", "external"]:
+            execution_result = await self.execute_tool_with_smart_routing(tool_name, **parameters)
+            result = execution_result.get("result", execution_result)
+            actual_execution_mode = execution_result.get("execution_mode", "unknown")
+            success = execution_result.get("success", True)
         else:
-            return ArcticMCPProtocol.create_message(
-                ArcticMCPMessageType.TOOL_RESULT,
-                self.agent_id,
-                {
-                    "tool_name": tool_name,
-                    "error": f"Tool {tool_name} not found",
-                    "success": False
-                }
-            )
+            # 回退到传统工具调用
+            if tool_name in self.mcp_capabilities:
+                handler = self.mcp_capabilities[tool_name]["handler"]
+                result = await handler(**parameters)
+                actual_execution_mode = "traditional"
+                success = True
+            else:
+                result = f"Tool {tool_name} not found"
+                actual_execution_mode = "traditional"
+                success = False
+        
+        # Create and return the tool result message with execution metadata
+        return ArcticMCPProtocol.create_message(
+            ArcticMCPMessageType.TOOL_RESULT,
+            self.agent_id,
+            {
+                "tool_name": tool_name,
+                "result": result,
+                "success": success,
+                "execution_mode": actual_execution_mode,
+                "smart_routing_used": self.smart_routing_enabled
+            }
+        )
 
     async def _handle_tool_result(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
         """

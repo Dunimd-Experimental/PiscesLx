@@ -23,7 +23,6 @@ from pathlib import Path
 from typing import Optional, List
 from utils.log.core import PiscesLxCoreLog
 
-# 模块级统一日志
 logger = PiscesLxCoreLog("PiscesLx.Utils.UL")
 
 def get_current_version(project_root: Path) -> str:

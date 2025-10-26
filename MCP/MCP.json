@@ -1,5 +1,6 @@
 {
   "version": "1.0",
+  "security_notice": "Server-safe configuration with unsafe tools disabled. Document processor and sequential thinking tools have security limits.",
   "tools": {
     "crypto_price": {
       "module": "MCP.crypto",
@@ -13,191 +14,58 @@
       "description": "Get trending cryptocurrencies from CoinGecko.",
       "enabled": true
     },
-
-    "search_everything": {
-      "module": "MCP.everything",
-      "func": "search_everything",
-      "description": "Search files using Everything on Windows.",
-      "enabled": true
-    },
-    "get_file_details": {
-      "module": "MCP.everything",
-      "func": "get_file_details",
-      "description": "Get detailed file information.",
-      "enabled": true
-    },
-    "list_drives": {
-      "module": "MCP.everything",
-      "func": "list_drives",
-      "description": "List available drive letters on Windows.",
-      "enabled": true
-    },
-    "get_recent_files": {
-      "module": "MCP.everything",
-      "func": "get_recent_files",
-      "description": "Get recently modified files in a directory.",
-      "enabled": true
-    },
-    "find_large_files": {
-      "module": "MCP.everything",
-      "func": "find_large_files",
-      "description": "Find large files in a directory.",
-      "enabled": true
-    },
-    "search_by_extension": {
-      "module": "MCP.everything",
-      "func": "search_by_extension",
-      "description": "Search files by extension in a directory.",
-      "enabled": true
-    },
-
     "fetch_url": {
       "module": "MCP.fetch",
       "func": "fetch_url",
       "description": "Fetch and extract content from a web URL.",
       "enabled": true
     },
-
     "web_search": {
       "module": "MCP.web_search",
       "func": "web_search",
       "description": "Perform a web search (DuckDuckGo) and return top results.",
       "enabled": true
     },
-
-    "read_file": {
-      "module": "MCP.filesystem",
-      "func": "read_file",
-      "description": "Read content from a file.",
-      "enabled": true
-    },
-    "write_file": {
-      "module": "MCP.filesystem",
-      "func": "write_file",
-      "description": "Write content to a file.",
-      "enabled": true
-    },
-    "list_directory": {
-      "module": "MCP.filesystem",
-      "func": "list_directory",
-      "description": "List contents of a directory.",
-      "enabled": true
-    },
-    "create_directory": {
-      "module": "MCP.filesystem",
-      "func": "create_directory",
-      "description": "Create a directory.",
-      "enabled": true
-    },
-    "delete_path": {
-      "module": "MCP.filesystem",
-      "func": "delete_path",
-      "description": "Delete a file or directory.",
-      "enabled": true
-    },
-    "file_info": {
-      "module": "MCP.filesystem",
-      "func": "file_info",
-      "description": "Get detailed information about a file or directory.",
-      "enabled": true
-    },
-
-    "git_status": {
-      "module": "MCP.git",
-      "func": "git_status",
-      "description": "Get the current git status of a repository.",
-      "enabled": true
-    },
-    "git_log": {
-      "module": "MCP.git",
-      "func": "git_log",
-      "description": "Get the git commit history.",
-      "enabled": true
-    },
-    "git_branch": {
-      "module": "MCP.git",
-      "func": "git_branch",
-      "description": "Get the list of branches in a repository.",
-      "enabled": true
-    },
-    "git_remote": {
-      "module": "MCP.git",
-      "func": "git_remote",
-      "description": "Get the list of remote repositories.",
-      "enabled": true
-    },
-    "git_diff": {
-      "module": "MCP.git",
-      "func": "git_diff",
-      "description": "Show changes between commits or working tree.",
-      "enabled": true
-    },
-
-    "store_memory": {
-      "module": "MCP.memory",
-      "func": "store_memory",
-      "description": "Store a value in memory with a given key.",
-      "enabled": true
-    },
-    "retrieve_memory": {
-      "module": "MCP.memory",
-      "func": "retrieve_memory",
-      "description": "Retrieve a value from memory by key.",
-      "enabled": true
-    },
-    "list_memory": {
-      "module": "MCP.memory",
-      "func": "list_memory",
-      "description": "List all keys stored in memory.",
-      "enabled": true
-    },
-    "delete_memory": {
-      "module": "MCP.memory",
-      "func": "delete_memory",
-      "description": "Delete a key from memory.",
-      "enabled": true
-    },
-    "clear_memory": {
-      "module": "MCP.memory",
-      "func": "clear_memory",
-      "description": "Clear all memory by deleting the memory file.",
-      "enabled": true
-    },
-    "append_to_memory": {
-      "module": "MCP.memory",
-      "func": "append_to_memory",
-      "description": "Append a value to an existing memory key.",
-      "enabled": true
-    },
-    "get_memory_stats": {
-      "module": "MCP.memory",
-      "func": "get_memory_stats",
-      "description": "Get statistics about the memory file.",
-      "enabled": true
-    },
-
     "create_thinking_session": {
       "module": "MCP.sequentialthinking",
       "func": "create_thinking_session",
-      "description": "Create a new sequential thinking session.",
+      "description": "Create a new sequential thinking session with security limits (max 50 sessions, 100 thoughts/session, 5000 chars/thought, 1hr timeout).",
       "enabled": true
     },
     "add_sequential_thought": {
       "module": "MCP.sequentialthinking",
       "func": "add_sequential_thought",
-      "description": "Add a thought to an existing sequential thinking session.",
+      "description": "Add a thought to an existing session with security limits (max 100 thoughts/session, 5000 chars/thought).",
       "enabled": true
     },
     "get_thinking_session": {
       "module": "MCP.sequentialthinking",
       "func": "get_thinking_session",
-      "description": "Get a complete sequential thinking session with all thoughts.",
+      "description": "Get a complete thinking session with memory usage statistics.",
       "enabled": true
     },
     "list_thinking_sessions": {
       "module": "MCP.sequentialthinking",
       "func": "list_thinking_sessions",
-      "description": "List all active sequential thinking sessions.",
+      "description": "List all active sequential thinking sessions with memory usage.",
+      "enabled": true
+    },
+    "get_thinking_path": {
+      "module": "MCP.sequentialthinking",
+      "func": "get_thinking_path",
+      "description": "Get the path from root to a specific thought in a session.",
+      "enabled": true
+    },
+    "get_thinking_summary": {
+      "module": "MCP.sequentialthinking",
+      "func": "get_thinking_summary",
+      "description": "Get a summary of a thinking session with key insights.",
+      "enabled": true
+    },
+    "get_thinking_statistics": {
+      "module": "MCP.sequentialthinking",
+      "func": "get_thinking_statistics",
+      "description": "Get overall thinking system statistics and memory usage.",
       "enabled": true
     },
     "delete_thinking_session": {
@@ -210,25 +78,6 @@
       "module": "MCP.sequentialthinking",
       "func": "get_thought_path",
       "description": "Get the path from root to a specific thought.",
-      "enabled": true
-    },
-    "get_thinking_summary": {
-      "module": "MCP.sequentialthinking",
-      "func": "get_thinking_summary",
-      "description": "Get a summary of a thinking session.",
-      "enabled": true
-    },
-
-    "system_info": {
-      "module": "MCP.system_info",
-      "func": "system_info",
-      "description": "Get comprehensive system information.",
-      "enabled": true
-    },
-    "system_health": {
-      "module": "MCP.system_info",
-      "func": "system_health",
-      "description": "Get system health status with warnings and recommendations.",
       "enabled": true
     },
 

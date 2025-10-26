@@ -109,10 +109,14 @@ def main():
     parser.add_argument('--mcp_action', type=str, choices=['status', 'warmup', 'refresh-cache'], default='status', help='MCP action to perform (for MCP operations)')
     parser.add_argument('--text', type=str, help='Text content to check for watermark (for watermark detection)')
     parser.add_argument('--file', type=str, help='File path to check for watermark (for watermark detection)')
+    parser.add_argument('--image-file', type=str, help='Image file to check for watermark (for watermark detection)')
+    parser.add_argument('--audio-file', type=str, help='Audio file to check for watermark (for watermark detection)')
     parser.add_argument('--batch', action='store_true', help='Enable batch mode for directory processing (for watermark detection)')
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output (for watermark detection)')
     parser.add_argument('--json', action='store_true', help='Output results in JSON format (for watermark detection)')
     parser.add_argument('--cache_action', type=str, choices=['stats', 'clear-all', 'clear-dataset', 'clear-downloads'], default='stats', help='Cache action to perform: stats, clear-all, clear-dataset, or clear-downloads (for cache maintenance)')
+    # Watermark options
+    parser.add_argument('--weights-verify', action='store_true', help='Verify weight-level watermark (for watermark)')
     # Monitor options
     parser.add_argument('--monitor_mode', type=str, choices=['standard'], help='Monitor mode (for system/tools observability)')
     parser.add_argument('--update_interval', type=float, help='Monitor screen update interval seconds')
@@ -201,22 +205,76 @@ def main():
             _LOG.success("MCP tools cache refreshed", event="manage.right")
     
     elif args.command == 'watermark':
-        from tools.watermark_check import detect_watermark, batch_detect
-        
-        if args.file:
-            if args.batch:
-                result = batch_detect(args.file, args.verbose)
-            else:
-                with open(args.file, 'r', encoding='utf-8') as f:
-                    content = f.read().strip()
-                result = detect_watermark(content, args.verbose)
-        elif args.text:
-            result = detect_watermark(args.text, args.verbose)
+        from tools.wmc import detect_watermark, batch_detect
+        from tools.wmc.check import detect_image_watermark, detect_audio_watermark
+        if args.weights_verify:
+            # Weight-level watermark verification path
+            try:
+                from utils.watermark.weights import verify_weights
+                from model import ArcticModel, ArcticConfig
+                from utils.checkpoint import load_ckpt
+                # Resolve ckpt path
+                if not args.ckpt:
+                    _LOG.error("--ckpt is required for --weights-verify", event="manage.error")
+                    sys.exit(1)
+                # Load watermark config
+                owner_id = 'piscesl1'
+                seed = 2025
+                threshold = 0.02
+                try:
+                    with open('configs/watermark.json', 'r', encoding='utf-8') as wf:
+                        wm_cfg = json.load(wf)
+                        w = (wm_cfg or {}).get('watermark_2025', {}).get('weights', {})
+                        owner_id = str(w.get('owner_id', owner_id))
+                        seed = int(w.get('seed', seed))
+                        threshold = float(w.get('verify_threshold', threshold))
+                except Exception:
+                    pass
+                # Build model for verification (uses model_size to pick config)
+                model_size = getattr(args, 'model_size', '0.5B').upper()
+                cfg_path = f"configs/{model_size}.json"
+                if not os.path.exists(cfg_path):
+                    _LOG.error(f"Model config not found: {cfg_path}", event="manage.error")
+                    sys.exit(1)
+                cfg = ArcticConfig.from_json(cfg_path)
+                model = ArcticModel(cfg)
+                # Load checkpoint weights
+                load_ckpt(model, None, 0, args.ckpt)
+                # Verify
+                score, passed = verify_weights(model, owner_id, seed)
+                out = {
+                    "owner_id": owner_id,
+                    "seed": seed,
+                    "threshold": threshold,
+                    "score": float(score),
+                    "passed": bool(passed),
+                    "ckpt": args.ckpt,
+                    "model_size": model_size,
+                }
+                print(json.dumps(out, ensure_ascii=False, indent=2))
+            except Exception as e:
+                _LOG.error(f"weights-verify failed: {e}", event="manage.error")
+                sys.exit(1)
         else:
-            _LOG.error("Watermark command requires --text or --file argument", event="manage.error")
-            sys.exit(1)
+            # Content watermark detection path (text/image/audio)
+            if args.image_file:
+                result = detect_image_watermark(args.image_file, args.verbose)
+            elif args.audio_file:
+                result = detect_audio_watermark(args.audio_file, args.verbose)
+            elif args.file:
+                if args.batch:
+                    result = batch_detect(args.file, args.verbose)
+                else:
+                    with open(args.file, 'r', encoding='utf-8') as f:
+                        content = f.read().strip()
+                    result = detect_watermark(content, args.verbose)
+            elif args.text:
+                result = detect_watermark(args.text, args.verbose)
+            else:
+                _LOG.error("Watermark command requires --text/--file/--image-file/--audio-file or --weights-verify with --ckpt", event="manage.error")
+                sys.exit(1)
             
-        if args.json:
+        if 'result' in locals() and args.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
     elif args.command == 'cache':
         from tools.cache import cache_stats, clear_all_cache, clear_dataset_cache, clear_downloads_cache

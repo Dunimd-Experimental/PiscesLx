@@ -68,3 +68,6 @@ torch-audio>=2.1.0; platform_system == "Linux"
 deepspeed>=0.12.0
 mpi4py>=3.1.0
 evalscope>=0.5.0
+fastmcp>=2.0.0
+aiofiles>=0.8.0
+pathlib2>=2.3.6;python_version<"3.4"

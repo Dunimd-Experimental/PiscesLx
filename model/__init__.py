@@ -32,13 +32,9 @@ from .modeling import (
     ArcticTransformerBlock,
     ArcticModel,
 )
-from .reasoner import (
-    ArcticMultiPathReasoningEngine,
-    ArcticMultiPathInferenceEngine,
-    ArcticMultiPathMetaLearner,
-    ArcticUnifiedMultiPathReasoningSystem,
-    ArcticMultiModalReasoningEnhancer,
-)
+from .multimodal.reasoner.multipath_core import ArcticMultiPathReasoningEngine
+from .multimodal.reasoner.multipath_meta import ArcticMultiPathMetaLearner
+from .multimodal.reasoner.enhancer import ArcticMultiModalReasoningEnhancer
 
 # Merge MCP public classes into model package exports
 from .mcp.server import ArcticOptimizedMCPServer
@@ -63,9 +59,7 @@ __all__ = [
     "ArcticTransformerBlock",
     "ArcticModel",
     "ArcticMultiPathReasoningEngine",
-    "ArcticMultiPathInferenceEngine",
     "ArcticMultiPathMetaLearner",
-    "ArcticUnifiedMultiPathReasoningSystem",
     "ArcticMultiModalReasoningEnhancer",
     "ArcticOptimizedMCPServer",
     "ArcticMCPTranslationLayer",

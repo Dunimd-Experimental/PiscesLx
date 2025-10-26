@@ -187,6 +187,115 @@ class ArcticMultiPathReasoningEngine(nn.Module):
         self.thinking_head = new_head
         self.vocab_size = new_vocab_size
 
+    async def analyze_tool_selection(self, tool_name: str, arguments: Dict[str, Any], 
+                                     available_tools: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze and optimize tool selection using 8-path reasoning.
+        
+        Args:
+            tool_name (str): The name of the tool to analyze.
+            arguments (Dict[str, Any]): The arguments for the tool.
+            available_tools (Dict[str, Any]): Dictionary of available tools.
+            
+        Returns:
+            Dict[str, Any]: Analysis results including optimization recommendations.
+        """
+        # 创建工具特征向量
+        tool_features = self._encode_tool_features(tool_name, arguments, available_tools)
+        
+        # 通过8路径推理引擎处理
+        with torch.no_grad():
+            reasoning_output = self.forward(tool_features.unsqueeze(0))
+            
+        # 提取推理结果
+        optimization_score = reasoning_output.get("uncertainty_scores", torch.tensor([0.5]))[0].item()
+        
+        # 基于推理结果决定是否优化
+        should_optimize = optimization_score > 0.3  # 不确定性较高时进行优化
+        
+        return {
+            "should_optimize": should_optimize,
+            "optimization_score": optimization_score,
+            "optimized_params": self._generate_optimized_params(arguments) if should_optimize else arguments,
+            "reasoning_paths": reasoning_output.get("thinking_logits", None)
+        }
+    
+    async def analyze_execution_mode(self, tool_name: str, arguments: Dict[str, Any], 
+                                   available_tools: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze and determine optimal execution mode (native vs external).
+        
+        Args:
+            tool_name (str): The name of the tool to analyze.
+            arguments (Dict[str, Any]): The arguments for the tool.
+            available_tools (Dict[str, Any]): Dictionary of available tools.
+            
+        Returns:
+            Dict[str, Any]: Analysis results including recommended execution mode.
+        """
+        # 检查工具是否支持原生执行
+        tool_info = available_tools.get(tool_name, {})
+        has_native_handler = tool_info.get("has_native_handler", False)
+        
+        # 简单工具优先原生执行
+        if has_native_handler and len(arguments) < 5:  # 参数较少的简单工具
+            return {
+                "recommended_mode": "native",
+                "reason": "Simple tool with native handler available",
+                "confidence": 0.9
+            }
+        
+        # 复杂工具或需要外部资源的工具使用外部执行
+        if "fetch" in tool_name.lower() or "search" in tool_name.lower():
+            return {
+                "recommended_mode": "external",
+                "reason": "Tool requires external resources or network access",
+                "confidence": 0.8
+            }
+        
+        # 默认推荐原生执行（如果可用）
+        return {
+            "recommended_mode": "native" if has_native_handler else "external",
+            "reason": "Default recommendation based on availability",
+            "confidence": 0.7
+        }
+    
+    def _encode_tool_features(self, tool_name: str, arguments: Dict[str, Any], 
+                            available_tools: Dict[str, Any]) -> torch.Tensor:
+        """Encode tool characteristics into feature vectors."""
+        # 简化的特征编码（实际实现会更复杂）
+        tool_info = available_tools.get(tool_name, {})
+        
+        # 基础特征：工具复杂度、参数数量、是否有原生处理器
+        complexity = len(tool_info.get("parameters", {}))
+        param_count = len(arguments)
+        has_native = float(tool_info.get("has_native_handler", False))
+        
+        # 创建特征张量
+        features = torch.tensor([
+            complexity / 10.0,  # 归一化复杂度
+            param_count / 10.0,  # 归一化参数数量
+            has_native,  # 是否有原生处理器
+            1.0 if "search" in tool_name.lower() else 0.0,  # 搜索相关
+            1.0 if "fetch" in tool_name.lower() else 0.0,  # 获取相关
+            0.5,  # 预留特征
+            0.3,  # 预留特征
+            0.1   # 预留特征
+        ], dtype=torch.float32)
+        
+        return features
+    
+    def _generate_optimized_params(self, original_params: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate optimized parameters based on reasoning."""
+        optimized = original_params.copy()
+        
+        # 简单的参数优化示例
+        if "timeout" in optimized and isinstance(optimized["timeout"], (int, float)):
+            optimized["timeout"] = min(optimized["timeout"] * 1.2, 30.0)  # 增加超时时间
+        
+        if "limit" in optimized and isinstance(optimized["limit"], int):
+            optimized["limit"] = min(optimized["limit"] + 10, 100)  # 增加结果限制
+        
+        return optimized
+
     def forward(self, hidden_states, input_ids=None, labels=None):
         """
         Forward pass of the ArcticMultiPathReasoningEngine.

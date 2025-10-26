@@ -10,7 +10,12 @@
         "redundancy": 3,
         "tamper_proof": true
       },
-      "visible_prefix": null
+      "visible_prefix": null,
+      "protocol": {
+        "framing": "SYNC_LEN_CRC",
+        "ecc": "none",
+        "symbol_bits": 2
+      }
     },
     "image": {
       "hidden": {
@@ -18,7 +23,10 @@
         "dct_strength": 0.08,
         "channels": ["Y", "U", "V"],
         "resistance": ["jpeg", "crop", "noise"],
-        "key": "pisces2025"
+        "key": "pisces2025",
+        "block_size": 8,
+        "embed_band": "mid",
+        "ecc": "repeat3"
       },
       "visible": {
         "force_enabled": true,
@@ -45,7 +53,14 @@
         "lsb_bits": 6,
         "frequency_range": [18000, 20000],
         "spread_spectrum": true,
-        "key": "pisces2025_audio"
+        "key": "pisces2025_audio",
+        "stft": {
+          "sample_rate": 44100,
+          "min_freq": 18000,
+          "max_freq": 20000,
+          "amplitude": 0.01,
+          "spread_factor": 10
+        }
       },
       "visible": null
     },
@@ -68,6 +83,13 @@
       "forward_tracking": true,
       "modification_detection": true,
       "regulatory_reporting": true
+    },
+    "weights": {
+      "enabled": false,
+      "owner_id": "your-org",
+      "seed": 2025,
+      "regularizer_strength": 1e-5,
+      "verify_threshold": 0.02
     }
   }
 }

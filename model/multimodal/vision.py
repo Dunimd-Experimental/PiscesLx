@@ -156,6 +156,69 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         return x_rotated
 
     def _rotate_half(self, x: torch.Tensor) -> torch.Tensor:
+
+
+class VisualTextProcessor(nn.Module):
+    """Processor for text rendered as images - H-Network support."""
+    
+    def __init__(self, hidden_size: int, patch_size: int = 14):
+        """Initialize visual text processor.
+        
+        Args:
+            hidden_size: Hidden dimension size
+            patch_size: Patch size for processing
+        """
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.patch_size = patch_size
+        
+        # Text-specific normalization
+        self.register_buffer('text_mean', torch.Tensor([0.95, 0.95, 0.95]).view(1, 3, 1, 1))
+        self.register_buffer('text_std', torch.Tensor([0.1, 0.1, 0.1]).view(1, 3, 1, 1))
+        
+        # Text-aware patch embedding
+        self.text_patch_embed = nn.Conv2d(
+            in_channels=3,
+            out_channels=hidden_size,
+            kernel_size=patch_size,
+            stride=patch_size
+        )
+        
+        # Text sequence compression
+        self.text_compressor = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.GELU(),
+            nn.Linear(hidden_size // 2, hidden_size),
+            nn.LayerNorm(hidden_size)
+        )
+        
+        logger.info(f"VisualTextProcessor initialized: hidden_size={hidden_size}, patch_size={patch_size}")
+    
+    def forward(self, text_images: torch.Tensor) -> torch.Tensor:
+        """Process text images to visual embeddings.
+        
+        Args:
+            text_images: Text images [B, C, H, W]
+            
+        Returns:
+            Visual embeddings [B, N, D]
+        """
+        # Normalize for text (higher contrast)
+        x = (text_images - self.text_mean) / self.text_std
+        
+        # Extract patches
+        patches = self.text_patch_embed(x)  # [B, D, H', W']
+        
+        # Flatten spatial dimensions
+        B, D, H, W = patches.shape
+        patches = patches.view(B, D, -1).transpose(1, 2)  # [B, N, D]
+        
+        # Apply text-specific compression
+        compressed = self.text_compressor(patches)
+        
+        logger.debug(f"VisualTextProcessor: {text_images.shape} -> {compressed.shape}")
+        
+        return compressed
         """
         Rotate the last dimension of the input tensor by half and negate the second half.
 
@@ -197,6 +260,38 @@ class ArcticVisionEncoder(nn.Module):
             kernel_size=self.patch_size,
             stride=self.patch_size
         )
+        
+        # H-Network visual text processing support
+        self.visual_text_processor = None
+        if hasattr(cfg, 'h_network_enabled') and cfg.h_network_enabled:
+            self.visual_text_processor = self._create_visual_text_processor()
+            logger.info("H-Network visual text processor initialized")
+    
+    def _create_visual_text_processor(self):
+        """Create visual text processor for H-Network tokenizer support."""
+        return VisualTextProcessor(self.hidden_size, self.patch_size)
+    
+    def process_visual_text(self, text_images: torch.Tensor) -> torch.Tensor:
+        """Process text rendered as images through vision encoder.
+        
+        Args:
+            text_images: Batch of text images [B, C, H, W]
+            
+        Returns:
+            Visual token embeddings [B, N, D]
+        """
+        if self.visual_text_processor is None:
+            raise RuntimeError("Visual text processor not initialized. Enable h_network_enabled in config.")
+        
+        return self.visual_text_processor(text_images)
+    
+    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
+        """Forward pass with optional visual text processing."""
+        if kwargs.get('is_visual_text', False) and self.visual_text_processor is not None:
+            return self.process_visual_text(x)
+        
+        # Standard vision processing
+        return self._standard_forward(x)
         max_patches_h = 1024 // self.patch_size
         max_patches_w = 1024 // self.patch_size
         self.pos_embed = nn.Parameter(torch.randn(1, max_patches_h * max_patches_w, self.hidden_size))

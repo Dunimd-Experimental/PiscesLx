@@ -114,7 +114,7 @@ from utils.observability.manager import PiscesLxCoreObservabilityManager
 from utils.observability.service import PiscesLxCoreObservabilityService
 
 # Quantization module
-from utils.quantization import PiscesLxCoreQuantizer, PiscesLxCoreQuantizationFacade
+from utils.quantization import PiscesLxCoreQuantizer
 
 # Config module
 from utils.config.manager import PiscesLxCoreConfigManager, PiscesLxCoreConfigManagerFacade
@@ -223,6 +223,4 @@ __all__ = [
     
     # Quantization
     'PiscesLxCoreQuantizer',
-
-    'PiscesLxCoreQuantizationFacade',
 ]

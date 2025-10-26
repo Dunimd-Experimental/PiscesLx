@@ -1,3 +1,8 @@
+try:
+    # optional watermark integration (enabled via env toggles)
+    from utils.watermark.integration import get_watermark_manager_from_env
+except Exception:
+    get_watermark_manager_from_env = lambda: None  # type: ignore
 #!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
@@ -113,31 +118,35 @@ class PiscesLxToolsInferOrchestrator:
         
         # Initialize metrics registry for inference-specific metrics
         self.metrics_registry = PiscesLxCoreMetricsRegistry()
-        
         # Initialize checkpoint manager for model loading optimization
         self.checkpoint_manager = PiscesLxCoreCheckpointManager()
         
         # Initialize configuration manager for dynamic inference config
         self.config_manager = PiscesLxCoreConfigManager()
-        
+
+        # Initialize watermark manager (optional, controlled by env)
+        self.wm_manager = get_watermark_manager_from_env() if 'get_watermark_manager_from_env' in globals() else None
+
         # Emit orchestrator initialization event
         device_config = self.device_facade.setup_devices(mode="inference") if hasattr(self.device_facade, 'setup_devices') else {}
         self.hooks.emit("infer.orchestrator.init",
                        config=self.cfg.dump_effective() if hasattr(self.cfg, 'dump_effective') else {},
                        device_config=device_config,
                        cache_enabled=self.cache_manager is not None,
-                       observability_enabled=self.observability is not None)
+                       observability_enabled=self.observability is not None,
+                       watermark_enabled=bool(self.wm_manager))
 
     def run(self, args: Any) -> None:
         mode = self.cfg.get('infer.mode', default=(getattr(args, 'infer_mode', None) or 'standard'))
-        logger.success(f"Infer orchestrator mode: {mode}")
+        logger.success(f"Inferencer mode: {mode}")
         
         # Emit inference start event with enhanced context
         inference_context = {
             "mode": mode,
             "device_config": self.device_facade.setup_devices(mode="inference") if hasattr(self.device_facade, 'setup_devices') else {},
             "cache_enabled": self.cache_manager is not None,
-            "observability_enabled": self.observability is not None
+            "observability_enabled": self.observability is not None,
+            "watermark_enabled": bool(getattr(self, 'wm_manager', None)),
         }
         self.hooks.emit("infer.start", **inference_context)
         
@@ -230,6 +239,8 @@ class PiscesLxToolsInferOrchestrator:
                 self.hooks.emit("infer.pre.optimization", metrics=pre_inference_metrics)
             
             # Run inference
+            if getattr(self, 'wm_manager', None):
+                self.hooks.emit("infer.watermark.ready", enabled=True)
             runner.infer()
             inference_success = True
             

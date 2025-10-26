@@ -337,7 +337,7 @@ class ArcticMCPTranslationLayer:
         # Default formatting
         return f"🟢\t{tool_name} execution completed"
     
-    async def execute_agent_calls(self, agent_calls: List[AgentCall], 
+    async def execute_agent_calls(self, agent_calls: List[ArcticAgentCall], 
                                 session_id: str = "default", 
                                 agent_id: str = "pisces_model") -> List[Dict[str, Any]]:
         """
@@ -446,7 +446,7 @@ class ArcticMCPTranslationLayer:
         
         return processed_output
     
-    async def execute_mcp_calls(self, agent_calls: List[AgentCall], 
+    async def execute_mcp_calls(self, agent_calls: List[ArcticAgentCall], 
                                session_id: str = "default", 
                                agent_id: str = "pisces_model") -> List[Dict[str, Any]]:
         """

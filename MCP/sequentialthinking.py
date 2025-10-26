@@ -35,13 +35,64 @@ class ThoughtNode:
         self.children = []
 
 class SequentialThinking:
-    """Manages sequential thinking sessions."""
+    """Manages sequential thinking sessions with memory limits."""
     
     def __init__(self):
         self.sessions = {}
+        # Security limits for server environment
+        self.max_sessions = 50  # Maximum concurrent sessions
+        self.max_thoughts_per_session = 100  # Maximum thoughts per session
+        self.max_content_length = 5000  # Maximum characters per thought
+        self.max_total_memory = 1000  # Maximum total thoughts across all sessions
+        self.session_timeout = 3600  # 1 hour timeout in seconds
+    
+    def _check_memory_limits(self) -> bool:
+        """Check if memory limits are exceeded."""
+        total_thoughts = sum(len(session['thoughts']) for session in self.sessions.values())
+        return total_thoughts >= self.max_total_memory
+    
+    def _cleanup_expired_sessions(self):
+        """Remove expired sessions based on timeout."""
+        import time
+        current_time = time.time()
+        expired_sessions = []
+        
+        for session_id, session in self.sessions.items():
+            created_time = datetime.fromisoformat(session['created_at']).timestamp()
+            if current_time - created_time > self.session_timeout:
+                expired_sessions.append(session_id)
+        
+        for session_id in expired_sessions:
+            del self.sessions[session_id]
+    
+    def _enforce_session_limits(self):
+        """Enforce session count limits by removing oldest sessions."""
+        if len(self.sessions) > self.max_sessions:
+            # Sort by creation time and remove oldest
+            sorted_sessions = sorted(
+                self.sessions.items(),
+                key=lambda x: x[1]['created_at']
+            )
+            # Remove oldest sessions
+            for session_id, _ in sorted_sessions[:-self.max_sessions]:
+                del self.sessions[session_id]
 
     def create_session(self, initial_thought: str) -> str:
-        """Create a new thinking session with an initial thought."""
+        """Create a new thinking session with an initial thought and memory checks."""
+        # Clean up expired sessions first
+        self._cleanup_expired_sessions()
+        
+        # Check memory limits
+        if self._check_memory_limits():
+            raise MemoryError("Maximum memory limit reached. Please delete some sessions.")
+        
+        # Enforce session count limits
+        self._enforce_session_limits()
+        
+        # Validate content length
+        if len(initial_thought) > self.max_content_length:
+            raise ValueError(f"Initial thought too long (max: {self.max_content_length} characters)")
+        
         session_id = str(uuid.uuid4())
         root_thought = ThoughtNode(initial_thought)
         self.sessions[session_id] = {
@@ -53,11 +104,19 @@ class SequentialThinking:
         return session_id
 
     def add_thought(self, session_id: str, content: str, parent_id: str = None) -> Dict[str, Any]:
-        """Add a new thought to a session."""
+        """Add a new thought to a session with memory checks."""
         if session_id not in self.sessions:
             return {"success": False, "error": "Session not found"}
         
         session = self.sessions[session_id]
+        
+        # Check session-level thought limits
+        if len(session['thoughts']) >= self.max_thoughts_per_session:
+            return {"success": False, "error": f"Session full (max: {self.max_thoughts_per_session} thoughts)"}
+        
+        # Validate content length
+        if len(content) > self.max_content_length:
+            return {"success": False, "error": f"Thought too long (max: {self.max_content_length} characters)"}
         
         if parent_id is None:
             parent_id = session['current_focus']
@@ -74,7 +133,9 @@ class SequentialThinking:
             "success": True,
             "thought_id": new_thought.id,
             "parent_id": parent_id,
-            "timestamp": new_thought.timestamp
+            "timestamp": new_thought.timestamp,
+            "session_thoughts": len(session['thoughts']),
+            "limit_warning": len(session['thoughts']) >= self.max_thoughts_per_session * 0.8
         }
 
     def get_session(self, session_id: str) -> Dict[str, Any]:
@@ -119,7 +180,25 @@ thinking_manager = SequentialThinking()
 
 @mcp.tool()
 def create_thinking_session(initial_thought: str) -> Dict[str, Any]:
-    """Create a new sequential thinking session."""
+    """Create a new sequential thinking session with security limits.
+    
+    Security limits:
+    - Max 50 concurrent sessions
+    - Max 100 thoughts per session
+    - Max 5000 characters per thought
+    - 1-hour session timeout
+    - Max 1000 total thoughts across all sessions
+    
+    Args:
+        initial_thought: The starting thought for the session
+        
+    Returns:
+        Dict[str, Any]: Result with session_id or error
+        
+    Raises:
+        MemoryError: If memory limits exceeded
+        ValueError: If thought too long
+    """
     try:
         session_id = thinking_manager.create_session(initial_thought)
         return {
@@ -132,7 +211,21 @@ def create_thinking_session(initial_thought: str) -> Dict[str, Any]:
 
 @mcp.tool()
 def add_sequential_thought(session_id: str, content: str, parent_id: str = None) -> Dict[str, Any]:
-    """Add a thought to an existing sequential thinking session."""
+    """Add a thought to a session with security limits.
+    
+    Security limits:
+    - Max 100 thoughts per session
+    - Max 5000 characters per thought
+    - Returns warning when session reaches 80% capacity
+    
+    Args:
+        session_id: The session ID
+        content: The thought content
+        parent_id: Optional parent thought ID
+        
+    Returns:
+        Dict[str, Any]: Result with success status and details
+    """
     try:
         return thinking_manager.add_thought(session_id, content, parent_id)
     except Exception as e:
@@ -142,7 +235,17 @@ def add_sequential_thought(session_id: str, content: str, parent_id: str = None)
 def get_thinking_session(session_id: str) -> Dict[str, Any]:
     """Get a complete sequential thinking session with all thoughts."""
     try:
-        return thinking_manager.get_session(session_id)
+        session = thinking_manager.get_session(session_id)
+        if session["success"]:
+            total_thoughts = len(session["thoughts"])
+            memory_usage = {
+                "total_thoughts": total_thoughts,
+                "max_thoughts": thinking_manager.max_thoughts_per_session,
+                "usage_percentage": (total_thoughts / thinking_manager.max_thoughts_per_session) * 100,
+                "session_limit_warning": total_thoughts >= thinking_manager.max_thoughts_per_session * 0.8
+            }
+            session["memory_usage"] = memory_usage
+        return session
     except Exception as e:
         return {"success": False, "error": str(e)}
 
@@ -236,3 +339,25 @@ def get_thinking_summary(session_id: str) -> Dict[str, Any]:
         }
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+@mcp.tool()
+def get_thinking_statistics() -> Dict[str, Any]:
+    """Get overall thinking system statistics and memory usage.
+    
+    Returns:
+        Dict[str, Any]: System statistics including memory usage
+    """
+    total_sessions = len(thinking_manager.sessions)
+    total_thoughts = sum(len(session['thoughts']) for session in thinking_manager.sessions.values())
+    
+    return {
+        'total_sessions': total_sessions,
+        'total_thoughts': total_thoughts,
+        'max_sessions': thinking_manager.max_sessions,
+        'max_thoughts_per_session': thinking_manager.max_thoughts_per_session,
+        'max_total_thoughts': thinking_manager.max_total_memory,
+        'session_usage_percentage': (total_sessions / thinking_manager.max_sessions) * 100,
+        'memory_usage_percentage': (total_thoughts / thinking_manager.max_total_memory) * 100,
+        'memory_limit_warning': total_thoughts >= thinking_manager.max_total_memory * 0.8,
+        'session_limit_warning': total_sessions >= thinking_manager.max_sessions * 0.8
+    }
