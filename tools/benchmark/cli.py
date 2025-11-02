@@ -6,7 +6,7 @@ from pathlib import Path
 from utils.log.core import PiscesLxCoreLog
 
 from .config import MODALITY_DATASETS
-from .runner import run_single_benchmark, compare_multiple_models
+from .runner import PiscesLxToolsBenchmarkRunner, PiscesLxToolsBenchmarkComparer
 
 _logger = PiscesLxCoreLog("pisceslx.tools.benchmark")
 
@@ -103,12 +103,12 @@ Examples:
                     "eval_batch_size": args.eval_batch_size,
                     "timeout": args.timeout,
                 })
-            results = compare_multiple_models(model_configs)
+            results = PiscesLxToolsBenchmarkComparer.compare(model_configs)
             print(json.dumps(results["comparison_summary"], indent=2))
         else:
             if not args.model_path:
                 parser.error("--model-path is required when not using --compare")
-            results = run_single_benchmark(
+            results = PiscesLxToolsBenchmarkRunner.run(
                 model_path=args.model_path,
                 model_name=args.model_name,
                 datasets=(MODALITY_DATASETS.get(args.modality) if args.modality else args.datasets),

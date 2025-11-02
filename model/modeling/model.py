@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -23,16 +22,16 @@ from torch import nn
 import torch.nn.functional as F
 from .norms import ArcticRMSNorm
 from ..config import ArcticConfig
+from .hybrid import ArcticHybridBlock
 from utils.log.core import PiscesLxCoreLog
 from .blocks import ArcticTransformerBlock
-from .hybrid import ArcticHybridBlock
 from .cache import ArcticUnifiedCacheManager
 from typing import Optional, Tuple, Dict, Any
 from ..multimodal.reasoner.enhancer import ArcticMultiModalReasoningEnhancer
 from ..speculative_decoder import ArcticSpeculativeDecoder, ArcticAdaptiveSpeculativeDecoder, ArcticSpeculativeConfig
-from ..multimodal import ArcticUnifiedReasoner, ArcticVisionEncoder, ArcticAudioEncoder, ArcticDocEncoder, ArcticVideoEncoder, ArcticAgentEncoder, ArcticDynamicModalFusion
+from ..multimodal import ArcticUnifiedReasoner, ArcticVisionEncoder, ArcticAudioEncoder, ArcticDocEncoder, ArcticVideoEncoder, ArcticAgenticEncoder, ArcticDynamicModalFusion
 
-logger = PiscesLxCoreLog("Arctic.Core.Modeling.Model")
+logger = PiscesLxCoreLog("Arctic.Core.Modeling.Model", file_path="logs/ArcticCore.log")
 
 class ArcticModel(nn.Module):
     def named_children(self):
@@ -104,7 +103,7 @@ class ArcticModel(nn.Module):
         self.audio = ArcticAudioEncoder(cfg)
         self.doc = ArcticDocEncoder(cfg)
 
-        self.agent_encoder = ArcticAgentEncoder(cfg)
+        self.agent_encoder = ArcticAgenticEncoder(cfg)
         self.modal_fusion = ArcticDynamicModalFusion(cfg)
 
         logger.debug("ArcticModel: initializing output heads...")
@@ -123,9 +122,12 @@ class ArcticModel(nn.Module):
         logger.debug("ArcticModel: initializing multi-modal reasoning enhancer...")
         self.mm_reasoning_enhancer = ArcticMultiModalReasoningEnhancer(cfg)
 
-        logger.debug("ArcticModel: initializing agent...")
-        from ..multimodal import ArcticAgent
-        self.agent = ArcticAgent(cfg, model=self)
+        logger.debug("ArcticModel: initializing agentic...")
+        try:
+            from ..multimodal import ArcticAgentic
+        except ImportError:
+            ArcticAgentic = None
+        self.agent = ArcticAgentic(cfg, model=self)
 
         logger.debug("ArcticModel: initializing speculative decoder...")
         self.speculative_config = ArcticSpeculativeConfig(

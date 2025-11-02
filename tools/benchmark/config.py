@@ -14,7 +14,7 @@ MODALITY_DATASETS: Dict[str, List[str]] = {
 
 
 @dataclass
-class BenchmarkConfig:
+class PiscesLxToolsBenchmarkConfig:
     """Benchmark configuration data class"""
     model_path: str
     model_name: Optional[str] = None

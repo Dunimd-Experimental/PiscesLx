@@ -26,10 +26,11 @@ class PiscesWatermark:
     and LSB watermarks for audio.
     """
     
-    def __init__(self, model_id: str = "PiscesL1-1.5B", version: str = "1.0.0"):
+    def __init__(self, model_id: str = "PiscesL1-1.5B", version: str = None):
         # Initialize model ID and version
         self.model_id = model_id
-        self.version = version
+        from configs.version import WATERMARK_VERSION
+        self.version = version or WATERMARK_VERSION
         # Generate a unique watermark key
         self.watermark_key = self._generate_watermark_key()
         # Load watermark configuration from JSON file

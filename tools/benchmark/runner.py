@@ -7,20 +7,25 @@ from utils.log.core import PiscesLxCoreLog
 from utils.config.loader import load_config_from_file
 from utils.device.manager import PiscesLxCoreDeviceManager
 
-from evalscope.summarizer import Summarizer
-from evalscope import run_task
+try:
+    from evalscope import run_task
+    from evalscope.summarizer import Summarizer
+except ImportError:
+    # Fallback for when evalscope is not available
+    run_task = None
+    Summarizer = None
 
-from .config import BenchmarkConfig
-from .builders import TaskConfigBuilder
-from .result import ResultManager, ComparisonManager
+from .config import PiscesLxToolsBenchmarkConfig
+from .builders import PiscesLxToolsTaskConfigBuilder
+from .result import PiscesLxToolsResultManager, PiscesLxToolsComparisonManager
 
 _logger = PiscesLxCoreLog("pisceslx.tools.benchmark")
 
 
-class PiscesL1Benchmark:
+class PiscesLxToolsBenchmark:
     """PiscesL1 Benchmark runner with EvalScope integration"""
 
-    def __init__(self, config: Union[str, Dict, BenchmarkConfig]):
+    def __init__(self, config: Union[str, Dict, PiscesLxToolsBenchmarkConfig]):
         self.config = self._load_config(config)
         self.logger = _logger.bind(benchmark_model=self.config.model_name)
 
@@ -30,8 +35,8 @@ class PiscesL1Benchmark:
             self.config.device = self.device_manager.get_optimal_device()
 
         # Initialize managers
-        self.result_manager = ResultManager(self.config.output_dir)
-        self.comparison_manager = ComparisonManager()
+        self.result_manager = PiscesLxToolsResultManager(self.config.output_dir)
+        self.comparison_manager = PiscesLxToolsComparisonManager()
 
         self.logger.info(
             "Initialized PiscesL1Benchmark",
@@ -54,22 +59,29 @@ class PiscesL1Benchmark:
             raise ValueError(f"Invalid config type: {type(config)}")
 
     def run_benchmark(self) -> Dict[str, Any]:
+        """Run benchmark using EvalScope"""
         self.logger.info(
             "Starting benchmark evaluation",
             event="benchmark.start",
+            model_path=self.config.model_path,
             datasets=self.config.datasets,
             metrics=self.config.metrics,
         )
         try:
-            task_config = TaskConfigBuilder.build(self.config)
+            task_config = PiscesLxToolsTaskConfigBuilder.build(self.config)
+            if run_task is None:
+                raise ImportError("evalscope is not available")
             results = run_task(task_config)
+            if Summarizer is None:
+                raise ImportError("evalscope.summarizer is not available")
             summarizer = Summarizer()
             summary = summarizer.summarize(results)
             self.result_manager.save_results(results, summary, self.config)
             self.logger.success(
                 "Benchmark completed successfully",
                 event="benchmark.completed",
-                summary=summary,
+                output_dir=self.config.output_dir,
+                results_count=len(results),
             )
             return {"results": results, "summary": summary, "config": asdict(self.config)}
         except Exception as e:
@@ -117,22 +129,30 @@ class PiscesL1Benchmark:
             self.config = original_config
 
 
-# Factory functions
-
-def create_benchmark_config(model_path: str, **kwargs) -> BenchmarkConfig:
-    return BenchmarkConfig(model_path=model_path, **kwargs)
-
-
-def run_single_benchmark(model_path: str, datasets: List[str] = None, **kwargs) -> Dict[str, Any]:
-    config = create_benchmark_config(model_path, datasets=datasets, **kwargs)
-    benchmark = PiscesL1Benchmark(config)
-    return benchmark.run_benchmark()
+class PiscesLxToolsBenchmarkConfig:
+    """PiscesLxTools Benchmark Configuration Factory"""
+    
+    @staticmethod
+    def create(config: Union[str, Dict]) -> PiscesLxToolsBenchmarkConfig:
+        """Create benchmark configuration from file or dict"""
+        return PiscesLxToolsBenchmarkConfig.create(config)
 
 
-def compare_multiple_models(model_configs: List[Dict[str, Any]], **kwargs) -> Dict[str, Any]:
-    if not model_configs:
-        raise ValueError("At least one model configuration is required")
-    base_config = model_configs[0]
-    config = create_benchmark_config(**{**base_config, **kwargs})
-    benchmark = PiscesL1Benchmark(config)
-    return benchmark.compare_models(model_configs)
+class PiscesLxToolsBenchmarkRunner:
+    """PiscesLxTools Single Benchmark Runner"""
+    
+    @staticmethod
+    def run(config: Union[str, Dict, PiscesLxToolsBenchmarkConfig]) -> Dict[str, Any]:
+        """Run benchmark with configuration"""
+        runner = PiscesLxToolsBenchmark(config)
+        return runner.run_benchmark()
+
+
+class PiscesLxToolsBenchmarkComparer:
+    """PiscesLxTools Multiple Models Benchmark Comparer"""
+    
+    @staticmethod
+    def compare(results: Dict[str, Any]) -> Dict[str, Any]:
+        """Compare benchmark results"""
+        manager = PiscesLxToolsComparisonManager()
+        return manager.generate_comparison_report(results)

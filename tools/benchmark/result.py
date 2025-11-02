@@ -8,17 +8,17 @@ from utils.log.core import PiscesLxCoreLog
 
 _logger = PiscesLxCoreLog("pisceslx.tools.benchmark")
 
-from .config import BenchmarkConfig
+from .config import PiscesLxToolsBenchmarkConfig
 
 
-class ResultManager:
+class PiscesLxToolsResultManager:
     """Manager for benchmark results"""
 
     def __init__(self, output_dir: str):
         self.output_dir = output_dir
         os.makedirs(output_dir, exist_ok=True)
 
-    def save_results(self, results: Dict[str, Any], summary: Dict[str, Any], config: BenchmarkConfig):
+    def save_results(self, results: Dict[str, Any], summary: Dict[str, Any], config: PiscesLxToolsBenchmarkConfig):
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
 
         # Save detailed results
@@ -45,7 +45,7 @@ class ResultManager:
         )
 
 
-class ComparisonManager:
+class PiscesLxToolsComparisonManager:
     """Manager for model comparisons"""
 
     def generate_comparison_report(self, results: Dict[str, Any]) -> Dict[str, Any]:

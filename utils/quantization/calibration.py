@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -24,7 +23,10 @@ from typing import Optional, Dict, Any, List, Union
 from pathlib import Path
 import json
 from datasets import load_dataset
-from transformers import AutoTokenizer
+try:
+    from transformers import AutoTokenizer
+except ImportError:
+    AutoTokenizer = None
 from utils.log.core import PiscesLxCoreLog
 from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError
 

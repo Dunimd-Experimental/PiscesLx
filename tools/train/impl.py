@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -141,6 +140,20 @@ def setup_distributed_training():
     }
 
     return device, is_distributed, local_rank, world_size, parallel_config
+
+def clip_gradients(model, max_norm: float = 1.0, norm_type: float = 2.0):
+    """
+    Global gradient clipping to prevent gradient explosion.
+    
+    Args:
+        model (torch.nn.Module): The model to clip gradients for.
+        max_norm (float): Maximum norm of the gradients. Default: 1.0
+        norm_type (float): Type of the used p-norm. Default: 2.0
+    
+    Returns:
+        float: Total norm of the parameters (viewed as a single vector).
+    """
+    return torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm, norm_type)
 
 def create_ddp_model(model, device, is_distributed, local_rank):
     """
@@ -1038,6 +1051,11 @@ def _train_impl(args):
                                 grad_norm += param.grad.data.norm(2).item() ** 2
                         grad_norm = grad_norm ** 0.5
                         
+                        # Apply global gradient clipping as additional safety measure
+                        global_grad_norm = clip_gradients(model, max_norm=2.0, norm_type=2.0)
+                        if global_grad_norm > 1.0:
+                            logger.debug(f"Global gradient clipping applied: norm={global_grad_norm:.4f}")
+                        
                         if grad_accumulator.should_step(grad_norm):
                             params = model.parameters() if not hasattr(model, 'module') else model.module.parameters()
                             total_norm, clip_coef, was_clipped = grad_clipper.update_and_clip(params, optimizer, scaler)
@@ -1221,6 +1239,10 @@ class AdaptiveGradientClipper:
         self.step_count += 1
         self.kfac_step += 1
         parameters = list(parameters)
+        
+        # Expert-level gradient clipping for MoE layers
+        self._apply_expert_gradient_clip(parameters)
+        
         if self.use_kfac and self.step_count > self.warmup_steps:
             total_norm = self._calculate_natural_gradient_norm(parameters)
         else:
@@ -1385,6 +1407,25 @@ class AdaptiveGradientClipper:
         self.grad_norm_history.clear()
         self.step_count = 0
         self.current_max_norm = self.initial_max_norm
+    
+    def _apply_expert_gradient_clip(self, parameters):
+        """
+        Apply expert-level gradient clipping for MoE layers to handle 3rd-order mixture gradient scale differences.
+        
+        Args:
+            parameters (iterable): An iterable of parameters to clip gradients for.
+        """
+        expert_clip_threshold = 0.1  # Expert-level clipping threshold for 10^4 gradient scale difference
+        
+        for param in parameters:
+            if param.grad is not None:
+                # Check if this is an MoE expert parameter (contains 'experts' in name)
+                param_name = getattr(param, 'name', '')
+                if 'experts' in param_name or hasattr(param, '_is_expert_param'):
+                    grad_norm = param.grad.data.norm(2)
+                    if grad_norm > expert_clip_threshold:
+                        clip_coef = expert_clip_threshold / (grad_norm + 1e-8)
+                        param.grad.data.mul_(clip_coef)
 
 def validate_train_args(args):
     """

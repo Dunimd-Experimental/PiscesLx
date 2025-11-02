@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -79,7 +78,7 @@ class DatasetItem:
         return default_preference
 
 @dataclass
-class DownloadConfig:
+class PiscesLxToolsDataDownloadConfig:
     """
     Represents the main configuration for dataset download.
     """
@@ -97,7 +96,7 @@ class DownloadConfig:
         if self.datasets is None:
             self.datasets = []
 
-class ConfigLoader:
+class PiscesLxToolsDataConfigLoader:
     """
     Loads and validates the dataset download configuration from a JSON file.
     """
@@ -116,7 +115,7 @@ class ConfigLoader:
         if not self.path.exists():
             raise FileNotFoundError(f"Configuration file not found: {self.path}")
 
-    def load(self) -> DownloadConfig:
+    def load(self) -> PiscesLxToolsDataDownloadConfig:
         """
         Load and validate the download configuration from the JSON file.
 
@@ -172,7 +171,7 @@ class ConfigLoader:
             else:
                 normalized_default_pref.append(src_lower)
 
-        cfg = DownloadConfig(
+        cfg = PiscesLxToolsDataDownloadConfig(
             max_samples_per_dataset=defaults.get("max_samples_per_dataset", 50000),
             post_download_clean=defaults.get("post_download_clean", True),
             source_preference=normalized_default_pref,
@@ -181,5 +180,5 @@ class ConfigLoader:
         
         return cfg
 
-__all__ = ["DatasetItem", "DownloadConfig", "ConfigLoader"]
+__all__ = ["DatasetItem", "PiscesLxToolsDataDownloadConfig", "PiscesLxToolsDataConfigLoader"]
 

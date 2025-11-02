@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -20,11 +19,11 @@
 
 import torch
 from torch import nn
-from .agent import ArcticAgent
+from .agentic import ArcticAgentic
 from typing import Any, Dict, Union
-from .types import ArcticAgentObservation
+from .types import PiscesLxCoreAgenticObservation
 
-class ArcticAgentEncoder(nn.Module):
+class ArcticAgenticEncoder(nn.Module):
     """
     Legacy agent encoder maintained for backward compatibility. This encoder is now replaced by PiscesAgent 
     for comprehensive agent functionality.
@@ -39,7 +38,7 @@ class ArcticAgentEncoder(nn.Module):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
-        self.pisces_agent = ArcticAgent(cfg)
+        self.pisces_agentic = ArcticAgentic(cfg)
         
     def forward(self, agent_input):
         """
@@ -51,7 +50,7 @@ class ArcticAgentEncoder(nn.Module):
         Returns:
             The result of processing the input through the PiscesAgent.
         """
-        return self.pisces_agent.process_observation(agent_input)
+        return self.pisces_agentic.process_observation(agent_input)
     
     def encode_observation(self, observation):
         """

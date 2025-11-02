@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -23,25 +22,45 @@ import asyncio
 import time
 from datetime import datetime
 from typing import Dict, Any, Callable, List, Optional, Union
-from .types import ArcticMCPMessageType, ArcticMCPMessage
-from .reasoner.multipath_core import ArcticMultiPathReasoningEngine
+# Import from utils.mcp instead of local types
+from utils.mcp import (
+    PiscesLxCoreMCPMessageType, PiscesLxCoreMCPMessage, PiscesLxCoreAgenticAction, PiscesLxCoreAgenticObservation,
+    PiscesLxCoreMCPProtocol, PiscesLxCoreMCPRegistry, PiscesLxCoreMCPUnifiedToolExecutor, 
+    get_unified_tool_executor, PiscesLxCoreMCPTreeSearchReasoner,
+    PiscesLxCoreMCPToolMetadata, PiscesLxCoreMCPToolType
+)
+from utils.mcp.execution import PiscesLxCoreMCPExecutionResult, PiscesLxCoreMCPExecutionManager
+# Import types with fallback for standalone testing
+try:
+    from .reasoner.multipath_core import ArcticMultiPathReasoningEngine
+except ImportError:
+    # Fallback for standalone testing
+    import sys
+    import os
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    parent_dir = os.path.dirname(current_dir)
+    sys.path.insert(0, parent_dir)
+    try:
+        from multimodal.reasoner.multipath_core import ArcticMultiPathReasoningEngine
+    except ImportError:
+        ArcticMultiPathReasoningEngine = None
 
 class ArcticMCPToolRegistry:
     """A registry for managing MCP tools and capabilities.
     
     This class provides functionality to store and manage tools and capabilities,
-    as well as handle tool calls.
+    as well as handle tool calls. Extends PiscesLxCoreMCPRegistry for better integration.
     """
     
-    def __init__(self, agent_id: str, message_handler: Callable, reasoning_engine: Optional[ArcticMultiPathReasoningEngine] = None):
+    def __init__(self, agentic_id: str, message_handler: Callable, reasoning_engine: Optional[ArcticMultiPathReasoningEngine] = None):
         """Initialize the MCPToolRegistry instance.
 
         Args:
-            agent_id (str): The ID of the agent.
+            agentic_id (str): The ID of the agentic.
             message_handler (Callable): The message handler callable.
             reasoning_engine (Optional[ArcticMultiPathReasoningEngine]): The 8-path reasoning engine for intelligent tool selection.
         """
-        self.agent_id = agent_id
+        self.agentic_id = agentic_id
         self.message_handler = message_handler
         self.tools: Dict[str, Dict[str, Any]] = {}
         self.capabilities: Dict[str, Dict[str, Any]] = {}
@@ -53,6 +72,12 @@ class ArcticMCPToolRegistry:
             "average_execution_time": 0.0
         }
         self._native_tools: Dict[str, Callable] = {}  # 原生工具函数直接映射
+        
+        # Initialize unified tool executor for better integration
+        self.unified_executor = get_unified_tool_executor()
+        
+        # Initialize core registry for base functionality
+        self.core_registry = PiscesLxCoreMCPRegistry()
     
     async def register_tool(self, name: str, description: str, parameters: Dict[str, Any], native_handler: Optional[Callable] = None):
         """Register a tool.
@@ -73,123 +98,52 @@ class ArcticMCPToolRegistry:
         
         if native_handler:
             self._native_tools[name] = native_handler
+            # Register with unified executor as native tool
+            tool_metadata = PiscesLxCoreMCPToolMetadata(
+                name=name,
+                description=description,
+                tool_type=PiscesLxCoreMCPToolType.NATIVE,
+                parameters=parameters,
+                function=native_handler,
+                priority=10  # High priority for native tools
+            )
+            self.unified_executor.register_tool(tool_metadata)
             print(f"[ArcticMCPToolRegistry] Registered native tool: {name}")
         else:
+            # Register with unified executor as external tool
+            tool_metadata = PiscesLxCoreMCPToolMetadata(
+                name=name,
+                description=description,
+                tool_type=PiscesLxCoreMCPToolType.EXTERNAL,
+                parameters=parameters,
+                priority=5  # Medium priority for external tools
+            )
+            self.unified_executor.register_tool(tool_metadata)
             print(f"[ArcticMCPToolRegistry] Registered external tool: {name}")
+        
+        # Also register with core registry for base functionality
+        await self.core_registry.register_tool(name, description, parameters, native_handler)
     
     async def handle_tool_call(self, tool_name: str, **kwargs) -> Any:
-        """Handle a tool call with intelligent routing.
+        """Handle tool calls with unified execution support.
 
         Args:
             tool_name (str): The name of the tool to call.
             **kwargs: The arguments to pass to the tool.
 
         Returns:
-            Any: The result of the tool call.
-
-        Raises:
-            ValueError: If the tool is not found.
+            Any: The result of the tool execution.
         """
-        if tool_name not in self.tools:
-            raise ValueError(f"Tool '{tool_name}' not found in registry")
-        
-        start_time = time.time()
-        
-        # 智能工具选择：使用8路径推理引擎优化工具调用
-        if self.reasoning_engine:
-            reasoning_result = await self.reasoning_engine.analyze_tool_selection(tool_name, kwargs, self.tools)
-            if reasoning_result.get("should_optimize"):
-                kwargs.update(reasoning_result.get("optimized_params", {}))
-        
-        # 双轨执行：优先原生执行，回退到外部调用
-        try:
-            if tool_name in self._native_tools:
-                # 原生执行：零延迟直接调用
-                result = await self._execute_native_tool(tool_name, **kwargs)
-                execution_mode = "native"
-                self.execution_stats["native_executions"] += 1
-            else:
-                # 外部执行：通过消息协议调用
-                result = await self._execute_external_tool(tool_name, **kwargs)
-                execution_mode = "external"
-                self.execution_stats["external_calls"] += 1
-            
-            execution_time = time.time() - start_time
-            self._update_execution_stats(execution_time)
-            
-            print(f"[ArcticMCPToolRegistry] Tool '{tool_name}' executed via {execution_mode} mode in {execution_time:.3f}s")
-            return result
-            
-        except Exception as e:
-            print(f"[ArcticMCPToolRegistry] Tool execution failed for '{tool_name}': {e}")
-            raise
-    
-    async def _execute_native_tool(self, tool_name: str, **kwargs) -> Any:
-        """Execute native tool with direct function call."""
-        native_handler = self._native_tools[tool_name]
-        
-        if asyncio.iscoroutinefunction(native_handler):
-            return await native_handler(**kwargs)
-        else:
-            return native_handler(**kwargs)
-    
-    async def _execute_external_tool(self, tool_name: str, **kwargs) -> Any:
-        """Execute external tool through message protocol."""
-        tool_call_message = ArcticMCPMessage(
-            message_type=ArcticMCPMessageType.TOOL_CALL,
-            sender_id=self.agent_id,
-            receiver_id="tool_executor",
-            content={
-                "tool_name": tool_name,
-                "arguments": kwargs,
-                "timestamp": datetime.now().isoformat(),
-                "execution_mode": "external"
-            }
-        )
-        
-        return await self.message_handler(tool_call_message)
-    
-    def _update_execution_stats(self, execution_time: float):
-        """Update execution statistics."""
-        self.execution_stats["total_executions"] += 1
-        total_time = self.execution_stats["average_execution_time"] * (self.execution_stats["total_executions"] - 1)
-        self.execution_stats["average_execution_time"] = (total_time + execution_time) / self.execution_stats["total_executions"]
+        # 统一使用核心注册表的执行器，支持原生和外部执行模式
+        return await self.core_registry.execute_tool(tool_name, kwargs)
     
     def get_execution_stats(self) -> Dict[str, Any]:
-        """Get comprehensive tool execution statistics with performance metrics."""
-        total_executions = self.execution_stats["total_executions"]
-        native_count = self.execution_stats["native_executions"]
-        external_count = self.execution_stats["external_calls"]
-        
-        # 计算性能指标
-        avg_time = self.execution_stats["average_execution_time"]
-        native_ratio = native_count / total_executions if total_executions > 0 else 0
-        external_ratio = external_count / total_executions if total_executions > 0 else 0
-        
-        # 性能评分（基于执行时间和原生执行比例）
-        performance_score = (
-            (native_ratio * 0.8) +  # 原生执行比例权重
-            (min(1.0, 1.0 / (avg_time + 0.1)) * 0.2)  # 执行速度权重
-        ) if total_executions > 0 else 0.0
-        
-        return {
-            **self.execution_stats,
-            "native_tools_count": len(self._native_tools),
-            "external_tools_count": len(self.tools) - len(self._native_tools),
-            "total_tools": len(self.tools),
-            "performance_metrics": {
-                "native_execution_ratio": native_ratio,
-                "external_execution_ratio": external_ratio,
-                "average_execution_time": avg_time,
-                "performance_score": performance_score,
-                "efficiency_rating": "high" if performance_score > 0.7 else "medium" if performance_score > 0.4 else "low"
-            },
-            "tool_distribution": {
-                "native_tools": list(self._native_tools.keys()),
-                "external_tools": [name for name in self.tools.keys() if name not in self._native_tools]
-            },
-            "timestamp": datetime.now().isoformat()
-        }
+        """Get execution statistics from core registry.
+
+        Returns:
+            Dict[str, Any]: The execution statistics from core registry.
+        """
+        return self.core_registry.get_stats()
     
     def reset_execution_stats(self):
         """Reset execution statistics."""
@@ -213,16 +167,21 @@ class ArcticMCPToolRegistry:
         """
         await self.register_tool(name, description, parameters, native_handler=handler)
 
-class ArcticMCPProtocol:
-    """Protocol for handling MCP messages and interactions with dual-track execution support."""
+class PiscesLxCoreMCPProtocol:
+    """Protocol for handling MCP messages and interactions with dual-track execution support.
+    
+    Extends the utils.mcp.PiscesLxCoreMCPProtocol with Arctic-specific functionality.
+    """
     
     def __init__(self, agent_id: str, tool_registry: Optional[ArcticMCPToolRegistry] = None):
-        """Initialize the ArcticMCPProtocol instance.
+        """Initialize the PiscesLxCoreMCPProtocol instance.
 
         Args:
             agent_id (str): The ID of the agent.
             tool_registry (Optional[ArcticMCPToolRegistry]): The tool registry for dual-track execution.
         """
+        # Initialize base protocol from utils.mcp
+        self.base_protocol = PiscesLxCoreMCPProtocol(agent_id)
         self.agent_id = agent_id
         self.tool_registry = tool_registry
         self.execution_modes = {
@@ -233,33 +192,28 @@ class ArcticMCPProtocol:
     
     @staticmethod
     def create_message(
-        message_type: ArcticMCPMessageType,
+        message_type: PiscesLxCoreMCPMessageType,
         agent_id: str,
         payload: Dict[str, Any],
         correlation_id: str = ""
-    ) -> ArcticMCPMessage:
+    ) -> PiscesLxCoreMCPMessage:
         """Create a new MCP message.
 
         Args:
-            message_type (ArcticMCPMessageType): The type of the message.
+            message_type (PiscesLxCoreMCPMessageType): The type of the message.
             agent_id (str): The ID of the agent sending the message.
             payload (Dict[str, Any]): The payload of the message.
             correlation_id (str, optional): The correlation ID of the message. 
                 If not provided, a new UUID will be generated. Defaults to "".
 
         Returns:
-            ArcticMCPMessage: A new ArcticMCPMessage instance.
+            PiscesLxCoreMCPMessage: A new PiscesLxCoreMCPMessage instance.
         """
-        return ArcticMCPMessage(
-            message_type=message_type.value,
-            agent_id=agent_id,
-            payload=payload,
-            timestamp=datetime.utcnow().isoformat(),
-            correlation_id=correlation_id or str(uuid.uuid4())
-        )
+        # Delegate to base protocol
+        return PiscesLxCoreMCPProtocol.create_message(message_type, agent_id, payload, correlation_id)
 
     async def create_tool_call_message(self, tool_name: str, arguments: Dict[str, Any], 
-                                       receiver_id: str, execution_mode: str = "auto") -> ArcticMCPMessage:
+                                       receiver_id: str, execution_mode: str = "auto") -> PiscesLxCoreMCPMessage:
         """Create a tool call message with dual-track execution support.
 
         Args:
@@ -269,24 +223,20 @@ class ArcticMCPProtocol:
             execution_mode (str): The execution mode ("native", "external", or "auto").
 
         Returns:
-            ArcticMCPMessage: The created tool call message.
+            PiscesLxCoreMCPMessage: The created tool call message.
         """
         # 智能路由决策
         if execution_mode == "auto" and self.tool_registry:
             execution_mode = await self._determine_execution_mode(tool_name, arguments)
         
-        return ArcticMCPMessage(
-            message_type=ArcticMCPMessageType.TOOL_CALL,
-            sender_id=self.agent_id,
-            receiver_id=receiver_id,
-            content={
-                "tool_name": tool_name,
-                "arguments": arguments,
-                "timestamp": datetime.now().isoformat(),
-                "execution_mode": execution_mode,
-                "dual_track_enabled": True
-            }
-        )
+        # Use base protocol to create the message
+        message = await self.base_protocol.create_tool_call_message(tool_name, arguments, execution_mode)
+        
+        # Add receiver-specific information
+        message.payload["receiver_id"] = receiver_id
+        message.payload["dual_track_enabled"] = True
+        
+        return message
     
     async def _determine_execution_mode(self, tool_name: str, arguments: Dict[str, Any]) -> str:
         """Intelligently determine the execution mode based on tool availability and performance."""
@@ -337,39 +287,3 @@ class ArcticMCPProtocol:
                 "execution_mode": "failed",
                 "execution_time": 0.0
             }
-
-class ArcticTreeSearchReasoner:
-    """A tree search reasoning module for advanced planning.
-    
-    This class implements a simplified tree search algorithm for complex reasoning tasks.
-    """
-    
-    def __init__(self, model, tokenizer):
-        """Initialize the TreeSearchReasoner instance.
-
-        Args:
-            model: The model used for reasoning.
-            tokenizer: The tokenizer used for processing text.
-        """
-        self.model = model
-        self.tokenizer = tokenizer
-        self.max_depth = 5
-        self.max_width = 3
-    
-    async def search(self, problem: str, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Perform tree search for complex reasoning.
-
-        Args:
-            problem (str): The problem to solve.
-            context (Dict[str, Any]): The context information for the problem.
-
-        Returns:
-            List[Dict[str, Any]]: A list of solutions with confidence scores.
-        """
-        # Simplified tree search implementation
-        return [{"solution": "tree_search_result", "confidence": 0.8}]
-
-# Aliases for old names
-PiscesMCPProtocol = ArcticMCPProtocol
-PiscesTreeSearchReasoner = ArcticTreeSearchReasoner
-PiscesMCPToolRegistry = ArcticMCPToolRegistry

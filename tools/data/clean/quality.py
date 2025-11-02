@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -25,61 +24,7 @@ from collections import Counter
 from typing import Dict, Any, List
 from datasets import load_from_disk, Dataset
 
-def calculate_text_quality_score(text: str) -> float:
-    """
-    Calculate the quality score of a given text based on multiple criteria.
-
-    Args:
-        text (str): The input text to calculate the quality score for.
-
-    Returns:
-        float: The calculated quality score, ranging from 0.0 to 1.0.
-               Returns 0.0 if the input is invalid or empty, and 0.5 if an exception occurs.
-    """
-    if not text or not isinstance(text, str):
-        return 0.0
-    text = text.strip()
-    if not text:
-        return 0.0
-    try:
-        # Calculate length score: longer text gets higher score, capped at 1.0
-        length_score = min(len(text) / 1000, 1.0)
-        # Calculate character diversity score based on unique lowercase characters
-        unique_chars = len(set(text.lower()))
-        char_diversity = min(unique_chars / 26, 1.0)
-        # Bug fix: correct regex pattern from r"\\b\\w+\\b" to r"\b\w+\b"
-        words = re.findall(r"\b\w+\b", text.lower())
-        unique_words = len(set(words))
-        # Calculate word diversity score
-        word_diversity = min(unique_words / len(words), 1.0) if words else 0.0
-        # Split text into sentences
-        sentences = re.split(r"[.!?]+", text)
-        # Filter valid sentences with at least 3 words
-        valid_sentences = [s.strip() for s in sentences if len(s.strip().split()) >= 3]
-        # Calculate sentence structure score
-        structure_score = min(len(valid_sentences) / len(sentences), 1.0) if sentences else 0.0
-        # Count punctuation marks
-        punct_count = len(re.findall(r"[.!?,:;]", text))
-        # Calculate punctuation score
-        punct_score = min(punct_count / (len(text) / 100), 1.0)
-        # Count word occurrences
-        word_counts = Counter(words)
-        # Calculate repetition penalty
-        repetition_penalty = 1.0 - min((word_counts.most_common(1)[0][1] / len(words)) if words else 0.0, 0.5)
-        # Combine all scores to get the final quality score
-        score = (
-            length_score * 0.2 +
-            char_diversity * 0.15 +
-            word_diversity * 0.25 +
-            structure_score * 0.25 +
-            punct_score * 0.1 +
-            repetition_penalty * 0.05
-        )
-        return max(0.0, min(1.0, float(score)))
-    except Exception:
-        return 0.5
-
-class DataQualityController:
+class PiscesLxToolsDataQualityController:
     def __init__(self, quality_threshold: float = 0.7, diversity_threshold: float = 0.5, min_samples_per_domain: int = 100):
         """
         Initialize the DataQualityController.
@@ -94,6 +39,61 @@ class DataQualityController:
         self.min_samples_per_domain = min_samples_per_domain
         self.quality_stats: Dict[str, Any] = {}
         self.domain_weights: Dict[str, float] = {}
+
+    @staticmethod
+    def calculate_text_quality_score(text: str) -> float:
+        """
+        Calculate the quality score of a given text based on multiple criteria.
+
+        Args:
+            text (str): The input text to calculate the quality score for.
+
+        Returns:
+            float: The calculated quality score, ranging from 0.0 to 1.0.
+                   Returns 0.0 if the input is invalid or empty, and 0.5 if an exception occurs.
+        """
+        if not text or not isinstance(text, str):
+            return 0.0
+        text = text.strip()
+        if not text:
+            return 0.0
+        try:
+            # Calculate length score: longer text gets higher score, capped at 1.0
+            length_score = min(len(text) / 1000, 1.0)
+            # Calculate character diversity score based on unique lowercase characters
+            unique_chars = len(set(text.lower()))
+            char_diversity = min(unique_chars / 26, 1.0)
+            # Bug fix: correct regex pattern from r"\\b\\w+\\b" to r"\b\w+\b"
+            words = re.findall(r"\b\w+\b", text.lower())
+            unique_words = len(set(words))
+            # Calculate word diversity score
+            word_diversity = min(unique_words / len(words), 1.0) if words else 0.0
+            # Split text into sentences
+            sentences = re.split(r"[.!?]+", text)
+            # Filter valid sentences with at least 3 words
+            valid_sentences = [s.strip() for s in sentences if len(s.strip().split()) >= 3]
+            # Calculate sentence structure score
+            structure_score = min(len(valid_sentences) / len(sentences), 1.0) if sentences else 0.0
+            # Count punctuation marks
+            punct_count = len(re.findall(r"[.!?,:;]", text))
+            # Calculate punctuation score
+            punct_score = min(punct_count / (len(text) / 100), 1.0)
+            # Count word occurrences
+            word_counts = Counter(words)
+            # Calculate repetition penalty
+            repetition_penalty = 1.0 - min((word_counts.most_common(1)[0][1] / len(words)) if words else 0.0, 0.5)
+            # Combine all scores to get the final quality score
+            score = (
+                length_score * 0.2 +
+                char_diversity * 0.15 +
+                word_diversity * 0.25 +
+                structure_score * 0.25 +
+                punct_score * 0.1 +
+                repetition_penalty * 0.05
+            )
+            return max(0.0, min(1.0, float(score)))
+        except Exception:
+            return 0.5
 
     def analyze_dataset_quality(self, dataset_path: str) -> Dict[str, Any]:
         """
@@ -144,7 +144,7 @@ class DataQualityController:
 
             series = df[text_field].astype(str)
             lengths = series.str.len()
-            qual = series.apply(calculate_text_quality_score)
+            qual = series.apply(self.calculate_text_quality_score)
 
             domain_keywords = {
                 "code": ["function", "class", "def", "import", "return", "{", "}", ";"],

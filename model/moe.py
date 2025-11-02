@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -25,7 +24,7 @@ import torch.nn.functional as F
 from collections import OrderedDict
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("Arctic.Core.MoE")
+logger = PiscesLxCoreLog("Arctic.Core.MoE", file_path="logs/ArcticCore.log")
 
 def moe_init_weights(m):
     """
@@ -83,6 +82,18 @@ class ArcticMoEGate(nn.Module):
         self.dynamic_top_k_min = dynamic_top_k_min
         self.dynamic_top_k_max = dynamic_top_k_max
         self.load_balance_threshold = load_balance_threshold
+        
+        # Stability configurations for 3rd-order mixture
+        self.expert_grad_clip = getattr(cfg, 'moe_expert_grad_clip', 0.1) if cfg else 0.1
+        self.z_loss_alpha = getattr(cfg, 'moe_z_loss_alpha', 1e-4) if cfg else 1e-4
+        self.random_to_gradient_steps = getattr(cfg, 'moe_random_to_gradient_steps', 500) if cfg else 500
+        self.gate_warmup_alpha = getattr(cfg, 'moe_gate_warmup_alpha', 0.05) if cfg else 0.05
+        self.attention_mamba_temp = getattr(cfg, 'moe_attention_mamba_temp', 0.3) if cfg else 0.3
+        self.l2_smooth_8k = getattr(cfg, 'moe_l2_smooth_8k', 0.01) if cfg else 0.01
+        
+        # Routing mode and step counter
+        self.use_random_routing = True  # Start with random routing
+        self.current_step = 0
         
         # Buffer to record expert usage count
         self.register_buffer('expert_usage_count', torch.zeros(num_experts))
@@ -142,8 +153,19 @@ class ArcticMoEGate(nn.Module):
             # Update the original representation with the enhanced one
             x_flat = x_flat + enhanced_representation * self.cognitive_enhancement_scale
         
+        # Update routing mode based on training steps
+        if self.training:
+            self.current_step += 1
+            if self.current_step > self.random_to_gradient_steps:
+                self.use_random_routing = False
+        
         # Compute routing logits
         logits = self.gate(x_flat)
+        
+        # Apply gate warmup for cold start
+        if self.training and self.current_step < 100:  # First 100 steps warmup
+            warmup_scale = min(1.0, self.current_step / 100.0)
+            logits = logits * (self.gate_warmup_alpha + (1.0 - self.gate_warmup_alpha) * warmup_scale)
         
         # Dynamic top-k adjustment based on load balance
         current_top_k = self._get_dynamic_top_k()
@@ -153,8 +175,17 @@ class ArcticMoEGate(nn.Module):
             noise = torch.randn_like(logits) * self.noise_std
             logits = logits + noise
         
-        # Apply temperature scaling
-        logits = logits / self.temperature
+        # Apply temperature scaling with 8k sequence length consideration
+        seq_len = x.shape[1] if len(x.shape) > 1 else x.shape[0]
+        if seq_len >= 8192:  # 8k sequence length threshold
+            effective_temp = self.temperature * self.attention_mamba_temp
+            # Apply stability bounds for 8k sequences
+            effective_temp = max(0.1, min(2.0, effective_temp))
+            logits = logits / effective_temp
+        else:
+            # Apply stability bounds for normal sequences
+            temp_bounded = max(0.1, min(2.0, self.temperature))
+            logits = logits / temp_bounded
         
         # Compute routing scores
         scores = F.softmax(logits, dim=-1)
@@ -163,10 +194,17 @@ class ArcticMoEGate(nn.Module):
         scores = self._apply_capacity_limitation(scores)
         
         # Select top-k experts with dynamic adjustment
-        top_scores, top_idx = torch.topk(scores, current_top_k, dim=-1)
-        
-        # Normalize top-k scores
-        top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
+        if self.training and self.use_random_routing and self.current_step <= self.random_to_gradient_steps:
+            # Random routing for cold start
+            random_scores = torch.rand_like(scores)
+            top_scores, top_idx = torch.topk(random_scores, current_top_k, dim=-1)
+            # Use uniform scores for random routing
+            top_scores = torch.ones_like(top_scores) / current_top_k
+        else:
+            # Gradient-based routing after cold start
+            top_scores, top_idx = torch.topk(scores, current_top_k, dim=-1)
+            # Normalize top-k scores
+            top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
         
         # Update expert usage count and temperature
         if self.training:
@@ -177,7 +215,11 @@ class ArcticMoEGate(nn.Module):
         # Compute load balance loss
         load_balance_loss = self._compute_load_balance_loss(scores)
         
-        return top_scores, top_idx, load_balance_loss
+        # Add z-loss for routing stability
+        z_loss = self._compute_z_loss(logits)
+        total_loss = load_balance_loss + z_loss
+        
+        return top_scores, top_idx, total_loss
     
     def _get_dynamic_top_k(self):
         """
@@ -269,6 +311,21 @@ class ArcticMoEGate(nn.Module):
             capacity_loss = 0.0
             
         return basic_loss + capacity_loss
+    
+    def _compute_z_loss(self, logits):
+        """
+        Compute z-loss for routing stability.
+        
+        Args:
+            logits (torch.Tensor): Routing logits.
+            
+        Returns:
+            torch.Tensor: Z-loss value.
+        """
+        # Z-loss encourages logit values to stay close to zero
+        logit_squared = torch.square(logits)
+        z_loss = self.z_loss_alpha * torch.mean(logit_squared)
+        return z_loss
 
 class ArcticStableMoEGate(nn.Module):
     """
@@ -695,6 +752,9 @@ class ArcticMoELayer(nn.Module):
             tuple: A tuple containing the output tensor and auxiliary loss.
         """
         b, t, d = x.shape
+        # Apply L2 smoothing for 8k sequence length
+        if t >= 8192 and hasattr(self, 'l2_smooth_8k'):
+            x = x * (1.0 - self.l2_smooth_8k) + x.mean(dim=1, keepdim=True) * self.l2_smooth_8k
         h = x.view(-1, d)  # [B*T, d]
         
         # Use different processing modes based on the type of routing gate

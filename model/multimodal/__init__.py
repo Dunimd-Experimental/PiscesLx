@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -22,23 +21,23 @@ from .vision import ArcticVisionEncoder, ArcticSpatioTemporalRoPE3D
 from .video import ArcticVideoEncoder
 from .audio import ArcticAudioEncoder
 from .doc import ArcticDocEncoder
-from .agent import ArcticAgent
-from .agent_encoder import ArcticAgentEncoder
+from .agentic import ArcticAgentic
+from .agentic_encoder import ArcticAgenticEncoder
 from .attention import ArcticCrossModalAttention
 from .fusion import ArcticDynamicModalFusion
 from .generator import ArcticUnifiedGeneration, ArcticMultiModalGenerator
 from .hw import ArcticHardwareAdaptiveConfig
 from .reasoner import ArcticUnifiedReasoner
 from .server import ArcticMCPGenerationServer
-from .mcp import ArcticMCPToolRegistry, ArcticMCPProtocol, ArcticTreeSearchReasoner
+from .mcp import ArcticMCPToolRegistry, PiscesLxCoreMCPProtocol, PiscesLxCoreMCPTreeSearchReasoner
 from .types import (
-    ArcticAgentState,
-    ArcticMCPMessageType,
+    ArcticAgenticState,
+    PiscesLxCoreMCPMessageType,
     ArcticGenerationCondition,
-    ArcticMCPMessage,
-    ArcticAgentAction,
-    ArcticAgentObservation,
-    ArcticAgentMemory,
+    PiscesLxCoreMCPMessage,
+    PiscesLxCoreAgenticAction,
+    PiscesLxCoreAgenticObservation,
+    ArcticAgenticMemory,
 )
 
 __all__ = [
@@ -47,8 +46,8 @@ __all__ = [
     "ArcticVideoEncoder",
     "ArcticAudioEncoder",
     "ArcticDocEncoder",
-    "ArcticAgent",
-    "ArcticAgentEncoder",
+    "ArcticAgentic",
+    "ArcticAgenticEncoder",
     "ArcticCrossModalAttention",
     "ArcticDynamicModalFusion",
     "ArcticUnifiedGeneration",
@@ -57,13 +56,13 @@ __all__ = [
     "ArcticUnifiedReasoner",
     "ArcticMCPGenerationServer",
     "ArcticMCPToolRegistry",
-    "ArcticMCPProtocol",
-    "ArcticTreeSearchReasoner",
-    "ArcticAgentState",
-    "ArcticMCPMessageType",
+    "PiscesLxCoreMCPProtocol",
+    "PiscesLxCoreMCPTreeSearchReasoner",
+    "ArcticAgenticState",
+    "PiscesLxCoreMCPMessageType",
     "ArcticGenerationCondition",
-    "ArcticMCPMessage",
-    "ArcticAgentAction",
-    "ArcticAgentObservation",
-    "ArcticAgentMemory",
+    "PiscesLxCoreMCPMessage",
+    "PiscesLxCoreAgenticAction",
+    "PiscesLxCoreAgenticObservation",
+    "ArcticAgenticMemory",
 ]

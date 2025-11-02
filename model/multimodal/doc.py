@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -24,7 +23,7 @@ from typing import Any, Dict
 import torch.nn.functional as F
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("Arctic.Core.Multimodal")
+logger = PiscesLxCoreLog("Arctic.Core.Multimodal", file_path="logs/ArcticCore.log")
 
 class ArcticDocEncoder(nn.Module):
     """A document encoder that processes text, layout, table, and handwriting information."""

@@ -8,14 +8,14 @@ with traditional attention mechanisms using intelligent gating fusion.
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Dict, Any
-from .attention import ArcticAttention
-from .mamba3 import Mamba3Integration, Mamba3Config
 from .norms import ArcticRMSNorm
 from ..config import ArcticConfig
+from .attention import ArcticAttention
+from typing import Optional, Dict, Any
 from utils.log.core import PiscesLxCoreLog
+from .mamba3 import Mamba3Integration, Mamba3Config
 
-logger = PiscesLxCoreLog("Arctic.Core.Modeling.Hybrid")
+logger = PiscesLxCoreLog("Arctic.Core.Modeling.Hybrid", file_path="logs/ArcticCore.log")
 
 
 class IntelligentGate(nn.Module):

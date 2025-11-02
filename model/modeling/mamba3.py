@@ -1,11 +1,21 @@
-"""
-Mamba-3 State Space Model Integration for PiscesL1
+#!/usr/bin/env python3
 
-This module implements the Mamba-3 architecture with three key innovations:
-1. Trapezoidal Discretization - Second-order precision for state evolution
-2. Complex State Space - Complex-valued state space for expressive updates
-3. MIMO Structure - Matrix multiplication for efficient decoding
-"""
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd project team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import math
 import torch
@@ -89,10 +99,10 @@ class ComplexStateSpace(nn.Module):
         super().__init__()
         self.d_state = d_state
         
-        # Complex state matrix initialization
+        # Complex state matrix initialization with stability checks
         # Real and imaginary parts
-        A_real = torch.randn(d_state, d_state) * 0.1
-        A_imag = torch.randn(d_state, d_state) * 0.1
+        A_real = torch.randn(d_state, d_state) * 0.05  # Reduced initialization scale
+        A_imag = torch.randn(d_state, d_state) * 0.05  # Reduced initialization scale
         
         # Ensure stability: eigenvalues have negative real parts
         A = A_real + 1j * A_imag
@@ -101,6 +111,14 @@ class ComplexStateSpace(nn.Module):
             # Stabilize by shifting eigenvalues
             max_real = eigenvals.real.max()
             A_real = A_real - max_real * torch.eye(d_state)
+        
+        # Additional stability: ensure well-conditioned matrix
+        A_stabilized = A_real + 1j * A_imag
+        cond_number = torch.linalg.cond(A_stabilized)
+        if cond_number > 1000.0:  # Condition number threshold
+            # Regularize matrix to improve conditioning
+            reg_factor = 1e-3
+            A_real = A_real + reg_factor * torch.eye(d_state)
             
         self.A_real = nn.Parameter(A_real)
         self.A_imag = nn.Parameter(A_imag)
@@ -112,7 +130,7 @@ class ComplexStateSpace(nn.Module):
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Apply complex state space transformation
+        Apply complex state space transformation with numerical stability checks
         
         Args:
             x: Real-valued input [batch, seq_len, d_state]
@@ -123,12 +141,24 @@ class ComplexStateSpace(nn.Module):
         # Convert to complex representation
         x_complex = torch.complex(x, torch.zeros_like(x))
         
-        # Apply complex transformation
+        # Apply complex transformation with stability checks
         A_complex = self.A_complex.unsqueeze(0).unsqueeze(0)  # [1, 1, d_state, d_state]
+        
+        # Add numerical stability check for matrix operations
+        if torch.isnan(A_complex).any() or torch.isinf(A_complex).any():
+            # Fallback to identity transformation if matrix is unstable
+            return x
+            
         x_transformed = torch.einsum('blds,blst->bldt', x_complex.unsqueeze(-2), A_complex).squeeze(-2)
         
         # Return real part (equivalent to rotary encoding effect)
-        return x_transformed.real
+        result = x_transformed.real
+        
+        # Final stability check
+        if torch.isnan(result).any() or torch.isinf(result).any():
+            return torch.zeros_like(x)  # Safe fallback
+            
+        return result
 
 
 class MIMOStateSpace(nn.Module):
@@ -185,28 +215,47 @@ class SelectiveScan(nn.Module):
         self.A_log = nn.Parameter(torch.randn(d_model))
         self.D = nn.Parameter(torch.ones(d_model))
         
-        # Initialize for stability
+        # Initialize for stability with conservative values
         nn.init.constant_(self.dt_proj.weight, 0.0)
         nn.init.constant_(self.dt_proj.bias, 0.0)
-        nn.init.uniform_(self.A_log, -4.0, -1.0)  # Stable initialization
+        nn.init.uniform_(self.A_log, -3.0, -1.0)  # More conservative initialization for stability
         
     def forward(self, u: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
-        """Selective scan operation"""
+        """Selective scan operation with enhanced numerical stability"""
         batch, seq_len, d_model = u.shape
         
-        # Discretization
+        # Discretization with stability checks
         delta = F.softplus(self.dt_proj(delta))
         A = -torch.exp(self.A_log.float())  # Ensure stability
         
-        # Scan operation (simplified parallel version)
+        # Add bounds to prevent extreme values
+        delta = torch.clamp(delta, min=1e-6, max=10.0)
+        A = torch.clamp(A, min=-10.0, max=-1e-6)
+        
+        # Scan operation (simplified parallel version) with stability checks
         output = torch.zeros_like(u)
         state = torch.zeros(batch, d_model, device=u.device, dtype=u.dtype)
         
         for i in range(seq_len):
-            state = state * torch.exp(delta[:, i:i+1] * A) + u[:, i:i+1]
+            # Compute state update with numerical stability
+            exp_term = torch.exp(delta[:, i:i+1] * A)
+            exp_term = torch.clamp(exp_term, min=1e-6, max=1.0)  # Prevent extreme exponentials
+            
+            state = state * exp_term + u[:, i:i+1]
+            
+            # Clamp state to prevent overflow
+            state = torch.clamp(state, min=-1e4, max=1e4)
             output[:, i:i+1] = state
             
-        return output + u * self.D.unsqueeze(0).unsqueeze(0)
+        # Final output with stability check
+        final_output = output + u * self.D.unsqueeze(0).unsqueeze(0)
+        final_output = torch.clamp(final_output, min=-1e4, max=1e4)
+        
+        # NaN/Inf check with fallback
+        if torch.isnan(final_output).any() or torch.isinf(final_output).any():
+            return torch.zeros_like(u)
+            
+        return final_output
 
 
 class Mamba3Block(nn.Module):

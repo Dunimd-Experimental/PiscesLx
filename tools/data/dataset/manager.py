@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -21,10 +20,10 @@
 from .core import Dataset
 from .registry import REGISTRY as DATASETS
 from typing import List, Optional, Dict, Any
-from .streaming import PiscesLxToolsLargeScaleStreamingDataset
-from .loader import PiscesLxToolsOptimizedDataLoader, PiscesLxToolsBatchConfig
+from .streaming import PiscesLxToolsDataLargeScaleStreamingDataset
+from .loader import PiscesLxToolsDataOptimizedDataLoader, PiscesLxToolsDataBatchConfig
 
-class DatasetManager:
+class PiscesLxToolsDataDatasetManager:
     """
     A manager class for Pisces datasets that provides a unified interface for dataset operations.
     """
@@ -59,33 +58,33 @@ class DatasetManager:
         ds = Dataset(subset=subset, split=split, config=config, max_samples=max_samples)
         return ds
 
-    def dataloader(self, dataset, batch_config: Optional[PiscesLxToolsBatchConfig] = None):
+    def dataloader(self, dataset, batch_config: Optional[PiscesLxToolsDataBatchConfig] = None):
         """
         Create a data loader for the given dataset.
 
         Args:
             dataset: The dataset for which to create a data loader.
-            batch_config (Optional[PiscesLxToolsBatchConfig], optional): Configuration for batch processing. Defaults to None.
+            batch_config (Optional[PiscesLxToolsDataBatchConfig], optional): Configuration for batch processing. Defaults to None.
 
         Returns:
-            The data loader instance created by PiscesLxToolsOptimizedDataLoader.
+            The data loader instance created by PiscesLxToolsDataOptimizedDataLoader.
         """
-        return PiscesLxToolsOptimizedDataLoader(dataset, batch_config).get()
+        return PiscesLxToolsDataOptimizedDataLoader(dataset, batch_config).get()
 
-    def streaming_dataloader(self, data_sources: List[str], config: Optional[Dict[str, Any]] = None, batch_config: Optional[PiscesLxToolsBatchConfig] = None):
+    def streaming_dataloader(self, data_sources: List[str], config: Optional[Dict[str, Any]] = None, batch_config: Optional[PiscesLxToolsDataBatchConfig] = None):
         """
         Create a data loader for large-scale streaming datasets.
 
         Args:
             data_sources (List[str]): List of data source paths.
             config (Optional[Dict[str, Any]], optional): Configuration dictionary for the streaming dataset. Defaults to None.
-            batch_config (Optional[PiscesLxToolsBatchConfig], optional): Configuration for batch processing. Defaults to None.
+            batch_config (Optional[PiscesLxToolsDataBatchConfig], optional): Configuration for batch processing. Defaults to None.
 
         Returns:
-            The data loader instance created by PiscesLxToolsOptimizedDataLoader for the streaming dataset.
+            The data loader instance created by PiscesLxToolsDataOptimizedDataLoader for the streaming dataset.
         """
-        ds = PiscesLxToolsLargeScaleStreamingDataset(data_sources=data_sources, config=config)
-        return PiscesLxToolsOptimizedDataLoader(ds, batch_config).get()
+        ds = PiscesLxToolsDataLargeScaleStreamingDataset(data_sources=data_sources, config=config)
+        return PiscesLxToolsDataOptimizedDataLoader(ds, batch_config).get()
 
     def register(self, name: str, builder):
         """

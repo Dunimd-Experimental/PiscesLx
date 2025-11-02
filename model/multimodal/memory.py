@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -27,9 +26,9 @@ import threading
 from collections import defaultdict
 from utils.log.core import PiscesLxCoreLog
 from typing import List, Dict, Any, Optional
-from .types import ArcticAgentObservation, ArcticAgentAction
+from .types import PiscesLxCoreAgenticObservation, PiscesLxCoreAgenticAction
 
-logger = PiscesLxCoreLog("Arctic.Core.Memory")
+logger = PiscesLxCoreLog("Arctic.Core.Memory", file_path="logs/ArcticCore.log")
 
 class ArcticMemoryManager:
     def __init__(self, enable_background: bool = True):
@@ -39,8 +38,8 @@ class ArcticMemoryManager:
         Args:
             enable_background (bool, optional): Whether to enable background memory monitoring. Defaults to True.
         """
-        self.observations: List[ArcticAgentObservation] = []  # List to store agent observations
-        self.actions: List[ArcticAgentAction] = []  # List to store agent actions
+        self.observations: List[PiscesLxCoreAgenticObservation] = []  # List to store agent observations
+        self.actions: List[PiscesLxCoreAgenticAction] = []  # List to store agent actions
         self.reflections: List[str] = []  # List to store reflections
 
         # Attributes for enhanced memory management
@@ -156,12 +155,12 @@ class ArcticMemoryManager:
 
         logger.debug(f"Registered tensor '{name}' shape={shape} bytes={nbytes} device={device}")
 
-    def add_observation(self, observation: ArcticAgentObservation):
+    def add_observation(self, observation: PiscesLxCoreAgenticObservation):
         """
         Add an observation to the memory and generate its corresponding embedding and importance score.
 
         Args:
-            observation (ArcticAgentObservation): The observation to be added.
+            observation (PiscesLxCoreAgenticObservation): The observation to be added.
         """
         self.observations.append(observation)
         try:
@@ -196,12 +195,12 @@ class ArcticMemoryManager:
         if len(self.observations) > self.max_memory_size:
             self.compress_memory()
 
-    def add_action(self, action: ArcticAgentAction):
+    def add_action(self, action: PiscesLxCoreAgenticAction):
         """
         Add an action to the memory and generate its corresponding embedding and importance score.
 
         Args:
-            action (ArcticAgentAction): The action to be added.
+            action (PiscesLxCoreAgenticAction): The action to be added.
         """
         self.actions.append(action)
         # Generate a random embedding for the action

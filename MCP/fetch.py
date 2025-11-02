@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -19,15 +18,44 @@
 # limitations under the License.
 
 import re
+import sys
 import asyncio
 import requests
-from MCP import mcp
+from pathlib import Path
 from typing import Dict, Any
 from bs4 import BeautifulSoup
 
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from utils.mcp import PiscesLxCoreMCPPlaza
+
+# Create mcp instance for tool registration
+mcp = PiscesLxCoreMCPPlaza()
+
 @mcp.tool()
 def fetch_url(url: str, max_length: int = 5000, extract_text: bool = True) -> Dict[str, Any]:
-    """Fetch and extract content from a web URL."""
+    """
+    Fetch and extract content from a web URL.
+    
+    Args:
+        url (str): The URL to fetch content from.
+        max_length (int, optional): Maximum length of extracted text. Defaults to 5000.
+        extract_text (bool, optional): Whether to extract text content. Defaults to True.
+        
+    Returns:
+        Dict[str, Any]: A dictionary containing the fetch result with keys:
+            - success (bool): Indicates if the fetch was successful.
+            - url (str): The fetched URL.
+            - title (str): The page title.
+            - description (str): The meta description.
+            - text_content (str): Extracted text content.
+            - links (list): List of extracted links.
+            - status_code (int): HTTP status code.
+            - error (str): Error message if any.
+            - error_type (str): Type of error if any.
+    """
     try:
         headers = {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -89,7 +117,15 @@ def fetch_url(url: str, max_length: int = 5000, extract_text: bool = True) -> Di
         }
 
 def _extract_text_from_html(html: str) -> str:
-    """Extract clean text from HTML content."""
+    """
+    Extract clean text from HTML content.
+    
+    Args:
+        html (str): HTML content to extract text from.
+        
+    Returns:
+        str: Cleaned text content.
+    """
     soup = BeautifulSoup(html, 'html.parser')
     
     # Remove unwanted tags
@@ -106,7 +142,15 @@ def _extract_text_from_html(html: str) -> str:
     return text
 
 def _get_metadata(soup: BeautifulSoup) -> Dict[str, str]:
-    """Extract metadata from HTML."""
+    """
+    Extract metadata from HTML.
+    
+    Args:
+        soup (BeautifulSoup): BeautifulSoup object containing parsed HTML.
+        
+    Returns:
+        Dict[str, str]: Dictionary containing extracted metadata.
+    """
     metadata = {}
     
     # Title

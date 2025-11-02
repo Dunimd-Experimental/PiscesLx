@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -19,3 +18,13 @@
 # limitations under the License.
 
 VERSION = "0.0.0200"
+
+# Component versions
+MCP_VERSION = "1.0.0"
+SERIALIZATION_VERSION = "1.0.0"
+WATERMARK_COMPLIANCE_VERSION = "2025.09.01"
+ENCODING_VERSION = "2025.09.01"
+
+# Tool versions
+TOOL_VERSION = "1.0.0"
+MCP_TOOL_VERSION = "1.0.0"

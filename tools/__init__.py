@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -88,10 +87,55 @@ try:
 except ImportError as e:
     print(f"Warning: Could not import benchmark module: {e}")
 
+# Initialize data download module
+PiscesLxToolsDataDatasetDownload = None
+PiscesLxToolsDataSourceRouter = None
+PiscesLxToolsDataDownloadConfig = None
+PiscesLxToolsDataDownloadCache = None
+PiscesLxToolsDataConfigLoader = None
+DatasetItem = None
+setup_hf_mirror = None
+
+try:
+    if 'setup' not in sys.argv:
+        from .data.download import (
+            PiscesLxToolsDataDatasetDownload,
+            PiscesLxToolsDataSourceRouter,
+            PiscesLxToolsDataDownloadConfig,
+            PiscesLxToolsDataDownloadCache,
+            PiscesLxToolsDataConfigLoader,
+            DatasetItem,
+            setup_hf_mirror
+        )
+except ImportError as e:
+    print(f"Warning: Could not import data.download module: {e}")
+
+# Initialize infer module
+PiscesLxToolsInferOrchestrator = None
+PiscesLxToolsInferRunner = None
+PiscesLxToolsInferConfig = None
+PiscesLxToolsInferImpl = None
+
+try:
+    if 'setup' not in sys.argv:
+        from .infer import (
+            PiscesLxToolsInferOrchestrator,
+            PiscesLxToolsInferRunner,
+            PiscesLxToolsInferConfig,
+            PiscesLxToolsInferImpl
+        )
+except ImportError as e:
+    print(f"Warning: Could not import infer module: {e}")
+
 __all__ = [
     'read_config',
     'watermark_manager', 'watermark_text',
     'get_cache_manager', 'PiscesLxCoreConfigManagerFacade',
     'PiscesL1Benchmark', 'create_benchmark_config',
     'run_single_benchmark', 'compare_multiple_models',
+    'PiscesLxToolsDataDatasetDownload', 'PiscesLxToolsDataSourceRouter',
+    'PiscesLxToolsDataDownloadConfig', 'PiscesLxToolsDataDownloadCache',
+    'PiscesLxToolsDataConfigLoader', 'DatasetItem', 'setup_hf_mirror',
+    'PiscesLxToolsInferOrchestrator', 'PiscesLxToolsInferRunner',
+    'PiscesLxToolsInferConfig', 'PiscesLxToolsInferImpl',
 ]

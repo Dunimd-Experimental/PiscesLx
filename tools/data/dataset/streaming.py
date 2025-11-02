@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -32,7 +31,7 @@ AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]
 DOC_KEYS = ["doc", "document", "doc_path", "pdf"]
 VIDEO_KEYS = ["video", "video_path", "mp4", "avi", "mov", "mkv"]
 
-class PiscesLxToolsLargeScaleStreamingDataset(IterableDataset):
+class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
     """An iterable dataset for large-scale streaming data processing.
     
     This dataset supports reading data from multiple sources, including directories and files,

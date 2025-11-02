@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -25,7 +24,7 @@ import torch.nn.functional as F
 from collections import OrderedDict
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("Arctic.Core.MoEDynamic")
+logger = PiscesLxCoreLog("Arctic.Core.MoEDynamic", file_path="logs/ArcticCore.log")
 
 def moe_init_weights(m):
     """

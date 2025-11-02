@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -27,17 +26,17 @@ from dataclasses import dataclass
 from utils.log.core import PiscesLxCoreLog
 from typing import List, Tuple, Optional, Dict, Any
 
-logger = PiscesLxCoreLog("Arctic.Core.SpeculativeDecoder")
+logger = PiscesLxCoreLog("Arctic.Core.SpeculativeDecoder", file_path="logs/ArcticCore.log")
 
 @dataclass
 class ArcticSpeculativeConfig:
-    """Configuration class for speculative decoding parameters.
+    """Configuration class for speculative decoding parameters with stability bounds.
 
     Attributes:
         num_candidates (int): Number of candidate tokens to generate in parallel. Defaults to 4.
         draft_length (int): Length of the draft sequence to generate. Defaults to 5.
         acceptance_threshold (float): Threshold for accepting draft tokens. Defaults to 0.8.
-        temperature (float): Temperature for sampling. Defaults to 0.7.
+        temperature (float): Temperature for sampling (bounded 0.1-2.0 for stability). Defaults to 0.7.
         top_k (int): Number of top-k tokens to consider during sampling. Defaults to 50.
         top_p (float): Cumulative probability threshold for nucleus sampling. Defaults to 0.9.
     """
@@ -47,6 +46,12 @@ class ArcticSpeculativeConfig:
     temperature: float = 0.7
     top_k: int = 50
     top_p: float = 0.9
+    
+    def __post_init__(self):
+        # Enforce stability bounds
+        self.temperature = max(0.1, min(2.0, self.temperature))
+        self.top_k = max(1, min(1000, self.top_k))
+        self.top_p = max(0.1, min(1.0, self.top_p))
 
 class ArcticSpeculativeDecoder(nn.Module):
     """Multi-path speculative decoder for efficient autoregressive text generation.
@@ -187,7 +192,9 @@ class ArcticSpeculativeDecoder(nn.Module):
                         logits = outputs['logits'] if isinstance(outputs, dict) else outputs
                         next_logits = logits[:, -1, :]
                         if self.config.temperature > 0:
-                            next_logits = next_logits / self.config.temperature
+                            # Apply temperature with stability bounds
+                            temp = max(0.1, min(2.0, self.config.temperature))
+                            next_logits = next_logits / temp
                         if self.config.top_k > 0:
                             top_k_logits, top_k_indices = torch.topk(next_logits, min(self.config.top_k, next_logits.size(-1)))
                             next_logits = torch.full_like(next_logits, float('-inf'))

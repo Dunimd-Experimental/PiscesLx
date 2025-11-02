@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -18,20 +17,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
 import pytz
 import datetime
-from MCP import mcp
+from pathlib import Path
 from typing import Dict, Any, Optional
+
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from utils.mcp import PiscesLxCoreMCPPlaza
+
+# Create mcp instance for tool registration
+mcp = PiscesLxCoreMCPPlaza()
 
 @mcp.tool()
 def get_current_time(timezone: str = "UTC") -> Dict[str, Any]:
-    """Get the current time in a specific timezone."""
+    """
+    Get the current time in a specific timezone.
+    
+    Args:
+        timezone (str): The timezone to get the current time for. Defaults to "UTC".
+        
+    Returns:
+        Dict[str, Any]: A dictionary containing the current time information.
+            - success (bool): Whether the operation was successful.
+            - datetime (str): ISO formatted datetime string.
+            - timezone (str): The requested timezone.
+            - year (int): Current year.
+            - month (int): Current month.
+            - day (int): Current day.
+            - hour (int): Current hour.
+            - minute (int): Current minute.
+            - second (int): Current second.
+            - microsecond (int): Current microsecond.
+            - weekday (str): Full name of the weekday.
+            - formatted (str): Formatted datetime string in "%Y-%m-%d %H:%M:%S %Z" format.
+            
+    Raises:
+        Exception: If there's an error processing the timezone or getting the current time.
+    """
     try:
         if timezone not in pytz.all_timezones:
             return {
                 "success": False,
                 "error": f"Invalid timezone: {timezone}",
-                "available_timezones": pytz.all_timezones[:10]  # Return first 10 as example
+                "available_timezones": pytz.all_timezones[:10]
             }
         
         tz = pytz.timezone(timezone)
@@ -61,7 +93,32 @@ def get_current_time(timezone: str = "UTC") -> Dict[str, Any]:
 
 @mcp.tool()
 def parse_time(time_string: str, input_format: str = "%Y-%m-%d %H:%M:%S", timezone: str = "UTC") -> Dict[str, Any]:
-    """Parse a time string into a structured format."""
+    """
+    Parse a time string into a structured format.
+    
+    Args:
+        time_string (str): The time string to parse.
+        input_format (str): The format of the input time string. Defaults to "%Y-%m-%d %H:%M:%S".
+        timezone (str): The timezone to use for the parsed time. Defaults to "UTC".
+        
+    Returns:
+        Dict[str, Any]: A dictionary containing the parsed time information.
+            - success (bool): Whether the operation was successful.
+            - datetime (str): ISO formatted datetime string.
+            - timezone (str): The requested timezone.
+            - year (int): Year from the parsed time.
+            - month (int): Month from the parsed time.
+            - day (int): Day from the parsed time.
+            - hour (int): Hour from the parsed time.
+            - minute (int): Minute from the parsed time.
+            - second (int): Second from the parsed time.
+            - weekday (str): Full name of the weekday.
+            - formatted (str): Formatted datetime string in "%Y-%m-%d %H:%M:%S %Z" format.
+            
+    Raises:
+        ValueError: If the time string doesn't match the input format.
+        Exception: If there's an error processing the timezone or parsing the time.
+    """
     try:
         if timezone not in pytz.all_timezones:
             return {
@@ -102,7 +159,29 @@ def parse_time(time_string: str, input_format: str = "%Y-%m-%d %H:%M:%S", timezo
 
 @mcp.tool()
 def time_difference(start_time: str, end_time: str, timezone: str = "UTC") -> Dict[str, Any]:
-    """Calculate the difference between two times."""
+    """
+    Calculate the difference between two times.
+    
+    Args:
+        start_time (str): The start time in ISO format.
+        end_time (str): The end time in ISO format.
+        timezone (str): The timezone to use for the calculation. Defaults to "UTC".
+        
+    Returns:
+        Dict[str, Any]: A dictionary containing the time difference information.
+            - success (bool): Whether the operation was successful.
+            - difference_seconds (float): Time difference in seconds.
+            - difference_days (int): Time difference in days.
+            - difference_hours (float): Time difference in hours.
+            - difference_minutes (float): Time difference in minutes.
+            - start_time (str): ISO formatted start time.
+            - end_time (str): ISO formatted end time.
+            - human_readable (str): Human-readable representation of the time difference.
+            
+    Raises:
+        ValueError: If the time strings don't match the expected ISO format.
+        Exception: If there's an error processing the timezone or calculating the difference.
+    """
     try:
         if timezone not in pytz.all_timezones:
             return {
@@ -155,7 +234,26 @@ def time_difference(start_time: str, end_time: str, timezone: str = "UTC") -> Di
 
 @mcp.tool()
 def format_time(iso_time: str, output_format: str = "%Y-%m-%d %H:%M:%S", timezone: str = "UTC") -> Dict[str, Any]:
-    """Format an ISO time string to a custom format."""
+    """
+    Format an ISO time string to a custom format.
+    
+    Args:
+        iso_time (str): The ISO formatted time string to format.
+        output_format (str): The desired output format. Defaults to "%Y-%m-%d %H:%M:%S".
+        timezone (str): The timezone to use for formatting. Defaults to "UTC".
+        
+    Returns:
+        Dict[str, Any]: A dictionary containing the formatted time information.
+            - success (bool): Whether the operation was successful.
+            - formatted_time (str): The formatted time string.
+            - timezone (str): The requested timezone.
+            - iso_time (str): ISO formatted datetime string.
+            - format_used (str): The format string used for formatting.
+            
+    Raises:
+        ValueError: If the ISO time string is invalid.
+        Exception: If there's an error processing the timezone or formatting the time.
+    """
     try:
         if timezone not in pytz.all_timezones:
             return {
@@ -195,7 +293,33 @@ def format_time(iso_time: str, output_format: str = "%Y-%m-%d %H:%M:%S", timezon
 
 @mcp.tool()
 def add_duration(base_time: str, days: int = 0, hours: int = 0, minutes: int = 0, seconds: int = 0, timezone: str = "UTC") -> Dict[str, Any]:
-    """Add a duration to a base time."""
+    """
+    Add a duration to a base time.
+    
+    Args:
+        base_time (str): The base time in ISO format.
+        days (int): Number of days to add. Defaults to 0.
+        hours (int): Number of hours to add. Defaults to 0.
+        minutes (int): Number of minutes to add. Defaults to 0.
+        seconds (int): Number of seconds to add. Defaults to 0.
+        timezone (str): The timezone to use for the calculation. Defaults to "UTC".
+        
+    Returns:
+        Dict[str, Any]: A dictionary containing the new time information.
+            - success (bool): Whether the operation was successful.
+            - original_time (str): ISO formatted original time.
+            - new_time (str): ISO formatted new time after adding the duration.
+            - duration_added (dict): Dictionary containing the duration components.
+                - days (int): Days added.
+                - hours (int): Hours added.
+                - minutes (int): Minutes added.
+                - seconds (int): Seconds added.
+            - formatted (str): Formatted datetime string in "%Y-%m-%d %H:%M:%S %Z" format.
+            
+    Raises:
+        ValueError: If the base time string is invalid.
+        Exception: If there's an error processing the timezone or adding the duration.
+    """
     try:
         if timezone not in pytz.all_timezones:
             return {
@@ -241,7 +365,19 @@ def add_duration(base_time: str, days: int = 0, hours: int = 0, minutes: int = 0
 
 @mcp.tool()
 def list_timezones() -> Dict[str, Any]:
-    """List all available timezones."""
+    """
+    List all available timezones.
+    
+    Returns:
+        Dict[str, Any]: A dictionary containing the timezone information.
+            - success (bool): Whether the operation was successful.
+            - timezones (list): List of all available timezones.
+            - count (int): Total number of available timezones.
+            - common_timezones (list): List of commonly used timezones.
+            
+    Raises:
+        Exception: If there's an error retrieving the timezone list.
+    """
     try:
         timezones = pytz.all_timezones
         

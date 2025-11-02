@@ -1,24 +1,31 @@
 import os
 from typing import Dict, List, Any, Optional
 
-from evalscope.models import ModelConfig
-from evalscope.metrics import MetricConfig
-from evalscope.datasets import DatasetConfig
-from evalscope import TaskConfig
+try:
+    from evalscope.models import ModelConfig
+    from evalscope.metrics import MetricConfig
+    from evalscope.datasets import DatasetConfig
+    from evalscope import TaskConfig
+except ImportError:
+    # Fallback for when evalscope is not available
+    ModelConfig = None
+    MetricConfig = None
+    DatasetConfig = None
+    TaskConfig = None
 
 try:
     from evalscope.constants import EvalType
 except Exception:
     EvalType = None  # type: ignore
 
-from .config import BenchmarkConfig
+from .config import PiscesLxToolsBenchmarkConfig
 
 
-class ModelConfigBuilder:
+class PiscesLxToolsModelConfigBuilder:
     """Builder for model configurations"""
 
     @staticmethod
-    def build(config: BenchmarkConfig) -> ModelConfig:
+    def build(config: PiscesLxToolsBenchmarkConfig) -> ModelConfig:
         return ModelConfig(
             model_id=config.model_path,
             model_name=config.model_name,
@@ -31,11 +38,11 @@ class ModelConfigBuilder:
         )
 
 
-class DatasetConfigBuilder:
+class PiscesLxToolsDatasetConfigBuilder:
     """Builder for dataset configurations"""
 
     @staticmethod
-    def build(config: BenchmarkConfig) -> List[DatasetConfig]:
+    def build(config: PiscesLxToolsBenchmarkConfig) -> List[DatasetConfig]:
         dataset_configs: List[DatasetConfig] = []
         for dataset_name in config.datasets:
             dataset_config = DatasetConfig(
@@ -49,25 +56,25 @@ class DatasetConfigBuilder:
         return dataset_configs
 
 
-class MetricConfigBuilder:
+class PiscesLxToolsMetricConfigBuilder:
     """Builder for metric configurations"""
 
     @staticmethod
-    def build(config: BenchmarkConfig) -> List[MetricConfig]:
+    def build(config: PiscesLxToolsBenchmarkConfig) -> List[MetricConfig]:
         metric_configs: List[MetricConfig] = []
         for metric_name in config.metrics:
             metric_configs.append(MetricConfig(metric_id=metric_name, params={}))
         return metric_configs
 
 
-class TaskConfigBuilder:
+class PiscesLxToolsTaskConfigBuilder:
     """Builder for task configurations"""
 
     @staticmethod
-    def build(config: BenchmarkConfig) -> TaskConfig:
-        model_config = ModelConfigBuilder.build(config)
-        dataset_configs = DatasetConfigBuilder.build(config)
-        metric_configs = MetricConfigBuilder.build(config)
+    def build(config: PiscesLxToolsBenchmarkConfig) -> TaskConfig:
+        model_config = PiscesLxToolsModelConfigBuilder.build(config)
+        dataset_configs = PiscesLxToolsDatasetConfigBuilder.build(config)
+        metric_configs = PiscesLxToolsMetricConfigBuilder.build(config)
 
         optional_kwargs: Dict[str, Any] = {}
         if config.eval_type is not None:

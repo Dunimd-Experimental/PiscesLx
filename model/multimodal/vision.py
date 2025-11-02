@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -28,7 +27,7 @@ import torch.nn.functional as F
 from utils.log.core import PiscesLxCoreLog
 from typing import Optional, Tuple, List, Dict, Any
 
-logger = PiscesLxCoreLog("Arctic.Core.Multimodal")
+logger = PiscesLxCoreLog("Arctic.Core.Multimodal", file_path="logs/ArcticCore.log")
 
 class ArcticSpatioTemporalRoPE3D(nn.Module):
     """
@@ -156,6 +155,18 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         return x_rotated
 
     def _rotate_half(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        Rotate the last dimension of the input tensor by half and negate the second half.
+
+        Args:
+            x (torch.Tensor): Input tensor.
+
+        Returns:
+            torch.Tensor: Rotated tensor.
+        """
+        x1 = x[..., :x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2:]
+        return torch.cat((-x2, x1), dim=-1)
 
 
 class VisualTextProcessor(nn.Module):
@@ -203,8 +214,10 @@ class VisualTextProcessor(nn.Module):
         Returns:
             Visual embeddings [B, N, D]
         """
-        # Normalize for text (higher contrast)
+        # Normalize for text (higher contrast) with stability bounds
         x = (text_images - self.text_mean) / self.text_std
+        # Clamp to prevent extreme values in text processing
+        x = torch.clamp(x, -5.0, 5.0)
         
         # Extract patches
         patches = self.text_patch_embed(x)  # [B, D, H', W']
@@ -290,8 +303,10 @@ class ArcticVisionEncoder(nn.Module):
         if kwargs.get('is_visual_text', False) and self.visual_text_processor is not None:
             return self.process_visual_text(x)
         
-        # Standard vision processing
-        return self._standard_forward(x)
+        # Standard vision processing with output stability
+        output = self._standard_forward(x)
+        # Clamp output to prevent extreme values
+        return torch.clamp(output, -10.0, 10.0)
         max_patches_h = 1024 // self.patch_size
         max_patches_w = 1024 // self.patch_size
         self.pos_embed = nn.Parameter(torch.randn(1, max_patches_h * max_patches_w, self.hidden_size))

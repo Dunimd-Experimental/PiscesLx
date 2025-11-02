@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -18,25 +17,56 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from MCP import mcp
+import sys
+from pathlib import Path
 from typing import Dict, Any, List
 from duckduckgo_search import DDGS
 
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from utils.mcp import PiscesLxCoreMCPPlaza
+
+# Instantiate MCP for tool registration
+mcp = PiscesLxCoreMCPPlaza()
+
 @mcp.tool()
-def web_search(query: str, max_results: int = 5, region: str = "wt-wt", safesearch: str = "moderate", time: str = None) -> Dict[str, Any]:
-    """Perform a web search (DuckDuckGo) and return top results.
-    
+def web_search(
+    query: str, 
+    max_results: int = 5, 
+    region: str = "wt-wt", 
+    safesearch: str = "moderate", 
+    time: str = None
+) -> Dict[str, Any]:
+    """Execute a DuckDuckGo web search and return structured results.
+
     Args:
-        query: Search query string.
-        max_results: Maximum number of results to return (1-25 typical).
-        region: Region code (e.g., 'wt-wt', 'us-en', 'cn-zh').
-        safesearch: 'on' | 'moderate' | 'off'.
-        time: Optional time range filter: 'd' (day), 'w' (week), 'm' (month), 'y' (year).
+        query (str): Search keyword or phrase.
+        max_results (int): Number of results to retrieve, default is 5.
+        region (str): Geographic region for search results, e.g., 'wt-wt', 'us-en'.
+        safesearch (str): Safe search setting ('on', 'moderate', 'off').
+        time (str, optional): Time-based filtering ('d', 'w', 'm', 'y').
+
+    Returns:
+        Dict[str, Any]: Contains status, query, result count, and list of results.
+                        On failure, includes error details.
     """
     try:
         ddgs = DDGS()
         results: List[Dict[str, Any]] = []
-        for i, item in enumerate(ddgs.text(query, region=region, safesearch=safesearch, timelimit=time) or []):
+        search_results = ddgs.text(
+            query, 
+            region=region, 
+            safesearch=safesearch, 
+            timelimit=time
+        )
+        
+        # Normalize empty generator to empty list
+        if search_results is None:
+            search_results = []
+            
+        for i, item in enumerate(search_results):
             if i >= max_results:
                 break
             results.append({
@@ -44,6 +74,7 @@ def web_search(query: str, max_results: int = 5, region: str = "wt-wt", safesear
                 "href": item.get("href"),
                 "body": item.get("body")
             })
+            
         return {
             "success": True,
             "query": query,

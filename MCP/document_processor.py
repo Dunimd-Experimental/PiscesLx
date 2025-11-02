@@ -19,23 +19,38 @@
 # limitations under the License.
 
 import os
+import sys
 import json
 import fitz
 import docx
 import pptx
-from MCP import mcp
+from pathlib import Path
 from pathlib import Path
 from pptx import Presentation
 from typing import Dict, Any, List, Optional
 
+# Add project root to path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
+
+from utils.mcp import PiscesLxCoreMCPPlaza
+
+# Create mcp instance for tool registration
+mcp = PiscesLxCoreMCPPlaza()
+
 class DocumentProcessor:
     """
-    Advanced document processing for PDF, DOCX, PPTX files with MCP integration.
-    Provides text extraction, structure analysis, and metadata extraction.
-    Server-safe version with security restrictions.
+    Document processor for PDF, DOCX, and PPTX files with security constraints.
+    
+    This class provides methods to extract text, metadata, and structural information
+    from various document formats while enforcing security limits to prevent
+    resource exhaustion and path traversal vulnerabilities.
     """
     
     def __init__(self):
+        """
+        Initialize DocumentProcessor with supported formats and security limits.
+        """
         self.supported_formats = {
             '.pdf': 'PDF Document',
             '.docx': 'Word Document',
@@ -56,7 +71,19 @@ class DocumentProcessor:
         }
     
     def _validate_file(self, file_path: str) -> Path:
-        """Validate file path and check if it exists with security checks."""
+        """
+        Validate file path and check if it exists with security checks.
+        
+        Args:
+            file_path (str): Path to the file to validate
+            
+        Returns:
+            Path: Validated Path object
+            
+        Raises:
+            FileNotFoundError: If file does not exist
+            ValueError: If file format is unsupported or security checks fail
+        """
         path = Path(file_path)
         
         # Check if file exists
@@ -83,7 +110,15 @@ class DocumentProcessor:
         return path
     
     def extract_pdf_content(self, file_path: str) -> Dict[str, Any]:
-        """Extract content from PDF file with security limits."""
+        """
+        Extract content from PDF file with security limits.
+        
+        Args:
+            file_path (str): Path to the PDF file
+            
+        Returns:
+            Dict[str, Any]: Dictionary containing extracted content or error information
+        """
         try:
             path = self._validate_file(file_path)
             doc = fitz.open(str(path))
@@ -140,7 +175,15 @@ class DocumentProcessor:
             return {"success": False, "error": str(e)}
     
     def extract_docx_content(self, file_path: str) -> Dict[str, Any]:
-        """Extract content from DOCX file with security limits."""
+        """
+        Extract content from DOCX file with security limits.
+        
+        Args:
+            file_path (str): Path to the DOCX file
+            
+        Returns:
+            Dict[str, Any]: Dictionary containing extracted content or error information
+        """
         try:
             path = self._validate_file(file_path)
             doc = docx.Document(str(path))
@@ -214,7 +257,15 @@ class DocumentProcessor:
             return {"success": False, "error": str(e)}
     
     def extract_pptx_content(self, file_path: str) -> Dict[str, Any]:
-        """Extract content from PPTX file with security limits."""
+        """
+        Extract content from PPTX file with security limits.
+        
+        Args:
+            file_path (str): Path to the PPTX file
+            
+        Returns:
+            Dict[str, Any]: Dictionary containing extracted content or error information
+        """
         try:
             path = self._validate_file(file_path)
             prs = Presentation(str(path))
@@ -307,13 +358,29 @@ class DocumentProcessor:
             return {"success": False, "error": str(e)}
     
     def _extract_tables_from_page(self, blocks: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract tables from PDF page blocks."""
+        """
+        Extract tables from PDF page blocks.
+        
+        Args:
+            blocks (Dict[str, Any]): PDF page blocks data
+            
+        Returns:
+            List[Dict[str, Any]]: List of extracted tables
+        """
         tables = []
         # Simplified table extraction - can be enhanced
         return tables
     
     def _extract_images_from_page(self, page) -> List[Dict[str, Any]]:
-        """Extract images from PDF page."""
+        """
+        Extract images from PDF page.
+        
+        Args:
+            page: PDF page object
+            
+        Returns:
+            List[Dict[str, Any]]: List of extracted images information
+        """
         images = []
         image_list = page.get_images()
         
@@ -329,7 +396,15 @@ class DocumentProcessor:
         return images
     
     def get_document_summary(self, file_path: str) -> Dict[str, Any]:
-        """Get quick summary of document without full content extraction."""
+        """
+        Get quick summary of document without full content extraction.
+        
+        Args:
+            file_path (str): Path to the document file
+            
+        Returns:
+            Dict[str, Any]: Dictionary containing document summary or error information
+        """
         try:
             path = self._validate_file(file_path)
             extension = path.suffix.lower()
@@ -379,17 +454,11 @@ def extract_document_content(file_path: str, include_full_content: bool = True) 
     Extract content from PDF, DOCX, or PPTX files with security restrictions.
     
     Args:
-        file_path: Path to the document file (max 50MB, 100 pages/slides)
-        include_full_content: Whether to include full content or just summary
-    
+        file_path (str): Path to the document file (max 50MB, 100 pages/slides)
+        include_full_content (bool): Whether to include full content or just summary
+        
     Returns:
-        Dictionary containing extracted content and metadata
-    
-    Security limits:
-        - Maximum file size: 50MB
-        - Maximum pages/slides: 100
-        - Maximum extracted characters: 100,000
-        - Path must be within current working directory
+        Dict[str, Any]: Dictionary containing extracted content and metadata
     """
     if not include_full_content:
         return document_processor.get_document_summary(file_path)
@@ -412,7 +481,12 @@ def extract_document_content(file_path: str, include_full_content: bool = True) 
 
 @mcp.tool()
 def list_supported_formats() -> Dict[str, Any]:
-    """List all supported document formats."""
+    """
+    List all supported document formats.
+    
+    Returns:
+        Dict[str, Any]: Dictionary containing supported formats
+    """
     return {
         "success": True,
         "formats": document_processor.supported_formats,
@@ -425,16 +499,11 @@ def batch_process_documents(directory_path: str, recursive: bool = False) -> Dic
     Process multiple documents in a directory with security restrictions.
     
     Args:
-        directory_path: Path to the directory containing documents
-        recursive: Whether to search subdirectories
-    
+        directory_path (str): Path to the directory containing documents
+        recursive (bool): Whether to search subdirectories
+        
     Returns:
-        List of processed documents with summaries
-    
-    Security restrictions:
-        - Only processes files within the specified directory
-        - Maximum 100 documents per batch
-        - No recursive directory traversal outside base path
+        Dict[str, Any]: List of processed documents with summaries
     """
     try:
         path = Path(directory_path)

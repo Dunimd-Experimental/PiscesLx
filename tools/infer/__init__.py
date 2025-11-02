@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -19,21 +18,17 @@
 # limitations under the License.
 
 from .orchestrator import PiscesLxToolsInferOrchestrator
+from .runner import PiscesLxToolsInferRunner  
+from .config import PiscesLxToolsInferConfig
+from .impl import PiscesLxToolsInferImpl
+
+__all__ = [
+    "PiscesLxToolsInferOrchestrator",
+    "PiscesLxToolsInferRunner",
+    "PiscesLxToolsInferConfig", 
+    "PiscesLxToolsInferImpl"
+]
 
 def infer(args):
-    """
-    Acts as a compatibility bridge for manage.py and legacy imports to call the new orchestrator.
-
-    This function preserves the original public entrypoint `tools.infer.infer(args)` while 
-    delegating the actual inference task to the class-based implementation.
-
-    Args:
-        args (Any): The input arguments required for the inference process.
-
-    Returns:
-        None
-    """
-    # Initialize the inference orchestrator with the provided arguments
-    orchestrator = PiscesLxToolsInferOrchestrator(args)
-    # Execute the inference task using the orchestrator
-    orchestrator.run(args)
+    """Legacy entry point for backward compatibility."""
+    return PiscesLxToolsInferOrchestrator(args).run(args)

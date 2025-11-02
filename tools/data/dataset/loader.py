@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -21,7 +20,7 @@
 from typing import Optional
 from torch.utils.data import DataLoader
 
-class PiscesLxToolsBatchConfig:
+class PiscesLxToolsDataBatchConfig:
     """Stores configuration parameters for batch processing in data loading.
     
     These parameters are used to configure the PyTorch DataLoader.
@@ -34,7 +33,7 @@ class PiscesLxToolsBatchConfig:
         drop_last: bool = False,
         prefetch_factor: int = 2
     ):
-        """Initialize a PiscesLxToolsBatchConfig object with batch processing parameters.
+        """Initialize a PiscesLxToolsDataBatchConfig object with batch processing parameters.
 
         Args:
             batch_size (int, optional): Number of samples per batch to load. Defaults to 32.
@@ -49,21 +48,21 @@ class PiscesLxToolsBatchConfig:
         self.drop_last = drop_last
         self.prefetch_factor = prefetch_factor
 
-class PiscesLxToolsOptimizedDataLoader:
+class PiscesLxToolsDataOptimizedDataLoader:
     """A wrapper class for PyTorch's DataLoader with optimized configuration.
     
     Provides different data loading mechanisms based on the dataset type.
     """
-    def __init__(self, dataset, batch_config: Optional[PiscesLxToolsBatchConfig] = None):
+    def __init__(self, dataset, batch_config: Optional[PiscesLxToolsDataBatchConfig] = None):
         """Initialize an PiscesLxToolsOptimizedDataLoader object.
 
         Args:
             dataset: Dataset from which to load the data.
-            batch_config (Optional[PiscesLxToolsBatchConfig], optional): Batch configuration object. 
-                If None, a default PiscesLxToolsBatchConfig will be used. Defaults to None.
+            batch_config (Optional[PiscesLxToolsDataBatchConfig], optional): Batch configuration object. 
+                If None, a default PiscesLxToolsDataBatchConfig will be used. Defaults to None.
         """
         self.dataset = dataset
-        self.cfg = batch_config or PiscesLxToolsBatchConfig()
+        self.cfg = batch_config or PiscesLxToolsDataBatchConfig()
 
     def get(self) -> DataLoader:
         """Get a configured PyTorch DataLoader instance based on the dataset type.

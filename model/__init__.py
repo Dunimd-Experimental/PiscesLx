@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -36,9 +35,10 @@ from .multimodal.reasoner.multipath_core import ArcticMultiPathReasoningEngine
 from .multimodal.reasoner.multipath_meta import ArcticMultiPathMetaLearner
 from .multimodal.reasoner.enhancer import ArcticMultiModalReasoningEnhancer
 
-# Merge MCP public classes into model package exports
-from .mcp.server import ArcticOptimizedMCPServer
-from .mcp.translator import ArcticMCPTranslationLayer, ArcticAgentCall
+# Merge MCP public classes into model package exports - Updated to use utils.mcp
+from utils.mcp import PiscesLxCoreMCPPlaza as ArcticOptimizedMCPServer
+from utils.mcp.xml_utils import PiscesLxCoreMCPXMLParser as ArcticMCPTranslationLayer
+from utils.mcp.types import PiscesLxCoreMCPAgenticCall as ArcticAgenticCall
 
 __all__ = [
     "ArcticConfig",
@@ -63,5 +63,5 @@ __all__ = [
     "ArcticMultiModalReasoningEnhancer",
     "ArcticOptimizedMCPServer",
     "ArcticMCPTranslationLayer",
-    "ArcticAgentCall",
+    "ArcticAgenticCall",
 ]

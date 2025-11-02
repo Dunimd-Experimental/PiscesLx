@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -110,6 +109,14 @@ class ArcticConfig:
     moe_min_capacity: int = 4  # Minimum capacity for expert routing
     moe_prediction_horizon: int = 8  # Prediction horizon for dynamic capacity
     
+    # Expert-level gradient clipping for 3rd-order mixture stability
+    moe_expert_grad_clip: float = 0.1  # Expert-level gradient clipping threshold
+    moe_z_loss_alpha: float = 1e-4  # Z-loss coefficient for routing stability
+    moe_random_to_gradient_steps: int = 500  # Steps to switch from random to gradient routing
+    moe_gate_warmup_alpha: float = 0.05  # Gate warmup coefficient for cold start
+    moe_attention_mamba_temp: float = 0.3  # Temperature for attention-mamba at 8k length
+    moe_l2_smooth_8k: float = 0.01  # L2 smoothing for 8k sequence length
+    
     intermediate_size: int = 5632
     max_position_embeddings: int = 8192
     rope_theta: float = 1e6
@@ -190,7 +197,7 @@ class ArcticConfig:
     mamba3_conv_bias: bool = True  # Whether to use bias in convolution
     mamba3_proj_bias: bool = False  # Whether to use bias in projections
     mamba3_use_fast_path: bool = True  # Whether to use fast path optimization
-    mamba3_layer_norm_eps: float = 1e-5  # Layer normalization epsilon for Mamba-3
+    mamba3_layer_norm_eps: float = 1e-4  # Layer normalization epsilon for Mamba-3 (increased for mixed precision stability)
     mamba3_sequence_threshold: int = 8192  # Sequence length threshold to switch between attention and Mamba-3
     mamba3_gate_mode: str = "adaptive"  # Gate mode: "learned", "adaptive", "fixed"
     mamba3_gate_init: float = 0.5  # Initial gate value for learned mode

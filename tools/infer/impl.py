@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -508,6 +507,14 @@ def _infer_impl(args: Any) -> None:
     _dev_cfg = f.setup_devices(mode="auto")
     _amp_dtype = f.amp_dtype(_dev_cfg.get("dtype", "auto"))
     _mp_enabled = bool(_dev_cfg.get("mixed_precision", torch.cuda.is_available())) and torch.cuda.is_available()
+    # Initialize model
+    try:
+        model = ArcticModel(cfg)
+        logger.success(f"Model initialized with config: {model_size}")
+    except Exception as e:
+        logger.error(f"Failed to initialize model: {e}")
+        raise
+    
     # Ensure model is on the selected device and uses mixed precision if available
     try:
         model = model.to(device, dtype=_amp_dtype if _mp_enabled else None)
@@ -515,7 +522,9 @@ def _infer_impl(args: Any) -> None:
         pass
     # DataParallel is removed; rely on engine tensor-parallel or single-device execution via unified device facade
     lora_used = False
-{{ ... }}
+    
+    # Load model checkpoint if provided
+    if hasattr(args, 'ckpt') and args.ckpt:
         logger.success(f"Loading model: {args.ckpt}")
         checkpoint = torch.load(args.ckpt, map_location=device)
         state_dict = checkpoint['model'] if 'model' in checkpoint else checkpoint
@@ -585,3 +594,163 @@ def _infer_impl(args: Any) -> None:
         elif not lora_used:
             # Load standard model weights if no LoRA is used
             model.load_state_dict(state_dict, strict=False)
+    
+    # Set model to evaluation mode
+    model.eval()
+    
+    # Initialize tokenizer
+    tokenizer = get_tokenizer()
+    
+    # Process input prompt
+    prompt = str(args.prompt).strip()
+    if not prompt:
+        raise ValueError("Empty prompt provided")
+    
+    # Handle image input if provided
+    if hasattr(args, 'image') and args.image:
+        try:
+            image = Image.open(args.image).convert('RGB')
+            image_tensor = TF.to_tensor(image).unsqueeze(0).to(device)
+            # Process image through vision encoder if available
+            if hasattr(model, 'vision_encoder'):
+                image_features = model.vision_encoder(image_tensor)
+                prompt = f"<image>{prompt}"
+            else:
+                logger.warning("Model does not have vision encoder, treating as text-only input")
+        except Exception as e:
+            logger.warning(f"Failed to process image: {e}, treating as text-only input")
+    
+    # Tokenize input
+    try:
+        input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
+    except Exception as e:
+        logger.error(f"Failed to tokenize input: {e}")
+        raise
+    
+    # Generate text based on inference method
+    if args.use_vllm:
+        # Use VLLM for inference
+        try:
+            vllm_engine = VLLMEngine(
+                model_path=args.ckpt if hasattr(args, 'ckpt') and args.ckpt else "piscesl1-model",
+                dtype=args.vllm_dtype,
+                gpu_memory_utilization=args.vllm_gpu_mem,
+                tensor_parallel_size=args.vllm_tp_size
+            )
+            
+            result = vllm_engine.infer(
+                prompt=prompt,
+                temperature=args.temperature,
+                max_tokens=args.max_length,
+                top_p=args.top_p,
+                stop=args.stop
+            )
+            
+            if result:
+                logger.success("VLLM inference completed successfully")
+                print(f"Generated text: {result}")
+                _emit('on_infer_end', result=result, args=args)
+                return
+            else:
+                logger.warning("VLLM inference failed, falling back to native inference")
+        except Exception as e:
+            logger.error(f"VLLM inference error: {e}, falling back to native inference")
+    
+    # Native PyTorch inference
+    try:
+        logger.info("Starting native PyTorch inference...")
+        
+        # Prepare generation parameters
+        generation_config = {
+            'max_length': min(args.max_length, 2048),  # Safety limit
+            'temperature': args.temperature,
+            'top_p': args.top_p,
+            'do_sample': True,
+            'pad_token_id': tokenizer.pad_token_id or tokenizer.eos_token_id,
+            'eos_token_id': tokenizer.eos_token_id,
+        }
+        
+        # Add stop sequences if provided
+        if args.stop:
+            stop_sequences = args.stop if isinstance(args.stop, (list, tuple)) else [args.stop]
+            generation_config['stop_sequences'] = stop_sequences
+        
+        # Generate text
+        with torch.no_grad():
+            if args.speculative and hasattr(model, 'speculative_generate'):
+                # Use speculative decoding if available
+                logger.info("Using speculative decoding...")
+                output_ids = model.speculative_generate(
+                    input_ids,
+                    gamma=args.spec_gamma,
+                    **generation_config
+                )
+            else:
+                # Standard generation
+                outputs = model.generate(input_ids, **generation_config)
+                output_ids = outputs[0] if outputs.dim() > 1 else outputs
+            
+            # Decode output
+            generated_text = tokenizer.decode(output_ids, skip_special_tokens=True)
+            
+            # Remove input prompt from output if present
+            if generated_text.startswith(prompt):
+                generated_text = generated_text[len(prompt):].strip()
+            
+            # Apply watermark
+            try:
+                from tools.infer.watermark import watermark_text
+                watermark_metadata = {
+                    "prompt": prompt,
+                    "params": {
+                        "temperature": args.temperature,
+                        "max_length": args.max_length,
+                        "top_p": args.top_p,
+                        "use_vllm": False,
+                        "speculative": args.speculative
+                    },
+                    "user_id": "piscesl1_user",
+                    "timestamp": str(int(time.time()))
+                }
+                watermarked_text = watermark_text(generated_text, prompt, watermark_metadata)
+                result = watermarked_text
+            except Exception as e:
+                logger.warning(f"Watermarking failed: {e}, using raw generated text")
+                result = generated_text
+            
+            logger.success("Native inference completed successfully")
+            print(f"Generated text: {result}")
+            
+            # Emit completion event
+            _emit('on_infer_end', result=result, args=args)
+            
+            # Stop profiler if available
+            if _PROFILER is not None and hasattr(_PROFILER, 'stop'):
+                try:
+                    _PROFILER.stop('infer')
+                except Exception:
+                    pass
+            
+            return result
+            
+    except Exception as e:
+        logger.error(f"Native inference failed: {e}")
+        _emit('on_infer_error', error=str(e), args=args)
+        raise
+
+# Module-level infer function for backward compatibility
+def infer(args):
+    """
+    Perform inference using the module-level implementation.
+    
+    This function provides backward compatibility by delegating to the 
+    PiscesLxToolsInferImpl class.
+    
+    Args:
+        args: Arguments for the inference process.
+        
+    Returns:
+        The result of the inference operation.
+    """
+    impl = PiscesLxToolsInferImpl()
+    return impl.infer(args)

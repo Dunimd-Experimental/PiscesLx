@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -41,7 +40,8 @@ def read_config(path: Optional[str] = None) -> Dict[str, Any]:
 
     Returns:
         Dict[str, Any]: The configuration data. If an error occurs, 
-                       return {"version": "1.0", "tools": {}, "meta": {}}.
+                       from configs.version import MCP_TOOL_VERSION
+            return {"version": MCP_TOOL_VERSION, "tools": {}, "meta": {}}.
     """
     cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
     try:
@@ -51,7 +51,8 @@ def read_config(path: Optional[str] = None) -> Dict[str, Any]:
         with open(cfg_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         # Ensure the data has the required basic keys
-        data.setdefault("version", "1.0")
+        from configs.version import MCP_TOOL_VERSION
+        data.setdefault("version", MCP_TOOL_VERSION)
         data.setdefault("tools", {})
         data.setdefault("meta", {})
         return data

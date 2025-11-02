@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -25,123 +24,89 @@ import threading
 from queue import Queue, Empty
 from typing import Dict, Optional, List
 
-class PiscesLxToolsMemoryMonitor:
-    """A class for monitoring memory usage of the current process, system, and GPUs, 
-    and performing memory cleanup operations when necessary."""
+class PiscesLxToolsDataMemoryMonitor:
+    """Monitor memory usage during dataset processing."""
 
-    def __init__(self, threshold_gb: float = 8.0):
-        """Initialize the PiscesLxToolsMemoryMonitor instance.
+    def __init__(self):
+        """Initialize the memory monitor."""
+        self.process = psutil.Process()
+        self.initial_memory = self.process.memory_info().rss
+        self.peak_memory = self.initial_memory
 
-        Args:
-            threshold_gb (float, optional): Memory threshold in gigabytes. 
-                Garbage collection will be triggered if the process memory exceeds this value. Defaults to 8.0.
+    def check_memory(self) -> float:
         """
-        self.threshold_gb = threshold_gb
-        self.alerts = 0
-
-    def check_memory(self) -> Dict[str, float]:
-        """Check the memory usage of the current process, system, and GPUs.
-
+        Check current memory usage.
+        
         Returns:
-            Dict[str, float]: A dictionary containing memory usage information:
-                - "process_memory_gb": Resident set size of the process in gigabytes.
-                - "system_available_gb": Available system memory in gigabytes.
-                - "system_used_percent": Percentage of used system memory.
-                - "gpu_memory": A dictionary with memory information for each available GPU, 
-                                including allocated, cached, and total memory.
+            float: Current memory usage in MB.
         """
-        # Get the current process
-        process = psutil.Process()
-        # Get the memory information of the current process
-        memory_info = process.memory_info()
-        # Get the system virtual memory information
-        system_memory = psutil.virtual_memory()
-        gpu_memory = {}
-        try:
-            if torch.cuda.is_available():
-                # Iterate over all available GPUs
-                for i in range(torch.cuda.device_count()):
-                    gpu_memory[f"gpu_{i}"] = {
-                        "allocated": torch.cuda.memory_allocated(i) / 1024**3,
-                        "cached": torch.cuda.memory_reserved(i) / 1024**3,
-                        "total": torch.cuda.get_device_properties(i).total_memory / 1024**3,
-                    }
-        except Exception:
-            # Silently handle exceptions when getting GPU memory information
-            pass
+        current_memory = self.process.memory_info().rss
+        self.peak_memory = max(self.peak_memory, current_memory)
+        return current_memory / 1024 / 1024
+
+    def get_peak_memory(self) -> float:
+        """
+        Get peak memory usage.
+        
+        Returns:
+            float: Peak memory usage in MB.
+        """
+        return self.peak_memory / 1024 / 1024
+
+    def get_memory_stats(self) -> dict:
+        """
+        Get comprehensive memory statistics.
+        
+        Returns:
+            dict: Memory statistics including current and peak usage.
+        """
+        current_mb = self.check_memory()
+        peak_mb = self.get_peak_memory()
         return {
-            "process_memory_gb": memory_info.rss / 1024**3,
-            "system_available_gb": system_memory.available / 1024**3,
-            "system_used_percent": system_memory.percent,
-            "gpu_memory": gpu_memory,
+            "current_mb": current_mb,
+            "peak_mb": peak_mb,
+            "increase_mb": peak_mb - (self.initial_memory / 1024 / 1024)
         }
 
-    def should_gc(self) -> bool:
-        """Determine if garbage collection should be performed based on the process memory usage.
-
-        Increments the alert counter if the process memory exceeds the predefined threshold.
-
-        Returns:
-            bool: True if the process memory exceeds the threshold, False otherwise.
-        """
-        mem = self.check_memory()
-        if mem["process_memory_gb"] > self.threshold_gb:
-            self.alerts += 1
-            return True
-        return False
-
-    def cleanup(self):
-        """Perform garbage collection and clean up the GPU cache if available.
-
-        Silently handles exceptions that occur during the cleanup process.
-        """
-        try:
-            # Perform garbage collection
-            gc.collect()
-            if torch.cuda.is_available():
-                # Empty the GPU cache
-                torch.cuda.empty_cache()
-                # Synchronize the current stream on the current device
-                torch.cuda.synchronize()
-        except Exception:
-            # Silently handle exceptions during cleanup
-            pass
-
-class PiscesLxToolsStreamingDataBuffer:
+class PiscesLxToolsDataStreamingDataBuffer:
     """A class for buffering streaming data using a thread-safe queue."""
 
-    def __init__(self, buffer_size: int = 1000):
-        """Initialize the PiscesLxToolsStreamingDataBuffer instance.
-
-        Args:
-            buffer_size (int, optional): Maximum size of the buffer queue. Defaults to 1000.
+    def __init__(self, max_size: int = 1000):
         """
-        self.buffer: "Queue[List[dict]]" = Queue(maxsize=buffer_size)
+        Initialize the streaming data buffer.
+        
+        Args:
+            max_size (int): Maximum number of items to buffer.
+        """
+        self.max_size = max_size
+        self.buffer = Queue(maxsize=max_size)
         self._stop_event = threading.Event()
 
-    def add_batch(self, batch_data: "List[dict]"):
-        """Add a batch of data to the buffer if the stop event is not set.
-
-        Args:
-            batch_data (List[dict]): A batch of data to be added to the buffer.
+    def put(self, item: Any) -> bool:
         """
-        if self._stop_event.is_set():
-            return
-        try:
-            # Put the batch data into the buffer with a timeout of 1 second
-            self.buffer.put(batch_data, timeout=1.0)
-        except Exception:
-            # Silently handle exceptions when adding data to the buffer
-            pass
-
-    def get_batch(self, timeout: float = 5.0) -> Optional["List[dict]"]:
-        """Retrieve a batch of data from the buffer with a specified timeout.
-
+        Put an item into the buffer.
+        
         Args:
-            timeout (float, optional): Maximum time in seconds to wait for data. Defaults to 5.0.
-
+            item (Any): The item to add to the buffer.
+            
         Returns:
-            Optional[List[dict]]: A batch of data if available within the timeout, None otherwise.
+            bool: True if the item was added successfully, False if the buffer is full.
+        """
+        try:
+            self.buffer.put(item, block=False)
+            return True
+        except queue.Full:
+            return False
+
+    def get(self, timeout: Optional[float] = None) -> Optional[Any]:
+        """
+        Get an item from the buffer.
+        
+        Args:
+            timeout (Optional[float]): Timeout in seconds.
+            
+        Returns:
+            Optional[Any]: The item from the buffer, or None if timeout or stopped.
         """
         try:
             return self.buffer.get(timeout=timeout)
@@ -149,5 +114,41 @@ class PiscesLxToolsStreamingDataBuffer:
             return None
 
     def stop(self):
-        """Set the stop event to prevent further data from being added to the buffer."""
+        """Stop the buffer."""
         self._stop_event.set()
+
+    def is_stopped(self) -> bool:
+        """
+        Check if the buffer is stopped.
+        
+        Returns:
+            bool: True if the buffer is stopped.
+        """
+        return self._stop_event.is_set()
+
+    def size(self) -> int:
+        """
+        Get the current size of the buffer.
+        
+        Returns:
+            int: Number of items in the buffer.
+        """
+        return self.buffer.qsize()
+
+    def is_empty(self) -> bool:
+        """
+        Check if the buffer is empty.
+        
+        Returns:
+            bool: True if the buffer is empty.
+        """
+        return self.buffer.empty()
+
+    def is_full(self) -> bool:
+        """
+        Check if the buffer is full.
+        
+        Returns:
+            bool: True if the buffer is full.
+        """
+        return self.buffer.full()

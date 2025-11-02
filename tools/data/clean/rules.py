@@ -7,7 +7,6 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -53,7 +52,7 @@ AUTO_FIELDS = {
     "video": ["video", "video_path", "mp4", "avi", "mov", "mkv"],
 }
 
-class StreamCleaner:
+class PiscesLxToolsDataStreamCleaner:
     """
     A class for cleaning text and media data, supporting text cleaning with specified rules and media quality control.
     """
@@ -130,7 +129,7 @@ class StreamCleaner:
             from .media import MediaCleaner
             if media_type == "image":
                 from PIL import Image
-                with Image.open(img_path) as img:
+                with Image.open(media_path) as img:
                     return MediaCleaner._calculate_image_quality(img)
             if media_type == "audio":
                 return MediaCleaner._calculate_audio_quality(media_path)
