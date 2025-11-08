@@ -210,12 +210,10 @@ class PiscesLxCoreReporter:
 
         version = data.get("version")
         if version:
-            ul_items = self._read_ul_changelog(version)
-            if ul_items:
-                lines.append(f"## UL Changelog for Version {version}")
-                for item in ul_items:
-                    lines.append(f"- {item}")
-                lines.append("")
+            # UL changelog functionality removed - version info preserved
+            lines.append(f"## Version Information")
+            lines.append(f"- **Version**: {version}")
+            lines.append("")
 
         if data.get("events"):
             lines.append("## Events")

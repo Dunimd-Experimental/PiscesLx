@@ -35,11 +35,6 @@ from .multimodal.reasoner.multipath_core import ArcticMultiPathReasoningEngine
 from .multimodal.reasoner.multipath_meta import ArcticMultiPathMetaLearner
 from .multimodal.reasoner.enhancer import ArcticMultiModalReasoningEnhancer
 
-# Merge MCP public classes into model package exports - Updated to use utils.mcp
-from utils.mcp import PiscesLxCoreMCPPlaza as ArcticOptimizedMCPServer
-from utils.mcp.xml_utils import PiscesLxCoreMCPXMLParser as ArcticMCPTranslationLayer
-from utils.mcp.types import PiscesLxCoreMCPAgenticCall as ArcticAgenticCall
-
 __all__ = [
     "ArcticConfig",
     "ArcticH2OAttention",
@@ -61,7 +56,4 @@ __all__ = [
     "ArcticMultiPathReasoningEngine",
     "ArcticMultiPathMetaLearner",
     "ArcticMultiModalReasoningEnhancer",
-    "ArcticOptimizedMCPServer",
-    "ArcticMCPTranslationLayer",
-    "ArcticAgenticCall",
 ]

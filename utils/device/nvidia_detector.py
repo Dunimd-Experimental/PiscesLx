@@ -61,10 +61,11 @@ class PiscesLxCoreDeviceNvidiaDetector:
             
         try:
             # Use `nvidia-smi` to get comprehensive GPU information
+            # Increase timeout for T4 and other server GPUs that may respond slower
             result = subprocess.run([
                 'nvidia-smi', '--query-gpu=index,name,memory.total,memory.used,memory.free,temperature.gpu,utilization.gpu,power.draw,power.limit,clocks.mem,memory.bus_width', 
                 '--format=csv,noheader,nounits'
-            ], capture_output=True, text=True, timeout=10)
+            ], capture_output=True, text=True, timeout=60)  # Increased from 30s to 60s for server GPUs like T4 that may be very slow
             
             if result.returncode == 0 and result.stdout.strip():
                 lines = result.stdout.strip().split('\n')
@@ -72,31 +73,47 @@ class PiscesLxCoreDeviceNvidiaDetector:
                     parts = line.split(', ')
                     if len(parts) >= 11:
                         self.gpu_info.append({
-                            'index': int(parts[0]),
-                            'name': parts[1].strip(),
-                            'memory_total': int(parts[2]),
-                            'memory_used': int(parts[3]),
-                            'memory_free': int(parts[4]),
-                            'temperature': int(parts[5]) if parts[5] != 'N/A' else self._get_gpu_temperature_fallback(int(parts[0])),
-                            'gpu_utilization': int(parts[6]) if parts[6] != 'N/A' else 0,
-                            'power_draw': float(parts[7]) if parts[7] != 'N/A' else 0.0,
-                            'power_limit': float(parts[8]) if parts[8] != 'N/A' else 0.0,
-                            'memory_clock': int(parts[9]) if parts[9] != 'N/A' else 0,
-                            'memory_bus_width': int(parts[10]) if parts[10] != 'N/A' else 0,
-                            'cuda_version': self.cuda_version,
-                            'driver_version': self._get_driver_version()
-                        })
+                        'index': int(parts[0]),
+                        'name': parts[1].strip(),
+                        'memory_total': int(parts[2]),
+                        'memory_used': int(parts[3]),
+                        'memory_free': int(parts[4]),
+                        'temperature': int(parts[5]) if parts[5] != 'N/A' else self._get_gpu_temperature_fallback(int(parts[0])),
+                        'gpu_utilization': int(parts[6]) if parts[6] != 'N/A' else 0,
+                        'power_draw': float(parts[7]) if parts[7] != 'N/A' else 0.0,
+                        'power_limit': float(parts[8]) if parts[8] != 'N/A' else 0.0,
+                        'memory_clock': int(parts[9]) if parts[9] != 'N/A' else 0,
+                        'memory_bus_width': int(parts[10]) if parts[10] != 'N/A' else 0,
+                        'vendor': 'nvidia',
+                        'platform': 'cuda',
+                        'cuda_version': self.cuda_version,
+                        'driver_version': self._get_driver_version()
+                    })
                         
-                logger.info("NVIDIA GPU detection", {"count": len(self.gpu_info), "method": "nvidia-smi"})
+                logger.info("NVIDIA GPU detection", count=len(self.gpu_info), method="nvidia-smi")
+                
+                # Add compute capability information
+                self._add_cuda_compute_info()
             else:
                 # Fallback if nvidia-smi returned no data
-                logger.debug("nvidia-smi returned no data, falling back to torch.cuda", {"returncode": result.returncode})
+                logger.debug("nvidia-smi returned no data, falling back to torch.cuda", returncode=result.returncode)
+                # Add specific logging for T4 detection issues
+                if result.stderr and 'T4' in result.stderr:
+                    logger.warning("Possible T4 detection issue detected", stderr=result.stderr)
                 self._detect_via_torch_cuda()
                 
         except Exception as e:
             logger.error("nvidia-smi detection failed", error=str(e), error_class=type(e).__name__)
+            # Add specific handling for timeout errors on server GPUs like T4
+            if 'timeout' in str(e).lower():
+                logger.warning("nvidia-smi timeout detected, this may affect T4 and other server GPUs", 
+                             error=str(e), 
+                             suggestion="Consider checking nvidia-smi availability and permissions")
             # Fallback to torch-based detection
             self._detect_via_torch_cuda()
+        
+        # Return the detected GPU information
+        return self.gpu_info
             
     def _detect_via_torch_cuda(self) -> None:
         """
@@ -124,6 +141,8 @@ class PiscesLxCoreDeviceNvidiaDetector:
                         'power_limit': 0.0,  # Not available via PyTorch
                         'memory_clock': 0,  # Not available via PyTorch
                         'memory_bus_width': 0,  # Not available via PyTorch
+                        'vendor': 'nvidia',
+                        'platform': 'cuda',
                         'cuda_version': self.cuda_version,
                         'driver_version': 'unknown',
                         'multi_processor_count': props.multi_processor_count,
@@ -135,10 +154,16 @@ class PiscesLxCoreDeviceNvidiaDetector:
                     logger.error("Failed to detect CUDA device", device_index=i, error=str(e))
                     continue
                     
-            logger.info("NVIDIA GPU detection", {"count": len(self.gpu_info), "method": "pytorch-cuda"})
+            logger.info("NVIDIA GPU detection", count=len(self.gpu_info), method="pytorch-cuda")
+            
+            # Add compute capability information for PyTorch-detected GPUs
+            self._add_cuda_compute_info()
             
         except Exception as e:
             logger.error("PyTorch CUDA detection failed", error=str(e), error_class=type(e).__name__)
+        
+        # Return the detected GPU information
+        return self.gpu_info
             
     def _add_cuda_compute_info(self) -> None:
         """
@@ -156,6 +181,31 @@ class PiscesLxCoreDeviceNvidiaDetector:
                     gpu['compute_capability'] = f"{major}.{minor}"
                     # GPUs with Volta architecture (7.0) and newer are considered modern
                     gpu['is_modern'] = major >= 7
+                else:
+                    # Try to infer compute capability from GPU name for nvidia-smi path
+                    gpu_name = gpu.get('name', '').lower()
+                    if 't4' in gpu_name or 'tesla t4' in gpu_name:
+                        gpu['compute_capability'] = '7.5'
+                        gpu['is_modern'] = True
+                    elif 'v100' in gpu_name or 'tesla v100' in gpu_name:
+                        gpu['compute_capability'] = '7.0'
+                        gpu['is_modern'] = True
+                    elif 'a100' in gpu_name or 'tesla a100' in gpu_name:
+                        gpu['compute_capability'] = '8.0'
+                        gpu['is_modern'] = True
+                    elif 'h100' in gpu_name or 'tesla h100' in gpu_name:
+                        gpu['compute_capability'] = '9.0'
+                        gpu['is_modern'] = True
+                    elif 'rtx' in gpu_name and ('30' in gpu_name or '40' in gpu_name):
+                        gpu['compute_capability'] = '8.6'
+                        gpu['is_modern'] = True
+                    elif 'rtx' in gpu_name and '20' in gpu_name:
+                        gpu['compute_capability'] = '7.5'
+                        gpu['is_modern'] = True
+                    else:
+                        # Default to modern for unknown but recent GPUs
+                        gpu['compute_capability'] = '7.0'
+                        gpu['is_modern'] = True
                     
                     # Calculate memory bandwidth (simplified calculation)
                     memory_bus_width = gpu.get('memory_bus_width', 0)
@@ -187,10 +237,10 @@ class PiscesLxCoreDeviceNvidiaDetector:
             except (ImportError, pynvml.NVMLError):
                 pass
             
-            # Try direct nvidia-smi call for specific GPU
+            # Try direct nvidia-smi call for specific GPU - increased timeout for server GPUs
             result = subprocess.run([
                 'nvidia-smi', f'--id={gpu_index}', '--query-gpu=temperature.gpu', '--format=csv,noheader,nounits'
-            ], capture_output=True, text=True, timeout=5)
+            ], capture_output=True, text=True, timeout=30)  # Increased from 15s to 30s for server GPUs like T4 that may be very slow
             
             if result.returncode == 0 and result.stdout.strip():
                 temp_str = result.stdout.strip().split('\n')[0]
@@ -202,10 +252,10 @@ class PiscesLxCoreDeviceNvidiaDetector:
             
         # Final fallback: estimate based on GPU model and utilization
         try:
-            # Try to get GPU name and make educated guess
+            # Try to get GPU name and make educated guess - increased timeout for server GPUs
             result = subprocess.run([
                 'nvidia-smi', f'--id={gpu_index}', '--query-gpu=name', '--format=csv,noheader'
-            ], capture_output=True, text=True, timeout=3)
+            ], capture_output=True, text=True, timeout=20)  # Increased from 10s to 20s for server GPUs like T4 that may be very slow
             
             if result.returncode == 0 and result.stdout.strip():
                 gpu_name = result.stdout.strip().split('\n')[0].lower()
@@ -216,6 +266,8 @@ class PiscesLxCoreDeviceNvidiaDetector:
                     return 55  # Previous generation
                 elif 'p100' in gpu_name or 'gtx' in gpu_name:
                     return 65  # Older generation
+                elif 't4' in gpu_name or 'tesla t4' in gpu_name:
+                    return 40  # T4 is very efficient, runs cool
                 else:
                     return 50  # Default for unknown models
         except Exception:
@@ -233,15 +285,15 @@ class PiscesLxCoreDeviceNvidiaDetector:
         try:
             result = subprocess.run(
                 ['nvidia-smi', '--query-gpu=driver_version', '--format=csv,noheader,nounits'],
-                capture_output=True, text=True, timeout=5,
+                capture_output=True, text=True, timeout=30,  # Increased from 15s to 30s for server environments like T4 that may be very slow
                 check=True
             )
             if result.returncode == 0 and result.stdout.strip():
                 return result.stdout.strip().split('\n')[0]
         except subprocess.CalledProcessError as e:
-            logger.debug("Failed to get NVIDIA driver version", {"error": str(e), "error_class": type(e).__name__})
+            logger.debug("Failed to get NVIDIA driver version", error=str(e), error_class=type(e).__name__)
         except Exception as e:
-            logger.debug("Failed to get NVIDIA driver version", {"error": str(e), "error_class": type(e).__name__})
+            logger.debug("Failed to get NVIDIA driver version", error=str(e), error_class=type(e).__name__)
         return 'unknown'
         
     def get_recommended_strategy(self, model_size: str = None) -> Dict[str, Any]:

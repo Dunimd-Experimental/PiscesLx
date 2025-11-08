@@ -29,8 +29,8 @@ class PiscesWatermark:
     def __init__(self, model_id: str = "PiscesL1-1.5B", version: str = None):
         # Initialize model ID and version
         self.model_id = model_id
-        from configs.version import WATERMARK_VERSION
-        self.version = version or WATERMARK_VERSION
+        from configs.version import PVERSION
+        self.version = version or PVERSION
         # Generate a unique watermark key
         self.watermark_key = self._generate_watermark_key()
         # Load watermark configuration from JSON file
@@ -41,13 +41,18 @@ class PiscesWatermark:
         self.char_to_bits = {v: k for k, v in self.zero_width_chars.items()}
     
     def _load_watermark_config(self) -> Dict[str, Any]:
+        from configs.version import PVERSION
         try:
             with open('configs/watermark.json', 'r', encoding='utf-8') as f:
-                return json.load(f)
+                config = json.load(f)
+                # Update compliance_version placeholder from PVERSION
+            if "watermark_2025" in config and "compliance_version" in config["watermark_2025"] and config["watermark_2025"]["compliance_version"] == "{{VERSION}}":
+                config["watermark_2025"]["compliance_version"] = PVERSION
+                return config
         except (FileNotFoundError, json.JSONDecodeError):
             return {
                 "watermark_2025": {
-                    "compliance_version": "2025.09.01",
+                    "compliance_version": "{{VERSION}}",
                     "text": {
                         "zero_width": {
                             "force_density": 0.33,
@@ -122,7 +127,8 @@ class PiscesWatermark:
         return binary_str
 
     def _encode_watermark_bits_2025(self, payload: Dict[str, Any]) -> str:
-        payload["encoding_version"] = "2025.09.01"
+        from configs.version import PVERSION
+        payload["encoding_version"] = PVERSION
         payload["encoding_time"] = int(time.time() * 1000)
         json_str = json.dumps(payload, separators=(',', ':'), sort_keys=True, ensure_ascii=False)
         md5_hash = hashlib.md5(json_str.encode()).hexdigest()

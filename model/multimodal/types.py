@@ -31,7 +31,7 @@ class ArcticAgenticState(Enum):
     COMPLETED = "completed"
     ERROR = "error"
 
-class PiscesLxCoreMCPMessageType(Enum):
+class ArcticMCPMessageType(Enum):
     OBSERVATION = "observation"
     ACTION = "action"
     TOOL_CALL = "tool_call"
@@ -50,7 +50,7 @@ class ArcticGenerationCondition:
     generation_params: Optional[Dict[str, Any]] = None
 
 @dataclass
-class PiscesLxCoreMCPMessage:
+class ArcticMCPMessage:
     message_type: str
     agentic_id: str
     payload: Dict[str, Any]
@@ -59,22 +59,22 @@ class PiscesLxCoreMCPMessage:
     priority: str = "normal"
 
 @dataclass
-class PiscesLxCoreAgenticAction:
+class ArcticAgenticAction:
     action_type: str
     parameters: Dict[str, Any]
     confidence: float = 1.0
     reasoning: str = ""
 
 @dataclass
-class PiscesLxCoreAgenticObservation:
+class ArcticAgenticObservation:
     modality: str  # "text", "image", "audio", "tool_result"
     content: Any
     metadata: Dict[str, Any]
 
 @dataclass
 class ArcticAgenticMemory:
-    observations: List[PiscesLxCoreAgenticObservation]
-    actions: List[PiscesLxCoreAgenticAction]
+    observations: List[ArcticAgenticObservation]
+    actions: List[ArcticAgenticAction]
     reflections: List[str]
     
     def __post_init__(self):
@@ -83,7 +83,7 @@ class ArcticAgenticMemory:
         self.max_memory_size = 1000
         self.compression_threshold = 0.7
     
-    def add_observation(self, observation: PiscesLxCoreAgenticObservation):
+    def add_observation(self, observation: ArcticAgenticObservation):
         self.observations.append(observation)
         try:
             from sentence_transformers import SentenceTransformer
@@ -108,7 +108,7 @@ class ArcticAgenticMemory:
         if len(self.observations) > self.max_memory_size:
             self.compress_memory()
     
-    def add_action(self, action: PiscesLxCoreAgenticAction):
+    def add_action(self, action: ArcticAgenticAction):
         self.actions.append(action)
         embedding = torch.randn(768)
         self.embeddings.append(embedding)
@@ -173,6 +173,3 @@ class ArcticAgenticMemory:
     
     def get_recent_context(self, k: int = 5) -> Dict[str, List]:
         return {"recent_observations": self.observations[-k:],"recent_actions": self.actions[-k:],"recent_reflections": self.reflections[-k:],"total_count": len(self.observations) + len(self.actions) + len(self.reflections),"memory_summary": {"observations": len(self.observations),"actions": len(self.actions),"reflections": len(self.reflections)}}
-
-# 旧名别名
-PiscesAgentState = ArcticAgenticState

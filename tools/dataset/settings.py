@@ -27,8 +27,8 @@ from func_templates import FunctionTemplateManager
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 
-from utils import get_cache_manager
-cache_manager = get_cache_manager()
+from utils.cache import PiscesLxCoreCacheManagerFacade
+cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
 DATA_CACHE_DIR = cache_manager.get_cache_dir("data_cache")
 
 # Use centralized config manager
@@ -450,10 +450,10 @@ def render_settings_page(initial_settings: AppSettings) -> None:
 
     with t_cache:
         with st.expander(t("cache.section_stats"), expanded=initial_settings.expand_panels_by_default):
-            from utils import get_cache_manager
+            from utils.cache import PiscesLxCoreCacheManagerFacade
             import os
             from pathlib import Path
-            cache_mgr = get_cache_manager()
+            cache_mgr = PiscesLxCoreCacheManagerFacade.get_instance()
             stats = cache_mgr.get_cache_stats()
             cache_dir = Path(str(stats.get("base_dir", "-")))
             cache_root = cache_dir.parent if cache_dir.name == 'cache' else cache_dir
@@ -543,8 +543,8 @@ def render_settings_page(initial_settings: AppSettings) -> None:
                 st.rerun()
 
         with st.expander(t("cache.section_clean"), expanded=initial_settings.expand_panels_by_default):
-            from utils import get_cache_manager
-            cache_mgr = get_cache_manager()
+            from utils.cache import PiscesLxCoreCacheManagerFacade
+            cache_mgr = PiscesLxCoreCacheManagerFacade.get_instance()
             import os, shutil
 
             st.warning(t("cache.caution_detailed"))

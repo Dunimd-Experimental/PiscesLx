@@ -47,13 +47,13 @@ class PiscesLxToolsBenchmark:
             metrics=self.config.metrics,
         )
 
-    def _load_config(self, config: Union[str, Dict, BenchmarkConfig]) -> BenchmarkConfig:
+    def _load_config(self, config: Union[str, Dict, PiscesLxToolsBenchmarkConfig]) -> PiscesLxToolsBenchmarkConfig:
         if isinstance(config, str):
             config_data = load_config_from_file(config)
-            return BenchmarkConfig(**config_data)
+            return PiscesLxToolsBenchmarkConfig(**config_data)
         elif isinstance(config, dict):
-            return BenchmarkConfig(**config)
-        elif isinstance(config, BenchmarkConfig):
+            return PiscesLxToolsBenchmarkConfig(**config)
+        elif isinstance(config, PiscesLxToolsBenchmarkConfig):
             return config
         else:
             raise ValueError(f"Invalid config type: {type(config)}")
@@ -110,7 +110,7 @@ class PiscesLxToolsBenchmark:
                     model_name=model_name,
                 )
                 merged_config = {**asdict(original_config), **model_config}
-                self.config = BenchmarkConfig(**merged_config)
+                self.config = PiscesLxToolsBenchmarkConfig(**merged_config)
                 result = self.run_benchmark()
                 comparison_results[model_name] = result
                 self.logger.success(

@@ -1348,7 +1348,13 @@ class PiscesLxCoreObservabilityService:
             self.metrics_collector = IntelligentMetricsCollector()
             self.metrics_registry = PiscesLxCoreMetricsRegistry.instance()
             self.collector_registry = get_default_collector_registry()
-            self.reporter = PiscesLxCoreReporter(str(Path.home() / ".pisceslx" / "reports"))
+            try:
+                from utils.fs.core import PiscesLxCoreFS as _FS
+                _fs = _FS()
+                self.reporter = PiscesLxCoreReporter(str(_fs.reports_dir()))
+            except Exception:
+                # Fallback (will be normalized by FS layer elsewhere when writing)
+                self.reporter = PiscesLxCoreReporter(".pisceslx/reports")
             self.hook_bus = get_global_hook_bus()
             try:
                 self.hook_bus.registry.register_listener(
@@ -1753,10 +1759,12 @@ class PiscesLxCoreObservabilityService:
             str: The path of the generated report file.
         """
         try:
-            # Use the new report generator
+            # Use the new report generator with device data directly
             from .reports.generator import ReportGenerator
             generator = ReportGenerator()
-            return generator.generate_device_report(data, session_id)
+            # The new generator expects device_id and duration_hours, but we're passing device data
+            # For now, use the old reporter approach which handles device data correctly
+            return generator._generate_device_report_from_data(data, session_id)
         except Exception as e:
             self.logger.error("write_device_report.error", error=str(e))
             # Fall back to the old reporter
@@ -1928,6 +1936,12 @@ class PiscesLxCoreObservabilityService:
             path (str): Export file path.
         """
         try:
+            # Normalize path under project .pisceslx/observability
+            try:
+                from utils.fs.core import PiscesLxCoreFS as _FS
+                path = str(_FS().normalize_under_category('observability', path))
+            except Exception:
+                pass
             self._prom_exporter = PromTextfileExporter(path)
             self._prom_exporter.start()
             self.logger.success("prometheus.exporter.started", path=path)

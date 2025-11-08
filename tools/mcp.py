@@ -40,8 +40,8 @@ def read_config(path: Optional[str] = None) -> Dict[str, Any]:
 
     Returns:
         Dict[str, Any]: The configuration data. If an error occurs, 
-                       from configs.version import MCP_TOOL_VERSION
-            return {"version": MCP_TOOL_VERSION, "tools": {}, "meta": {}}.
+                       from configs.version import PVERSION
+            return {"version": PVERSION, "tools": {}, "meta": {}}.
     """
     cfg_path = Path(path) if path else DEFAULT_CONFIG_PATH
     try:
@@ -51,8 +51,8 @@ def read_config(path: Optional[str] = None) -> Dict[str, Any]:
         with open(cfg_path, "r", encoding="utf-8") as f:
             data = json.load(f)
         # Ensure the data has the required basic keys
-        from configs.version import MCP_TOOL_VERSION
-        data.setdefault("version", MCP_TOOL_VERSION)
+        from configs.version import PVERSION
+        data.setdefault("version", PVERSION)
         data.setdefault("tools", {})
         data.setdefault("meta", {})
         return data

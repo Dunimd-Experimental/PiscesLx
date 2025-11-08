@@ -6,8 +6,7 @@
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
+# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -17,13 +16,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-"""
-Unified execution utilities for MCP system.
-
-This module provides unified synchronous and asynchronous execution capabilities
-for tools, including timeout handling, error management, and performance tracking.
-"""
 
 import asyncio
 import time
@@ -391,14 +383,14 @@ class PiscesLxCoreMCPExecutionManager:
 
 
 # Global execution manager instance
-_execution_manager: Optional[MCPExecutionManager] = None
+_execution_manager: Optional[PiscesLxCoreMCPExecutionManager] = None
 
 
-def get_execution_manager(config: Optional[ExecutionConfig] = None) -> MCPExecutionManager:
+def get_execution_manager(config: Optional[PiscesLxCoreMCPExecutionConfig] = None) -> PiscesLxCoreMCPExecutionManager:
     """Get the global execution manager instance."""
     global _execution_manager
     if _execution_manager is None:
-        _execution_manager = MCPExecutionManager(config)
+        _execution_manager = PiscesLxCoreMCPExecutionManager(config)
     return _execution_manager
 
 

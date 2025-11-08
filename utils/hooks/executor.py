@@ -29,12 +29,12 @@ logger = PiscesLxCoreLog("HOOKS")
 class PiscesLxCoreHookExecutor:
     """Object-oriented encapsulation for executing listeners."""
     
-    def __init__(self, max_workers: int = 64, max_coroutines: int = 256) -> None:
+    def __init__(self, max_workers: int = 16, max_coroutines: int = 128) -> None:
         """Initialize the executor.
 
         Args:
-            max_workers (int, optional): The maximum number of worker threads. Defaults to 64.
-            max_coroutines (int, optional): The maximum number of concurrent coroutines. Defaults to 256.
+            max_workers (int, optional): The maximum number of worker threads. Defaults to 16 (reduced from 64 to avoid resource exhaustion).
+            max_coroutines (int, optional): The maximum number of concurrent coroutines. Defaults to 128 (reduced from 256).
         """
         self.max_workers = max_workers
         self.max_coroutines = max_coroutines
@@ -215,9 +215,37 @@ class PiscesLxCoreHookExecutor:
             except RuntimeError:
                 return asyncio.run(self._run_async_listener(listener, event_type, payload))
         else:
-            # Execute synchronously
-            future = self.thread_pool.submit(self._run_sync_listener, listener, event_type, payload)
-            return future.result()
+            # Execute synchronously - add timeout to prevent deadlocks
+            try:
+                future = self.thread_pool.submit(self._run_sync_listener, listener, event_type, payload)
+                # Add 30-second timeout to prevent indefinite blocking
+                return future.result(timeout=30.0)
+            except concurrent.futures.TimeoutError:
+                logger.error("Listener execution timed out after 30 seconds", {
+                    "event_type": event_type,
+                    "callback": getattr(callback, "__name__", str(callback))
+                })
+                return PiscesLxCoreExecutionResult(
+                    event_type=event_type,
+                    execution_time=30.0,
+                    executed=0,
+                    errors=1,
+                    exception="Listener execution timed out after 30 seconds"
+                )
+            except Exception as e:
+                logger.error("Listener execution failed", {
+                    "event_type": event_type,
+                    "callback": getattr(callback, "__name__", str(callback)),
+                    "error": str(e),
+                    "error_class": type(e).__name__
+                })
+                return PiscesLxCoreExecutionResult(
+                    event_type=event_type,
+                    execution_time=0.0,
+                    executed=0,
+                    errors=1,
+                    exception=str(e)
+                )
     
     def run_listeners_parallel(
         self,
@@ -257,8 +285,18 @@ class PiscesLxCoreHookExecutor:
         results = []
         for future in concurrent.futures.as_completed(futures):
             try:
-                result = future.result()
+                # Add timeout to prevent indefinite blocking on individual futures
+                result = future.result(timeout=35.0)  # Slightly longer than individual listener timeout
                 results.append(result)
+            except concurrent.futures.TimeoutError:
+                logger.error("Parallel listener execution timed out", {"event_type": event_type})
+                results.append(PiscesLxCoreExecutionResult(
+                    event_type=event_type,
+                    execution_time=35.0,
+                    executed=0,
+                    errors=1,
+                    exception="Parallel listener execution timed out after 35 seconds"
+                ))
             except Exception as exc:
                 logger.error("Listener execution failed", {"error": str(exc), "error_class": type(exc).__name__})
                 results.append(PiscesLxCoreExecutionResult(
@@ -287,12 +325,38 @@ class PiscesLxCoreHookExecutor:
                 'count': int           # Number of listeners
         """
         payload = kwargs
-        results = self.run_listeners_parallel(listeners, event_type, payload)
-        total_time = sum((r.execution_time for r in results), 0.0)
-        errors = sum((r.errors for r in results), 0)
-        return {
-            'results': results,
-            'total_time': float(total_time),
-            'errors': int(errors),
-            'count': len(results),
-        }
+        
+        # Add overall timeout to prevent indefinite blocking
+        import signal
+        
+        def timeout_handler(signum, frame):
+            raise TimeoutError(f"Hook execution timed out after 60 seconds for event: {event_type}")
+        
+        # Set timeout for entire execution (Unix only, Windows will ignore)
+        if hasattr(signal, 'SIGALRM'):
+            signal.signal(signal.SIGALRM, timeout_handler)
+            signal.alarm(60)  # 60 second overall timeout
+        
+        try:
+            results = self.run_listeners_parallel(listeners, event_type, payload)
+            total_time = sum((r.execution_time for r in results), 0.0)
+            errors = sum((r.errors for r in results), 0)
+            return {
+                'results': results,
+                'total_time': float(total_time),
+                'errors': int(errors),
+                'count': len(results),
+            }
+        except TimeoutError as e:
+            logger.error("Hook execution overall timeout", {"event_type": event_type, "error": str(e)})
+            return {
+                'results': [],
+                'total_time': 60.0,
+                'errors': len(listeners) if listeners else 1,
+                'count': 0,
+                'timeout_error': str(e)
+            }
+        finally:
+            # Cancel timeout
+            if hasattr(signal, 'SIGALRM'):
+                signal.alarm(0)

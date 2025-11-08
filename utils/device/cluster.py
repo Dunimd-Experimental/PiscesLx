@@ -148,9 +148,9 @@ class PiscesLxCoreDeviceUnifiedPlanner:
         # Attempt to initialize the process group
         try:
             PiscesLxCoreProcessGroupManager.init()
-            logger.info("PG", {"message": "Process group initialized"})
+            logger.info("Process group initialized")
         except Exception as e:
-            logger.error("PG", {"message": "Process group init failed", "error": str(e)})
+            logger.error("Process group init failed", error=str(e))
             raise
 
     @staticmethod
@@ -166,9 +166,9 @@ class PiscesLxCoreDeviceUnifiedPlanner:
         # Attempt to finalize the process group
         try:
             PiscesLxCoreProcessGroupManager.finalize()
-            logger.info("PG", {"message": "Process group finalized"})
+            logger.info("Process group finalized")
         except Exception as e:
-            logger.error("PG", {"message": "Process group finalize failed", "error": str(e)})
+            logger.error("Process group finalize failed", error=str(e))
             raise
 
     @staticmethod
@@ -200,7 +200,7 @@ class PiscesLxCoreDeviceUnifiedPlanner:
                 "DataParallel" if getattr(wrapped, "__class__", None).__name__ == "DataParallel" else
                 "SingleProcess"
             )
-            logger.info("WRAP", {"message": "Model wrapped for train", "mode": mode})
+            logger.info("Model wrapped for train", mode=mode)
         except Exception as e:
             logger.debug("failed to log model wrap mode for train", event="device.wrap.train_log_error", error=str(e))
             
@@ -235,7 +235,7 @@ class PiscesLxCoreDeviceUnifiedPlanner:
                 "DataParallel" if getattr(wrapped, "__class__", None).__name__ == "DataParallel" else
                 "SingleProcess"
             )
-            logger.info("WRAP", {"message": "Model wrapped for infer", "mode": mode})
+            logger.info("Model wrapped for infer", mode=mode)
         except Exception as e:
             logger.debug("failed to log model wrap mode for infer", event="device.wrap.infer_log_error", error=str(e))
             

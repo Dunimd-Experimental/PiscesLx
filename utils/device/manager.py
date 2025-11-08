@@ -990,19 +990,23 @@ class PiscesLxCoreDeviceManager:
         Returns:
             float: Estimated number of model parameters in billions
         """
-        # Try to get from config first
-        model_size = self.cfg.get("model.size", "")
-        if model_size:
-            return self._parse_model_size(model_size)
-        
-        # Fallback: estimate from model architecture
-        hidden_size = self.cfg.get("model.hidden_size", 4096)
-        num_layers = self.cfg.get("model.num_layers", 32)
-        vocab_size = self.cfg.get("model.vocab_size", 32000)
-        
-        # Rough estimation: ~ params = layers * (hidden^2 * 4 + vocab * hidden)
-        params = num_layers * (hidden_size * hidden_size * 4 + vocab_size * hidden_size)
-        return params / 1e9  # Convert to billions
+        try:
+            # Try to get from config first
+            model_size = self.cfg.get("model.size", "")
+            if model_size:
+                return self._parse_model_size(model_size)
+            
+            # Fallback: estimate from model architecture
+            hidden_size = self.cfg.get("model.hidden_size", 4096)
+            num_layers = self.cfg.get("model.num_layers", 32)
+            vocab_size = self.cfg.get("model.vocab_size", 32000)
+            
+            # Rough estimation: ~ params = layers * (hidden^2 * 4 + vocab * hidden)
+            params = num_layers * (hidden_size * hidden_size * 4 + vocab_size * hidden_size)
+            return params / 1e9  # Convert to billions
+        except Exception as e:
+            logger.warning("Failed to estimate model parameters, using default", error=str(e))
+            return 7.0  # Default to 7B model size
 
     def _parse_model_size(self, size_str: str) -> float:
         """
@@ -1014,21 +1018,25 @@ class PiscesLxCoreDeviceManager:
         Returns:
             float: Model size in billions of parameters
         """
-        size_str = size_str.upper()
-        
-        # Handle TB models (ultra-large scale)
-        if 'TB' in size_str:
-            try:
-                tb_value = float(size_str.replace('TB', ''))
-                return tb_value * 1000  # Convert TB to B equivalent
-            except:
-                return 7000.0  # Default to 7TB equivalent
-        
-        # Handle regular B models
-        size_str = size_str.replace('B', '')
         try:
-            return float(size_str)
-        except:
+            size_str = size_str.upper()
+            
+            # Handle TB models (ultra-large scale)
+            if 'TB' in size_str:
+                try:
+                    tb_value = float(size_str.replace('TB', ''))
+                    return tb_value * 1000  # Convert TB to B equivalent
+                except:
+                    return 7000.0  # Default to 7TB equivalent
+            
+            # Handle regular B models
+            size_str = size_str.replace('B', '')
+            try:
+                return float(size_str)
+            except:
+                return 7.0  # Default to 7B
+        except Exception as e:
+            logger.warning("Failed to parse model size, using default", size_str=size_str, error=str(e))
             return 7.0  # Default to 7B
 
     def _enhance_parallel_strategy(self, base_strategy: dict, model_params: float) -> dict:
@@ -2603,50 +2611,89 @@ class PiscesLxCoreDeviceManager:
         Returns:
             dict: Inference strategy dictionary
         """
-        # Estimate model parameters from size string or config
-        model_params = self._parse_model_size(model_size) if model_size else self._estimate_model_parameters()
-        
-        # Auto-detect inference cluster configuration
-        cluster_config = self._auto_detect_inference_cluster()
-        
-        # Check if cluster mode is enabled
-        cluster_enabled = self.cfg.get("distributed.enabled", False)
-        
-        # Automatic fallback chain: cluster -> multi-gpu -> single-gpu -> cpu
-        fallbacks = []
-        # 1) Cluster (if enabled/world_size>1)
-        if (cluster_config['world_size'] > 1 or cluster_enabled) and self.gpu_info:
+        try:
+            # Estimate model parameters from size string or config
+            model_params = self._parse_model_size(model_size) if model_size else self._estimate_model_parameters()
+            
+            # Auto-detect inference cluster configuration
+            cluster_config = self._auto_detect_inference_cluster()
+            
+            # Check if cluster mode is enabled
+            cluster_enabled = self.cfg.get("distributed.enabled", False)
+            
+            # Automatic fallback chain: cluster -> multi-gpu -> single-gpu -> cpu
+            fallbacks = []
+            # 1) Cluster (if enabled/world_size>1)
+            if (cluster_config['world_size'] > 1 or cluster_enabled) and self.gpu_info:
+                try:
+                    strat = self._get_distributed_inference_strategy(cluster_config, model_params, sequence_length)
+                    return strat
+                except Exception as e:
+                    logger.warning("Distributed strategy failed, falling back", error=str(e))
+                    fallbacks.append('cluster->local')
+            # 2) Multi-GPU (single node)
+            if len(self.gpu_info) > 1:
+                try:
+                    strat = self._get_multi_inference_strategy(self.gpu_info, model_params, sequence_length)
+                    if fallbacks:
+                        strat['fallbacks'] = fallbacks
+                        strat['warning'] = '; '.join(fallbacks)
+                    return strat
+                except Exception as e:
+                    logger.warning("Multi-GPU strategy failed, falling back", error=str(e))
+                    fallbacks.append('multi->single')
+            # 3) Single-GPU
+            if len(self.gpu_info) >= 1:
+                try:
+                    strat = self._get_single_inference_strategy(self.gpu_info[0], model_params, sequence_length)
+                    if fallbacks:
+                        strat['fallbacks'] = fallbacks
+                        strat['warning'] = '; '.join(fallbacks)
+                    return strat
+                except Exception as e:
+                    logger.warning("Single-GPU strategy failed, falling back to CPU", error=str(e))
+                    fallbacks.append('single->cpu')
+            # 4) CPU fallback
             try:
-                strat = self._get_distributed_inference_strategy(cluster_config, model_params, sequence_length)
-                return strat
-            except Exception:
-                fallbacks.append('cluster->local')
-        # 2) Multi-GPU (single node)
-        if len(self.gpu_info) > 1:
-            try:
-                strat = self._get_multi_inference_strategy(self.gpu_info, model_params, sequence_length)
+                strat = self._get_cpu_inference_strategy(model_params, sequence_length)
                 if fallbacks:
                     strat['fallbacks'] = fallbacks
                     strat['warning'] = '; '.join(fallbacks)
                 return strat
-            except Exception:
-                fallbacks.append('multi->single')
-        # 3) Single-GPU
-        if len(self.gpu_info) >= 1:
-            try:
-                strat = self._get_single_inference_strategy(self.gpu_info[0], model_params, sequence_length)
-                if fallbacks:
-                    strat['fallbacks'] = fallbacks
-                    strat['warning'] = '; '.join(fallbacks)
-                return strat
-            except Exception:
-                fallbacks.append('single->cpu')
-        # 4) CPU fallback
-        strat = self._get_cpu_inference_strategy(model_params, sequence_length)
-        if fallbacks:
-            strat['fallbacks'] = fallbacks
-            strat['warning'] = '; '.join(fallbacks)
-        return strat
+            except Exception as e:
+                logger.error("CPU strategy failed, using emergency fallback", error=str(e))
+                # Emergency fallback - return basic CPU strategy
+                return {
+                    'mode': 'cpu',
+                    'gpu_ids': [],
+                    'batch_size': 1,
+                    'mixed_precision': False,
+                    'reason': 'Emergency CPU fallback - minimal configuration',
+                    'cpu_info': {'cores': 1, 'threads': 1, 'memory_gb': 4.0, 'architecture': 'unknown'},
+                    'model_params': model_params,
+                    'sequence_length': sequence_length,
+                    'estimated_memory': 100,
+                    'memory_margin_mb': 1000,
+                    'warning': 'Emergency fallback - minimal CPU configuration',
+                    'emergency_fallback': True
+                }
+        except Exception as e:
+            logger.error("Strategy generation completely failed, using ultimate fallback", error=str(e))
+            # Ultimate fallback - return absolute minimal configuration
+            return {
+                'mode': 'cpu',
+                'gpu_ids': [],
+                'batch_size': 1,
+                'mixed_precision': False,
+                'reason': 'Ultimate emergency fallback - absolute minimal configuration',
+                'cpu_info': {'cores': 1, 'threads': 1, 'memory_gb': 2.0, 'architecture': 'unknown'},
+                'model_params': 7.0,  # Default model size
+                'sequence_length': sequence_length,
+                'estimated_memory': 50,
+                'memory_margin_mb': 500,
+                'warning': 'Ultimate emergency fallback - absolute minimal configuration',
+                'ultimate_fallback': True
+            }
     
     def _get_cpu_inference_strategy(self, model_params: float, sequence_length: int = 1024) -> dict:
         """
@@ -2659,12 +2706,18 @@ class PiscesLxCoreDeviceManager:
         Returns:
             dict: CPU inference strategy
         """
-        import psutil
-        
-        # Get CPU information
-        cpu_cores = psutil.cpu_count(logical=False)
-        cpu_threads = psutil.cpu_count(logical=True)
-        available_memory = psutil.virtual_memory().available / 1024 / 1024  # Convert to MB
+        try:
+            import psutil
+            
+            # Get CPU information
+            cpu_cores = psutil.cpu_count(logical=False) or 1
+            cpu_threads = psutil.cpu_count(logical=True) or 1
+            available_memory = psutil.virtual_memory().available / 1024 / 1024  # Convert to MB
+        except Exception as e:
+            logger.warning("Failed to get CPU info via psutil, using defaults", error=str(e))
+            cpu_cores = 1
+            cpu_threads = 1
+            available_memory = 4096  # Default 4GB
         
         # Memory estimation for CPU inference
         memory_per_param = 4  # bytes for CPU (FP32)
@@ -2678,7 +2731,7 @@ class PiscesLxCoreDeviceManager:
         if safe_memory > 0:
             # CPU batch size based on memory and core count
             memory_based_batch = max(1, int(safe_memory / (model_memory * 0.1)))
-            core_based_batch = max(1, (cpu_cores or 1) // 2)  # Conservative core usage
+            core_based_batch = max(1, cpu_cores // 2)  # Conservative core usage
             batch_size = min(memory_based_batch, core_based_batch)
         else:
             batch_size = 1

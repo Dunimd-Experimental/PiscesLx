@@ -41,7 +41,8 @@ class JSONLCreator:
                                      If None, use the data cache directory from the cache manager.
         """
         if base_path is None:
-            cache_manager = get_cache_manager()
+            from utils.cache import PiscesLxCoreCacheManagerFacade
+            cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
             base_path = cache_manager.get_cache_dir("data_cache")
         self.base_path = Path(base_path)
         # Create the base directory if it doesn't exist
@@ -342,8 +343,8 @@ def create_template_dataset(template_type: str, record_count: int = 10, base_pat
         str: Full path of the created file.
     """
     if base_path is None:
-        from utils import get_cache_manager
-        cache_manager = get_cache_manager()
+        from utils.cache import PiscesLxCoreCacheManagerFacade
+        cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
         base_path = cache_manager.get_or_create_cache_dir("data_cache")
     creator = JSONLCreator(base_path)
     return creator.create_from_template(template_type, record_count)

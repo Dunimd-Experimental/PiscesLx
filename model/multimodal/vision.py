@@ -169,7 +169,7 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         return torch.cat((-x2, x1), dim=-1)
 
 
-class VisualTextProcessor(nn.Module):
+class ArcticVisualTextProcessor(nn.Module):
     """Processor for text rendered as images - H-Network support."""
     
     def __init__(self, hidden_size: int, patch_size: int = 14):
@@ -203,7 +203,7 @@ class VisualTextProcessor(nn.Module):
             nn.LayerNorm(hidden_size)
         )
         
-        logger.info(f"VisualTextProcessor initialized: hidden_size={hidden_size}, patch_size={patch_size}")
+        logger.info(f"ArcticVisualTextProcessor initialized: hidden_size={hidden_size}, patch_size={patch_size}")
     
     def forward(self, text_images: torch.Tensor) -> torch.Tensor:
         """Process text images to visual embeddings.
@@ -229,7 +229,7 @@ class VisualTextProcessor(nn.Module):
         # Apply text-specific compression
         compressed = self.text_compressor(patches)
         
-        logger.debug(f"VisualTextProcessor: {text_images.shape} -> {compressed.shape}")
+        logger.debug(f"ArcticVisualTextProcessor: {text_images.shape} -> {compressed.shape}")
         
         return compressed
         """
@@ -282,7 +282,7 @@ class ArcticVisionEncoder(nn.Module):
     
     def _create_visual_text_processor(self):
         """Create visual text processor for H-Network tokenizer support."""
-        return VisualTextProcessor(self.hidden_size, self.patch_size)
+        return ArcticVisualTextProcessor(self.hidden_size, self.patch_size)
     
     def process_visual_text(self, text_images: torch.Tensor) -> torch.Tensor:
         """Process text rendered as images through vision encoder.

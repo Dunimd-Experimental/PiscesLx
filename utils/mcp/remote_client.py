@@ -6,8 +6,7 @@
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
+# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -358,12 +357,12 @@ class PiscesLxCoreMCPRemoteClientPool:
     def __init__(self, max_clients: int = 10):
         """Initialize client pool."""
         self.max_clients = max_clients
-        self.clients: Dict[str, ArcticRemoteMCPClient] = {}
+        self.clients: Dict[str, PiscesLxCoreMCPArcticRemoteClient] = {}
         self._lock = asyncio.Lock()
         
         logger.info(f"RemoteMCPClientPool initialized with max {max_clients} clients")
     
-    async def get_client(self, client_id: str, config: Optional[RemoteClientConfig] = None) -> ArcticRemoteMCPClient:
+    async def get_client(self, client_id: str, config: Optional[_RemoteClientConfig] = None) -> PiscesLxCoreMCPArcticRemoteClient:
         """Get or create a client for the given ID."""
         async with self._lock:
             if client_id not in self.clients:
@@ -373,7 +372,7 @@ class PiscesLxCoreMCPRemoteClientPool:
                     await self.clients[oldest_client_id].disconnect()
                     del self.clients[oldest_client_id]
                 
-                self.clients[client_id] = ArcticRemoteMCPClient(client_id, config)
+                self.clients[client_id] = PiscesLxCoreMCPArcticRemoteClient(client_id, config)
             
             return self.clients[client_id]
     
@@ -397,14 +396,14 @@ class PiscesLxCoreMCPRemoteClientPool:
 
 
 # Global client pool instance
-_client_pool: Optional[RemoteMCPClientPool] = None
+_client_pool: Optional[PiscesLxCoreMCPRemoteClientPool] = None
 
 
-def get_remote_client_pool(max_clients: int = 10) -> RemoteMCPClientPool:
+def get_remote_client_pool(max_clients: int = 10) -> PiscesLxCoreMCPRemoteClientPool:
     """Get the global remote client pool instance."""
     global _client_pool
     if _client_pool is None:
-        _client_pool = RemoteMCPClientPool(max_clients)
+        _client_pool = PiscesLxCoreMCPRemoteClientPool(max_clients)
     return _client_pool
 
 
@@ -412,7 +411,7 @@ async def execute_remote_tool(
     client_id: str,
     tool_name: str,
     parameters: Dict[str, Any],
-    config: Optional[RemoteClientConfig] = None
+    config: Optional[_RemoteClientConfig] = None
 ) -> PiscesLxCoreMCPExecutionResult:
     """
     Convenience function for remote tool execution.

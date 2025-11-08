@@ -6,8 +6,7 @@
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
+# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -125,7 +124,7 @@ class PiscesLxCoreMCPNativeToolExecutor(ToolExecutor):
     
     def __init__(self):
         """Initialize native tool executor."""
-        self.native_tools: Dict[str, ToolMetadata] = {}
+        self.native_tools: Dict[str, PiscesLxCoreMCPToolMetadata] = {}
         self.execution_manager = PiscesLxCoreMCPExecutionManager()
         
         logger.info("NativeToolExecutor initialized")
@@ -209,7 +208,7 @@ class PiscesLxCoreMCPInternalToolExecutor(ToolExecutor):
     
     def __init__(self):
         """Initialize internal tool executor."""
-        self.internal_tools: Dict[str, ToolMetadata] = {}
+        self.internal_tools: Dict[str, PiscesLxCoreMCPToolMetadata] = {}
         self.execution_manager = PiscesLxCoreMCPExecutionManager()
         
         logger.info("InternalToolExecutor initialized")
@@ -283,7 +282,7 @@ class PiscesLxCoreMCPInternalToolExecutor(ToolExecutor):
                 mode=PiscesLxCoreMCPExecutionMode.SYNC
             )
     
-    def get_supported_types(self) -> List[ToolType]:
+    def get_supported_types(self) -> List[PiscesLxCoreMCPToolType]:
         """Get supported tool types."""
         return [PiscesLxCoreMCPToolType.INTERNAL]
 
@@ -293,7 +292,7 @@ class PiscesLxCoreMCPExternalToolExecutor(ToolExecutor):
     
     def __init__(self):
         """Initialize external tool executor."""
-        self.external_tools: Dict[str, ToolMetadata] = {}
+        self.external_tools: Dict[str, PiscesLxCoreMCPToolMetadata] = {}
         
         logger.info("ExternalToolExecutor initialized")
     
@@ -347,7 +346,7 @@ class PiscesLxCoreMCPExternalToolExecutor(ToolExecutor):
                 mode=PiscesLxCoreMCPExecutionMode.REMOTE
             )
     
-    def get_supported_types(self) -> List[ToolType]:
+    def get_supported_types(self) -> List[PiscesLxCoreMCPToolType]:
         """Get supported tool types."""
         return [PiscesLxCoreMCPToolType.EXTERNAL]
 
@@ -358,12 +357,12 @@ class PiscesLxCoreMCPUnifiedToolExecutor:
     def __init__(self):
         """Initialize unified tool executor."""
         self.executors: List[ToolExecutor] = [
-            NativeToolExecutor(),
-            InternalToolExecutor(),
-            ExternalToolExecutor()
+            PiscesLxCoreMCPNativeToolExecutor(),
+            PiscesLxCoreMCPInternalToolExecutor(),
+            PiscesLxCoreMCPExternalToolExecutor()
         ]
         
-        self.tool_registry: Dict[str, List[ToolMetadata]] = {}  # tool_name -> [metadata1, metadata2, ...]
+        self.tool_registry: Dict[str, List[PiscesLxCoreMCPToolMetadata]] = {}  # tool_name -> [metadata1, metadata2, ...]
         self.execution_stats: Dict[str, Dict[str, Any]] = {}  # tool_name -> stats
         
         logger.info("UnifiedToolExecutor initialized")

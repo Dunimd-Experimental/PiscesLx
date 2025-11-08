@@ -159,7 +159,7 @@ class PiscesLxCoreDecorators:
                 new_tp = PiscesLxCoreDecorators._make_traceparent(trace_id, span_id)
 
                 # Log the start of the event
-                log.info(f"{event_name}.start", fields)
+                log.info(f"{event_name}.start", **fields)
                 try:
                     bus.emit(f"{event_name}.start", **fields)
                 except Exception as e:
@@ -185,7 +185,7 @@ class PiscesLxCoreDecorators:
                     if parent_span_id:
                         end_fields["parent_span_id"] = parent_span_id
                     end_fields["traceparent"] = new_tp
-                    log.info(f"{event_name}.end", end_fields)
+                    log.info(f"{event_name}.end", **end_fields)
                     try:
                         bus.emit(f"{event_name}.end", **end_fields)
                     except Exception as e:
@@ -218,7 +218,7 @@ class PiscesLxCoreDecorators:
                     except Exception as log_e:
                         PiscesLxCoreLog().debug("ERROR_CLASSIFICATION_FAILED", event="ERROR_CLASSIFICATION_FAILED", event_name=event_name, error=str(log_e))
 
-                    log.error(f"{event_name}.error", err_fields)
+                    log.error(f"{event_name}.error", **err_fields)
                     try:
                         bus.emit(f"{event_name}.error", **err_fields)
                     except Exception as e2:
@@ -235,7 +235,7 @@ class PiscesLxCoreDecorators:
                             PiscesLxCoreLog().debug("HOOKS_EMIT_ERROR_LOG_ERROR", event="HOOKS_EMIT_ERROR_LOG_ERROR", event_name=event_name, error=str(log_e))
                     raise
                 finally:
-                    log.debug(f"{event_name}.finally", {"message": "No extra cleanup required, kept for symmetry and future extension"})
+                    log.debug(f"{event_name}.finally", message="No extra cleanup required, kept for symmetry and future extension")
 
             return _wrapped
         return _decorator

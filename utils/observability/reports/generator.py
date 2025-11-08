@@ -177,6 +177,68 @@ class ReportGenerator:
         self.logger.info(f"Device report generation completed: {report['metadata'].report_id}")
         return report
     
+    def _generate_device_report_from_data(self, data: Dict[str, Any], session_id: Optional[str] = None) -> str:
+        """
+        Generate a device report from existing device data.
+        
+        Args:
+            data (Dict[str, Any]): Device data to generate report from.
+            session_id (Optional[str]): Session ID.
+            
+        Returns:
+            str: Path to the generated report file.
+        """
+        self.logger.info(f"Generating device report from data: {session_id}")
+        
+        # Use current time as report generation time
+        end_time = datetime.now()
+        
+        # Create a simple report from the provided data
+        report = {
+            "metadata": ReportMetadata(
+                report_id=f"device_data_{int(time.time())}",
+                report_type="device",
+                device_id="unknown",
+                session_id=session_id or "",
+                start_time=end_time - timedelta(hours=1),  # Assume 1 hour duration
+                end_time=end_time,
+                duration=3600
+            ),
+            "device_data": data,
+            "generated_at": end_time.isoformat() + "Z"
+        }
+        
+        # Save report
+        self._save_report(report)
+        
+        self.logger.info(f"Device report generation completed: {report['metadata'].report_id}")
+        # Return a simple path for compatibility
+        return str(self.reports_dir / f"device_report_{report['metadata'].report_id}.json")
+    
+    def _save_report(self, report: Dict[str, Any]) -> None:
+        """
+        Save the generated report to a JSON file.
+        
+        Args:
+            report (Dict[str, Any]): The report data to save.
+        """
+        try:
+            report_id = report['metadata'].report_id
+            report_file = self.reports_dir / f"report_{report_id}.json"
+            
+            # Convert dataclass to dict for JSON serialization
+            report_dict = report.copy()
+            if hasattr(report['metadata'], '__dict__'):
+                report_dict['metadata'] = report['metadata'].__dict__
+            
+            with open(report_file, 'w', encoding='utf-8') as f:
+                json.dump(report_dict, f, indent=2, default=str)
+            
+            self.logger.debug(f"Report saved to {report_file}")
+        except Exception as e:
+            self.logger.error(f"Failed to save report: {e}")
+            raise
+    
     def generate_session_report(self, session_id: str, start_time: datetime, end_time: datetime) -> Dict[str, Any]:
         """
         Generate a session report for the specified session.

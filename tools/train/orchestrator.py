@@ -62,6 +62,7 @@ class PiscesLxToolsTrainOrchestrator:
         self.args = args
         # Initialize logger
         self._logger = PiscesLxCoreLog("pisceslx.tools.train.orchestrator")
+        self._logger.info("Orchestrator __init__ start")
         # Create a configuration object from the provided arguments
         self.cfg = PiscesLxToolsTrainConfig.from_args(args)
         # Initialize the hook bus for event handling
@@ -71,43 +72,54 @@ class PiscesLxToolsTrainOrchestrator:
         
         # Initialize utils-enhanced components
         self._init_utils_components()
+        self._logger.info("Orchestrator __init__ end")
 
     def _init_utils_components(self):
         """Initialize utils-enhanced components for better reliability and monitoring."""
-        # Initialize device facade for unified device management
-        self.device_facade = PiscesLxCoreDeviceFacade(self.args)
+        self._logger.info("init_utils: creating device_facade")
+        try:
+            self.device_facade = PiscesLxCoreDeviceFacade(self.args)
+            self._logger.info("init_utils: device_facade created")
+        except Exception as e:
+            self._logger.error(f"init_utils: device_facade creation failed: {e}")
+            class _CpuOnlyFacade:
+                def __init__(self, args=None):
+                    self.args = args
+                def setup_devices(self, mode: str = "auto"):
+                    return {"device_type": "cpu", "strategy": "cpu", "gpu_ids": [], "batch_size": 1}
+            self.device_facade = _CpuOnlyFacade(self.args)
+            self._logger.info("init_utils: fallback CPU-only facade in use")
         
+        self._logger.info("init_utils: creating cache_manager")
         # Initialize cache manager for training data caching
         self.cache_manager = PiscesLxCoreEnhancedCacheManager.get_instance()
         
+        self._logger.info("init_utils: creating observability facade")
         # Initialize observability facade for enhanced monitoring
         self.observability = PiscesLxCoreObservabilityFacade()
         
+        self._logger.info("init_utils: creating metrics registry")
         # Initialize metrics registry for training metrics
         self.metrics_registry = PiscesLxCoreMetricsRegistry()
         
+        self._logger.info("init_utils: creating checkpoint manager")
         # Initialize checkpoint manager for model persistence
         self.checkpoint_manager = PiscesLxCoreCheckpointManager()
         
+        self._logger.info("init_utils: creating config manager")
         # Initialize configuration manager for dynamic config updates
         self.config_manager = PiscesLxCoreConfigManager()
         
         # Initialize distributed manager for multi-GPU coordination
+        self._logger.info("init_utils: importing/dist config")
         from utils.device.dist import PiscesLxCoreDistConfig
         self.dist_config = PiscesLxCoreDistConfig()
 
         # Initialize watermark manager (optional, controlled by env)
+        self._logger.info("init_utils: creating watermark manager")
         self.wm_manager = get_watermark_manager_from_env() if 'get_watermark_manager_from_env' in globals() else None
-        
-        # Emit orchestrator initialization event with enhanced metadata
-        device_config = self.device_facade.setup_devices(mode="auto") if hasattr(self.device_facade, 'setup_devices') else {}
-        self.hooks.emit("train.orchestrator.init", 
-                       config=self.cfg.dump_effective(),
-                       device_config=device_config,
-                       cache_enabled=self.cache_manager is not None,
-                       observability_enabled=self.observability is not None,
-                       distributed_enabled=self.dist_config.is_distributed(),
-                       watermark_enabled=bool(self.wm_manager))
+        # Defer device setup and init emit to run() to avoid blocking __init__
+        self._logger.info("init_utils: deferring device setup to run()")
 
     def run(self, args) -> None:
         """
@@ -118,8 +130,43 @@ class PiscesLxToolsTrainOrchestrator:
             args: Command line arguments or configuration object.
         """
         # Get the training mode from the configuration, default to "standard"
+        self._logger.info("Orchestrator run() enter")
         mode = self.cfg.get("train.mode", default="standard")
         self._logger.info(f"Train orchestrator mode: {mode}")
+        # Perform deferred device setup and emit init event here
+        try:
+            if not hasattr(self, 'device_facade') or self.device_facade is None:
+                self._logger.info("run(): creating device_facade (deferred)")
+                try:
+                    self.device_facade = PiscesLxCoreDeviceFacade(self.args)
+                except Exception as e:
+                    self._logger.error(f"run(): device_facade creation failed: {e}")
+                    class _CpuOnlyFacade:
+                        def __init__(self, args=None):
+                            self.args = args
+                        def setup_devices(self, mode: str = "auto"):
+                            return {"device_type": "cpu", "strategy": "cpu", "gpu_ids": [], "batch_size": 1}
+                    self.device_facade = _CpuOnlyFacade(self.args)
+            self._logger.info("run(): calling setup_devices (deferred)")
+            device_config = self.device_facade.setup_devices(mode="auto") if hasattr(self.device_facade, 'setup_devices') else {}
+            self._logger.info("run(): setup_devices done")
+            print("[orchestrator] setup_devices done")
+            self._logger.success("SETUP_DEVICES_DONE", event="train.milestone", stage="orchestrator.run", device_type=device_config.get("device_type"))
+            try:
+                self._logger.info("run(): emitting train.orchestrator.init")
+                self.hooks.emit("train.orchestrator.init", 
+                               config=self.cfg.dump_effective(),
+                               device_config=device_config,
+                               cache_enabled=self.cache_manager is not None,
+                               observability_enabled=self.observability is not None,
+                               distributed_enabled=self._is_distributed(),
+                               watermark_enabled=bool(self.wm_manager))
+                self._logger.info("run(): emit done")
+                self._logger.success("INIT_EMIT_DONE", event="train.milestone", stage="orchestrator.run")
+            except Exception as e:
+                self._logger.error(f"run(): emit failed: {e}")
+        except Exception as e:
+            self._logger.error(f"run(): deferred device setup failed: {e}")
         
         # Emit training start event for observability
         self.hooks.emit("train.start", mode=mode, config=self.cfg.dump_effective(), watermark_enabled=bool(getattr(self, 'wm_manager', None)))
@@ -155,49 +202,80 @@ class PiscesLxToolsTrainOrchestrator:
         Enhanced with utils device validation, cache management, distributed coordination,
         and real-time performance monitoring.
         """
+        self._logger.info("run_standard_training enter")
+        # Ensure device_facade is present even if __init__ deferred/failed
+        if not hasattr(self, 'device_facade') or self.device_facade is None:
+            self._logger.info("run_standard_training: creating device_facade (late)")
+            try:
+                self.device_facade = PiscesLxCoreDeviceFacade(self.args)
+            except Exception as e:
+                self._logger.error(f"run_standard_training: device_facade creation failed: {e}")
+                class _CpuOnlyFacade:
+                    def __init__(self, args=None):
+                        self.args = args
+                    def setup_devices(self, mode: str = "auto"):
+                        return {"device_type": "cpu", "strategy": "cpu", "gpu_ids": [], "batch_size": 1}
+                self.device_facade = _CpuOnlyFacade(self.args)
         from .runner import PiscesLxToolsTrainRunner
         
         # Validate device configuration before training
         device_config = self.device_facade.setup_devices(mode="auto")
         if device_config.get('device_type') == 'cpu':
             self._logger.info("Training on CPU - performance may be limited")
+        else:
+            self._logger.info(f"Device ready: {device_config.get('device_type')} GPUs={device_config.get('num_devices', '?')}")
         
         # Setup distributed training configuration if available
-        if self.dist_config.is_distributed():
+        if self._is_distributed():
             dist_setup = self.dist_config.setup_process_group()
             self._logger.info(f"Distributed training setup: {dist_setup}")
             self.hooks.emit("train.distributed.setup", config=dist_setup)
+        else:
+            self._logger.info("Distributed training disabled")
         
         # Setup cache for training data with intelligent preloading
         cache_hit = False
+        cached_config = None
+        cache_ns = "train.standard"
         if self.cache_manager:
-            cache_key = f"train_standard_{hash(str(self.args))}_{self.cfg.get('model.size', 'unknown')}"
-            cached_config = self.cache_manager.get(cache_key)
-            if cached_config:
-                cache_hit = True
-                self._logger.debug(f"Cache hit: Using cached training configuration")
-                # Validate cached configuration compatibility
-                if self.config_manager.validate_config_compatibility(cached_config, self.cfg.dump_effective()):
-                    self._logger.debug("Cached configuration validated successfully")
-                else:
-                    self._logger.debug("Cached configuration incompatible, refreshing...")
-                    cache_hit = False
+            try:
+                cache = self.cache_manager.get_default_cache()
+                cache_key = f"train_standard_{hash(str(self.args))}_{self.cfg.get('model.size', 'unknown')}"
+                cached_config = cache.get(cache_ns, cache_key)
+                if cached_config:
+                    cache_hit = True
+                    self._logger.debug(f"Cache hit: Using cached training configuration")
+                    # Validate cached configuration compatibility
+                    if self.config_manager.validate_config_compatibility(cached_config, self.cfg.dump_effective()):
+                        self._logger.debug("Cached configuration validated successfully")
+                    else:
+                        self._logger.debug("Cached configuration incompatible, refreshing...")
+                        cache_hit = False
+            except Exception as e:
+                self._logger.debug(f"Enhanced cache get failed: {e}")
         
-        # Initialize performance monitoring with baseline metrics
-        if self.observability:
-            baseline_metrics = self.observability.collect_system_metrics()
-            self.metrics_registry.set_baseline("train.baseline", baseline_metrics)
-            self._logger.debug(f"Performance baseline established: {baseline_metrics}")
+        # Initialize performance monitoring with baseline metrics (if supported)
+        performance_delta = {}
+        if self.observability and hasattr(self.observability, "collect_system_metrics"):
+            try:
+                baseline_metrics = self.observability.collect_system_metrics()
+                self.metrics_registry.set_baseline("train.baseline", baseline_metrics)
+                self._logger.debug(f"Performance baseline established: {baseline_metrics}")
+            except Exception as e:
+                self._logger.debug(f"Observability baseline skipped: {e}")
+        else:
+            self._logger.debug("Observability baseline skipped: collect_system_metrics not available")
         
         # Emit training standard start event with enhanced context
         training_context = {
             "device_config": device_config,
             "cache_hit": cache_hit,
-            "distributed_enabled": self.dist_config.is_distributed(),
+            "distributed_enabled": self._is_distributed(),
             "model_size": self.cfg.get("model.size", "unknown"),
             "batch_size": self.cfg.get("train.batch_size", "auto")
         }
         self.hooks.emit("train.standard.start", **training_context)
+        self._logger.info("Runner instantiation start")
         
         # Create a runner instance with enhanced utils integration
         runner = PiscesLxToolsTrainRunner(
@@ -209,40 +287,53 @@ class PiscesLxToolsTrainOrchestrator:
             device_manager=self.device_facade,
             observability=self.observability
         )
+        self._logger.info("Runner instantiation done")
         
         # Start the training process with comprehensive monitoring
         training_success = False
         try:
-            # Pre-training validation and optimization
-            if self.checkpoint_manager:
-                checkpoint_status = self.checkpoint_manager.validate_training_environment(
-                    self.cfg.dump_effective(), device_config
-                )
-                self._logger.debug(f"Training environment validation: {checkpoint_status}")
+            # Pre-training validation and optimization (optional)
+            if self.checkpoint_manager and hasattr(self.checkpoint_manager, 'validate_training_environment'):
+                try:
+                    checkpoint_status = self.checkpoint_manager.validate_training_environment(
+                        self.cfg.dump_effective(), device_config
+                    )
+                    self._logger.debug(f"Training environment validation: {checkpoint_status}")
+                except Exception as e:
+                    self._logger.debug(f"Checkpoint environment validation skipped: {e}")
             
             # Execute training with real-time monitoring
+            self._logger.info("runner.train() start")
             runner.train()
+            self._logger.info("runner.train() end")
             training_success = True
             
             # Post-training analysis and caching
-            # Post-training analysis and caching
-            if self.observability:
-                final_metrics = self.observability.collect_system_metrics()
-                performance_delta = self.metrics_registry.calculate_delta("train.baseline", final_metrics)
-                self._logger.debug(f"Training performance delta: {performance_delta}")
-                self.hooks.emit("train.performance.analysis", delta=performance_delta)
+            if self.observability and hasattr(self.observability, "collect_system_metrics"):
+                try:
+                    final_metrics = self.observability.collect_system_metrics()
+                    performance_delta = self.metrics_registry.calculate_delta("train.baseline", final_metrics)
+                    self._logger.debug(f"Training performance delta: {performance_delta}")
+                    self.hooks.emit("train.performance.analysis", delta=performance_delta)
+                except Exception as e:
+                    self._logger.debug(f"Observability final metrics skipped: {e}")
                 
             # Cache successful configuration for future use
             if self.cache_manager and not cache_hit:
-                cache_data = {
-                    "status": "success", 
-                    "device_config": device_config,
-                    "training_context": training_context,
-                    "performance_metrics": final_metrics if self.observability else {},
-                    "timestamp": self.config_manager.get_current_timestamp()
-                }
-                self.cache_manager.set(cache_key, cache_data, ttl=7200.0)  # 2小时TTL
-                self._logger.debug("Training configuration cached for future use")
+                try:
+                    cache = self.cache_manager.get_default_cache()
+                    cache_key = f"train_standard_{hash(str(self.args))}_{self.cfg.get('model.size', 'unknown')}"
+                    cache_data = {
+                        "status": "success", 
+                        "device_config": device_config,
+                        "training_context": training_context,
+                        "performance_metrics": final_metrics if self.observability else {},
+                        "timestamp": self.config_manager.get_current_timestamp()
+                    }
+                    cache.set(cache_ns, cache_key, cache_data, ttl=7200)  # 2小时TTL
+                    self._logger.debug("Training configuration cached for future use")
+                except Exception as e:
+                    self._logger.debug(f"Enhanced cache set failed: {e}")
                 
         except Exception as e:
             # Enhanced error handling with detailed diagnostics
@@ -250,7 +341,7 @@ class PiscesLxToolsTrainOrchestrator:
                 "error": str(e),
                 "training_phase": "standard_training",
                 "cache_hit": cache_hit,
-                "distributed_enabled": self.dist_config.is_distributed(),
+                "distributed_enabled": self._is_distributed(),
                 "device_config": device_config
             }
             self.hooks.emit("train.standard.error", **error_context)
@@ -266,10 +357,20 @@ class PiscesLxToolsTrainOrchestrator:
         completion_context = {
             "success": training_success,
             "cache_utilized": cache_hit,
-            "distributed_coordination": self.dist_config.is_distributed(),
+            "distributed_coordination": self._is_distributed(),
             "performance_improved": performance_delta.get('improvement', False) if self.observability else None
         }
         self.hooks.emit("train.standard.complete", **completion_context)
+
+    def _is_distributed(self) -> bool:
+        try:
+            fn = getattr(self.dist_config, 'is_distributed', None)
+            if callable(fn):
+                return bool(fn())
+            # Fallback: infer from possible attributes
+            return bool(getattr(self.dist_config, 'distributed', False))
+        except Exception:
+            return False
 
     def run_quant_and_export(self) -> None:
         """

@@ -1,6 +1,6 @@
 {
   "watermark_2025": {
-    "compliance_version": "2025.09.01",
+    "compliance_version": "{{VERSION}}",
     "force_enabled": true,
     "text": {
       "zero_width": {

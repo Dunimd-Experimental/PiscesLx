@@ -29,14 +29,14 @@ from .generator import ArcticUnifiedGeneration, ArcticMultiModalGenerator
 from .hw import ArcticHardwareAdaptiveConfig
 from .reasoner import ArcticUnifiedReasoner
 from .server import ArcticMCPGenerationServer
-from .mcp import ArcticMCPToolRegistry, PiscesLxCoreMCPProtocol, PiscesLxCoreMCPTreeSearchReasoner
+from .mcp import ArcticMCPToolRegistry
 from .types import (
     ArcticAgenticState,
-    PiscesLxCoreMCPMessageType,
+    ArcticMCPMessageType,
     ArcticGenerationCondition,
-    PiscesLxCoreMCPMessage,
-    PiscesLxCoreAgenticAction,
-    PiscesLxCoreAgenticObservation,
+    ArcticMCPMessage,
+    ArcticAgenticAction,
+    ArcticAgenticObservation,
     ArcticAgenticMemory,
 )
 
@@ -56,13 +56,11 @@ __all__ = [
     "ArcticUnifiedReasoner",
     "ArcticMCPGenerationServer",
     "ArcticMCPToolRegistry",
-    "PiscesLxCoreMCPProtocol",
-    "PiscesLxCoreMCPTreeSearchReasoner",
     "ArcticAgenticState",
-    "PiscesLxCoreMCPMessageType",
+    "ArcticMCPMessageType",
     "ArcticGenerationCondition",
-    "PiscesLxCoreMCPMessage",
-    "PiscesLxCoreAgenticAction",
-    "PiscesLxCoreAgenticObservation",
+    "ArcticMCPMessage",
+    "ArcticAgenticAction",
+    "ArcticAgenticObservation",
     "ArcticAgenticMemory",
 ]

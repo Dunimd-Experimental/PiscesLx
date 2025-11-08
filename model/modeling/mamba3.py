@@ -27,7 +27,7 @@ from einops import rearrange, repeat
 
 
 @dataclass
-class Mamba3Config:
+class ArcticMamba3Config:
     """Configuration for Mamba-3 State Space Model"""
     d_model: int  # Model dimension
     d_state: int = 128  # State dimension
@@ -50,7 +50,7 @@ class Mamba3Config:
             self.dt_rank = math.ceil(self.d_model / 16)
 
 
-class TrapezoidalDiscretization(nn.Module):
+class ArcticTrapezoidalDiscretization(nn.Module):
     """
     Trapezoidal discretization for improved numerical stability.
     Combines information from interval start and end points.
@@ -89,7 +89,7 @@ class TrapezoidalDiscretization(nn.Module):
         return discretized
 
 
-class ComplexStateSpace(nn.Module):
+class ArcticComplexStateSpace(nn.Module):
     """
     Complex-valued state space model for more expressive state updates.
     Equivalent to data-dependent rotary position encoding.
@@ -161,7 +161,7 @@ class ComplexStateSpace(nn.Module):
         return result
 
 
-class MIMOStateSpace(nn.Module):
+class ArcticMIMOStateSpace(nn.Module):
     """
     Multi-Input Multi-Output state space using matrix multiplication.
     Replaces outer product form with efficient matrix operations.
@@ -206,7 +206,7 @@ class MIMOStateSpace(nn.Module):
         return y, new_state
 
 
-class SelectiveScan(nn.Module):
+class ArcticSelectiveScan(nn.Module):
     """Hardware-efficient selective scan mechanism"""
     
     def __init__(self, d_model: int, dt_rank: int):
@@ -258,12 +258,12 @@ class SelectiveScan(nn.Module):
         return final_output
 
 
-class Mamba3Block(nn.Module):
+class ArcticMamba3Block(nn.Module):
     """
     Complete Mamba-3 block with all three innovations
     """
     
-    def __init__(self, config: Mamba3Config):
+    def __init__(self, config: ArcticMamba3Config):
         super().__init__()
         self.config = config
         self.d_model = config.d_model
@@ -283,17 +283,17 @@ class Mamba3Block(nn.Module):
         )
         
         # Selective scan
-        self.selective_scan = SelectiveScan(config.d_inner, config.dt_rank)
+        self.selective_scan = ArcticSelectiveScan(config.d_inner, config.dt_rank)
         
         # Mamba-3 innovations
         if config.use_trapezoidal:
-            self.trapezoidal = TrapezoidalDiscretization(config.d_inner, config.dt_rank)
+            self.trapezoidal = ArcticTrapezoidalDiscretization(config.d_inner, config.dt_rank)
             
         if config.use_complex:
-            self.complex_ssm = ComplexStateSpace(config.d_state, config.d_inner)
+            self.complex_ssm = ArcticComplexStateSpace(config.d_state, config.d_inner)
             
         if config.use_mimo:
-            self.mimo_ssm = MIMOStateSpace(config.d_inner, config.d_state)
+            self.mimo_ssm = ArcticMIMOStateSpace(config.d_inner, config.d_state)
             
         # Output projection
         self.out_proj = nn.Linear(config.d_inner, config.d_model, bias=config.bias)
@@ -360,17 +360,17 @@ class Mamba3Block(nn.Module):
         return output
 
 
-class Mamba3Integration(nn.Module):
+class ArcticMamba3Integration(nn.Module):
     """
     High-level integration module for Mamba-3 in PiscesL1
     """
     
-    def __init__(self, d_model: int, config: Optional[Mamba3Config] = None):
+    def __init__(self, d_model: int, config: Optional[ArcticMamba3Config] = None):
         super().__init__()
         if config is None:
-            config = Mamba3Config(d_model=d_model)
+            config = ArcticMamba3Config(d_model=d_model)
             
-        self.mamba3_block = Mamba3Block(config)
+        self.mamba3_block = ArcticMamba3Block(config)
         self.layer_norm = nn.LayerNorm(d_model)
         
     def forward(self, hidden_states: torch.Tensor, attention_mask: Optional[torch.Tensor] = None) -> torch.Tensor:

@@ -35,7 +35,11 @@ class PromTextfileExporter:
             output_path (str): Path to the output file where metrics will be written.
             interval_sec (int, optional): Interval in seconds between each write operation. Defaults to 15.
         """
-        self.output_path = output_path
+        try:
+            from utils.fs.core import PiscesLxCoreFS as _FS
+            self.output_path = str(_FS().normalize_under_category('observability', output_path))
+        except Exception:
+            self.output_path = output_path
         self.interval_sec = interval_sec
         self._stop = threading.Event()
         self._thread: Optional[threading.Thread] = None

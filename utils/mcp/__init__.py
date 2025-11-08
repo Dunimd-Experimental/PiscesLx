@@ -6,8 +6,7 @@
 # The PiscesL1 project belongs to the Dunimd project team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# Commercial use is strictly prohibited.
+# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -59,8 +58,8 @@ from .core import PiscesLxCoreMCPPlaza
 from .arctic_extensions import PiscesLxCoreMCPTreeSearchReasoner, create_arctic_reasoner
 
 # Version information
-from configs.version import MCP_VERSION
-__version__ = MCP_VERSION
+from configs.version import PVERSION
+__version__ = PVERSION
 __author__ = "Wenze Wei"
 __email__ = "wenze.wei@dunimd.com"
 

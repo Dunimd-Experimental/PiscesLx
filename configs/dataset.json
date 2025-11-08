@@ -1,5 +1,5 @@
 {
-  "version": "0.1",
+  "version": "{{VERSION}}",
   "defaults": {
     "max_samples_per_dataset": -1,
     "post_download_clean": true,

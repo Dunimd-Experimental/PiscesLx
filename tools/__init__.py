@@ -32,8 +32,6 @@ if current_dir not in sys.path:
 
 # Initialize variables with None as fallback
 read_config = None
-watermark_manager = None
-watermark_text = None
 get_cache_manager = None
 PiscesLxCoreConfigManagerFacade = None
 
@@ -42,7 +40,6 @@ try:
         # Import local modules first
         try:
             from .mcp import read_config
-            from .watermark import watermark_manager, watermark_text
         except ImportError as e:
             print(f"Warning: Could not import local modules: {e}")
         
@@ -78,12 +75,7 @@ compare_multiple_models = None
 
 try:
     if 'setup' not in sys.argv:
-        from .benchmark import (
-            PiscesL1Benchmark,
-            create_benchmark_config,
-            run_single_benchmark,
-            compare_multiple_models
-        )
+        from .benchmark import PiscesLxToolsBenchmark as PiscesL1Benchmark
 except ImportError as e:
     print(f"Warning: Could not import benchmark module: {e}")
 
@@ -94,7 +86,6 @@ PiscesLxToolsDataDownloadConfig = None
 PiscesLxToolsDataDownloadCache = None
 PiscesLxToolsDataConfigLoader = None
 DatasetItem = None
-setup_hf_mirror = None
 
 try:
     if 'setup' not in sys.argv:
@@ -104,8 +95,7 @@ try:
             PiscesLxToolsDataDownloadConfig,
             PiscesLxToolsDataDownloadCache,
             PiscesLxToolsDataConfigLoader,
-            DatasetItem,
-            setup_hf_mirror
+            DatasetItem
         )
 except ImportError as e:
     print(f"Warning: Could not import data.download module: {e}")
@@ -129,13 +119,11 @@ except ImportError as e:
 
 __all__ = [
     'read_config',
-    'watermark_manager', 'watermark_text',
     'get_cache_manager', 'PiscesLxCoreConfigManagerFacade',
-    'PiscesL1Benchmark', 'create_benchmark_config',
-    'run_single_benchmark', 'compare_multiple_models',
+    'PiscesL1Benchmark',
     'PiscesLxToolsDataDatasetDownload', 'PiscesLxToolsDataSourceRouter',
     'PiscesLxToolsDataDownloadConfig', 'PiscesLxToolsDataDownloadCache',
-    'PiscesLxToolsDataConfigLoader', 'DatasetItem', 'setup_hf_mirror',
+    'PiscesLxToolsDataConfigLoader', 'DatasetItem',
     'PiscesLxToolsInferOrchestrator', 'PiscesLxToolsInferRunner',
     'PiscesLxToolsInferConfig', 'PiscesLxToolsInferImpl',
 ]

@@ -21,7 +21,7 @@ import torch
 from torch import nn
 from .agentic import ArcticAgentic
 from typing import Any, Dict, Union
-from .types import PiscesLxCoreAgenticObservation
+from .types import ArcticAgenticObservation
 
 class ArcticAgenticEncoder(nn.Module):
     """

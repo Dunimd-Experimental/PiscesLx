@@ -177,6 +177,10 @@ class PiscesLxCoreDeviceCpuDetector:
                 'l3_cache_size': 0
             }
     
+    def _compute_sum_squares(self, start_val: int) -> int:
+        """Helper function for multiprocessing - computes sum of squares in range."""
+        return sum(i * i for i in range(start_val, start_val + 100000))
+    
     def _detect_performance_metrics(self) -> None:
         """
         Detect CPU performance metrics.
@@ -195,9 +199,13 @@ class PiscesLxCoreDeviceCpuDetector:
             # Benchmark multi-core performance
             start_time = time.time()
             try:
-                with multiprocessing.Pool() as pool:
+                # Add timeout to prevent hanging
+                import multiprocessing as mp
+                ctx = mp.get_context('spawn')  # Use spawn method for better compatibility
+                with ctx.Pool(processes=min(4, mp.cpu_count()), timeout=30) as pool:
+                    # Use helper function instead of lambda to avoid pickling issues
                     results = pool.map(
-                        lambda x: sum(i * i for i in range(x, x + 100000)),
+                        self._compute_sum_squares,
                         range(0, 1000000, 100000)
                     )
                     _ = sum(results)

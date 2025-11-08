@@ -200,7 +200,16 @@ class PiscesLxCoreFS:
         Returns:
             Path: The path to the ".pisceslx" directory.
         """
-        return self.project_root() / ".pisceslx"
+        p = self.project_root() / ".pisceslx"
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return p
+
+    # Backward-compatible alias
+    def get_pisceslx_root(self) -> Path:
+        return self.app_dir()
 
     def logs_dir(self) -> Path:
         """Get the logs directory under the application directory.
@@ -208,7 +217,12 @@ class PiscesLxCoreFS:
         Returns:
             Path: The path to the logs directory.
         """
-        return self.app_dir() / "logs"
+        p = self.app_dir() / "logs"
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return p
 
     def cache_dir(self) -> Path:
         """Get the cache directory under the application directory.
@@ -216,7 +230,12 @@ class PiscesLxCoreFS:
         Returns:
             Path: The path to the cache directory.
         """
-        return self.app_dir() / "cache"
+        p = self.app_dir() / "cache"
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return p
 
     def reports_dir(self) -> Path:
         """Get the reports directory under the application directory.
@@ -224,4 +243,66 @@ class PiscesLxCoreFS:
         Returns:
             Path: The path to the reports directory.
         """
-        return self.app_dir() / "reports"
+        p = self.app_dir() / "reports"
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return p
+
+    def observability_dir(self) -> Path:
+        """Get the observability directory under the application directory."""
+        p = self.app_dir() / "observability"
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return p
+
+    def temp_dir(self) -> Path:
+        """Get the temp directory under the application directory."""
+        p = self.app_dir() / "tmp"
+        try:
+            p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return p
+
+    def ensure_pisceslx_subdir(self, category: str, *parts: str) -> Path:
+        """Ensure a subpath under .pisceslx/<category> exists and return it.
+
+        Args:
+            category: One of 'logs', 'cache', 'reports', 'observability', 'tmp'.
+            parts: Additional path parts (e.g., filename).
+        """
+        base_map = {
+            "logs": self.logs_dir,
+            "cache": self.cache_dir,
+            "reports": self.reports_dir,
+            "observability": self.observability_dir,
+            "tmp": self.temp_dir,
+        }
+        base_fn = base_map.get(category)
+        if base_fn is None:
+            base_fn = self.app_dir
+        base = base_fn()
+        p = base.joinpath(*parts) if parts else base
+        try:
+            # Ensure parent exists (for files)
+            if p.suffix:
+                self.ensure_parent_dir(p)
+            else:
+                p.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            pass
+        return p
+
+    def normalize_under_category(self, category: str, path_or_name: str | os.PathLike) -> Path:
+        """Force any provided path to be under .pisceslx/<category> with its basename.
+
+        Examples:
+            normalize_under_category('logs', 'logs/abc.log') -> .pisceslx/logs/abc.log
+            normalize_under_category('cache', '/var/tmp/foo') -> .pisceslx/cache/foo
+        """
+        name = Path(path_or_name).name
+        return self.ensure_pisceslx_subdir(category, name)

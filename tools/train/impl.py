@@ -45,12 +45,8 @@ COLLATE_MAX_SEQ_LEN = 96
 
 # Local compatibility wrapper to avoid importing utils functions
 def get_cache_manager():
-    try:
-        from utils.cache import get_cache_manager as get_cache_manager_facade
-        return get_cache_manager_facade()
-    except Exception:
-        from utils.cache import PiscesLxCoreCacheManagerFacade
-        return PiscesLxCoreCacheManagerFacade.get_instance()
+    from utils.cache import PiscesLxCoreCacheManagerFacade
+    return PiscesLxCoreCacheManagerFacade.get_instance()
 
 def set_context(*, hooks=None, profiler=None, cfg=None):
     """
@@ -376,12 +372,20 @@ def _train_impl(args):
     # Initialize logger for this function
     logger = PiscesLxCoreLog("pisceslx.tools.train.impl._train_impl")
     
-    # Get the model size and construct the configuration file path
+    # Get the model size and resolve the configuration file path (support new and legacy locations)
     model_size = getattr(args, 'model_size', '0.5B').upper()
-    config_path = f"configs/{model_size}.json"
-    if not os.path.exists(config_path):
-        logger.error(f"Config file {config_path} not found. Please provide a valid --model_size.")
+    _candidates = [
+        f"configs/model/{model_size}.json",
+        f"configs/{model_size}.json",
+    ]
+    config_path = next((p for p in _candidates if os.path.exists(p)), None)
+    if not config_path:
+        logger.error(f"Config file not found for model_size={model_size}. Tried: {_candidates}")
         sys.exit(1)
+    try:
+        print(f"[train_impl] enter model_size={model_size}, config_path={config_path}")
+    except Exception:
+        pass
 
     # Load the full configuration file
     with open(config_path, 'r') as f:
@@ -394,8 +398,12 @@ def _train_impl(args):
     # Load watermark configuration (optional)
     wm_cfg = {}
     try:
+        from configs.version import PVERSION
         with open('configs/watermark.json', 'r', encoding='utf-8') as wf:
             wm_cfg = json.load(wf)
+            # Update compliance_version placeholder from PVERSION
+            if "watermark_2025" in wm_cfg and "compliance_version" in wm_cfg["watermark_2025"] and wm_cfg["watermark_2025"]["compliance_version"] == "{{VERSION}}":
+                wm_cfg["watermark_2025"]["compliance_version"] = PVERSION
     except Exception:
         wm_cfg = {}
     wm_2025 = wm_cfg.get('watermark_2025', {}) if isinstance(wm_cfg, dict) else {}
@@ -562,6 +570,10 @@ def _train_impl(args):
         if not dataset_list:
             logger.error(f"No dataset names found in {model_txt}! Please use --dataset argument instead.")
             sys.exit(1)
+    try:
+        print(f"[train_impl] datasets={len(dataset_list)}")
+    except Exception:
+        pass
     
     # Set up distributed training
     device, is_distributed, local_rank, world_size, _ = setup_distributed_training()
@@ -597,7 +609,7 @@ def _train_impl(args):
         
     logger.info(f"Device setup completed: {device}")
     logger.info("Loading ArcticConfig...")
-    config = f"configs/{model_size}.json"
+    config = config_path
     if not os.path.exists(config):
         logger.error(f"Config file {config} not found. Please provide a valid --model_size")
         sys.exit(1)
@@ -917,6 +929,14 @@ def _train_impl(args):
             if param_group['lr'] < min_lr_threshold:
                 param_group['lr'] = lr
                 logger.info(f"Learning rate auto - reset to {lr}")
+    
+    # Validate dataset list before training
+    if not dataset_list:
+        logger.error("No datasets provided for training! Please specify datasets via --dataset argument or data_cache/model.txt file.")
+        raise ValueError("No training datasets available. Use --dataset argument or create data_cache/model.txt with dataset names.")
+    
+    logger.info(f"Starting training with {len(dataset_list)} dataset(s): {dataset_list}")
+    
     for dataset in dataset_list:
         logger.debug(f"\n==============================")
         logger.info(f"Training dataset: {dataset}")
@@ -927,7 +947,7 @@ def _train_impl(args):
         cache_path = os.path.join(data_cache_dir, dataset)
         if not os.path.exists(cache_path):
             logger.error(f"Local dataset not found: {cache_path}")
-            continue
+            raise FileNotFoundError(f"Dataset '{dataset}' not found at {cache_path}. Please ensure the dataset is properly downloaded and cached.")
         # Convert ArcticConfig to dict if needed
         if hasattr(cfg, 'to_dict'):
             config_dict = cfg.__dict__ if hasattr(cfg, '__dict__') else {}
@@ -937,8 +957,8 @@ def _train_impl(args):
             config_dict = {}
         train_ds = PiscesDataset(subset=dataset, split="train", config=config_dict)
         if len(train_ds) == 0:
-            logger.debug(f"Warning: Dataset '{dataset}' is empty after filtering. Skipping.")
-            continue
+            logger.error(f"Dataset '{dataset}' is empty after filtering! Training cannot proceed.")
+            raise ValueError(f"Dataset '{dataset}' is empty. Please check your dataset configuration and ensure the dataset contains valid training data.")
         logger.info(f"Dataset loaded successfully, size: {len(train_ds)}")
         logger.info("Creating DataLoader...")
         rank = int(os.environ.get('RANK', 0))

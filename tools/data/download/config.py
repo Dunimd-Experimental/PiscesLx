@@ -21,6 +21,7 @@ import json
 from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Optional
+from configs.version import PVERSION
 
 @dataclass
 class DatasetItem:
@@ -141,6 +142,10 @@ class PiscesLxToolsDataConfigLoader:
         defaults = raw.get("defaults", {})
         # Get raw dataset configurations
         datasets_raw = raw.get("datasets", [])
+        
+        # Update version placeholder from PVERSION
+        if "version" in raw and raw["version"] == "{{VERSION}}":
+            raw["version"] = PVERSION
         
         # Initialize list to store DatasetItem objects
         items: List[DatasetItem] = []

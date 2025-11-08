@@ -18,9 +18,9 @@
 # limitations under the License.
 
 import os
-from .rules import StreamCleaner
+from .rules import PiscesLxToolsDataStreamCleaner as StreamCleaner
 from .pipeline import DatasetCleaner
-from .quality import DataQualityController
+from .quality import PiscesLxToolsDataQualityController as DataQualityController
 from typing import Optional, Dict, Any, Tuple, List
 from utils import PiscesLxCoreLog, PiscesLxCoreCacheManagerFacade
 

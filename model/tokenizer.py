@@ -30,7 +30,7 @@ from typing import Optional, List, Union
 
 logger = PiscesLxCoreLog("Arctic.Core.Tokenizer", file_path="logs/ArcticCore.log")
 
-class HNetworkTokenizer:
+class ArcticHNetworkTokenizer:
     """H-Network tokenizer for visual text processing without traditional tokenization.
     
     Converts text to visual tokens by rendering text as images and compressing them
@@ -484,7 +484,7 @@ def get_tokenizer(tokenizer_type="standard", **kwargs):
         **kwargs: Additional arguments for tokenizer initialization
 
     Returns:
-        Union[ArcticBPETokenizer, HNetworkTokenizer]: Tokenizer instance
+        Union[ArcticBPETokenizer, ArcticHNetworkTokenizer]: Tokenizer instance
 
     Raises:
         FileNotFoundError: If vocab.json or merges.txt is not found for standard tokenizer
@@ -492,7 +492,7 @@ def get_tokenizer(tokenizer_type="standard", **kwargs):
     """
     if tokenizer_type == "h_network":
         logger.info("Initializing H-Network tokenizer")
-        return HNetworkTokenizer(**kwargs)
+        return ArcticHNetworkTokenizer(**kwargs)
     elif tokenizer_type == "standard":
         vocab_path, merges_path = None, None
         # Search for the vocabulary file in multiple locations
@@ -517,14 +517,14 @@ def get_tokenizer(tokenizer_type="standard", **kwargs):
     else:
         raise ValueError(f"Invalid tokenizer_type: {tokenizer_type}. Choose 'standard' or 'h_network'")
 
-def load_tokenizer_from_config(config_path: str = None) -> Union[ArcticBPETokenizer, HNetworkTokenizer]:
+def load_tokenizer_from_config(config_path: str = None) -> Union[ArcticBPETokenizer, ArcticHNetworkTokenizer]:
     """Load tokenizer based on model configuration file.
     
     Args:
         config_path (str): Path to model config JSON file. If None, will auto-detect.
         
     Returns:
-        Union[ArcticBPETokenizer, HNetworkTokenizer]: Configured tokenizer instance
+        Union[ArcticBPETokenizer, ArcticHNetworkTokenizer]: Configured tokenizer instance
         
     Raises:
         FileNotFoundError: If config file not found

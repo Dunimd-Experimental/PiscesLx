@@ -21,7 +21,7 @@ import os
 import sys
 from datetime import datetime
 from typing import Dict, Any, Optional, List, Tuple
-from utils import PiscesLxCoreCacheManager
+from utils.cache import PiscesLxCoreCacheManagerFacade
 from utils import PiscesLxCoreDeviceManager
 from utils import PiscesLxCoreFS
 from utils import PiscesLxCoreDecorators
@@ -65,7 +65,7 @@ class PiscesLxMonitorUtils:
     def __init__(self):
         """Initialize utility components."""
         self.fs_manager = PiscesLxCoreFS()
-        self.cache_manager = PiscesLxCoreCacheManager()
+        self.cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
         self.device_manager = PiscesLxCoreDeviceManager()
         
         # Build log paths dynamically
@@ -83,7 +83,7 @@ class PiscesLxMonitorUtils:
             enable_file=True
         )
     
-    def get_cache_manager(self) -> PiscesLxCoreCacheManager:
+    def get_cache_manager(self) -> PiscesLxCoreCacheManagerFacade:
         """Get cache manager."""
         return self.cache_manager
     
@@ -124,7 +124,7 @@ class PiscesLxMonitorContextManager:
         """Emit global event."""
         self._context_manager.emit_event(event_type, data)
     
-    def get_cache_manager(self) -> PiscesLxCoreCacheManager:
+    def get_cache_manager(self) -> PiscesLxCoreCacheManagerFacade:
         """Get global cache manager."""
         return self._utils_manager.get_cache_manager()
     

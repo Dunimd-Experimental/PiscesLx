@@ -30,8 +30,7 @@ from datasets import load_from_disk, Dataset
 from typing import Optional, Set, List, Tuple
 from tools.data.clean import DatasetCleaner
 from .config import PiscesLxToolsDataConfigLoader, PiscesLxToolsDataDownloadConfig, DatasetItem
-from .sources import PiscesLxToolsDataSourceRouter, to_hf_if_needed, detect_available_splits
-from .sources import detect_available_splits as _detect_available_splits
+from .sources import PiscesLxToolsDataSourceRouter
 
 logger = PiscesLxCoreLog("PiscesLx.Tools.DataDownload")
 
@@ -55,8 +54,8 @@ class PiscesLxToolsDataDatasetDownload:
         try:
             # Ensure dataset is in HuggingFace format if needed
             try:
-                from .sources import to_hf_if_needed
-                ds = to_hf_if_needed(ds)
+                from .sources import PiscesLxToolsDataSourceRouter
+                ds = PiscesLxToolsDataSourceRouter.to_hf_if_needed(ds)
             except Exception:
                 logger.debug("Dataset is already in HuggingFace format or conversion failed")
             
@@ -66,10 +65,10 @@ class PiscesLxToolsDataDatasetDownload:
                 ds = ds.select(range(max_samples))
             
             save_path = os.path.join(data_dir, name)
-            logger.debug(f"Saving dataset to {save_path}")
+            logger.info(f"Saving dataset '{name}' to: {save_path}")
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             ds.save_to_disk(save_path)
-            logger.info(f"Successfully saved dataset to {save_path}")
+            logger.info(f"Successfully saved dataset '{name}' to: {save_path}")
             return True
         except Exception as e:
             logger.error(f"Failed to save dataset {name}: {str(e)}")
@@ -87,7 +86,7 @@ class PiscesLxToolsDataDatasetDownload:
         Returns:
             Optional[str]: The save name of the dataset if downloaded and saved successfully, None otherwise.
         """
-        from .sources import PiscesLxToolsDataSourceRouter, setup_hf_mirror
+        from .sources import PiscesLxToolsDataSourceRouter
         from .caches import PiscesLxToolsDataDownloadCache
         
         dataset_name, save_name, description, preferred_sources, data_dir, max_samples = task
@@ -97,7 +96,7 @@ class PiscesLxToolsDataDatasetDownload:
         cache.setup_env()
         
         # Set up HuggingFace mirror if needed in child process
-        setup_hf_mirror()
+        PiscesLxToolsDataSourceRouter.setup_hf_mirror()
         
         logger = PiscesLxCoreLog("pisceslx.data.download")
         logger.info(f"Starting download: {dataset_name} -> {save_name}")
@@ -112,7 +111,7 @@ class PiscesLxToolsDataDatasetDownload:
                 strict_sources: List[str] = [preferred_sources[0]] if preferred_sources else ["modelscope"]
                 src = strict_sources[0].strip().lower()
                         # Build loading methods based on detected splits from the chosen source
-                splits = PiscesLxToolsDataDatasetDownload.detect_available_splits(dataset_name, src)
+                splits = PiscesLxToolsDataSourceRouter.detect_available_splits(dataset_name, src)
                 methods: List[Tuple[dict, str]] = []
                 if "__direct__" in splits or not splits:
                     methods.append(({}, "direct"))
@@ -136,7 +135,7 @@ class PiscesLxToolsDataDatasetDownload:
                         continue
                 
                 if ds is None:
-                    logger.error(f"Failed to load dataset {dataset_name} after all methods")
+                    logger.error(f"Failed to load dataset {dataset_name} after all methods. Last error: {last_err}")
                     if attempt < max_retries - 1:
                         logger.info(f"Retrying {dataset_name} in 5 seconds...")
                         import time
@@ -324,6 +323,11 @@ class PiscesLxToolsDataDatasetDownload:
         """
         # Logger for this run
         logger = PiscesLxCoreLog("pisceslx.data.download")
+        logger.info(f"Starting download with config: {cfg}")
+        logger.info(f"Using data directory: {self._DATA}")
+        logger.info(f"Using cache directory: {self._DATATEMP}")
+        logger.info(f"Datasets will be saved to: {self._DATA} (data_cache directory)")
+        logger.info(f"Temporary files will use: {self._DATATEMP} (datatmp directory)")
 
         # Collect the names of already downloaded datasets
         downloaded: Set[str] = set()
@@ -422,12 +426,14 @@ class PiscesLxToolsDataDatasetDownload:
             except Exception:
                 pass
 
-            # Generate model.txt file
+        # Generate model.txt file - moved outside post_download_clean condition
+        if successfully_downloaded:
             try:
                 model_file = os.path.join(self._DATA, "model.txt")
                 with open(model_file, "w", encoding="utf-8") as f:
                     for name in sorted(successfully_downloaded):
                         f.write(f"{name}\n")
+                logger.info(f"Successfully generated model.txt with {len(successfully_downloaded)} datasets")
             except Exception as e:
                 logger.error(f"Exception in generating model.txt: {str(e)}")
 

@@ -20,7 +20,8 @@
 import os
 import sys
 from pathlib import Path
-from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager, display_update_log
+sys.path.append(str(Path(__file__).parent.parent))
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
 
 # Initialize logger
 logger = PiscesLxCoreLog("pisceslx.data.download")
@@ -54,8 +55,8 @@ def update():
         _logger.debug("GitPython not available, falling back to system git commands")
         _update_with_subprocess(remote_url)
     
-    # Display the latest update log after a successful update
-    display_update_log(project_root)
+    # UL update log functionality removed - update completed successfully
+    logger.success("Update completed successfully")
 
 def _update_with_gitpython(project_root: Path, primary_url: str, backup_url: str):
     """

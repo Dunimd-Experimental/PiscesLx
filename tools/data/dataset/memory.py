@@ -21,8 +21,8 @@ import gc
 import torch
 import psutil
 import threading
-from queue import Queue, Empty
-from typing import Dict, Optional, List
+from queue import Queue, Empty, Full
+from typing import Dict, Optional, List, Any
 
 class PiscesLxToolsDataMemoryMonitor:
     """Monitor memory usage during dataset processing."""
@@ -68,6 +68,24 @@ class PiscesLxToolsDataMemoryMonitor:
             "increase_mb": peak_mb - (self.initial_memory / 1024 / 1024)
         }
 
+class PiscesLxToolsMemoryMonitor:
+    def __init__(self, threshold_gb: float = 8.0):
+        self.threshold_gb = threshold_gb
+        self.process = psutil.Process()
+
+    def check_memory(self) -> Dict[str, float]:
+        vm = psutil.virtual_memory()
+        total_gb = vm.total / (1024 ** 3)
+        available_gb = vm.available / (1024 ** 3)
+        used_gb = (vm.total - vm.available) / (1024 ** 3)
+        return {
+            "total_gb": total_gb,
+            "available_gb": available_gb,
+            "system_available_gb": available_gb,
+            "used_gb": used_gb,
+            "threshold_gb": self.threshold_gb,
+        }
+
 class PiscesLxToolsDataStreamingDataBuffer:
     """A class for buffering streaming data using a thread-safe queue."""
 
@@ -95,7 +113,7 @@ class PiscesLxToolsDataStreamingDataBuffer:
         try:
             self.buffer.put(item, block=False)
             return True
-        except queue.Full:
+        except Full:
             return False
 
     def get(self, timeout: Optional[float] = None) -> Optional[Any]:

@@ -18,7 +18,7 @@
 # limitations under the License.
 
 # Core utilities
-from utils.ul import PiscesLxCoreUL
+
 from utils.fs.core import PiscesLxCoreFS
 from utils.validate import PiscesLxCoreValidator
 from utils.config.loader import PiscesLxCoreConfigLoader
@@ -54,9 +54,6 @@ from utils.error import (
 from utils.cache.core import PiscesLxCoreCache
 from utils.cache.enhanced import PiscesLxCoreEnhancedCache, PiscesLxCoreEnhancedCacheManager
 from utils.cache import PiscesLxCoreCacheManagerFacade
-
-# Backward compatibility alias
-PiscesLxCoreCacheManager = PiscesLxCoreEnhancedCacheManager
 
 # Log module
 from utils.log.core import PiscesLxCoreLog, PiscesLxCoreLogManager
@@ -120,7 +117,6 @@ from utils.config.manager import PiscesLxCoreConfigManager, PiscesLxCoreConfigMa
 
 __all__ = [
     # Core utilities
-    'PiscesLxCoreUL',
     'PiscesLxCoreFS',
     'PiscesLxCoreValidator',
     'PiscesLxCoreConfigLoader',
@@ -158,7 +154,6 @@ __all__ = [
     'PiscesLxCoreCache',
     'PiscesLxCoreEnhancedCache',
     'PiscesLxCoreEnhancedCacheManager',
-    'PiscesLxCoreCacheManager',  # Backward compatibility alias
     'PiscesLxCoreCacheManagerFacade',
     
     # Logging

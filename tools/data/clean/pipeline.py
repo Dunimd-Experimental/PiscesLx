@@ -20,9 +20,9 @@
 import os
 import gc
 import pandas as pd
-from .rules import StreamCleaner, AUTO_FIELDS
+from .rules import PiscesLxToolsDataStreamCleaner as StreamCleaner, AUTO_FIELDS
 from utils import PiscesLxCoreCacheManagerFacade, PiscesLxCoreLog
-from .quality import calculate_text_quality_score
+from .quality import PiscesLxToolsDataQualityController
 from typing import Optional, Dict, Any, List, Tuple
 from datasets import load_from_disk, Dataset, concatenate_datasets
 
@@ -188,7 +188,7 @@ class DatasetCleaner:
                         v = DatasetCleaner._extract_text_from_complex_format(v)
                     row[text_field] = v
                     if enable_quality_scoring:
-                        s = calculate_text_quality_score(v)
+                        s = PiscesLxToolsDataQualityController.calculate_text_quality_score(v)
                         row["text_quality_score"] = s
                         text_scores.append(s)
                     else:

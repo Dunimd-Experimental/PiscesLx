@@ -48,13 +48,38 @@ class PiscesLxCoreHookBus:
             event_type (str): The type of the event to emit.
             **kwargs (Any): Additional keyword arguments to pass to the listeners.
         """
-        # Read and execute listeners first to avoid holding the lock for too long
+        # Read listeners first to avoid holding the lock for too long
         listeners = self.registry.get_listeners(event_type)
-        summary = None
-        if listeners:
-            summary = self.executor.execute(event_type, listeners, **kwargs)
+        
+        # Skip execution if no listeners to avoid unnecessary overhead
+        if not listeners:
+            with self._lock:
+                m = self._metrics.get(event_type)
+                if m is None:
+                    m = PiscesLxCoreEventMetrics(event_type=event_type)
+                    self._metrics[event_type] = m
+                m.count += 1
+                m.last_executed = kwargs.get('timestamp', time.time())
+            return
 
-        # Then update the metrics
+        # Execute listeners with timeout protection to prevent blocking
+        summary = None
+        try:
+            summary = self.executor.execute(event_type, listeners, **kwargs)
+        except Exception as e:
+            logger.warning("Hook execution failed with exception", {
+                "event_type": event_type, 
+                "error": str(e), 
+                "error_class": type(e).__name__
+            })
+            # Create a minimal summary to record the error
+            summary = {
+                'total_time': 0.0,
+                'errors': len(listeners),
+                'count': 0
+            }
+
+        # Update metrics with execution results
         with self._lock:
             m = self._metrics.get(event_type)
             if m is None:

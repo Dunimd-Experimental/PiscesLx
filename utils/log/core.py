@@ -601,6 +601,13 @@ class PiscesLxCoreLog:
 
         if enable_file and file_path:
             try:
+                # Normalize any provided path to .pisceslx/logs/<basename>
+                try:
+                    from utils.fs.core import PiscesLxCoreFS as _FS
+                    _fs = _FS()
+                    file_path = str(_fs.normalize_under_category('logs', file_path))
+                except Exception:
+                    pass
                 # Remove existing file handlers with our name to avoid duplicates
                 for h in list(self._logger.handlers):
                     if getattr(h, 'name', '') == _FILE_HANDLER_NAME:

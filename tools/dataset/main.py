@@ -39,7 +39,8 @@ from field_manager import init_field_rules, add_new_field, manage_fields
 
 # Import root utils functions
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from utils import PiscesLxCoreConfigManagerFacade, get_cache_manager
+from utils import PiscesLxCoreConfigManagerFacade
+from utils.cache import PiscesLxCoreCacheManagerFacade
 
 import streamlit as st, pyarrow as pa, pyarrow.json as paj, json, jsonlines, ast, time, shutil
 
@@ -63,7 +64,7 @@ config_manager = PiscesLxCoreConfigManagerFacade(PROJECT_ROOT)
 st.session_state.config_manager = config_manager
 
 # Cache manager already imported above
-cache_manager = get_cache_manager()
+cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
 st.session_state.cache_manager = cache_manager
 
 # Apply language before setting page config so title is localized at first paint
@@ -144,7 +145,7 @@ def dataset(args=None):
             if _early_settings.default_open_path:
                 _default_path = _early_settings.default_open_path
             else:
-                cache_manager = get_cache_manager()
+                cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
                 _default_path = cache_manager.get_or_create_cache_dir("data_cache")
 
         # Initialize new dataset name in session state if not present
@@ -224,8 +225,8 @@ def dataset(args=None):
         if _early_settings.default_open_path:
             _default_path = _early_settings.default_open_path
         else:
-                from utils import get_cache_manager
-                cache_manager = get_cache_manager()
+                from utils.cache import PiscesLxCoreCacheManagerFacade
+                cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
                 _default_path = cache_manager.get_or_create_cache_dir("data_cache")
     path_input = st.text_input(t("input.path_label"), _default_path, placeholder=t("ph.path_input"))
     # remember recent path

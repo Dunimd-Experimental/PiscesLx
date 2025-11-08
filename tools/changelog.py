@@ -20,7 +20,10 @@
 import sys
 import argparse
 from pathlib import Path
-from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager, PiscesLxCoreUL
+import sys
+from pathlib import Path
+sys.path.append(str(Path(__file__).parent.parent))
+from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
 logger = PiscesLxCoreLog("pisceslx.data.download")
 
 def show_changelog(args=None):
@@ -37,15 +40,9 @@ def show_changelog(args=None):
         # Retrieve the root directory of the project
         project_root = Path(__file__).parent.parent
 
-        if args and hasattr(args, 'all') and args.all:
-            # Display changelog information for all versions
-            PiscesLxCoreUL.display_all_versions(project_root)
-        elif args and hasattr(args, 'version') and args.version:
-            # Display changelog information for a specific version
-            PiscesLxCoreUL.display_specific_version(project_root, args.version)
-        else:
-            # Display changelog information for all versions by default
-            PiscesLxCoreUL.display_all_versions(project_root)
+        # UL functionality removed - display message instead
+        print("🔴\tUL changelog functionality has been removed")
+        print("🔵\tVersion information is now available in configs/version.py")
 
     except Exception as e:
         logger.error(f"Failed to display changelog information: {e}")

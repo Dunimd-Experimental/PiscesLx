@@ -45,7 +45,7 @@ class PiscesLxCoreObservabilityFacade:
         self._active_sessions = {}
         # Log the initialization of the observability facade
         try:
-            self.logger.info("Observability facade initialized for tools/services monitoring", {"scope": "tools_services"})
+            self.logger.info("Observability facade initialized for tools/services monitoring", scope="tools_services")
         except Exception as e:
             self.logger.error("Failed to log observability facade initialization", error=str(e), error_class=type(e).__name__)
     
@@ -63,7 +63,7 @@ class PiscesLxCoreObservabilityFacade:
             >>> obs = PiscesLxCoreObservabilityFacade()
             >>> config = obs.observe_training(model_size="70B", mode="auto")
         """
-        self.logger.info("Configuring training monitoring", {"model": model_size, "mode": mode})
+        self.logger.info("Configuring training monitoring", model=model_size, mode=mode)
         # Retrieve the unified configuration manager
         from utils.config.manager import PiscesLxCoreConfigManager
         config_manager = PiscesLxCoreConfigManager.get_instance()
@@ -82,7 +82,7 @@ class PiscesLxCoreObservabilityFacade:
             "status": "active"
         }
         
-        self.logger.success("Training monitoring activated", {"session_id": session_id, "level": config.monitoring_level})
+        self.logger.success("Training monitoring activated", session_id=session_id, level=config.monitoring_level)
         return result
     
     def observe_inference(self, batch_size: int = 1, sequence_length: int = 2048, 
@@ -97,7 +97,7 @@ class PiscesLxCoreObservabilityFacade:
         Returns:
             Dict[str, Any]: Inference monitoring configuration.
         """
-        self.logger.info("Configuring inference monitoring", {"batch": batch_size, "seq_len": sequence_length})
+        self.logger.info("Configuring inference monitoring", batch=batch_size, seq_len=sequence_length)
         # Retrieve the unified configuration manager
         from utils.config.manager import PiscesLxCoreConfigManager
         config_manager = PiscesLxCoreConfigManager.get_instance()
@@ -133,7 +133,7 @@ class PiscesLxCoreObservabilityFacade:
         Returns:
             Dict[str, Any]: Distributed monitoring configuration.
         """
-        self.logger.info("Configuring distributed monitoring", {"world_size": world_size, "rank": rank})
+        self.logger.info("Configuring distributed monitoring", world_size=world_size, rank=rank)
         # Retrieve the unified configuration manager
         from utils.config.manager import PiscesLxCoreConfigManager
         config_manager = PiscesLxCoreConfigManager.get_instance()
@@ -218,7 +218,7 @@ class PiscesLxCoreObservabilityFacade:
                 if session_id in self._active_sessions:
                     self._manager.stop_monitoring()
                     del self._active_sessions[session_id]
-                    self.logger.info("Monitoring session stopped", {"session_id": session_id})
+                    self.logger.info("Monitoring session stopped", session_id=session_id)
                     return True
                 else:
                     self.logger.warning("Session does not exist", session_id=session_id)

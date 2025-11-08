@@ -39,8 +39,8 @@ class PiscesWatermark:
     def __init__(self, model_id: str = "PiscesL1-1.5B", version: str = None):
         # Initialize model ID and version
         self.model_id = model_id
-        from configs.version import WATERMARK_VERSION
-        self.version = version or WATERMARK_VERSION
+        from configs.version import PVERSION
+        self.version = version or PVERSION
         # Generate a unique watermark key
         self.watermark_key = self._generate_watermark_key()
         # Load watermark configuration from JSON file
@@ -59,12 +59,18 @@ class PiscesWatermark:
             Dict[str, Any]: Loaded watermark configuration or fallback configuration.
         """
         try:
+            from configs.version import PVERSION
             with open('configs/watermark.json', 'r', encoding='utf-8') as f:
-                return json.load(f)
+                config = json.load(f)
+                # Update compliance_version placeholder from PVERSION
+            if "watermark_2025" in config and "compliance_version" in config["watermark_2025"] and config["watermark_2025"]["compliance_version"] == "{{VERSION}}":
+                config["watermark_2025"]["compliance_version"] = PVERSION
+                return config
         except (FileNotFoundError, json.JSONDecodeError):
+            from configs.version import PVERSION
             return {
                 "watermark_2025": {
-                    "compliance_version": "2025.09.01",
+                    "compliance_version": "{{VERSION}}",
                     "text": {
                         "zero_width": {
                             "force_density": 0.33,
@@ -185,7 +191,8 @@ class PiscesWatermark:
             str: Binary string with enhanced encoding and redundancy.
         """
         # Add version identifier to the payload
-        payload["encoding_version"] = "2025.09.01"
+        from configs.version import PVERSION
+        payload["encoding_version"] = PVERSION
         # Add encoding time to the payload
         payload["encoding_time"] = int(time.time() * 1000)
         # Convert payload to compressed JSON with ensure_ascii=False

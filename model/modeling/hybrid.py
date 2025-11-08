@@ -13,12 +13,12 @@ from ..config import ArcticConfig
 from .attention import ArcticAttention
 from typing import Optional, Dict, Any
 from utils.log.core import PiscesLxCoreLog
-from .mamba3 import Mamba3Integration, Mamba3Config
+from .mamba3 import ArcticMamba3Integration, ArcticMamba3Config
 
 logger = PiscesLxCoreLog("Arctic.Core.Modeling.Hybrid", file_path="logs/ArcticCore.log")
 
 
-class IntelligentGate(nn.Module):
+class ArcticIntelligentGate(nn.Module):
     """
     Intelligent gating mechanism for fusing attention and Mamba-3 outputs.
     Adapts to sequence length, content complexity, and model state.
@@ -143,7 +143,7 @@ class ArcticHybridBlock(nn.Module):
         
         # Core components
         self.attention = ArcticAttention(cfg, device=device, dtype=dtype)
-        self.mamba3_config = Mamba3Config(
+        self.mamba3_config = ArcticMamba3Config(
             d_model=cfg.hidden_size,
             d_state=getattr(cfg, 'mamba3_d_state', 128),
             d_conv=getattr(cfg, 'mamba3_d_conv', 4),
@@ -153,11 +153,11 @@ class ArcticHybridBlock(nn.Module):
             use_complex=getattr(cfg, 'mamba3_use_complex', True),
             use_mimo=getattr(cfg, 'mamba3_use_mimo', True)
         )
-        self.mamba3 = Mamba3Integration(cfg.hidden_size, self.mamba3_config)
+        self.mamba3 = ArcticMamba3Integration(cfg.hidden_size, self.mamba3_config)
         
         # Intelligent gating
         gate_type = getattr(cfg, 'hybrid_gate_type', 'adaptive')
-        self.intelligent_gate = IntelligentGate(cfg.hidden_size, gate_type)
+        self.intelligent_gate = ArcticIntelligentGate(cfg.hidden_size, gate_type)
         
         # Normalization layers
         self.norm_attention = ArcticRMSNorm(cfg.hidden_size)

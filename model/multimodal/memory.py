@@ -26,7 +26,7 @@ import threading
 from collections import defaultdict
 from utils.log.core import PiscesLxCoreLog
 from typing import List, Dict, Any, Optional
-from .types import PiscesLxCoreAgenticObservation, PiscesLxCoreAgenticAction
+from .types import ArcticAgenticObservation, ArcticAgenticAction
 
 logger = PiscesLxCoreLog("Arctic.Core.Memory", file_path="logs/ArcticCore.log")
 
@@ -38,8 +38,8 @@ class ArcticMemoryManager:
         Args:
             enable_background (bool, optional): Whether to enable background memory monitoring. Defaults to True.
         """
-        self.observations: List[PiscesLxCoreAgenticObservation] = []  # List to store agent observations
-        self.actions: List[PiscesLxCoreAgenticAction] = []  # List to store agent actions
+        self.observations: List[ArcticAgenticObservation] = []  # List to store agent observations
+        self.actions: List[ArcticAgenticAction] = []  # List to store agent actions
         self.reflections: List[str] = []  # List to store reflections
 
         # Attributes for enhanced memory management
@@ -155,12 +155,12 @@ class ArcticMemoryManager:
 
         logger.debug(f"Registered tensor '{name}' shape={shape} bytes={nbytes} device={device}")
 
-    def add_observation(self, observation: PiscesLxCoreAgenticObservation):
+    def add_observation(self, observation: ArcticAgenticObservation):
         """
         Add an observation to the memory and generate its corresponding embedding and importance score.
 
         Args:
-            observation (PiscesLxCoreAgenticObservation): The observation to be added.
+            observation (ArcticAgenticObservation): The observation to be added.
         """
         self.observations.append(observation)
         try:
@@ -195,12 +195,12 @@ class ArcticMemoryManager:
         if len(self.observations) > self.max_memory_size:
             self.compress_memory()
 
-    def add_action(self, action: PiscesLxCoreAgenticAction):
+    def add_action(self, action: ArcticAgenticAction):
         """
         Add an action to the memory and generate its corresponding embedding and importance score.
 
         Args:
-            action (PiscesLxCoreAgenticAction): The action to be added.
+            action (ArcticAgenticAction): The action to be added.
         """
         self.actions.append(action)
         # Generate a random embedding for the action

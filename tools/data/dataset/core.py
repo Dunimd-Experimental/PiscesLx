@@ -39,7 +39,7 @@ class Dataset:
     and provides efficient data loading and processing capabilities.
     """
 
-    def __init__(self, name: str, subset: Optional[str] = None, split: str = "train", config: Optional[Dict[str, Any]] = None, cache_dir: Optional[str] = None):
+    def __init__(self, name: str, subset: Optional[str] = None, split: str = "train", config: Optional[Dict[str, Any]] = None, cache_dir: Optional[str] = None, max_samples: Optional[int] = None):
         """Initialize the Dataset instance.
 
         Args:
@@ -48,11 +48,13 @@ class Dataset:
             split: Data split to use (e.g., 'train', 'test', 'validation').
             config: Configuration dictionary (optional).
             cache_dir: Directory to cache the dataset (optional).
+            max_samples: Maximum number of samples to load (optional).
         """
         
         self.subset = subset
         self.split = split
         self.config = config or {}
+        self.max_samples = max_samples
 
         # Get the instance of cache manager and create data cache directory
         cache = PiscesLxCoreCacheManagerFacade.instance()
@@ -70,8 +72,8 @@ class Dataset:
         self.ds = ds
 
         # Limit the number of samples if max_samples is specified
-        if max_samples is not None and len(self.ds) > max_samples:
-            self.ds = self.ds.select(range(max_samples))
+        if self.max_samples is not None and len(self.ds) > self.max_samples:
+            self.ds = self.ds.select(range(self.max_samples))
 
         # Initialize the tokenizer and modality encoders
         self.tokenizer = get_tokenizer()

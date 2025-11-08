@@ -18,7 +18,7 @@
 # limitations under the License.
 
 from .runner import PiscesLxToolsDataDatasetDownload
-from .sources import PiscesLxToolsDataSourceRouter, setup_hf_mirror
+from .sources import PiscesLxToolsDataSourceRouter
 from .config import PiscesLxToolsDataDownloadConfig, PiscesLxToolsDataConfigLoader, DatasetItem
 from .caches import PiscesLxToolsDataDownloadCache
 
@@ -28,6 +28,5 @@ __all__ = [
     "PiscesLxToolsDataDownloadConfig",
     "PiscesLxToolsDataDownloadCache",
     "PiscesLxToolsDataConfigLoader",
-    "DatasetItem",
-    "setup_hf_mirror"
+    "DatasetItem"
 ]

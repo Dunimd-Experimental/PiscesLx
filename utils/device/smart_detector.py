@@ -49,6 +49,64 @@ class PiscesLxCoreDeviceSmartDetector:
         self.detection_summary = {}
 
         
+    def _detect_all_devices_with_timeout(self, model_size: str = None, timeout: int = 30) -> Dict[str, Any]:
+        """Internal method with timeout protection for device detection."""
+        import threading
+        result = {}
+        exception = None
+        
+        def detect_worker():
+            nonlocal result, exception
+            try:
+                result = self._detect_all_devices_internal(model_size)
+            except Exception as e:
+                exception = e
+        
+        # Start detection in separate thread
+        detect_thread = threading.Thread(target=detect_worker, daemon=True)
+        detect_thread.start()
+        detect_thread.join(timeout=timeout)
+        
+        if detect_thread.is_alive():
+            logger.warning("Device detection timed out, using fallback GPU detection", event="DEVICE", message="Device detection timed out, using fallback GPU detection")
+            # Return fallback result with basic GPU info
+            return self._get_fallback_device_info(model_size)
+        
+        if exception:
+            logger.warning("Device detection failed, using fallback GPU detection", event="DEVICE", message="Device detection failed", error=str(exception), error_class=type(exception).__name__)
+            return self._get_fallback_device_info(model_size)
+        
+        return result
+    
+    def _get_fallback_device_info(self, model_size: str = None) -> Dict[str, Any]:
+        """Provide fallback device information when detection fails."""
+        import torch
+        
+        # Basic GPU detection using PyTorch
+        gpu_info = []
+        if torch.cuda.is_available():
+            for i in range(torch.cuda.device_count()):
+                gpu_info.append({
+                    'id': i,
+                    'name': torch.cuda.get_device_name(i),
+                    'memory_total': torch.cuda.get_device_properties(i).total_memory,
+                    'vendor': 'nvidia'
+                })
+        
+        return {
+            'gpu_info': gpu_info,
+            'cpu_info': {'name': platform.processor(), 'cores': 1},
+            'detection_summary': {
+                'nvidia_gpus': len(gpu_info),
+                'amd_gpus': 0,
+                'total_gpus': len(gpu_info),
+                'cpu_detected': True,
+                'cuda_available': torch.cuda.is_available(),
+            },
+            'recommended_strategy': self._get_nvidia_strategy(model_size) if gpu_info else self._get_cpu_strategy(model_size),
+            'device_priority': ['cuda:0'] if gpu_info else ['cpu']
+        }
+    
     @ObsDec.auto_cached_logged(namespace="device.detect", ttl=60)
     def detect_all_devices(self, model_size: str = None) -> Dict[str, Any]:
         """
@@ -61,6 +119,10 @@ class PiscesLxCoreDeviceSmartDetector:
             Dict[str, Any]: A dictionary containing GPU information, CPU information, 
                            detection summary, recommended strategy, and device priority.
         """
+        return self._detect_all_devices_with_timeout(model_size, timeout=30)
+    
+    def _detect_all_devices_internal(self, model_size: str = None) -> Dict[str, Any]:
+        """Internal method for actual device detection without timeout."""
         # Log start of device detection process
         logger.info("Starting comprehensive device detection", event="DETECT", message="Starting comprehensive device detection")
         
@@ -68,22 +130,48 @@ class PiscesLxCoreDeviceSmartDetector:
         bus = get_global_hook_bus()
         t0 = time.time()
         
-        # Emit device detection start event
+        # Emit device detection start event with timeout protection - non-blocking
         try:
-            bus.emit("device.detect.start", model_size=model_size)
+            # Use a separate thread to emit the event to avoid blocking main detection flow
+            import threading
+            def emit_start_event():
+                try:
+                    bus.emit("device.detect.start", model_size=model_size)
+                except Exception as e:
+                    logger.debug("emit device.detect.start failed", event="DEVICE", message="emit device.detect.start failed", error=str(e), error_class=type(e).__name__)
+            
+            # Start event emission in background thread with very short timeout
+            emit_thread = threading.Thread(target=emit_start_event, daemon=True)
+            emit_thread.start()
+            emit_thread.join(timeout=2.0)  # Reduced to 2 seconds - don't wait for hooks
+            if emit_thread.is_alive():
+                logger.debug("device.detect.start event emission continuing in background", event="DEVICE", message="device.detect.start event emission continuing in background")
+                
         except Exception as e:
-            logger.debug("emit device.detect.start failed", event="DEVICE", message="emit device.detect.start failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("Failed to start device detection event emission", event="DEVICE", message="Failed to start device detection event emission", error=str(e), error_class=type(e).__name__)
         
-        # Detect NVIDIA GPUs using dedicated detector
-        nvidia_gpus = self.nvidia_detector.detect()
-        self.all_gpu_info.extend(nvidia_gpus)
+        # Detect NVIDIA GPUs using dedicated detector with timeout protection
+        try:
+            nvidia_gpus = self.nvidia_detector.detect()
+            self.all_gpu_info.extend(nvidia_gpus)
+        except Exception as e:
+            logger.warning("NVIDIA GPU detection failed, continuing without NVIDIA GPUs", event="DEVICE", message="NVIDIA GPU detection failed", error=str(e), error_class=type(e).__name__)
+            nvidia_gpus = []
         
-        # Detect platform-specific devices (ROCm, DirectML, WSL)
-        self._detect_platform_specific_devices()
+        # Detect platform-specific devices (ROCm, DirectML, WSL) with timeout protection
+        try:
+            self._detect_platform_specific_devices()
+        except Exception as e:
+            logger.warning("Platform-specific device detection failed, continuing", event="DEVICE", message="Platform-specific device detection failed", error=str(e), error_class=type(e).__name__)
         
-        # Detect CPU using dedicated detector
-        cpu_info = self.cpu_detector.detect()
-        self.cpu_info = cpu_info
+        # Detect CPU using dedicated detector with timeout protection
+        try:
+            cpu_info = self.cpu_detector.detect()
+            self.cpu_info = cpu_info
+        except Exception as e:
+            logger.warning("CPU detection failed, continuing without CPU info", event="DEVICE", message="CPU detection failed", error=str(e), error_class=type(e).__name__)
+            cpu_info = {}
+            self.cpu_info = cpu_info
         
         # Calculate totals for different GPU types
         nvidia_count = len([gpu for gpu in self.all_gpu_info if gpu.get('vendor') == 'nvidia'])
@@ -122,18 +210,95 @@ class PiscesLxCoreDeviceSmartDetector:
             obs.write_device_report(result)
         except Exception as e:
             logger.debug("write_device_report failed", error=str(e), error_class=type(e).__name__)
-        # emit end event
+        
+        # emit end event with timeout protection - non-blocking
         try:
             duration = int((time.time() - t0) * 1000)
-            bus.emit(
-                "device.detect.end",
-                model_size=model_size,
-                duration_ms=duration,
-                summary=self.detection_summary,
-                gpu_info=self.all_gpu_info,
-            )
+            # Use a separate thread to emit the event to avoid blocking main flow
+            import threading
+            def emit_end_event():
+                try:
+                    bus.emit(
+                        "device.detect.end",
+                        model_size=model_size,
+                        duration_ms=duration,
+                        summary=self.detection_summary,
+                        gpu_info=self.all_gpu_info,
+                    )
+                except Exception as e:
+                    logger.debug("emit device.detect.end failed", event="DEVICE", message="emit device.detect.end failed", error=str(e), error_class=type(e).__name__)
+            
+            # Start event emission in background thread with very short timeout
+            emit_thread = threading.Thread(target=emit_end_event, daemon=True)
+            emit_thread.start()
+            emit_thread.join(timeout=2.0)  # Reduced to 2 seconds - don't wait for hooks
+            if emit_thread.is_alive():
+                logger.debug("device.detect.end event emission continuing in background", event="DEVICE", message="device.detect.end event emission continuing in background")
+                
         except Exception as e:
-            logger.debug("emit device.detect.end failed", event="DEVICE", message="emit device.detect.end failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("Failed to emit device detection end event", event="DEVICE", message="Failed to emit device detection end event", error=str(e), error_class=type(e).__name__)
+        
+        return result
+        
+        # Generate detection summary with key metrics
+        self.detection_summary = {
+            'nvidia_gpus': nvidia_count,
+            'amd_gpus': amd_count,
+            'total_gpus': len(self.all_gpu_info),
+            'cpu_detected': bool(cpu_info),
+            'cuda_available': torch.cuda.is_available(),
+            'rocm_available': self._check_rocm_availability(),
+            'directml_available': self._check_directml_availability(),
+            'device_capabilities': self._get_device_capabilities(self.all_gpu_info, cpu_info)
+        }
+        
+        # Log completion of device detection
+        logger.info("Device detection completed", event="DETECT", message="Device detection completed", nvidia_gpus=nvidia_count, amd_gpus=amd_count, cpu_detected=True)
+        
+        # Determine optimal strategy based on detected hardware
+        strategy = self._determine_optimal_strategy(model_size)
+        
+        # Prepare final result dictionary
+        result = {
+            'gpu_info': self.all_gpu_info,
+            'cpu_info': self.cpu_info,
+            'detection_summary': self.detection_summary,
+            'recommended_strategy': strategy,
+            'device_priority': self._get_device_priority()
+        }
+
+        # auto-generate device report (best-effort)
+        try:
+            obs = PiscesLxCoreObservabilityService.instance()
+            obs.write_device_report(result)
+        except Exception as e:
+            logger.debug("write_device_report failed", error=str(e), error_class=type(e).__name__)
+        # emit end event with timeout protection - non-blocking
+        try:
+            duration = int((time.time() - t0) * 1000)
+            # Use a separate thread to emit the event to avoid blocking main flow
+            import threading
+            def emit_end_event():
+                try:
+                    bus.emit(
+                        "device.detect.end",
+                        model_size=model_size,
+                        duration_ms=duration,
+                        summary=self.detection_summary,
+                        gpu_info=self.all_gpu_info,
+                    )
+                except Exception as e:
+                    logger.debug("emit device.detect.end failed", event="DEVICE", message="emit device.detect.end failed", error=str(e), error_class=type(e).__name__)
+            
+            # Start event emission in background thread with very short timeout
+            emit_thread = threading.Thread(target=emit_end_event, daemon=True)
+            emit_thread.start()
+            emit_thread.join(timeout=2.0)  # Reduced to 2 seconds - don't wait for hooks
+            if emit_thread.is_alive():
+                logger.debug("device.detect.end event emission continuing in background", event="DEVICE", message="device.detect.end event emission continuing in background")
+                
+        except Exception as e:
+            logger.debug("Failed to emit device detection end event", event="DEVICE", message="Failed to emit device detection end event", error=str(e), error_class=type(e).__name__)
         return result
     
     def _determine_optimal_strategy(self, model_size: str = None) -> Dict[str, Any]:
@@ -296,14 +461,26 @@ class PiscesLxCoreDeviceSmartDetector:
         capability_score = 0
         details = []
         
-        # NVIDIA GPUs with Tensor Cores
+        # NVIDIA GPUs with Tensor Cores - check compute capability directly
         for gpu in nvidia_gpus:
-            if gpu.get('tensor_cores', False):
+            major = gpu.get('major', 0)
+            minor = gpu.get('minor', 0)
+            
+            if major >= 7:  # Volta and newer have Tensor Cores
                 capability_score += 10
-                details.append(f"{gpu['name']}: Tensor Cores")
-            else:
+                details.append(f"{gpu['name']}: Tensor Cores (compute {major}.{minor})")
+            elif major > 0:  # Valid compute capability
                 capability_score += 6
-                details.append(f"{gpu['name']}: Standard CUDA")
+                details.append(f"{gpu['name']}: Standard CUDA (compute {major}.{minor})")
+            else:
+                # Fallback: check if GPU name indicates modern architecture
+                name = gpu.get('name', '').lower()
+                if 't4' in name or 'v100' in name or 'a100' in name or 'h100' in name or 'rtx' in name:
+                    capability_score += 10
+                    details.append(f"{gpu['name']}: Tensor Cores (inferred)")
+                else:
+                    capability_score += 6
+                    details.append(f"{gpu['name']}: Standard CUDA")
         
         # AMD GPUs with ROCm
         for gpu in amd_gpus:
@@ -338,8 +515,15 @@ class PiscesLxCoreDeviceSmartDetector:
             Dict[str, Any]: A dictionary containing the memory capacity score, level, 
                            total GPU memory, and details.
         """
-        # Calculate total GPU memory across all GPUs
-        total_gpu_memory = sum(gpu.get('total_memory', 0) for gpu in gpu_info)
+        # Calculate total GPU memory across all GPUs - try multiple possible field names
+        total_gpu_memory = 0
+        for gpu in gpu_info:
+            # Try different possible field names for memory
+            memory = (gpu.get('memory_total') or 
+                     gpu.get('total_memory') or 
+                     gpu.get('memory') or 
+                     gpu.get('vram') or 0)
+            total_gpu_memory += memory
         
         # Initialize memory score and details list
         memory_score = 0
@@ -366,7 +550,11 @@ class PiscesLxCoreDeviceSmartDetector:
         
         # Add per-GPU details
         for gpu in gpu_info:
-            details.append(f"  {gpu['name']}: {gpu.get('total_memory', 0)//1024}GB")
+            memory = (gpu.get('memory_total') or 
+                     gpu.get('total_memory') or 
+                     gpu.get('memory') or 
+                     gpu.get('vram') or 0)
+            details.append(f"  {gpu['name']}: {memory//1024}GB")
         
         # Return memory capacity assessment
         return {
@@ -441,29 +629,76 @@ class PiscesLxCoreDeviceSmartDetector:
         details = []
         
         # Assess platform-specific optimizations
-        if 'nvidia' in platforms:
-            optimization_score += 4
-            details.append("NVIDIA: CUDA, cuDNN, TensorRT optimizations")
+        nvidia_gpus = [gpu for gpu in gpu_info if gpu.get('vendor') == 'nvidia']
+        if nvidia_gpus:
+            # Check for modern NVIDIA GPUs - use compute capability or name
+            modern_nvidia = []
+            
+            for gpu in nvidia_gpus:
+                # Check if modern by is_modern flag first, then fallback to compute capability
+                if gpu.get('is_modern', False):
+                    modern_nvidia.append(gpu)
+                else:
+                    # Fallback: check compute capability - try multiple field names
+                    major = gpu.get('major', 0)
+                    minor = gpu.get('minor', 0)
+                    
+                    if major >= 7:  # Volta and newer are modern
+                        modern_nvidia.append(gpu)
+                    else:
+                        # Last resort: check GPU name
+                        name = gpu.get('name', '').lower()
+                        if any(modern in name for modern in ['t4', 'v100', 'a100', 'h100', 'rtx', 'tesla v', 'tesla a']):
+                            modern_nvidia.append(gpu)
+            
+            if modern_nvidia:
+                optimization_score += 8  # Higher score for modern NVIDIA
+                details.append(f"NVIDIA: CUDA, cuDNN, TensorRT optimizations ({len(modern_nvidia)} modern GPUs)")
+            else:
+                optimization_score += 4
+                details.append("NVIDIA: CUDA, cuDNN, TensorRT optimizations")
         
-        if 'rocm' in platforms:
+        # Check for ROCm platform
+        rocm_gpus = [gpu for gpu in gpu_info if gpu.get('platform') == 'rocm']
+        if rocm_gpus:
             optimization_score += 3
             details.append("AMD: ROCm optimizations")
         
-        if 'directml' in platforms:
+        # Check for DirectML platform
+        directml_gpus = [gpu for gpu in gpu_info if gpu.get('platform') == 'directml']
+        if directml_gpus:
             optimization_score += 2
             details.append("Microsoft: DirectML optimizations")
         
-        if 'wsl' in platforms:
+        # Check for WSL platform
+        wsl_gpus = [gpu for gpu in gpu_info if gpu.get('platform') == 'wsl']
+        if wsl_gpus:
             optimization_score += 1
             details.append("WSL: Windows Subsystem for Linux support")
         
         # Return platform optimization assessment
         return {
             'score': optimization_score,
-            'level': 'high' if optimization_score >= 6 else 'medium' if optimization_score >= 3 else 'low',
+            'level': 'high' if optimization_score >= 8 else 'medium' if optimization_score >= 4 else 'low',
             'platforms': list(platforms),
             'details': details
         }
+    
+    def _get_nvidia_strategy(self, model_size: str = None) -> Dict[str, Any]:
+        """
+        Get the NVIDIA-specific strategy with enhanced optimizations.
+
+        Args:
+            model_size (str, optional): The size of the model, e.g., "7B", "13B". Defaults to None.
+
+        Returns:
+            Dict[str, Any]: A dictionary representing the NVIDIA-specific strategy with enhancements.
+        """
+        # Get NVIDIA GPUs from detected devices
+        nvidia_gpus = [gpu for gpu in self.all_gpu_info if gpu.get('vendor') == 'nvidia']
+        
+        if not nvidia_gpus:
+            return self._get_cpu_strategy(model_size)
         
         # Get NVIDIA-specific strategy
         nvidia_strategy = self.nvidia_detector.get_recommended_strategy(model_size)
@@ -513,6 +748,7 @@ class PiscesLxCoreDeviceSmartDetector:
                     optimizations['tensor_cores'] = True
                     optimizations['mixed_precision'] = True
                     optimizations['flash_attention'] = True
+                    break  # Enable optimizations if any GPU supports them
             except Exception as e:
                 logger.debug("tensor core detection failed", event="DEVICE", message="tensor core detection failed", error=str(e), error_class=type(e).__name__)
                 
@@ -520,42 +756,7 @@ class PiscesLxCoreDeviceSmartDetector:
     
 
     
-    def _should_use_memory_efficient(self, gpus: List[Dict[str, Any]], model_size: str = None) -> bool:
-        """
-        Determine whether to use memory-efficient mode based on the model size and GPU memory.
 
-        Args:
-            gpus (List[Dict[str, Any]]): A list of dictionaries containing GPU information.
-            model_size (str, optional): The size of the model, e.g., "7B", "13B". Defaults to None.
-
-        Returns:
-            bool: True if memory-efficient mode should be used, False otherwise.
-        """
-        # Return False if no model size specified
-        if not model_size:
-            return False
-            
-        try:
-            # Parse model size
-            size_str = model_size.upper().replace('B', '')
-            params_b = float(size_str)
-            
-            # Large models (>7B) should use memory efficient mode
-            if params_b >= 7:
-                return True
-                
-            # Check total GPU memory
-            total_memory = sum(gpu.get('total_memory', 0) for gpu in gpus)
-            total_memory_gb = total_memory / 1024  # Convert MiB to GiB
-            
-            # If total GPU memory is less than 24GB and model is >3B
-            if total_memory_gb < 24 and params_b > 3:
-                return True
-                
-        except Exception as e:
-            logger.debug("WSL detection skipped", event="DEVICE", message="WSL detection skipped", error=type(e).__name__)
-            
-        return False
     
     def _detect_platform_specific_devices(self) -> None:
         """
@@ -1129,200 +1330,18 @@ class PiscesLxCoreDeviceSmartDetector:
                 'data_parallel': False,
                 'platform': 'cpu'
             }
-
-    def _get_device_capabilities(self, gpu_info: List[Dict], cpu_info: Dict) -> Dict[str, Any]:
-        """
-        Get a comprehensive assessment of device capabilities.
-
-        Args:
-            gpu_info (List[Dict]): A list of dictionaries containing GPU information.
-            cpu_info (Dict): A dictionary containing CPU information.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing compute capability, memory capacity, 
-                           parallel efficiency, and platform optimization.
-        """
-        capabilities = {
-            'compute_capability': self._assess_compute_capability(gpu_info, cpu_info),
-            'memory_capacity': self._assess_memory_capacity(gpu_info, cpu_info),
-            'parallel_efficiency': self._assess_parallel_efficiency(gpu_info),
-            'platform_optimization': self._assess_platform_optimization(gpu_info)
-        }
-        return capabilities
     
-    def _assess_compute_capability(self, gpu_info: List[Dict], cpu_info: Dict) -> Dict[str, Any]:
+    def _get_nvidia_strategy(self, model_size: str = None) -> Dict[str, Any]:
         """
-        Assess the compute capability of the detected devices.
+        Get the NVIDIA-specific strategy.
 
         Args:
-            gpu_info (List[Dict]): A list of dictionaries containing GPU information.
-            cpu_info (Dict): A dictionary containing CPU information.
+            model_size (str, optional): The size of the model, e.g., "7B", "13B". Defaults to None.
 
         Returns:
-            Dict[str, Any]: A dictionary containing the compute capability score, level, and details.
+            Dict[str, Any]: A dictionary representing the NVIDIA strategy.
         """
-        nvidia_gpus = [gpu for gpu in gpu_info if gpu.get('vendor') == 'nvidia']
-        amd_gpus = [gpu for gpu in gpu_info if gpu.get('vendor') == 'amd']
-        
-        capability_score = 0
-        details = []
-        
-        # NVIDIA GPUs with Tensor Cores
-        for gpu in nvidia_gpus:
-            if gpu.get('tensor_cores', False):
-                capability_score += 10
-                details.append(f"{gpu['name']}: Tensor Cores")
-            else:
-                capability_score += 6
-                details.append(f"{gpu['name']}: Standard CUDA")
-        
-        # AMD GPUs with ROCm
-        for gpu in amd_gpus:
-            capability_score += 4
-            details.append(f"{gpu['name']}: ROCm support")
-        
-        # CPU capabilities
-        if cpu_info:
-            if cpu_info.get('has_avx512', False):
-                capability_score += 2
-                details.append("CPU: AVX-512 support")
-            elif cpu_info.get('has_avx2', False):
-                capability_score += 1
-                details.append("CPU: AVX2 support")
-        
-        return {
-            'score': capability_score,
-            'level': 'high' if capability_score >= 10 else 'medium' if capability_score >= 5 else 'low',
-            'details': details
-        }
-    
-    def _assess_memory_capacity(self, gpu_info: List[Dict], cpu_info: Dict) -> Dict[str, Any]:
-        """
-        Assess the memory capacity of the detected devices.
-
-        Args:
-            gpu_info (List[Dict]): A list of dictionaries containing GPU information.
-            cpu_info (Dict): A dictionary containing CPU information.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing the memory capacity score, level, 
-                           total GPU memory, and details.
-        """
-        total_gpu_memory = sum(gpu.get('total_memory', 0) for gpu in gpu_info)
-        
-        memory_score = 0
-        details = []
-        
-        if total_gpu_memory >= 48000:  # 48GB+
-            memory_score = 10
-            details.append(f"Total GPU memory: {total_gpu_memory//1024}GB - Excellent")
-        elif total_gpu_memory >= 24000:  # 24GB+
-            memory_score = 8
-            details.append(f"Total GPU memory: {total_gpu_memory//1024}GB - Very Good")
-        elif total_gpu_memory >= 16000:  # 16GB+
-            memory_score = 6
-            details.append(f"Total GPU memory: {total_gpu_memory//1024}GB - Good")
-        elif total_gpu_memory >= 8000:  # 8GB+
-            memory_score = 4
-            details.append(f"Total GPU memory: {total_gpu_memory//1024}GB - Adequate")
-        elif total_gpu_memory > 0:
-            memory_score = 2
-            details.append(f"Total GPU memory: {total_gpu_memory//1024}GB - Limited")
-        else:
-            details.append("No GPU memory available")
-        
-        # Add per-GPU details
-        for gpu in gpu_info:
-            details.append(f"  {gpu['name']}: {gpu.get('total_memory', 0)//1024}GB")
-        
-        return {
-            'score': memory_score,
-            'level': 'high' if memory_score >= 8 else 'medium' if memory_score >= 4 else 'low',
-            'total_gpu_memory': total_gpu_memory,
-            'details': details
-        }
-    
-    def _assess_parallel_efficiency(self, gpu_info: List[Dict]) -> Dict[str, Any]:
-        """
-        Assess the parallel efficiency potential of the detected GPUs.
-
-        Args:
-            gpu_info (List[Dict]): A list of dictionaries containing GPU information.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing the parallel efficiency score, level, 
-                           GPU count, and details.
-        """
-        gpu_count = len(gpu_info)
-        nvidia_count = len([gpu for gpu in gpu_info if gpu.get('vendor') == 'nvidia'])
-        amd_count = len([gpu for gpu in gpu_info if gpu.get('vendor') == 'amd'])
-        
-        efficiency_score = 0
-        details = []
-        
-        # Multi-GPU setups
-        if gpu_count >= 4:
-            efficiency_score = 10
-            details.append(f"{gpu_count} GPUs - Excellent scaling potential")
-        elif gpu_count >= 2:
-            efficiency_score = 8
-            details.append(f"{gpu_count} GPUs - Good scaling potential")
-        elif gpu_count == 1:
-            efficiency_score = 4
-            details.append("Single GPU - Standard performance")
-        else:
-            details.append("No GPU - CPU only")
-        
-        # Mixed vendor considerations
-        if nvidia_count > 0 and amd_count > 0:
-            efficiency_score -= 2
-            details.append("Mixed vendor setup - Complexity penalty")
-        
-        return {
-            'score': efficiency_score,
-            'level': 'high' if efficiency_score >= 8 else 'medium' if efficiency_score >= 4 else 'low',
-            'gpu_count': gpu_count,
-            'details': details
-        }
-    
-    def _assess_platform_optimization(self, gpu_info: List[Dict]) -> Dict[str, Any]:
-        """
-        Assess the platform-specific optimizations of the detected devices.
-
-        Args:
-            gpu_info (List[Dict]): A list of dictionaries containing GPU information.
-
-        Returns:
-            Dict[str, Any]: A dictionary containing the optimization score, level, 
-                           available platforms, and details.
-        """
-        platforms = set(gpu.get('platform', 'unknown') for gpu in gpu_info)
-        
-        optimization_score = 0
-        details = []
-        
-        if 'nvidia' in platforms:
-            optimization_score += 4
-            details.append("NVIDIA: CUDA, cuDNN, TensorRT optimizations")
-        
-        if 'rocm' in platforms:
-            optimization_score += 3
-            details.append("AMD: ROCm optimizations")
-        
-        if 'directml' in platforms:
-            optimization_score += 2
-            details.append("Microsoft: DirectML optimizations")
-        
-        if 'wsl' in platforms:
-            optimization_score += 1
-            details.append("WSL: Windows Subsystem for Linux support")
-        
-        return {
-            'score': optimization_score,
-            'level': 'high' if optimization_score >= 6 else 'medium' if optimization_score >= 3 else 'low',
-            'platforms': list(platforms),
-            'details': details
-        }
+        nvidia_gpus = [gpu for gpu in self.all_gpu_info if gpu.get('vendor') == 'nvidia']
         
         # Get NVIDIA-specific strategy
         nvidia_strategy = self.nvidia_detector.get_recommended_strategy(model_size)
@@ -1362,17 +1381,17 @@ class PiscesLxCoreDeviceSmartDetector:
         # Check for modern NVIDIA GPUs with Tensor Cores
         for gpu in nvidia_gpus:
             name = gpu.get('name', '').lower()
-            compute_capability = gpu.get('compute_capability', '0.0')
             
             # Check for Tensor Core support (Volta and newer)
-            try:
-                major, minor = map(int, compute_capability.split('.'))
-                if major >= 7:  # Volta (7.x) and newer have Tensor Cores
-                    optimizations['tensor_cores'] = True
-                    optimizations['mixed_precision'] = True
-                    optimizations['flash_attention'] = True
-            except Exception as e:
-                logger.debug("tensor core detection failed", event="DEVICE", message="tensor core detection failed", error=str(e), error_class=type(e).__name__)
+            # Use major and minor fields directly
+            major = gpu.get('major', 0)
+            minor = gpu.get('minor', 0)
+            
+            if major >= 7:  # Volta (7.x) and newer have Tensor Cores
+                optimizations['tensor_cores'] = True
+                optimizations['mixed_precision'] = True
+                optimizations['flash_attention'] = True
+                break  # Enable optimizations if any GPU supports them
                 
         return optimizations
     
@@ -1401,8 +1420,16 @@ class PiscesLxCoreDeviceSmartDetector:
             if params_b >= 7:
                 return True
                 
-            # Check total GPU memory
-            total_memory = sum(gpu.get('total_memory', 0) for gpu in gpus)
+            # Check total GPU memory - try multiple possible field names
+            total_memory = 0
+            for gpu in gpus:
+                # Try different possible field names for memory
+                memory = (gpu.get('memory_total') or 
+                         gpu.get('total_memory') or 
+                         gpu.get('memory') or 
+                         gpu.get('vram') or 0)
+                total_memory += memory
+                
             total_memory_gb = total_memory / 1024  # Convert MiB to GiB
             
             # If total GPU memory is less than 24GB and model is >3B
@@ -1410,7 +1437,7 @@ class PiscesLxCoreDeviceSmartDetector:
                 return True
                 
         except Exception as e:
-            logger.debug("WSL detection skipped", event="DEVICE", message="WSL detection skipped", error=type(e).__name__)
+            logger.debug("memory efficient detection failed", event="DEVICE", message="memory efficient detection failed", error=str(e), error_class=type(e).__name__)
             
         return False
     

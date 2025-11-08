@@ -60,17 +60,8 @@ class PiscesLxCoreDeviceFacade:
         # Initialize configuration
         self.cfg = PiscesLxCoreDeviceConfig.from_args(args) if args else PiscesLxCoreDeviceConfig({})
         
-        # Initialize device manager with error handling
-        try:
-            self.gpu_manager = PiscesLxCoreDeviceManager(self.cfg)
-        except PiscesLxCoreNoGPUError:
-            logger.error("GPU detection failed. PiscesL1 requires CUDA-capable GPU for optimal performance.")
-            self.gpu_manager = PiscesLxCoreDeviceManager.__new__(PiscesLxCoreDeviceManager)
-            self.gpu_manager.cfg = self.cfg
-            self.gpu_manager.gpu_info = []
-            self.gpu_manager.strategy = {"mode": "cpu_fallback", "reason": "No GPU detected"}
-        except RuntimeError:
-            raise
+        # Defer GPU manager construction to avoid heavy detection during __init__
+        self.gpu_manager = None
                 
         self._mode = "auto"
     
@@ -82,10 +73,44 @@ class PiscesLxCoreDeviceFacade:
         Returns:
             Dict[str, Any]: Device configuration dictionary with recommended settings.
         """
-        self.gpu_manager.print_summary()
+        # Temporary fast-return to unblock training if detection is fragile/slow
+        try:
+            if os.environ.get("PISCESLX_DEVICE_FAST_RETURN", "0").strip() in ("1", "true", "True"): 
+                try:
+                    import torch as _t
+                    cuda_ok = bool(getattr(_t, "cuda", None) and _t.cuda.is_available())
+                except Exception:
+                    cuda_ok = False
+                cfg = {
+                    "device_type": "cuda" if cuda_ok else "cpu",
+                    "strategy": "single_gpu" if cuda_ok else "cpu",
+                    "gpu_ids": [0] if cuda_ok else [],
+                    "batch_size": 1,
+                    "mixed_precision": bool(cuda_ok),
+                    "dtype": "bf16" if cuda_ok else "fp32",
+                    "reason": "FAST_RETURN",
+                    "memory_efficient": True,
+                }
+                try:
+                    print(f"[device] FAST_RETURN active device_type={cfg['device_type']} strategy={cfg['strategy']}", flush=True)
+                except Exception:
+                    pass
+                return cfg
+        except Exception:
+            pass
+        logger.info("_auto_setup enter")
+        self._ensure_gpu_manager()
+        try:
+            self.gpu_manager.print_summary()
+        except Exception:
+            pass
         model_size = self.cfg.get("model.size", None)
         seq_len = int(self.cfg.get("inference.sequence_length", 1024))
         strategy = self.gpu_manager.get_inference_strategy(model_size=model_size, sequence_length=seq_len)
+        try:
+            print(f"[device] strategy computed mode={strategy.get('mode')} gpus={len(self.gpu_manager.gpu_info)}", flush=True)
+        except Exception:
+            pass
         
         if self.gpu_manager.gpu_info:
             first_type = self.gpu_manager.gpu_info[0].get('type', 'nvidia')
@@ -94,6 +119,10 @@ class PiscesLxCoreDeviceFacade:
             device_type = 'cpu'
         
         gpu_ids = strategy.get('gpu_ids', [])
+        try:
+            print(f"[device] device_type={device_type} gpu_ids={gpu_ids}", flush=True)
+        except Exception:
+            pass
         
         def _recommend_dtype(device_type: str, gpu_ids: list) -> str:
             """
@@ -111,7 +140,14 @@ class PiscesLxCoreDeviceFacade:
                     return 'fp32'
                 if torch.cuda.is_available():
                     idx = gpu_ids[0] if gpu_ids else 0
-                    major, minor = torch.cuda.get_device_capability(idx)
+                    try:
+                        major, minor = torch.cuda.get_device_capability(idx)
+                    except Exception:
+                        major, minor = (7, 5)  # safe default for Turing (fp16)
+                    try:
+                        print(f"[device] capability idx={idx} major={major} minor={minor}", flush=True)
+                    except Exception:
+                        pass
                     if major >= 8:
                         return 'bf16'
                 return 'fp16'
@@ -142,7 +178,21 @@ class PiscesLxCoreDeviceFacade:
         if strategy.get('mode') == 'cpu':
             config["device_type"] = 'cpu'
         
-        logger.info("Auto device config", config)
+        # Log only key fields to avoid heavy/unstable serialization
+        logger.info(
+            "Auto device config summary",
+            device_type=config.get("device_type"),
+            strategy=config.get("strategy"),
+            gpu_ids_count=len(config.get("gpu_ids", [])),
+            batch_size=config.get("batch_size"),
+            mixed_precision=bool(config.get("mixed_precision")),
+            dtype=config.get("dtype"),
+        )
+        logger.info("_auto_setup exit", device_type=config.get("device_type"), strategy=config.get("strategy"))
+        try:
+            print(f"[device] _auto_setup exit device_type={config.get('device_type')} strategy={config.get('strategy')}", flush=True)
+        except Exception:
+            pass
         return config
     
     def _manual_setup(self) -> dict:
@@ -156,6 +206,7 @@ class PiscesLxCoreDeviceFacade:
             RuntimeError: If GPU is requested but not available.
             ValueError: If an unknown device type is specified.
         """
+        self._ensure_gpu_manager()
         device_type = getattr(self.args, 'device', 'auto') if self.args else 'auto'
         batch_size = getattr(self.args, 'batch_size', None) if self.args else None
         
@@ -207,7 +258,7 @@ class PiscesLxCoreDeviceFacade:
             "reason": "Manual configuration (validated)"
         }
         
-        logger.info("Manual device config", config)
+        logger.info("Manual device config", **config)
         return config
     
     def _distributed_setup(self) -> dict:
@@ -217,6 +268,7 @@ class PiscesLxCoreDeviceFacade:
         Returns:
             dict: Distributed training configuration.
         """
+        self._ensure_gpu_manager()
         recommendation = self.gpu_manager.get_recommendation()
         strategy = recommendation.get("strategy")
         gpu_info = self.gpu_manager.get_gpu_info()
@@ -238,7 +290,7 @@ class PiscesLxCoreDeviceFacade:
             if k in recommendation:
                 config[k] = recommendation[k]
         
-        logger.info("Distributed device config", config)
+        logger.info("Distributed device config", **config)
         return config
     
     def _cluster_setup(self) -> dict:
@@ -299,9 +351,15 @@ class PiscesLxCoreDeviceFacade:
             if hasattr(self, "hooks") and self.hooks:
                 # Assuming bus API has emit/publish interface; try emit then publish
                 if hasattr(self.hooks, "emit"):
-                    self.hooks.emit(event_name, payload)
+                    if isinstance(payload, dict):
+                        self.hooks.emit(event_name, **payload)
+                    else:
+                        self.hooks.emit(event_name, payload=payload)
                 elif hasattr(self.hooks, "publish"):
-                    self.hooks.publish(event_name, payload)
+                    if isinstance(payload, dict):
+                        self.hooks.publish(event_name, **payload)
+                    else:
+                        self.hooks.publish(event_name, payload=payload)
         except Exception as e:
             # Keep failures non-fatal and only debug-log
             logger.debug("hook emit failed", event=event_name, error=str(e))
@@ -322,6 +380,7 @@ class PiscesLxCoreDeviceFacade:
             ValueError: If an unknown setup mode is provided
         """
         self._mode = mode
+        logger.info("setup_devices enter", mode=mode)
         
         try:
             if mode == "auto":
@@ -336,15 +395,32 @@ class PiscesLxCoreDeviceFacade:
                 logger.error("Unknown setup mode", mode=mode)
                 raise ValueError(f"Unknown setup mode: {mode}")
             
-            # Emit hook event
-            self._emit_hook_event("device.setup_completed", {
-                "mode": mode,
-                "config": config,
-                "timestamp": time.time()
-            })
+            # Prepare to emit hook event (non-blocking)
+            logger.info("setup_devices prepared config", **config)
             # Cache current config for downstream consumers (dtype/ids decisions)
             self._config_cache = config
-            
+            # Log and print exit BEFORE emitting hooks to avoid blocking training startup
+            logger.info("setup_devices exit", device_type=config.get("device_type"), strategy=config.get("strategy"))
+            try:
+                print(f"[device] setup_devices exit device_type={config.get('device_type')} strategy={config.get('strategy')}")
+            except Exception:
+                pass
+            # Fire hook asynchronously so it cannot block the caller
+            try:
+                import threading as _threading
+                def _emit_async():
+                    try:
+                        self._emit_hook_event("device.setup_completed", {
+                            "mode": mode,
+                            "config": config,
+                            "timestamp": time.time()
+                        })
+                    except Exception:
+                        pass
+                _t = _threading.Thread(target=_emit_async, daemon=True)
+                _t.start()
+            except Exception:
+                pass
             return config
             
         except Exception as e:
@@ -396,7 +472,7 @@ class PiscesLxCoreDeviceFacade:
                 logger.error("Cluster setup requires GPUs but none detected")
                 raise RuntimeError("Cluster training requires GPU devices")
             
-            logger.info("Cluster setup completed", cluster_config)
+            logger.info("Cluster setup completed", **cluster_config)
             return cluster_config
             
         except Exception as e:
@@ -410,6 +486,7 @@ class PiscesLxCoreDeviceFacade:
         Returns:
             list: List of GPU information dictionaries
         """
+        self._ensure_gpu_manager()
         return self.gpu_manager.gpu_info
 
     def get_cluster_status(self) -> dict:
@@ -449,6 +526,7 @@ class PiscesLxCoreDeviceFacade:
         Returns:
             int: Recommended batch size
         """
+        self._ensure_gpu_manager()
         return self.gpu_manager.recommend_batch_size(model_size, sequence_length, precision)
     
     def get_current_config(self) -> Optional[dict]:
@@ -459,6 +537,22 @@ class PiscesLxCoreDeviceFacade:
             Optional[dict]: Current device configuration, or None if not set.
         """
         return self._config_cache
+    
+    def _ensure_gpu_manager(self) -> None:
+        """Lazily construct GPU manager only when first needed."""
+        if getattr(self, "gpu_manager", None) is not None:
+            return
+        try:
+            self.gpu_manager = PiscesLxCoreDeviceManager(self.cfg)
+        except PiscesLxCoreNoGPUError:
+            logger.error("GPU detection failed. PiscesL1 requires CUDA-capable GPU for optimal performance.")
+            gm = PiscesLxCoreDeviceManager.__new__(PiscesLxCoreDeviceManager)
+            gm.cfg = self.cfg
+            gm.gpu_info = []
+            gm.strategy = {"mode": "cpu_fallback", "reason": "No GPU detected"}
+            self.gpu_manager = gm
+        except RuntimeError:
+            raise
     
     def print_device_summary(self) -> None:
         """
@@ -501,12 +595,13 @@ class PiscesLxCoreDeviceFacade:
                 })
                 return False
         
-        logger.info("Device requirements validated", {
-            "required_memory_gb": required_memory_gb,
-            "required_gpu_count": required_gpu_count,
-            "available_gpus": available_gpus,
-            "max_available_gb": max_available_gb if required_memory_gb > 0 else "N/A"
-        })
+        logger.info(
+            "Device requirements validated",
+            required_memory_gb=required_memory_gb,
+            required_gpu_count=required_gpu_count,
+            available_gpus=available_gpus,
+            max_available_gb=max_available_gb if required_memory_gb > 0 else "N/A",
+        )
         return True
 
     def init_distributed(self, backend: str = "nccl") -> dict:

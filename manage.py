@@ -22,7 +22,7 @@ import sys
 import json
 import argparse
 from pathlib import Path
-from configs.version import VERSION
+from configs.version import CVERSION
 
 ROOT = os.path.abspath(os.path.dirname(__file__))
 
@@ -86,7 +86,7 @@ def main():
     parser.add_argument('--perf', action='store_true', help='Run a performance benchmark (for benchmarking)')
     parser.add_argument('--selftest', action='store_true', help='Run built-in benchmark tests (for benchmarking)')
     parser.add_argument('--model_size', default='0.5B', type=str, help='Model size, e.g., 0.5B, 1.5B, 7B, 70B, 128B')
-    parser.add_argument('--dataset', default='Chinese2', type=str, help='Dataset name for training')
+    parser.add_argument('--dataset', default='', type=str, help='Dataset name for training')
     parser.add_argument('--resume_ckpt', default='', type=str, help='Path to the checkpoint to resume training')
     parser.add_argument('--reset_lr', action='store_true', help='Reset the learning rate after resuming from a checkpoint')
     parser.add_argument('--quant', action='store_true', help='Force enable 4-bit quantization')
@@ -122,11 +122,6 @@ def main():
     parser.add_argument('--log_interval', type=float, help='Monitor log aggregation interval seconds')
 
     args, unknown = parser.parse_known_args()
-    
-    if args.command == 'setup':
-        print(f"✅\tPiscesL1 Model Version: {VERSION}")
-    if args.command not in ['version', 'changelog', 'setup']:
-        print(f"✅\tPiscesL1 Model Version: {VERSION}")
     if args.command is None or args.command == 'help':
         from tools.help import help
         help()
@@ -146,8 +141,8 @@ def main():
         orchestrator = PiscesLxToolsMonitorOrchestrator(args)
         orchestrator.run(args)
     elif args.command == 'download':
-        from tools.data.download import _DatasetDownload
-        tool = _DatasetDownload()
+        from tools.data.download import PiscesLxToolsDataDatasetDownload
+        tool = PiscesLxToolsDataDatasetDownload()
         tool.download(args.max_samples)
         tool.optimize(max_keep=5000)
     elif args.command == 'dataset':
@@ -157,27 +152,14 @@ def main():
         from tools.setup import setup
         setup(args)
     elif args.command == 'update':
-        from utils import PiscesLxCoreInfoUpdate
-        updater = PiscesLxCoreInfoUpdate()
-        updater.update()
+        from tools.update import update
+        update()
     elif args.command == 'version':
-        from utils import PiscesLxCoreInfoVersion
-        version_manager = PiscesLxCoreInfoVersion()
-        version_manager.show_version()
+        from tools.version import show_version
+        show_version()
     elif args.command == 'changelog':
-        from utils import PiscesLxCoreInfoChangelog
-        changelog_manager = PiscesLxCoreInfoChangelog()
-        
-        # Parse changelog-specific arguments from unknown arguments
-        changelog_parser = changelog_manager.parse_changelog_args()
-        
-        try:
-            changelog_args = changelog_parser.parse_args(unknown)
-            changelog_manager.show_changelog(changelog_args)
-        except SystemExit:
-            # argparse calls sys.exit() on help or error
-            pass
-    
+        from tools.changelog import show_changelog
+        show_changelog()
     elif args.command == 'benchmark':
         from tools.benchmark.orchestrator import PiscesLxToolsBenchmarkOrchestrator
         orchestrator = PiscesLxToolsBenchmarkOrchestrator(args)
@@ -221,8 +203,12 @@ def main():
                 seed = 2025
                 threshold = 0.02
                 try:
+                    from configs.version import PVERSION
                     with open('configs/watermark.json', 'r', encoding='utf-8') as wf:
                         wm_cfg = json.load(wf)
+                        # Update compliance_version placeholder from PVERSION
+                        if "watermark_2025" in wm_cfg and "compliance_version" in wm_cfg["watermark_2025"] and wm_cfg["watermark_2025"]["compliance_version"] == "{{VERSION}}":
+                            wm_cfg["watermark_2025"]["compliance_version"] = PVERSION
                         w = (wm_cfg or {}).get('watermark_2025', {}).get('weights', {})
                         owner_id = str(w.get('owner_id', owner_id))
                         seed = int(w.get('seed', seed))

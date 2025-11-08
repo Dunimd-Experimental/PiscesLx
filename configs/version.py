@@ -17,14 +17,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-VERSION = "0.0.0200"
+CVERSION = "0.0.0200"
 
 # Component versions
-MCP_VERSION = "1.0.0"
-SERIALIZATION_VERSION = "1.0.0"
-WATERMARK_COMPLIANCE_VERSION = "2025.09.01"
-ENCODING_VERSION = "2025.09.01"
-
-# Tool versions
-TOOL_VERSION = "1.0.0"
-MCP_TOOL_VERSION = "1.0.0"
+PVERSION = "1.0.0"

@@ -23,8 +23,8 @@ class QuantizedModelSerializer:
     """Handles serialization of quantized models with full state preservation."""
     
     def __init__(self):
-        from configs.version import SERIALIZATION_VERSION
-        self.serialization_version = SERIALIZATION_VERSION
+        from configs.version import PVERSION
+        self.serialization_version = PVERSION
     
     def save_quantized_model(
         self,

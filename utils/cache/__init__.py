@@ -22,7 +22,7 @@ from typing import Optional
 from utils.fs.core import PiscesLxCoreFS
 from utils.log.core import PiscesLxCoreLog
 from utils.cache.enhanced import PiscesLxCoreEnhancedCacheManager
-from utils.config.manager import PiscesLxCoreConfigManagerFacade as _ConfigFacade
+from utils.config.manager import PiscesLxCoreConfigManagerFacade
 
 logger = PiscesLxCoreLog("PiscesLx.Utils.Cache.Facade")
 
@@ -69,17 +69,6 @@ class PiscesLxCoreCacheManagerFacade:
             cls._instance = cls()
         return cls._instance
 
-def get_cache_manager() -> PiscesLxCoreCacheManagerFacade:
-    """Public accessor expected by multiple modules (tools/data).
-    Returns a singleton facade with directory helpers.
-    """
-    return PiscesLxCoreCacheManagerFacade.get_instance()
-
-# Re-export for backward compatibility with tools/__init__.py import path
-PiscesLxCoreConfigManagerFacade = _ConfigFacade
-
 __all__ = [
-    "get_cache_manager",
     "PiscesLxCoreCacheManagerFacade",
-    "PiscesLxCoreConfigManagerFacade",
 ]

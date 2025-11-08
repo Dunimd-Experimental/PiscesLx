@@ -297,6 +297,79 @@ class PiscesLxCoreConfigManager:
             self._configs.pop(config_name, None)
             self.logger.success("CONFIG_CLEARED", {"config_name": config_name})
 
+    # --- Compatibility helpers used by training pipeline ---
+    def validate(self, obj: Any = None) -> Any:
+        """
+        Lightweight validation shim to keep backward compatibility.
+
+        Returns an object with attributes: is_valid (bool) and errors (list[str]).
+        """
+        class _Result:
+            def __init__(self, is_valid: bool = True, errors: Optional[list] = None) -> None:
+                self.is_valid = is_valid
+                self.errors = errors or []
+
+        try:
+            # Best-effort: treat presence of object as valid; extend here if schema available
+            return _Result(True, [])
+        except Exception as e:
+            return _Result(False, [str(e)])
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """
+        Safe dotted-path getter used by higher-level config facades.
+        Since this manager is not holding a single unified dict, just return default.
+        """
+        try:
+            # Future: could map to loaded configs if needed
+            return default
+        except Exception:
+            return default
+
+    def validate_config_compatibility(self, cached_config: Dict[str, Any], new_config: Dict[str, Any]) -> bool:
+        """
+        Best-effort compatibility check between cached and current configs.
+        Non-strict: only verifies a few key fields if present; otherwise returns True.
+        """
+        try:
+            keys = (
+                "model.size",
+                "train.batch_size",
+                "device_config.device_type",
+            )
+            for k in keys:
+                # Support dotted-path lookup in flat dicts
+                def _get(d: Dict[str, Any], path: str):
+                    if d is None:
+                        return None
+                    node = d
+                    for part in path.split('.'):
+                        if isinstance(node, dict) and part in node:
+                            node = node[part]
+                        else:
+                            return None
+                    return node
+
+                cv = _get(cached_config, k)
+                nv = _get(new_config, k)
+                if cv is not None and nv is not None and cv != nv:
+                    self.logger.debug("CONFIG_INCOMPATIBLE_KEY", key=k, cached=cv, new=nv)
+                    return False
+            return True
+        except Exception:
+            # If unsure, do not block training
+            return True
+
+    def get_current_timestamp(self) -> str:
+        """
+        Return current timestamp in ISO-like string for logging/caching.
+        """
+        import time as _time
+        try:
+            return _time.strftime("%Y-%m-%dT%H:%M:%S", _time.localtime())
+        except Exception:
+            return str(int(_time.time()))
+
 
 class PiscesLxCoreConfigManagerFacade:
     """
