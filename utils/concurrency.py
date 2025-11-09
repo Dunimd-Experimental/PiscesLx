@@ -32,7 +32,7 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple, Type, Dict, Union, Set
 from utils.error import PiscesLxCoreTimeoutError, PiscesLxCoreConcurrencyError, PiscesLxCoreMemoryError
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Concurrency")
+logger = PiscesLxCoreLog("PiscesLx.Core.Concurrency", file_path="logs/PLC/Concurrency.log")
 
 class _TaskPriority(Enum):
     """Enumeration representing different task priority levels.
@@ -932,8 +932,6 @@ class PiscesLxCoreResourcePool:
 class PiscesLxCoreConcurrencyManager:
     """A centralized manager for all concurrency primitives."""
 
-
-
     def __init__(self, config: Optional['ConcurrencyConfig'] = None):
         """Initialize the concurrency manager.
 
@@ -1164,8 +1162,6 @@ class PiscesLxCoreConcurrencyManager:
 
 class PiscesLxCoreParallel:
     """Performs advanced parallel execution using ThreadPoolExecutor and ProcessPoolExecutor."""
-
-
 
     def __init__(
         self,

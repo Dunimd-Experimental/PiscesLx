@@ -31,7 +31,7 @@ from utils.config import PiscesLxCoreConfigManagerFacade
 from utils.device import PiscesLxCoreDeviceFacade
 from utils.observability import PiscesLxCoreObservabilityFacade
 from utils.metrics import PiscesLxCoreMetricsRegistry
-from utils.cache import get_cache_manager
+from utils.cache import PiscesLxCoreCacheManagerFacade
 
 class FunctionTemplateManager:
     """Manager for function templates with comprehensive utils integration."""
@@ -50,8 +50,7 @@ class FunctionTemplateManager:
         # Initialize utils components
         self.config_manager = config_manager or PiscesLxCoreConfigManagerFacade()
         # Use cache manager to get a flexible directory for template storage
-        from utils.cache import get_cache_manager
-        cache_manager = get_cache_manager()
+        cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
         
         if base_dir is None:
             self.base_dir = Path(cache_manager.get_cache_dir("func_templates"))

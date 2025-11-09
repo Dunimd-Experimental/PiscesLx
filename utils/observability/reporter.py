@@ -24,7 +24,7 @@ from datetime import datetime
 from typing import Any, Dict, Optional, List
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.Reporter")
+logger = PiscesLxCoreLog("PiscesLx.Core.Observability.Reporter")
 
 class PiscesLxCoreReporter:
     """A class for generating markdown and lightweight HTML reports in a specified directory.

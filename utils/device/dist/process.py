@@ -24,7 +24,7 @@ from typing import Optional
 import torch.distributed as dist
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Dist.Process")
+logger = PiscesLxCoreLog("PiscesLx.Core.Device.Dist.Process")
 
 class PiscesLxCoreProcessGroupManager:
     """Manages the process group for distributed training in PiscesLx Core."""

@@ -17,11 +17,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Dynamic Mixture-of-Experts routing components used across Arctic models."""
+
 import math
 import torch
 from torch import nn
 import torch.nn.functional as F
 from collections import OrderedDict
+from typing import Any, Optional, Tuple
 from utils.log.core import PiscesLxCoreLog
 
 logger = PiscesLxCoreLog("Arctic.Core.MoE", file_path="logs/ArcticCore.log")
@@ -653,7 +656,6 @@ class ArcticMoELayer(nn.Module):
         # Print layer information for the first layer
         if ArcticMoELayer._layer_count == 1:
             gate_type = "Stable" if use_stable_gate else "Standard"
-            # 使用新的日志系统替换旧的日志调用
             logger.info(f"ArcticMoELayer: {self.num_experts} experts, top-{self.top_k} routing, {gate_type} gate")
 
         self.max_gpu_experts = max_gpu_experts

@@ -17,38 +17,63 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Video encoder utilities for Arctic multimodal agents.
+
+The module exposes :class:`ArcticVideoEncoder`, a wrapper around the vision
+encoder that augments per-frame embeddings with temporal modeling, action
+recognition, and summarization heuristics. It mirrors the detailed docstring
+style adopted across the multimodal stack and leaves model behavior unchanged.
+"""
+
 import torch
 from torch import nn
-import torch.nn.functional as F
+from typing import Optional
+from .vision import ArcticVisionEncoder
 from utils.log.core import PiscesLxCoreLog
-from .vision import ArcticVisionEncoder as _ArcticVisionEncoder
 
 logger = PiscesLxCoreLog("Arctic.Core.Multimodal", file_path="logs/ArcticCore.log")
 
 class ArcticVideoEncoder(nn.Module):
+    """Encode video frame sequences with optional 3D rotary positional modeling.
+
+    The encoder delegates per-frame feature extraction to
+    :class:`ArcticVisionEncoder` and enriches temporal structure through
+    convolution, attention, and lightweight analytic heads.
+
+    Attributes:
+        enabled (bool): Indicates whether the encoder is active.
+        cfg: Configuration namespace providing ``hidden_size`` and ``n_head``.
+        use_3d_rope (bool): Flag controlling 3D spatio-temporal RoPE handling.
+        frame_encoder (ArcticVisionEncoder): Backbone used for per-frame features.
+        temporal_processing (nn.ModuleDict): Temporal modules varying with RoPE usage.
+        action_recognition (nn.ModuleDict): Heads that output coarse action logits
+            and localization cues.
+        scene_understanding (nn.Sequential): Classifier estimating scene context.
+        event_detector (nn.Conv1d): Temporal convolution approximating event scores.
+        object_tracker (nn.ModuleDict): Modules estimating tracking correlation and
+            occlusion likelihood.
+        summarizer (nn.ModuleDict): Heads approximating importance and diversity scores.
     """
-    A video encoder supporting 3D spatio-temporal encoding. 
-    It includes sub-modules for action recognition, scene understanding, event detection, object tracking/occlusion handling, and video summarization.
-    """
+
     def __init__(self, cfg):
-        """
-        Initialize the ArcticVideoEncoder.
+        """Instantiate the encoder using the supplied configuration namespace.
 
         Args:
-            cfg (object): Configuration object containing necessary parameters such as hidden_size, n_head, etc.
+            cfg: Configuration object providing vision backbone parameters such as
+                ``hidden_size`` and ``n_head`` as well as temporal feature toggles.
         """
         super().__init__()
         self.enabled = True
         self.cfg = cfg
         logger.debug(f"VideoEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
-        
-        # Determine whether to use 3D spatio-temporal RoPE
+
+        # Determine whether to use 3D spatio-temporal RoPE.
         self.use_3d_rope = getattr(cfg, 'use_3d_spatio_temporal_rope', False)
-        # Initialize frame encoder
-        self.frame_encoder = _ArcticVisionEncoder(cfg)
+        # Initialize the per-frame feature extractor.
+        self.frame_encoder = ArcticVisionEncoder(cfg)
 
         if self.use_3d_rope:
-            # Temporal processing modules when using 3D RoPE
+            # Temporal processing modules activated when 3D RoPE is enabled.
             self.temporal_processing = nn.ModuleDict({
                 'temporal_conv': nn.Sequential(
                     nn.Conv1d(cfg.hidden_size, cfg.hidden_size, kernel_size=5, padding=2),
@@ -69,7 +94,7 @@ class ArcticVideoEncoder(nn.Module):
                 ),
             })
         else:
-            # Temporal processing modules when not using 3D RoPE
+            # Temporal processing modules for the standard (non-3D RoPE) pathway.
             self.temporal_processing = nn.ModuleDict({
                 'temporal_proj': nn.Sequential(
                     nn.Linear(cfg.hidden_size, cfg.hidden_size),
@@ -81,7 +106,7 @@ class ArcticVideoEncoder(nn.Module):
                 'temporal_attention': nn.MultiheadAttention(cfg.hidden_size, cfg.n_head, batch_first=True)
             })
 
-        # Initialize advanced sub-modules
+        # Initialize analytic heads that produce auxiliary video descriptors.
         self.action_recognition = nn.ModuleDict({
             'head': nn.Sequential(
                 nn.Linear(cfg.hidden_size, 256), nn.SiLU(),
@@ -105,17 +130,16 @@ class ArcticVideoEncoder(nn.Module):
 
         logger.debug("VideoEncoder: __init__ end")
 
-    def forward(self, video_frames):
-        """
-        Forward pass of the ArcticVideoEncoder.
+    def forward(self, video_frames: Optional[torch.Tensor]) -> torch.Tensor:
+        """Encode a batch of videos into pooled feature representations.
 
         Args:
-            video_frames (torch.Tensor): Input video frames with shape [B, T, C, H, W], 
-                                        where B is batch size, T is number of frames, 
-                                        C is number of channels, H is height, and W is width.
+            video_frames (torch.Tensor | None): Input tensor shaped ``[B, T, C, H, W]``
+                containing batched video clips. ``None`` yields a zero tensor placeholder.
 
         Returns:
-            torch.Tensor: Output tensor with shape [B, 1, hidden_size].
+            torch.Tensor: Encoded tensor shaped ``[B, 1, hidden_size]`` summarizing each
+            video through temporal pooling and projection.
         """
         if video_frames is None:
             return torch.zeros(1, 1, self.cfg.hidden_size, device=getattr(self.cfg, 'device', 'cpu'))
@@ -123,28 +147,28 @@ class ArcticVideoEncoder(nn.Module):
         B, T, C, H, W = video_frames.shape
 
         if self.use_3d_rope:
-            # Flatten frames for encoding
+            # Flatten frames to feed the vision encoder.
             frames_flat = video_frames.view(-1, C, H, W)
             video_shape = (T, H, W)
             frame_features = self.frame_encoder(frames_flat, video_shape=video_shape)
             video_features = frame_features['features']  # [B, T, hidden]
             video_features = video_features.transpose(1, 2)  # [B, hidden, T]
-            # Apply temporal convolution
+            # Apply temporal convolution for localized temporal mixing.
             video_features = self.temporal_processing['temporal_conv'](video_features)
             video_features = video_features.transpose(1, 2)  # [B, T, hidden]
-            # Apply temporal attention
+            # Apply temporal attention to model long-range dependencies.
             video_features, _ = self.temporal_processing['temporal_attention'](
                 video_features, video_features, video_features
             )
-            # Average over time dimension
+            # Average over time dimension to obtain a pooled descriptor.
             video_features = video_features.mean(dim=1)  # [B, hidden]
-            # Apply temporal projection
+            # Apply temporal projection to match the downstream hidden size.
             video_features = self.temporal_processing['temporal_proj'](video_features)
         else:
-            # Flatten frames for encoding
+            # Flatten frames to feed the vision encoder.
             frames_flat = video_frames.view(-1, C, H, W)
             frame_features = self.frame_encoder(frames_flat)
-            # Reshape frame features based on its type
+            # Reshape frame features based on encoder output type.
             if isinstance(frame_features, dict) and 'features' in frame_features:
                 feats = frame_features['features']  # [B*T, 1, hidden] or [B, 1, hidden]
                 feats = feats.view(B, T, -1, self.cfg.hidden_size)
@@ -152,29 +176,29 @@ class ArcticVideoEncoder(nn.Module):
             else:
                 feats = frame_features.view(B, T, -1, self.cfg.hidden_size)
                 video_seq = feats.mean(dim=2)  # [B, T, hidden]
-            
-            # Perform lightweight event detection
+
+            # Perform lightweight event detection to maintain parity with existing interface.
             seq_ = video_seq.transpose(1, 2)  # [B, hidden, T]
             _ = self.event_detector(seq_)
-            
-            # Perform action recognition
+
+            # Perform action recognition; output is retained for interface completeness.
             act_logits = self.action_recognition['head'](video_seq.mean(dim=1))
             _ = act_logits  # Placeholder for interface
-            
-            # Perform scene understanding
+
+            # Perform scene understanding to populate auxiliary outputs.
             _ = self.scene_understanding(video_seq.mean(dim=1))
-            
-            # Perform object tracking and occlusion handling
+
+            # Perform object tracking and occlusion handling heuristics.
             pair = torch.cat([video_seq[:, :1, :], video_seq[:, -1:, :]], dim=-1).squeeze(1)  # [B, 2H]
             _ = self.object_tracker['correlator'](pair)
             _ = self.object_tracker['occlusion'](video_seq.mean(dim=1))
-            
-            # Generate video summary
+
+            # Generate a video summary using importance and diversity heuristics.
             imp = self.summarizer['importance'](video_seq.mean(dim=1))
             div = self.summarizer['diversity'](video_seq.mean(dim=1))
             _ = (imp, div)
-            
-            # Apply temporal projection
+
+            # Apply temporal projection to produce the final pooled features.
             video_features = self.temporal_processing['temporal_proj'](video_seq.mean(dim=1))
 
         return video_features.unsqueeze(1)

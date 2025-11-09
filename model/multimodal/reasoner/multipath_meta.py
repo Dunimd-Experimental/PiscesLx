@@ -17,59 +17,67 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Meta-learning utilities for Arctic multi-path reasoning systems.
+
+The module implements :class:`ArcticMultiPathMetaLearner`, which stores
+reasoning experiences, mines successful patterns, and adapts inference
+parameters or priors to improve downstream multi-path reasoning engines.
+"""
+
 import time
 import torch
 import numpy as np
 import torch.nn as nn
 import torch.nn.functional as F
-from collections import defaultdict, Counter
+from collections import Counter, defaultdict
+from typing import Any, Dict, List, Optional
 
 class ArcticMultiPathMetaLearner:
-    """A meta-learner class for multi-path reasoning. It records reasoning experiences, 
-    extracts patterns from them, and adapts reasoning parameters accordingly.
-    """
-    def __init__(self, model, learning_rate=1e-5):
-        """Initialize an instance of ArcticMultiPathMetaLearner.
+    """Record, analyze, and adapt multi-path reasoning behavior."""
+
+    def __init__(self, model: nn.Module, learning_rate: float = 1e-5) -> None:
+        """Initialize the meta-learner with a base reasoning model.
 
         Args:
-            model: The base model used for reasoning.
-            learning_rate (float, optional): The learning rate for the learner. Defaults to 1e-5.
+            model (nn.Module): Underlying model used during meta-learning routines.
+            learning_rate (float): Learning rate governing adaptive updates. Defaults to ``1e-5``.
         """
         self.model = model
         self.learning_rate = learning_rate
         self.reasoning_memory = []
         self.pattern_extractor = self._build_pattern_extractor()
 
-    def _build_pattern_extractor(self):
-        """Construct a neural network for pattern extraction.
-
-        Returns:
-            nn.Sequential: A sequential neural network model designed for pattern extraction.
-        """
+    def _build_pattern_extractor(self) -> nn.Sequential:
+        """Construct the neural network used to encode reasoning patterns."""
         return nn.Sequential(
-            # First linear layer: reduce feature dimension from 768 to 512
+            # First linear layer reduces feature dimensionality.
             nn.Linear(768, 512),
-            # Apply ReLU activation function to introduce non-linearity
+            # Non-linear activation for expressive capacity.
             nn.ReLU(),
-            # Apply dropout with a rate of 0.1 to prevent overfitting
+            # Dropout regularization to mitigate overfitting.
             nn.Dropout(0.1),
-            # Second linear layer: reduce feature dimension from 512 to 256
+            # Compress hidden representation further.
             nn.Linear(512, 256),
-            # Apply ReLU activation function to introduce non-linearity
+            # Additional non-linearity for deeper feature extraction.
             nn.ReLU(),
-            # Third linear layer: reduce feature dimension from 256 to 128
+            # Final projection into the pattern embedding space.
             nn.Linear(256, 128)
         )
 
-    def record_reasoning(self, query, reasoning_chain, final_result, metadata):
-        """Record a reasoning experience into the memory.
-        If the number of experiences exceeds 10000, keep only the last 5000 experiences.
+    def record_reasoning(
+        self,
+        query: str,
+        reasoning_chain: List[Any],
+        final_result: Any,
+        metadata: Dict[str, Any],
+    ) -> None:
+        """Persist a reasoning episode into the experience buffer.
 
         Args:
-            query (str): The input query for reasoning.
-            reasoning_chain (list): A list of reasoning steps.
-            final_result: The final result of the reasoning process.
-            metadata (dict): Additional metadata about the reasoning process.
+            query (str): Input query processed by the reasoning system.
+            reasoning_chain (List[Any]): Sequence describing intermediate reasoning steps.
+            final_result (Any): Output produced by the reasoning engine.
+            metadata (Dict[str, Any]): Supplemental information such as confidence metrics.
         """
         experience = {
             'query': query,
@@ -83,15 +91,14 @@ class ArcticMultiPathMetaLearner:
         if len(self.reasoning_memory) > 10000:
             self.reasoning_memory = self.reasoning_memory[-5000:]
 
-    def _embed_query(self, query):
-        """Embed a query into a vector representation.
-        Attempt to use SentenceTransformer first. If it fails, use a hash-based method to generate the embedding.
+    def _embed_query(self, query: str) -> torch.Tensor:
+        """Encode an input query to a fixed-length embedding.
 
         Args:
-            query (str): The input query to be embedded.
+            query (str): Free-form query string requiring representation.
 
         Returns:
-            torch.Tensor: A tensor representing the embedded query.
+            torch.Tensor: Query embedding derived from SentenceTransformer or a hash-based fallback.
         """
         try:
             from sentence_transformers import SentenceTransformer
@@ -100,32 +107,32 @@ class ArcticMultiPathMetaLearner:
             return embedding
         except Exception:
             import hashlib
-            # Generate a hash value for the query
+            # Generate a deterministic hash for the query content.
             query_hash = int(hashlib.md5(query.encode()).hexdigest(), 16)
-            # Set the random seed based on the hash value
+            # Seed torch RNG to obtain repeatable pseudo-random embeddings.
             torch.manual_seed(query_hash % 2147483647)
-            # Generate a random embedding vector
+            # Create a base embedding following a normal distribution.
             base_embedding = torch.randn(768)
-            # Calculate the length factor of the query
+            # Length factor reflects query verbosity.
             length_factor = min(len(query) / 100, 1.0)
-            # Calculate the complexity factor of the query
+            # Complexity captures diversity of unique tokens.
             complexity_factor = len(set(query.split())) / max(len(query.split()), 1)
-            # Generate the structured embedding vector
+            # Combine base embedding with structural scalars for stability.
             structured_embedding = base_embedding * (0.5 + 0.5 * length_factor * complexity_factor)
             return structured_embedding
 
-    def extract_reasoning_patterns(self):
-        """Extract reasoning patterns from successful experiences.
-        Only perform extraction if there are at least 100 experiences and 20 successful experiences.
+    def extract_reasoning_patterns(self) -> Optional[Dict[str, Any]]:
+        """Mine recurring reasoning patterns from high-confidence episodes.
 
         Returns:
-            dict: A dictionary containing reasoning patterns, or None if the conditions are not met.
+            Optional[Dict[str, Any]]: Extracted pattern summary or ``None`` when support is insufficient.
         """
         if len(self.reasoning_memory) < 100:
             return None
         successful = [exp for exp in self.reasoning_memory if exp['metadata']['confidence'] > 0.9]
         if len(successful) < 20:
             return None
+
         patterns = {
             'optimal_depth_distribution': self._analyze_depth_patterns(successful),
             'confidence_indicators': self._analyze_confidence_patterns(successful),
@@ -133,15 +140,8 @@ class ArcticMultiPathMetaLearner:
         }
         return patterns
 
-    def _analyze_depth_patterns(self, experiences):
-        """Analyze the depth patterns of successful reasoning experiences.
-
-        Args:
-            experiences (list): A list of successful reasoning experiences.
-
-        Returns:
-            dict: A dictionary containing the mean depth, depth variance, and optimal depth range.
-        """
+    def _analyze_depth_patterns(self, experiences: List[Dict[str, Any]]) -> Dict[str, float]:
+        """Summarize typical reasoning depth statistics among successful episodes."""
         depths = [exp['metadata']['reasoning_depth'] for exp in experiences]
         return {
             'mean_depth': float(np.mean(depths)),
@@ -149,15 +149,8 @@ class ArcticMultiPathMetaLearner:
             'optimal_depth_range': (float(np.percentile(depths, 25)), float(np.percentile(depths, 75)))
         }
 
-    def _analyze_confidence_patterns(self, experiences):
-        """Analyze the confidence patterns of successful reasoning experiences.
-
-        Args:
-            experiences (list): A list of successful reasoning experiences.
-
-        Returns:
-            dict: A dictionary containing the mean confidence, confidence growth rate, and stability threshold.
-        """
+    def _analyze_confidence_patterns(self, experiences: List[Dict[str, Any]]) -> Dict[str, float]:
+        """Compute confidence-related indicators from successful episodes."""
         confidences = [exp['metadata']['confidence'] for exp in experiences]
         uncertainty_evol = [exp['metadata']['uncertainty_evolution'] for exp in experiences]
         return {
@@ -166,34 +159,21 @@ class ArcticMultiPathMetaLearner:
             'stability_threshold': float(np.percentile(confidences, 10))
         }
 
-    def _analyze_strategy_patterns(self, experiences):
-        """Analyze the strategy patterns of successful reasoning experiences.
-
-        Args:
-            experiences (list): A list of successful reasoning experiences.
-
-        Returns:
-            dict: A dictionary containing the most common strategies and their success rates.
-        """
+    def _analyze_strategy_patterns(self, experiences: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Identify prominent reasoning strategies and associated success metrics."""
         strategies = []
         for exp in experiences:
             chain = exp['reasoning_chain']
             strategy = self._identify_strategy(chain)
             strategies.append(strategy)
+
         return {
             'most_common_strategies': Counter(strategies).most_common(5),
             'strategy_success_rates': self._calculate_strategy_success(strategies, experiences)
         }
 
-    def _calculate_confidence_growth(self, uncertainty_evolutions):
-        """Calculate the average confidence growth rate based on uncertainty evolution sequences.
-
-        Args:
-            uncertainty_evolutions (list): A list of uncertainty evolution sequences.
-
-        Returns:
-            float: The average confidence growth rate, or 0.0 if no valid sequences are provided.
-        """
+    def _calculate_confidence_growth(self, uncertainty_evolutions: List[List[float]]) -> float:
+        """Average the reduction in uncertainty over time for successful runs."""
         growth_rates = []
         for evolution in uncertainty_evolutions:
             if len(evolution) > 1:
@@ -202,20 +182,14 @@ class ArcticMultiPathMetaLearner:
                 growth_rates.append(reduction / steps)
         return np.mean(growth_rates) if growth_rates else 0.0
 
-    def _identify_strategy(self, reasoning_chain):
-        """Identify the dominant reasoning strategy in a reasoning chain.
-
-        Args:
-            reasoning_chain (list): A list of reasoning steps.
-
-        Returns:
-            str: The dominant reasoning strategy, e.g., 'analogical', 'decomposition', etc.
-        """
+    def _identify_strategy(self, reasoning_chain: List[Any]) -> str:
+        """Infer the dominant reasoning strategy from descriptive steps."""
         strategies = []
         for step in reasoning_chain:
             s = str(step).lower()
             if 'analog' in s:
                 strategies.append('analogical')
+
             elif 'break down' in s or 'decompose' in s:
                 strategies.append('decomposition')
             elif 'assume' in s:
@@ -224,57 +198,37 @@ class ArcticMultiPathMetaLearner:
                 strategies.append('direct')
         return max(set(strategies), key=strategies.count)
 
-    def _calculate_strategy_success(self, strategies, experiences):
-        """Calculate the average success rate (confidence) for each reasoning strategy.
-
-        Args:
-            strategies (list): A list of reasoning strategies.
-            experiences (list): A list of corresponding reasoning experiences.
-
-        Returns:
-            dict: A dictionary mapping each strategy to its average success rate.
-        """
+    def _calculate_strategy_success(self, strategies: List[str], experiences: List[Dict[str, Any]]) -> Dict[str, float]:
+        """Compute average confidence per reasoning strategy."""
         strategy_success = defaultdict(list)
         for strategy, exp in zip(strategies, experiences):
             strategy_success[strategy].append(exp['metadata']['confidence'])
         return {strategy: float(np.mean(confidences)) for strategy, confidences in strategy_success.items()}
 
-    def adapt_reasoning_parameters(self, patterns):
-        """Adapt reasoning parameters based on the extracted patterns.
-
-        Args:
-            patterns (dict): A dictionary containing reasoning patterns.
-
-        Returns:
-            dict: A dictionary containing adapted reasoning parameters, or None if no patterns are provided.
-        """
+    def adapt_reasoning_parameters(self, patterns: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Derive updated reasoning thresholds from extracted patterns."""
         if not patterns:
-            return
+            return None
         new_threshold = max(0.7, patterns['confidence_indicators']['stability_threshold'])
         optimal_depth = patterns['optimal_depth_distribution']['mean_depth']
         new_max_depth = max(3, min(8, int(optimal_depth * 1.2)))
         return {
             'confidence_threshold': new_threshold,
+
             'max_depth': new_max_depth,
             'preferred_strategies': [
                 strategy for strategy, _ in patterns['reasoning_strategies']['most_common_strategies'][:3]
             ]
         }
 
-    def create_reasoning_prior(self, query):
-        """Create a reasoning prior based on similar past experiences.
-
-        Args:
-            query (str): The input query.
-
-        Returns:
-            dict: A dictionary containing reasoning prior information, or None if the conditions are not met.
-        """
+    def create_reasoning_prior(self, query: str) -> Optional[Dict[str, Any]]:
+        """Construct a reasoning prior leveraging similar historical episodes."""
         if len(self.reasoning_memory) < 50:
             return None
         query_embedding = self._embed_query(query)
         similarities = []
         for exp in self.reasoning_memory[-500:]:
+
             sim = F.cosine_similarity(query_embedding.unsqueeze(0), exp['query_embedding'].unsqueeze(0))
             similarities.append((sim, exp))
         top_experiences = sorted(similarities, key=lambda x: x[0], reverse=True)[:10]
@@ -288,20 +242,14 @@ class ArcticMultiPathMetaLearner:
         }
         return prior
 
-    def _extract_uncertainty_pattern(self, experiences):
-        """Extract typical uncertainty patterns from a list of experiences.
-
-        Args:
-            experiences (list): A list of tuples containing similarity scores and experiences.
-
-        Returns:
-            dict: A dictionary containing typical uncertainty patterns and their variances, or None if no data is available.
-        """
+    def _extract_uncertainty_pattern(self, experiences: List[Any]) -> Optional[Dict[str, List[float]]]:
+        """Average uncertainty trajectories across similar experiences."""
         uncertainties = []
         for _, exp in experiences:
             if 'uncertainty_evolution' in exp['metadata']:
                 uncertainties.append(exp['metadata']['uncertainty_evolution'])
         if not uncertainties:
+
             return None
         max_len = max(len(u) for u in uncertainties)
         padded_uncertainties = [u + [u[-1]] * (max_len - len(u)) if u else [0.5] * max_len for u in uncertainties]

@@ -76,7 +76,7 @@ class PiscesLxCoreMCPMonitor:
         Returns:
             Configured logger instance
         """
-        logger = PiscesLxCoreLog("PiscesLx.Utils.MCP.Monitor")
+        logger = PiscesLxCoreLog("PiscesLx.Core.MCP.Monitor")
         return logger
     
     def _start_background_monitoring(self):

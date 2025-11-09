@@ -22,7 +22,7 @@ import torch
 from utils.log.core import PiscesLxCoreLog
 from utils.error import PiscesLxCoreIOError
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Checkpoint")
+logger = PiscesLxCoreLog("PiscesLx.Core.Checkpoint", file_path="logs/PLC/Checkpoint.log")
 
 class PiscesLxCoreCheckpointManager:
     """

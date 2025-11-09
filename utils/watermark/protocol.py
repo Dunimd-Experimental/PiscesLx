@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
 
-# Text watermark framing protocol (Step 1): SYNC + LEN + PAYLOAD(JSON UTF-8) + CRC32
-# Provides bitstring-level frame/deframe utilities.
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd project team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import json
 import zlib
@@ -10,10 +24,8 @@ from typing import Optional, Dict
 SYNC_HEADER = 0xA5F0A5F0  # 32-bit sync word
 LEN_BITS = 16             # payload length field in bytes (0..65535)
 
-
 def _int_to_bits(value: int, bit_len: int) -> str:
     return ''.join('1' if (value >> i) & 1 else '0' for i in reversed(range(bit_len)))
-
 
 def _bits_to_int(bits: str) -> int:
     v = 0
@@ -21,10 +33,8 @@ def _bits_to_int(bits: str) -> int:
         v = (v << 1) | (1 if b == '1' else 0)
     return v
 
-
 def _bytes_to_bits(data: bytes) -> str:
     return ''.join(f"{b:08b}" for b in data)
-
 
 def _bits_to_bytes(bits: str) -> Optional[bytes]:
     if len(bits) % 8 != 0:
@@ -33,7 +43,6 @@ def _bits_to_bytes(bits: str) -> Optional[bytes]:
     for i in range(0, len(bits), 8):
         out.append(int(bits[i:i+8], 2))
     return bytes(out)
-
 
 def frame_payload(payload: Dict) -> str:
     """Frame JSON payload into a bitstring with SYNC+LEN+PAYLOAD+CRC32."""
@@ -47,7 +56,6 @@ def frame_payload(payload: Dict) -> str:
     frame += payload_bytes
     frame += crc.to_bytes(4, byteorder='big')
     return _bytes_to_bits(bytes(frame))
-
 
 def extract_from_bits(bitstream: str) -> Optional[Dict]:
     """Search for a valid frame in bitstream and return JSON payload dict if found."""

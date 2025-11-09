@@ -97,6 +97,17 @@ class PiscesLxToolsMonitorOrchestrator:
         self._cache_manager = PiscesLxCoreEnhancedCacheManager()
         self._device_manager = PiscesLxCoreDeviceManager()
         self._fs_manager = PiscesLxCoreFS()
+
+        # Provide utils components to global monitor context so implementation picks them up
+        try:
+            from .context_utils import PiscesLxMonitorGlobalContext
+            PiscesLxMonitorGlobalContext.set_utils(
+                cache_manager=self._cache_manager,
+                device_manager=self._device_manager,
+                fs_manager=self._fs_manager,
+            )
+        except Exception:
+            pass
         
         # Orchestrator state
         self._start_time = None
@@ -110,10 +121,44 @@ class PiscesLxToolsMonitorOrchestrator:
         """Main entry point to run monitoring with enhanced utils integration and intelligent adaptation."""
         try:
             # Initialize utils components
+            self._start_time = time.time()
             self._init_utils_components()
-            
-            # Establish performance baseline
-            baseline_metrics = self._establish_baseline()
+
+            # Immediate bootstrap heartbeat for visibility before async work
+            try:
+                print("monitor bootstrapping...", flush=True)
+            except Exception:
+                pass
+
+            # Kick off comprehensive device detection asynchronously to avoid startup blocking
+            try:
+                import threading as _th
+                def _bg_detect_devices():
+                    try:
+                        if hasattr(self._device_manager, 'detect_all_devices'):
+                            self._device_manager.detect_all_devices()
+                    except Exception:
+                        pass
+                _th.Thread(target=_bg_detect_devices, daemon=True).start()
+            except Exception:
+                pass
+
+            # Establish performance baseline asynchronously (non-blocking)
+            baseline_metrics = {}
+            try:
+                import threading as _th
+                def _collect_baseline(_out: dict):
+                    try:
+                        if hasattr(self, '_observability') and getattr(self, '_observability', None):
+                            mgr = getattr(self._observability, '_manager', None)
+                            if mgr and hasattr(mgr, 'get_system_metrics'):
+                                m = mgr.get_system_metrics() or {}
+                                _out.update(m)
+                    except Exception:
+                        pass
+                _th.Thread(target=_collect_baseline, args=(baseline_metrics,), daemon=True).start()
+            except Exception:
+                pass
             
             # Create intelligent session cache
             session_id = f"monitor_{int(time.time())}"
@@ -140,17 +185,34 @@ class PiscesLxToolsMonitorOrchestrator:
                 "predicted_duration": self._estimate_session_duration(mode),
                 "resource_requirements": self._calculate_resource_requirements()
             })
-            
-            # Run monitoring based on mode with enhanced capabilities
-            if mode == "standard":
-                self.run_enhanced_monitor(mode, session_id)
-            elif mode == "realtime":
-                self.run_enhanced_monitor(mode, session_id)
-            elif mode == "predictive":
-                self.run_enhanced_monitor(mode, session_id)
-            else:
-                logger.error(f"Unknown monitoring mode: {mode}")
-                raise ValueError(f"Unknown monitoring mode: {mode}")
+
+            # Also emit through global monitor context to re-use existing hook listeners
+            try:
+                from .context_utils import PiscesLxMonitorGlobalContext
+                PiscesLxMonitorGlobalContext.emit_event("monitor.start", {
+                    "mode": mode,
+                    "session_id": session_id,
+                    "baseline": baseline_metrics,
+                    "timestamp": time.time(),
+                    "utils_integration": session_cache["utils_enabled"],
+                })
+            except Exception:
+                pass
+
+            # Start monitor immediately using runner (non-blocking design)
+            try:
+                from .runner import PiscesLxToolsMonitorRunner
+                runner = PiscesLxToolsMonitorRunner(
+                    self.args,
+                    hooks=self.hooks,
+                    profiler=self.profiler,
+                    cfg=self.cfg,
+                )
+                runner.monitor()
+            except Exception:
+                # Fallback: if runner import fails, raise clear error
+                logger.error("Failed to start monitor runner")
+                raise
             
             # Emit completion event with enhanced results
             completion_metrics = {
@@ -335,81 +397,3 @@ class PiscesLxToolsMonitorOrchestrator:
         except Exception as recovery_error:
             logger.debug(f"Automatic recovery failed: {recovery_error}")
             return False
-    
-    @PiscesLxCoreRetry(max_attempts=3, delay=1.0, backoff=2.0)
-    def run_enhanced_monitor(self, mode: str, session_id: str) -> None:
-        """Run enhanced monitoring with predictive analytics and intelligent resource management."""
-        try:
-            self._start_time = time.time()
-            
-            # Get comprehensive device context
-            device_info = self._device_manager.get_device_info()
-            resource_requirements = self._calculate_resource_requirements()
-            
-            # Validate resource availability
-            if not self._validate_resource_availability(device_info, resource_requirements):
-                logger.warning("Insufficient resources for optimal monitoring, adjusting parameters...")
-                self._adjust_monitoring_parameters(device_info, resource_requirements)
-            
-            # Emit enhanced setup hook
-            self.hooks.trigger("monitor.setup", {
-                "config": self.cfg,
-                "timestamp": time.time(),
-                "device_info": device_info,
-                "session_id": session_id,
-                "mode": mode,
-                "resource_requirements": resource_requirements,
-                "predicted_duration": self._estimate_session_duration(mode)
-            })
-            
-            # Cache enhanced setup configuration
-            setup_cache = {
-                "config": self.cfg,
-                "device_info": device_info,
-                "setup_time": time.time(),
-                "session_id": session_id,
-                "mode": mode,
-                "resource_validation": self._validate_resource_availability(device_info, resource_requirements),
-                "adjusted_parameters": getattr(self, '_last_adjusted_params', {})
-            }
-            self._cache_manager.set(f"monitor_setup_{session_id}", setup_cache, ttl=7200.0)  # 2小时TTL
-            
-            # Initialize runner with enhanced context and predictive capabilities
-            from .runner import PiscesLxToolsMonitorRunner
-            runner = PiscesLxToolsMonitorRunner(
-                self.args, 
-                hooks=self.hooks, 
-                profiler=self.profiler, 
-                cfg=self.cfg,
-                observability=self._observability,
-                metrics_registry=self._metrics_registry,
-                cache_manager=self._cache_manager
-            )
-            
-            # Execute monitoring with real-time adaptation
-            runner.monitor()
-            
-            # Post-monitoring analysis and optimization recommendations
-            self._analyze_monitoring_results(session_id)
-            
-        except Exception as e:
-            self._error_count += 1
-            # Enhanced error caching with session context
-            error_cache = {
-                "error": str(e),
-                "timestamp": time.time(),
-                "error_count": self._error_count,
-                "session_id": session_id,
-                "mode": mode,
-                "device_context": self._device_manager.get_device_info() if self._device_manager else {},
-                "recovery_attempted": False
-            }
-            
-            # Attempt recovery for recoverable errors
-            diagnostics = self._diagnose_monitoring_error(e)
-            if diagnostics.get("recoverable", False):
-                error_cache["recovery_attempted"] = True
-                error_cache["recovery_result"] = self._attempt_error_recovery(e, session_id)
-            
-            self._cache_manager.set(f"monitor_error_{session_id}", error_cache, ttl=3600.0)  # 1小时TTL
-            raise

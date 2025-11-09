@@ -22,8 +22,7 @@ from enum import Enum
 from typing import Any, Dict, Optional
 from utils.log.core import PiscesLxCoreLog
 
-# Module-level fallback logger for debug paths where delayed logger may fail
-logger = PiscesLxCoreLog("PiscesLx.Utils.Error")
+logger = PiscesLxCoreLog("PiscesLx.Core.Error", file_path="logs/PLC/Error.log")
 
 class PiscesLxCoreErrorCode(Enum):
     """Enumeration of error codes for PiscesL1 utilities."""
@@ -43,7 +42,6 @@ class PiscesLxCoreErrorCode(Enum):
     METRICS = "metrics"  # Metrics collection/flush/export error
     EXPORTER = "exporter"  # Exporter initialization/transport error
     DEVICE = "device"  # Device detection/setup/runtime error
-
 
 class PiscesLxCoreError(Exception):
     """Base error class for all PiscesL1 utilities.
@@ -169,8 +167,6 @@ class PiscesLxCoreError(Exception):
         """
         return cls(message or str(exc), context=context, cause=exc, code=code)
 
-
-# ---------- Validation & Config ----------
 class PiscesLxCoreValidationError(PiscesLxCoreError):
     """Error class for input/data/schema validation failures."""
     def __init__(self, message: str, *, context: Optional[Dict[str, Any]] = None, cause: Optional[BaseException] = None) -> None:
@@ -182,7 +178,6 @@ class PiscesLxCoreValidationError(PiscesLxCoreError):
             cause (Optional[BaseException]): The original exception that caused this error. Defaults to None.
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.VALIDATION)
-
 
 class PiscesLxCoreConfigError(PiscesLxCoreError):
     """Error class for configuration loading/merging failures."""
@@ -196,8 +191,6 @@ class PiscesLxCoreConfigError(PiscesLxCoreError):
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.CONFIG)
 
-
-# ---------- Filesystem / IO ----------
 class PiscesLxCoreIOError(PiscesLxCoreError):
     """Error class for generic I/O operations (read/write/serialize)."""
     def __init__(self, message: str, *, context: Optional[Dict[str, Any]] = None, cause: Optional[BaseException] = None) -> None:
@@ -223,8 +216,6 @@ class PiscesLxCoreFilesystemError(PiscesLxCoreError):
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.FILESYSTEM)
 
-
-# ---------- Runtime / Concurrency / Network ----------
 class PiscesLxCoreConcurrencyError(PiscesLxCoreError):
     """Error class for thread/process/lock/timeouts related failures."""
     def __init__(self, message: str, *, context: Optional[Dict[str, Any]] = None, cause: Optional[BaseException] = None) -> None:
@@ -236,7 +227,6 @@ class PiscesLxCoreConcurrencyError(PiscesLxCoreError):
             cause (Optional[BaseException]): The original exception that caused this error. Defaults to None.
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.CONCURRENCY)
-
 
 class PiscesLxCoreTimeoutError(PiscesLxCoreError):
     """Error class for operation timeouts."""
@@ -250,7 +240,6 @@ class PiscesLxCoreTimeoutError(PiscesLxCoreError):
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.TIMEOUT)
 
-
 class PiscesLxCoreNetworkError(PiscesLxCoreError):
     """Error class for network/HTTP/Socket related failures."""
     def __init__(self, message: str, *, context: Optional[Dict[str, Any]] = None, cause: Optional[BaseException] = None) -> None:
@@ -262,7 +251,6 @@ class PiscesLxCoreNetworkError(PiscesLxCoreError):
             cause (Optional[BaseException]): The original exception that caused this error. Defaults to None.
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.NETWORK)
-
 
 class PiscesLxCoreMemoryError(PiscesLxCoreError):
     """Error class for memory allocation/management failures."""
@@ -276,8 +264,6 @@ class PiscesLxCoreMemoryError(PiscesLxCoreError):
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.CONCURRENCY)
 
-
-# ---------- Domain-specific (utils subpackages) ----------
 class PiscesLxCoreCacheError(PiscesLxCoreError):
     """Error class for cache put/get/evict failures."""
     def __init__(self, message: str, *, context: Optional[Dict[str, Any]] = None, cause: Optional[BaseException] = None) -> None:
@@ -289,7 +275,6 @@ class PiscesLxCoreCacheError(PiscesLxCoreError):
             cause (Optional[BaseException]): The original exception that caused this error. Defaults to None.
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.CACHE)
-
 
 class PiscesLxCoreLogError(PiscesLxCoreError):
     """Error class for logging pipeline failures (handlers/formatters)."""
@@ -303,7 +288,6 @@ class PiscesLxCoreLogError(PiscesLxCoreError):
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.LOG)
 
-
 class PiscesLxCoreHooksError(PiscesLxCoreError):
     """Error class for events bus/registry/dispatch failures."""
     def __init__(self, message: str, *, context: Optional[Dict[str, Any]] = None, cause: Optional[BaseException] = None) -> None:
@@ -315,7 +299,6 @@ class PiscesLxCoreHooksError(PiscesLxCoreError):
             cause (Optional[BaseException]): The original exception that caused this error. Defaults to None.
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.HOOKS)
-
 
 class PiscesLxCoreObservabilityError(PiscesLxCoreError):
     """Error class for observability service-level failures."""
@@ -329,7 +312,6 @@ class PiscesLxCoreObservabilityError(PiscesLxCoreError):
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.OBSERVABILITY)
 
-
 class PiscesLxCoreReporterError(PiscesLxCoreError):
     """Error class for report rendering/writing failures."""
     def __init__(self, message: str, *, context: Optional[Dict[str, Any]] = None, cause: Optional[BaseException] = None) -> None:
@@ -341,7 +323,6 @@ class PiscesLxCoreReporterError(PiscesLxCoreError):
             cause (Optional[BaseException]): The original exception that caused this error. Defaults to None.
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.REPORTER)
-
 
 class PiscesLxCoreMetricsError(PiscesLxCoreError):
     """Error class for metrics collection/flush/export failures."""
@@ -355,7 +336,6 @@ class PiscesLxCoreMetricsError(PiscesLxCoreError):
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.METRICS)
 
-
 class PiscesLxCoreExporterError(PiscesLxCoreError):
     """Error class for exporter initialization/transport failures (Prom/OTLP/etc)."""
     def __init__(self, message: str, *, context: Optional[Dict[str, Any]] = None, cause: Optional[BaseException] = None) -> None:
@@ -367,7 +347,6 @@ class PiscesLxCoreExporterError(PiscesLxCoreError):
             cause (Optional[BaseException]): The original exception that caused this error. Defaults to None.
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.EXPORTER)
-
 
 class PiscesLxCoreDeviceError(PiscesLxCoreError):
     """Error class for device detection/setup/runtime failures."""
@@ -381,8 +360,6 @@ class PiscesLxCoreDeviceError(PiscesLxCoreError):
         """
         super().__init__(message, context=context, cause=cause, code=PiscesLxCoreErrorCode.DEVICE)
 
-
-# ---- Device-specific subclasses (migrated from utils/device/exceptions.py) ----
 class PiscesLxCoreNoGPUError(PiscesLxCoreDeviceError):
     """Error raised when no GPU is detected but GPU computation is required."""
     def __init__(self, message: str = "No GPU detected", *, context: Optional[Dict[str, Any]] = None, cause: Optional[BaseException] = None) -> None:
@@ -397,7 +374,6 @@ class PiscesLxCoreNoGPUError(PiscesLxCoreDeviceError):
         if context:
             ctx.update(context)
         super().__init__(message, context=ctx, cause=cause)
-
 
 class PiscesLxCoreGPUInsufficientError(PiscesLxCoreDeviceError):
     """Error raised when available GPU memory is insufficient for the requested operation."""
@@ -416,7 +392,6 @@ class PiscesLxCoreGPUInsufficientError(PiscesLxCoreDeviceError):
             ctx.update(context)
         super().__init__(message, context=ctx, cause=cause)
 
-
 class PiscesLxCorePlatformDetectionError(PiscesLxCoreDeviceError):
     """Error raised when platform-specific GPU detection fails."""
     def __init__(self, platform: str, message: str, *, context: Optional[Dict[str, Any]] = None, cause: Optional[BaseException] = None) -> None:
@@ -433,7 +408,6 @@ class PiscesLxCorePlatformDetectionError(PiscesLxCoreDeviceError):
         if context:
             ctx.update(context)
         super().__init__(full_message, context=ctx, cause=cause)
-
 
 class PiscesLxCoreDistributedSetupError(PiscesLxCoreDeviceError):
     """Error raised when distributed training/inference setup fails."""
@@ -452,7 +426,6 @@ class PiscesLxCoreDistributedSetupError(PiscesLxCoreDeviceError):
             ctx.update(context)
         super().__init__(message, context=ctx, cause=cause)
 
-
 class PiscesLxCoreDeviceOrchestrationError(PiscesLxCoreDeviceError):
     """Error raised when device orchestration or strategy selection fails."""
     def __init__(self, strategy: str, message: str, *, context: Optional[Dict[str, Any]] = None, cause: Optional[BaseException] = None) -> None:
@@ -468,7 +441,6 @@ class PiscesLxCoreDeviceOrchestrationError(PiscesLxCoreDeviceError):
         if context:
             ctx.update(context)
         super().__init__(message, context=ctx, cause=cause)
-
 
 class PiscesLxCoreConfigurationError(PiscesLxCoreDeviceError):
     """Error raised when device configuration is invalid or inconsistent."""

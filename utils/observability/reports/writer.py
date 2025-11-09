@@ -21,7 +21,7 @@ from typing import Any, Dict
 from datetime import datetime
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.Reports.Writer")
+logger = PiscesLxCoreLog("PiscesLx.Core.Observability.Reports.Writer")
 
 def build_device_report_payload(service: Any, data: Dict[str, Any]) -> Dict[str, Any]:
     """

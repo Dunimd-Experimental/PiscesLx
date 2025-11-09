@@ -17,49 +17,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Configuration utilities for Arctic multimodal models."""
+
 import json
-from typing import Optional, Dict, Any
 from dataclasses import dataclass, field
+from typing import Any, Dict, Optional
 
 @dataclass
 class ArcticConfig:
-    """Dataclass for storing configuration parameters of the PiscesL1 model.
+    """Dataclass encapsulating PiscesL1 model configuration parameters.
 
     Attributes:
-        model_type (str): The type of the model. Defaults to "pisces_l1".
-        vocab_size (int): The size of the vocabulary. Defaults to 71164.
-        hidden_size (int): The size of the hidden layer. Defaults to 2048.
-        n_layer (int): The number of layers in the model. Defaults to 24.
-        n_head (int): The number of attention heads. Defaults to 16.
-        n_kv_head (int): The number of key-value attention heads. Defaults to 4.
-        moe_num_experts (int): The number of experts in the Mixture of Experts (MoE). Defaults to 64.
-        moe_top_k (int): The number of top-k experts to use in MoE. Defaults to 2.
-        moe_capacity_factor (float): Capacity factor for expert routing. Defaults to 1.0.
-        moe_load_balance_alpha (float): Load balancing loss coefficient. Defaults to 0.01.
-        moe_noise_std (float): Routing noise standard deviation. Defaults to 0.1.
-        moe_use_stable_gate (bool): Whether to use a stable routing gate. Defaults to True.
-        moe_min_capacity (int): Minimum capacity for expert routing. Defaults to 4.
-        moe_prediction_horizon (int): Prediction horizon for dynamic capacity. Defaults to 8.
-        intermediate_size (int): The size of the intermediate layer. Defaults to 5632.
-        max_position_embeddings (int): The maximum number of position embeddings. Defaults to 8192.
-        rope_theta (float): The theta value for Rotary Position Embedding (RoPE). Defaults to 1e6.
-        dropout (float): The dropout rate. Defaults to 0.0.
-        image_res (int): The resolution of the image. Defaults to 224.
-        max_image_res (int): The maximum resolution of the image. Defaults to 1024.
-        image_patch (int): The size of the image patch. Defaults to 14.
-        use_native_resolution (bool): Whether to use native resolution. Defaults to True.
-        enable_patch_pack (bool): Whether to enable patch packing. Defaults to True.
-        mm_tokens (int): The number of multimodal tokens. Defaults to 256.
-        audio_tokens (int): The number of audio tokens. Defaults to 512.
-        task_classes (int): The number of task classes. Defaults to 256.
-        eval_dims (int): The number of evaluation dimensions. Defaults to 7.
-        rope_scaling (dict): The configuration for RoPE scaling. Defaults to a dict specifying "yarn" type with factor 32 and original max position 32768.
-        residual_dropout_p (float): Dropout rate for residual connections. Defaults to 0.1.
-        use_gradient_checkpointing (bool): Whether to enable gradient checkpointing for memory efficiency. Defaults to True.
-        use_pre_norm (bool): Whether to use Pre-Norm architecture for stability. Defaults to True.
-        attention_dropout (float): Dropout rate for attention layers. Defaults to 0.0.
-        fused_qkv (bool): Whether to use fused QKV projection in attention for better efficiency when supported. Defaults to False.
-        enable_dynamic_fusion (bool): Whether to enable native token-level multimodal fusion. Defaults to True.
+        model_type (str): Human-readable model identifier. Defaults to ``"pisces_l1"``.
+        vocab_size (int): Token vocabulary size. Defaults to ``71164``.
+        hidden_size (int): Transformer hidden dimension. Defaults to ``2048``.
+        n_layer (int): Number of transformer layers. Defaults to ``24``.
+        n_head (int): Number of attention heads. Defaults to ``16``.
+        n_kv_head (int): Number of key-value heads for grouped attention. Defaults to ``4``.
+        moe_num_experts (int): Total experts for Mixture-of-Experts blocks. Defaults to ``64``.
+        moe_top_k (int): Number of activated experts per token. Defaults to ``2``.
+        moe_capacity_factor (float): Routing capacity multiplier. Defaults to ``1.0``.
+        moe_load_balance_alpha (float): Coefficient for load-balancing loss. Defaults to ``0.01``.
+        moe_noise_std (float): Standard deviation of routing noise. Defaults to ``0.1``.
+        moe_use_stable_gate (bool): Whether to use a stabilized MoE gate. Defaults to ``True``.
+        moe_min_capacity (int): Minimum routing capacity per expert. Defaults to ``4``.
+        moe_prediction_horizon (int): Horizon length for predictive capacity tuning. Defaults to ``8``.
+        intermediate_size (int): Transformer feed-forward hidden size. Defaults to ``5632``.
+        max_position_embeddings (int): Maximum positional embeddings. Defaults to ``8192``.
+        rope_theta (float): Base theta parameter for RoPE. Defaults to ``1e6``.
+        dropout (float): Dropout probability applied throughout the model. Defaults to ``0.0``.
+        image_res (int): Default input image resolution. Defaults to ``224``.
+        max_image_res (int): Maximum supported image resolution. Defaults to ``1024``.
+        image_patch (int): Image patch size for vision encoder. Defaults to ``14``.
+        use_native_resolution (bool): Whether to keep original image resolution. Defaults to ``True``.
+        enable_patch_pack (bool): Whether to enable patch packing. Defaults to ``True``.
+        mm_tokens (int): Number of multimodal tokens. Defaults to ``256``.
+        audio_tokens (int): Number of audio tokens. Defaults to ``512``.
+        task_classes (int): Number of classification tasks. Defaults to ``256``.
+        eval_dims (int): Evaluation dimension cardinality. Defaults to ``7``.
+        rope_scaling (Dict[str, Any]): RoPE scaling configuration; defaults to YaRN scaling.
         fusion_quality_threshold (float): Quality threshold for modality inclusion. Defaults to 0.3.
         fusion_dropout (float): Dropout for fusion layers. Defaults to 0.1.
         modal_token_count (int): Number of fused multimodal tokens to prepend when fusion returns [B, H]. Defaults to 8.

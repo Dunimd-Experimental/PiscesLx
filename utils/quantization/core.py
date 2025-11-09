@@ -33,7 +33,7 @@ from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError, Pisces
 ERROR = "🔴"
 RIGHT = "✅"
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Quantization.Core")
+logger = PiscesLxCoreLog("PiscesLx.Core.Quantization.Core")
 
 class QuantizationMethod(Enum):
     """Enumeration of available quantization methods."""

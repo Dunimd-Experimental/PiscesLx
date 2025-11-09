@@ -1,13 +1,28 @@
 #!/usr/bin/env python3
 
-# Watermark checker utilities (migrated from tools/watermark_check.py)
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd project team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import os
 import json
 from typing import Dict, Any, Optional
 
 from utils import PiscesLxCoreLog
-from utils.watermark.content import PiscesWatermark
+from utils.watermark.content import PiscesLxCoreWatermark
 
 logger = PiscesLxCoreLog("pisceslx.tools.wmc")
 
@@ -48,7 +63,7 @@ def detect_watermark(text: str, verbose: bool = False) -> Dict[str, Any]:
     }
 
     try:
-        wm = PiscesWatermark()
+        wm = PiscesLxCoreWatermark()
         payload = wm.extract_text_watermark(text)
         if payload:
             result["watermark_detected"] = True
@@ -80,7 +95,7 @@ def batch_detect(file_path: str, verbose: bool = False) -> Dict[str, Any]:
     total_lines = 0
     results = []
 
-    wm = PiscesWatermark()
+    wm = PiscesLxCoreWatermark()
 
     with open(file_path, 'r', encoding='utf-8') as f:
         for line in f:
@@ -179,7 +194,7 @@ def detect_image_watermark(image_path: str, verbose: bool = False) -> Dict[str, 
         result["error"] = "image_load_failed"
         return result
     try:
-        wm = PiscesWatermark()
+        wm = PiscesLxCoreWatermark()
         payload = wm.extract_image_watermark(img_t)
         if payload:
             result["watermark_detected"] = True
@@ -203,7 +218,7 @@ def detect_audio_watermark(audio_path: str, verbose: bool = False) -> Dict[str, 
         result["error"] = "audio_load_failed"
         return result
     try:
-        wm = PiscesWatermark()
+        wm = PiscesLxCoreWatermark()
         payload = wm.extract_audio_watermark(wav, sample_rate=sr)
         if payload:
             result["watermark_detected"] = True

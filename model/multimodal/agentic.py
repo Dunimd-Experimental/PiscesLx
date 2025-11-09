@@ -17,6 +17,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""High-level orchestration helpers for Arctic multimodal agent behaviors.
+
+This module defines :class:`ArcticAgentic`, the coordination layer that binds
+perception, memory, reasoning, and tool execution for the PiscesL1 system. It
+acts as the compatibility surface between legacy MCP integrations and newer
+PiscesAgent-based flows, managing smart routing, capability registration, and
+context-aware action planning.
+"""
+
 import uuid
 import json
 import torch
@@ -29,41 +38,76 @@ from .audio import ArcticAudioEncoder
 from .vision import ArcticVisionEncoder
 from utils.log.core import PiscesLxCoreLog
 from typing import Dict, Any, Union, List, Callable
-from .mcp import PiscesLxCoreMCPProtocol, ArcticMCPToolRegistry, PiscesLxCoreMCPTreeSearchReasoner
-from .types import ArcticAgenticState, ArcticAgenticAction, ArcticAgenticObservation, ArcticAgenticMemory, ArcticMCPMessageType
+from .mcp import (
+    PiscesLxCoreMCPProtocol,
+    ArcticMCPToolRegistry,
+    PiscesLxCoreMCPTreeSearchReasoner,
+)
+from .types import (
+    ArcticAgenticState,
+    ArcticAgenticAction,
+    ArcticAgenticObservation,
+    ArcticAgenticMemory,
+    ArcticMCPMessageType,
+)
 
 logger = PiscesLxCoreLog("Arctic.Core.Agentic", file_path="logs/ArcticCore.log")
 
 class ArcticAgentic(nn.Module):
+    """Multimodal control surface that orchestrates the Arctic agent runtime.
+
+    The controller unifies perception, long-term memory, structured reasoning,
+    and tool execution under the MCP (Model Context Protocol) contract. It can
+    operate in a standalone configuration with local encoders or attach to an
+    upstream Pisces base model for shared infrastructure. Smart routing logic
+    selects between native and external tool executors while maintaining rich
+    telemetry on decision quality.
+
+    Attributes:
+        cfg: Configuration namespace that enumerates model hyper-parameters and
+            feature toggles consumed by encoders and the reasoning engine.
+        tokenizer: Optional tokenizer leveraged for textual normalization and
+            embedding fallback routines.
+        agentic_id (str): Stable identifier used across MCP message exchanges.
+        memory (ArcticAgenticMemory): Persistent store that captures
+            observations, actions, and reflections for contextual retrieval.
+        smart_routing_enabled (bool): Flag toggling intelligent routing between
+            native and external tool execution surfaces.
+        performance_monitor (Dict[str, Any]): Diagnostics counters tracking
+            registration events, resource usage, and uptime metadata.
+        execution_stats (Dict[str, int]): Aggregated counts of routing decisions
+            partitioned by execution mode.
     """
-    Represents an agent in the PiscesL1 system with integrated reasoning, perception, and action capabilities.
-    Supports multimodal perception, advanced reasoning, tool usage, memory management, and MCP protocol.
-    """
-    
+
     def __init__(self, cfg, tokenizer=None, model=None, agentic_id: str = None):
-        """
-        Initialize the ArcticAgent instance.
+        """Construct the agent controller and wire supporting infrastructure.
 
         Args:
-            cfg: Configuration object containing necessary parameters.
-            tokenizer: Tokenizer for text processing, defaults to None.
-            model: Base model instance, defaults to None.
-            agentic_id: Unique identifier for the agentic, defaults to None (a UUID will be generated).
+            cfg: Configuration object describing encoder dimensions, reasoning
+                backends, and routing defaults.
+            tokenizer: Optional tokenizer used to embed textual observations and
+                tool outputs when language models are available.
+            model: Optional Pisces base model providing shared encoders and
+                reasoning modules. When supplied, the controller links via weak
+                references to avoid affecting module registration.
+            agentic_id (str, optional): Pre-assigned identifier. A UUID v4 is
+                generated when the parameter is omitted.
         """
         super().__init__()
         self.cfg = cfg
         self.tokenizer = tokenizer
         import weakref
-        self._model_ref = None  # Placeholder for weak reference to the model
+        self._model_ref = None  # Weak reference placeholder; resolved post-init.
         self.agentic_id = agentic_id or str(uuid.uuid4())
         
-        # Use provided model or initialize components for stand - alone mode
+        # Consume shared modules from the provided base model when possible; otherwise
+        # instantiate standalone components to maintain feature parity.
         if model is not None:
-            # Store a weak reference to avoid registering the model as a sub - module
+            # Store a weak reference to avoid registering the model as a submodule.
             self._base_model_ref = weakref.ref(model)
             self._model_ref = self._base_model_ref
         else:
-            # Stand - alone agent: no linked PiscesModel to avoid reference cycles
+            # Standalone agent mode: construct local reasoning and perception stacks.
             self._base_model_ref = None
             self._model_ref = None
             self._reasoner = ArcticUnifiedReasoner(cfg)
@@ -72,28 +116,28 @@ class ArcticAgentic(nn.Module):
         
         self.tree_reasoner = PiscesLxCoreMCPTreeSearchReasoner(None, tokenizer) if tokenizer else None
 
-        # MCP Agent infrastructure
+        # MCP agent infrastructure
         self.memory = ArcticAgenticMemory([], [], [])
         
-        # 初始化推理引擎
+        # Initialize multipath reasoning backend
         from .reasoner.multipath_core import ArcticMultiPathReasoningEngine
         self.reasoning_engine = ArcticMultiPathReasoningEngine(cfg)
         
-        # 创建增强的MCP工具注册表（集成8路径推理引擎）
+        # Enhanced MCP tool registry integrating the multipath reasoning engine
         self.mcp_tools = ArcticMCPToolRegistry(
             self.agentic_id, 
             self._handle_mcp_message,
             reasoning_engine=self.reasoning_engine
         )
         
-        # 创建双轨MCP协议
+        # Dual-track MCP protocol to coordinate native and external execution
         self.mcp_protocol = PiscesLxCoreMCPProtocol(self.agentic_id, self.mcp_tools)
         
         self.state = ArcticAgenticState.IDLE
         self.mcp_peers: Dict[str, Dict[str, Any]] = {}
         self.mcp_capabilities: Dict[str, Dict[str, Any]] = {}
         
-        # 智能路由状态
+        # Smart routing status and counters
         self.smart_routing_enabled = True
         self.execution_stats = {
             "native_executions": 0,
@@ -102,7 +146,7 @@ class ArcticAgentic(nn.Module):
             "routing_decisions": 0
         }
         
-        # 性能监控
+        # Performance monitoring state
         from datetime import datetime
         self.performance_monitor = {
             "start_time": datetime.now(),
@@ -110,11 +154,11 @@ class ArcticAgentic(nn.Module):
             "total_tools_registered": 0
         }
         
-        # Coordinate marking support
+        # Coordinate marking support flag for vision-assisted operations
         self._coordinate_detection_enabled = True
         
         # Action prediction heads
-        self.action_type_head = nn.Linear(cfg.hidden_size, 10)  # Predict 10 types of actions
+        self.action_type_head = nn.Linear(cfg.hidden_size, 10)  # Predict 10 action categories
         self.action_param_head = nn.Linear(cfg.hidden_size, cfg.hidden_size)
         self.confidence_head = nn.Linear(cfg.hidden_size, 1)
         
@@ -131,22 +175,21 @@ class ArcticAgentic(nn.Module):
 
     @property
     def base_model(self):
-        """
-        Get the base model instance through the weak reference.
+        """Access the upstream Pisces base model when linked.
 
         Returns:
-            The base model instance if the weak reference is valid, otherwise None.
+            Optional[nn.Module]: Resolved base model if the weak reference is
+            still alive, otherwise ``None``.
         """
         return self._base_model_ref() if self._base_model_ref else None
 
     @property
     def reasoner(self):
-        """
-        Get the reasoner instance. Use the reasoner of the base model if available, 
-        otherwise use the local reasoner.
+        """Return the active reasoning module bound to the controller.
 
         Returns:
-            The reasoner instance.
+            ArcticUnifiedReasoner: Shared base-model reasoner when available, or
+            the locally instantiated fallback instance.
         """
         if self._base_model_ref:
             return self._base_model_ref().reasoner
@@ -154,12 +197,11 @@ class ArcticAgentic(nn.Module):
 
     @property
     def vision_encoder(self):
-        """
-        Get the vision encoder instance. Use the vision encoder of the base model if available, 
-        otherwise use the local vision encoder.
+        """Retrieve the vision encoder responsible for image embeddings.
 
         Returns:
-            The vision encoder instance.
+            ArcticVisionEncoder: Encoder sourced from the base model when
+            possible, falling back to the local implementation.
         """
         if self._base_model_ref:
             return self._base_model_ref().vision
@@ -167,65 +209,69 @@ class ArcticAgentic(nn.Module):
 
     @property
     def audio_encoder(self):
-        """
-        Get the audio encoder instance. Use the audio encoder of the base model if available, 
-        otherwise use the local audio encoder.
+        """Expose the audio encoder for waveform or spectrogram processing.
 
         Returns:
-            The audio encoder instance.
+            ArcticAudioEncoder: Base-model audio encoder if present, else the
+            locally provisioned encoder.
         """
         if self._base_model_ref:
             return self._base_model_ref().audio
         return self._audio_encoder
 
-    async def register_capability(self, name: str, description: str, 
+    async def register_capability(self, name: str, description: str,
                                   parameters: Dict[str, Any], handler: Callable):
-        """
-        Register a capability via the MCP protocol.
+        """Expose a capability to MCP peers via the shared registry.
 
         Args:
-            name: Name of the capability.
-            description: Description of the capability.
-            parameters: Parameters of the capability.
-            handler: Handler function for the capability.
+            name (str): Public identifier for the capability entry.
+            description (str): Human-readable explanation of the capability.
+            parameters (Dict[str, Any]): Schema describing accepted arguments.
+            handler (Callable): Coroutine handling incoming invocations.
+
+        Returns:
+            None
         """
         await self.mcp_tools.register_capability(name, description, parameters, handler)
     
-    async def register_native_tool(self, name: str, description: str, 
+    async def register_native_tool(self, name: str, description: str,
                                   parameters: Dict[str, Any], handler: Callable):
-        """Register a native tool with direct execution capability.
-        
+        """Register a native tool that can be executed without routing indirection.
+
         Args:
-            name: Name of the tool.
-            description: Description of the tool.
-            parameters: Parameters of the tool.
-            handler: Native function handler for direct execution.
+            name (str): Tool identifier used by callers.
+            description (str): Summary of the tool's behavior.
+            parameters (Dict[str, Any]): Expected argument specification.
+            handler (Callable): Implementation invoked for native execution.
+
+        Returns:
+            Any: Resulting registry metadata produced by the MCP tool registry.
         """
         result = await self.mcp_tools.register_native_tool(name, description, parameters, handler)
         self.performance_monitor["total_tools_registered"] += 1
         return result
     
     async def execute_tool_with_smart_routing(self, tool_name: str, **kwargs) -> Dict[str, Any]:
-        """Execute tool with intelligent routing between native and external execution.
+        """Execute a tool with intelligent routing between native and external execution.
         
         Args:
-            tool_name: Name of the tool to execute.
-            **kwargs: Arguments to pass to the tool.
+            tool_name (str): Name of the tool to execute.
+            **kwargs: Keyword arguments forwarded to the tool handler.
             
         Returns:
-            Dict containing execution result and metadata.
+            Dict[str, Any]: Execution artifact containing result payload and metadata.
         """
         if not self.smart_routing_enabled:
-            # 回退到普通工具调用
+            # Fallback: execute the tool directly without smart routing heuristics.
             result = await self.mcp_tools.handle_tool_call(tool_name, **kwargs)
             return {"result": result, "execution_mode": "direct", "routed": False}
         
-        # 使用双轨MCP协议进行智能执行
+        # Dispatch via dual-track MCP protocol to select native or external execution paths.
         execution_result = await self.mcp_protocol.execute_tool_with_fallback(
             tool_name, kwargs, "tool_executor"
         )
         
-        # 更新执行统计
+        # Update routing statistics to reflect this decision point.
         self.execution_stats["total_executions"] += 1
         self.execution_stats["routing_decisions"] += 1
         
@@ -237,15 +283,20 @@ class ArcticAgentic(nn.Module):
         return execution_result
     
     def get_execution_statistics(self) -> Dict[str, Any]:
-        """Get comprehensive execution statistics with advanced analytics."""
+        """Collect execution metrics and derived analytics for monitoring.
+
+        Returns:
+            Dict[str, Any]: Aggregated statistics including routing efficiency,
+            health indicators, and tool registry counters.
+        """
         tool_stats = self.mcp_tools.get_execution_stats()
         
-        # 计算智能路由效率
+        # Compute routing efficiency metrics for diagnostic purposes.
         total_routing = self.execution_stats["routing_decisions"]
         native_ratio = self.execution_stats["native_executions"] / total_routing if total_routing > 0 else 0
         external_ratio = self.execution_stats["external_executions"] / total_routing if total_routing > 0 else 0
         
-        # 性能优化建议
+        # Derive optimization suggestions based on observed execution profiles.
         performance_suggestions = []
         if native_ratio < 0.3 and self.execution_stats["total_executions"] > 10:
             performance_suggestions.append("Consider converting more tools to native execution for better performance")
@@ -254,7 +305,7 @@ class ArcticAgentic(nn.Module):
         if tool_stats["performance_metrics"]["efficiency_rating"] == "low":
             performance_suggestions.append("Low efficiency rating - optimize tool selection and execution paths")
         
-        # 系统运行时间
+        # Measure agent runtime for health reporting.
         uptime = (datetime.now() - self.performance_monitor["start_time"]).total_seconds()
         
         return {
@@ -266,22 +317,22 @@ class ArcticAgentic(nn.Module):
             "routing_efficiency": {
                 "native_ratio": native_ratio,
                 "external_ratio": external_ratio,
-                "routing_success_rate": 1.0 if total_routing > 0 else 0.0,  # 简化版本
-                "optimization_potential": max(0.0, 1.0 - native_ratio)  # 原生执行提升空间
+                "routing_success_rate": 1.0 if total_routing > 0 else 0.0,
+                "optimization_potential": max(0.0, 1.0 - native_ratio)
             },
             "performance_suggestions": performance_suggestions,
             "system_health": {
                 "status": "healthy" if tool_stats["performance_metrics"]["performance_score"] > 0.6 else "needs_attention",
                 "last_updated": datetime.now().isoformat(),
-                "recommendations": performance_suggestions[:2],  # 前两条建议
+                "recommendations": performance_suggestions[:2],
                 "uptime_seconds": uptime,
-                "tools_registration_rate": self.performance_monitor["total_tools_registered"] / max(1, uptime / 60)  # 每分钟注册速率
+                "tools_registration_rate": self.performance_monitor["total_tools_registered"] / max(1, uptime / 60)
             },
             "performance_monitor": self.performance_monitor
         }
     
     def reset_all_statistics(self):
-        """Reset all execution statistics."""
+        """Clear accumulated execution statistics and monitoring counters."""
         self.execution_stats = {
             "native_executions": 0,
             "external_executions": 0,
@@ -290,7 +341,7 @@ class ArcticAgentic(nn.Module):
         }
         self.mcp_tools.reset_execution_stats()
         
-        # 重置性能监控但保留启动时间
+        # Reset performance monitor counters while preserving inception timestamp.
         start_time = self.performance_monitor["start_time"]
         self.performance_monitor = {
             "start_time": start_time,
@@ -300,11 +351,18 @@ class ArcticAgentic(nn.Module):
         print("[ArcticAgentic] All execution statistics reset")
     
     def enable_smart_routing(self, enabled: bool = True):
-        """Enable or disable smart routing functionality."""
+        """Toggle smart routing heuristics for tool execution.
+
+        Args:
+            enabled (bool, optional): Desired routing state. Defaults to ``True``.
+
+        Returns:
+            None
+        """
         self.smart_routing_enabled = enabled
         print(f"[ArcticAgentic] Smart routing {'enabled' if enabled else 'disabled'}")
         
-        # 记录状态变更到统计信息
+        # Record state transitions to enable historical analysis of routing toggles.
         if not hasattr(self, 'routing_state_changes'):
             self.routing_state_changes = []
         self.routing_state_changes.append({
@@ -314,19 +372,23 @@ class ArcticAgentic(nn.Module):
         })
     
     def get_routing_history(self) -> List[Dict[str, Any]]:
-        """Get smart routing state change history."""
+        """Get smart routing state change history.
+
+        Returns:
+            List[Dict[str, Any]]: Chronological records of smart routing toggle
+            events with timestamps and execution counts.
+        """
         return getattr(self, 'routing_state_changes', [])
 
     async def _handle_mcp_message(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
-        """
-        Handle incoming MCP messages.
+        """Route an MCP message to the corresponding handler coroutine.
 
         Args:
-            message: Incoming MCP message.
+            message (ArcticMCPMessage): Envelope containing the message type and payload.
 
         Returns:
-            An MCP message as a response. If the message type is unknown, 
-            return an error message.
+            ArcticMCPMessage: Response produced by the handler or an error state
+            update when the message type is unsupported.
         """
         handler = self.mcp_handlers.get(message.message_type)
         if handler:
@@ -339,14 +401,13 @@ class ArcticAgentic(nn.Module):
             )
 
     async def _handle_observation(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
-        """
-        Handle MCP observation messages.
+        """Persist an observation and acknowledge processing.
 
         Args:
-            message: MCP observation message.
+            message (ArcticMCPMessage): Observation payload emitted by a peer.
 
         Returns:
-            An MCP observation message indicating the processing status.
+            ArcticMCPMessage: Observation acknowledgement carrying embedding metadata.
         """
         observation_data = message.payload
         observation = ArcticAgenticObservation(
@@ -369,14 +430,13 @@ class ArcticAgentic(nn.Module):
         )
 
     async def _handle_action(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
-        """
-        Handle MCP action messages.
+        """Plan an action in response to an MCP action request.
 
         Args:
-            message: MCP action message.
+            message (ArcticMCPMessage): Action request populated with contextual data.
 
         Returns:
-            An MCP action message containing the planned action and the agent's state.
+            ArcticMCPMessage: Action response including the serialized plan and agent state.
         """
         action_data = message.payload
         context = {
@@ -397,29 +457,29 @@ class ArcticAgentic(nn.Module):
         )
 
     async def _handle_tool_call(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
-        """
-        Handle MCP tool call messages with smart routing support.
+        """Process an MCP tool invocation and report execution metadata.
 
         Args:
-            message: MCP tool call message.
+            message (ArcticMCPMessage): Serialized tool call request including
+                tool name, parameters, and optional routing hints.
 
         Returns:
-            An MCP tool result message indicating the execution result. 
-            If the tool is not found, return an error message.
+            ArcticMCPMessage: Response annotated with success flag, execution
+            mode, and serialized result payload.
         """
         tool_data = message.payload
         tool_name = tool_data["tool_name"]
         parameters = tool_data["parameters"]
         execution_mode = tool_data.get("execution_mode", "auto")
         
-        # 使用智能路由执行工具调用
+        # Prefer smart routing when enabled and the requested mode allows indirection.
         if self.smart_routing_enabled and execution_mode in ["auto", "native", "external"]:
             execution_result = await self.execute_tool_with_smart_routing(tool_name, **parameters)
             result = execution_result.get("result", execution_result)
             actual_execution_mode = execution_result.get("execution_mode", "unknown")
             success = execution_result.get("success", True)
         else:
-            # 回退到传统工具调用
+            # Fallback to direct capability execution when routing is bypassed.
             if tool_name in self.mcp_capabilities:
                 handler = self.mcp_capabilities[tool_name]["handler"]
                 result = await handler(**parameters)
@@ -444,14 +504,13 @@ class ArcticAgentic(nn.Module):
         )
 
     async def _handle_tool_result(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
-        """
-        Handle MCP tool result messages.
+        """Record a tool execution result and signal completion.
 
         Args:
-            message: MCP tool result message.
+            message (ArcticMCPMessage): Tool result payload referencing the originating agent.
 
         Returns:
-            An MCP state update message indicating that the tool result has been processed.
+            ArcticMCPMessage: State update confirming the tool result has been assimilated.
         """
         result_data = message.payload
         
@@ -470,14 +529,13 @@ class ArcticAgentic(nn.Module):
         )
 
     async def _handle_capability_register(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
-        """
-        Handle capability registration from other agents.
+        """Store a peer capability advertised over MCP.
 
         Args:
-            message: MCP message for capability registration.
+            message (ArcticMCPMessage): Capability registration announcement.
 
         Returns:
-            An MCP state update message indicating that the capability has been registered.
+            ArcticMCPMessage: State update acknowledging the capability.
         """
         capability_data = message.payload
         capability_name = capability_data["capability"]
@@ -492,15 +550,14 @@ class ArcticAgentic(nn.Module):
         )
 
     async def _handle_sync_request(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
-        """
-        Handle synchronization requests.
+        """Respond to synchronization requests from peers.
 
         Args:
-            message: MCP synchronization request message.
+            message (ArcticMCPMessage): Synchronization request specifying desired data.
 
         Returns:
-            An MCP synchronization response message containing the requested information. 
-            If the sync type is unknown, return an error message.
+            ArcticMCPMessage: Sync response containing capability or state data, or
+            an error descriptor when the request type is unsupported.
         """
         sync_type = message.payload.get("type")
         
@@ -531,14 +588,13 @@ class ArcticAgentic(nn.Module):
         )
 
     async def _handle_sync_response(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
-        """
-        Handle synchronization responses.
+        """Consolidate synchronization data received from a peer.
 
         Args:
-            message: MCP synchronization response message.
+            message (ArcticMCPMessage): Synchronization response carrying peer metadata.
 
         Returns:
-            An MCP state update message indicating that the synchronization is completed.
+            ArcticMCPMessage: State update marking the synchronization cycle as complete.
         """
         response_data = message.payload
         
@@ -554,15 +610,16 @@ class ArcticAgentic(nn.Module):
         )
 
     def process_observation(self, observation: ArcticAgenticObservation) -> torch.Tensor:
-        """
-        Process multimodal observations into a unified representation.
+        """Project an incoming observation into the shared embedding space.
 
         Args:
-            observation: A PiscesLxCoreAgenticObservation instance containing observation data.
+            observation (ArcticAgenticObservation): Structured observation with
+                modality label, content payload, and optional metadata.
 
         Returns:
-            A torch.Tensor representing the observation embedding. 
-            If processing fails, return a zero tensor.
+            torch.Tensor: Embedding tensor compatible with downstream reasoning
+            modules. A zero tensor is returned when the modality cannot be
+            processed.
         """
         if observation.modality == "text":
             if hasattr(self, 'tokenizer') and self.tokenizer:
@@ -592,7 +649,7 @@ class ArcticAgentic(nn.Module):
                 return self.audio_encoder(observation.content)
         
         elif observation.modality == "tool_result":
-            # Convert tool results to embedding
+            # Convert structured tool output into a textual embedding surrogate.
             import json
             result_str = json.dumps(observation.content)
             if hasattr(self, 'tokenizer') and self.tokenizer:
@@ -606,37 +663,43 @@ class ArcticAgentic(nn.Module):
         return torch.zeros(1, 1, self.cfg.hidden_size)
 
     async def plan_action(self, context: Dict[str, Any]) -> ArcticAgenticAction:
-        """
-        Generate an action based on the current context and enhanced reasoning.
+        """Generate an agent action using retrieval-augmented reasoning.
+
+        The planner retrieves contextual memories, encodes the query, and invokes
+        the configured reasoning backend to derive an action distribution. When a
+        linked base model is available, the routine leverages its reasoning head;
+        otherwise it falls back to stochastic sampling on the local heads.
 
         Args:
-            context: A dictionary containing the current context and available tools.
+            context (Dict[str, Any]): Dictionary describing the latest
+                observation and declared tool set.
 
         Returns:
-            A PiscesLxCoreAgenticAction instance representing the planned action.
+            ArcticAgenticAction: Structured action containing type, parameters,
+            confidence, and an explanatory reasoning trace.
         """
-        # Get enhanced context from memory with semantic search
+        # Retrieve semantically relevant memories to enrich the reasoning context.
         memory_context = self.memory.get_context_with_retrieval(
             query=str(context), 
             k=5, 
             include_compressed=True
         )
         
-        # Encode query for semantic search
+        # Encode the textualized context for similarity search against memories.
         query_embedding = self._encode_query(str(context))
         
-        # Perform semantic memory retrieval
+        # Perform semantic retrieval to isolate the top-k memories by affinity.
         relevant_memories = self.memory.semantic_search(
             query_embedding=query_embedding,
             k=3,
             threshold=0.7
         )
         
-        # Extract memory keys and values for enhanced reasoning
+        # Extract structured key/value representations for subsequent reasoning steps.
         memory_keys = self._extract_memory_keys(relevant_memories)
         memory_values = self._extract_memory_values(relevant_memories)
         
-        # Prepare enhanced reasoning input
+        # Construct the consolidated reasoning payload consumed by the LLM head.
         enhanced_input = self._prepare_enhanced_reasoning_input(
             context=context,
             memory_context=memory_context,
@@ -645,32 +708,32 @@ class ArcticAgentic(nn.Module):
             query_embedding=query_embedding
         )
         
-        # Use enhanced reasoner for multi - step CoT reasoning
+        # Execute multi-step chain-of-thought reasoning to plan the response.
         with torch.no_grad():
             if self.base_model and hasattr(self, 'reasoner'):
-                # Enhanced reasoning with memory context
+                # Use the shared base-model reasoner to incorporate memory context.
                 reasoning_output = self.reasoner(
                     enhanced_input,
                     memory_context=memory_context.get("embeddings", None)
                 )
                 
-                # Multi - step CoT processing
+                # Collect logits from the multi-step thinking heads.
                 thinking_logits = reasoning_output.get("thinking_logits", reasoning_output.get("logits"))
                 difficulty_logits = reasoning_output.get("difficulty_logits")
                 reflection_logits = reasoning_output.get("reflection_logits")
                 confidence_logits = reasoning_output.get("confidence_logits")
                 
-                # Enhanced action prediction
+                # Derive action probabilities from the terminal thinking token.
                 action_logits = self.action_type_head(thinking_logits[:, -1])
                 action_probs = torch.softmax(action_logits, dim=-1)
                 action_type_idx = torch.argmax(action_probs, dim=-1).item()
                 
-                # Enhanced confidence calculation with reflection
+                # Blend base and reflection confidences when available.
                 base_confidence = torch.sigmoid(self.confidence_head(thinking_logits[:, -1])).item()
                 reflection_confidence = torch.sigmoid(reflection_logits[:, -1]).item() if reflection_logits is not None else base_confidence
                 confidence = (base_confidence + reflection_confidence) / 2
                 
-                # Difficulty - aware reasoning
+                # Estimate difficulty tier for downstream parameter decoding.
                 if difficulty_logits is not None:
                     difficulty = torch.softmax(difficulty_logits[:, -1], dim=-1)
                     difficulty_level = torch.argmax(difficulty, dim=-1).item()
@@ -678,14 +741,14 @@ class ArcticAgentic(nn.Module):
                     difficulty_level = 2  # Default medium
                 
             else:
-                # Fallback for stand - alone mode
+                # Fallback path: sample logits from random embeddings when no base model exists.
                 action_logits = self.action_type_head(torch.randn(1, self.cfg.hidden_size))
                 action_probs = torch.softmax(action_logits, dim=-1)
                 action_type_idx = torch.argmax(action_probs, dim=-1).item()
                 confidence = 0.5
                 difficulty_level = 2
             
-            # Enhanced action types with deep thinking
+            # Enumerate supported action types in deterministic order.
             action_types = [
                 "respond", "use_tool", "ask_clarification", "reflect", 
                 "search_memory", "plan_next", "wait", "verify", 
@@ -693,7 +756,7 @@ class ArcticAgentic(nn.Module):
             ]
             action_type = action_types[action_type_idx]
             
-            # Generate enhanced action parameters
+            # Generate action parameters conditioned on the reasoning head.
             if self.base_model and hasattr(self, 'reasoner'):
                 param_embedding = self.action_param_head(thinking_logits[:, -1])
             else:
@@ -706,7 +769,7 @@ class ArcticAgentic(nn.Module):
                 confidence
             )
             
-            # Generate detailed reasoning trace
+            # Assemble a reasoning trace to surface retrieval and decision factors.
             reasoning_trace = self._generate_reasoning_trace(
                 context=context,
                 memory_summary=memory_context.get("memory_summary", {}),
@@ -724,15 +787,14 @@ class ArcticAgentic(nn.Module):
             )
 
     def _prepare_reasoning_input(self, context: Dict[str, Any], memory_context: Dict[str, List]) -> Dict[str, Any]:
-        """
-        Prepare input for the reasoner.
+        """Assemble the minimal payload required by the baseline reasoner.
 
         Args:
-            context: Current context dictionary.
-            memory_context: Memory context dictionary.
+            context (Dict[str, Any]): Current conversational or environmental context.
+            memory_context (Dict[str, List]): Retrieved memory slices and metadata.
 
         Returns:
-            A dictionary containing the input for the reasoner.
+            Dict[str, Any]: Dictionary formatted for the legacy reasoner interface.
         """
         return {
             "context": context,
@@ -741,15 +803,16 @@ class ArcticAgentic(nn.Module):
         }
 
     def _decode_action_params(self, param_embedding: torch.Tensor, action_type: str) -> Dict[str, Any]:
-        """
-        Decode action parameters from the embedding.
+        """Decode legacy action parameters from a latent embedding.
 
         Args:
-            param_embedding: Action parameter embedding tensor.
-            action_type: Type of the action.
+            param_embedding (torch.Tensor): Latent representation produced by the
+                action parameter head.
+            action_type (str): Selected action label guiding decoding heuristics.
 
         Returns:
-            A dictionary containing the decoded action parameters.
+            Dict[str, Any]: Dictionary describing the decoded parameters for the
+            legacy execution path.
         """
         return {
             "embedding": param_embedding.detach().cpu().numpy().tolist(),
@@ -758,15 +821,15 @@ class ArcticAgentic(nn.Module):
         }
 
     def _encode_query(self, query: str) -> torch.Tensor:
-        """
-        Encode a query string into a semantic embedding.
+        """Encode a textual query into the controller's semantic space.
 
         Args:
-            query: Query string to be encoded.
+            query (str): Query string representing the current planning context.
 
         Returns:
-            A torch.Tensor representing the query embedding. 
-            If the tokenizer or base model is not available, use a hash - based fallback.
+            torch.Tensor: Semantic embedding of shape ``[1, hidden_size]``. Falls
+            back to a hash-based representation when tokenizer or base model are
+            unavailable.
         """
         if hasattr(self, 'tokenizer') and self.tokenizer and self.base_model:
             tokens = self.tokenizer.encode(query, return_tensors="pt", max_length=512, truncation=True)
@@ -776,7 +839,7 @@ class ArcticAgentic(nn.Module):
                 query_embedding = embeddings.mean(dim=1)
                 return query_embedding
         else:
-            # Fallback: use simple hash - based encoding
+            # Fallback: use simple hash-based encoding when language models are unavailable.
             import hashlib
             hash_obj = hashlib.md5(query.encode())
             hash_bytes = hash_obj.digest()
@@ -793,35 +856,33 @@ class ArcticAgentic(nn.Module):
             return query_embedding
 
     def _extract_memory_keys(self, memories: List[Dict[str, Any]]) -> List[str]:
-        """
-        Extract memory keys from retrieved memories.
+        """Create coarse key phrases summarizing retrieved memories.
 
         Args:
-            memories: List of memory dictionaries.
+            memories (List[Dict[str, Any]]): Retrieved memory entries.
 
         Returns:
-            List of memory keys (strings).
+            List[str]: List of phrases used as shorthand keys during reasoning.
         """
         keys = []
         for memory in memories:
             if "content" in memory:
                 content = str(memory["content"])
-                # Extract key phrases (simplified)
-                key_phrases = content.split()[:10]  # First 10 words as key
+                # Extract deterministic prefix of words for a lightweight key.
+                key_phrases = content.split()[:10]
                 keys.append(" ".join(key_phrases))
             else:
                 keys.append("memory_entry")
         return keys
 
     def _extract_memory_values(self, memories: List[Dict[str, Any]]) -> List[str]:
-        """
-        Extract memory values from retrieved memories.
+        """Surface raw memory values for downstream inspection.
 
         Args:
-            memories: List of memory dictionaries.
+            memories (List[Dict[str, Any]]): Retrieved memory entries.
 
         Returns:
-            List of memory values (strings).
+            List[str]: Stringified representation of the memory contents.
         """
         values = []
         for memory in memories:
@@ -836,18 +897,18 @@ class ArcticAgentic(nn.Module):
                                         memory_keys: List[str],
                                         memory_values: List[str],
                                         query_embedding: torch.Tensor) -> Dict[str, Any]:
-        """
-        Prepare enhanced input for multi - step CoT reasoning.
+        """Build the enriched reasoning payload consumed by enhanced CoT logic.
 
         Args:
-            context: Current context dictionary.
-            memory_context: Memory context dictionary.
-            memory_keys: List of memory keys.
-            memory_values: List of memory values.
-            query_embedding: Query embedding tensor.
+            context (Dict[str, Any]): Foreground context provided by the caller.
+            memory_context (Dict[str, List]): Retrieval response with embeddings and summaries.
+            memory_keys (List[str]): Shortened descriptors derived from memories.
+            memory_values (List[str]): Detailed memory contents for justification.
+            query_embedding (torch.Tensor): Semantic embedding describing the query.
 
         Returns:
-            A dictionary containing the enhanced reasoning input.
+            Dict[str, Any]: Payload containing all features required by multi-path
+            reasoning heads.
         """
         return {
             "context": context,
@@ -856,24 +917,24 @@ class ArcticAgentic(nn.Module):
             "memory_values": memory_values,
             "query_embedding": query_embedding,
             "agent_state": self.state.value,
-            "timestamp": str(uuid.uuid4())[:8]  # Simple timestamp
+            "timestamp": str(uuid.uuid4())[:8]  # Lightweight correlation token.
         }
 
     def _decode_enhanced_action_params(self, param_embedding: torch.Tensor, 
                                      action_type: str, 
                                      difficulty_level: int,
                                      confidence: float) -> Dict[str, Any]:
-        """
-        Decode enhanced action parameters considering difficulty and confidence.
+        """Decode enhanced action parameters with difficulty and confidence signals.
 
         Args:
-            param_embedding: Action parameter embedding tensor.
-            action_type: Type of the action.
-            difficulty_level: Difficulty level of the action.
-            confidence: Confidence of the action.
+            param_embedding (torch.Tensor): Latent vector produced by the action
+                parameter head.
+            action_type (str): Selected action label guiding specialization.
+            difficulty_level (int): Discrete difficulty tier inferred by the reasoner.
+            confidence (float): Confidence value in ``[0, 1]``.
 
         Returns:
-            A dictionary containing the decoded enhanced action parameters.
+            Dict[str, Any]: Structured parameters tailored to the selected action.
         """
         params = {
             "embedding": param_embedding.detach().cpu().numpy().tolist(),
@@ -883,7 +944,7 @@ class ArcticAgentic(nn.Module):
             "timestamp": str(uuid.uuid4())[:8]
         }
         
-        # Add action - specific parameters
+        # Add action-specific parameters according to the selected action template.
         if action_type == "use_tool":
             params.update({
                 "tool_name": "default_tool",
@@ -916,19 +977,19 @@ class ArcticAgentic(nn.Module):
                                 confidence: float,
                                 difficulty_level: int,
                                 relevant_memories: List[Dict[str, Any]]) -> str:
-        """
-        Generate a detailed reasoning trace for transparency.
+        """Produce a human-readable reasoning trace for auditing.
 
         Args:
-            context: Current context dictionary.
-            memory_summary: Memory summary dictionary.
-            action_type: Type of the selected action.
-            confidence: Confidence of the action.
-            difficulty_level: Difficulty level of the action.
-            relevant_memories: List of relevant memories.
+            context (Dict[str, Any]): Caller-provided action context.
+            memory_summary (Dict[str, int]): Aggregated memory counts for telemetry.
+            action_type (str): Chosen action label.
+            confidence (float): Confidence score emitted by the reasoner.
+            difficulty_level (int): Difficulty tier derived from logits.
+            relevant_memories (List[Dict[str, Any]]): Memories contributing to the decision.
 
         Returns:
-            A string representing the reasoning trace.
+            str: Pipe-delimited summary capturing context length, memory usage,
+            difficulty, and action justification.
         """
         trace_parts = []
         
@@ -962,11 +1023,10 @@ class ArcticAgentic(nn.Module):
         return " | ".join(trace_parts)
 
     def _summarize_memory(self) -> Dict[str, int]:
-        """
-        Summarize memory for state synchronization.
+        """Summarize stored memories for synchronization or diagnostics.
 
         Returns:
-            A dictionary containing the counts of observations, actions, and reflections.
+            Dict[str, int]: Counts of observations, actions, and reflections.
         """
         return {
             "observations": len(self.memory.observations),
@@ -975,15 +1035,14 @@ class ArcticAgentic(nn.Module):
         }
 
     def detect_objects(self, image_input: Union[str, torch.Tensor, np.ndarray]) -> Dict[str, Any]:
-        """
-        Detect objects in an image and return their coordinates.
+        """Run vision encoder detection pipeline and expose summarized results.
 
         Args:
-            image_input: Image path string, tensor, or numpy array.
+            image_input (Union[str, torch.Tensor, np.ndarray]): Image path or tensor.
 
         Returns:
-            A dictionary containing detected objects with coordinates, image size, and number of objects.
-            If an error occurs or no objects are detected, return an empty result.
+            Dict[str, Any]: Dictionary with detected objects, image dimensions, and
+            diagnostics. Empty structures are returned when detection fails.
         """
         if not self._coordinate_detection_enabled:
             return {"objects": [], "image_size": [0, 0], "num_objects": 0}
@@ -1012,13 +1071,13 @@ class ArcticAgentic(nn.Module):
             results = detection_results["detection_results"]
             objects = []
             
-            # Process bounding boxes and coordinates
+            # Process bounding boxes and coordinates.
             if "boxes" in results and "labels" in results:
                 boxes = results["boxes"].cpu().numpy()
                 labels = results["labels"].cpu().numpy()
                 scores = results.get("scores", torch.ones(len(boxes))).cpu().numpy()
                 
-                # Convert to image coordinates
+                # Convert patch indices into absolute image coordinates.
                 img_coords = self.vision_encoder.convert_patch_to_image_coords(boxes)
                 
                 for i, (box, label, score) in enumerate(zip(img_coords, labels, scores)):
@@ -1034,7 +1093,7 @@ class ArcticAgentic(nn.Module):
                             "bbox": [float(x_min), float(y_min), float(x_max), float(y_max)]
                         })
             
-            # Get image dimensions
+            # Capture approximate image dimensions for coordinate normalization.
             if isinstance(image_input, str):
                 from PIL import Image
                 with Image.open(image_input) as img:
@@ -1054,15 +1113,14 @@ class ArcticAgentic(nn.Module):
 
     def get_coordinates(self, image_input: Union[str, torch.Tensor, np.ndarray], 
                          target_object: str = None) -> List[List[float]]:
-        """
-        Get the coordinates of detected objects or a specific target object.
+        """Extract object centroid coordinates from detection results.
 
         Args:
-            image_input: Image to analyze.
-            target_object: Optional target object name to filter results.
+            image_input (Union[str, torch.Tensor, np.ndarray]): Image input forwarded to detection.
+            target_object (str, optional): Filter criterion for object class names.
 
         Returns:
-            A list of [x, y] coordinates for the detected objects.
+            List[List[float]]: Coordinate pairs of detected objects satisfying the filter.
         """
         detection_results = self.detect_objects(image_input)
         
@@ -1075,16 +1133,15 @@ class ArcticAgentic(nn.Module):
 
     def point_to_object(self, image_input: Union[str, torch.Tensor, np.ndarray], 
                        object_description: str) -> Dict[str, Any]:
-        """
-        Point to a specific object in the image based on the description.
+        """Identify an object aligned with the textual description.
 
         Args:
-            image_input: Image to analyze.
-            object_description: Description of the object to find.
+            image_input (Union[str, torch.Tensor, np.ndarray]): Image to analyze.
+            object_description (str): Free-form description of the target object.
 
         Returns:
-            A dictionary with object information and pointing coordinates. 
-            If the object is not found, indicate failure.
+            Dict[str, Any]: Result indicating success, matched object metadata, and
+            pointing coordinates when available.
         """
         detection_results = self.detect_objects(image_input)
         
@@ -1118,13 +1175,12 @@ class ArcticAgentic(nn.Module):
             }
 
     def enable_coordinate_detection(self, enabled: bool = True):
-        """
-        Enable or disable the coordinate detection functionality.
+        """Toggle coordinate detection support in the vision subsystem.
 
         Args:
-            enabled: Boolean indicating whether to enable coordinate detection, defaults to True.
+            enabled (bool, optional): Whether to enable coordinate detection.
+                Defaults to ``True``.
         """
         self._coordinate_detection_enabled = enabled
         if hasattr(self.vision_encoder, 'enable_detection'):
             self.vision_encoder.enable_detection(enabled)
-

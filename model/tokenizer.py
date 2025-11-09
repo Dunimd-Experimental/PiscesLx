@@ -196,7 +196,7 @@ class ArcticBPETokenizer:
 
         if merges_path and os.path.exists(merges_path):
             # Load merge rules from the specified file
-            with open(merges_path, "r", encoding="utf-8") as f:
+            with open(merges_path, "r", encoding="utf-8", errors="ignore") as f:
                 merges = [tuple(line.strip().split()) for line in f if not line.startswith("#") and line.strip()]
             # Assign ranks to each merge pair
             self.bpe_ranks = {pair: i for i, pair in enumerate(merges)}

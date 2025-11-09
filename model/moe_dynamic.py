@@ -17,24 +17,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Dynamic Mixture-of-Experts utilities for Arctic multimodal models."""
+
 import math
+from collections import OrderedDict
+from typing import Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from collections import OrderedDict
+
 from utils.log.core import PiscesLxCoreLog
 
 logger = PiscesLxCoreLog("Arctic.Core.MoEDynamic", file_path="logs/ArcticCore.log")
 
-def moe_init_weights(m):
-    """
-    Initializes weights for MoE (Mixture of Experts) layers.
-    Specifically, it uses Kaiming uniform initialization for the weights of linear layers
-    and sets the bias to zero if it exists.
-
-    Args:
-        m (nn.Module): The module whose weights are to be initialized.
-    """
+def moe_init_weights(m: nn.Module) -> None:
+    """Initialize MoE expert weights with Kaiming uniform and zero bias."""
     if isinstance(m, nn.Linear):
         # Initialize the weights using Kaiming uniform initialization with a=sqrt(5).
         nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
@@ -43,20 +41,10 @@ def moe_init_weights(m):
             nn.init.zeros_(m.bias)
 
 class ArcticExpertChoiceRouter(nn.Module):
-    """
-    A router module implementing the expert choice routing strategy for MoE.
-    Each expert selects the top-k tokens based on routing scores.
-    """
-    def __init__(self, hidden_size, num_experts, capacity_factor=1.25, top_k=2):
-        """
-        Initializes the ExpertChoiceRouter.
+    """Expert-choice router that allocates tokens to experts based on scores."""
 
-        Args:
-            hidden_size (int): Size of the hidden layer.
-            num_experts (int): Number of experts.
-            capacity_factor (float, optional): Capacity factor for experts. Defaults to 1.25.
-            top_k (int, optional): Number of top tokens each expert selects. Defaults to 2.
-        """
+    def __init__(self, hidden_size: int, num_experts: int, capacity_factor: float = 1.25, top_k: int = 2) -> None:
+        """Initialize expert-choice routing with capacity and top-k constraints."""
         super().__init__()
         # Linear layer to compute routing scores.
         self.gate = nn.Linear(hidden_size, num_experts, bias=False)
@@ -64,15 +52,14 @@ class ArcticExpertChoiceRouter(nn.Module):
         self.num_experts = num_experts
         self.top_k = top_k
         
-    def forward(self, x):
-        """
-        Performs a forward pass of the expert choice router.
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute expert assignments and load balancing objective.
 
         Args:
-            x (torch.Tensor): Input tensor with shape (batch*seq, hidden_size).
+            x (torch.Tensor): Input tensor shaped ``[tokens, hidden]``.
 
         Returns:
-            tuple: A tuple containing expert indices, dispatch mask, and load balancing loss.
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Expert indices, dispatch mask, and load balancing loss.
         """
         # Compute the maximum number of tokens each expert can handle.
         tokens_per_expert = int(x.shape[0] * self.capacity_factor / self.num_experts)
@@ -97,20 +84,11 @@ class ArcticExpertChoiceRouter(nn.Module):
         return expert_indices, dispatch_mask, load_balancing_loss
 
 class ArcticDynamicMoELayer(nn.Module):
-    """
-    A dynamic Mixture of Experts (MoE) layer with expert device management.
-    This layer can dynamically manage the placement of experts on different devices (CPU/GPU).
-    """
+    """Dynamic Mixture-of-Experts layer supporting expert migration across devices."""
     _layer_count = 0
-    def __init__(self, cfg, device=None, dtype=None):
-        """
-        Initializes the DynamicMoELayer.
 
-        Args:
-            cfg: Configuration object containing parameters for the layer.
-            device (torch.device, optional): Device to place the model on. Defaults to None.
-            dtype (torch.dtype, optional): Data type of the model. Defaults to None.
-        """
+    def __init__(self, cfg: Any, device: Optional[torch.device] = None, dtype: Optional[torch.dtype] = None) -> None:
+        """Set up expert modules, router, and device management metadata."""
         super().__init__()
         ArcticDynamicMoELayer._layer_count += 1
         self.cfg = cfg
@@ -150,14 +128,8 @@ class ArcticDynamicMoELayer(nn.Module):
             except UnicodeEncodeError:
                 print(f"[OK] ArcticDynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
     
-    def _move_expert_to_gpu(self, expert_id):
-        """
-        Moves an expert to GPU and manages the active experts list.
-        If the number of active experts exceeds the limit, moves the least recently used expert to CPU.
-
-        Args:
-            expert_id (int): ID of the expert to move to GPU.
-        """
+    def _move_expert_to_gpu(self, expert_id: int) -> None:
+        """Move an expert to GPU and update least-recently-used tracking."""
         expert = self.experts[expert_id]
         # Move the expert to GPU if it is not already on GPU.
         if next(expert.parameters()).device.type != 'cuda':
@@ -170,28 +142,15 @@ class ArcticDynamicMoELayer(nn.Module):
             lru_expert_id, _ = self._active_experts.popitem(last=False)
             self._move_expert_to_cpu(lru_expert_id)
     
-    def _move_expert_to_cpu(self, expert_id):
-        """
-        Moves an expert to CPU.
-
-        Args:
-            expert_id (int): ID of the expert to move to CPU.
-        """
+    def _move_expert_to_cpu(self, expert_id: int) -> None:
+        """Move an expert back to CPU when not actively used."""
         expert = self.experts[expert_id]
         # Move the expert to CPU if it is not already on CPU.
         if next(expert.parameters()).device.type != 'cpu':
             expert.to('cpu')
     
-    def forward(self, x):
-        """
-        Performs a forward pass of the dynamic MoE layer.
-
-        Args:
-            x (torch.Tensor): Input tensor with shape (batch_size, seq_len, hidden_size).
-
-        Returns:
-            tuple: A tuple containing the output tensor and load balancing loss.
-        """
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Route tokens through experts and gather outputs with MoE loss."""
         batch_size, seq_len, hidden = x.shape
         # Flatten the input tensor.
         x_flat = x.view(-1, hidden)

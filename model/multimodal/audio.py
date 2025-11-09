@@ -17,22 +17,58 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import torch
-import torch.nn as nn
-import numpy as np
-from typing import Dict, Any, Optional
-import logging
+"""Audio encoding utilities backing Arctic multimodal agents.
 
-logger = logging.getLogger(__name__)
+This module defines :class:`ArcticAudioEncoder`, a multi-task audio feature
+extractor that converts waveforms or spectrograms into hidden representations
+compatible with PiscesL1 multimodal stacks. It fuses spectral, prosodic, and
+affective signals while exposing auxiliary heads for emotion classification and
+intensity estimation. Logging is routed through :class:`PiscesLxCoreLog` to keep
+telemetry consistent across the Arctic runtime.
+"""
+
+import torch
+import numpy as np
+import torch.nn as nn
+from typing import Dict, Any, Optional
+from utils.log.core import PiscesLxCoreLog
+
+logger = PiscesLxCoreLog("Arctic.Core.Audio", file_path="logs/ArcticCore.log")
 
 class ArcticAudioEncoder(nn.Module):
-    """Advanced audio encoder with multi-task learning capabilities."""
-    
+    """Multi-task audio encoder producing modality-aligned embeddings.
+
+    The encoder ingests raw audio or pre-computed spectrograms, derives Mel
+    filter representations, and processes them through convolutional backbones
+    coupled with auxiliary heads. Derived features are projected into the model
+    hidden space and optionally reused for speaker, music, and emotion tasks.
+
+    Attributes:
+        cfg: Configuration namespace supplying dimensional parameters.
+        enabled (bool): Flag indicating whether audio encoding is active.
+        hidden_size (int): Dimensionality of the downstream hidden space.
+        sampling_rate (int): Audio sampling rate in Hertz.
+        n_mels (int): Number of Mel filter bands.
+        n_fft (int): FFT window size for STFT computations.
+        hop_length (int): Hop length for successive STFT windows.
+        win_length (int): Window size for Hann window generation.
+        mel_filters (nn.Parameter): Fixed filter bank used to compute Mel bins.
+        conv_layers (nn.ModuleDict): Spectral convolution stack and auxiliary
+            feature heads for prosody, spectrum, and emotion classification.
+        arousal_valence (nn.Sequential): Head predicting arousal and valence
+            scores.
+        intensity_estimator (nn.Sequential): Head estimating emotional
+            intensity.
+        proj (nn.ModuleDict): Projection layers consolidating multi-task
+            features into the model hidden space.
+    """
+
     def __init__(self, cfg):
-        """Initialize the ArcticAudioEncoder.
-        
+        """Instantiate the encoder using model-level configuration.
+
         Args:
-            cfg: Configuration object containing hyperparameters.
+            cfg: Configuration object providing audio hyperparameters including
+                ``hidden_size`` and optional STFT settings.
         """
         super().__init__()
         self.cfg = cfg
@@ -136,9 +172,14 @@ class ArcticAudioEncoder(nn.Module):
         logger.debug("AudioEncoder: __init__ end")
 
     def _create_mel_filters(self):
-        """Create a Mel filter bank."""
+        """Construct a Mel filter bank parameter for spectrogram projection.
+
+        Returns:
+            nn.Parameter: Fixed filter bank tensor shaped ``[n_mels, n_fft/2 + 1]``.
+        """
         low_freq_mel = 0
         high_freq_mel = 2595 * np.log10(1 + (self.sampling_rate / 2) / 700)
+        
         mel_points = np.linspace(low_freq_mel, high_freq_mel, self.n_mels + 2)
         hz_points = 700 * (10**(mel_points / 2595) - 1)
         bin_points = np.floor((self.n_fft + 1) * hz_points / self.sampling_rate).astype(int)
@@ -154,12 +195,21 @@ class ArcticAudioEncoder(nn.Module):
         return nn.Parameter(torch.from_numpy(filters).float(), requires_grad=False)
 
     def _stft(self, audio):
-        """Perform a short-time Fourier transform (STFT) on the input audio."""
+        """Perform a short-time Fourier transform (STFT) on input audio.
+
+        Args:
+            audio (torch.Tensor): Mono waveform tensor of shape ``[T]`` or
+                batched tensor ``[B, T]``.
+
+        Returns:
+            torch.Tensor: Complex magnitude tensor shaped ``[B, freq, time]``.
+        """
         window = torch.hann_window(self.win_length)
         stft = torch.stft(
             audio, n_fft=self.n_fft, hop_length=self.hop_length,
             win_length=self.win_length, window=window, return_complex=True
         )
+        
         magnitude = torch.abs(stft)
         # Handle mono audio by adding a batch dimension if needed
         if magnitude.dim() == 2:
@@ -167,20 +217,29 @@ class ArcticAudioEncoder(nn.Module):
         return magnitude
 
     def _mel_spectrogram(self, audio):
-        """Calculate the log Mel spectrogram of the input audio."""
+        """Compute the log-Mel spectrogram from a waveform tensor.
+
+        Args:
+            audio (torch.Tensor): Input waveform compatible with :meth:`_stft`.
+
+        Returns:
+            torch.Tensor: Log-scaled Mel spectrogram tensor.
+        """
         stft = self._stft(audio)
         mel_spec = torch.matmul(self.mel_filters, stft)
         log_mel_spec = torch.log(torch.clamp(mel_spec, min=1e-10))
         return log_mel_spec
 
     def forward(self, audio_input):
-        """Perform a forward pass through the audio encoder.
-        
+        """Encode audio input into hidden representations for multimodal fusion.
+
         Args:
-            audio_input: Input audio data. Can be a tensor or a dictionary.
-            
+            audio_input (Union[torch.Tensor, Dict[str, torch.Tensor], None]):
+                Raw waveform, spectrogram tensor, or dictionary containing
+                ``input_values`` or ``audio`` keys.
+
         Returns:
-            torch.Tensor: Encoded audio features.
+            torch.Tensor: Encoded feature tensor shaped ``[B, 1, hidden_size]``.
         """
         if audio_input is None:
             device = next(self.parameters()).device

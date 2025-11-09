@@ -24,7 +24,7 @@ from utils.log.core import PiscesLxCoreLog
 from utils.cache.enhanced import PiscesLxCoreEnhancedCacheManager
 from utils.config.manager import PiscesLxCoreConfigManagerFacade
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Cache.Facade")
+logger = PiscesLxCoreLog("PiscesLx.Core.Cache.Facade")
 
 class PiscesLxCoreCacheManagerFacade:
     """Lightweight facade exposing filesystem cache directories.

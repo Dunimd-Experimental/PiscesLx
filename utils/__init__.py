@@ -17,8 +17,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Core utilities
-
 from utils.fs.core import PiscesLxCoreFS
 from utils.validate import PiscesLxCoreValidator
 from utils.config.loader import PiscesLxCoreConfigLoader

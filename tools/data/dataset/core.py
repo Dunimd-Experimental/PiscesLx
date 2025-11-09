@@ -54,11 +54,17 @@ class Dataset:
         self.subset = subset
         self.split = split
         self.config = config or {}
+        try:
+            from types import SimpleNamespace
+            if isinstance(self.config, dict):
+                self.config = SimpleNamespace(**self.config)
+        except Exception:
+            pass
         self.max_samples = max_samples
 
         # Get the instance of cache manager and create data cache directory
-        cache = PiscesLxCoreCacheManagerFacade.instance()
-        data_cache = cache.get_or_create_cache_dir("data_cache")
+        cache = PiscesLxCoreCacheManagerFacade.get_instance()
+        data_cache = cache.get_cache_dir("data_cache")
         cache_path = os.path.join(data_cache, self.subset)
 
         # Check if the dataset cache path exists

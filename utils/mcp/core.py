@@ -95,7 +95,7 @@ class PiscesLxCoreMCPPlaza:
         Returns:
             Configured logger instance
         """
-        logger = PiscesLxCoreLog("PiscesLx.Utils.MCP.Plaza")
+        logger = PiscesLxCoreLog("PiscesLx.Core.MCP.Plaza")
         return logger
     
     async def initialize(self) -> bool:

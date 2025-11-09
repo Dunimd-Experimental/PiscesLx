@@ -93,7 +93,15 @@ class ArcticSpeculativeDecoder(nn.Module):
 
         hidden_size = max(512, base_hidden // 2)
         num_layers = max(2, base_layers // 4)
-        nhead = max(4, min(8, base_heads // 2))
+        # Choose heads that are compatible with hidden_size
+        preferred_max = max(4, min(8, max(1, base_heads // 2)))
+        candidates = [h for h in range(preferred_max, 0, -1) if hidden_size % h == 0]
+        if candidates:
+            nhead = candidates[0]
+        else:
+            # If no candidate divides hidden_size, pad hidden_size up to nearest multiple
+            nhead = max(1, min(preferred_max, base_heads))
+            hidden_size = ((hidden_size + nhead - 1) // nhead) * nhead
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=hidden_size,

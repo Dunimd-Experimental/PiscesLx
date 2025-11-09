@@ -1,14 +1,26 @@
 #!/usr/bin/env python3
 
-# Weight-level watermarking utilities (skeleton)
-# Methods: Uchida/DeepSigns-style correlation embedding and verification.
-# NOTE: Integrate during training as an additional regularization term with very small strength.
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd project team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
-from typing import Tuple, Iterable
 import torch
 import math
 import random
-
+from typing import Tuple, Iterable
 
 def _select_parameter_slices(model: torch.nn.Module, top_k_layers: int = 8) -> Iterable[torch.nn.Parameter]:
     """Select a stable subset of Linear/Conv weights to host watermark.
@@ -23,12 +35,10 @@ def _select_parameter_slices(model: torch.nn.Module, top_k_layers: int = 8) -> I
     candidates.sort(key=lambda x: x[0])
     return [p for _, p in candidates[:top_k_layers]]
 
-
 def _codebook(owner_id: str, seed: int, dim: int) -> torch.Tensor:
     rnd = random.Random(hash((owner_id, seed)))
     vec = torch.tensor([1.0 if rnd.random() > 0.5 else -1.0 for _ in range(dim)], dtype=torch.float32)
     return vec / math.sqrt(dim)
-
 
 def watermarked_regularizer(param: torch.Tensor, owner_id: str, seed: int, strength: float = 1e-5) -> torch.Tensor:
     """Compute a tiny regularization loss to align a flattened parameter with codebook.
@@ -41,7 +51,6 @@ def watermarked_regularizer(param: torch.Tensor, owner_id: str, seed: int, stren
     w_norm = torch.nn.functional.normalize(w, dim=0)
     corr = (w_norm * code).sum()
     return strength * (-corr)  # maximizing corr -> minimize negative corr
-
 
 def verify_weights(model: torch.nn.Module, owner_id: str, seed: int, top_k_layers: int = 8) -> Tuple[float, bool]:
     """Aggregate correlation score over selected layers and return pass/fail.

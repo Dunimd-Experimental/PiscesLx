@@ -17,26 +17,38 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Inference utilities for Arctic multi-path reasoning workflows.
+
+The module exposes :class:`ArcticMultiPathInferenceEngine`, which samples
+multiple reasoning branches, scores them with factual and logical heuristics,
+and selects the highest-confidence answer while optionally returning rich
+metadata for analysis.
+"""
+
 import re
 import torch
 import numpy as np
 from torch import nn
 import torch.nn.functional as F
+from typing import Any, Dict, List, Optional, Union
 
 class ArcticMultiPathInferenceEngine:
-    """
-    A class for performing multi-path reasoning inference. This engine conducts step-by-step reasoning
-    with multiple paths at each layer to find the most confident answer.
-    """
-    def __init__(self, model, tokenizer, max_depth=5, confidence_threshold=0.85):
-        """
-        Initialize the ArcticMultiPathInferenceEngine.
+    """Perform inference-time multi-path reasoning and confidence evaluation."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        tokenizer: Any,
+        max_depth: int = 5,
+        confidence_threshold: float = 0.85,
+    ) -> None:
+        """Configure the inference engine with model, tokenizer, and limits.
 
         Args:
-            model: Pre-trained model used for reasoning.
-            tokenizer: Tokenizer corresponding to the model.
-            max_depth (int): Maximum reasoning depth. Defaults to 5.
-            confidence_threshold (float): Confidence threshold to stop reasoning. Defaults to 0.85.
+            model (nn.Module): Pre-trained model providing ``generate`` and forward APIs.
+            tokenizer (Any): Tokenizer aligned with ``model`` for encoding/decoding text.
+            max_depth (int): Maximum number of reasoning layers explored before termination.
+            confidence_threshold (float): Confidence level required to stop exploring further paths.
         """
         self.model = model
         self.tokenizer = tokenizer
@@ -45,25 +57,24 @@ class ArcticMultiPathInferenceEngine:
         self.reasoning_cache = {}
 
     @torch.no_grad()
-    def multi_path_reason(self, prompt, return_metadata=False):
-        """
-        Perform multi-path reasoning on the given prompt.
+    def multi_path_reason(self, prompt: str, return_metadata: bool = False) -> Union[str, Dict[str, Any]]:
+        """Run multi-path reasoning and optionally return diagnostic metadata.
 
         Args:
-            prompt (str): Input prompt for reasoning.
-            return_metadata (bool): Whether to return additional reasoning metadata. Defaults to False.
+            prompt (str): Natural language query or problem description.
+            return_metadata (bool): When ``True``, expose intermediate reasoning traces.
 
         Returns:
-            Union[str, dict]: If return_metadata is False, returns the answer string.
-                             If True, returns a dictionary containing the answer, confidence,
-                             reasoning depth, reasoning chain, uncertainty evolution, and fact verifications.
+            Union[str, Dict[str, Any]]: Either the best answer string or a metadata payload
+            containing answer, confidence, reasoning depth, reasoning chain, uncertainty trajectory,
+            and fact verification scores.
         """
-        # Initialize the reasoning state based on the input prompt
+        # Initialize the reasoning state from the encoded prompt.
         reasoning_state = self._initialize_reasoning_state(prompt)
         reasoning_layers = []
         current_depth = 0
 
-        # Perform multi-path reasoning layer by layer
+        # Iterate through reasoning layers until depth or confidence limits are reached.
         while current_depth < self.max_depth:
             layer_result = self._multi_path_layer_reasoning(reasoning_state, depth=current_depth)
             reasoning_layers.append(layer_result)
@@ -72,7 +83,7 @@ class ArcticMultiPathInferenceEngine:
             reasoning_state = self._update_reasoning_state(reasoning_state, layer_result['residual_uncertainty'])
             current_depth += 1
 
-        # Select the best reasoning path from the reasoning layers
+        # Select the highest-confidence reasoning path from accumulated layers.
         final_result = self._path_selection_inference(reasoning_layers)
 
         if return_metadata:
@@ -86,15 +97,14 @@ class ArcticMultiPathInferenceEngine:
             }
         return final_result['answer']
 
-    def _initialize_reasoning_state(self, prompt):
-        """
-        Initialize the reasoning state based on the input prompt.
+    def _initialize_reasoning_state(self, prompt: str) -> Dict[str, Any]:
+        """Encode the prompt and construct the initial reasoning state.
 
         Args:
-            prompt (str): Input prompt.
+            prompt (str): Request supplied by the user.
 
         Returns:
-            dict: A dictionary containing the prompt embedding, uncertainty map, and hypothesis space.
+            Dict[str, Any]: Structure containing prompt embeddings, an uncertainty map, and an empty hypothesis store.
         """
         inputs = self.tokenizer.encode(prompt, return_tensors="pt").to(self.model.device)
         with torch.no_grad():
@@ -106,17 +116,15 @@ class ArcticMultiPathInferenceEngine:
             'hypothesis_space': {}
         }
 
-    def _multi_path_layer_reasoning(self, reasoning_state, depth):
-        """
-        Perform multi-path reasoning at a specific layer.
+    def _multi_path_layer_reasoning(self, reasoning_state: Dict[str, Any], depth: int) -> Dict[str, Any]:
+        """Evaluate candidate reasoning paths for the current depth.
 
         Args:
-            reasoning_state (dict): Current reasoning state.
-            depth (int): Current reasoning depth.
+            reasoning_state (Dict[str, Any]): Encoded state accumulated so far.
+            depth (int): Zero-based reasoning layer index.
 
         Returns:
-            dict: A dictionary containing the reasoning path, confidence, uncertainty,
-                  verified facts, and residual uncertainty.
+            Dict[str, Any]: Record containing the best path, its confidence, uncertainty metrics, and verified facts.
         """
         prompt_emb = reasoning_state['prompt_embedding']
         reasoning_paths = self._generate_reasoning_paths(prompt_emb, depth)
@@ -137,20 +145,19 @@ class ArcticMultiPathInferenceEngine:
             'residual_uncertainty': uncertainty
         }
 
-    def _generate_reasoning_paths(self, prompt_emb, depth):
-        """
-        Generate multiple reasoning paths based on the prompt embedding and depth.
+    def _generate_reasoning_paths(self, prompt_emb: torch.Tensor, depth: int) -> List[Dict[str, Any]]:
+        """Sample multiple reasoning paths with diversified temperatures.
 
         Args:
-            prompt_emb (torch.Tensor): Prompt embedding.
-            depth (int): Current reasoning depth.
+            prompt_emb (torch.Tensor): Prompt embedding produced by the model.
+            depth (int): Reasoning depth influencing the number of samples.
 
         Returns:
-            list: A list of dictionaries, each containing the generated text, logits, and temperature.
+            List[Dict[str, Any]]: Generated paths containing decoded text, token-level logits, and sampling temperature.
         """
         paths = []
         temperatures = [0.3, 0.5, 0.7, 0.9, 1.1]
-        # Generate reasoning paths with different temperatures
+        # Iterate through candidate temperatures to diversify sampling behaviour.
         for temp in temperatures[:min(3 + depth, 5)]:
             generated = self.model.generate(
                 prompt_emb,
@@ -168,31 +175,29 @@ class ArcticMultiPathInferenceEngine:
             })
         return paths
 
-    def _evaluate_reasoning_path(self, path, depth):
-        """
-        Evaluate a reasoning path based on length, consistency, and uncertainty reduction.
+    def _evaluate_reasoning_path(self, path: Dict[str, Any], depth: int) -> float:
+        """Score a reasoning path using structural and uncertainty heuristics.
 
         Args:
-            path (dict): Reasoning path to evaluate.
-            depth (int): Current reasoning depth.
+            path (Dict[str, Any]): Path descriptor containing generated text and logits.
+            depth (int): Current reasoning depth controlling target length.
 
         Returns:
-            float: Evaluation score of the reasoning path.
+            float: Composite score reflecting path quality.
         """
         length_score = 1.0 / (1.0 + abs(len(path['text']) - 100 * (depth + 1)) / 100)
         consistency_score = self._estimate_logical_consistency(path['text'])
         uncertainty_score = self._measure_uncertainty_reduction(path)
         return length_score * 0.3 + consistency_score * 0.4 + uncertainty_score * 0.3
 
-    def _verify_facts(self, reasoning_path):
-        """
-        Verify the facts in a reasoning path.
+    def _verify_facts(self, reasoning_path: Dict[str, Any]) -> Dict[str, float]:
+        """Estimate factual, temporal, and causal consistency of a reasoning path.
 
         Args:
-            reasoning_path (dict): Reasoning path containing text to verify.
+            reasoning_path (Dict[str, Any]): Candidate path including plain-text reasoning.
 
         Returns:
-            dict: A dictionary containing verification scores for different aspects.
+            Dict[str, float]: Per-aspect verification scores in the range ``[0.0, 1.0]``.
         """
         text = reasoning_path['text']
         checks = {
@@ -204,15 +209,14 @@ class ArcticMultiPathInferenceEngine:
         }
         return checks
 
-    def _check_factual_accuracy(self, text):
-        """
-        Check the factual accuracy of the given text.
+    def _check_factual_accuracy(self, text: str) -> float:
+        """Estimate factual accuracy for textual reasoning segments.
 
         Args:
-            text (str): Text to check.
+            text (str): Input text subject to factual assessment.
 
         Returns:
-            float: Factual accuracy score in the range [0.0, 1.0].
+            float: Factual accuracy score normalized to ``[0.0, 1.0]``.
         """
         try:
             from transformers import pipeline
@@ -233,15 +237,14 @@ class ArcticMultiPathInferenceEngine:
             speculative_score = sum(1 for w in speculative_indicators if w in text.lower()) / len(speculative_indicators)
             return max(0.0, float(factual_score - speculative_score * 0.5))
 
-    def _check_logical_validity(self, text):
-        """
-        Check the logical validity of the given text.
+    def _check_logical_validity(self, text: str) -> float:
+        """Assess logical validity using either model-based or heuristic signals.
 
         Args:
-            text (str): Text to check.
+            text (str): Textual reasoning sequence.
 
         Returns:
-            float: Logical validity score in the range [0.0, 1.0].
+            float: Logical validity score between ``0.0`` and ``1.0``.
         """
         logical_patterns = {
             'deductive': ['if.*then', 'given.*therefore', 'since.*conclude'],
@@ -257,16 +260,15 @@ class ArcticMultiPathInferenceEngine:
             scores.append(matches / len(patterns))
         return float(np.mean(scores)) if scores else 0.5
 
-    def _calculate_path_confidence(self, path, facts):
-        """
-        Calculate the confidence of a reasoning path based on verified facts.
+    def _calculate_path_confidence(self, path: Dict[str, Any], facts: Dict[str, float]) -> torch.Tensor:
+        """Aggregate fact scores into a sigmoid-normalized confidence tensor.
 
         Args:
-            path (dict): Reasoning path.
-            facts (dict): Verified facts.
+            path (Dict[str, Any]): Reasoning path descriptor (unused but retained for parity).
+            facts (Dict[str, float]): Per-aspect verification scores produced by :meth:`_verify_facts`.
 
         Returns:
-            torch.Tensor: Confidence score.
+            torch.Tensor: Tensor containing a single confidence value.
         """
         base_confidence = torch.sigmoid(torch.tensor([
             facts['self_consistency'],
@@ -275,29 +277,27 @@ class ArcticMultiPathInferenceEngine:
         ]).mean())
         return base_confidence
 
-    def _update_reasoning_state(self, current_state, residual_uncertainty):
-        """
-        Update the reasoning state based on the residual uncertainty.
+    def _update_reasoning_state(self, current_state: Dict[str, Any], residual_uncertainty: torch.Tensor) -> Dict[str, Any]:
+        """Update the uncertainty map with residual uncertainty feedback.
 
         Args:
-            current_state (dict): Current reasoning state.
-            residual_uncertainty (torch.Tensor): Residual uncertainty.
+            current_state (Dict[str, Any]): Existing reasoning state.
+            residual_uncertainty (torch.Tensor): Remaining uncertainty after current depth.
 
         Returns:
-            dict: Updated reasoning state.
+            Dict[str, Any]: Updated reasoning state with adjusted uncertainty map.
         """
         uncertainty_adjustment = 1.0 - residual_uncertainty * 0.5
         return {**current_state, 'uncertainty_map': current_state['uncertainty_map'] * uncertainty_adjustment}
 
-    def _path_selection_inference(self, reasoning_layers):
-        """
-        Select the best reasoning path from the reasoning layers.
+    def _path_selection_inference(self, reasoning_layers: List[Dict[str, Any]]) -> Dict[str, Union[str, float]]:
+        """Select the best reasoning path via confidence-weighted aggregation.
 
         Args:
-            reasoning_layers (list): List of reasoning layer results.
+            reasoning_layers (List[Dict[str, Any]]): Layer-wise reasoning summaries produced by the engine.
 
         Returns:
-            dict: A dictionary containing the best answer and its confidence.
+            Dict[str, Union[str, float]]: Answer string with its associated confidence score.
         """
         if not reasoning_layers:
             return {'answer': "Unable to reason about this", 'confidence': 0.0}
@@ -306,15 +306,14 @@ class ArcticMultiPathInferenceEngine:
         best_layer = reasoning_layers[best_layer_idx]
         return {'answer': best_layer['reasoning']['text'], 'confidence': best_layer['confidence']}
 
-    def _estimate_logical_consistency(self, text):
-        """
-        Estimate the logical consistency of the given text.
+    def _estimate_logical_consistency(self, text: str) -> float:
+        """Derive a logical consistency score using learned or heuristic cues.
 
         Args:
-            text (str): Text to estimate.
+            text (str): Reasoning text passage.
 
         Returns:
-            float: Logical consistency score in the range [0.0, 1.0].
+            float: Logical consistency score between ``0.0`` and ``1.0``.
         """
         try:
             from transformers import AutoTokenizer, AutoModel
@@ -341,15 +340,14 @@ class ArcticMultiPathInferenceEngine:
                 scores.append(score)
             return float(np.mean(scores)) if scores else 0.5
 
-    def _measure_uncertainty_reduction(self, path):
-        """
-        Measure the uncertainty reduction of a reasoning path.
+    def _measure_uncertainty_reduction(self, path: Dict[str, Any]) -> float:
+        """Quantify uncertainty reduction achieved by a reasoning path.
 
         Args:
-            path (dict): Reasoning path containing logits.
+            path (Dict[str, Any]): Reasoning path record containing token-level logits.
 
         Returns:
-            float: Uncertainty reduction score in the range [0.0, 1.0].
+            float: Uncertainty reduction score between ``0.0`` and ``1.0``.
         """
         logits = torch.stack(path['logits'])
         entropy = -torch.sum(F.softmax(logits, dim=-1) * F.log_softmax(logits, dim=-1), dim=-1)

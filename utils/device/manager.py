@@ -29,7 +29,7 @@ from typing import Dict, Any, Optional
 from .config import PiscesLxCoreDeviceConfig
 from .smart_detector import PiscesLxCoreDeviceSmartDetector
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Manager")
+logger = PiscesLxCoreLog("PiscesLx.Core.Device.Manager")
 
 class PiscesLxCoreDeviceManager:
     """

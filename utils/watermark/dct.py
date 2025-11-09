@@ -1,9 +1,25 @@
 #!/usr/bin/env python3
 
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd project team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import math
 from typing import Tuple, List
 import torch
-
 
 def _dct_matrix(n: int, device=None, dtype=None) -> torch.Tensor:
     """Create an NxN DCT-II transform matrix."""
@@ -13,7 +29,6 @@ def _dct_matrix(n: int, device=None, dtype=None) -> torch.Tensor:
     alpha[0] = 1.0 / math.sqrt(2.0)
     C = math.sqrt(2.0 / n) * alpha.unsqueeze(1) * torch.cos((math.pi * (2 * k + 1) * i) / (2.0 * n))
     return C
-
 
 def block_dct2(x: torch.Tensor, block: int) -> torch.Tensor:
     """Apply 2D DCT (type-II) in non-overlapping blocks on a single-channel image tensor [H, W]."""
@@ -32,7 +47,6 @@ def block_dct2(x: torch.Tensor, block: int) -> torch.Tensor:
             y[by * block:(by + 1) * block, bx * block:(bx + 1) * block] = yb
     return y
 
-
 def block_idct2(X: torch.Tensor, block: int) -> torch.Tensor:
     """Inverse of block_dct2 for a single-channel [H, W]."""
     H, W = X.shape
@@ -50,7 +64,6 @@ def block_idct2(X: torch.Tensor, block: int) -> torch.Tensor:
             y[by * block:(by + 1) * block, bx * block:(bx + 1) * block] = yb
     return y
 
-
 def midband_coordinates(block: int, band: str = "mid") -> List[Tuple[int, int]]:
     """Return a list of (u,v) coords considered mid-band for a DCT block."""
     coords: List[Tuple[int, int]] = []
@@ -66,7 +79,6 @@ def midband_coordinates(block: int, band: str = "mid") -> List[Tuple[int, int]]:
                 coords.append((u, v))
     return coords
 
-
 def enforce_pair_relation(a: torch.Tensor, b: torch.Tensor, bit: int, delta: float) -> Tuple[torch.Tensor, torch.Tensor]:
     """Enforce |a| > |b| if bit=1 else |b| > |a| by minimal multiplicative scaling."""
     mag_a = torch.abs(a)
@@ -80,7 +92,6 @@ def enforce_pair_relation(a: torch.Tensor, b: torch.Tensor, bit: int, delta: flo
             scale = (mag_a + delta + 1e-8) / (mag_b + 1e-8)
             b = b * scale
     return a, b
-
 
 def embed_bits_in_dct(channel: torch.Tensor, bits: str, block: int, band: str, strength: float, seed: int) -> torch.Tensor:
     """Embed bits into a single-channel image via block DCT pairwise embedding."""
@@ -115,7 +126,6 @@ def embed_bits_in_dct(channel: torch.Tensor, bits: str, block: int, band: str, s
             break
     out = block_idct2(C, block)
     return out
-
 
 def extract_bits_from_dct(channel: torch.Tensor, n_bits: int, block: int, band: str, seed: int) -> str:
     """Extract up to n_bits by reading the enforced pair relations in block DCT domain."""

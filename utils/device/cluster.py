@@ -21,7 +21,7 @@ from utils.log.core import PiscesLxCoreLog
 from typing import Any, Dict, Literal
 from .facade import PiscesLxCoreDeviceFacade
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Cluster")
+logger = PiscesLxCoreLog("PiscesLx.Core.Device.Cluster")
 
 class PiscesLxCoreDeviceUnifiedPlanner:
     @staticmethod

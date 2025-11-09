@@ -30,7 +30,7 @@ except ImportError:
 from utils.log.core import PiscesLxCoreLog
 from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Quantization.Calibration")
+logger = PiscesLxCoreLog("PiscesLx.Core.Quantization.Calibration")
 
 class CalibrationDataLoader:
     """Enhanced calibration data loader supporting multiple dataset formats."""

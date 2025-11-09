@@ -29,7 +29,7 @@ from utils.hooks.bus import PiscesLxCoreHookBus, get_global_hook_bus
 from utils.observability.decorators import PiscesLxCoreDecorators as ObsDec
 from utils.error import PiscesLxCoreDeviceError, PiscesLxCoreNoGPUError, PiscesLxCoreGPUInsufficientError
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Facade")
+logger = PiscesLxCoreLog("PiscesLx.Core.Device.Facade")
 
 class PiscesLxCoreDeviceFacade:
     """
@@ -98,6 +98,26 @@ class PiscesLxCoreDeviceFacade:
                 return cfg
         except Exception:
             pass
+        # Simple path: skip advanced strategy computation if enabled
+        try:
+            if os.environ.get("PISCESLX_DEVICE_SIMPLE", "0").strip() in ("1", "true", "True"):
+                try:
+                    import torch as _t
+                    cuda_ok = bool(getattr(_t, "cuda", None) and _t.cuda.is_available())
+                except Exception:
+                    cuda_ok = False
+                return {
+                    "device_type": "cuda" if cuda_ok else "cpu",
+                    "strategy": "single_gpu" if cuda_ok else "cpu",
+                    "gpu_ids": [0] if cuda_ok else [],
+                    "batch_size": 1,
+                    "mixed_precision": bool(cuda_ok),
+                    "dtype": "bf16" if cuda_ok else "fp32",
+                    "reason": "SIMPLE",
+                    "memory_efficient": True,
+                }
+        except Exception:
+            pass
         logger.info("_auto_setup enter")
         self._ensure_gpu_manager()
         try:
@@ -126,31 +146,16 @@ class PiscesLxCoreDeviceFacade:
         
         def _recommend_dtype(device_type: str, gpu_ids: list) -> str:
             """
-            Recommend optimal data type based on device capabilities.
-            
-            Args:
-                device_type (str): Type of device ('cpu', 'cuda', etc.)
-                gpu_ids (list): List of GPU indices to check capabilities for.
-                
-            Returns:
-                str: Recommended data type ('fp32', 'fp16', or 'bf16').
+            Recommend data type conservatively without querying device capability to avoid hangs.
+            CPU -> fp32; CUDA -> fp16 (safe on Turing+); BF16 decision left to higher-level configs.
             """
             try:
                 if device_type == 'cpu':
                     return 'fp32'
+                # Avoid get_device_capability; default to fp16 for CUDA
                 if torch.cuda.is_available():
-                    idx = gpu_ids[0] if gpu_ids else 0
-                    try:
-                        major, minor = torch.cuda.get_device_capability(idx)
-                    except Exception:
-                        major, minor = (7, 5)  # safe default for Turing (fp16)
-                    try:
-                        print(f"[device] capability idx={idx} major={major} minor={minor}", flush=True)
-                    except Exception:
-                        pass
-                    if major >= 8:
-                        return 'bf16'
-                return 'fp16'
+                    return 'fp16'
+                return 'fp32'
             except Exception:
                 return 'fp16' if device_type != 'cpu' else 'fp32'
         

@@ -17,6 +17,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Memory management utilities for Arctic multimodal agents.
+
+The module implements :class:`ArcticMemoryManager`, which captures agent
+observations, actions, and reflections while providing semantic retrieval,
+importance scoring, and lightweight memory compression. Optional background
+monitoring tracks tensor allocations to surface high memory usage.
+"""
+
 import gc
 import time
 import torch
@@ -31,12 +39,33 @@ from .types import ArcticAgenticObservation, ArcticAgenticAction
 logger = PiscesLxCoreLog("Arctic.Core.Memory", file_path="logs/ArcticCore.log")
 
 class ArcticMemoryManager:
+    """Manage agent memory buffers with optional monitoring and retrieval support.
+
+    The manager stores observations, actions, and reflections, generates
+    embeddings and importance scores for semantic search, and optionally
+    launches a background thread to monitor process memory usage.
+
+    Attributes:
+        observations (List[ArcticAgenticObservation]): Recorded observations.
+        actions (List[ArcticAgenticAction]): Logged agent actions.
+        reflections (List[str]): Captured reflective notes.
+        embeddings (List[torch.Tensor]): Embeddings for retrieval and scoring.
+        importance_scores (List[float]): Normalized importance values aligned with embeddings.
+        max_memory_size (int): Maximum number of entries before compression.
+        compression_threshold (float): Percentile cutoff used during compression.
+        enable_background (bool): Whether to run background monitoring.
+        monitoring_thread (threading.Thread | None): Active monitoring thread if running.
+        stop_monitoring (threading.Event): Event used to stop monitoring.
+        _tensor_registry (Dict[str, Dict[str, Any]]): Metadata on tracked tensors for diagnostics.
+        _tensor_lock (threading.Lock): Synchronization primitive protecting the tensor registry.
+    """
+
     def __init__(self, enable_background: bool = True):
-        """
-        Initialize the MemoryManager instance.
+        """Create a memory manager and optionally enable background monitoring.
 
         Args:
-            enable_background (bool, optional): Whether to enable background memory monitoring. Defaults to True.
+            enable_background (bool): If ``True``, spawn a monitoring thread that
+                periodically inspects process memory usage. Defaults to ``True``.
         """
         self.observations: List[ArcticAgenticObservation] = []  # List to store agent observations
         self.actions: List[ArcticAgenticAction] = []  # List to store agent actions
@@ -58,27 +87,23 @@ class ArcticMemoryManager:
         self._tensor_lock = threading.Lock()
 
     def start_monitoring(self):
-        """
-        Start the background thread for memory monitoring if background monitoring is enabled and the thread is not already running.
+        """Launch the background monitoring thread when enabled.
+
+        The method is a no-op if monitoring is disabled or already running.
         """
         if self.enable_background and self.monitoring_thread is None:
             self.monitoring_thread = threading.Thread(target=self._monitor_memory, daemon=True)
             self.monitoring_thread.start()
 
     def stop_monitoring(self):
-        """
-        Stop the background memory monitoring thread if it is running.
-        """
+        """Stop the background monitoring thread if it is currently running."""
         if self.monitoring_thread:
             self.stop_monitoring.set()
             self.monitoring_thread.join()
             self.monitoring_thread = None
 
     def _monitor_memory(self):
-        """
-        Background thread function to monitor memory usage periodically.
-        Logs high memory usage and triggers garbage collection if necessary.
-        """
+        """Monitor process memory usage and trigger mitigation when thresholds are exceeded."""
         while not self.stop_monitoring.is_set():
             try:
                 # Get the current process and monitor memory usage
@@ -101,12 +126,11 @@ class ArcticMemoryManager:
             time.sleep(5)
 
     def register_tensor(self, tensor: torch.Tensor, name: str):
-        """
-        Register a tensor for memory monitoring.
+        """Record tensor metadata for later diagnostics.
 
         Args:
-            tensor (torch.Tensor): The tensor to be registered.
-            name (str): The name of the tensor.
+            tensor (torch.Tensor): Tensor to track. ``None`` values are ignored.
+            name (str): Registry key associated with the tensor.
         """
         if tensor is None:
             return
@@ -135,7 +159,7 @@ class ArcticMemoryManager:
             # If lock or registry is unavailable, perform a soft fail
             self._tensor_registry[name] = info
 
-        # Auto-cleanup registry entry when tensor is garbage-collected
+        # Auto-cleanup registry entry when tensor is garbage-collected.
         self_ref = weakref.ref(self)
 
         def _on_finalize(n=name, self_ref=self_ref):
@@ -191,16 +215,15 @@ class ArcticMemoryManager:
         self.embeddings.append(embedding)
         self.importance_scores.append(importance)
 
-        # Trigger memory compression if the number of observations exceeds the maximum capacity
+        # Trigger memory compression if the number of observations exceeds the maximum capacity.
         if len(self.observations) > self.max_memory_size:
             self.compress_memory()
 
     def add_action(self, action: ArcticAgenticAction):
-        """
-        Add an action to the memory and generate its corresponding embedding and importance score.
+        """Add an action entry and synthesize placeholder embedding/importance data.
 
         Args:
-            action (ArcticAgenticAction): The action to be added.
+            action (ArcticAgenticAction): Action to store in memory buffers.
         """
         self.actions.append(action)
         # Generate a random embedding for the action
@@ -211,11 +234,10 @@ class ArcticMemoryManager:
         self.importance_scores.append(importance)
 
     def add_reflection(self, reflection: str):
-        """
-        Add a reflection to the memory and generate its corresponding embedding and importance score.
+        """Add a reflection entry and assign synthetic retrieval metadata.
 
         Args:
-            reflection (str): The reflection to be added.
+            reflection (str): Reflection content captured by the agent.
         """
         self.reflections.append(reflection)
         # Generate a random embedding for the reflection
@@ -225,15 +247,15 @@ class ArcticMemoryManager:
         self.importance_scores.append(importance)
 
     def semantic_search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
-        """
-        Perform semantic search through memory using cosine similarity with enhanced relevance scoring.
+        """Perform semantic search with cosine similarity and heuristic scoring.
 
         Args:
-            query (str): The query string for semantic search.
-            k (int, optional): The number of top results to return. Defaults to 5.
+            query (str): Query string subjected to embedding-based retrieval.
+            k (int): Number of top records to return. Defaults to ``5``.
 
         Returns:
-            List[Dict[str, Any]]: A list of dictionaries containing search results with memory type, content, similarity score, index, and importance.
+            List[Dict[str, Any]]: Ranked memory entries including metadata such as
+            type, content, similarity score, index, and importance.
         """
         if not self.embeddings:
             return []
@@ -299,10 +321,7 @@ class ArcticMemoryManager:
         return results
 
     def compress_memory(self):
-        """
-        Perform intelligent memory compression based on importance scores.
-        Remove low-importance memories to reduce memory usage.
-        """
+        """Down-sample stored memories using importance scores as the filter criterion."""
         if not self.importance_scores:
             return
 
@@ -323,15 +342,15 @@ class ArcticMemoryManager:
         self.importance_scores = [self.importance_scores[i] for i in keep_indices]
 
     def get_context_with_retrieval(self, query: str = None, k: int = 5) -> Dict[str, Any]:
-        """
-        Get context with semantic retrieval if a query is provided, otherwise get recent context.
+        """Fetch context via semantic retrieval or by returning recent entries.
 
         Args:
-            query (str, optional): The query string for semantic retrieval. Defaults to None.
-            k (int, optional): The number of top results to return for semantic search or recent context. Defaults to 5.
+            query (str | None): Optional query for semantic retrieval.
+            k (int): Number of results to return for search or recent context. Defaults to ``5``.
 
         Returns:
-            Dict[str, Any]: A dictionary containing relevant memories and total memory count if query is provided, or recent context otherwise.
+            Dict[str, Any]: Either semantically relevant memories or a snapshot of
+            the most recent entries with summary statistics.
         """
         if query:
             relevant_memories = self.semantic_search(query, k)
@@ -343,14 +362,13 @@ class ArcticMemoryManager:
             return self.get_recent_context(k)
 
     def get_recent_context(self, k: int = 5) -> Dict[str, List]:
-        """
-        Get the most recent observations, actions, and reflections.
+        """Return the most recent observations, actions, and reflections.
 
         Args:
-            k (int, optional): The number of recent items to return for each memory type. Defaults to 5.
+            k (int): Number of entries to include for each memory collection. Defaults to ``5``.
 
         Returns:
-            Dict[str, List]: A dictionary containing recent observations, actions, reflections, total memory count, and a memory summary.
+            Dict[str, List]: Recent memory slices, total counts, and a summary snapshot.
         """
         return {
             "recent_observations": self.observations[-k:],

@@ -22,7 +22,7 @@ from typing import Any
 import torch.distributed as dist
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Dist.Wrap")
+logger = PiscesLxCoreLog("PiscesLx.Core.Device.Dist.Wrap")
 
 class PiscesLxCoreModelParallelizer:
     """A utility class for wrapping models with parallelization for training and inference."""

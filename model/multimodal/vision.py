@@ -17,7 +17,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
+"""Vision encoders and utilities for Arctic multimodal agents.
+
+This module houses components that transform raw images and video frames into
+feature representations consumed across the Pisces multimodal stack. It
+includes optional 3D rotary positional embeddings, a vision encoder with
+auxiliary detection heads, and helpers for text rendered as images.
+"""
+
 import math
 import torch
 import numpy as np
@@ -25,29 +32,35 @@ from torch import nn
 from PIL import Image
 import torch.nn.functional as F
 from utils.log.core import PiscesLxCoreLog
-from typing import Optional, Tuple, List, Dict, Any
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = PiscesLxCoreLog("Arctic.Core.Multimodal", file_path="logs/ArcticCore.log")
 
 class ArcticSpatioTemporalRoPE3D(nn.Module):
-    """
-    A PyTorch module for 3D Spatio-Temporal Rotary Position Embedding for video frames.
-    Extends 2D RoPE by incorporating a temporal dimension to handle video data.
-    """
-    def __init__(self, dim: int, max_temporal_frames: int = 1024, 
-                 max_spatial_h: int = 64, max_spatial_w: int = 64,
-                 base: float = 10000.0, device: Optional[torch.device] = None):
-        """
-        Initialize the 3D Spatio-Temporal Rotary Position Embedding module.
+    """3D spatio-temporal rotary positional embedding for video inputs.
 
-        Args:
-            dim (int): Dimension of the input features. Must be divisible by 3.
-            max_temporal_frames (int, optional): Maximum number of temporal frames. Defaults to 1024.
-            max_spatial_h (int, optional): Maximum height of the spatial dimension. Defaults to 64.
-            max_spatial_w (int, optional): Maximum width of the spatial dimension. Defaults to 64.
-            base (float, optional): Base value for frequency calculation. Defaults to 10000.0.
-            device (Optional[torch.device], optional): Device to store the tensors. Defaults to None.
-        """
+    The module extends the standard 2D RoPE formulation by incorporating an
+    additional temporal axis, enabling consistent positional encoding across
+    frame sequences.
+
+    Args:
+        dim (int): Feature dimension divisible by three (one slice per axis).
+        max_temporal_frames (int): Maximum time steps supported for caching.
+        max_spatial_h (int): Maximum height in patches used for caching.
+        max_spatial_w (int): Maximum width in patches used for caching.
+        base (float): Base factor controlling the geometric progression.
+        device (torch.device | None): Optional device override for buffers.
+    """
+
+    def __init__(
+        self,
+        dim: int,
+        max_temporal_frames: int = 1024,
+        max_spatial_h: int = 64,
+        max_spatial_w: int = 64,
+        base: float = 10000.0,
+        device: Optional[torch.device] = None,
+    ) -> None:
         super().__init__()
         assert dim % 3 == 0, "Dimension must be divisible by 3 for 3D RoPE"
         self.dim = dim
@@ -56,11 +69,11 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         self.max_spatial_h = max_spatial_h
         self.max_spatial_w = max_spatial_w
         self.base = base
-        # Compute frequency values for temporal dimension
+        # Compute frequency values for temporal dimension.
         temp_freq = 1.0 / (base ** (torch.arange(0, self.dim_per_axis, 2).float() / self.dim_per_axis))
-        # Compute frequency values for height dimension
+        # Compute frequency values for height dimension.
         h_freq = 1.0 / (base ** (torch.arange(0, self.dim_per_axis, 2).float() / self.dim_per_axis))
-        # Compute frequency values for width dimension
+        # Compute frequency values for width dimension.
         w_freq = 1.0 / (base ** (torch.arange(0, self.dim_per_axis, 2).float() / self.dim_per_axis))
         self.register_buffer('temp_freq', temp_freq, persistent=False)
         self.register_buffer('h_freq', h_freq, persistent=False)
@@ -70,17 +83,7 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         self.register_buffer('max_seq_cached', torch.tensor(0), persistent=False)
 
     def _compute_3d_positions(self, t: int, h: int, w: int) -> torch.Tensor:
-        """
-        Compute 3D positions for temporal, height, and width dimensions.
-
-        Args:
-            t (int): Number of temporal frames.
-            h (int): Height of the spatial dimension.
-            w (int): Width of the spatial dimension.
-
-        Returns:
-            torch.Tensor: A tensor containing flattened 3D positions.
-        """
+        """Return flattened grid indices spanning temporal, height, and width."""
         temp_pos = torch.arange(t, dtype=torch.float32)
         h_pos = torch.arange(h, dtype=torch.float32)
         w_pos = torch.arange(w, dtype=torch.float32)
@@ -93,15 +96,7 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         return positions
 
     def _compute_3d_rope(self, positions: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
-        """
-        Compute 3D Rotary Position Embedding (RoPE) cosine and sine values.
-
-        Args:
-            positions (torch.Tensor): Tensor containing 3D positions.
-
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor]: Cosine and sine values for RoPE.
-        """
+        """Compute cosine and sine lookup tables associated with 3D positions."""
         device = positions.device
         seq_len = positions.shape[0]
         temp_pos = positions[:, 0]
@@ -132,16 +127,7 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         return cos, sin
 
     def forward(self, x: torch.Tensor, video_shape: Tuple[int, int, int]) -> torch.Tensor:
-        """
-        Apply 3D Spatio-Temporal Rotary Position Embedding to the input tensor.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-            video_shape (Tuple[int, int, int]): Shape of the video (temporal, height, width).
-
-        Returns:
-            torch.Tensor: Tensor with RoPE applied.
-        """
+        """Apply cached 3D RoPE values to the input sequence."""
         t, h, w = video_shape
         seq_len = t * h * w
         if self.cos_cache is None or seq_len > self.max_seq_cached:
@@ -170,91 +156,85 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
 
 
 class ArcticVisualTextProcessor(nn.Module):
-    """Processor for text rendered as images - H-Network support."""
-    
-    def __init__(self, hidden_size: int, patch_size: int = 14):
-        """Initialize visual text processor.
-        
+    """Encode text rendered as images for H-Network tokenization support."""
+
+    def __init__(self, hidden_size: int, patch_size: int = 14) -> None:
+        """Construct a text-oriented preprocessing pipeline.
+
         Args:
-            hidden_size: Hidden dimension size
-            patch_size: Patch size for processing
+            hidden_size (int): Target embedding dimension.
+            patch_size (int): Convolutional patch size applied during tokenization.
         """
         super().__init__()
         self.hidden_size = hidden_size
         self.patch_size = patch_size
-        
-        # Text-specific normalization
+
+        # Text-specific normalization tuned for high-contrast glyph imagery.
         self.register_buffer('text_mean', torch.Tensor([0.95, 0.95, 0.95]).view(1, 3, 1, 1))
         self.register_buffer('text_std', torch.Tensor([0.1, 0.1, 0.1]).view(1, 3, 1, 1))
-        
-        # Text-aware patch embedding
+
+        # Text-aware patch embedding producing coarse glyph descriptors.
         self.text_patch_embed = nn.Conv2d(
             in_channels=3,
             out_channels=hidden_size,
             kernel_size=patch_size,
             stride=patch_size
         )
-        
-        # Text sequence compression
+
+        # Compression network restoring the original hidden dimensionality.
         self.text_compressor = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 2),
             nn.GELU(),
             nn.Linear(hidden_size // 2, hidden_size),
             nn.LayerNorm(hidden_size)
         )
-        
+
         logger.info(f"ArcticVisualTextProcessor initialized: hidden_size={hidden_size}, patch_size={patch_size}")
-    
+
     def forward(self, text_images: torch.Tensor) -> torch.Tensor:
-        """Process text images to visual embeddings.
-        
+        """Convert batches of rendered text images into patch embeddings.
+
         Args:
-            text_images: Text images [B, C, H, W]
-            
+            text_images (torch.Tensor): Input tensor of shape ``[B, C, H, W]``.
+
         Returns:
-            Visual embeddings [B, N, D]
+            torch.Tensor: Patch embeddings shaped ``[B, N, hidden_size]``.
         """
-        # Normalize for text (higher contrast) with stability bounds
+        # Normalize for text (higher contrast) with stability bounds.
         x = (text_images - self.text_mean) / self.text_std
-        # Clamp to prevent extreme values in text processing
+        # Clamp to prevent extreme values in text processing.
         x = torch.clamp(x, -5.0, 5.0)
-        
-        # Extract patches
+
+        # Extract patches using the text-specific convolution.
         patches = self.text_patch_embed(x)  # [B, D, H', W']
-        
-        # Flatten spatial dimensions
+
+        # Flatten spatial dimensions into sequences.
         B, D, H, W = patches.shape
         patches = patches.view(B, D, -1).transpose(1, 2)  # [B, N, D]
-        
-        # Apply text-specific compression
+
+        # Apply text-specific compression restoring the ``hidden_size`` dimension.
         compressed = self.text_compressor(patches)
-        
+
         logger.debug(f"ArcticVisualTextProcessor: {text_images.shape} -> {compressed.shape}")
-        
+
         return compressed
-        """
-        Rotate the last dimension of the input tensor by half and negate the second half.
-
-        Args:
-            x (torch.Tensor): Input tensor.
-
-        Returns:
-            torch.Tensor: Rotated tensor.
-        """
-        x1 = x[..., :x.shape[-1] // 2]
-        x2 = x[..., x.shape[-1] // 2:]
-        return torch.cat((-x2, x1), dim=-1)
 
 
 class ArcticVisionEncoder(nn.Module):
-    def __init__(self, cfg, cache_manager=None):
-        """
-        Initialize the ArcticVisionEncoder module.
+    """Vision backbone producing multimodal features and auxiliary predictions.
 
-        Args:
-            cfg: Configuration object containing hyperparameters.
-            cache_manager: Cache manager object. Defaults to None.
-        """
+    The encoder tokenizes images into patch embeddings, supports optional 3D
+    RoPE for video streams, and attaches detection, segmentation, and reasoning
+    heads used by downstream Arctic modules.
+
+    Args:
+        cfg: Configuration namespace supplying hyperparameters such as
+            ``hidden_size``, ``n_head``, and ``n_layer``.
+        cache_manager: Reserved for future caching integrations. Defaults to
+            ``None``.
+    """
+
+    def __init__(self, cfg, cache_manager=None) -> None:
         super().__init__()
         self.enabled = True
         self.cfg = cfg
@@ -274,38 +254,51 @@ class ArcticVisionEncoder(nn.Module):
             stride=self.patch_size
         )
         
-        # H-Network visual text processing support
+        # H-Network visual text processing support.
         self.visual_text_processor = None
         if hasattr(cfg, 'h_network_enabled') and cfg.h_network_enabled:
             self.visual_text_processor = self._create_visual_text_processor()
             logger.info("H-Network visual text processor initialized")
-    
+
     def _create_visual_text_processor(self):
-        """Create visual text processor for H-Network tokenizer support."""
+        """Instantiate a processor specialized for rendered text inputs."""
         return ArcticVisualTextProcessor(self.hidden_size, self.patch_size)
-    
+
     def process_visual_text(self, text_images: torch.Tensor) -> torch.Tensor:
-        """Process text rendered as images through vision encoder.
-        
+        """Project rendered text images into embeddings via the text processor.
+
         Args:
-            text_images: Batch of text images [B, C, H, W]
-            
+            text_images (torch.Tensor): Input tensor shaped ``[B, C, H, W]``.
+
         Returns:
-            Visual token embeddings [B, N, D]
+            torch.Tensor: Token embeddings shaped ``[B, N, hidden_size]``.
+
+        Raises:
+            RuntimeError: If the visual text processor has not been enabled via
+                ``cfg.h_network_enabled``.
         """
         if self.visual_text_processor is None:
             raise RuntimeError("Visual text processor not initialized. Enable h_network_enabled in config.")
-        
+
         return self.visual_text_processor(text_images)
-    
+
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        """Forward pass with optional visual text processing."""
+        """Encode images or rendered text into stabilized vision embeddings.
+
+        Args:
+            x (torch.Tensor): Input tensor shaped ``[B, C, H, W]``.
+            **kwargs: Optional flags including ``is_visual_text`` to route through
+                the text processor.
+
+        Returns:
+            torch.Tensor: Clamped vision features respecting ``hidden_size``.
+        """
         if kwargs.get('is_visual_text', False) and self.visual_text_processor is not None:
             return self.process_visual_text(x)
-        
-        # Standard vision processing with output stability
+
+        # Standard vision processing with output stability.
         output = self._standard_forward(x)
-        # Clamp output to prevent extreme values
+        # Clamp output to prevent extreme values.
         return torch.clamp(output, -10.0, 10.0)
         max_patches_h = 1024 // self.patch_size
         max_patches_w = 1024 // self.patch_size

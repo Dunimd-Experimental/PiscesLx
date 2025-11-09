@@ -29,7 +29,7 @@ from utils.log.core import PiscesLxCoreLog
 from typing import Any, Dict, Optional, Callable, Tuple, List
 
 _DEFAULT_CACHE: Optional["PiscesLxCoreCache"] = None
-logger = PiscesLxCoreLog("PiscesLx.Utils.Cache")
+logger = PiscesLxCoreLog("PiscesLx.Core.Cache")
 
 class PiscesLxCoreCache:
     """
@@ -782,7 +782,7 @@ class PiscesLxCoreCache:
     @classmethod
     def _resolve_cache_dir(cls, cache_dir: Optional[str]) -> str:
         """
-        Resolve cache directory under project root.
+        Resolve cache directory under project .pisceslx/cache.
 
         Args:
             cache_dir (Optional[str]): Cache directory path. If None, use default.
@@ -790,12 +790,22 @@ class PiscesLxCoreCache:
         Returns:
             str: Resolved cache directory path.
         """
-        from utils.config.loader import PiscesLxCoreConfigLoader
-        loader = PiscesLxCoreConfigLoader()
-        base = str(loader._project_root)
-        sub = (cache_dir or "cache").strip().strip("/\\")
-        return os.path.join(base, sub) if sub else base
-
+        try:
+            from utils.fs.core import PiscesLxCoreFS as _FS
+            _fs = _FS()
+            if not cache_dir:
+                return str(_fs.cache_dir())
+            # Normalize any provided dir to .pisceslx/cache/<basename>
+            return str(_fs.normalize_under_category('cache', cache_dir))
+        except Exception:
+            # Fallback to project_root/.pisceslx/cache
+            try:
+                from utils.config.loader import PiscesLxCoreConfigLoader
+                loader = PiscesLxCoreConfigLoader()
+                return str(loader._project_root / ".pisceslx" / "cache")
+            except Exception:
+                # Last resort: relative .pisceslx/cache
+                return os.path.join(".pisceslx", "cache")
 
 def get_default_cache(cache_dir: Optional[str] = None) -> PiscesLxCoreCache:
     """
@@ -811,10 +821,14 @@ def get_default_cache(cache_dir: Optional[str] = None) -> PiscesLxCoreCache:
     global _DEFAULT_CACHE
     if _DEFAULT_CACHE is not None and cache_dir is None:
         return _DEFAULT_CACHE
-    # Always resolve under project_root/.pisceslx
-    if cache_dir is None:
-        cache_dir = "cache"
-    _DEFAULT_CACHE = PiscesLxCoreCache(cache_dir=cache_dir)
+    # Always resolve under project .pisceslx/cache
+    try:
+        from utils.fs.core import PiscesLxCoreFS as _FS
+        _fs = _FS()
+        resolved = str(_fs.cache_dir()) if cache_dir is None else str(_fs.normalize_under_category('cache', cache_dir))
+    except Exception:
+        resolved = cache_dir or os.path.join(".pisceslx", "cache")
+    _DEFAULT_CACHE = PiscesLxCoreCache(cache_dir=resolved)
     return _DEFAULT_CACHE
 
 def _clamp(v: int, lo: int, hi: int) -> int:

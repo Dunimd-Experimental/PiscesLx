@@ -21,22 +21,52 @@ import os
 import sys
 import importlib.util
 from types import ModuleType
-from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-from utils import PiscesLxCoreCheckpointManager
-try:
-    # optional watermark integration (enabled via env toggles)
-    from utils.watermark.integration import get_watermark_manager_from_env
-except Exception:
-    get_watermark_manager_from_env = lambda: None  # type: ignore
-from utils import PiscesLxCoreHookBus
-from utils import PiscesLxCoreDeviceFacade
-from utils import PiscesLxCoreEnhancedCacheManager
-from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
-from .profiler import PiscesLxToolsProfiler
-from .config import PiscesLxToolsTrainConfig
-from .quant_export import PiscesLxToolsQuantExporter
-from .pref_align import PiscesLxToolsPreferenceTrainer
-logger = PiscesLxCoreLog("pisceslx.tools.train.orchestrator")
+
+# Avoid importing utils at module import time to prevent side-effects
+PiscesLxCoreLog = None
+PiscesLxCoreConfigManager = None
+PiscesLxCoreCheckpointManager = None
+PiscesLxCoreHookBus = None
+PiscesLxCoreDeviceFacade = None
+PiscesLxCoreEnhancedCacheManager = None
+PiscesLxCoreObservabilityFacade = None
+PiscesLxCoreMetricsRegistry = None
+PiscesLxToolsProfiler = None
+PiscesLxToolsTrainConfig = None
+PiscesLxToolsQuantExporter = None
+PiscesLxToolsPreferenceTrainer = None
+
+def _lazy_imports_for_init():
+    global PiscesLxCoreLog, PiscesLxCoreHookBus, PiscesLxToolsProfiler, PiscesLxToolsTrainConfig
+    from utils.log.core import PiscesLxCoreLog as _Log
+    from utils.hooks.bus import PiscesLxCoreHookBus as _Bus
+    from .profiler import PiscesLxToolsProfiler as _Prof
+    from .config import PiscesLxToolsTrainConfig as _Cfg
+    PiscesLxCoreLog = _Log
+    PiscesLxCoreHookBus = _Bus
+    PiscesLxToolsProfiler = _Prof
+    PiscesLxToolsTrainConfig = _Cfg
+
+def _lazy_imports_for_utils():
+    global PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager, PiscesLxCoreDeviceFacade, \
+        PiscesLxCoreEnhancedCacheManager, PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry, \
+        PiscesLxToolsQuantExporter, PiscesLxToolsPreferenceTrainer
+    from utils.config.manager import PiscesLxCoreConfigManager as _CfgMgr
+    from utils.checkpoint import PiscesLxCoreCheckpointManager as _Ckpt
+    from utils.device.facade import PiscesLxCoreDeviceFacade as _Dev
+    from utils.cache.enhanced import PiscesLxCoreEnhancedCacheManager as _CacheMgr
+    from utils.observability.facade import PiscesLxCoreObservabilityFacade as _Obs
+    from utils.observability.metrics import PiscesLxCoreMetricsRegistry as _Metrics
+    from .quant_export import PiscesLxToolsQuantExporter as _QE
+    from .pref_align import PiscesLxToolsPreferenceTrainer as _PT
+    PiscesLxCoreConfigManager = _CfgMgr
+    PiscesLxCoreCheckpointManager = _Ckpt
+    PiscesLxCoreDeviceFacade = _Dev
+    PiscesLxCoreEnhancedCacheManager = _CacheMgr
+    PiscesLxCoreObservabilityFacade = _Obs
+    PiscesLxCoreMetricsRegistry = _Metrics
+    PiscesLxToolsQuantExporter = _QE
+    PiscesLxToolsPreferenceTrainer = _PT
 
 class PiscesLxToolsTrainOrchestrator:
     """
@@ -60,9 +90,12 @@ class PiscesLxToolsTrainOrchestrator:
             args: Command line arguments or configuration object.
         """
         self.args = args
+        # Lazy import minimal dependencies to avoid side-effects
+        _lazy_imports_for_init()
         # Initialize logger
         self._logger = PiscesLxCoreLog("pisceslx.tools.train.orchestrator")
         self._logger.info("Orchestrator __init__ start")
+        print("[orchestrator] __init__ enter")
         # Create a configuration object from the provided arguments
         self.cfg = PiscesLxToolsTrainConfig.from_args(args)
         # Initialize the hook bus for event handling
@@ -73,9 +106,12 @@ class PiscesLxToolsTrainOrchestrator:
         # Initialize utils-enhanced components
         self._init_utils_components()
         self._logger.info("Orchestrator __init__ end")
+        print("[orchestrator] __init__ end")
 
     def _init_utils_components(self):
         """Initialize utils-enhanced components for better reliability and monitoring."""
+        # Lazily import utils classes before using them
+        _lazy_imports_for_utils()
         self._logger.info("init_utils: creating device_facade")
         try:
             self.device_facade = PiscesLxCoreDeviceFacade(self.args)
@@ -94,9 +130,9 @@ class PiscesLxToolsTrainOrchestrator:
         # Initialize cache manager for training data caching
         self.cache_manager = PiscesLxCoreEnhancedCacheManager.get_instance()
         
-        self._logger.info("init_utils: creating observability facade")
-        # Initialize observability facade for enhanced monitoring
-        self.observability = PiscesLxCoreObservabilityFacade()
+        self._logger.info("init_utils: deferring observability facade to run()")
+        # Defer observability facade creation to run() to avoid any heavy init here
+        self.observability = None
         
         self._logger.info("init_utils: creating metrics registry")
         # Initialize metrics registry for training metrics
@@ -131,8 +167,20 @@ class PiscesLxToolsTrainOrchestrator:
         """
         # Get the training mode from the configuration, default to "standard"
         self._logger.info("Orchestrator run() enter")
+        print("[orchestrator] run enter")
         mode = self.cfg.get("train.mode", default="standard")
         self._logger.info(f"Train orchestrator mode: {mode}")
+        # Ensure utils classes are available
+        _lazy_imports_for_utils()
+        # Lazy-create observability facade here
+        if self.observability is None:
+            try:
+                self._logger.info("run(): creating observability facade (lazy)")
+                self.observability = PiscesLxCoreObservabilityFacade()
+                self._logger.info("run(): observability facade created")
+            except Exception as e:
+                self._logger.error(f"run(): observability facade creation failed: {e}")
+                self.observability = None
         # Perform deferred device setup and emit init event here
         try:
             if not hasattr(self, 'device_facade') or self.device_facade is None:

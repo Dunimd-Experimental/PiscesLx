@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from typing import Any, Dict, Optional
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.OtelHelper")
+logger = PiscesLxCoreLog("PiscesLx.Core.Observability.OtelHelper")
 
 # Get environment variable to determine if OpenTelemetry tracing is enabled
 _OTEL_ENABLED = os.environ.get("PISCES_OTEL_ENABLE", "0").lower() in ("1", "true")

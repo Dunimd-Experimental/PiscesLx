@@ -17,21 +17,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional, Any, Dict
 import torch
-
-"""
-Quantization module for PiscesL1.
-
-This module provides comprehensive quantization capabilities including:
-- Multiple quantization methods (BitsAndBytes, GPTQ, AWQ, Dynamic, Static, BitNet v2)
-- Calibration and optimization tools
-- Performance benchmarking and metrics
-- Easy-to-use interfaces for model quantization
-
-The module has been restructured with a modular architecture for better maintainability
-and extensibility.
-"""
+from typing import Optional, Any, Dict
 
 # Import core components
 from .core import (
@@ -131,7 +118,7 @@ class PiscesLxCoreQuantizer:
         import torch
         from utils.log.core import PiscesLxCoreLog
         
-        logger = PiscesLxCoreLog("PiscesLx.Utils.Quantization")
+        logger = PiscesLxCoreLog("PiscesLx.Core.Quantization")
         
         # Use provided config or create default
         config = quantization_config or QuantizationConfig(bits=bits)

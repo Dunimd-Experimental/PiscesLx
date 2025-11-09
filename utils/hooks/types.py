@@ -22,7 +22,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from utils.log.core import PiscesLxCoreLog
-logger = PiscesLxCoreLog("PiscesLx.Utils.Hooks.Types")
+logger = PiscesLxCoreLog("PiscesLx.Core.Hooks.Types")
 from typing import Any, Callable, Dict, List, Optional, Union, Awaitable
 
 @dataclass

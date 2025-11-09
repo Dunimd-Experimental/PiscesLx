@@ -17,6 +17,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Cryptocurrency data retrieval module for accessing price and trending information
+from the CoinGecko API.
+"""
+
 import sys
 import json
 import requests
@@ -34,65 +39,69 @@ mcp = PiscesLxCoreMCPPlaza()
 @mcp.tool()
 def crypto_price(symbol: str = "BTC", currency: str = "USD") -> Dict[str, Any]:
     """
-    Fetch the current price and related data for a given cryptocurrency.
+    Fetch current market data for a specified cryptocurrency from CoinGecko API.
     
     Args:
-        symbol (str): Cryptocurrency symbol (e.g., BTC, ETH). Defaults to "BTC".
-        currency (str): Target currency for price conversion (e.g., USD, EUR). Defaults to "USD".
-        
+        symbol (str): Cryptocurrency identifier (e.g., btc, eth).
+                      Case-insensitive.
+        currency (str): Target currency for price quoting (e.g., usd, eur).
+                        Defaults to 'USD'.
+    
     Returns:
-        Dict[str, Any]: A dictionary containing price data or error information.
-                        On success, includes symbol, currency, price, 24h change, market cap, and volume.
-                        On failure, includes an error message.
+        Dict[str, Any]: A dictionary containing cryptocurrency market data:
+            - success (bool): Indicates if the request was successful.
+            - symbol (str): Uppercase version of the input symbol.
+            - currency (str): Uppercase version of the input currency.
+            - price (float): Current price in the target currency.
+            - change_24h (float): Percentage change over the last 24 hours.
+            - market_cap (float): Market capitalization in the target currency.
+            - volume_24h (float): Trading volume in the last 24 hours.
+            - error (str): Error message if the request failed.
+            - error_type (str): Type of exception encountered, if any.
     """
     try:
-        # Prepare API request parameters
         url = "https://api.coingecko.com/api/v3/simple/price"
         params = {
             "ids": symbol.lower(),
             "vs_currencies": currency.lower(),
             "include_24hr_change": "true",
             "include_market_cap": "true",
-            "include_24hr_vol": "true"
+            "include_24hr_vol": "true",
         }
-        
-        # Execute HTTP GET request with timeout
+
         response = requests.get(url, params=params, timeout=10)
         response.raise_for_status()
-        
-        # Parse JSON response
-        data = response.json()
-        
-        # Check if requested symbol exists in response
-        if symbol.lower() in data:
-            price_data = data[symbol.lower()]
-            return {
-                "success": True,
-                "symbol": symbol.upper(),
-                "currency": currency.upper(),
-                "price": price_data.get(currency.lower()),
-                "change_24h": price_data.get(f"{currency.lower()}_24h_change"),
-                "market_cap": price_data.get(f"{currency.lower()}_market_cap"),
-                "volume_24h": price_data.get(f"{currency.lower()}_24h_vol")
-            }
-        else:
+
+        payload = response.json()
+        if symbol.lower() not in payload:
             return {
                 "success": False,
-                "error": f"Symbol '{symbol}' not found"
+                "error": f"Symbol '{symbol}' not found",
+                "error_type": "ValueError"
             }
-            
-    except requests.exceptions.RequestException as e:
-        # Handle network-related errors
+
+        price_info = payload[symbol.lower()]
         return {
-            "success": False,
-            "error": f"Network error: {str(e)}"
+            "success": True,
+            "symbol": symbol.upper(),
+            "currency": currency.upper(),
+            "price": price_info.get(currency.lower()),
+            "change_24h": price_info.get(f"{currency.lower()}_24h_change"),
+            "market_cap": price_info.get(f"{currency.lower()}_market_cap"),
+            "volume_24h": price_info.get(f"{currency.lower()}_24h_vol"),
         }
-    except Exception as e:
-        # Handle unexpected errors
+
+    except requests.exceptions.RequestException as exc:
         return {
             "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__
+            "error": f"Network error: {exc}",
+            "error_type": type(exc).__name__
+        }
+    except Exception as exc:
+        return {
+            "success": False,
+            "error": str(exc),
+            "error_type": type(exc).__name__
         }
 
 @mcp.tool()
@@ -101,50 +110,55 @@ def crypto_trending(limit: int = 10) -> Dict[str, Any]:
     Retrieve trending cryptocurrencies from CoinGecko API.
     
     Args:
-        limit (int): Maximum number of trending coins to retrieve. Defaults to 10.
-        
+        limit (int): Maximum number of trending coins to retrieve.
+                    Defaults to 10.
+    
     Returns:
-        Dict[str, Any]: A dictionary containing trending coin data or error information.
-                        On success, includes a list of trending coins with their details.
-                        On failure, includes an error message.
+        Dict[str, Any]: A dictionary containing:
+            - success (bool): Indicates if the request was successful.
+            - trending (list): List of dictionaries with coin details.
+              Each dictionary includes:
+                - id (str): Coin ID.
+                - symbol (str): Coin symbol.
+                - name (str): Full name of the coin.
+                - market_cap_rank (int): Market cap rank.
+                - price_btc (float): Price in Bitcoin.
+            - count (int): Number of coins retrieved.
+            - error (str): Error message if the request failed.
+            - error_type (str): Type of exception encountered, if any.
     """
     try:
-        # Execute HTTP GET request to fetch trending coins
         url = "https://api.coingecko.com/api/v3/search/trending"
         response = requests.get(url, timeout=10)
         response.raise_for_status()
-        
-        # Parse JSON response
-        data = response.json()
-        trending = []
-        
-        # Process each trending coin up to the specified limit
-        for item in data.get("coins", [])[:limit]:
-            coin = item.get("item", {})
-            trending.append({
-                "id": coin.get("id"),
-                "symbol": coin.get("symbol"),
-                "name": coin.get("name"),
-                "market_cap_rank": coin.get("market_cap_rank"),
-                "price_btc": coin.get("price_btc")
-            })
-        
+
+        payload = response.json()
+        coins = [
+            {
+                "id": item["item"].get("id"),
+                "symbol": item["item"].get("symbol"),
+                "name": item["item"].get("name"),
+                "market_cap_rank": item["item"].get("market_cap_rank"),
+                "price_btc": item["item"].get("price_btc"),
+            }
+            for item in payload.get("coins", [])[:limit]
+        ]
+
         return {
             "success": True,
-            "trending": trending,
-            "count": len(trending)
+            "trending": coins,
+            "count": len(coins)
         }
-        
-    except requests.exceptions.RequestException as e:
-        # Handle network-related errors
+
+    except requests.exceptions.RequestException as exc:
         return {
             "success": False,
-            "error": f"Network error: {str(e)}"
+            "error": f"Network error: {exc}",
+            "error_type": type(exc).__name__
         }
-    except Exception as e:
-        # Handle unexpected errors
+    except Exception as exc:
         return {
             "success": False,
-            "error": str(e),
-            "error_type": type(e).__name__
+            "error": str(exc),
+            "error_type": type(exc).__name__
         }

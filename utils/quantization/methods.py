@@ -24,7 +24,7 @@ from .core import QuantizationConfig, QuantizationMetrics
 from utils.log.core import PiscesLxCoreLog
 from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Quantization.Methods")
+logger = PiscesLxCoreLog("PiscesLx.Core.Quantization.Methods")
 
 class BitsAndBytesQuantizer:
     """BitsAndBytes quantization method implementation."""

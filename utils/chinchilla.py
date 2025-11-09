@@ -1,13 +1,24 @@
-"""
-Chinchilla Scaling Laws Implementation
+#!/usr/bin/env python3
 
-Based on "Training Compute-Optimal Large Language Models" (Hoffmann et al., 2022)
-Provides optimal model size and training data allocation for given compute budget.
-"""
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd project team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import math
 from typing import Tuple
-
 
 def optimal_nd(c_budget: float, unit: str = "flops") -> Tuple[float, float]:
     """
@@ -40,7 +51,6 @@ def optimal_nd(c_budget: float, unit: str = "flops") -> Tuple[float, float]:
     optimal_tokens = optimal_scale
     
     return optimal_parameters, optimal_tokens
-
 
 def scale_to_existing_block(parameters: float, existing_blocks: list = None) -> Tuple[int, int]:
     """
@@ -78,7 +88,6 @@ def scale_to_existing_block(parameters: float, existing_blocks: list = None) -> 
     
     return best_config
 
-
 def self_estimate_params(layers: int, hidden_size: int, 
                         vocab_size: int = 71164,
                         moe_experts: int = 64,
@@ -115,7 +124,6 @@ def self_estimate_params(layers: int, hidden_size: int,
     total_params = embed_params + total_layer_params + output_params
     
     return total_params
-
 
 def chinchilla_memory_correction(base_memory: float, 
                                chinchilla_enabled: bool,

@@ -112,8 +112,15 @@ class ReportGenerator:
     def __init__(self):
         """Initialize the report generator with logger and reports directory."""
         self.logger = PiscesLxCoreLog("pisceslx.observability.reports")
-        self.reports_dir = Path("reports")
-        self.reports_dir.mkdir(exist_ok=True)
+        # Always place reports under project .pisceslx/reports
+        try:
+            from utils.fs.core import PiscesLxCoreFS as _FS
+            _fs = _FS()
+            self.reports_dir = _fs.reports_dir()
+        except Exception:
+            # Fallback; will still attempt to create under local .pisceslx
+            self.reports_dir = Path(".pisceslx") / "reports"
+        self.reports_dir.mkdir(parents=True, exist_ok=True)
         
     def generate_device_report(self, device_id: str, duration_hours: int = 24) -> Dict[str, Any]:
         """

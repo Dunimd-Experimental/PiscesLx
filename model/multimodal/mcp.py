@@ -17,6 +17,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Model Context Protocol integration helpers for Arctic multimodal agents.
+
+The module defines registries and protocol adapters that extend the shared
+Pisces MCP infrastructure with Arctic-specific routing, reasoning hooks, and
+compatibility shims. The helpers coordinate tool registration, execution
+statistics, and message construction while preserving backward compatibility
+with utils.mcp implementations.
+"""
+
 import uuid
 import asyncio
 import time
@@ -25,10 +34,11 @@ from typing import Dict, Any, Callable, List, Optional, Union
 # Import from utils.mcp instead of local types
 from utils.mcp import (
     PiscesLxCoreMCPMessageType, PiscesLxCoreMCPMessage, PiscesLxCoreAgenticAction, PiscesLxCoreAgenticObservation,
-    PiscesLxCoreMCPProtocol, PiscesLxCoreMCPRegistry, PiscesLxCoreMCPUnifiedToolExecutor, 
+    PiscesLxCoreMCPRegistry, PiscesLxCoreMCPUnifiedToolExecutor,
     get_unified_tool_executor, PiscesLxCoreMCPTreeSearchReasoner,
     PiscesLxCoreMCPToolMetadata, PiscesLxCoreMCPToolType
 )
+import utils.mcp
 from utils.mcp.execution import PiscesLxCoreMCPExecutionResult, PiscesLxCoreMCPExecutionManager
 # Import types with fallback for standalone testing
 try:
@@ -46,19 +56,33 @@ except ImportError:
         ArcticMultiPathReasoningEngine = None
 
 class ArcticMCPToolRegistry:
-    """A registry for managing MCP tools and capabilities.
-    
-    This class provides functionality to store and manage tools and capabilities,
-    as well as handle tool calls. Extends PiscesLxCoreMCPRegistry for better integration.
+    """Registry bridging Arctic tools with the shared Pisces MCP ecosystem.
+
+    The registry augments :class:`PiscesLxCoreMCPRegistry` with Arctic-specific
+    tracking such as native/external execution statistics, dual registration with
+    the unified executor, and optional integration with the multipath reasoning
+    engine to inform execution decisions.
+
+    Attributes:
+        agentic_id (str): Identifier for the owning agent instance.
+        message_handler (Callable): Callback used to dispatch inbound MCP messages.
+        tools (Dict[str, Dict[str, Any]]): Metadata for registered tools.
+        capabilities (Dict[str, Dict[str, Any]]): Registered capability descriptors.
+        reasoning_engine (Optional[ArcticMultiPathReasoningEngine]): Optional reasoning backend.
+        execution_stats (Dict[str, Union[int, float]]): Local execution counters retained for compatibility.
+        _native_tools (Dict[str, Callable]): Mapping of native tool names to their handlers.
+        unified_executor (PiscesLxCoreMCPUnifiedToolExecutor): Shared executor used for dual registration.
+        core_registry (PiscesLxCoreMCPRegistry): Underlying registry from ``utils.mcp``.
     """
-    
+
     def __init__(self, agentic_id: str, message_handler: Callable, reasoning_engine: Optional[ArcticMultiPathReasoningEngine] = None):
-        """Initialize the MCPToolRegistry instance.
+        """Initialize the registry and attach optional reasoning capabilities.
 
         Args:
-            agentic_id (str): The ID of the agentic.
-            message_handler (Callable): The message handler callable.
-            reasoning_engine (Optional[ArcticMultiPathReasoningEngine]): The 8-path reasoning engine for intelligent tool selection.
+            agentic_id (str): Identifier for the owning agent.
+            message_handler (Callable): Coroutine invoked for inbound MCP messages.
+            reasoning_engine (Optional[ArcticMultiPathReasoningEngine]): Optional reasoning helper
+                used to recommend execution modes.
         """
         self.agentic_id = agentic_id
         self.message_handler = message_handler
@@ -71,7 +95,7 @@ class ArcticMCPToolRegistry:
             "total_executions": 0,
             "average_execution_time": 0.0
         }
-        self._native_tools: Dict[str, Callable] = {}  # 原生工具函数直接映射
+        self._native_tools: Dict[str, Callable] = {}
         
         # Initialize unified tool executor for better integration
         self.unified_executor = get_unified_tool_executor()
@@ -80,13 +104,13 @@ class ArcticMCPToolRegistry:
         self.core_registry = PiscesLxCoreMCPRegistry()
     
     async def register_tool(self, name: str, description: str, parameters: Dict[str, Any], native_handler: Optional[Callable] = None):
-        """Register a tool.
+        """Register a tool with both the unified executor and core registry.
 
         Args:
-            name (str): The name of the tool.
-            description (str): The description of the tool.
-            parameters (Dict[str, Any]): The parameters of the tool.
-            native_handler (Optional[Callable]): Optional native function handler for direct execution.
+            name (str): Tool identifier.
+            description (str): Human-readable description of the tool.
+            parameters (Dict[str, Any]): Parameter schema for the tool.
+            native_handler (Optional[Callable]): Optional coroutine invoked for native execution.
         """
         self.tools[name] = {
             "description": description,
@@ -125,28 +149,24 @@ class ArcticMCPToolRegistry:
         await self.core_registry.register_tool(name, description, parameters, native_handler)
     
     async def handle_tool_call(self, tool_name: str, **kwargs) -> Any:
-        """Handle tool calls with unified execution support.
+        """Execute a tool invocation using the core registry executor.
 
         Args:
-            tool_name (str): The name of the tool to call.
-            **kwargs: The arguments to pass to the tool.
+            tool_name (str): Name of the tool to invoke.
+            **kwargs: Arguments forwarded to the tool handler.
 
         Returns:
-            Any: The result of the tool execution.
+            Any: Execution result returned by the core registry.
         """
-        # 统一使用核心注册表的执行器，支持原生和外部执行模式
+        # Delegate execution to the core registry executor supporting native and external modes.
         return await self.core_registry.execute_tool(tool_name, kwargs)
     
     def get_execution_stats(self) -> Dict[str, Any]:
-        """Get execution statistics from core registry.
-
-        Returns:
-            Dict[str, Any]: The execution statistics from core registry.
-        """
+        """Return execution statistics collected by the core registry."""
         return self.core_registry.get_stats()
     
     def reset_execution_stats(self):
-        """Reset execution statistics."""
+        """Reset locally tracked execution counters and print a status message."""
         self.execution_stats = {
             "native_executions": 0,
             "external_calls": 0,
@@ -157,31 +177,34 @@ class ArcticMCPToolRegistry:
     
     async def register_native_tool(self, name: str, description: str, 
                                    parameters: Dict[str, Any], handler: Callable):
-        """Convenience method to register a native tool with direct execution capability.
-        
+        """Convenience wrapper for registering a native tool.
+
         Args:
-            name (str): The name of the tool.
-            description (str): The description of the tool.
-            parameters (Dict[str, Any]): The parameters of the tool.
-            handler (Callable): The native function handler.
+            name (str): Tool identifier.
+            description (str): Short description of the tool.
+            parameters (Dict[str, Any]): Tool parameter schema.
+            handler (Callable): Native handler invoked for execution.
         """
         await self.register_tool(name, description, parameters, native_handler=handler)
 
 class PiscesLxCoreMCPProtocol:
-    """Protocol for handling MCP messages and interactions with dual-track execution support.
-    
-    Extends the utils.mcp.PiscesLxCoreMCPProtocol with Arctic-specific functionality.
+    """Protocol adapter enabling dual-track MCP execution for Arctic agents.
+
+    The adapter wraps :class:`utils.mcp.PiscesLxCoreMCPProtocol` to add metadata
+    for dual-track routing and to integrate with the Arctic tool registry when
+    available.
     """
-    
+
     def __init__(self, agent_id: str, tool_registry: Optional[ArcticMCPToolRegistry] = None):
-        """Initialize the PiscesLxCoreMCPProtocol instance.
+        """Initialize the protocol adapter and link the optional tool registry.
 
         Args:
-            agent_id (str): The ID of the agent.
-            tool_registry (Optional[ArcticMCPToolRegistry]): The tool registry for dual-track execution.
+            agent_id (str): Identifier of the agent using the protocol.
+            tool_registry (Optional[ArcticMCPToolRegistry]): Registry providing
+                tool metadata and reasoning hooks.
         """
-        # Initialize base protocol from utils.mcp
-        self.base_protocol = PiscesLxCoreMCPProtocol(agent_id)
+        # Initialize base protocol from utils.mcp using fully qualified name to avoid shadowing
+        self.base_protocol = utils.mcp.PiscesLxCoreMCPProtocol(agent_id)
         self.agent_id = agent_id
         self.tool_registry = tool_registry
         self.execution_modes = {
@@ -197,35 +220,34 @@ class PiscesLxCoreMCPProtocol:
         payload: Dict[str, Any],
         correlation_id: str = ""
     ) -> PiscesLxCoreMCPMessage:
-        """Create a new MCP message.
+        """Create an MCP message via the base protocol helper.
 
         Args:
-            message_type (PiscesLxCoreMCPMessageType): The type of the message.
-            agent_id (str): The ID of the agent sending the message.
-            payload (Dict[str, Any]): The payload of the message.
-            correlation_id (str, optional): The correlation ID of the message. 
-                If not provided, a new UUID will be generated. Defaults to "".
+            message_type (PiscesLxCoreMCPMessageType): Message type identifier.
+            agent_id (str): Sender agent identifier.
+            payload (Dict[str, Any]): Message payload.
+            correlation_id (str): Optional correlation identifier.
 
         Returns:
-            PiscesLxCoreMCPMessage: A new PiscesLxCoreMCPMessage instance.
+            PiscesLxCoreMCPMessage: Constructed message instance.
         """
-        # Delegate to base protocol
-        return PiscesLxCoreMCPProtocol.create_message(message_type, agent_id, payload, correlation_id)
+        # Delegate to base protocol via fully qualified name
+        return utils.mcp.PiscesLxCoreMCPProtocol.create_message(message_type, agent_id, payload, correlation_id)
 
     async def create_tool_call_message(self, tool_name: str, arguments: Dict[str, Any], 
                                        receiver_id: str, execution_mode: str = "auto") -> PiscesLxCoreMCPMessage:
-        """Create a tool call message with dual-track execution support.
+        """Construct a tool call message, optionally leveraging dual-track routing.
 
         Args:
-            tool_name (str): The name of the tool to call.
-            arguments (Dict[str, Any]): The arguments to pass to the tool.
-            receiver_id (str): The ID of the receiver.
-            execution_mode (str): The execution mode ("native", "external", or "auto").
+            tool_name (str): Tool identifier.
+            arguments (Dict[str, Any]): Tool invocation arguments.
+            receiver_id (str): Message recipient identifier.
+            execution_mode (str): Preferred execution mode (``"native"``, ``"external"``, ``"auto"``).
 
         Returns:
-            PiscesLxCoreMCPMessage: The created tool call message.
+            PiscesLxCoreMCPMessage: Tool call message populated with routing metadata.
         """
-        # 智能路由决策
+        # Evaluate routing strategy when automatic mode is requested.
         if execution_mode == "auto" and self.tool_registry:
             execution_mode = await self._determine_execution_mode(tool_name, arguments)
         
@@ -239,16 +261,16 @@ class PiscesLxCoreMCPProtocol:
         return message
     
     async def _determine_execution_mode(self, tool_name: str, arguments: Dict[str, Any]) -> str:
-        """Intelligently determine the execution mode based on tool availability and performance."""
+        """Determine execution mode using tool metadata and optional reasoning."""
         if not self.tool_registry:
             return "external"
-        
-        # 检查工具是否注册为原生工具
+
+        # Check whether the tool has a registered native handler.
         tool_info = self.tool_registry.tools.get(tool_name, {})
         if tool_info.get("has_native_handler", False):
             return "native"
         
-        # 使用推理引擎优化选择
+        # Leverage the reasoning engine to select an execution mode when available.
         if self.tool_registry.reasoning_engine:
             reasoning_result = await self.tool_registry.reasoning_engine.analyze_execution_mode(
                 tool_name, arguments, self.tool_registry.tools
@@ -259,25 +281,25 @@ class PiscesLxCoreMCPProtocol:
     
     async def execute_tool_with_fallback(self, tool_name: str, arguments: Dict[str, Any], 
                                        receiver_id: str) -> Dict[str, Any]:
-        """Execute tool with intelligent fallback between native and external modes."""
+        """Execute a tool, falling back to external routing when native execution fails."""
         try:
-            # 首先尝试原生执行
+            # Attempt native execution first when a handler is available.
             if self.tool_registry and tool_name in self.tool_registry._native_tools:
                 result = await self.tool_registry.handle_tool_call(tool_name, **arguments)
                 return {
                     "success": True,
                     "result": result,
                     "execution_mode": "native",
-                    "execution_time": 0.0  # 原生执行接近零延迟
+                    "execution_time": 0.0
                 }
             
-            # 原生执行不可用，创建外部调用消息
+            # Fallback: create an external execution message when native execution is unavailable.
             message = await self.create_tool_call_message(tool_name, arguments, receiver_id, "external")
             return {
                 "success": True,
                 "message": message,
                 "execution_mode": "external",
-                "execution_time": None  # 外部执行时间由接收方记录
+                "execution_time": None
             }
             
         except Exception as e:

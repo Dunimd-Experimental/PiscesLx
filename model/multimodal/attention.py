@@ -17,30 +17,57 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Cross-modal attention primitives for Arctic multimodal encoders.
+
+This module exposes :class:`ArcticCrossModalAttention`, a lightweight wrapper
+around multi-head attention tuned for multimodal fusion. It provides optional
+integration with xFormers memory-efficient kernels while preserving a PyTorch
+fallback path, enabling deployment across both research and production
+environments without switching APIs.
+"""
+
 import math
 import torch
 from torch import nn
 import torch.nn.functional as F
 
 class ArcticCrossModalAttention(nn.Module):
+    """Multi-head attention layer for fusing heterogeneous modality embeddings.
+
+    The layer projects inputs into query/key/value spaces, performs scaled
+    dot-product attention, and aggregates the result through an output
+    projection. When xFormers is available it can switch to memory-efficient
+    kernels, otherwise it falls back to standard PyTorch implementations.
+
+    Attributes:
+        cfg: Configuration namespace supplying attention hyperparameters.
+        num_heads (int): Number of attention heads.
+        hidden_size (int): Size of the model embedding dimension.
+        head_dim (int): Per-head dimension derived from ``hidden_size``.
+        q_proj (nn.Linear): Projection layer generating queries.
+        k_proj (nn.Linear): Projection layer generating keys.
+        v_proj (nn.Linear): Projection layer generating values.
+        o_proj (nn.Linear): Projection layer applied to the concatenated output.
+        norm1 (nn.LayerNorm): Layer normalization applied to the query input.
+        norm2 (nn.LayerNorm): Layer normalization applied to the key input.
+        dropout (nn.Dropout): Dropout applied to attention weights.
     """
-    A cross-modal attention module that fuses information from different modalities using multi-head attention.
-    Supports both xFormers memory-efficient attention and standard scaled dot-product attention.
-    """
+
     def __init__(self, cfg):
-        """
-        Initialize the cross-modal attention module.
+        """Construct the attention module using the provided configuration.
 
         Args:
-            cfg: Configuration object containing attention parameters.
-                Expected attributes:
-                - n_head (int): Number of attention heads.
-                - hidden_size (int): Hidden size of the input features.
+            cfg: Configuration object defining ``n_head`` and ``hidden_size``.
+
+        Raises:
+            ValueError: If ``hidden_size`` is not divisible by ``n_head``.
         """
         super().__init__()
         self.cfg = cfg
         self.num_heads = cfg.n_head
         self.hidden_size = cfg.hidden_size
+        if self.hidden_size % self.num_heads != 0:
+            raise ValueError("hidden_size must be divisible by n_head for uniform head dimensions")
         self.head_dim = self.hidden_size // self.num_heads
         
         # Linear projection layers for query, key, value, and output
@@ -56,18 +83,21 @@ class ArcticCrossModalAttention(nn.Module):
         self.dropout = nn.Dropout(0.1)
         
     def forward(self, query, key, value, mask=None):
-        """
-        Perform cross-modal attention.
+        """Compute cross-modal attention weights and apply them to values.
 
         Args:
-            query (torch.Tensor): Query tensor of shape [B, T_q, hidden_size].
-            key (torch.Tensor): Key tensor of shape [B, T_k, hidden_size].
-            value (torch.Tensor): Value tensor of shape [B, T_k, hidden_size].
-            mask (torch.Tensor, optional): Mask tensor of shape [B, T_q, T_k]. 
-                Zero values indicate positions to be masked. Defaults to None.
+            query (torch.Tensor): Query tensor shaped ``[B, T_q, hidden_size]``.
+            key (torch.Tensor): Key tensor shaped ``[B, T_k, hidden_size]``.
+            value (torch.Tensor): Value tensor shaped ``[B, T_k, hidden_size]``.
+            mask (torch.Tensor, optional): Attention mask shaped ``[B, T_q, T_k]``
+                where zeros indicate masked positions. Defaults to ``None``.
 
         Returns:
-            torch.Tensor: Output tensor of shape [B, T_q, hidden_size].
+            torch.Tensor: Context tensor shaped ``[B, T_q, hidden_size]``.
+
+        Raises:
+            RuntimeError: If input tensors cannot be projected to the expected
+            dimensions.
         """
         B, T_q, _ = query.shape
         B, T_k, _ = key.shape

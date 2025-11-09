@@ -86,7 +86,7 @@ class PiscesLxCoreMCPRegistry:
         Returns:
             Configured logger instance
         """
-        logger = PiscesLxCoreLog("PiscesLx.Utils.MCP.Registry")
+        logger = PiscesLxCoreLog("PiscesLx.Core.MCP.Registry")
         return logger
     
     def initialize(self) -> bool:

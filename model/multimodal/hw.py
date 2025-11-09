@@ -17,29 +17,33 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Hardware detection utilities for Arctic multimodal agents.
+
+The helper classes in this module infer hardware capabilities such as device
+type, gradient capacities, and checkpoint segmentation hints. They expose
+configuration dictionaries that downstream components can consult to adapt
+their workloads.
+"""
+
 from typing import Dict
 
 class ArcticHardwareAdaptiveConfig:
-    """
-    A class for hardware detection and adaptive configuration.
+    """Hardware adapter that derives configuration tiers from detected devices.
 
-    This class detects the available hardware resources and provides adaptive configuration 
-    parameters such as max_layers, max_heads, max_lstm_layers, gradient_clip_norm, 
-    use_mixed_precision, and checkpoint_segments.
+    Attributes:
+        device_info (Dict[str, Dict]): Raw device detection results including tier
+            recommendations.
+        adaptive_config (Dict[str, Dict]): Profiled configuration generated from
+            the recommended tier.
     """
+
     def __init__(self):
-        """
-        Initialize the hardware adaptive configuration.
-
-        Detects the hardware information and generates the adaptive configuration based on the 
-        recommended tier.
-        """
+        """Detect hardware information and build the adaptive configuration."""
         self.device_info = self._detect_hardware()
         self.adaptive_config = self._profile(self.device_info["recommended_config"])
 
     def _detect_hardware(self) -> Dict:
-        """
-        Detect the available CUDA hardware and determine the recommended configuration tier.
+        """Detect the available CUDA hardware and determine the recommended configuration tier.
 
         Tries to detect the number of CUDA devices and their total memory. Based on these values,
         it assigns a recommended configuration tier. If any exception occurs, it defaults to 

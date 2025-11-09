@@ -17,6 +17,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Dynamic multimodal fusion utilities for PiscesL1 Arctic agents.
+
+This module implements :class:`ArcticDynamicModalFusion`, which harmonizes
+token representations across modalities, applies cross-modal attention, and
+manages gated generation pathways. It integrates with the Arctic memory
+manager and hardware adaptation layers to orchestrate caching and gradient
+configurations.
+"""
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -26,22 +35,43 @@ from .hw import ArcticHardwareAdaptiveConfig
 from .attention import ArcticCrossModalAttention
 
 class ArcticDynamicModalFusion(nn.Module):
+    """Dynamic multimodal fusion backbone for Arctic workflows.
+
+    The module tokenizes modality-specific inputs, enriches them with learned
+    positional and modality embeddings, and performs cross-modal attention
+    followed by gated fusion to produce a unified representation.
+
+    Attributes:
+        cfg: Configuration namespace containing fusion hyperparameters.
+        hidden_size (int): Dimensionality of the shared representation space.
+        modalities (List[str]): Canonical modality identifiers handled by the fusion core.
+        weight_cache (Dict[str, torch.Tensor]): Cache for previously fused outputs keyed by modality presence signatures.
+        cache_size_limit (int): Maximum number of cached signatures retained.
+        cache_manager: Optional external cache manager reused across agent subsystems.
+        memory_manager (ArcticMemoryManager): Manager responsible for tracking tensor lifetimes.
+        hw (ArcticHardwareAdaptiveConfig): Hardware adaptation helper used to derive gradient configuration.
+        grad_conf (Dict[str, Any]): Gradient settings retrieved from the hardware adapter.
+        unified_tokenizer (nn.ModuleDict): Mapping from modality to tokenization modules that project raw inputs.
+        unified_pos_embed (nn.Parameter): Learned positional embeddings shared across modalities.
+        modality_tokens (nn.Embedding): Trainable embeddings encoding modality identity.
+        cross_modal_attn (ArcticCrossModalAttention): Attention layer performing cross-modality reasoning.
+        understanding_gate (nn.Sequential): Gating module producing global understanding signals.
+        generation_gates (nn.ModuleDict): Modality-specific gates used to modulate generation outputs.
+        _generation_cache (Dict[str, torch.Tensor]): Storage for latest modality-specific outputs produced by ``forward``.
     """
-    A module for dynamic modal fusion in the Arctic architecture, supporting multi-modal data processing
-    with unified tokenization, position encoding, cross-modal attention, and gated mechanisms.
-    """
+
     def __init__(self, cfg, cache_manager=None):
-        """
-        Initialize the ArcticDynamicModalFusion module.
+        """Initialize the fusion module and supporting infrastructure.
 
         Args:
-            cfg: Configuration object containing necessary parameters, e.g., hidden_size.
-            cache_manager: Optional cache manager for handling generation caches. Defaults to None.
+            cfg: Configuration object containing parameters such as ``hidden_size``.
+            cache_manager: Optional cache manager for generation caches. Defaults
+                to ``None``.
         """
         super().__init__()
         self.cfg = cfg
         self.hidden_size = cfg.hidden_size
-        self.modalities = ["text", "image", "audio", "video", "document", "agent"]
+        self.modalities = ["text", "image", "audio", "video", "document", "agentic"]
         self.weight_cache: Dict[str, torch.Tensor] = {}
         self.cache_size_limit = 1000
         self.cache_manager = cache_manager
@@ -58,7 +88,7 @@ class ArcticDynamicModalFusion(nn.Module):
             'audio': nn.Conv1d(1, self.hidden_size, 16, 16),
             'video': nn.Conv3d(3, self.hidden_size, (2, 16, 16), (2, 16, 16)),
             'document': nn.Linear(self.hidden_size, self.hidden_size),
-            'agent': nn.Linear(self.hidden_size, self.hidden_size)
+            'agentic': nn.Linear(self.hidden_size, self.hidden_size)
         })
         self.unified_pos_embed = nn.Parameter(torch.randn(1, 8192, self.hidden_size) * 0.02)
         self.modality_tokens = nn.Embedding(len(self.modalities), self.hidden_size)
@@ -86,34 +116,32 @@ class ArcticDynamicModalFusion(nn.Module):
         self._generation_cache: Dict[str, torch.Tensor] = {}
 
     def _signature(self, features: Dict[str, Optional[torch.Tensor]]) -> str:
-        """
-        Generate a signature string based on the presence of features for each modality.
+        """Summarize modality presence into a cache signature string.
 
         Args:
-            features: A dictionary containing optional feature tensors for each modality.
+            features: Dictionary mapping modality names to optional tensors.
 
         Returns:
-            str: A signature string representing the presence of features.
+            str: Colon-delimited presence signature, e.g., ``"text:1:image:0"``.
         """
         present = [f"{m}:{1 if (features.get(m) is not None) else 0}" for m in self.modalities]
         return ":".join(present)
 
     def generate_modality(self, target_modal: str, prompt_tokens: Optional[torch.Tensor] = None,
                           temperature: float = 1.0, top_k: Optional[int] = None) -> torch.Tensor:
-        """
-        Generate representations for the target modality using the latest generation cache.
+        """Generate representations for a target modality using cached states.
 
         Args:
-            target_modal (str): The target modality for generation.
-            prompt_tokens (Optional[torch.Tensor]): Optional prompt tokens for conditional generation. Defaults to None.
-            temperature (float): Temperature parameter for controlling randomness. Defaults to 1.0.
-            top_k (Optional[int]): Top-k value for limiting the number of output elements. Defaults to None.
+            target_modal (str): Name of the modality to synthesize.
+            prompt_tokens (Optional[torch.Tensor]): Optional conditioning tokens.
+            temperature (float): Softmax temperature scaling factor.
+            top_k (Optional[int]): Retain top-k dimensions when specified.
 
         Returns:
-            torch.Tensor: Generated tensor for the target modality.
+            torch.Tensor: Generated tensor for ``target_modal``.
 
         Raises:
-            ValueError: If the generation cache is empty, indicating forward() has not been called.
+            ValueError: If the generation cache is empty, implying ``forward`` was not invoked.
         """
         if not self._generation_cache:
             raise ValueError("The forward() method must be called first to build the generation cache.")
@@ -140,14 +168,12 @@ class ArcticDynamicModalFusion(nn.Module):
         return out
 
     def generate_cross_modal(self, source_modal: str, target_modal: str, source_tokens: Optional[torch.Tensor] = None) -> torch.Tensor:
-        """
-        Perform cross-modal understanding and generation. Update conditions based on source tokens and 
-        generate representations for the target modality.
+        """Generate a modality representation conditioned on another modality.
 
         Args:
-            source_modal (str): The source modality.
-            target_modal (str): The target modality for generation.
-            source_tokens (Optional[torch.Tensor]): Optional source tokens for conditional generation. Defaults to None.
+            source_modal (str): Modality providing conditioning context.
+            target_modal (str): Modality to synthesize.
+            source_tokens (Optional[torch.Tensor]): Optional conditioning tokens.
 
         Returns:
             torch.Tensor: Generated tensor for the target modality.
@@ -155,14 +181,14 @@ class ArcticDynamicModalFusion(nn.Module):
         return self.generate_modality(target_modal, prompt_tokens=source_tokens)
 
     def forward(self, modal_features: Dict[str, Optional[torch.Tensor]]) -> torch.Tensor:
-        """
-        Forward pass of the ArcticDynamicModalFusion module.
+        """Fuse modality features into a shared representation.
 
         Args:
-            modal_features (Dict[str, Optional[torch.Tensor]]): A dictionary containing optional feature tensors for each modality.
+            modal_features (Dict[str, Optional[torch.Tensor]]): Mapping from
+                modality name to feature tensors or ``None``.
 
         Returns:
-            torch.Tensor: Global representation after modal fusion.
+            torch.Tensor: Global representation tensor with shape ``[B, 1, hidden_size]``.
         """
         # Cache lookup
         sig = self._signature(modal_features)
@@ -198,7 +224,7 @@ class ArcticDynamicModalFusion(nn.Module):
                 tok = patches.flatten(2).transpose(1, 2)
                 tok = tok.reshape(b, t * tok.shape[1], self.hidden_size)
             else:
-                # document/agent or fallback
+                # document/agentic or fallback
                 if feat.dim() == 3:
                     tok = feat
                 else:
@@ -213,18 +239,18 @@ class ArcticDynamicModalFusion(nn.Module):
             return torch.zeros(1, 1, self.hidden_size, device=device or torch.device('cpu'))
 
         seq = torch.cat(tokens, dim=1)
-        # Apply one pass of cross-modal attention
+        # Apply a single pass of cross-modal attention to integrate modalities.
         fused = self.cross_modal_attn(seq, seq, seq)
 
-        # Apply understanding gating
+        # Derive a global understanding vector via gating.
         gate = self.understanding_gate(fused.mean(dim=1)).unsqueeze(1)
         understanding = fused * gate
 
-        # Generate gated outputs for each modality
+        # Generate modality-specific outputs modulated by generation gates.
         gen_outputs: Dict[str, torch.Tensor] = {}
         cursor = 0
         for idx, modal in enumerate(self.modalities):
-            # Estimate the length of tokens for each modality by uniform division
+            # Estimate per-modality token allocation using uniform division.
             est_len = max(1, fused.shape[1] // max(1, len(self.modalities)))
             end = min(fused.shape[1], cursor + est_len)
             modal_tokens = fused[:, cursor:end, :]
@@ -232,7 +258,7 @@ class ArcticDynamicModalFusion(nn.Module):
             gen_gate = self.generation_gates[modal](fused.mean(dim=1)).unsqueeze(1)
             gen_outputs[modal] = modal_tokens * gen_gate
 
-        # Compute global representation
+        # Compute the final global representation via temporal averaging.
         out = understanding.mean(dim=1, keepdim=True)
 
         # Write to weight cache
@@ -247,6 +273,3 @@ class ArcticDynamicModalFusion(nn.Module):
 
         self.memory_manager.register_tensor(out, "fusion_out")
         return out
-
-
-__all__ = ["ArcticDynamicModalFusion"]

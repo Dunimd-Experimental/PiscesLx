@@ -29,7 +29,7 @@ import hashlib
 from datetime import datetime
 from typing import Dict, Any, Optional, Union, List
 
-class PiscesWatermark:
+class PiscesLxCoreWatermark:
     """
     An AI content hidden watermark system compliant with national standards.
     Supports zero-width character watermarks for text, frequency domain watermarks for images, 
@@ -739,7 +739,7 @@ class PiscesWatermark:
         )
 
 
-class WatermarkManager:
+class PiscesLxCoreWatermarkManager:
     """
     Watermark manager integrated into the inference process.
     This class is responsible for adding, checking, and verifying watermarks.
@@ -747,7 +747,7 @@ class WatermarkManager:
     
     def __init__(self, model_id: str = "PiscesL1-1.5B"):
         # Initialize the watermark instance
-        self.watermark = PiscesWatermark(model_id)
+        self.watermark = PiscesLxCoreWatermark(model_id)
         # Watermark is always enabled and cannot be disabled
         self.enabled = True
         # Force enabled mode
@@ -955,7 +955,7 @@ class WatermarkManager:
         return True  # Other types are considered compliant by default
 
 # Global watermark manager instance (2025 mandatory standard)
-watermark_manager = WatermarkManager()
+watermark_manager = PiscesLxCoreWatermarkManager()
 
 def watermark_text(text: str, prompt: str = "", generation_params: Dict[str, Any] = None) -> str:
     """

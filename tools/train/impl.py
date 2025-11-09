@@ -22,7 +22,6 @@ import sys
 import json
 import torch
 import warnings
-from utils.cache import get_cache_manager
 from utils.device.facade import PiscesLxCoreDeviceFacade
 from utils.device.manager import PiscesLxCoreDeviceManager
 from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
@@ -89,10 +88,27 @@ def setup_distributed_training():
 
     # Use facade for device + distributed init
     facade = PiscesLxCoreDeviceFacade()
-    dev_cfg = facade.setup_devices(mode="distributed")
-    dist_cfg = facade.init_distributed(backend="nccl")
+    world_size_env = 1
+    try:
+        world_size_env = int(os.environ.get("WORLD_SIZE", "1"))
+    except Exception:
+        world_size_env = 1
+    should_init_dist = world_size_env > 1
 
-    is_distributed = bool(dist_cfg.get("distributed", dev_cfg.get("world_size", 1) > 1))
+    # Only use distributed mode when actually running multi-process
+    dev_cfg = facade.setup_devices(mode="distributed" if should_init_dist else "auto")
+    dist_cfg = {}
+    if should_init_dist:
+        import platform
+        backend = "nccl" if (torch.cuda.is_available() and platform.system() == "Linux") else "gloo"
+        try:
+            dist_cfg = facade.init_distributed(backend=backend)
+        except Exception as e:
+            logger.warning(f"init_distributed failed with backend={backend}: {e}; falling back to single-process.")
+            dist_cfg = {"distributed": False, "world_size": 1, "rank": 0, "local_rank": dev_cfg.get("local_rank", 0)}
+            should_init_dist = False
+
+    is_distributed = bool(dist_cfg.get("distributed", False)) if should_init_dist else False
     local_rank = int(dist_cfg.get("local_rank", dev_cfg.get("local_rank", 0)))
     world_size = int(dist_cfg.get("world_size", dev_cfg.get("world_size", 1)))
     rank = int(dist_cfg.get("rank", dev_cfg.get("rank", 0)))
@@ -172,8 +188,12 @@ def create_ddp_model(model, device, is_distributed, local_rank):
     
     if is_distributed:
         # Move the model to the specified device with utils-enhanced placement
-        model = model.to(device)
-        
+        try:
+            # Model was constructed on target device; avoid deep traversal that caused recursion
+            model = model.to(device)
+        except RecursionError:
+            logger.warning("Skipping model.to(device) due to recursion; model already constructed on target device.")
+
         # Emit model distribution event for observability
         _emit("train.model.distribute", 
               device=str(device), local_rank=local_rank, 
@@ -255,50 +275,18 @@ def create_dataloader(dataset, batch_size, is_distributed, world_size=1, rank=0,
         sampler = None
         shuffle = True
     
-    # Optimized configuration for async prefetching and multi-threading
-    num_workers = min(mp.cpu_count(), 8)  # Use up to 8 CPU cores
-    prefetch_factor = 4 if num_workers > 0 else 2  # Increase prefetch for better GPU utilization
-    persistent_workers = num_workers > 0  # Keep workers alive between epochs
+    # For stability across environments and to avoid spawn import issues, disable multiprocessing
+    num_workers = 0
+    prefetch_factor = None
+    persistent_workers = False
     pin_memory = torch.cuda.is_available()  # Enable pin memory for GPU training
-    
-    # Async data augmentation for multimodal inputs
-    def async_collate_fn(batch):
-        """
-        Enhanced collate function with async data augmentation.
-
-        Args:
-            batch: A batch of data samples.
-
-        Returns:
-            The augmented and collated batch data.
-        """
-        # Pre-fetch next batch while processing current batch
-        augmented_batch = []
-        for item in batch:
-            # Apply lightweight data augmentation for multimodal inputs
-            if 'pixel_values' in item and item['pixel_values'] is not None:
-                # Random horizontal flip for images (10% probability)
-                if torch.rand(1).item() < 0.1:
-                    item['pixel_values'] = torch.flip(item['pixel_values'], dims=[-1])
-            
-            if 'audio_input' in item and item['audio_input'] is not None:
-                # Random noise injection for audio (5% probability, 0.01 amplitude)
-                if torch.rand(1).item() < 0.05:
-                    if isinstance(item['audio_input'], dict) and 'input_values' in item['audio_input']:
-                        noise = torch.randn_like(item['audio_input']['input_values']) * 0.01
-                        item['audio_input']['input_values'] = item['audio_input']['input_values'] + noise
-            
-            augmented_batch.append(item)
-        
-        # Use original collate function for final processing
-        return collate_fn(augmented_batch)
     
     return torch.utils.data.DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=shuffle,
         sampler=sampler,
-        collate_fn=async_collate_fn,
+        collate_fn=collate_fn,
         num_workers=num_workers,
         pin_memory=pin_memory,
         persistent_workers=persistent_workers,
@@ -361,7 +349,7 @@ def _train_impl(args):
         args: Command line arguments or configuration object containing training parameters.
     """
     import torch
-    from tools.data.dataset.core import PiscesDataset
+    from tools.data.dataset import PiscesDataset
     from torch.utils.data import DataLoader
     from model.tokenizer import get_tokenizer
     from model import ArcticModel, ArcticConfig
@@ -603,8 +591,21 @@ def _train_impl(args):
     f = PiscesLxCoreDeviceFacade(args)
     _dev_cfg = f.setup_devices(mode="distributed" if is_distributed else "auto")
     _amp_dtype = f.amp_dtype(_dev_cfg.get("dtype", "auto"))
+    # Mixed precision fully decided by device facade
     _mp_enabled = bool(_dev_cfg.get("mixed_precision", torch.cuda.is_available())) and torch.cuda.is_available()
-    scaler = torch.cuda.amp.GradScaler() if _mp_enabled else None
+    amp_dtype_str = str(_dev_cfg.get("dtype", "auto")).lower()
+    if _mp_enabled and amp_dtype_str in ("bf16", "bfloat16"):
+        _amp_dtype = torch.bfloat16
+        scaler = None
+    elif _mp_enabled and amp_dtype_str in ("fp16", "float16", "half"):
+        _amp_dtype = torch.float16
+        try:
+            scaler = torch.amp.GradScaler('cuda')
+        except Exception:
+            scaler = torch.cuda.amp.GradScaler()
+    else:
+        _mp_enabled = False
+        scaler = None
     # Apply silently without printing suggestions
         
     logger.info(f"Device setup completed: {device}")
@@ -706,7 +707,7 @@ def _train_impl(args):
             else:
                 logger.error(f"Unsupported quantization bits: {quant_bits}. Supported: 2, 4, 8")
                 sys.exit(1)
-        model = ArcticModel(cfg, quantization_config=quant_config) if quant_config else ArcticModel(cfg)
+        model = ArcticModel(cfg, device=device, dtype=_amp_dtype, quantization_config=quant_config) if quant_config else ArcticModel(cfg, device=device, dtype=_amp_dtype)
         if force_lora:
             lora_config = LoraConfig(
                 r=8, lora_alpha=32, target_modules=["q_proj", "v_proj", "o_proj"],
@@ -726,7 +727,7 @@ def _train_impl(args):
                 total_params = sum(p.numel() for p in model.parameters())
                 logger.info(f"Trainable parameters: {trainable_params:,} / {total_params:,} ({100 * trainable_params / total_params:.2f}%)")
     else:
-        model = ArcticModel(cfg)
+        model = ArcticModel(cfg, device=device, dtype=_amp_dtype)
 
     if model is not None:
         model.resize_token_embeddings(len(tokenizer))
@@ -800,9 +801,19 @@ def _train_impl(args):
     
     param_groups = get_parameter_groups(model, lr)
     
-    # Check for GaLore configuration in training config
-    galore_config = training_config.get('galore', {})
-    galore_enabled = galore_config.get('galore_enabled', False)
+    # Check for GaLore configuration (device + config)
+    galore_section = training_config.get('galore', {})
+    # Enable if any: nested config, top-level flag, or device says memory_efficient
+    galore_enabled = bool(
+        galore_section.get('galore_enabled', False)
+        or training_config.get('galore_enabled', False)
+        or _dev_cfg.get('memory_efficient', False)
+    )
+    # Helper to read galore params from either top-level or nested section
+    def _galore_get(key, default=None):
+        if key in training_config:
+            return training_config.get(key, default)
+        return galore_section.get(key, default)
     
     if galore_enabled:
         logger.info("GaLore optimization enabled for training")
@@ -810,20 +821,20 @@ def _train_impl(args):
         # Create GaLore configuration from training config
         galore_cfg = GaLoreConfig(
             enabled=galore_enabled,
-            rank=galore_config.get('galore_rank', 128),
-            update_interval=galore_config.get('galore_update_interval', 200),
-            target_modules=galore_config.get('galore_target_modules', None),
-            lr_ratio=galore_config.get('galore_lr_ratio', 1.0),
-            min_rank=galore_config.get('galore_min_rank', 32),
-            max_rank=galore_config.get('galore_max_rank', 512),
-            rank_adapt_interval=galore_config.get('galore_rank_adapt_interval', 1000),
-            rank_adapt_threshold=galore_config.get('galore_rank_adapt_threshold', 0.1),
-            quantization_bits=galore_config.get('galore_quantization_bits', 0),
-            memory_efficient=galore_config.get('galore_memory_efficient', True),
-            moe_expert_only=galore_config.get('galore_moe_expert_only', False),
-            multimodal_modules=galore_config.get('galore_multimodal_modules', None),
-            sequence_threshold=galore_config.get('galore_sequence_threshold', 4096),
-            gradient_accumulation_sync=galore_config.get('galore_gradient_accumulation_sync', True)
+            rank=_galore_get('galore_rank', 128),
+            update_interval=_galore_get('galore_update_interval', 200),
+            target_modules=_galore_get('galore_target_modules', None),
+            lr_ratio=_galore_get('galore_lr_ratio', 1.0),
+            min_rank=_galore_get('galore_min_rank', 32),
+            max_rank=_galore_get('galore_max_rank', 512),
+            rank_adapt_interval=_galore_get('galore_rank_adapt_interval', 1000),
+            rank_adapt_threshold=_galore_get('galore_rank_adapt_threshold', 0.1),
+            quantization_bits=_galore_get('galore_quantization_bits', 0),
+            memory_efficient=_galore_get('galore_memory_efficient', True),
+            moe_expert_only=_galore_get('galore_moe_expert_only', False),
+            multimodal_modules=_galore_get('galore_multimodal_modules', None),
+            sequence_threshold=_galore_get('galore_sequence_threshold', 4096),
+            gradient_accumulation_sync=_galore_get('galore_gradient_accumulation_sync', True)
         )
         
         # Create base AdamW optimizer
@@ -843,9 +854,16 @@ def _train_impl(args):
         # Wrap with GaLore optimizer
         optimizer = GaLoreOptimizer(base_optimizer, galore_cfg)
         
-        # Log memory savings estimate
-        model_size_mb = sum(p.numel() for p in model.parameters()) * 4 / (1024 * 1024)  # Assuming float32
-        memory_savings = get_galore_memory_savings(galore_cfg, model_size_mb)
+        def _galore_memory_savings_estimate(cfg_obj, model_size_mb):
+            try:
+                r = float(getattr(cfg_obj, 'rank', 128))
+                mr = float(getattr(cfg_obj, 'max_rank', max(r, 128)))
+                v = 0.5 + 0.5 * (1.0 - r / max(1.0, mr))
+                return max(0.0, min(1.0, v))
+            except Exception:
+                return 0.3
+        model_size_mb = sum(p.numel() for p in model.parameters()) * 4 / (1024 * 1024)
+        memory_savings = _galore_memory_savings_estimate(galore_cfg, model_size_mb)
         logger.info(f"Estimated GaLore memory savings: {memory_savings:.1%}")
         
     else:
@@ -862,7 +880,8 @@ def _train_impl(args):
             differentiable=False,
             fused=False
         )
-    
+    # Use base optimizer for LR schedulers if GaLore wrapper is used
+    scheduler_optimizer = base_optimizer if 'base_optimizer' in locals() and galore_enabled else optimizer
     def create_modality_scheduler(optimizer, modality_name, base_scheduler_config):
         """
         Create a learning rate scheduler for a specific modality.
@@ -896,7 +915,7 @@ def _train_impl(args):
     modality_schedulers = {}
     sched_cfg = training_config.get('schedulers', {})
     for modality in ['text', 'vision', 'audio', 'fusion', 'other']:
-        scheduler_obj = create_modality_scheduler(optimizer, modality, sched_cfg.get(modality, {}))
+        scheduler_obj = create_modality_scheduler(scheduler_optimizer, modality, sched_cfg.get(modality, {}))
         if scheduler_obj is not None:
             modality_schedulers[modality] = scheduler_obj
     
@@ -955,7 +974,7 @@ def _train_impl(args):
             config_dict = cfg.__dict__
         else:
             config_dict = {}
-        train_ds = PiscesDataset(subset=dataset, split="train", config=config_dict)
+        train_ds = PiscesDataset(name=dataset, subset=dataset, split="train", config=config_dict)
         if len(train_ds) == 0:
             logger.error(f"Dataset '{dataset}' is empty after filtering! Training cannot proceed.")
             raise ValueError(f"Dataset '{dataset}' is empty. Please check your dataset configuration and ensure the dataset contains valid training data.")
@@ -974,7 +993,7 @@ def _train_impl(args):
         os.makedirs(save_dir, exist_ok=True)
         logger.info(f"Starting training loop...")
         model.train()
-        scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
+        # keep scaler from configuration (bf16 => None, fp16 => GradScaler)
         torch.cuda.empty_cache()
         torch.cuda.reset_peak_memory_stats()
         stop_training = False
@@ -1071,6 +1090,12 @@ def _train_impl(args):
                                 grad_norm += param.grad.data.norm(2).item() ** 2
                         grad_norm = grad_norm ** 0.5
                         
+                        # If using AMP, unscale gradients before any clipping to record inf checks
+                        if scaler is not None and optimizer is not None:
+                            try:
+                                scaler.unscale_(optimizer)
+                            except Exception:
+                                pass
                         # Apply global gradient clipping as additional safety measure
                         global_grad_norm = clip_gradients(model, max_norm=2.0, norm_type=2.0)
                         if global_grad_norm > 1.0:
@@ -1081,6 +1106,7 @@ def _train_impl(args):
                             total_norm, clip_coef, was_clipped = grad_clipper.update_and_clip(params, optimizer, scaler)
                             torch.cuda.empty_cache()
                             if scaler is not None:
+                                # Standard AMP sequence: unscale_ done above, now step via scaler then update
                                 scaler.step(optimizer)
                                 scaler.update()
                             else:
@@ -1161,7 +1187,7 @@ def _train_impl(args):
                     
                     if epoch+1 == min_plateau_epoch:
                         from torch.optim.lr_scheduler import ReduceLROnPlateau
-                        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, verbose=True, min_lr=1e-8)
+                        scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=2, min_lr=1e-8)
                         logger.info(f"ReduceLROnPlateau scheduler enabled after {min_plateau_epoch} epochs.")
                     
                     # Stopping criteria: loss-driven with optional epoch caps.
@@ -1440,8 +1466,10 @@ class AdaptiveGradientClipper:
         for param in parameters:
             if param.grad is not None:
                 # Check if this is an MoE expert parameter (contains 'experts' in name)
-                param_name = getattr(param, 'name', '')
-                if 'experts' in param_name or hasattr(param, '_is_expert_param'):
+                param_name = getattr(param, 'name', None)
+                if not isinstance(param_name, str):
+                    param_name = ''
+                if ('experts' in param_name) or hasattr(param, '_is_expert_param'):
                     grad_norm = param.grad.data.norm(2)
                     if grad_norm > expert_clip_threshold:
                         clip_coef = expert_clip_threshold / (grad_norm + 1e-8)

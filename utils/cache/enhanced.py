@@ -42,7 +42,7 @@ class PiscesLxCoreEnhancedCache:
             max_mem_entries (int): Maximum number of entries in memory cache.
             enable_redis (bool): Whether to enable Redis support.
         """
-        self.logger = PiscesLxCoreLog("PiscesLx.Utils.Cache.Enhanced")
+        self.logger = PiscesLxCoreLog("PiscesLx.Core.Cache.Enhanced")
         self.local_cache = get_default_cache(cache_dir) if cache_dir else get_default_cache()
         # Avoid hard dependency on redis module in annotations
         self.redis_client: Optional[Any] = None
@@ -288,7 +288,7 @@ class PiscesLxCoreEnhancedCacheManager:
     
     def __init__(self) -> None:
         """Initialize the cache manager."""
-        self.logger = PiscesLxCoreLog("PiscesLx.Utils.Cache.EnhancedManager")
+        self.logger = PiscesLxCoreLog("PiscesLx.Core.Cache.EnhancedManager")
     
     @classmethod
     def get_instance(cls) -> 'PiscesLxCoreEnhancedCacheManager':

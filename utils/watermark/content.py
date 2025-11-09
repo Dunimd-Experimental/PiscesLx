@@ -1,7 +1,21 @@
 #!/usr/bin/env python3
 
-# Moved from tools/watermark.py into utils/watermark/content.py
-# NOTE: Future work will refactor protocols (SYNC+LEN+CRC+ECC) and add extractors for image/audio.
+# Copyright © 2025 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd project team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import re
 import json
@@ -19,7 +33,7 @@ from typing import Dict, Any, Optional, Union, List
 from .protocol import frame_payload, extract_from_bits
 from .dct import embed_bits_in_dct, extract_bits_from_dct
 
-class PiscesWatermark:
+class PiscesLxCoreWatermark:
     """
     An AI content hidden watermark system compliant with national standards.
     Supports zero-width character watermarks for text, frequency domain watermarks for images, 
@@ -557,11 +571,11 @@ class PiscesWatermark:
             extracted.get("compliance", {}).get("standard") == "GB/T 45225-2024"
         )
 
-class WatermarkManager:
+class PiscesLxCoreWatermarkManager:
     """Watermark manager integrated into the inference process."""
     
     def __init__(self, model_id: str = "PiscesL1-1.5B"):
-        self.watermark = PiscesWatermark(model_id)
+        self.watermark = PiscesLxCoreWatermark(model_id)
         self.enabled = True
         self.force_enabled = True  
     

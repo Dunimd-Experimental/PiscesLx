@@ -23,7 +23,7 @@ from typing import Any, Optional
 from utils.log.core import PiscesLxCoreLog
 from utils.error import PiscesLxCoreError, PiscesLxCoreIOError, PiscesLxCoreFilesystemError
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Fs.Core")
+logger = PiscesLxCoreLog("PiscesLx.Core.Fs.Core")
 
 class PiscesLxCoreFS:
     """Object-oriented filesystem helper with safe operations.

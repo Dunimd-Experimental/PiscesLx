@@ -22,7 +22,7 @@ import subprocess
 from utils.log.core import PiscesLxCoreLog
 from typing import List, Dict, Any
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Device.NvidiaDetector")
+logger = PiscesLxCoreLog("PiscesLx.Core.Device.NvidiaDetector")
 
 class PiscesLxCoreDeviceNvidiaDetector:
     """

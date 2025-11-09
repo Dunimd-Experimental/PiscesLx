@@ -17,113 +17,47 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import os
-import sys
+import importlib
 
-# Add project root to Python path for cross-platform compatibility
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-if project_root not in sys.path:
-    sys.path.insert(0, project_root)
+_LAZY_EXPORTS = {
+    # Benchmark
+    'PiscesLxToolsBenchmark': 'tools.benchmark.runner',
+    # Data download
+    'PiscesLxToolsDataDatasetDownload': 'tools.data.download.runner',
+    'PiscesLxToolsDataSourceRouter': 'tools.data.download.sources',
+    'PiscesLxToolsDataDownloadConfig': 'tools.data.download.config',
+    'PiscesLxToolsDataDownloadCache': 'tools.data.download.caches',
+    'PiscesLxToolsDataConfigLoader': 'tools.data.download.config',
+    'DatasetItem': 'tools.data.download.config',
+    # Infer
+    'PiscesLxToolsInferOrchestrator': 'tools.infer.orchestrator',
+    'PiscesLxToolsInferRunner': 'tools.infer.runner',
+    'PiscesLxToolsInferConfig': 'tools.infer.config',
+    'PiscesLxToolsInferImpl': 'tools.infer.impl',
+    # Train
+    'PiscesLxToolsTrainOrchestrator': 'tools.train.orchestrator',
+    'PiscesLxToolsTrainRunner': 'tools.train.runner',
+    'PiscesLxToolsTrainConfig': 'tools.train.config',
+    'PiscesLxToolsTrainImpl': 'tools.train.impl',
+    'PiscesLxToolsProfiler': 'tools.train.profiler',
+    'PiscesLxToolsQuantExporter': 'tools.train.quant_export',
+    'PiscesLxToolsPreferenceTrainer': 'tools.train.pref_align',
+    # Monitor
+    'PiscesLxToolsMonitorOrchestrator': 'tools.monitor.orchestrator',
+    'PiscesLxToolsMonitorRunner': 'tools.monitor.runner',
+    'PiscesLxToolsMonitorImpl': 'tools.monitor.impl',
+    'PiscesLxToolsMonitorConfig': 'tools.monitor.config',
+}
 
-# Ensure current directory is in path
-current_dir = os.path.abspath(os.path.dirname(__file__))
-if current_dir not in sys.path:
-    sys.path.insert(0, current_dir)
+__all__ = list(_LAZY_EXPORTS.keys())
 
-# Initialize variables with None as fallback
-read_config = None
-get_cache_manager = None
-PiscesLxCoreConfigManagerFacade = None
-
-try:
-    if 'setup' not in sys.argv:
-        # Import local modules first
-        try:
-            from .mcp import read_config
-        except ImportError as e:
-            print(f"Warning: Could not import local modules: {e}")
-        
-        # Try multiple import strategies for utils.cache
-        import_success = False
-        import_attempts = [
-            lambda: __import__('utils.cache', fromlist=['get_cache_manager', 'PiscesLxCoreConfigManagerFacade']),
-            lambda: __import__('piscesl1.utils.cache', fromlist=['get_cache_manager', 'PiscesLxCoreConfigManagerFacade']),
-            lambda: __import__('..utils.cache', fromlist=['get_cache_manager', 'PiscesLxCoreConfigManagerFacade']),
-        ]
-        
-        for attempt in import_attempts:
-            try:
-                cache_module = attempt()
-                get_cache_manager = getattr(cache_module, 'get_cache_manager')
-                PiscesLxCoreConfigManagerFacade = getattr(cache_module, 'PiscesLxCoreConfigManagerFacade')
-                import_success = True
-                break
-            except (ImportError, AttributeError):
-                continue
-        
-        if not import_success:
-            print(f"Warning: Could not import utils.cache module after multiple attempts")
-            
-except Exception as e:
-    print(f"Warning: Error during module imports: {e}")
-
-# Initialize benchmark module
-PiscesL1Benchmark = None
-create_benchmark_config = None
-run_single_benchmark = None
-compare_multiple_models = None
-
-try:
-    if 'setup' not in sys.argv:
-        from .benchmark import PiscesLxToolsBenchmark as PiscesL1Benchmark
-except ImportError as e:
-    print(f"Warning: Could not import benchmark module: {e}")
-
-# Initialize data download module
-PiscesLxToolsDataDatasetDownload = None
-PiscesLxToolsDataSourceRouter = None
-PiscesLxToolsDataDownloadConfig = None
-PiscesLxToolsDataDownloadCache = None
-PiscesLxToolsDataConfigLoader = None
-DatasetItem = None
-
-try:
-    if 'setup' not in sys.argv:
-        from .data.download import (
-            PiscesLxToolsDataDatasetDownload,
-            PiscesLxToolsDataSourceRouter,
-            PiscesLxToolsDataDownloadConfig,
-            PiscesLxToolsDataDownloadCache,
-            PiscesLxToolsDataConfigLoader,
-            DatasetItem
-        )
-except ImportError as e:
-    print(f"Warning: Could not import data.download module: {e}")
-
-# Initialize infer module
-PiscesLxToolsInferOrchestrator = None
-PiscesLxToolsInferRunner = None
-PiscesLxToolsInferConfig = None
-PiscesLxToolsInferImpl = None
-
-try:
-    if 'setup' not in sys.argv:
-        from .infer import (
-            PiscesLxToolsInferOrchestrator,
-            PiscesLxToolsInferRunner,
-            PiscesLxToolsInferConfig,
-            PiscesLxToolsInferImpl
-        )
-except ImportError as e:
-    print(f"Warning: Could not import infer module: {e}")
-
-__all__ = [
-    'read_config',
-    'get_cache_manager', 'PiscesLxCoreConfigManagerFacade',
-    'PiscesL1Benchmark',
-    'PiscesLxToolsDataDatasetDownload', 'PiscesLxToolsDataSourceRouter',
-    'PiscesLxToolsDataDownloadConfig', 'PiscesLxToolsDataDownloadCache',
-    'PiscesLxToolsDataConfigLoader', 'DatasetItem',
-    'PiscesLxToolsInferOrchestrator', 'PiscesLxToolsInferRunner',
-    'PiscesLxToolsInferConfig', 'PiscesLxToolsInferImpl',
-]
+def __getattr__(name):
+    modpath = _LAZY_EXPORTS.get(name)
+    if not modpath:
+        raise AttributeError(f"module 'tools' has no attribute '{name}'")
+    mod = importlib.import_module(modpath)
+    try:
+        return getattr(mod, name)
+    except AttributeError:
+        # Some modules export classes under different names; try best-effort fallbacks
+        raise

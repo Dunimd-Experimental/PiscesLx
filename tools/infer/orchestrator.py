@@ -1,8 +1,3 @@
-try:
-    # optional watermark integration (enabled via env toggles)
-    from utils.watermark.integration import get_watermark_manager_from_env
-except Exception:
-    get_watermark_manager_from_env = lambda: None  # type: ignore
 #!/usr/bin/env python3
 
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
@@ -27,6 +22,12 @@ from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
 from utils import PiscesLxCoreHookBus, PiscesLxCoreDeviceFacade, PiscesLxCoreEnhancedCacheManager
 from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
 from utils import PiscesLxCoreCheckpointManager
+
+try:
+    # optional watermark integration (enabled via env toggles)
+    from utils.watermark.integration import get_watermark_manager_from_env
+except Exception:
+    get_watermark_manager_from_env = lambda: None  # type: ignore
 
 logger = PiscesLxCoreLog("pisceslx.tools.infer.orchestrator")
 
@@ -127,7 +128,7 @@ class PiscesLxToolsInferOrchestrator:
         self.wm_manager = get_watermark_manager_from_env() if 'get_watermark_manager_from_env' in globals() else None
 
         # Emit orchestrator initialization event
-        device_config = self.device_facade.setup_devices(mode="inference") if hasattr(self.device_facade, 'setup_devices') else {}
+        device_config = self.device_facade.setup_devices(mode="auto") if hasattr(self.device_facade, 'setup_devices') else {}
         self.hooks.emit("infer.orchestrator.init",
                        config=self.cfg.dump_effective() if hasattr(self.cfg, 'dump_effective') else {},
                        device_config=device_config,
@@ -142,7 +143,7 @@ class PiscesLxToolsInferOrchestrator:
         # Emit inference start event with enhanced context
         inference_context = {
             "mode": mode,
-            "device_config": self.device_facade.setup_devices(mode="inference") if hasattr(self.device_facade, 'setup_devices') else {},
+            "device_config": self.device_facade.setup_devices(mode="auto") if hasattr(self.device_facade, 'setup_devices') else {},
             "cache_enabled": self.cache_manager is not None,
             "observability_enabled": self.observability is not None,
             "watermark_enabled": bool(getattr(self, 'wm_manager', None)),
@@ -179,24 +180,33 @@ class PiscesLxToolsInferOrchestrator:
         from .runner import PiscesLxToolsInferRunner
         
         # Optimize device configuration for inference
-        device_config = self.device_facade.setup_devices(mode="inference")
+        device_config = self.device_facade.setup_devices(mode="auto")
         if device_config.get('device_type') == 'cpu':
             logger.success("Inference on CPU - performance may be limited")
         
         # Setup intelligent model caching
         cache_hit = False
+        cache_ns = "infer.standard"
         if self.cache_manager:
             model_key = f"infer_model_{self.cfg.get('model.name', 'unknown')}_{hash(str(self.args))}"
-            cached_model = self.cache_manager.get(model_key)
+            try:
+                cache = self.cache_manager.get_default_cache()
+                cached_model = cache.get(cache_ns, model_key)
+            except Exception as _e:
+                cached_model = None
+                logger.debug(f"Enhanced cache get skipped: {_e}")
             if cached_model:
                 cache_hit = True
                 logger.debug(f"Model cache hit: Using cached model configuration")
         
         # Initialize inference performance monitoring
-        if self.observability:
-            inference_baseline = self.observability.collect_system_metrics()
-            self.metrics_registry.set_baseline("infer.baseline", inference_baseline)
-            logger.debug(f"Inference baseline established: GPU memory {inference_baseline.get('gpu_memory_used', 'N/A')}MB")
+        if self.observability and hasattr(self.observability, "_manager") and hasattr(self.observability._manager, "get_system_metrics"):
+            try:
+                inference_baseline = self.observability._manager.get_system_metrics()
+                self.metrics_registry.set_baseline("infer.baseline", inference_baseline)
+                logger.debug("Inference baseline established", gpu_memory_used=inference_baseline.get('gpu_memory_used', 'N/A'))
+            except Exception as _e:
+                logger.debug("Observability baseline skipped", error=str(_e))
         
         # Validate model checkpoint before inference
         model_path = self.cfg.get('infer.model_path') or getattr(self.args, 'model_path', None)
@@ -233,9 +243,12 @@ class PiscesLxToolsInferOrchestrator:
         inference_success = False
         try:
             # Pre-inference optimization
-            if self.observability:
-                pre_inference_metrics = self.observability.collect_system_metrics()
-                self.hooks.emit("infer.pre.optimization", metrics=pre_inference_metrics)
+            if self.observability and hasattr(self.observability, "_manager") and hasattr(self.observability._manager, "get_system_metrics"):
+                try:
+                    pre_inference_metrics = self.observability._manager.get_system_metrics()
+                    self.hooks.emit("infer.pre.optimization", metrics=pre_inference_metrics)
+                except Exception as _e:
+                    logger.debug("Pre-inference observability skipped", error=str(_e))
             
             # Run inference
             if getattr(self, 'wm_manager', None):
@@ -244,9 +257,21 @@ class PiscesLxToolsInferOrchestrator:
             inference_success = True
             
             # Post-inference analysis and caching
-            if self.observability:
-                post_inference_metrics = self.observability.collect_system_metrics()
-                performance_analysis = self.metrics_registry.calculate_delta("infer.baseline", post_inference_metrics)
+            if self.observability and hasattr(self.observability, "_manager") and hasattr(self.observability._manager, "get_system_metrics"):
+                try:
+                    post_inference_metrics = self.observability._manager.get_system_metrics()
+                except Exception as _e:
+                    logger.debug("Post-inference observability skipped", error=str(_e))
+                    post_inference_metrics = {}
+                performance_analysis = {}
+                try:
+                    if hasattr(self.metrics_registry, "calculate_delta"):
+                        performance_analysis = self.metrics_registry.calculate_delta("infer.baseline", post_inference_metrics)
+                    elif isinstance(post_inference_metrics, dict):
+                        # Fallback: provide a minimal structure so downstream .get works
+                        performance_analysis = {"efficiency_score": 0.0}
+                except Exception as _e:
+                    logger.debug("Performance delta skipped", error=str(_e))
                 
                 # Cache model if performance is optimal
                 if self.cache_manager and not cache_hit and performance_analysis.get('efficiency_score', 0) > 0.8:
@@ -257,8 +282,12 @@ class PiscesLxToolsInferOrchestrator:
                         "efficiency_score": performance_analysis.get('efficiency_score', 0),
                         "timestamp": self.config_manager.get_current_timestamp()
                     }
-                    self.cache_manager.set(model_key, model_cache_data, ttl=3600.0)  # 1小时TTL
-                    logger.debug(f"Model configuration cached with efficiency score: {performance_analysis.get('efficiency_score', 0)}")
+                    try:
+                        cache = self.cache_manager.get_default_cache()
+                        cache.set(cache_ns, model_key, model_cache_data, ttl=3600)  # 1小时TTL
+                        logger.debug(f"Model configuration cached with efficiency score: {performance_analysis.get('efficiency_score', 0)}")
+                    except Exception as _e:
+                        logger.debug(f"Enhanced cache set skipped: {_e}")
                 
                 self.hooks.emit("infer.performance.analysis", analysis=performance_analysis)
                 

@@ -25,7 +25,7 @@ from .core import QuantizationConfig, QuantizationMetrics
 from utils.log.core import PiscesLxCoreLog
 from utils.error import PiscesLxCoreValidationError
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Quantization.Advanced")
+logger = PiscesLxCoreLog("PiscesLx.Core.Quantization.Advanced")
 
 
 class SensitivityAnalyzer:

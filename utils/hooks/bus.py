@@ -20,7 +20,7 @@
 import time
 import threading
 from utils.log.core import PiscesLxCoreLog
-logger = PiscesLxCoreLog("PiscesLx.Utils.Hooks.Bus")
+logger = PiscesLxCoreLog("PiscesLx.Core.Hooks.Bus")
 from .types import PiscesLxCoreEventMetrics
 from typing import Any, Dict, Optional, List
 from .executor import PiscesLxCoreHookExecutor

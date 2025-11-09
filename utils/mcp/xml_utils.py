@@ -45,8 +45,8 @@ class PiscesLxCoreMCPXMLParser:
     
     def __init__(self):
         """Initialize the XML parser with predefined patterns."""
-        # Pattern for <agent><an>tool_name</an><ap1>param1</ap1>...</agent>
-        self.agent_pattern = re.compile(r'<agent><an>(.+?)</an>(.*?)</agent>', re.DOTALL)
+        # Pattern for <agentic><an>tool_name</an><ap1>param1</ap1>...</agentic>
+        self.agent_pattern = re.compile(r'<agentic><an>(.+?)</an>(.*?)</agentic>', re.DOTALL)
         # Pattern for individual parameters ap1, ap2, ap3, etc.
         self.param_pattern = re.compile(r'<ap(\d+)>(.+?)</ap\1>', re.DOTALL)
         # Pattern for any XML tags
@@ -54,7 +54,7 @@ class PiscesLxCoreMCPXMLParser:
     
     def extract_agentic_calls(self, text: str) -> List[PiscesLxCoreMCPAgenticCall]:
         """
-        Extract all <agent> tags from text content.
+        Extract all <agentic> tags from text content.
         
         Args:
             text: Text containing agent tags
@@ -88,7 +88,7 @@ class PiscesLxCoreMCPXMLParser:
     
     def remove_agentic_tags(self, text: str, placeholder: str = "") -> str:
         """
-        Remove all <agent> tags from text.
+        Remove all <agentic> tags from text.
         
         Args:
             text: Text containing agent tags
@@ -147,7 +147,7 @@ class PiscesLxCoreMCPXMLParser:
         """
         try:
             # Check for basic XML structure
-            if '<agent>' in text and '</agent>' in text:
+            if '<agentic>' in text and '</agentic>' in text:
                 # Check for tool name
                 if '<an>' not in text or '</an>' not in text:
                     return False, "Missing tool name tag <an>"
@@ -211,7 +211,7 @@ class PiscesLxCoreMCPXMLGenerator:
                 param_parts.append(f'<ap{param_index}>{escaped_value}</ap{param_index}>')
         
         params_xml = ''.join(param_parts)
-        return f'<agent><an>{escaped_tool}</an>{params_xml}</agent>'
+        return f'<agentic><an>{escaped_tool}</an>{params_xml}</agentic>'
     
     def generate_result_xml(self, success: bool, result: Any, error_message: Optional[str] = None) -> str:
         """

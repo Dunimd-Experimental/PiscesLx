@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from typing import Dict, Any, List, Optional
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Observability.Config")
+logger = PiscesLxCoreLog("PiscesLx.Core.Observability.Config")
 
 @dataclass
 class PiscesL1CoreMonitoringConfig:

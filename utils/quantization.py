@@ -17,6 +17,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Quantization helpers for adapting PiscesL1 checkpoints to constrained targets.
+
+This module defines configuration dataclasses, telemetry metrics, and the
+``PiscesLxCoreQuantizer`` controller used to apply multiple quantization
+strategies. It centralizes heuristics for memory-aware configuration search,
+per-method application routines, and benchmarking utilities so that downstream
+tooling can invoke a single surface when preparing edge deployments.
+"""
+
 import os
 import gc
 import json
@@ -34,42 +43,68 @@ from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError, Pisces
 ERROR = "🔴"
 RIGHT = "✅"
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Quantization")
+logger = PiscesLxCoreLog("PiscesLx.Core.Quantization", file_path="logs/PLC/Quantization.log")
 
 class QuantizationMethod(Enum):
-    """Enumeration of available quantization methods."""
-    BITSANDBYTES = "bitsandbytes"  # BitsAndBytes quantization method
-    DYNAMIC = "dynamic"            # Dynamic quantization method
-    STATIC = "static"              # Static quantization method
-    GPTQ = "gptq"                  # GPTQ quantization method
-    AWQ = "awq"                    # AWQ quantization method
-    SQUEEZELLM = "squeezellm"      # SqueezeLLM quantization method
-    KV_CACHE = "kv_cache"          # KV cache quantization method
+    """Enumeration of quantization pipelines supported by PiscesL1 tooling.
+
+    Each enum value corresponds to an implementation that can be invoked by the
+    quantizer. Methods span vendor-provided kernels (BitsAndBytes), native
+    PyTorch routines (dynamic/static), and research-grade approaches (GPTQ,
+    AWQ, SqueezeLLM) to cover diverse latency and accuracy targets. ``KV_CACHE``
+    represents a specialized path for caching key/value tensors.
+    """
+
+    BITSANDBYTES = "bitsandbytes"
+    DYNAMIC = "dynamic"
+    STATIC = "static"
+    GPTQ = "gptq"
+    AWQ = "awq"
+    SQUEEZELLM = "squeezellm"
+    KV_CACHE = "kv_cache"
 
 class QuantizationGranularity(Enum):
-    """Enumeration of quantization granularity levels."""
-    PER_TENSOR = "per_tensor"  # Quantization at the tensor level
-    PER_CHANNEL = "per_channel"  # Quantization at the channel level
-    PER_GROUP = "per_group"    # Quantization at the group level
-    PER_TOKEN = "per_token"    # Quantization at the token level
+    """Enumeration of supported quantization granularities.
+
+    These settings control the scope at which quantization parameters are
+    derived, ranging from coarse tensor-wide scales to per-token adjustments.
+    Selecting tighter granularity typically improves fidelity at the cost of
+    additional metadata and compute.
+    """
+
+    PER_TENSOR = "per_tensor"
+    PER_CHANNEL = "per_channel"
+    PER_GROUP = "per_group"
+    PER_TOKEN = "per_token"
 
 @dataclass
 class QuantizationConfig:
-    """Configuration class for model quantization.
-    
+    """User-configurable knobs for quantization runs.
+
     Attributes:
-        method (QuantizationMethod): The quantization method to use. Defaults to BITSANDBYTES.
-        bits (int): The number of bits to use for quantization. Defaults to 8.
-        granularity (QuantizationGranularity): The granularity level of quantization. Defaults to PER_CHANNEL.
-        group_size (int): The size of each group for group-wise quantization. Defaults to 128.
-        symmetric (bool): Whether to use symmetric quantization. Defaults to True.
-        calibration_dataset (Optional[str]): Path to the calibration dataset. Defaults to None.
-        num_calibration_samples (int): Number of samples to use for calibration. Defaults to 128.
-        enable_kv_cache_quant (bool): Whether to enable KV cache quantization. Defaults to False.
-        kv_cache_bits (int): The number of bits to use for KV cache quantization. Defaults to 8.
-        mixed_precision (bool): Whether to use mixed precision quantization. Defaults to False.
-        sensitive_layers (List[str]): List of layer names that are sensitive to quantization. Defaults to None.
-        preserve_accuracy_layers (List[str]): List of layer names where accuracy should be preserved. Defaults to None.
+        method (QuantizationMethod): Quantization pipeline to execute. Defaults
+            to :attr:`QuantizationMethod.BITSANDBYTES`.
+        bits (int): Bit width for weight quantization. Defaults to 8.
+        granularity (QuantizationGranularity): Level at which quantization
+            scales are computed. Defaults to :attr:`QuantizationGranularity.PER_CHANNEL`.
+        group_size (int): Token group size for group-wise quantization. Defaults
+            to 128.
+        symmetric (bool): Whether to center quantization ranges around zero.
+            Defaults to ``True``.
+        calibration_dataset (Optional[str]): Path to calibration corpus for
+            methods requiring representative data. Defaults to ``None``.
+        num_calibration_samples (int): Number of calibration samples to consume.
+            Defaults to 128.
+        enable_kv_cache_quant (bool): Toggle for KV-cache compression.
+            Defaults to ``False``.
+        kv_cache_bits (int): Bit width applied when KV-cache quantization is
+            active. Defaults to 8.
+        mixed_precision (bool): Whether to enable mixed-precision execution.
+            Defaults to ``False``.
+        sensitive_layers (List[str]): Layer names exempt from aggressive
+            quantization passes. Defaults to an empty list.
+        preserve_accuracy_layers (List[str]): Layers that should favor higher
+            fidelity settings. Defaults to an empty list.
     """
     method: QuantizationMethod = QuantizationMethod.BITSANDBYTES
     bits: int = 8
@@ -93,17 +128,20 @@ class QuantizationConfig:
 
 @dataclass
 class QuantizationMetrics:
-    """Metrics to evaluate the performance and effects of quantization.
-    
+    """Telemetry describing quantization cost and impact.
+
     Attributes:
-        original_size_mb (float): The size of the original model in megabytes. Defaults to 0.0.
-        quantized_size_mb (float): The size of the quantized model in megabytes. Defaults to 0.0.
-        compression_ratio (float): The compression ratio of the model after quantization. Defaults to 1.0.
-        accuracy_drop (float): The drop in model accuracy after quantization. Defaults to 0.0.
-        inference_speedup (float): The speedup of model inference after quantization. Defaults to 1.0.
-        memory_reduction (float): The reduction in memory usage after quantization. Defaults to 1.0.
-        calibration_time_seconds (float): The time taken for calibration in seconds. Defaults to 0.0.
-        quantization_time_seconds (float): The time taken for quantization in seconds. Defaults to 0.0.
+        original_size_mb (float): Checkpoint size prior to quantization.
+        quantized_size_mb (float): Checkpoint size after quantization.
+        compression_ratio (float): Ratio ``original_size_mb / quantized_size_mb``.
+        accuracy_drop (float): Difference in evaluation accuracy relative to the
+            baseline model.
+        inference_speedup (float): Measured speed-up when executing the
+            quantized model.
+        memory_reduction (float): Memory footprint reduction factor.
+        calibration_time_seconds (float): Wall-clock time spent on calibration
+            flows.
+        quantization_time_seconds (float): Duration of the quantization pass.
     """
     original_size_mb: float = 0.0
     quantized_size_mb: float = 0.0
@@ -115,15 +153,23 @@ class QuantizationMetrics:
     quantization_time_seconds: float = 0.0
 
 class PiscesLxCoreQuantizer:
-    """A class providing advanced quantization utilities with support for multiple quantization methods."""
+    """Quantization controller that orchestrates model compression workflows.
+
+    The quantizer exposes a unified interface for applying multiple
+    quantization backends, capturing telemetry, and persisting compressed
+    checkpoints. It also provides helper routines for calibration dataset
+    preparation, sensitivity analysis, and runtime benchmarking so pipeline
+    callers can compose end-to-end flows through a single object.
+    """
 
     def __init__(self, device_manager: Optional[Any] = None):
-        """
-        Initialize the quantizer with an optional device manager.
+        """Initialize the quantizer and bind optional device management services.
 
         Args:
-            device_manager (Optional[Any]): Device manager for handling device operations. 
-                If None, a new instance of PiscesLxCoreDeviceManager will be created.
+            device_manager (Optional[Any]): Device manager used to provision
+                hardware resources during calibration and benchmarking. When
+                omitted, a ``PiscesLxCoreDeviceManager`` instance is created on
+                demand.
         """
         if device_manager is None:
             from utils.device.manager import PiscesLxCoreDeviceManager
@@ -1128,31 +1174,35 @@ class PiscesLxCoreQuantizer:
         target_accuracy: Optional[float] = None,
         device_constraints: Optional[Dict[str, Any]] = None
     ) -> QuantizationConfig:
-        """
-        Get the optimal quantization configuration based on memory constraints, accuracy requirements, and device constraints.
+        """Derive a quantization configuration satisfying device constraints.
 
         Args:
-            model_config (ArcticConfig): The configuration of the model.
-            target_memory_mb (Optional[float]): Target memory usage in megabytes. Defaults to None.
-            target_accuracy (Optional[float]): Target accuracy for the quantized model. Defaults to None.
-            device_constraints (Optional[Dict[str, Any]]): Device constraints, such as device type and memory. Defaults to None.
+            model_config (Any): Model configuration object supplying layer sizes
+                for memory estimation.
+            target_memory_mb (Optional[float]): Maximum allowable checkpoint
+                memory in megabytes. Defaults to ``None`` for unconstrained.
+            target_accuracy (Optional[float]): Desired post-quantization
+                accuracy target. Currently used for logging only. Defaults to ``None``.
+            device_constraints (Optional[Dict[str, Any]]): Hardware descriptors
+                such as device type or available memory. Defaults to ``None``.
 
         Returns:
-            QuantizationConfig: The optimal quantization configuration.
+            QuantizationConfig: Configuration adjusted to honor the supplied
+            constraints when possible.
         """
         try:
             logger.info("finding optimal quantization config", event="quant.optimize.start", target_memory_mb=target_memory_mb, target_accuracy=target_accuracy)
         except Exception as log_e:
             logger.debug("QUANTIZATION_LOG_ERROR", error=str(log_e))
         
-        # Initialize with default configuration
+        # Start from the default configuration before applying constraints.
         optimal_config = QuantizationConfig()
         
-        # Optimize configuration based on memory constraints
+        # Adjust bit width to satisfy memory targets when provided.
         if target_memory_mb:
             estimated_memory = self.estimate_memory_usage(model_config, optimal_config)
             if estimated_memory["total_memory_mb"] > target_memory_mb:
-                # Try lower bit widths to reduce memory usage
+                # Iterate through lower bit widths from most to least precise.
                 for bits in [4, 2]:
                     test_config = QuantizationConfig(bits=bits)
                     estimated = self.estimate_memory_usage(model_config, test_config)
@@ -1160,7 +1210,7 @@ class PiscesLxCoreQuantizer:
                         optimal_config.bits = bits
                         break
         
-        # Optimize configuration based on device constraints
+        # Enforce device-specific limitations such as CPU execution or low memory.
         if device_constraints:
             if device_constraints.get("type") == "cpu":
                 optimal_config.method = QuantizationMethod.DYNAMIC

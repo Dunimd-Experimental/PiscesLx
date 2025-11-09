@@ -27,7 +27,7 @@ from datetime import datetime
 from typing import Dict, List, Any, Optional, Callable, Union
 from pathlib import Path
 
-from .types import (
+from utils.mcp.types import (
     PiscesLxCoreMCPToolMetadata,
     PiscesLxCoreMCPModuleStats,
     PiscesLxCoreMCPModuleStatus,
@@ -83,7 +83,7 @@ class PiscesLxCoreMCPTools:
         Returns:
             Configured logger instance
         """
-        logger = PiscesLxCoreLog("PiscesLx.Utils.MCP.Tools")
+        logger = PiscesLxCoreLog("PiscesLx.Core.MCP.Tools")
         return logger
     
     def _initialize_discovery_paths(self):

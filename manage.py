@@ -126,8 +126,10 @@ def main():
         from tools.help import help
         help()
     elif args.command == 'train':
+        print("[manage] train branch enter")
         from tools.train.orchestrator import PiscesLxToolsTrainOrchestrator
         orchestrator = PiscesLxToolsTrainOrchestrator(args)
+        print("[manage] orchestrator created")
         orchestrator.run(args)
     elif args.command == 'infer':
         from tools.infer.orchestrator import PiscesLxToolsInferOrchestrator

@@ -268,6 +268,10 @@ def validate_infer_args(args: Any) -> Any:
     # Set default spec_gamma if not provided
     if not hasattr(args, 'spec_gamma'):
         setattr(args, 'spec_gamma', 4)
+
+    # Ensure a minimum number of new tokens are generated unless EOS encountered
+    if not hasattr(args, 'min_new_tokens'):
+        setattr(args, 'min_new_tokens', 16)
     
     # Set default force_lora flag if not provided
     if not hasattr(args, 'force_lora'):
@@ -288,6 +292,22 @@ def validate_infer_args(args: Any) -> Any:
     # Set default lora_bias if not provided
     if not hasattr(args, 'lora_bias'):
         setattr(args, 'lora_bias', "none")
+
+    # Inference-time MoE balancing knobs (borrowed from training ideas)
+    if not hasattr(args, 'routing_temp'):
+        setattr(args, 'routing_temp', None)  # float or None; when set, overrides gate.temperature
+    if not hasattr(args, 'moe_top_k_override'):
+        setattr(args, 'moe_top_k_override', None)  # int or None; when set, overrides gate.top_k
+
+    # Adaptive MoE runtime adjuster (optional)
+    if not hasattr(args, 'adaptive_moe'):
+        setattr(args, 'adaptive_moe', False)
+    if not hasattr(args, 'adaptive_moe_temp_step'):
+        setattr(args, 'adaptive_moe_temp_step', 0.03)
+    if not hasattr(args, 'adaptive_moe_interval'):
+        setattr(args, 'adaptive_moe_interval', 16)
+    if not hasattr(args, 'adaptive_moe_temp_cap'):
+        setattr(args, 'adaptive_moe_temp_cap', 1.30)
 
     # Validate temperature value
     try:
@@ -463,7 +483,6 @@ def _infer_impl(args: Any) -> None:
     from model.tokenizer import get_tokenizer
     from model import ArcticModel, ArcticConfig
     from transformers import BitsAndBytesConfig
-    from torchvision.transforms import functional as TF
     import torch.nn.functional as F
     import asyncio
     # Start the profiler if available
@@ -481,19 +500,33 @@ def _infer_impl(args: Any) -> None:
     logger.success("Starting PiscesL1 Inference with MCP Integration...")
     _emit('on_infer_start', args=args)
     
-    # 初始化MCP集成
+    # Initialize MCP integration (optional, only if module exists and enabled)
     try:
-        from .agentic.integration import initialize_mcp_for_inference
-        mcp_initialized = asyncio.run(initialize_mcp_for_inference())
-        if mcp_initialized:
-            logger.success("MCP集成初始化成功")
+        import importlib.util as _importlib_util
+        mcp_enabled = bool(getattr(args, 'mcp_enable', True))
+        if mcp_enabled and _importlib_util.find_spec("tools.infer.agentic.integration") is not None:
+            from tools.infer.agentic.integration import initialize_mcp_for_inference  # type: ignore
+            mcp_initialized = asyncio.run(initialize_mcp_for_inference())
+            if mcp_initialized:
+                logger.success("MCP集成初始化成功")
+            else:
+                logger.warning("MCP集成初始化失败，继续推理流程")
         else:
-            logger.warning("MCP集成初始化失败，继续推理流程")
+            # Skip MCP init silently if module not found or disabled
+            pass
     except Exception as e:
-        logger.warning(f"MCP集成初始化异常: {e}，继续推理流程")
+        logger.debug("MCP init skipped", error=str(e))
     # Load model configuration and inference settings
     model_size = getattr(args, "model_size", "0.5B").upper()
-    config_path = f"configs/{model_size}.json"
+    # Resolve config file path (support both new and legacy locations)
+    _candidates = [
+        f"configs/model/{model_size}.json",
+        f"configs/{model_size}.json",
+    ]
+    config_path = next((p for p in _candidates if os.path.exists(p)), None)
+    if not config_path:
+        logger.error(f"Config file not found for model_size={model_size}. Tried: {_candidates}")
+        raise FileNotFoundError(f"Config file not found. Tried: {_candidates}")
     cfg = ArcticConfig.from_json(config_path)
     import json as _json
     with open(config_path, 'r', encoding='utf-8') as _f:
@@ -594,7 +627,47 @@ def _infer_impl(args: Any) -> None:
         elif not lora_used:
             # Load standard model weights if no LoRA is used
             model.load_state_dict(state_dict, strict=False)
-    
+
+    # Auto-enable MoE balancing (Option B) when not explicitly provided via CLI
+    try:
+        if getattr(args, 'routing_temp', None) is None:
+            args.routing_temp = 1.12  # sensible default start
+        if not getattr(args, 'adaptive_moe', False):
+            args.adaptive_moe = True
+            if not hasattr(args, 'adaptive_moe_temp_step'):
+                args.adaptive_moe_temp_step = 0.03
+            if not hasattr(args, 'adaptive_moe_interval'):
+                args.adaptive_moe_interval = 16
+            if not hasattr(args, 'adaptive_moe_temp_cap'):
+                args.adaptive_moe_temp_cap = 1.30
+    except Exception:
+        pass
+
+    # Apply inference-time MoE runtime overrides before switching to eval
+    try:
+        def _apply_moe_overrides(_model, routing_temp=None, top_k=None):
+            for m in _model.modules():
+                # Override routing temperature if gate exposes a tensor buffer 'temperature'
+                if routing_temp is not None and hasattr(m, 'temperature'):
+                    try:
+                        # Handle tensor buffer or float attribute
+                        t = float(routing_temp)
+                        if isinstance(m.temperature, torch.Tensor):
+                            m.temperature.fill_(t)
+                        else:
+                            setattr(m, 'temperature', t)
+                    except Exception:
+                        pass
+                # Optionally override top-k for gates exposing 'top_k'
+                if top_k is not None and hasattr(m, 'top_k'):
+                    try:
+                        setattr(m, 'top_k', int(top_k))
+                    except Exception:
+                        pass
+        _apply_moe_overrides(model, routing_temp=args.routing_temp, top_k=args.moe_top_k_override)
+    except Exception as _e:
+        logger.debug(f"MoE override skipped: {_e}")
+
     # Set model to evaluation mode
     model.eval()
     
@@ -610,10 +683,19 @@ def _infer_impl(args: Any) -> None:
     if hasattr(args, 'image') and args.image:
         try:
             image = Image.open(args.image).convert('RGB')
-            image_tensor = TF.to_tensor(image).unsqueeze(0).to(device)
+            try:
+                # Try torchvision if available
+                from torchvision.transforms import functional as TF  # type: ignore
+                image_tensor = TF.to_tensor(image).unsqueeze(0).to(device)
+            except Exception:
+                # Fallback: pure PIL + torch without torchvision
+                import numpy as _np  # type: ignore
+                _arr = _np.asarray(image, dtype=_np.float32) / 255.0  # HWC, [0,1]
+                import torch as _t
+                image_tensor = _t.from_numpy(_arr).permute(2, 0, 1).unsqueeze(0).to(device)
             # Process image through vision encoder if available
             if hasattr(model, 'vision_encoder'):
-                image_features = model.vision_encoder(image_tensor)
+                _ = model.vision_encoder(image_tensor)
                 prompt = f"<image>{prompt}"
             else:
                 logger.warning("Model does not have vision encoder, treating as text-only input")
@@ -668,7 +750,16 @@ def _infer_impl(args: Any) -> None:
             'do_sample': True,
             'pad_token_id': tokenizer.pad_token_id or tokenizer.eos_token_id,
             'eos_token_id': tokenizer.eos_token_id,
+            'min_new_tokens': max(0, int(getattr(args, 'min_new_tokens', 16))),
         }
+        # Optional: enable adaptive MoE runtime adjustment during generation
+        if getattr(args, 'adaptive_moe', False):
+            generation_config['adaptive_moe'] = {
+                'enabled': True,
+                'temp_step': float(getattr(args, 'adaptive_moe_temp_step', 0.03)),
+                'interval': int(getattr(args, 'adaptive_moe_interval', 16)),
+                'temp_cap': float(getattr(args, 'adaptive_moe_temp_cap', 1.30)),
+            }
         
         # Add stop sequences if provided
         if args.stop:
@@ -688,14 +779,27 @@ def _infer_impl(args: Any) -> None:
             else:
                 # Standard generation
                 outputs = model.generate(input_ids, **generation_config)
-                output_ids = outputs[0] if outputs.dim() > 1 else outputs
+                if isinstance(outputs, tuple):
+                    output_ids = outputs[0]
+                else:
+                    output_ids = outputs[0] if outputs.dim() > 1 else outputs
             
-            # Decode output
-            generated_text = tokenizer.decode(output_ids, skip_special_tokens=True)
-            
-            # Remove input prompt from output if present
-            if generated_text.startswith(prompt):
-                generated_text = generated_text[len(prompt):].strip()
+            # Decode only newly generated tokens beyond the prompt length
+            try:
+                in_len = input_ids.shape[1] if hasattr(input_ids, 'shape') and len(input_ids.shape) == 2 else input_ids.shape[-1]
+                if hasattr(output_ids, 'dim') and output_ids.dim() > 1:
+                    new_ids = output_ids[:, in_len:]
+                else:
+                    # 1D tensor path
+                    new_ids = output_ids[in_len:]
+                if new_ids.numel() > 0:
+                    generated_text = tokenizer.decode(new_ids, skip_special_tokens=True)
+                else:
+                    # Fallback: decode full output (may include prompt)
+                    generated_text = tokenizer.decode(output_ids, skip_special_tokens=True)
+            except Exception:
+                # Conservative fallback
+                generated_text = tokenizer.decode(output_ids, skip_special_tokens=True)
             
             # Apply watermark
             try:

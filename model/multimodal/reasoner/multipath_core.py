@@ -17,22 +17,29 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Core multi-path reasoning engine used by Arctic multimodal agents.
+
+The module defines :class:`ArcticMultiPathReasoningEngine`, a composite
+reasoner that orchestrates transformer abstraction layers, multi-path
+attention, fact verification, and meta-cognitive feedback to generate
+chain-of-thought logits and diagnostic signals.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Any, Dict
 
 class ArcticMultiPathReasoningEngine(nn.Module):
-    """
-    A PyTorch module implementing the Arctic Multi-Path Reasoning Engine.
-    This engine is designed to perform multi-modal reasoning with dynamic path selection and abstraction.
-    """
+    """Execute multi-path chain-of-thought reasoning with adaptive abstraction."""
+
     def __init__(self, cfg):
-        """
-        Initialize the ArcticMultiPathReasoningEngine.
+        """Configure the multi-path reasoning engine.
 
         Args:
-            cfg: Configuration object containing necessary parameters like hidden_size, vocab_size, etc.
+            cfg: Configuration namespace providing ``hidden_size``, ``vocab_size``,
+                ``n_head``, and optional toggles such as
+                ``enable_dynamic_fusion``.
         """
         super().__init__()
         self.cfg = cfg
@@ -40,7 +47,7 @@ class ArcticMultiPathReasoningEngine(nn.Module):
         self.vocab_size = cfg.vocab_size
         self.reasoning_heads = 8
 
-        # Transformer encoder layers for abstraction
+        # Transformer encoder layers applied during abstraction passes.
         self.abstraction_layers = nn.ModuleList([
             nn.TransformerEncoderLayer(
                 d_model=self.hidden_size,
@@ -51,7 +58,7 @@ class ArcticMultiPathReasoningEngine(nn.Module):
             ) for _ in range(3)
         ])
 
-        # Controller to determine reasoning depth
+        # Controller to estimate reasoning depth before multi-path routing.
         self.depth_controller = nn.Sequential(
             nn.Linear(self.hidden_size, self.hidden_size // 4),
             nn.ReLU(),
@@ -60,7 +67,7 @@ class ArcticMultiPathReasoningEngine(nn.Module):
             nn.Sigmoid()
         )
 
-        # Multi-head attention for multi-path reasoning
+        # Multi-head attention block producing candidate reasoning paths.
         self.multi_path_attention = nn.MultiheadAttention(
             embed_dim=self.hidden_size,
             num_heads=self.reasoning_heads,
@@ -68,7 +75,7 @@ class ArcticMultiPathReasoningEngine(nn.Module):
             batch_first=True
         )
 
-        # Controller for pruning reasoning paths
+        # Controller estimating importance weights for path pruning.
         self.path_pruning_controller = nn.Sequential(
             nn.Linear(self.hidden_size, self.hidden_size // 2),
             nn.ReLU(),
@@ -77,7 +84,7 @@ class ArcticMultiPathReasoningEngine(nn.Module):
             nn.Sigmoid()
         )
 
-        # Components for chunked attention with LSH
+        # Components supporting chunked attention accelerated by LSH hashing.
         self.chunked_attention = nn.ModuleDict({
             'lsh_proj': nn.Linear(self.hidden_size, self.hidden_size // 4),
             'chunk_q': nn.Linear(self.hidden_size, self.hidden_size),
@@ -87,13 +94,13 @@ class ArcticMultiPathReasoningEngine(nn.Module):
             'layer_norm': nn.LayerNorm(self.hidden_size)
         })
 
-        # Linear attention module
+        # Linear attention fallback when chunked attention is not available.
         self.linear_attention = nn.Sequential(
             nn.Linear(self.hidden_size, self.hidden_size),
             nn.LayerNorm(self.hidden_size)
         )
 
-        # Module to verify the facts
+        # Module to estimate fact verification confidence.
         self.fact_verifier = nn.Sequential(
             nn.Linear(self.hidden_size * 2, self.hidden_size),
             nn.ReLU(),
@@ -102,7 +109,7 @@ class ArcticMultiPathReasoningEngine(nn.Module):
             nn.Sigmoid()
         )
 
-        # Meta-cognitive module using GRU
+        # Meta-cognitive GRU capturing temporal reasoning feedback.
         self.meta_cognitive = nn.GRU(
             input_size=self.hidden_size,
             hidden_size=self.hidden_size,
@@ -111,7 +118,7 @@ class ArcticMultiPathReasoningEngine(nn.Module):
             dropout=0.1
         )
 
-        # Head to estimate uncertainty
+        # Head estimating per-sample uncertainty. 
         self.uncertainty_head = nn.Sequential(
             nn.Linear(self.hidden_size, self.hidden_size // 2),
             nn.ReLU(),
@@ -119,7 +126,7 @@ class ArcticMultiPathReasoningEngine(nn.Module):
             nn.Sigmoid()
         )
 
-        # Different reasoning streams
+        # Reasoning streams emitting hypotheses, evidence, conclusions, and reflections.
         self.reasoning_streams = nn.ModuleDict({
             'hypothesis': nn.Linear(self.hidden_size, self.vocab_size),
             'evidence': nn.Linear(self.hidden_size, self.vocab_size),
@@ -127,10 +134,10 @@ class ArcticMultiPathReasoningEngine(nn.Module):
             'reflection': nn.Linear(self.hidden_size, 3)
         })
 
-        # Final thinking head
+        # Final thinking head for collapsed reasoning output.
         self.thinking_head = nn.Linear(self.hidden_size, self.vocab_size)
 
-        # Tokens for reasoning process
+        # Token identifiers demarcating reasoning segments; populated lazily.
         self.reasoning_tokens = {
             'start_hypothesis': None,
             'start_evidence': None,
@@ -140,12 +147,11 @@ class ArcticMultiPathReasoningEngine(nn.Module):
         }
 
     def initialize_reasoning_tokens(self, tokenizer):
-        """
-        Initialize reasoning tokens using the provided tokenizer.
-        If tokenizer fails or is None, set default reasoning tokens.
+        """Populate reasoning token identifiers using an external tokenizer.
 
         Args:
-            tokenizer: Tokenizer object with convert_tokens_to_ids method.
+            tokenizer: Tokenizer exposing ``convert_tokens_to_ids``. If ``None``
+                or misconfigured, fallback defaults are applied.
         """
         if tokenizer is not None:
             try:
@@ -162,9 +168,7 @@ class ArcticMultiPathReasoningEngine(nn.Module):
             self._set_default_reasoning_tokens()
 
     def _set_default_reasoning_tokens(self):
-        """
-        Set default reasoning tokens based on the vocabulary size.
-        """
+        """Assign deterministic reasoning tokens using tail indices of the vocabulary."""
         self.reasoning_tokens = {
             'start_hypothesis': self.vocab_size - 5,
             'start_evidence': self.vocab_size - 4,
@@ -174,11 +178,10 @@ class ArcticMultiPathReasoningEngine(nn.Module):
         }
 
     def resize_vocab(self, new_vocab_size):
-        """
-        Resize the vocabulary size and update the thinking head accordingly.
+        """Resize vocabulary-dependent heads while preserving existing weights.
 
         Args:
-            new_vocab_size (int): The new vocabulary size.
+            new_vocab_size (int): Target vocabulary cardinality.
         """
         old_head = self.thinking_head
         new_head = nn.Linear(self.hidden_size, new_vocab_size, bias=False, device=old_head.weight.device, dtype=old_head.weight.dtype)
@@ -189,28 +192,28 @@ class ArcticMultiPathReasoningEngine(nn.Module):
 
     async def analyze_tool_selection(self, tool_name: str, arguments: Dict[str, Any], 
                                      available_tools: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze and optimize tool selection using 8-path reasoning.
-        
+        """Assess tool invocation by running eight-path reasoning heuristics.
+
         Args:
-            tool_name (str): The name of the tool to analyze.
-            arguments (Dict[str, Any]): The arguments for the tool.
-            available_tools (Dict[str, Any]): Dictionary of available tools.
-            
+            tool_name (str): Candidate tool identifier.
+            arguments (Dict[str, Any]): Argument payload destined for the tool.
+            available_tools (Dict[str, Any]): Registry declaring tool metadata.
+
         Returns:
-            Dict[str, Any]: Analysis results including optimization recommendations.
+            Dict[str, Any]: Recommendation payload with optimization directives.
         """
-        # 创建工具特征向量
+        # Construct a feature vector summarizing the tool invocation profile.
         tool_features = self._encode_tool_features(tool_name, arguments, available_tools)
         
-        # 通过8路径推理引擎处理
+        # Execute reasoning without gradient tracking to save memory.
         with torch.no_grad():
             reasoning_output = self.forward(tool_features.unsqueeze(0))
             
-        # 提取推理结果
+        # Derive an optimization score from the uncertainty head.
         optimization_score = reasoning_output.get("uncertainty_scores", torch.tensor([0.5]))[0].item()
         
-        # 基于推理结果决定是否优化
-        should_optimize = optimization_score > 0.3  # 不确定性较高时进行优化
+        # Decide whether to optimize when uncertainty exceeds the threshold.
+        should_optimize = optimization_score > 0.3
         
         return {
             "should_optimize": should_optimize,
@@ -221,29 +224,29 @@ class ArcticMultiPathReasoningEngine(nn.Module):
     
     async def analyze_execution_mode(self, tool_name: str, arguments: Dict[str, Any], 
                                    available_tools: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze and determine optimal execution mode (native vs external).
-        
+        """Recommend native or external execution mode for a tool invocation.
+
         Args:
-            tool_name (str): The name of the tool to analyze.
-            arguments (Dict[str, Any]): The arguments for the tool.
-            available_tools (Dict[str, Any]): Dictionary of available tools.
-            
+            tool_name (str): Candidate tool identifier.
+            arguments (Dict[str, Any]): Arguments that will be supplied to the tool.
+            available_tools (Dict[str, Any]): Metadata registry describing tools.
+
         Returns:
-            Dict[str, Any]: Analysis results including recommended execution mode.
+            Dict[str, Any]: Recommendation payload with mode, rationale, and confidence.
         """
-        # 检查工具是否支持原生执行
+        # Determine whether a native handler is available for the tool.
         tool_info = available_tools.get(tool_name, {})
         has_native_handler = tool_info.get("has_native_handler", False)
         
-        # 简单工具优先原生执行
-        if has_native_handler and len(arguments) < 5:  # 参数较少的简单工具
+        # Favor native execution for simple tools with limited arguments.
+        if has_native_handler and len(arguments) < 5:
             return {
                 "recommended_mode": "native",
                 "reason": "Simple tool with native handler available",
                 "confidence": 0.9
             }
         
-        # 复杂工具或需要外部资源的工具使用外部执行
+        # Prefer external execution for tools requiring network resources.
         if "fetch" in tool_name.lower() or "search" in tool_name.lower():
             return {
                 "recommended_mode": "external",
@@ -251,7 +254,7 @@ class ArcticMultiPathReasoningEngine(nn.Module):
                 "confidence": 0.8
             }
         
-        # 默认推荐原生执行（如果可用）
+        # Default to native execution whenever a handler exists.
         return {
             "recommended_mode": "native" if has_native_handler else "external",
             "reason": "Default recommendation based on availability",
@@ -260,40 +263,40 @@ class ArcticMultiPathReasoningEngine(nn.Module):
     
     def _encode_tool_features(self, tool_name: str, arguments: Dict[str, Any], 
                             available_tools: Dict[str, Any]) -> torch.Tensor:
-        """Encode tool characteristics into feature vectors."""
-        # 简化的特征编码（实际实现会更复杂）
+        """Encode tool metadata into a compact feature vector."""
+        # Lightweight feature encoding; real systems may substitute richer descriptors.
         tool_info = available_tools.get(tool_name, {})
         
-        # 基础特征：工具复杂度、参数数量、是否有原生处理器
+        # Core features: declared complexity, argument volume, native availability.
         complexity = len(tool_info.get("parameters", {}))
         param_count = len(arguments)
         has_native = float(tool_info.get("has_native_handler", False))
         
-        # 创建特征张量
+        # Assemble normalized feature tensor capturing request traits.
         features = torch.tensor([
-            complexity / 10.0,  # 归一化复杂度
-            param_count / 10.0,  # 归一化参数数量
-            has_native,  # 是否有原生处理器
-            1.0 if "search" in tool_name.lower() else 0.0,  # 搜索相关
-            1.0 if "fetch" in tool_name.lower() else 0.0,  # 获取相关
-            0.5,  # 预留特征
-            0.3,  # 预留特征
-            0.1   # 预留特征
+            complexity / 10.0,
+            param_count / 10.0,
+            has_native,
+            1.0 if "search" in tool_name.lower() else 0.0,
+            1.0 if "fetch" in tool_name.lower() else 0.0,
+            0.5,
+            0.3,
+            0.1
         ], dtype=torch.float32)
         
         return features
     
     def _generate_optimized_params(self, original_params: Dict[str, Any]) -> Dict[str, Any]:
-        """Generate optimized parameters based on reasoning."""
+        """Derive parameter adjustments based on reasoning heuristics."""
         optimized = original_params.copy()
         
-        # 简单的参数优化示例
+        # Increase timeout mildly when capped and numeric.
         if "timeout" in optimized and isinstance(optimized["timeout"], (int, float)):
-            optimized["timeout"] = min(optimized["timeout"] * 1.2, 30.0)  # 增加超时时间
+            optimized["timeout"] = min(optimized["timeout"] * 1.2, 30.0)
         
         if "limit" in optimized and isinstance(optimized["limit"], int):
-            optimized["limit"] = min(optimized["limit"] + 10, 100)  # 增加结果限制
-        
+            optimized["limit"] = min(optimized["limit"] + 10, 100)
+
         return optimized
 
     def forward(self, hidden_states, input_ids=None, labels=None):

@@ -17,17 +17,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Heavy-Hitter Oracle (H2O) attention blocks for ultra-long context processing."""
+
 import math
+from typing import Optional, Tuple
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple
+
 
 class ArcticH2OAttention(nn.Module):
-    """
-    Module implementing the H2O attention mechanism for processing ultra-long sequences.
-    This mechanism selectively retains important tokens (heavy-hitters) and compresses less important ones.
-    """
+    """Implement H2O attention with heavy-hitter retention and streaming support."""
     
     def __init__(
         self,
@@ -39,17 +40,16 @@ class ArcticH2OAttention(nn.Module):
         streaming_window: int = 16384,
         dropout: float = 0.1
     ):
-        """
-        Initialize the ArcticH2OAttention module.
+        """Initialize projection layers and H2O routing thresholds.
 
         Args:
-            hidden_size (int): Dimensionality of the input hidden states.
-            num_attention_heads (int): Number of attention heads.
-            max_position_embeddings (int, optional): Maximum number of position embeddings. Defaults to 10485760.
-            compression_ratio (int, optional): Compression ratio for state compression. Defaults to 8.
-            heavy_hitter_ratio (float, optional): Ratio of heavy-hitter tokens. Defaults to 0.1.
-            streaming_window (int, optional): Size of the streaming window. Defaults to 16384.
-            dropout (float, optional): Dropout probability. Defaults to 0.1.
+            hidden_size (int): Model hidden dimensionality.
+            num_attention_heads (int): Number of attention heads for the block.
+            max_position_embeddings (int): Upper bound for absolute positional bias generation.
+            compression_ratio (int): Baseline ratio used when compressing long sequences.
+            heavy_hitter_ratio (float): Fraction of tokens considered heavy hitters per step.
+            streaming_window (int): Window size preserved verbatim during streaming mode.
+            dropout (float): Dropout probability applied to attention outputs.
         """
         super().__init__()
         self.hidden_size = hidden_size
@@ -76,19 +76,18 @@ class ArcticH2OAttention(nn.Module):
         self.heavy_hitter_threshold = None
         
     def _create_position_bias(self, seq_len: int, device: torch.device) -> torch.Tensor:
-        """
-        Create a position bias tensor for attention scores in a memory-efficient manner.
+        """Return exponential decay position bias promoting locality.
 
         Args:
-            seq_len (int): Length of the sequence.
-            device (torch.device): Device to place the tensors on.
+            seq_len (int): Current sequence length.
+            device (torch.device): Device used to allocate the bias tensor.
 
         Returns:
-            torch.Tensor: Position bias tensor.
+            torch.Tensor: Position bias tensor shaped ``[seq_len, seq_len]``.
         """
-        # Generate position indices
+        # Generate position indices.
         positions = torch.arange(seq_len, device=device).unsqueeze(0)
-        # Compute the position bias
+        # Compute the position bias with exponential decay.
         bias = torch.exp(-torch.abs(positions - positions.T) / 1000.0)
         return bias
         
@@ -97,15 +96,14 @@ class ArcticH2OAttention(nn.Module):
         attention_scores: torch.Tensor,
         seq_len: int
     ) -> torch.Tensor:
-        """
-        Identify the indices of heavy-hitter tokens based on attention scores.
+        """Select token indices with highest combined importance scores.
 
         Args:
-            attention_scores (torch.Tensor): Attention score matrix with shape [batch, heads, seq_len, seq_len].
-            seq_len (int): Length of the sequence.
+            attention_scores (torch.Tensor): Attention weights shaped ``[B, H, T, T]``.
+            seq_len (int): Sequence length used for determining heavy-hitter count.
 
         Returns:
-            torch.Tensor: Indices of heavy-hitter tokens with shape [batch, max_heavy_hitters].
+            torch.Tensor: Heavy-hitter indices shaped ``[B, max_heavy_hitters]``.
         """
         batch_size, num_heads, _, _ = attention_scores.shape
         
@@ -150,15 +148,14 @@ class ArcticH2OAttention(nn.Module):
         states: torch.Tensor,
         compression_ratio: int = None
     ) -> torch.Tensor:
-        """
-        Compress states using attention-weighted pooling and importance-based retention.
+        """Compress key/value states using adaptive importance-weighted pooling.
 
         Args:
-            states (torch.Tensor): States to compress with shape [batch, heads, seq_len, head_dim].
-            compression_ratio (int, optional): Compression ratio. Defaults to self.compression_ratio.
+            states (torch.Tensor): Input tensor shaped ``[B, H, T, D]``.
+            compression_ratio (int, optional): Override for baseline compression ratio.
 
         Returns:
-            torch.Tensor: Compressed states with preserved semantic information.
+            torch.Tensor: Compressed states preserving salient information.
         """
         batch_size, num_heads, seq_len, head_dim = states.shape
         device = states.device
@@ -207,15 +204,14 @@ class ArcticH2OAttention(nn.Module):
         return compressed_states
         
     def _calculate_importance_scores(self, key_states: torch.Tensor, value_states: torch.Tensor) -> torch.Tensor:
-        """
-        Calculate importance scores for key-value cache management.
+        """Compute per-token importance for KV cache eviction policies.
 
         Args:
-            key_states (torch.Tensor): Key states with shape [batch, heads, seq_len, head_dim].
-            value_states (torch.Tensor): Value states with shape [batch, heads, seq_len, head_dim].
+            key_states (torch.Tensor): Key tensor shaped ``[B, H, T, D]``.
+            value_states (torch.Tensor): Value tensor shaped ``[B, H, T, D]``.
 
         Returns:
-            torch.Tensor: Importance scores with shape [batch, heads, seq_len].
+            torch.Tensor: Normalized importance scores shaped ``[B, H, T]``.
         """
         batch_size, num_heads, seq_len, head_dim = key_states.shape
         
@@ -247,22 +243,18 @@ class ArcticH2OAttention(nn.Module):
         max_cache_size: int,
         cache_manager=None
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """
-        Select important key-value pairs for the cache based on importance scores.
+        """Retain high-importance KV entries under cache budget constraints.
 
         Args:
-            key_states (torch.Tensor): Key states with shape [batch, heads, seq_len, head_dim].
-            value_states (torch.Tensor): Value states with shape [batch, heads, seq_len, head_dim].
-            importance_scores (torch.Tensor): Importance scores with shape [batch, heads, seq_len].
-            current_pos (int): Current position in the sequence.
-            max_cache_size (int): Maximum size of the cache.
-            cache_manager: Optional cache manager object.
+            key_states (torch.Tensor): Key tensor shaped ``[B, H, T, D]``.
+            value_states (torch.Tensor): Value tensor shaped ``[B, H, T, D]``.
+            importance_scores (torch.Tensor): Importance weights shaped ``[B, H, T]``.
+            current_pos (int): Current decoding position.
+            max_cache_size (int): Maximum retained KV entries per head.
+            cache_manager (Optional[Any]): Optional cache manager implementing get/set hooks.
 
         Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: 
-                selected_keys: Selected key states.
-                selected_values: Selected value states.
-                pos: Positions of the selected states.
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Selected keys, values, and their positions.
         """
         batch_size, num_heads, seq_len, head_dim = key_states.shape
 
@@ -382,18 +374,17 @@ class ArcticH2OAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         cache_manager=None
     ) -> torch.Tensor:
-        """
-        Perform streaming attention with H2O compression and sliding window cache.
+        """Execute streaming attention using sliding windows and H2O compression.
 
         Args:
-            query_states (torch.Tensor): Query states with shape [batch, heads, seq_len, head_dim].
-            key_states (torch.Tensor): Key states with shape [batch, heads, seq_len, head_dim].
-            value_states (torch.Tensor): Value states with shape [batch, heads, seq_len, head_dim].
-            attention_mask (torch.Tensor, optional): Optional attention mask.
-            cache_manager: Optional cache manager object.
+            query_states (torch.Tensor): Query tensor shaped ``[B, H, T, D]``.
+            key_states (torch.Tensor): Key tensor shaped ``[B, H, T, D]``.
+            value_states (torch.Tensor): Value tensor shaped ``[B, H, T, D]``.
+            attention_mask (Optional[torch.Tensor]): Optional additive mask.
+            cache_manager (Optional[Any]): Optional cache manager providing H2O caches.
 
         Returns:
-            torch.Tensor: Output from streaming attention with shape [batch, heads, seq_len, head_dim].
+            torch.Tensor: Attention outputs shaped ``[B, H, T, D]``.
         """
         batch_size, num_heads, seq_len, head_dim = query_states.shape
         device = query_states.device

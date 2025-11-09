@@ -23,7 +23,7 @@ from typing import Optional, Dict, Any, List, Union, Tuple
 from utils.log.core import PiscesLxCoreLog
 from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Quantization.Utils")
+logger = PiscesLxCoreLog("PiscesLx.Core.Quantization.Utils")
 
 def get_device_memory_info(device: Optional[torch.device] = None) -> Dict[str, float]:
     """Get memory information for the specified device."""

@@ -21,7 +21,7 @@ from typing import Any
 from .facade import PiscesLxCoreDeviceFacade
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Runner")
+logger = PiscesLxCoreLog("PiscesLx.Core.Device.Runner")
 
 class PiscesLxCoreDeviceRunner:
     """Device runner class that offers static methods for device management.

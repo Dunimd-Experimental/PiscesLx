@@ -17,6 +17,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Document understanding components for Arctic multimodal pipelines.
+
+The module defines :class:`ArcticDocEncoder`, a composite encoder that fuses
+text, layout, table, and handwriting signals into unified document
+representations. It exposes modular sub-encoders for each modality and uses
+PiscesL1 logging infrastructure to trace initialization and inference phases.
+"""
+
 import torch
 from torch import nn
 from typing import Any, Dict
@@ -26,14 +34,37 @@ from utils.log.core import PiscesLxCoreLog
 logger = PiscesLxCoreLog("Arctic.Core.Multimodal", file_path="logs/ArcticCore.log")
 
 class ArcticDocEncoder(nn.Module):
-    """A document encoder that processes text, layout, table, and handwriting information."""
-    
+    """Document encoder integrating textual, layout, and handwriting signals.
+
+    The encoder composes multiple modality-specific submodules (text, layout,
+    table, handwriting) and aggregates their outputs into a shared latent
+    representation suitable for downstream Arctic agent workflows.
+
+    Attributes:
+        enabled (bool): Flag indicating whether the encoder is available.
+        cfg: Configuration namespace describing hidden sizes and head counts.
+        vocab_size (int): Vocabulary size used for simplistic tokenization.
+        max_length (int): Maximum supported token sequence length.
+        text_encoder (nn.ModuleDict): Submodules for embedding, positional
+            encoding, script-specific encoders, and language detection.
+        layout_encoder (nn.ModuleDict): Components that encode geometric and
+            layout-specific features.
+        table_understanding (nn.ModuleDict): Modules for table structure
+            detection and semantic analysis.
+        handwriting_recognition (nn.ModuleDict): Networks handling stroke-level
+            recognition and style analysis.
+        doc_fusion (nn.ModuleDict): Attention and hierarchical encoders for
+            cross-modality fusion.
+        final_proj (nn.ModuleDict): Projection heads that prepare fused
+            features for downstream tasks.
+    """
+
     def __init__(self, cfg):
-        """
-        Initialize the ArcticDocEncoder.
+        """Initialize the composite document encoder.
 
         Args:
-            cfg: Configuration object containing parameters such as hidden_size and n_head.
+            cfg: Configuration object containing parameters such as
+                ``hidden_size`` and ``n_head``.
         """
         super().__init__()
         self.enabled = True
@@ -258,14 +289,13 @@ class ArcticDocEncoder(nn.Module):
         logger.debug("DocEncoder: __init__ end")
     
     def _tokenize_text(self, text):
-        """
-        Perform simple text tokenization and encoding.
+        """Tokenize text inputs using a simple character-level heuristic.
 
         Args:
-            text (Union[str, torch.Tensor]): Input text or token IDs.
+            text (Union[str, torch.Tensor]): Raw text or precomputed token IDs.
 
         Returns:
-            torch.Tensor: Tokenized text.
+            torch.Tensor: Tensor of token indices with length ``max_length``.
         """
         if isinstance(text, str):
             # Perform simple character-level tokenization
@@ -275,14 +305,14 @@ class ArcticDocEncoder(nn.Module):
         return text
     
     def _encode_layout(self, layout):
-        """
-        Encode layout information.
+        """Encode layout geometry into latent features.
 
         Args:
-            layout (Union[torch.Tensor, None]): Input layout information.
+            layout (Union[torch.Tensor, None]): Layout tensor capturing bounding
+                boxes and derived spatial statistics.
 
         Returns:
-            torch.Tensor: Encoded layout features.
+            torch.Tensor: Layout feature tensor following spatial encoding.
         """
         if layout is None:
             # Use default layout: full page
@@ -291,20 +321,20 @@ class ArcticDocEncoder(nn.Module):
         if layout.dim() == 1:
             layout = layout.unsqueeze(0)
         
-        # Note: There's a bug here. self.layout_encoder is a ModuleDict, not callable.
-        # This code will raise an error. It should process each key in the ModuleDict.
-        # For now, assuming the user meant to process through spatial_encoder.
+        # The ModuleDict stores individual encoders; here we apply the spatial encoder directly.
         return self.layout_encoder['spatial_encoder'](layout.float())
     
     def forward(self, doc_input):
-        """
-        Forward pass of the document encoder.
+        """Encode the provided document payload into multimodal features.
 
         Args:
-            doc_input (Union[str, torch.Tensor, dict]): Input document, which can be a text string, token IDs, or a dictionary.
+            doc_input (Union[str, torch.Tensor, dict]): Document input expressed
+                as raw text, token IDs, or a dictionary with ``input_ids`` and
+                ``layout`` fields.
 
         Returns:
-            torch.Tensor: Encoded document features with shape (batch_size, 1, hidden_size).
+            torch.Tensor: Encoded document features with shape
+            ``(batch_size, 1, hidden_size)``.
         """
         if doc_input is None:
             device = next(self.parameters()).device
@@ -330,9 +360,7 @@ class ArcticDocEncoder(nn.Module):
         if text_tokens.dim() == 1:
             text_tokens = text_tokens.unsqueeze(0)
         
-        # Note: There's a bug here. self.text_encoder is a ModuleDict, not callable.
-        # This code will raise an error. It should process each key in the ModuleDict.
-        # For now, assuming the user meant to process through embedding and others.
+        # Sequentially apply embedding components from the text encoder module dictionary.
         embeddings = self.text_encoder['embedding'](text_tokens)
         pos_enc = self.text_encoder['positional_encoding'](
             torch.arange(text_tokens.size(1), device=text_tokens.device).unsqueeze(0).expand(text_tokens.size(0), -1)
@@ -349,9 +377,7 @@ class ArcticDocEncoder(nn.Module):
         # Fusion of text and layout features
         combined = torch.cat([text_features, layout_features], dim=-1)
         
-        # Note: There's a bug here. self.doc_fusion is a ModuleDict, not callable.
-        # This code will raise an error. It should process each key in the ModuleDict.
-        # For now, assuming the user meant to process through text_layout_attention first.
+        # Apply attention-based fusion followed by hierarchical encoding.
         attn_output, _ = self.doc_fusion['text_layout_attention'](
             combined.unsqueeze(1), combined.unsqueeze(1), combined.unsqueeze(1)
         )
@@ -359,13 +385,10 @@ class ArcticDocEncoder(nn.Module):
         doc_features = self.doc_fusion['hierarchy_encoder'](attn_output.unsqueeze(1)).squeeze(1)
         doc_features = self.doc_fusion['final_fusion'](doc_features)
         
-        # Note: There's a bug here. self.final_proj is a ModuleDict, not callable.
-        # This code will raise an error. It should process each key in the ModuleDict.
-        # For now, assuming the user meant to process through main_projection first.
+        # Aggregate projections from the final projection module dictionary.
         main_proj = self.final_proj['main_projection'](doc_features)
         table_proj = self.final_proj['table_proj'](doc_features)
-        # Note: handwriting_proj needs input of size 256, but doc_features is of size hidden_size.
-        # This will raise an error. Skipping for now.
+        # handwriting_proj expects 256-dimensional inputs; skip invocation here to avoid shape mismatch.
         # handwriting_proj = self.final_proj['handwriting_proj'](doc_features)
         layout_proj = self.final_proj['layout_proj'](layout_features)
         # Concatenate all projections

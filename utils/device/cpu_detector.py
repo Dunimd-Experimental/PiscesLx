@@ -23,7 +23,7 @@ import multiprocessing
 from utils.log.core import PiscesLxCoreLog
 from typing import Dict, Any, Optional
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Device.CpuDetector")
+logger = PiscesLxCoreLog("PiscesLx.Core.Device.CpuDetector")
 
 class PiscesLxCoreDeviceCpuDetector:
     """

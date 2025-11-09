@@ -24,7 +24,7 @@ from dataclasses import dataclass, asdict
 from typing import Any, Dict, Optional, Literal
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Dist.Planner")
+logger = PiscesLxCoreLog("PiscesLx.Core.Device.Dist.Planner")
 
 @dataclass
 class PiscesLxCoreDistConfig:

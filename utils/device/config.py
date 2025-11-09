@@ -20,7 +20,7 @@
 from typing import Any, Optional
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Device.Config")
+logger = PiscesLxCoreLog("PiscesLx.Core.Device.Config")
 
 class PiscesLxCoreDeviceConfig:
     """A lightweight facade for device configuration, maintaining parity with inference and training configurations.

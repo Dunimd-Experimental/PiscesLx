@@ -53,11 +53,26 @@ class PiscesLxToolsMonitorImpl:
         self.cache_manager = self.context_manager.get_cache_manager()
         self.device_manager = self.context_manager.get_device_manager()
         self.logger = self.context_manager.get_logger()
+        try:
+            self.console_logger = PiscesLxCoreLog("pisceslx.monitor.console", console=True, enable_file=False)
+        except TypeError:
+            # Backward compatibility: older logger may not accept enable_file flag
+            self.console_logger = PiscesLxCoreLog("pisceslx.monitor.console")
         
-        # Initialize modular components
-        self.stats_collector = PiscesLxMonitorStatsCollector()
-        self.alert_manager = PiscesLxMonitorAlertManager()
-        self.data_manager = PiscesLxMonitorDataManager()
+        # Initialize modular components with shared dependencies
+        self.stats_collector = PiscesLxMonitorStatsCollector(
+            self.cache_manager,
+            self.device_manager,
+        )
+        self.alert_manager = PiscesLxMonitorAlertManager(
+            self.cache_manager,
+            self.logger,
+        )
+        self.data_manager = PiscesLxMonitorDataManager(
+            self.cache_manager,
+            self.logger,
+            log_interval=self.LOG_INTERVAL,
+        )
         self.display = PiscesLxToolsMonitorDisplay()
         
         # Initialize observability manager
@@ -79,13 +94,67 @@ class PiscesLxToolsMonitorImpl:
         self.last_log_time = time.time()
         self.gpu_enabled = False
         self.gpu_count = 0
+        self._last_console_heartbeat = 0.0
         
         # Initialize GPU detection
         self._init_gpu_detection()
         
         # Create monitor log file
         self._init_logging()
-    
+
+    def set_context(self, hooks=None, profiler=None, cfg=None):
+        """Inject external context (legacy compatibility with runner)."""
+        self.context_manager.set_context('hooks', hooks)
+        self.context_manager.set_context('profiler', profiler)
+        self.context_manager.set_context('cfg', cfg)
+        return self
+
+    def _emit_console_line(self, message: str) -> None:
+        """Emit a single-line console message with robust stdout fallbacks."""
+        # Always attempt to log via console logger (best-effort)
+        try:
+            if getattr(self, "console_logger", None):
+                self.console_logger.info(message)
+        except Exception:
+            pass
+
+        line = message if message.endswith(os.linesep) else message + os.linesep
+
+        # Prefer the original stdout to bypass any redirected logger streams
+        stream = getattr(sys, "__stdout__", None)
+        if stream and hasattr(stream, "write") and hasattr(stream, "flush"):
+            try:
+                stream.write(line)
+                stream.flush()
+                return
+            except Exception:
+                pass
+
+        # Fallback to os.write on the underlying file descriptor if available
+        fd = None
+        try:
+            if stream and hasattr(stream, "fileno"):
+                fd = stream.fileno()
+        except Exception:
+            fd = None
+        if fd is None:
+            try:
+                fd = sys.__stdout__.fileno()  # type: ignore[attr-defined]
+            except Exception:
+                fd = None
+        if fd is not None:
+            try:
+                os.write(fd, line.encode("utf-8", errors="replace"))
+                return
+            except Exception:
+                pass
+
+        # Last resort: standard print
+        try:
+            print(message, flush=True)
+        except Exception:
+            pass
+
     def _init_gpu_detection(self):
         """Initialize GPU detection."""
         try:
@@ -141,8 +210,20 @@ class PiscesLxToolsMonitorImpl:
                 }
                 self.observability_manager.start_monitoring(session_config)
             
-            # Get system metrics
-            metrics = self.observability_manager.get_system_metrics()
+            # Get system metrics with short timeout and safe fallback
+            metrics = None
+            try:
+                from utils.concurrency import PiscesLxCoreTimeout
+            except Exception:
+                PiscesLxCoreTimeout = None  # type: ignore
+            try:
+                if PiscesLxCoreTimeout is not None:
+                    with PiscesLxCoreTimeout(seconds=0.5, raise_on_timeout=True):
+                        metrics = self.observability_manager.get_system_metrics()
+                else:
+                    metrics = self.observability_manager.get_system_metrics()
+            except Exception:
+                metrics = None
             
             # Cache results
             if metrics:
@@ -153,7 +234,12 @@ class PiscesLxToolsMonitorImpl:
                 
                 # Log metrics to file only
                 self.obs_logger.info(f"Observability metrics: {metrics}")
-                
+            
+            # Fallback to last cached or minimal defaults
+            if metrics is None:
+                if cached_metrics:
+                    return cached_metrics.get('data')
+                return {"cpu_percent_total": psutil.cpu_percent(interval=None), "memory": {"percent": psutil.virtual_memory().percent}}
             return metrics
             
         except Exception as e:
@@ -260,14 +346,44 @@ class PiscesLxToolsMonitorImpl:
                 return 1
             
             # Set runtime context
-            set_context(hooks=getattr(args, 'hooks', None), 
-                       profiler=getattr(args, 'profiler', None), 
-                       cfg=getattr(args, 'cfg', None))
+            self.context_manager.set_context('hooks', getattr(args, 'hooks', None))
+            self.context_manager.set_context('profiler', getattr(args, 'profiler', None))
+            self.context_manager.set_context('cfg', getattr(args, 'cfg', None))
             
             # Emit start event
-            _emit("monitor_start", args=vars(args) if hasattr(args, '__dict__') else {})
+            self.context_manager.emit_event("monitor_start", {
+                'args': vars(args) if hasattr(args, '__dict__') else {}
+            })
             
             self.logger.info("Starting system monitor")
+            # Immediate heartbeat: quick non-blocking snapshot so users see progress instantly
+            cpu_quick = 0.0
+            mem_quick = 0.0
+            gpu_quick = None
+            try:
+                cpu_quick = float(psutil.cpu_percent(interval=None) or 0.0)
+            except Exception as e:
+                self.logger.debug("warmup_cpu_percent_failed", error=str(e))
+            try:
+                mem_quick = float(psutil.virtual_memory().percent or 0.0)
+            except Exception as e:
+                self.logger.debug("warmup_memory_percent_failed", error=str(e))
+            if self.gpu_enabled and self.gpu_count > 0:
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        mem_used = torch.cuda.memory_allocated(0)
+                        mem_total = torch.cuda.get_device_properties(0).total_memory
+                        if mem_total:
+                            gpu_quick = f"GPU0 {mem_used/1024/1024:.1f}/{mem_total/1024/1024:.1f} GB"
+                except Exception as e:
+                    self.logger.debug("warmup_gpu_snapshot_failed", error=str(e))
+            msg0 = f"monitor warmup | cpu={cpu_quick:.1f}% mem={mem_quick:.1f}%"
+            if gpu_quick:
+                msg0 += f" {gpu_quick}"
+            self.logger.info(msg0)
+            self._emit_console_line(msg0)
+            self._last_console_heartbeat = time.time()
             
             # Main monitoring loop
             iteration = 0
@@ -284,7 +400,9 @@ class PiscesLxToolsMonitorImpl:
                     # Check for alerts
                     alerts = self.check_alerts(stats)
                     if alerts:
-                        _emit("monitor_alerts", alerts=alerts)
+                        self.context_manager.emit_event("monitor_alerts", {
+                            'alerts': alerts
+                        })
                     
                     # Process monitoring data
                     logged, averages = self.process_monitoring_data(stats)
@@ -293,6 +411,29 @@ class PiscesLxToolsMonitorImpl:
                     if hasattr(args, 'display') and args.display:
                         display_output = self.format_display(stats)
                         self.logger.info(display_output)
+                    else:
+                        # Console heartbeat: brief one-line status every ~2s
+                        now = time.time()
+                        if now - self._last_console_heartbeat >= 2.0:
+                            cpu = stats.get('cpu', {}).get('percent_total') or stats.get('cpu_percent_total') or 0.0
+                            mem = (stats.get('memory', {}) or {}).get('percent') or stats.get('memory_percent') or 0.0
+                            gpu = None
+                            try:
+                                g = stats.get('gpu', {}) or stats.get('gpus')
+                                if isinstance(g, list) and g:
+                                    gi = g[0]
+                                    mem_used = gi.get('mem_used') or gi.get('memory_used')
+                                    mem_total = gi.get('mem_total') or gi.get('memory_total')
+                                    if mem_used and mem_total:
+                                        gpu = f"GPU0 {mem_used/1024/1024:.1f}/{mem_total/1024/1024:.1f} GB"
+                            except Exception as e:
+                                self.logger.debug("heartbeat_gpu_snapshot_failed", error=str(e))
+                            msg = f"monitor heartbeat | cpu={float(cpu):.1f}% mem={float(mem):.1f}%"
+                            if gpu:
+                                msg += f" {gpu}"
+                            self.logger.info(msg)
+                            self._emit_console_line(msg)
+                            self._last_console_heartbeat = now
                     # Emit iteration complete
                     self.context_manager.emit_event("monitor_iteration", {
                         'iteration': iteration,
@@ -309,7 +450,9 @@ class PiscesLxToolsMonitorImpl:
                     break
                 except Exception as e:
                     self.logger.error(f"Monitor iteration error: {e}")
-                    _emit("monitor_error", error=str(e))
+                    self.context_manager.emit_event("monitor_error", {
+                        'error': str(e)
+                    })
                     time.sleep(self.UPDATE_INTERVAL)
             
             # Emit end event
@@ -321,7 +464,3 @@ class PiscesLxToolsMonitorImpl:
         except Exception as e:
             self.logger.error(f"Monitor failed: {e}")
             return 1
-
-# Only expose the main implementation class
-# All functionality is accessed through PiscesLxToolsMonitorImpl class
-

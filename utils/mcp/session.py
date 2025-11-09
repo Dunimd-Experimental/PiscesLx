@@ -83,7 +83,7 @@ class PiscesLxCoreMCPSession:
         Returns:
             Configured logger instance
         """
-        logger = PiscesLxCoreLog(f"PiscesLx.Utils.MCP.Session.{self.session_id[:8]}")
+        logger = PiscesLxCoreLog(f"PiscesLx.Core.MCP.Session.{self.session_id[:8]}")
         return logger
     
     def create_execution_context(self, tool_name: str, arguments: Dict[str, Any]) -> str:

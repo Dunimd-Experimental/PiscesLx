@@ -45,7 +45,7 @@ class PiscesLxCoreConfigManager:
             project_root (Optional[Path]): Path to the project root directory. If None, it will be detected automatically.
         """
         # Initialize the logger for the configuration manager.
-        self.logger = PiscesLxCoreLog("PiscesLx.Utils.Config.Manager")
+        self.logger = PiscesLxCoreLog("PiscesLx.Core.Config.Manager")
         # Set the project root directory. If not provided, detect it automatically.
         self.project_root = project_root or self._detect_project_root()
         # Dictionary to store loaded configurations.

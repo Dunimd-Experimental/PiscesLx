@@ -17,29 +17,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Multi-modal reasoning enhancer utilities for Arctic agents.
+
+The module defines :class:`ArcticMultiModalReasoningEnhancer`, which fuses
+text, vision, audio, and temporal context through attention-driven reasoning
+loops and produces calibrated confidence estimates for the final reasoning
+state.
+"""
+
 import torch
 from torch import nn
 
 class ArcticMultiModalReasoningEnhancer(nn.Module):
-    """
-    A PyTorch module for multi-modal reasoning enhancement based on the Arctic architecture.
-    This module performs cross-modal reasoning with temporal consistency to enhance reasoning states.
-    """
+    """Enhance reasoning states via cross-modal attention and iterative refinement."""
     def __init__(self, cfg):
-        """
-        Initialize the ArcticMultiModalReasoningEnhancer.
+        """Instantiate the enhancer using configuration-provided hyperparameters.
 
         Args:
-            cfg (object): Configuration object containing necessary hyperparameters.
-                Expected attributes include `hidden_size`, `n_head`, 
-                and optionally `num_reasoning_steps` (defaults to 4 if not specified).
+            cfg: Configuration namespace providing ``hidden_size``, ``n_head`` and
+                optionally ``num_reasoning_steps`` (defaults to ``4``).
         """
         super().__init__()
         self.cfg = cfg
         self.hidden_size = cfg.hidden_size
         self.num_reasoning_steps = getattr(cfg, 'num_reasoning_steps', 4)
         
-        # ModuleDict storing multi-head attention modules for different cross-modal and temporal reasoning tasks
+        # Attention modules addressing visual/audio/temporal reasoning and a fallback linear path.
         self.cross_modal_reasoner = nn.ModuleDict({
             'visual_textual': nn.MultiheadAttention(
                 embed_dim=self.hidden_size,
@@ -65,7 +68,7 @@ class ArcticMultiModalReasoningEnhancer(nn.Module):
             )
         })
         
-        # ModuleList containing reasoning layers for iterative reasoning process
+        # Iterative reasoning blocks that refine the fused hidden state.
         self.reasoning_layers = nn.ModuleList([
             nn.Sequential(
                 nn.Linear(self.hidden_size, self.hidden_size * 2),
@@ -76,7 +79,7 @@ class ArcticMultiModalReasoningEnhancer(nn.Module):
             ) for _ in range(self.num_reasoning_steps)
         ])
         
-        # Sequential module to aggregate evidence from text, visual, and audio modalities
+        # Aggregator combining modality averages into a shared evidence vector.
         self.evidence_aggregator = nn.Sequential(
             nn.Linear(self.hidden_size * 3, self.hidden_size * 2),
             nn.SiLU(),
@@ -85,7 +88,7 @@ class ArcticMultiModalReasoningEnhancer(nn.Module):
             nn.LayerNorm(self.hidden_size)
         )
         
-        # Sequential module to estimate the confidence score of the final reasoning state
+        # Confidence estimator producing the final scalar score.
         self.confidence_estimator = nn.Sequential(
             nn.Linear(self.hidden_size, self.hidden_size // 2),
             nn.SiLU(),
@@ -94,37 +97,39 @@ class ArcticMultiModalReasoningEnhancer(nn.Module):
         )
     
     def forward(self, text_features, visual_features=None, audio_features=None, temporal_context=None, return_intermediates=False):
-        """
-        Perform a forward pass through the ArcticMultiModalReasoningEnhancer.
+        """Fuse multi-modal cues and iterate reasoning to yield a final state.
 
         Args:
-            text_features (torch.Tensor): Input text features with shape (batch_size, seq_len, hidden_size).
-            visual_features (torch.Tensor, optional): Input visual features. Defaults to None.
-            audio_features (torch.Tensor, optional): Input audio features. Defaults to None.
-            temporal_context (torch.Tensor, optional): Temporal context features. Defaults to None.
-            return_intermediates (bool, optional): Whether to return intermediate results. Defaults to False.
+            text_features (torch.Tensor): Tensor shaped ``[batch, seq_len, hidden]``
+                containing textual embeddings.
+            visual_features (torch.Tensor | None): Optional visual embeddings aligned
+                with the text sequence.
+            audio_features (torch.Tensor | None): Optional audio embeddings aligned
+                with the text sequence.
+            temporal_context (torch.Tensor | None): Optional temporal features used
+                for consistency across reasoning steps.
+            return_intermediates (bool): If ``True``, return diagnostic metadata.
 
         Returns:
-            tuple: 
-                - reasoning_state (torch.Tensor): Final reasoning state with shape (batch_size, 1, hidden_size).
-                - confidence (torch.Tensor): Confidence score of the final state with shape (batch_size, 1).
-                - intermediates (dict, optional): Dictionary containing intermediate results if `return_intermediates` is True.
+            Tuple[torch.Tensor, torch.Tensor, Optional[dict]]: Final reasoning state
+            ``[batch, 1, hidden]``, confidence ``[batch, 1]``, and optionally a
+            dictionary with intermediate artifacts.
         """
-        # Extract batch size, device, and sequence length from text features
+        # Extract batch size, device, and sequence length from text features.
         batch_size = text_features.shape[0]
         device = text_features.device
         seq_len = text_features.shape[1]
         
-        # Initialize the reasoning state with a copy of text features
+        # Initialize the reasoning state with a copy of text features.
         reasoning_state = text_features.clone()
         
-        # List to collect evidence features from different modalities
+        # Collect evidence features from available modalities.
         evidence_features = [text_features]
         
-        # Determine whether to use efficient linear attention based on sequence length
+        # Determine whether to use efficient linear attention based on sequence length.
         use_linear_attention = seq_len > 512
         
-        # Initialize a dictionary to store intermediate results
+        # Initialize a dictionary to store intermediate results.
         intermediates = {
             'initial_state': reasoning_state.clone(),
             'modal_contributions': {},
@@ -132,19 +137,19 @@ class ArcticMultiModalReasoningEnhancer(nn.Module):
             'attention_maps': {}
         }
         
-        # Process visual features if they are provided
+        # Process visual features if they are provided.
         if visual_features is not None:
             if use_linear_attention:
-                # Apply efficient linear layer for visual reasoning when sequence length is large
+                # Apply efficient linear layer for visual reasoning when sequence length is large.
                 visual_reasoning = self.cross_modal_reasoner['efficient_linear'](text_features)
                 reasoning_state = reasoning_state + 0.3 * visual_reasoning
             else:
-                # Use multi-head attention for visual-textual reasoning
+                # Use multi-head attention for visual-textual reasoning.
                 visual_reasoning, visual_attn = self.cross_modal_reasoner['visual_textual'](
                     text_features, visual_features, visual_features
                 )
                 reasoning_state = reasoning_state + 0.3 * visual_reasoning
-                # Store the attention map for visual-textual reasoning
+                # Store the attention map for visual-textual reasoning.
                 intermediates['attention_maps']['visual_textual'] = visual_attn.detach().cpu()
             evidence_features.append(visual_features)
             intermediates['modal_contributions']['visual'] = 0.3
@@ -152,19 +157,19 @@ class ArcticMultiModalReasoningEnhancer(nn.Module):
             evidence_features.append(torch.zeros_like(text_features))
             intermediates['modal_contributions']['visual'] = 0.0
         
-        # Process audio features if they are provided
+        # Process audio features if they are provided.
         if audio_features is not None:
             if use_linear_attention:
-                # Apply efficient linear layer for audio reasoning when sequence length is large
+                # Apply efficient linear layer for audio reasoning when sequence length is large.
                 audio_reasoning = self.cross_modal_reasoner['efficient_linear'](text_features)
                 reasoning_state = reasoning_state + 0.2 * audio_reasoning
             else:
-                # Use multi-head attention for audio-textual reasoning
+                # Use multi-head attention for audio-textual reasoning.
                 audio_reasoning, audio_attn = self.cross_modal_reasoner['audio_textual'](
                     text_features, audio_features, audio_features
                 )
                 reasoning_state = reasoning_state + 0.2 * audio_reasoning
-                # Store the attention map for audio-textual reasoning
+                # Store the attention map for audio-textual reasoning.
                 intermediates['attention_maps']['audio_textual'] = audio_attn.detach().cpu()
             evidence_features.append(audio_features)
             intermediates['modal_contributions']['audio'] = 0.2
@@ -172,42 +177,42 @@ class ArcticMultiModalReasoningEnhancer(nn.Module):
             evidence_features.append(torch.zeros_like(text_features))
             intermediates['modal_contributions']['audio'] = 0.0
         
-        # Combine evidence features by taking the mean along the sequence dimension and concatenating them
+        # Combine evidence features by taking the mean along the sequence dimension and concatenating them.
         combined_evidence = torch.cat([feat.mean(dim=1) for feat in evidence_features], dim=-1)
         
-        # Aggregate the combined evidence using the evidence aggregator module
+        # Aggregate the combined evidence using the evidence aggregator module.
         aggregated_evidence = self.evidence_aggregator(combined_evidence)
         
-        # Perform iterative reasoning steps
+        # Perform iterative reasoning steps.
         for i, reasoning_layer in enumerate(self.reasoning_layers):
-            # Store the reasoning state before the current step
+            # Store the reasoning state before the current step.
             pre_step_state = reasoning_state.clone()
             
-            # Apply the reasoning layer to the mean of the current reasoning state
+            # Apply the reasoning layer to the mean of the current reasoning state.
             step_output = reasoning_layer(reasoning_state.mean(dim=1))
             
-            # Integrate the step output with the aggregated evidence
+            # Integrate the step output with the aggregated evidence.
             integrated = step_output + 0.1 * aggregated_evidence
             
-            # Process temporal context if it is provided
+            # Process temporal context if it is provided.
             if temporal_context is not None:
                 if use_linear_attention:
-                    # Apply efficient linear layer for temporal reasoning when sequence length is large
+                    # Apply efficient linear layer for temporal reasoning when sequence length is large.
                     temporal_enhanced = self.cross_modal_reasoner['efficient_linear'](integrated.unsqueeze(1))
                     integrated = integrated + 0.2 * temporal_enhanced.squeeze(1)
                 else:
-                    # Use multi-head attention for temporal reasoning
+                    # Use multi-head attention for temporal reasoning.
                     temporal_enhanced, temporal_attn = self.cross_modal_reasoner['temporal_reasoning'](
                         integrated.unsqueeze(1), temporal_context, temporal_context
                     )
                     integrated = integrated + 0.2 * temporal_enhanced.squeeze(1)
-                    # Store the attention map for temporal reasoning at the current step
+                    # Store the attention map for temporal reasoning at the current step.
                     intermediates['attention_maps'][f'temporal_step_{i}'] = temporal_attn.detach().cpu()
             
-            # Update the reasoning state
+            # Update the reasoning state.
             reasoning_state = integrated.unsqueeze(1)
             
-            # Record information about the current reasoning step
+            # Record information about the current reasoning step.
             step_info = {
                 'step_id': i,
                 'input_state': pre_step_state.mean(dim=1),
@@ -216,7 +221,7 @@ class ArcticMultiModalReasoningEnhancer(nn.Module):
             }
             intermediates['step_outputs'].append(step_info)
         
-        # Estimate the confidence of the final reasoning state
+        # Estimate the confidence of the final reasoning state.
         confidence = self.confidence_estimator(reasoning_state.mean(dim=1))
         intermediates['final_confidence'] = confidence
         intermediates['final_state'] = reasoning_state.clone()

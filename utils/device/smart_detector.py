@@ -28,7 +28,7 @@ from .nvidia_detector import PiscesLxCoreDeviceNvidiaDetector
 from utils.observability.service import PiscesLxCoreObservabilityService
 from utils.observability.decorators import PiscesLxCoreDecorators as ObsDec
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Device.SmartDetector")
+logger = PiscesLxCoreLog("PiscesLx.Core.Device.SmartDetector")
 
 class PiscesLxCoreDeviceSmartDetector:
     """
@@ -204,10 +204,17 @@ class PiscesLxCoreDeviceSmartDetector:
             'device_priority': self._get_device_priority()
         }
 
-        # auto-generate device report (best-effort)
+        # auto-generate device report (best-effort) unless disabled for training
         try:
-            obs = PiscesLxCoreObservabilityService.instance()
-            obs.write_device_report(result)
+            import os, sys, threading
+            if os.environ.get("PISCESLX_DISABLE_DEVICE_REPORT", "") != "1" and "train" not in (sys.argv[:2] if len(sys.argv) >= 2 else []):
+                def _bg_write_report(_data):
+                    try:
+                        obs = PiscesLxCoreObservabilityService.instance()
+                        obs.write_device_report(_data)
+                    except Exception as _e:
+                        logger.debug("write_device_report failed", error=str(_e), error_class=type(_e).__name__)
+                threading.Thread(target=_bg_write_report, args=(result,), daemon=True).start()
         except Exception as e:
             logger.debug("write_device_report failed", error=str(e), error_class=type(e).__name__)
         
@@ -267,10 +274,17 @@ class PiscesLxCoreDeviceSmartDetector:
             'device_priority': self._get_device_priority()
         }
 
-        # auto-generate device report (best-effort)
+        # auto-generate device report (best-effort) unless disabled for training
         try:
-            obs = PiscesLxCoreObservabilityService.instance()
-            obs.write_device_report(result)
+            import os, sys, threading
+            if os.environ.get("PISCESLX_DISABLE_DEVICE_REPORT", "") != "1" and "train" not in (sys.argv[:2] if len(sys.argv) >= 2 else []):
+                def _bg_write_report(_data):
+                    try:
+                        obs = PiscesLxCoreObservabilityService.instance()
+                        obs.write_device_report(_data)
+                    except Exception as _e:
+                        logger.debug("write_device_report failed", error=str(_e), error_class=type(_e).__name__)
+                threading.Thread(target=_bg_write_report, args=(result,), daemon=True).start()
         except Exception as e:
             logger.debug("write_device_report failed", error=str(e), error_class=type(e).__name__)
         # emit end event with timeout protection - non-blocking
@@ -1196,24 +1210,33 @@ class PiscesLxCoreDeviceSmartDetector:
             'device_priority': self._get_device_priority()
         }
 
-        # auto-generate device report (best-effort)
+        # auto-generate device report (best-effort) unless disabled for training
         try:
-            obs = PiscesLxCoreObservabilityService.instance()
-            obs.write_device_report(result)
+            import os, sys
+            if os.environ.get("PISCESLX_DISABLE_DEVICE_REPORT", "") != "1" and "train" not in (sys.argv[:2] if len(sys.argv) >= 2 else []):
+                obs = PiscesLxCoreObservabilityService.instance()
+                obs.write_device_report(result)
         except Exception as e:
             logger.debug("write_device_report failed", error=str(e), error_class=type(e).__name__)
-        # emit end event
+        # emit end event (non-blocking)
         try:
             duration = int((time.time() - t0) * 1000)
-            bus.emit(
-                "device.detect.end",
-                model_size=model_size,
-                duration_ms=duration,
-                summary=self.detection_summary,
-                gpu_info=self.all_gpu_info,
-            )
+            import threading as _threading
+            def _emit_end():
+                try:
+                    bus.emit(
+                        "device.detect.end",
+                        model_size=model_size,
+                        duration_ms=duration,
+                        summary=self.detection_summary,
+                        gpu_info=self.all_gpu_info,
+                    )
+                except Exception as _e:
+                    logger.debug("emit device.detect.end failed", event="DEVICE", message="emit device.detect.end failed", error=str(_e), error_class=type(_e).__name__)
+            _t = _threading.Thread(target=_emit_end, daemon=True)
+            _t.start()
         except Exception as e:
-            logger.debug("emit device.detect.end failed", event="DEVICE", message="emit device.detect.end failed", error=str(e), error_class=type(e).__name__)
+            logger.debug("emit device.detect.end scheduling failed", event="DEVICE", error=str(e), error_class=type(e).__name__)
         return result
     
     def _determine_optimal_strategy(self, model_size: str = None) -> Dict[str, Any]:

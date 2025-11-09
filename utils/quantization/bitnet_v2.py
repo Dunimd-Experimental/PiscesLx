@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from .core import QuantizationConfig, QuantizationMetrics
 from utils.log.core import PiscesLxCoreLog
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Quantization.BitNetV2")
+logger = PiscesLxCoreLog("PiscesLx.Core.Quantization.BitNetV2")
 
 class STEQuantizer(torch.autograd.Function):
     """Straight-Through Estimator for BitNet v2 quantization."""

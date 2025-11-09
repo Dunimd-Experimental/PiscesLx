@@ -29,7 +29,7 @@ from .bitnet_v2 import BitNetV2Quantizer
 from utils.log.core import PiscesLxCoreLog
 from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError
 
-logger = PiscesLxCoreLog("PiscesLx.Utils.Quantization.Engine")
+logger = PiscesLxCoreLog("PiscesLx.Core.Quantization.Engine")
 
 class QuantizationEngine:
     """Main quantization engine that orchestrates different quantization methods."""

@@ -17,78 +17,88 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Orchestrated multi-path reasoning system for Arctic agents.
+
+The module exposes :class:`ArcticUnifiedMultiPathReasoningSystem`, which
+coordinates core reasoning, inference-time search, and meta-learning to deliver
+adaptive, interpretable multi-path reasoning flows.
+"""
+
 import time
 import torch
 import numpy as np
 from torch import nn
+from typing import Any, Dict, Optional, Union
 from .multipath_meta import ArcticMultiPathMetaLearner
 from .enhancer import ArcticMultiModalReasoningEnhancer
 from .multipath_core import ArcticMultiPathReasoningEngine
 from .multipath_infer import ArcticMultiPathInferenceEngine
 
 class ArcticUnifiedMultiPathReasoningSystem:
-    """
-    A unified multi-path reasoning system that integrates a reasoning engine, inference engine, and meta-learner.
-    Tracks the performance of reasoning processes and provides interpretability analysis.
-    """
-    def __init__(self, model, tokenizer, device='cuda'):
-        """
-        Initialize the unified multi-path reasoning system.
+    """Runtime container integrating core reasoning, inference, and meta-learning."""
+
+    def __init__(self, model: nn.Module, tokenizer: Any, device: str = 'cuda') -> None:
+        """Instantiate the unified multi-path reasoning pipeline.
 
         Args:
-            model: The base model for performing reasoning tasks.
-            tokenizer: The tokenizer used to encode input queries.
-            device (str, optional): The device on which the model will run. Defaults to 'cuda'.
+            model (nn.Module): Underlying foundation model providing forward and generate methods.
+            tokenizer (Any): Tokenizer corresponding to ``model`` for encoding user queries.
+            device (str): Device identifier for executing model operations. Defaults to ``'cuda'``.
         """
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
 
-        # Initialize sub-components of the reasoning system
+        # Initialize reasoning subsystems used during inference.
         self.reasoning_engine = ArcticMultiPathReasoningEngine(model.config)
         self.reasoning_inference = ArcticMultiPathInferenceEngine(model, tokenizer)
         self.meta_learner = ArcticMultiPathMetaLearner(model)
 
-        # Initialize performance tracking variables
+        # Tracking variables for runtime metrics.
         self.total_reasoning_calls = 0
         self.successful_reasoning_calls = 0
         self.average_confidence = 0.0
 
-    def reason(self, query, use_meta_learning=True, return_full_metadata=False, enable_interpretability=False):
-        """
-        Perform multi-path reasoning on the given query.
+    def reason(
+        self,
+        query: str,
+        use_meta_learning: bool = True,
+        return_full_metadata: bool = False,
+        enable_interpretability: bool = False,
+    ) -> Union[Dict[str, Any], str]:
+        """Execute multi-path reasoning for a given user query.
 
         Args:
-            query (str): The input query for reasoning.
-            use_meta_learning (bool, optional): Whether to use meta-learning during reasoning. Defaults to True.
-            return_full_metadata (bool, optional): Whether to return full metadata. Defaults to False.
-            enable_interpretability (bool, optional): Whether to enable interpretability analysis. Defaults to False.
+            query (str): User query or problem statement.
+            use_meta_learning (bool): If ``True``, leverage meta-learned priors and record experiences.
+            return_full_metadata (bool): When ``True``, return a detailed metadata dictionary.
+            enable_interpretability (bool): Whether to append interpretability diagnostics to the result.
 
         Returns:
-            Union[dict, str]: Returns full metadata if return_full_metadata is True, otherwise returns the answer string.
+            Union[Dict[str, Any], str]: Either an answer string or a metadata payload describing the reasoning process.
         """
-        # Increment the total number of reasoning calls
+        # Increment the total number of reasoning calls.
         self.total_reasoning_calls += 1
         prior = None
-        # Generate a reasoning prior if meta-learning is enabled and there are enough experiences
+        # Generate a reasoning prior if meta-learning is enabled and the experience buffer is populated.
         if use_meta_learning and len(self.meta_learner.reasoning_memory) >= 50:
             prior = self.meta_learner.create_reasoning_prior(query)
 
-        # Record the start time to measure reasoning duration
+        # Record the start time to measure reasoning latency.
         start_time = time.time()
-        # Extract hidden states from the base model without gradient computation
+        # Extract hidden states from the base model without gradient computation.
         with torch.no_grad():
             model_out = self.model(self.tokenizer.encode(query, return_tensors="pt").to(self.device),
                                    output_hidden_states=True)
             hidden_states = model_out.hidden_states[-1]
-            # Pass hidden states to the reasoning engine
+            # Feed hidden states into the core reasoning engine.
             core_out = self.reasoning_engine.forward(hidden_states)
 
-        # Perform multi-path reasoning and get the final result
+        # Perform multi-path inference and gather the final result with chain data.
         final_result = self.reasoning_inference.multi_path_reason(query, return_metadata=True)
         reasoning_time = time.time() - start_time
 
-        # Collect reasoning metadata
+        # Collect reasoning metadata summarizing the execution.
         metadata = {
             'query': query,
             'answer': final_result['answer'] if isinstance(final_result, dict) else final_result,
@@ -105,7 +115,7 @@ class ArcticUnifiedMultiPathReasoningSystem:
             'uncertainty_scores': core_out.get('uncertainty_scores', []),
         }
 
-        # Add interpretability analysis to metadata if enabled
+        # Compute interpretability diagnostics when requested.
         if enable_interpretability:
             metadata['interpretability'] = {
                 'query_complexity': len(query.split()),
@@ -114,13 +124,13 @@ class ArcticUnifiedMultiPathReasoningSystem:
                 'confidence_breakdown': self._analyze_confidence_components(metadata),
             }
 
-        # Increment successful reasoning calls if confidence is high enough
+        # Track success rate using a confidence threshold.
         if metadata['confidence'] > 0.8:
             self.successful_reasoning_calls += 1
-        # Update the average confidence
+        # Update the running average confidence statistic.
         self.average_confidence = ((self.average_confidence * (self.total_reasoning_calls - 1) + metadata['confidence']) / self.total_reasoning_calls)
 
-        # Record reasoning experience if meta-learning is enabled
+        # Record reasoning experience to the meta-learner buffer when enabled.
         if use_meta_learning:
             self.meta_learner.record_reasoning(
                 query=query,
@@ -135,13 +145,8 @@ class ArcticUnifiedMultiPathReasoningSystem:
 
         return metadata if return_full_metadata else metadata['answer']
 
-    def get_performance_stats(self):
-        """
-        Get the performance statistics of the reasoning system.
-
-        Returns:
-            dict: A dictionary containing various performance metrics.
-        """
+    def get_performance_stats(self) -> Dict[str, float]:
+        """Return aggregate metrics summarizing reasoning performance."""
         return {
             'total_reasoning_calls': self.total_reasoning_calls,
             'successful_reasoning_calls': self.successful_reasoning_calls,
@@ -151,25 +156,17 @@ class ArcticUnifiedMultiPathReasoningSystem:
             'patterns_learned': len(self.meta_learner.extract_reasoning_patterns() or {})
         }
 
-    def _analyze_reasoning_paths(self, metadata):
-        """
-        Analyze the reasoning paths based on the given metadata.
-
-        Args:
-            metadata (dict): Metadata containing path importance information.
-
-        Returns:
-            dict: Analysis results including the total number of paths, dominant paths, and path diversity.
-        """
+    def _analyze_reasoning_paths(self, metadata: Dict[str, Any]) -> Dict[str, Union[List[int], float, int]]:
+        """Analyze path importance distribution for interpretability reporting."""
         analysis = {'total_paths': 0, 'dominant_paths': [], 'path_diversity': 0.0}
         path_importance = metadata.get('path_importance', [])
         if path_importance:
-            # Calculate the threshold to determine dominant paths
+            # Identify dominant paths via percentile thresholding.
             threshold = np.percentile(path_importance, 70)
             dominant_indices = [i for i, imp in enumerate(path_importance) if imp >= threshold]
             analysis['dominant_paths'] = dominant_indices
             if len(path_importance) > 1:
-                # Calculate path diversity using entropy
+                # Compute entropy-based diversity normalized by maximum entropy.
                 arr = np.array(path_importance, dtype=float)
                 arr = arr / max(arr.sum(), 1e-8)
                 entropy = -np.sum(arr * np.log(arr + 1e-10))
@@ -177,17 +174,8 @@ class ArcticUnifiedMultiPathReasoningSystem:
                 analysis['path_diversity'] = float(entropy / max(max_entropy, 1e-8))
         return analysis
 
-    def _analyze_uncertainty_trend(self, metadata):
-        """
-        Analyze the uncertainty trend based on the given metadata.
-
-        Args:
-            metadata (dict): Metadata containing uncertainty scores.
-
-        Returns:
-            dict: Analysis results including initial uncertainty, final uncertainty, 
-                  uncertainty reduction, and trend direction.
-        """
+    def _analyze_uncertainty_trend(self, metadata: Dict[str, Any]) -> Dict[str, float]:
+        """Evaluate how uncertainty evolves across reasoning steps."""
         uncertainty_scores = metadata.get('uncertainty_scores', [])
         trend = {
             'initial_uncertainty': uncertainty_scores[0] if uncertainty_scores else 0.5,
@@ -205,16 +193,8 @@ class ArcticUnifiedMultiPathReasoningSystem:
                 trend['trend_direction'] = 'increasing'
         return trend
 
-    def _analyze_confidence_components(self, metadata):
-        """
-        Analyze the components of the confidence score based on the given metadata.
-
-        Args:
-            metadata (dict): Metadata containing the confidence score.
-
-        Returns:
-            dict: Breakdown of the confidence score into base confidence, path consensus, and uncertainty weighted components.
-        """
+    def _analyze_confidence_components(self, metadata: Dict[str, Any]) -> Dict[str, float]:
+        """Decompose the aggregate confidence into conceptual components."""
         confidence = metadata.get('confidence', 0.8)
         return {
             'base_confidence': confidence * 0.6,

@@ -17,6 +17,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Generation subsystems for Arctic multimodal content synthesis.
+
+This module exposes lightweight generators used in tests and mock pipelines to
+produce images, videos, audio, and document tensors. The implementation favors
+clarity over realism and serves as a placeholder for future integration with
+production-grade models.
+"""
+
 import torch
 import pandas as pd
 from torch import nn
@@ -25,15 +33,27 @@ from typing import Dict, Any, List
 from .types import ArcticGenerationCondition
 
 class ArcticUnifiedGeneration(nn.Module):
+    """Minimal multimodal generator for Arctic prototypes.
+
+    The class synthesizes basic tensors for images, videos, audio, and documents
+    by applying simple linear decoders to latent vectors modulated by time
+    embeddings. It is not intended for production use, but allows downstream
+    pipelines to exercise multimodal flows.
+
+    Attributes:
+        cfg: Configuration namespace containing hidden size and related parameters.
+        time_emb (nn.Sequential): Network producing temporal embeddings for diffusion-like iteration.
+        img_decoder (nn.Sequential): Linear decoder that reshapes latent vectors into image tensors.
+        vid_decoder (nn.Sequential): Linear decoder producing video tensors.
+        aud_decoder (nn.Sequential): Linear decoder generating waveform tensors.
+        doc_decoders (nn.ModuleDict): Dictionary of decoders for document content, structure, style, and format.
     """
-    A minimal implementation of a unified generation subsystem for image, video, audio, and document generation.
-    """
+
     def __init__(self, cfg):
-        """
-        Initialize the ArcticUnifiedGeneration module.
+        """Build the generator with simple linear decoders.
 
         Args:
-            cfg: Configuration object containing necessary parameters, including `hidden_size`.
+            cfg: Configuration object with ``hidden_size`` and related attributes.
         """
         super().__init__()
         self.cfg = cfg
@@ -55,14 +75,14 @@ class ArcticUnifiedGeneration(nn.Module):
         })
 
     def _latent(self, condition: ArcticGenerationCondition) -> torch.Tensor:
-        """
-        Generate a stable latent tensor based on the given condition.
+        """Generate a pseudo-random latent vector conditioned on metadata.
 
         Args:
-            condition (ArcticGenerationCondition): The generation condition containing text prompt and emotion vector.
+            condition (ArcticGenerationCondition): Generation parameters including
+                textual prompts and optional emotion vectors.
 
         Returns:
-            torch.Tensor: A randomly generated latent tensor of shape (1, hidden_size).
+            torch.Tensor: Latent tensor of shape ``(1, hidden_size)``.
         """
         # Initialize seed value
         seed = 0.5
@@ -74,15 +94,14 @@ class ArcticUnifiedGeneration(nn.Module):
         return torch.randn(1, self.cfg.hidden_size)
 
     def generate_image(self, condition: ArcticGenerationCondition, steps: int = 8) -> torch.Tensor:
-        """
-        Generate an image tensor based on the given condition.
+        """Generate a mock image tensor by iterative refinement.
 
         Args:
-            condition (ArcticGenerationCondition): The generation condition.
-            steps (int, optional): The number of generation steps. Defaults to 8.
+            condition (ArcticGenerationCondition): Generation parameters.
+            steps (int): Number of refinement iterations. Defaults to ``8``.
 
         Returns:
-            torch.Tensor: The generated image tensor of shape (1, 3, 64, 64).
+            torch.Tensor: Image tensor shaped ``(1, 3, 64, 64)``.
         """
         z = self._latent(condition)
         x = torch.zeros(1, 3, 64, 64)
@@ -93,16 +112,15 @@ class ArcticUnifiedGeneration(nn.Module):
         return x
 
     def generate_video(self, condition: ArcticGenerationCondition, frames: int = 8, steps: int = 8) -> torch.Tensor:
-        """
-        Generate a video tensor based on the given condition.
+        """Generate a mock video tensor via iterative smoothing.
 
         Args:
-            condition (ArcticGenerationCondition): The generation condition.
-            frames (int, optional): The number of frames in the video. Defaults to 8.
-            steps (int, optional): The number of generation steps. Defaults to 8.
+            condition (ArcticGenerationCondition): Generation parameters.
+            frames (int): Number of video frames. Defaults to ``8``.
+            steps (int): Number of refinement iterations. Defaults to ``8``.
 
         Returns:
-            torch.Tensor: The generated video tensor of shape (1, 3, frames, 32, 32).
+            torch.Tensor: Video tensor shaped ``(1, 3, frames, 32, 32)``.
         """
         z = self._latent(condition)
         x = torch.zeros(1, 3, frames, 32, 32)
@@ -113,16 +131,15 @@ class ArcticUnifiedGeneration(nn.Module):
         return x
 
     def generate_audio(self, condition: ArcticGenerationCondition, length: int = 1024, steps: int = 8) -> torch.Tensor:
-        """
-        Generate an audio tensor based on the given condition.
+        """Synthesize a mock audio waveform.
 
         Args:
-            condition (ArcticGenerationCondition): The generation condition.
-            length (int, optional): The length of the audio tensor. Defaults to 1024.
-            steps (int, optional): The number of generation steps. Defaults to 8.
+            condition (ArcticGenerationCondition): Generation parameters.
+            length (int): Desired waveform length. Defaults to ``1024``.
+            steps (int): Number of refinement iterations. Defaults to ``8``.
 
         Returns:
-            torch.Tensor: The generated audio tensor of shape (1, 1, length).
+            torch.Tensor: Audio tensor shaped ``(1, 1, length)``.
         """
         z = self._latent(condition)
         x = torch.zeros(1, 1, length)
@@ -133,15 +150,14 @@ class ArcticUnifiedGeneration(nn.Module):
         return x
 
     def generate_document(self, condition: ArcticGenerationCondition, max_length: int = 100) -> Dict[str, torch.Tensor]:
-        """
-        Generate a document represented as a dictionary of tensors based on the given condition.
+        """Produce placeholder document tensors for content, structure, and style.
 
         Args:
-            condition (ArcticGenerationCondition): The generation condition.
-            max_length (int, optional): The maximum length of the document content. Defaults to 100.
+            condition (ArcticGenerationCondition): Generation parameters.
+            max_length (int): Maximum number of tokens for the content tensor. Defaults to ``100``.
 
         Returns:
-            Dict[str, torch.Tensor]: A dictionary containing tensors for content, structure, style, and format.
+            Dict[str, torch.Tensor]: Mapping containing content, structure, style, and format tensors.
         """
         z = self._latent(condition)
         return {
@@ -153,17 +169,21 @@ class ArcticUnifiedGeneration(nn.Module):
 
 
 class ArcticMultiModalGenerator:
+    """High-level interface orchestrating placeholder multimodal generation.
+
+    The wrapper coordinates between text prompts, emotion conditioning, and
+    cross-modal references to produce output tensors via ``ArcticUnifiedGeneration``.
+    It also applies placeholder watermarking metadata to illustrate post-processing
+    hooks.
     """
-    A high-level unified generation interface that supports text-based, emotion-based, cross-modal, and multimodal fusion generation, with mandatory watermarking.
-    """
+
     def __init__(self, cfg, vision_encoder=None, audio_encoder=None):
-        """
-        Initialize the ArcticMultiModalGenerator module.
+        """Construct the generator facade.
 
         Args:
-            cfg: Configuration object.
-            vision_encoder: Vision encoder model. Defaults to None.
-            audio_encoder: Audio encoder model. Defaults to None.
+            cfg: Configuration namespace shared with ``ArcticUnifiedGeneration``.
+            vision_encoder: Optional vision encoder reference.
+            audio_encoder: Optional audio encoder reference.
         """
         self.cfg = cfg
         self.unified_gen = ArcticUnifiedGeneration(cfg)
@@ -171,28 +191,26 @@ class ArcticMultiModalGenerator:
         self.audio_encoder = audio_encoder
 
     def _dummy_tensor(self, shape):
-        """
-        Create a zero tensor on the available device (GPU if available, otherwise CPU).
+        """Allocate a zero tensor on the preferred device.
 
         Args:
-            shape: Shape of the tensor.
+            shape (Tuple[int, ...]): Desired tensor shape.
 
         Returns:
-            torch.Tensor: A zero tensor with the specified shape on the available device.
+            torch.Tensor: Zero tensor located on GPU when available.
         """
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return torch.zeros(*shape, device=device)
 
     def _apply_watermark(self, tensor_or_dict, metadata: Dict[str, Any]):
-        """
-        Apply a placeholder watermark to the input tensor or dictionary without modifying the data.
+        """Attach placeholder watermark metadata without mutating content.
 
         Args:
-            tensor_or_dict: Input tensor or dictionary of tensors.
-            metadata (Dict[str, Any]): Metadata containing information about the content type.
+            tensor_or_dict: Generated payload.
+            metadata (Dict[str, Any]): Generation metadata.
 
         Returns:
-            tuple: A tuple containing the original input and a dictionary indicating the watermark application.
+            Tuple[Any, Dict[str, Any]]: Original payload and watermark metadata.
         """
         watermark_info = {
             'applied': True,
@@ -202,19 +220,18 @@ class ArcticMultiModalGenerator:
         return tensor_or_dict, watermark_info
 
     def generate_from_text(self, text: str, modality: str = 'image', **kwargs):
-        """
-        Generate content of the specified modality based on the given text.
+        """Generate content conditioned on text prompts for a specified modality.
 
         Args:
-            text (str): The input text prompt.
-            modality (str, optional): The target modality ('image', 'video', 'audio', or 'document'). Defaults to 'image'.
+            text (str): Input prompt.
+            modality (str): Target modality among ``{"image", "video", "audio", "document"}``.
             **kwargs: Additional generation parameters.
 
         Returns:
-            torch.Tensor or Dict[str, torch.Tensor]: The generated content.
+            Union[torch.Tensor, Dict[str, torch.Tensor]]: Generated content matching the modality.
 
         Raises:
-            ValueError: If the specified modality is not supported.
+            ValueError: If ``modality`` is unsupported.
         """
         condition = ArcticGenerationCondition(text_prompt=text, generation_params=kwargs)
         metadata = {
@@ -239,20 +256,19 @@ class ArcticMultiModalGenerator:
         return result
 
     def cross_modal_generate(self, source_modality: str, target_modality: str, input_data: torch.Tensor, **kwargs):
-        """
-        Perform cross-modal generation from the source modality to the target modality.
+        """Generate content by conditioning on an alternate modality input.
 
         Args:
-            source_modality (str): The source modality ('image', 'audio', 'video', or 'document').
-            target_modality (str): The target modality ('image', 'video', 'audio', or 'document').
-            input_data (torch.Tensor): The input data of the source modality.
+            source_modality (str): Source modality name.
+            target_modality (str): Destination modality name.
+            input_data (torch.Tensor): Tensor representing the source modality.
             **kwargs: Additional generation parameters.
 
         Returns:
-            torch.Tensor or Dict[str, torch.Tensor]: The generated content of the target modality.
+            Union[torch.Tensor, Dict[str, torch.Tensor]]: Generated content matching ``target_modality``.
 
         Raises:
-            ValueError: If the specified target modality is not supported.
+            ValueError: If ``target_modality`` is unsupported.
         """
         condition = ArcticGenerationCondition(generation_params=kwargs)
         if source_modality == "image":
@@ -286,19 +302,18 @@ class ArcticMultiModalGenerator:
         return result
 
     def multimodal_fusion_generate(self, inputs: Dict[str, torch.Tensor], target_modality: str, **kwargs):
-        """
-        Generate content of the target modality by fusing multiple modalities of input data.
+        """Fuse multiple modalities to synthesize target-modality outputs.
 
         Args:
-            inputs (Dict[str, torch.Tensor]): A dictionary containing input data of different modalities.
-            target_modality (str): The target modality ('image', 'video', 'audio', or 'document').
+            inputs (Dict[str, torch.Tensor]): Feature tensors keyed by modality.
+            target_modality (str): Destination modality among ``{"image", "video", "audio", "document"}``.
             **kwargs: Additional generation parameters.
 
         Returns:
-            torch.Tensor or Dict[str, torch.Tensor]: The generated content of the target modality.
+            Union[torch.Tensor, Dict[str, torch.Tensor]]: Generated content matching ``target_modality``.
 
         Raises:
-            ValueError: If the specified target modality is not supported.
+            ValueError: If ``target_modality`` is unsupported.
         """
         condition = ArcticGenerationCondition(generation_params=kwargs)
         if "image" in inputs:
@@ -332,19 +347,18 @@ class ArcticMultiModalGenerator:
         return result
 
     def generate_from_emotion(self, emotion: str, modality: str = 'image', **kwargs):
-        """
-        Generate content of the specified modality based on the given emotion.
+        """Generate content using emotion descriptors as prompts.
 
         Args:
-            emotion (str): The input emotion.
-            modality (str, optional): The target modality ('image', 'video', 'audio', or 'document'). Defaults to 'image'.
+            emotion (str): Emotion descriptor.
+            modality (str): Target modality among ``{"image", "video", "audio", "document"}``.
             **kwargs: Additional generation parameters.
 
         Returns:
-            torch.Tensor or Dict[str, torch.Tensor]: The generated content.
+            Union[torch.Tensor, Dict[str, torch.Tensor]]: Generated content matching ``modality``.
 
         Raises:
-            ValueError: If the specified modality is not supported.
+            ValueError: If ``modality`` is unsupported.
         """
         condition = ArcticGenerationCondition(generation_params=kwargs)
         metadata = {
