@@ -1,6 +1,6 @@
 # ⚠️ Compliance Notice
 
-**Please be advised that PiscesL1 does not provide model filing services in accordance with China’s "Interim Measures for the Management of Generative Artificial Intelligence Services" and related regulations; if services are provided to the public within the territory of China, please complete the required filings independently.**
+**Developers and users are solely responsible for compliance with applicable laws and regulations in their respective jurisdictions, including but not limited to China's "Interim Measures for the Management of Generative Artificial Intelligence Services", the EU's "Artificial Intelligence Act", the US "AI Risk Management Framework", and Japan's "AI Guidelines"; failure to comply may result in service suspension, regulatory penalties, or legal liability.**
 
 ---
 
@@ -32,7 +32,7 @@ A next-generation lightweight multimodal Mixture-of-Experts (MoE) model with Arc
 
 ## ❄️ Arctic Architecture Innovations
 
-### 🧠 Multi-Path Reasoning Engine (PiscesReasoner)
+### 🧠 Multi-Path Reasoning Engine (ArcticUnifiedReasoner)
 - Hierarchical Reasoning Chains (HRC): multi-layer abstraction
 - Parallel hypothesis thinking: up to 8 concurrent streams with dynamic selection
 - Dynamic fact verification: real-time truth checking and consistency scoring
@@ -45,12 +45,12 @@ A next-generation lightweight multimodal Mixture-of-Experts (MoE) model with Arc
 - Gradient-checkpoint friendly fixed-shape mode
 - Stable gates: noise injection and capacity control
 
-### 🌐 5-Modal Encoding System
-- VisionEncoder: NaViT native resolution (up to 1024px)
-- VideoEncoder: temporal visual understanding, frame-level attention
-- AudioEncoder: advanced audio feature extraction
-- DocEncoder: document structure understanding (LayoutLMv3)
-- AgentEncoder: agent behavior modeling (observations/actions/reflections)
+### 🌐 Multimodal Encoding System
+- ArcticVisionEncoder: NaViT native resolution (up to 1024px)
+- ArcticVideoEncoder: temporal visual understanding, frame-level attention  
+- ArcticAudioEncoder: advanced audio feature extraction
+- ArcticDocEncoder: document structure understanding (LayoutLMv3)
+- ArcticAgenticEncoder: agent behavior modeling (compatibility wrapper)
 
 ### ⚛️ Advanced Multimodal Fusion
 - DynamicModalFusion: unified token-level multimodal fusion
@@ -81,7 +81,7 @@ A next-generation lightweight multimodal Mixture-of-Experts (MoE) model with Arc
 ## 🚀 Features
 
 - Arctic architecture with multi-path reasoning
-- Unified 5-modal understanding and cross-modal fusion
+- Unified multimodal understanding and cross-modal fusion
 - 8-expert Top-2 routing and load prediction
 - 10M+ context window
 - Multi-bit quantization (2/4/8)
