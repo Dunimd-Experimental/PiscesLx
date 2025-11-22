@@ -3,7 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
-# The PiscesL1 project belongs to the Dunimd project team.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -143,7 +143,7 @@ class PiscesLxCoreDeviceUnifiedPlanner:
             Exception: If the process group initialization fails.
         """
 
-        from utils.device import PiscesLxCoreProcessGroupManager
+        from utils import PiscesLxCoreProcessGroupManager
         
         # Attempt to initialize the process group
         try:
@@ -161,7 +161,7 @@ class PiscesLxCoreDeviceUnifiedPlanner:
             Exception: If the process group finalization fails.
         """
 
-        from utils.device import PiscesLxCoreProcessGroupManager
+        from utils import PiscesLxCoreProcessGroupManager
         
         # Attempt to finalize the process group
         try:
@@ -183,7 +183,7 @@ class PiscesLxCoreDeviceUnifiedPlanner:
             Any: The wrapped model.
         """
         logger = PiscesLxCoreLog()
-        from utils.device import PiscesLxCoreModelParallelizer
+        from utils import PiscesLxCoreModelParallelizer
         
         # Convert the dictionary plan to a lightweight object with the attributes expected by the wrapper
         class _P:  # pragma: no cover
@@ -218,7 +218,7 @@ class PiscesLxCoreDeviceUnifiedPlanner:
             Any: The wrapped model.
         """
         logger = PiscesLxCoreLog()
-        from utils.device import PiscesLxCoreModelParallelizer
+        from utils import PiscesLxCoreModelParallelizer
         
         # Convert the dictionary plan to a lightweight object with the attributes expected by the wrapper
         class _P:  # pragma: no cover

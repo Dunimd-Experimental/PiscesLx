@@ -3,7 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
-# The PiscesL1 project belongs to the Dunimd project team.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -88,17 +88,17 @@ from utils.device.cpu_detector import PiscesLxCoreDeviceCpuDetector
 
 from utils.device.smart_detector import PiscesLxCoreDeviceSmartDetector
 from utils.device.nvidia_detector import PiscesLxCoreDeviceNvidiaDetector
-from utils.device.dist import (
+from utils.device.dist.planner import (
     PiscesLxCoreDistConfig,
     PiscesLxCoreDistPlan,
     PiscesLxCoreDistPlanner,
-    PiscesLxCoreProcessGroupManager,
-    PiscesLxCoreModelParallelizer,
-    PiscesLxCoreClusterEnv,
-    PiscesLxCoreTopologyOptimizer,
-    PiscesLxCoreLaunchSpec,
-    PiscesLxCoreDistributedSamplerBuilder,
 )
+from utils.device.dist.process import PiscesLxCoreProcessGroupManager
+from utils.device.dist.wrap import PiscesLxCoreModelParallelizer
+from utils.device.dist.env import PiscesLxCoreClusterEnv
+from utils.device.dist.topology import PiscesLxCoreTopologyOptimizer
+from utils.device.dist.launcher import PiscesLxCoreLaunchSpec
+from utils.device.dist.sampler import PiscesLxCoreDistributedSamplerBuilder
 
 # Observability module
 from utils.observability.decorators import PiscesLxCoreDecorators
@@ -112,6 +112,45 @@ from utils.quantization import PiscesLxCoreQuantizer
 
 # Config module
 from utils.config.manager import PiscesLxCoreConfigManager, PiscesLxCoreConfigManagerFacade
+
+# MCP module - all exports centralized here
+from utils.mcp.types import (
+    PiscesLxCoreMCPToolMetadata,
+    PiscesLxCoreMCPExecutionContext,
+    PiscesLxCoreMCPModuleStats,
+    PiscesLxCoreMCPModuleStatus,
+    PiscesLxCoreMCPHealthStatus,
+    PiscesLxCoreMCPPerformanceMetrics,
+    PiscesLxCoreMCPConfiguration,
+    PiscesLxCoreMCPFileWatcherConfig,
+    PiscesLxCoreMCPMessageType,
+    PiscesLxCoreMCPMessage,
+    PiscesLxCoreAgenticAction,
+    PiscesLxCoreAgenticObservation,
+    PiscesLxCoreMCPProtocol
+)
+from utils.mcp.monitor import PiscesLxCoreMCPMonitor
+from utils.mcp.session import PiscesLxCoreMCPSession
+from utils.mcp.registry import PiscesLxCoreMCPRegistry
+from utils.mcp.tools import PiscesLxCoreMCPTools
+from utils.mcp.xml_utils import (
+    PiscesLxCoreMCPAgenticCall, PiscesLxCoreMCPXMLParser, PiscesLxCoreMCPXMLGenerator
+)
+from utils.mcp.execution import (
+    PiscesLxCoreMCPExecutionMode, PiscesLxCoreMCPExecutionStatus, PiscesLxCoreMCPExecutionResult, PiscesLxCoreMCPExecutionConfig,
+    PiscesLxCoreMCPExecutionManager, get_execution_manager
+)
+from utils.mcp.remote_client import (
+    PiscesLxCoreMCPRemoteClient, PiscesLxCoreMCPArcticRemoteClient, PiscesLxCoreMCPRemoteClientPool,
+    get_remote_client_pool, execute_remote_tool
+)
+from utils.mcp.tool_executor import (
+    PiscesLxCoreMCPToolType, PiscesLxCoreMCPToolMetadata, PiscesLxCoreMCPExecutionContext,
+    PiscesLxCoreMCPNativeToolExecutor, PiscesLxCoreMCPInternalToolExecutor, PiscesLxCoreMCPExternalToolExecutor,
+    PiscesLxCoreMCPUnifiedToolExecutor, get_unified_tool_executor
+)
+from utils.mcp.core import PiscesLxCoreMCPPlaza
+from utils.mcp.arctic_extensions import PiscesLxCoreMCPTreeSearchReasoner, create_arctic_reasoner
 
 __all__ = [
     # Core utilities
@@ -215,4 +254,59 @@ __all__ = [
     
     # Quantization
     'PiscesLxCoreQuantizer',
+    
+    # MCP module - all exports centralized here
+    # Core classes
+    'PiscesLxCoreMCPPlaza',
+    'PiscesLxCoreMCPMonitor', 
+    'PiscesLxCoreMCPSession',
+    'PiscesLxCoreMCPRegistry',
+    'PiscesLxCoreMCPTools',
+    
+    # XML utilities
+    'PiscesLxCoreMCPAgenticCall',
+    'PiscesLxCoreMCPXMLParser',
+    'PiscesLxCoreMCPXMLGenerator',
+    
+    # Execution
+    'PiscesLxCoreMCPExecutionMode',
+    'PiscesLxCoreMCPExecutionStatus',
+    'PiscesLxCoreMCPExecutionResult',
+    'PiscesLxCoreMCPExecutionConfig',
+    'PiscesLxCoreMCPExecutionManager',
+    'get_execution_manager',
+    
+    # Remote client
+    'PiscesLxCoreMCPRemoteClient',
+    'PiscesLxCoreMCPArcticRemoteClient',
+    'PiscesLxCoreMCPRemoteClientPool',
+    'get_remote_client_pool',
+    'execute_remote_tool',
+    
+    # Tool executor
+    'PiscesLxCoreMCPToolType',
+    'PiscesLxCoreMCPToolMetadata',
+    'PiscesLxCoreMCPExecutionContext',
+    'PiscesLxCoreMCPNativeToolExecutor',
+    'PiscesLxCoreMCPInternalToolExecutor',
+    'PiscesLxCoreMCPExternalToolExecutor',
+    'PiscesLxCoreMCPUnifiedToolExecutor',
+    'get_unified_tool_executor',
+    
+    # Data types
+    'PiscesLxCoreMCPToolMetadata',
+    'PiscesLxCoreMCPExecutionContext',
+    'PiscesLxCoreMCPModuleStats',
+    'PiscesLxCoreMCPModuleStatus',
+    'PiscesLxCoreMCPHealthStatus',
+    'PiscesLxCoreMCPPerformanceMetrics',
+    'PiscesLxCoreMCPConfiguration',
+    'PiscesLxCoreMCPFileWatcherConfig',
+    'PiscesLxCoreMCPTreeSearchReasoner',
+    'create_arctic_reasoner',
+    'PiscesLxCoreMCPMessageType',
+    'PiscesLxCoreMCPMessage',
+    'PiscesLxCoreAgenticAction',
+    'PiscesLxCoreAgenticObservation',
+    'PiscesLxCoreMCPProtocol',
 ]

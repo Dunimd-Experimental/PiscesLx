@@ -3,7 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
-# The PiscesL1 project belongs to the Dunimd project team.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -22,7 +22,6 @@ from typing import Optional
 from utils.fs.core import PiscesLxCoreFS
 from utils.log.core import PiscesLxCoreLog
 from utils.cache.enhanced import PiscesLxCoreEnhancedCacheManager
-from utils.config.manager import PiscesLxCoreConfigManagerFacade
 
 logger = PiscesLxCoreLog("PiscesLx.Core.Cache.Facade")
 
@@ -68,7 +67,3 @@ class PiscesLxCoreCacheManagerFacade:
         if cls._instance is None:
             cls._instance = cls()
         return cls._instance
-
-__all__ = [
-    "PiscesLxCoreCacheManagerFacade",
-]

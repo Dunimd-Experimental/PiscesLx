@@ -3,7 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
-# The PiscesL1 project belongs to the Dunimd project team.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -39,8 +39,7 @@ from field_manager import init_field_rules, add_new_field, manage_fields
 
 # Import root utils functions
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..')))
-from utils import PiscesLxCoreConfigManagerFacade
-from utils.cache import PiscesLxCoreCacheManagerFacade
+from utils import PiscesLxCoreConfigManagerFacade, PiscesLxCoreCacheManagerFacade
 
 import streamlit as st, pyarrow as pa, pyarrow.json as paj, json, jsonlines, ast, time, shutil
 
@@ -225,9 +224,8 @@ def dataset(args=None):
         if _early_settings.default_open_path:
             _default_path = _early_settings.default_open_path
         else:
-                from utils.cache import PiscesLxCoreCacheManagerFacade
-                cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
-                _default_path = cache_manager.get_or_create_cache_dir("data_cache")
+            cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
+            _default_path = cache_manager.get_or_create_cache_dir("data_cache")
     path_input = st.text_input(t("input.path_label"), _default_path, placeholder=t("ph.path_input"))
     # remember recent path
     if path_input and path_input != st.session_state.get('last_path') and _early_settings.remember_recent_path:
@@ -1110,7 +1108,7 @@ def dataset(args=None):
         
         with button_col:
             # Toggle main-page settings view
-            if st.button("�?, help=t("sidebar.settings_hint"), key="btn_settings_min"):
+            if st.button("⚙️", help=t("sidebar.settings_hint"), key="btn_settings_min"):
                 st.session_state["show_settings_page"] = True
                 st.rerun()
 

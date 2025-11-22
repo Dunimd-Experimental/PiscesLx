@@ -1,5 +1,5 @@
 {
-  "model_type": "pisces_l1_314b",
+  "model_type": "piscesl1_314b",
   "vocab_size": 71164,
   "hidden_size": 12288,
   "n_layer": 160,

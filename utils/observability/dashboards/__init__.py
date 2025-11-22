@@ -3,7 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
-# The PiscesL1 project belongs to the Dunimd project team.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -89,5 +89,3 @@ def validate_dashboard_config(config: Dict[str, Any]) -> bool:
             return False
     
     return True
-
-# Intentionally do not re-export anything at subpackage level to enforce single entry via utils.__init__.

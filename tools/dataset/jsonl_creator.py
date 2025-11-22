@@ -3,7 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
-# The PiscesL1 project belongs to the Dunimd project team.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-from utils import get_cache_manager
+from utils import PiscesLxCoreCacheManagerFacade
 
 class JSONLCreator:
     """
@@ -41,7 +41,6 @@ class JSONLCreator:
                                      If None, use the data cache directory from the cache manager.
         """
         if base_path is None:
-            from utils.cache import PiscesLxCoreCacheManagerFacade
             cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
             base_path = cache_manager.get_cache_dir("data_cache")
         self.base_path = Path(base_path)
@@ -343,7 +342,7 @@ def create_template_dataset(template_type: str, record_count: int = 10, base_pat
         str: Full path of the created file.
     """
     if base_path is None:
-        from utils.cache import PiscesLxCoreCacheManagerFacade
+        from utils import PiscesLxCoreCacheManagerFacade
         cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
         base_path = cache_manager.get_or_create_cache_dir("data_cache")
     creator = JSONLCreator(base_path)

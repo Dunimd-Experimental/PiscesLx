@@ -3,7 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
-# The PiscesL1 project belongs to the Dunimd project team.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -44,7 +44,7 @@ COLLATE_MAX_SEQ_LEN = 96
 
 # Local compatibility wrapper to avoid importing utils functions
 def get_cache_manager():
-    from utils.cache import PiscesLxCoreCacheManagerFacade
+    from utils import PiscesLxCoreCacheManagerFacade
     return PiscesLxCoreCacheManagerFacade.get_instance()
 
 def set_context(*, hooks=None, profiler=None, cfg=None):

@@ -3,7 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
-# The PiscesL1 project belongs to the Dunimd project team.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -27,7 +27,7 @@ from func_templates import FunctionTemplateManager
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
 
-from utils.cache import PiscesLxCoreCacheManagerFacade
+from utils import PiscesLxCoreCacheManagerFacade
 cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
 DATA_CACHE_DIR = cache_manager.get_cache_dir("data_cache")
 
@@ -450,7 +450,7 @@ def render_settings_page(initial_settings: AppSettings) -> None:
 
     with t_cache:
         with st.expander(t("cache.section_stats"), expanded=initial_settings.expand_panels_by_default):
-            from utils.cache import PiscesLxCoreCacheManagerFacade
+            from utils import PiscesLxCoreCacheManagerFacade
             import os
             from pathlib import Path
             cache_mgr = PiscesLxCoreCacheManagerFacade.get_instance()
@@ -543,7 +543,7 @@ def render_settings_page(initial_settings: AppSettings) -> None:
                 st.rerun()
 
         with st.expander(t("cache.section_clean"), expanded=initial_settings.expand_panels_by_default):
-            from utils.cache import PiscesLxCoreCacheManagerFacade
+            from utils import PiscesLxCoreCacheManagerFacade
             cache_mgr = PiscesLxCoreCacheManagerFacade.get_instance()
             import os, shutil
 

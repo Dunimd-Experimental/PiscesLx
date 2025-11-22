@@ -3,7 +3,7 @@
 # Copyright © 2025 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
-# The PiscesL1 project belongs to the Dunimd project team.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -28,7 +28,7 @@ class ArcticConfig:
     """Dataclass encapsulating PiscesL1 model configuration parameters.
 
     Attributes:
-        model_type (str): Human-readable model identifier. Defaults to ``"pisces_l1"``.
+        model_type (str): Human-readable model identifier. Defaults to ``"piscesl1"``.
         vocab_size (int): Token vocabulary size. Defaults to ``71164``.
         hidden_size (int): Transformer hidden dimension. Defaults to ``2048``.
         n_layer (int): Number of transformer layers. Defaults to ``24``.
@@ -88,7 +88,7 @@ class ArcticConfig:
         enable_debug_outputs (bool): If True, model.forward returns a 'debug' section with shapes and data types. Defaults to False.
         debug_verbose (bool): If True, include extra debug information like modality presence and fusion shapes. Defaults to False.
     """
-    model_type: str = "pisces_l1"
+    model_type: str = "piscesl1"
     vocab_size: int = 71164
     hidden_size: int = 2048
     n_layer: int = 24
