@@ -25,7 +25,9 @@ import numpy as np
 from typing import Optional, Tuple, Dict, Any
 from dataclasses import dataclass
 from .core import QuantizationConfig, QuantizationMetrics
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 
 logger = PiscesLxCoreLog("PiscesLx.Core.Quantization.BitNetV2")
 

@@ -17,50 +17,50 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .vision import ArcticVisionEncoder, ArcticSpatioTemporalRoPE3D
-from .video import ArcticVideoEncoder
-from .audio import ArcticAudioEncoder
-from .doc import ArcticDocEncoder
-from .agentic import ArcticAgentic
-from .agentic_encoder import ArcticAgenticEncoder
-from .attention import ArcticCrossModalAttention
-from .fusion import ArcticDynamicModalFusion
-from .generator import ArcticUnifiedGeneration, ArcticMultiModalGenerator
-from .hw import ArcticHardwareAdaptiveConfig
-from .reasoner import ArcticUnifiedReasoner
-from .server import ArcticMCPGenerationServer
-from .mcp import ArcticMCPToolRegistry
+from .vision import RuchbahVisionEncoder, RuchbahSpatioTemporalRoPE3D
+from .video import RuchbahVideoEncoder
+from .audio import RuchbahAudioEncoder
+from .doc import RuchbahDocEncoder
+from .agentic import RuchbahAgentic
+from .agentic_encoder import RuchbahAgenticEncoder
+from .attention import RuchbahCrossModalAttention
+from .fusion import RuchbahDynamicModalFusion
+from .generator import RuchbahUnifiedGeneration, RuchbahMultiModalGenerator
+from .hw import RuchbahHardwareAdaptiveConfig
+from .reasoner import RuchbahUnifiedReasoner
+from .server import RuchbahMCPGenerationServer
+from .mcp import RuchbahMCPToolRegistry
 from .types import (
-    ArcticAgenticState,
-    ArcticMCPMessageType,
-    ArcticGenerationCondition,
-    ArcticMCPMessage,
-    ArcticAgenticAction,
-    ArcticAgenticObservation,
-    ArcticAgenticMemory,
+    RuchbahAgenticState,
+    RuchbahMCPMessageType,
+    RuchbahGenerationCondition,
+    RuchbahMCPMessage,
+    RuchbahAgenticAction,
+    RuchbahAgenticObservation,
+    RuchbahAgenticMemory,
 )
 
 __all__ = [
-    "ArcticVisionEncoder",
-    "ArcticSpatioTemporalRoPE3D",
-    "ArcticVideoEncoder",
-    "ArcticAudioEncoder",
-    "ArcticDocEncoder",
-    "ArcticAgentic",
-    "ArcticAgenticEncoder",
-    "ArcticCrossModalAttention",
-    "ArcticDynamicModalFusion",
-    "ArcticUnifiedGeneration",
-    "ArcticMultiModalGenerator",
-    "ArcticHardwareAdaptiveConfig",
-    "ArcticUnifiedReasoner",
-    "ArcticMCPGenerationServer",
-    "ArcticMCPToolRegistry",
-    "ArcticAgenticState",
-    "ArcticMCPMessageType",
-    "ArcticGenerationCondition",
-    "ArcticMCPMessage",
-    "ArcticAgenticAction",
-    "ArcticAgenticObservation",
-    "ArcticAgenticMemory",
+    "RuchbahVisionEncoder",
+    "RuchbahSpatioTemporalRoPE3D",
+    "RuchbahVideoEncoder",
+    "RuchbahAudioEncoder",
+    "RuchbahDocEncoder",
+    "RuchbahAgentic",
+    "RuchbahAgenticEncoder",
+    "RuchbahCrossModalAttention",
+    "RuchbahDynamicModalFusion",
+    "RuchbahUnifiedGeneration",
+    "RuchbahMultiModalGenerator",
+    "RuchbahHardwareAdaptiveConfig",
+    "RuchbahUnifiedReasoner",
+    "RuchbahMCPGenerationServer",
+    "RuchbahMCPToolRegistry",
+    "RuchbahAgenticState",
+    "RuchbahMCPMessageType",
+    "RuchbahGenerationCondition",
+    "RuchbahMCPMessage",
+    "RuchbahAgenticAction",
+    "RuchbahAgenticObservation",
+    "RuchbahAgenticMemory",
 ]

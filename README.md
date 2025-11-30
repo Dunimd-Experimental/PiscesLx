@@ -27,29 +27,29 @@ English | [简体中文](README.zh.md)
     <img alt="ModelScope" src="https://img.shields.io/badge/ModelScope-Dunimd-1E6CFF?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTcuMDA2IDBDMy4xNDIgMCAwIDMuMTQyIDAgNy4wMDZTMy4xNDIgMTQuMDEyIDcuMDA2IDE0LjAxMkMxMC44NyAxNC4wMTIgMTQuMDEyIDEwLjg3IDE0LjAxMiA3LjAwNkMxNC4wMTIgMy4xNDIgMTAuODcgMCA3LjAwNiAwWiIgZmlsbD0iIzFFNkNGRiIvPgo8L3N2Zz4K"/>
 </a>
 
-A lightweight multimodal Mixture-of-Experts (MoE) model featuring the Arctic architecture, supporting text, image, audio, video, document, and agent understanding. PiscesL1 (PiscesLx series, Dunimd Team) is designed for research and practical applications, capable of running on a single RTX 4090 GPU with scalable architecture up to 1T parameters.
+A lightweight multimodal Mixture-of-Experts (MoE) model featuring the **Ruchbah Architecture**, supporting text, image, audio, video, document, and agent understanding. PiscesL1 (PiscesLx series, Dunimd Team) is designed for research and practical applications, capable of running on a single RTX 4090 GPU with scalable architecture up to 1T parameters.
 
 </div>
 
-<h2 align="center">❄️ Arctic Architecture</h2>
+<h2 align="center">Ruchbah Architecture (Reliable Unified Cognitive Hybrid Balanced Adaptive High-performance)</h2>
 
-### 🧠 ArcticUnifiedReasoner
-ArcticUnifiedReasoner unified scheduling Hierarchical Reasoning Chains (HRC) can simultaneously run up to 8 hypothesis streams, combined with dynamic fact verification and metacognitive uncertainty scoring to provide self-checking feedback for the reasoning process. Control tokens like `<|start_hypothesis|>`, `<|start_evidence|>`, `<|start_conclusion|>`, `<|hypothesis_split|>`, `<|hypothesis_merge|>` help external tools precisely track the model's thinking path.
+### 🧠 RuchbahUnifiedReasoner
+RuchbahUnifiedReasoner unified scheduling Hierarchical Reasoning Chains (HRC) can simultaneously run up to 8 hypothesis streams, combined with dynamic fact verification and metacognitive uncertainty scoring to provide self-checking feedback for the reasoning process. Control tokens like `<|start_hypothesis|>`, `<|start_evidence|>`, `<|start_conclusion|>`, `<|hypothesis_split|>`, `<|hypothesis_merge|>` help external tools precisely track the model's thinking path.
 
-### 🔧 Arctic MoE Scaling
-ArcticStableMoEGate with its LSTM load predictor handles 8-expert Top-2 routing, integrating load noise, fixed-shape execution, and capacity-aware gating. This ensures stable training for large models while maintaining consistent interfaces for small models, facilitating switching between different computational resources.
+### 🔧 Ruchbah MoE Scaling
+RuchbahStableMoEGate with its LSTM load predictor handles 8-expert Top-2 routing, integrating load noise, fixed-shape execution, and capacity-aware gating. This ensures stable training for large models while maintaining consistent interfaces for small models, facilitating switching between different computational resources.
 
 ### 🌐 Multimodal Perception Stack
-Visual, video, audio, document, and agent inputs are unified by ArcticVisionEncoder (NaViT-style patches up to 1024px), ArcticVideoEncoder (frame-level attention with 3D RoPE), ArcticAudioEncoder, ArcticDocEncoder (LayoutLMv3-style structural reasoning), and ArcticAgenticEncoder. This allows the backbone network to directly consume cross-modal features without additional tokenization logic.
+Visual, video, audio, document, and agent inputs are unified by RuchbahVisionEncoder (NaViT-style patches up to 1024px), RuchbahVideoEncoder (frame-level attention with 3D RoPE), RuchbahAudioEncoder, RuchbahDocEncoder (LayoutLMv3-style structural reasoning), and RuchbahAgenticEncoder. This allows the backbone network to directly consume cross-modal features without additional tokenization logic.
 
-### ⚛️ ArcticDynamicModalFusion
-ArcticDynamicModalFusion implements token-level fusion through cross-modal attention, modality-aware position embeddings, and quality-weighted gating. It can choose to insert fusion tokens before text sequences, concatenate 3D features, or output compressed summaries based on scenarios. Training, inference, and MCP tool alignment all share this logic.
+### ⚛️ RuchbahDynamicModalFusion
+RuchbahDynamicModalFusion implements token-level fusion through cross-modal attention, modality-aware position embeddings, and quality-weighted gating. It can choose to insert fusion tokens before text sequences, concatenate 3D features, or output compressed summaries based on scenarios. Training, inference, and MCP tool alignment all share this logic.
 
 ### 📏 Ultra-Long Context Fabric
-With YaRN RoPE + dynamic NTK scaling, H2O streaming attention, sliding window, and compression strategies, the Arctic architecture can scale single sequences to 10M+ tokens. It also supports speculative decoding and high-speed KV cache segmentation, suitable for long documents and multi-round Agent workloads.
+With YaRN RoPE + dynamic NTK scaling, H2O streaming attention, sliding window, and compression strategies, the Ruchbah architecture can scale single sequences to 10M+ tokens. It also supports speculative decoding and high-speed KV cache segmentation, suitable for long documents and multi-round Agent workloads.
 
-### 🤖 ArcticAgentic Runtime
-ArcticAgentic is an MCP-native agent runtime that can embed environment observation, maintain persistent memory, schedule tool calls, and coordinate multi-agent conversations. Since it shares encoders and fusion layers with the backbone, agent trajectories can be directly trained or reviewed through the `python manage.py` workflow.
+### 🤖 RuchbahAgentic Runtime
+RuchbahAgentic is an MCP-native agent runtime that can embed environment observation, maintain persistent memory, schedule tool calls, and coordinate multi-agent conversations. Since it shares encoders and fusion layers with the backbone, agent trajectories can be directly trained or reviewed through the `python manage.py` workflow.
 
 ### 🎯 Training Envelope & Optimization
 All model sizes share the same training envelope: K-FAC enhanced gradient clipping, multi-bit quantization (2/4/8), LoRA/QLoRA, and checkpoint pipeline. This makes 0.5B–1.5B scale feasible on ~14.6 GB GPU while retaining an upgrade path to 1T parameters. One command (`python manage.py train|infer|benchmark`) covers the entire lifecycle.

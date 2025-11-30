@@ -17,9 +17,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Orchestrated multi-path reasoning system for Arctic agents.
+"""Orchestrated multi-path reasoning system for Ruchbah agents.
 
-The module exposes :class:`ArcticUnifiedMultiPathReasoningSystem`, which
+The module exposes :class:`RuchbahUnifiedMultiPathReasoningSystem`, which
 coordinates core reasoning, inference-time search, and meta-learning to deliver
 adaptive, interpretable multi-path reasoning flows.
 """
@@ -29,12 +29,12 @@ import torch
 import numpy as np
 from torch import nn
 from typing import Any, Dict, Optional, Union
-from .multipath_meta import ArcticMultiPathMetaLearner
-from .enhancer import ArcticMultiModalReasoningEnhancer
-from .multipath_core import ArcticMultiPathReasoningEngine
-from .multipath_infer import ArcticMultiPathInferenceEngine
+from .multipath_meta import RuchbahMultiPathMetaLearner
+from .enhancer import RuchbahMultiModalReasoningEnhancer
+from .multipath_core import RuchbahMultiPathReasoningEngine
+from .multipath_infer import RuchbahMultiPathInferenceEngine
 
-class ArcticUnifiedMultiPathReasoningSystem:
+class RuchbahUnifiedMultiPathReasoningSystem:
     """Runtime container integrating core reasoning, inference, and meta-learning."""
 
     def __init__(self, model: nn.Module, tokenizer: Any, device: str = 'cuda') -> None:
@@ -50,9 +50,9 @@ class ArcticUnifiedMultiPathReasoningSystem:
         self.device = device
 
         # Initialize reasoning subsystems used during inference.
-        self.reasoning_engine = ArcticMultiPathReasoningEngine(model.config)
-        self.reasoning_inference = ArcticMultiPathInferenceEngine(model, tokenizer)
-        self.meta_learner = ArcticMultiPathMetaLearner(model)
+        self.reasoning_engine = RuchbahMultiPathReasoningEngine(model.config)
+        self.reasoning_inference = RuchbahMultiPathInferenceEngine(model, tokenizer)
+        self.meta_learner = RuchbahMultiPathMetaLearner(model)
 
         # Tracking variables for runtime metrics.
         self.total_reasoning_calls = 0

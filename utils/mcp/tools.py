@@ -34,7 +34,9 @@ from utils.mcp.types import (
     PiscesLxCoreMCPExecutionContext
 )
 
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 
 class PiscesLxCoreMCPTools:
     """Tool management system for PiscesLxCoreMCP.

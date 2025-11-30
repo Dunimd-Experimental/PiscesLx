@@ -18,9 +18,9 @@
 # limitations under the License.
 
 """
-Arctic-specific extensions for the PiscesLxCoreMCP system.
+Ruchbah-specific extensions for the PiscesLxCoreMCP system.
 
-This module provides Arctic-specific functionality that extends the core MCP system,
+This module provides Ruchbah-specific functionality that extends the core MCP system,
 including tree search reasoning and advanced planning capabilities.
 """
 
@@ -76,16 +76,16 @@ class PiscesLxCoreMCPTreeSearchReasoner:
             return {"recommended_mode": "native", "confidence": 0.9}
         else:
             return {"recommended_mode": "external", "confidence": 0.7}
-
-
-def create_arctic_reasoner(model=None, tokenizer=None) -> PiscesLxCoreMCPTreeSearchReasoner:
-    """Factory function to create an PiscesLxCoreMCPTreeSearchReasoner instance.
     
-    Args:
-        model: The model used for reasoning (optional).
-        tokenizer: The tokenizer used for processing text (optional).
+    @staticmethod
+    def create_arctic_reasoner(model=None, tokenizer=None) -> "PiscesLxCoreMCPTreeSearchReasoner":
+        """Factory method to create an PiscesLxCoreMCPTreeSearchReasoner instance.
         
-    Returns:
-        PiscesLxCoreMCPTreeSearchReasoner: A new reasoner instance.
-    """
-    return PiscesLxCoreMCPTreeSearchReasoner(model, tokenizer)
+        Args:
+            model: The model used for reasoning (optional).
+            tokenizer: The tokenizer used for processing text (optional).
+            
+        Returns:
+            PiscesLxCoreMCPTreeSearchReasoner: A new reasoner instance.
+        """
+        return PiscesLxCoreMCPTreeSearchReasoner(model, tokenizer)

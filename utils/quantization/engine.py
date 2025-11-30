@@ -26,7 +26,9 @@ from .methods import (
     GPTQQuantizer, AWQQuantizer, SqueezeLLMQuantizer, KVCacheQuantizer
 )
 from .bitnet_v2 import BitNetV2Quantizer
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError
 
 logger = PiscesLxCoreLog("PiscesLx.Core.Quantization.Engine")

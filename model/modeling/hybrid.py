@@ -27,16 +27,18 @@ fuse their outputs based on sequence characteristics.
 
 import torch
 import torch.nn as nn
-from .norms import ArcticRMSNorm
-from ..config import ArcticConfig
-from .attention import ArcticAttention
+from .norms import RuchbahRMSNorm
+from ..config import RuchbahConfig
+from .attention import RuchbahAttention
 from typing import Optional, Dict, Any
-from utils.log.core import PiscesLxCoreLog
-from .mamba3 import ArcticMamba3Integration, ArcticMamba3Config
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
+from .mamba3 import RuchbahMamba3Integration, RuchbahMamba3Config
 
-logger = PiscesLxCoreLog("Arctic.Core.Modeling.Hybrid", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.Modeling.Hybrid", file_path="logs/RuchbahCore.log")
 
-class ArcticIntelligentGate(nn.Module):
+class RuchbahIntelligentGate(nn.Module):
     """
     Gating mechanism for fusing attention and Mamba-3 outputs.
 
@@ -197,7 +199,7 @@ class ArcticIntelligentGate(nn.Module):
         }
 
 
-class ArcticHybridBlock(nn.Module):
+class RuchbahHybridBlock(nn.Module):
     """
     Hybrid transformer block combining attention and Mamba-3.
 
@@ -206,12 +208,12 @@ class ArcticHybridBlock(nn.Module):
     an intelligent gating mechanism.
     """
 
-    def __init__(self, cfg: ArcticConfig, device=None, dtype=None, quantization_config=None):
+    def __init__(self, cfg: RuchbahConfig, device=None, dtype=None, quantization_config=None):
         """
         Initialize the hybrid block.
 
         Args:
-            cfg (ArcticConfig): Configuration object containing model hyperparameters.
+            cfg (RuchbahConfig): Configuration object containing model hyperparameters.
             device (torch.device, optional): Device to place the module on.
             dtype (torch.dtype, optional): Data type for the module parameters.
             quantization_config (object, optional): Configuration for model quantization.
@@ -220,8 +222,8 @@ class ArcticHybridBlock(nn.Module):
         super().__init__()
 
         # Core components: attention and Mamba-3
-        self.attention = ArcticAttention(cfg, device=device, dtype=dtype)
-        self.mamba3_config = ArcticMamba3Config(
+        self.attention = RuchbahAttention(cfg, device=device, dtype=dtype)
+        self.mamba3_config = RuchbahMamba3Config(
             d_model=cfg.hidden_size,
             d_state=getattr(cfg, 'mamba3_d_state', 128),
             d_conv=getattr(cfg, 'mamba3_d_conv', 4),
@@ -231,21 +233,21 @@ class ArcticHybridBlock(nn.Module):
             use_complex=getattr(cfg, 'mamba3_use_complex', True),
             use_mimo=getattr(cfg, 'mamba3_use_mimo', True)
         )
-        self.mamba3 = ArcticMamba3Integration(cfg.hidden_size, self.mamba3_config)
+        self.mamba3 = RuchbahMamba3Integration(cfg.hidden_size, self.mamba3_config)
 
         # Gating mechanism for fusion
         gate_type = getattr(cfg, 'hybrid_gate_type', 'adaptive')
-        self.intelligent_gate = ArcticIntelligentGate(cfg.hidden_size, gate_type)
+        self.intelligent_gate = RuchbahIntelligentGate(cfg.hidden_size, gate_type)
 
         # Normalization layers
-        self.norm_attention = ArcticRMSNorm(cfg.hidden_size)
-        self.norm_mamba = ArcticRMSNorm(cfg.hidden_size)
-        self.norm_fusion = ArcticRMSNorm(cfg.hidden_size)
+        self.norm_attention = RuchbahRMSNorm(cfg.hidden_size)
+        self.norm_mamba = RuchbahRMSNorm(cfg.hidden_size)
+        self.norm_fusion = RuchbahRMSNorm(cfg.hidden_size)
 
         # MoE layer for feedforward network
         use_stable_gate = getattr(cfg, 'moe_use_stable_gate', True)
         if use_stable_gate:
-            from ..moe import ArcticMoELayer as MoELayer
+            from ..moe import RuchbahMoELayer as MoELayer
             self.mlp = MoELayer(
                 cfg,
                 device=device,
@@ -254,11 +256,11 @@ class ArcticHybridBlock(nn.Module):
                 use_stable_gate=True
             )
         else:
-            from ..moe_dynamic import ArcticDynamicMoELayer
-            self.mlp = ArcticDynamicMoELayer(cfg, device=device, dtype=dtype)
+            from ..moe_dynamic import RuchbahDynamicMoELayer
+            self.mlp = RuchbahDynamicMoELayer(cfg, device=device, dtype=dtype)
 
         # Additional normalization for MLP
-        self.norm_mlp = ArcticRMSNorm(cfg.hidden_size)
+        self.norm_mlp = RuchbahRMSNorm(cfg.hidden_size)
 
         # Residual connection scaling factors: (2 * n_layers)^(-0.5)
         self.residual_scale_attn = nn.Parameter(torch.ones(1) * (2.0 * cfg.n_layer) ** -0.5)
@@ -279,7 +281,7 @@ class ArcticHybridBlock(nn.Module):
         self.layer_idx = -1
 
         logger.info(
-            f"Initialized ArcticHybridBlock with gate_type={gate_type}, "
+            f"Initialized RuchbahHybridBlock with gate_type={gate_type}, "
             f"sequence_threshold={self.sequence_threshold}"
         )
 

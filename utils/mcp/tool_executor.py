@@ -33,19 +33,9 @@ from dataclasses import dataclass
 from enum import Enum
 from abc import ABC, abstractmethod
 
-try:
-    from utils.log.core import PiscesLxCoreLog
-    logger = PiscesLxCoreLog("Arctic.Utils.MCP.ToolExecutor")
-except ImportError:
-    # Fallback to simple logger if utils.log.core is not available
-    import logging
-    logger = logging.getLogger("Arctic.Utils.MCP.ToolExecutor")
-    logger.setLevel(logging.INFO)
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+# Use dms_core logging exclusively
+import dms_core
+logger = dms_core.log.get_logger("Ruchbah.Utils.MCP.ToolExecutor")
 
 # Import modules with fallback for standalone testing
 try:
@@ -529,45 +519,219 @@ class PiscesLxCoreMCPUnifiedToolExecutor:
 _unified_executor: Optional[PiscesLxCoreMCPUnifiedToolExecutor] = None
 
 
-def get_unified_tool_executor() -> PiscesLxCoreMCPUnifiedToolExecutor:
-    """Get the global unified tool executor instance."""
-    global _unified_executor
-    if _unified_executor is None:
-        _unified_executor = PiscesLxCoreMCPUnifiedToolExecutor()
-    return _unified_executor
-
-
-async def execute_tool_unified(
-    tool_name: str,
-    parameters: Dict[str, Any],
-    execution_id: str,
-    preferred_types: Optional[List[PiscesLxCoreMCPToolType]] = None,
-    allow_fallback: bool = True,
-    timeout: float = 30.0,
-    metadata: Optional[Dict[str, Any]] = None
-) -> PiscesLxCoreMCPExecutionResult:
-    """
-    Convenience function for unified tool execution.
+class PiscesLxCoreMCPUnifiedToolExecutor:
+    """Unified executor that intelligently routes tool execution."""
     
-    Args:
-        tool_name: Name of the tool to execute
-        parameters: Parameters for the tool
-        execution_id: Unique execution identifier
-        preferred_types: Preferred tool types to try first
-        allow_fallback: Whether to allow fallback to other types
-        timeout: Execution timeout
-        metadata: Additional metadata for execution
+    def __init__(self):
+        """Initialize unified tool executor."""
+        self.executors: List[ToolExecutor] = [
+            PiscesLxCoreMCPNativeToolExecutor(),
+            PiscesLxCoreMCPInternalToolExecutor(),
+            PiscesLxCoreMCPExternalToolExecutor()
+        ]
         
-    Returns:
-        Execution result
-    """
-    executor = get_unified_tool_executor()
-    return await executor.execute_tool(
-        tool_name=tool_name,
-        parameters=parameters,
-        execution_id=execution_id,
-        preferred_types=preferred_types,
-        allow_fallback=allow_fallback,
-        timeout=timeout,
-        metadata=metadata
-    )
+        self.tool_registry: Dict[str, List[PiscesLxCoreMCPToolMetadata]] = {}  # tool_name -> [metadata1, metadata2, ...]
+        self.execution_stats: Dict[str, Dict[str, Any]] = {}  # tool_name -> stats
+        
+        logger.info("UnifiedToolExecutor initialized")
+    
+    def register_tool(self, metadata: PiscesLxCoreMCPToolMetadata):
+        """Register a tool with the unified executor."""
+        if metadata.name not in self.tool_registry:
+            self.tool_registry[metadata.name] = []
+        
+        self.tool_registry[metadata.name].append(metadata)
+        
+        # Register with appropriate executor
+        for executor in self.executors:
+            if metadata.tool_type in executor.get_supported_types():
+                if isinstance(executor, PiscesLxCoreMCPNativeToolExecutor) and metadata.tool_type == PiscesLxCoreMCPToolType.NATIVE:
+                    executor.register_native_tool(metadata)
+                elif isinstance(executor, PiscesLxCoreMCPInternalToolExecutor) and metadata.tool_type == PiscesLxCoreMCPToolType.INTERNAL:
+                    executor.register_internal_tool(metadata)
+                elif isinstance(executor, PiscesLxCoreMCPExternalToolExecutor) and metadata.tool_type == PiscesLxCoreMCPToolType.EXTERNAL:
+                    executor.register_external_tool(metadata)
+        
+        logger.debug(f"Registered tool {metadata.name} of type {metadata.tool_type.value}")
+    
+    async def execute_tool(
+        self,
+        tool_name: str,
+        parameters: Dict[str, Any],
+        execution_id: str,
+        preferred_types: Optional[List[PiscesLxCoreMCPToolType]] = None,
+        allow_fallback: bool = True,
+        timeout: float = 30.0,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> PiscesLxCoreMCPExecutionResult:
+        """
+        Execute a tool with intelligent routing and fallback.
+        
+        Args:
+            tool_name: Name of the tool to execute
+            parameters: Parameters for the tool
+            execution_id: Unique execution identifier
+            preferred_types: Preferred tool types to try first
+            allow_fallback: Whether to allow fallback to other types
+            timeout: Execution timeout
+            metadata: Additional metadata for execution
+            
+        Returns:
+            Execution result
+        """
+        start_time = time.time()
+        
+        # Get available tool variants
+        tool_variants = self.tool_registry.get(tool_name, [])
+        if not tool_variants:
+            return PiscesLxCoreMCPExecutionResult(
+                success=False,
+                result=None,
+                execution_time=time.time() - start_time,
+                status=PiscesLxCoreMCPExecutionStatus.FAILED,
+                error_message=f"Tool {tool_name} not found in registry",
+                error_code="TOOL_NOT_REGISTERED",
+                mode=PiscesLxCoreMCPExecutionMode.SYNC
+            )
+        
+        # Create execution context
+        context = PiscesLxCoreMCPExecutionContext(
+            execution_id=execution_id,
+            tool_name=tool_name,
+            parameters=parameters,
+            preferred_types=preferred_types or [],
+            allow_fallback=allow_fallback,
+            timeout=timeout,
+            metadata=metadata
+        )
+        
+        # Try preferred types first
+        if preferred_types:
+            for tool_type in preferred_types:
+                for variant in tool_variants:
+                    if variant.tool_type == tool_type:
+                        result = await self._execute_variant(variant, context)
+                        if result.success or not allow_fallback:
+                            return result
+        
+        # Try all available variants if fallback is enabled
+        if allow_fallback:
+            # Sort by priority (higher priority first)
+            sorted_variants = sorted(tool_variants, key=lambda x: x.priority, reverse=True)
+            
+            for variant in sorted_variants:
+                result = await self._execute_variant(variant, context)
+                if result.success:
+                    return result
+        
+        # All attempts failed
+        return PiscesLxCoreMCPExecutionResult(
+            success=False,
+            result=None,
+            execution_time=time.time() - start_time,
+            status=PiscesLxCoreMCPExecutionStatus.FAILED,
+            error_message=f"All execution attempts failed for tool {tool_name}",
+            error_code="ALL_ATTEMPTS_FAILED",
+            mode=PiscesLxCoreMCPExecutionMode.SYNC
+        )
+    
+    async def _execute_variant(self, metadata: PiscesLxCoreMCPToolMetadata, context: PiscesLxCoreMCPExecutionContext) -> PiscesLxCoreMCPExecutionResult:
+        """Execute a specific tool variant."""
+        # Find appropriate executor
+        for executor in self.executors:
+            if metadata.tool_type in executor.get_supported_types():
+                try:
+                    result = await executor.execute(context.tool_name, context.parameters, context)
+                    
+                    # Update execution statistics
+                    self._update_stats(metadata.name, result)
+                    
+                    return result
+                    
+                except Exception as e:
+                    logger.error(f"Executor {executor.__class__.__name__} failed for tool {metadata.name}: {e}")
+                    continue
+        
+        return PiscesLxCoreMCPExecutionResult(
+            success=False,
+            result=None,
+            execution_time=0.0,
+            status=PiscesLxCoreMCPExecutionStatus.FAILED,
+            error_message=f"No executor found for tool type {metadata.tool_type.value}",
+            error_code="NO_EXECUTOR",
+            mode=PiscesLxCoreMCPExecutionMode.SYNC
+        )
+    
+    def _update_stats(self, tool_name: str, result: PiscesLxCoreMCPExecutionResult):
+        """Update execution statistics."""
+        if tool_name not in self.execution_stats:
+            self.execution_stats[tool_name] = {
+                "total_executions": 0,
+                "successful_executions": 0,
+                "failed_executions": 0,
+                "total_time": 0.0,
+                "average_time": 0.0
+            }
+        
+        stats = self.execution_stats[tool_name]
+        stats["total_executions"] += 1
+        stats["total_time"] += result.execution_time
+        
+        if result.success:
+            stats["successful_executions"] += 1
+        else:
+            stats["failed_executions"] += 1
+        
+        stats["average_time"] = stats["total_time"] / stats["total_executions"]
+    
+    def get_tool_stats(self, tool_name: str) -> Optional[Dict[str, Any]]:
+        """Get execution statistics for a tool."""
+        return self.execution_stats.get(tool_name)
+    
+    def get_all_stats(self) -> Dict[str, Dict[str, Any]]:
+        """Get execution statistics for all tools."""
+        return self.execution_stats.copy()
+    
+    @staticmethod
+    def get_unified_tool_executor() -> "PiscesLxCoreMCPUnifiedToolExecutor":
+        """Get the global unified tool executor instance."""
+        global _unified_executor
+        if _unified_executor is None:
+            _unified_executor = PiscesLxCoreMCPUnifiedToolExecutor()
+        return _unified_executor
+    
+    @staticmethod
+    async def execute_tool_unified(
+        tool_name: str,
+        parameters: Dict[str, Any],
+        execution_id: str,
+        preferred_types: Optional[List[PiscesLxCoreMCPToolType]] = None,
+        allow_fallback: bool = True,
+        timeout: float = 30.0,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> PiscesLxCoreMCPExecutionResult:
+        """
+        Convenience function for unified tool execution.
+        
+        Args:
+            tool_name: Name of the tool to execute
+            parameters: Parameters for the tool
+            execution_id: Unique execution identifier
+            preferred_types: Preferred tool types to try first
+            allow_fallback: Whether to allow fallback to other types
+            timeout: Execution timeout
+            metadata: Additional metadata for execution
+            
+        Returns:
+            Execution result
+        """
+        executor = PiscesLxCoreMCPUnifiedToolExecutor.get_unified_tool_executor()
+        return await executor.execute_tool(
+            tool_name=tool_name,
+            parameters=parameters,
+            execution_id=execution_id,
+            preferred_types=preferred_types,
+            allow_fallback=allow_fallback,
+            timeout=timeout,
+            metadata=metadata
+        )

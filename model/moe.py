@@ -17,7 +17,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dynamic Mixture-of-Experts routing components used across Arctic models."""
+"""Dynamic Mixture-of-Experts routing components used across Ruchbah models."""
 
 import math
 import torch
@@ -25,9 +25,11 @@ from torch import nn
 import torch.nn.functional as F
 from collections import OrderedDict
 from typing import Any, Optional, Tuple
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 
-logger = PiscesLxCoreLog("Arctic.Core.MoE", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.MoE", file_path="logs/RuchbahCore.log")
 
 def moe_init_weights(m):
     """
@@ -43,7 +45,7 @@ def moe_init_weights(m):
             # Initialize bias to zero
             nn.init.zeros_(m.bias)
 
-class ArcticMoEGate(nn.Module):
+class RuchbahMoEGate(nn.Module):
     """
     Expert routing gate for MoE (top-k configurable) with load balancing.
     This gate is responsible for routing inputs to experts and maintaining load balance.
@@ -330,7 +332,7 @@ class ArcticMoEGate(nn.Module):
         z_loss = self.z_loss_alpha * torch.mean(logit_squared)
         return z_loss
 
-class ArcticStableMoEGate(nn.Module):
+class RuchbahStableMoEGate(nn.Module):
     """
     Stable MoE routing gate to prevent routing collapse with load prediction.
     This gate uses load prediction and dynamic capacity adjustment to improve stability.
@@ -588,7 +590,7 @@ class ArcticStableMoEGate(nn.Module):
         
         return torch.cat(final_scores), torch.cat(final_indices), torch.tensor(0.0, device=x.device)
 
-class ArcticMoELayer(nn.Module):
+class RuchbahMoELayer(nn.Module):
     """
     Mixture of Experts layer with improved load balancing and stability.
     This layer combines multiple experts and uses a routing gate to distribute inputs.
@@ -608,7 +610,7 @@ class ArcticMoELayer(nn.Module):
             use_stable_gate (bool, optional): Whether to use stable gate. Defaults to True.
         """
         super().__init__()
-        ArcticMoELayer._layer_count += 1
+        RuchbahMoELayer._layer_count += 1
         self.cfg = cfg
         self.top_k = getattr(cfg, 'moe_top_k', 2)
         self.num_experts = getattr(cfg, 'moe_num_experts', 8)
@@ -617,7 +619,7 @@ class ArcticMoELayer(nn.Module):
         if use_stable_gate:
             # Enable fixed shape mode for small models to avoid gradient checkpointing issues
             fixed_shape_mode = (cfg.hidden_size <= 768)
-            self.gate = ArcticStableMoEGate(
+            self.gate = RuchbahStableMoEGate(
                 cfg.hidden_size, self.num_experts, top_k=self.top_k,
                 device=device, dtype=dtype,
                 capacity_factor=getattr(cfg, 'moe_capacity_factor', 1.0),
@@ -633,7 +635,7 @@ class ArcticMoELayer(nn.Module):
             if hasattr(self.gate, 'expert_load_balance_threshold'):
                 self.gate.expert_load_balance_threshold = getattr(cfg, 'expert_load_balance_threshold', 0.15)
         else:
-            self.gate = ArcticMoEGate(
+            self.gate = RuchbahMoEGate(
                 cfg.hidden_size, self.num_experts, top_k=self.top_k,
                 device=device, dtype=dtype,
                 load_balance_alpha=getattr(cfg, 'moe_load_balance_alpha', 0.01),
@@ -654,9 +656,9 @@ class ArcticMoELayer(nn.Module):
             expert.apply(moe_init_weights)
         
         # Print layer information for the first layer
-        if ArcticMoELayer._layer_count == 1:
+        if RuchbahMoELayer._layer_count == 1:
             gate_type = "Stable" if use_stable_gate else "Standard"
-            logger.info(f"ArcticMoELayer: {self.num_experts} experts, top-{self.top_k} routing, {gate_type} gate")
+            logger.info(f"RuchbahMoELayer: {self.num_experts} experts, top-{self.top_k} routing, {gate_type} gate")
 
         self.max_gpu_experts = max_gpu_experts
         # Ordered dictionary to record the last used step of each expert
@@ -760,7 +762,7 @@ class ArcticMoELayer(nn.Module):
         h = x.view(-1, d)  # [B*T, d]
         
         # Use different processing modes based on the type of routing gate
-        if isinstance(self.gate, ArcticStableMoEGate) and hasattr(self.gate, 'fixed_shape_mode') and self.gate.fixed_shape_mode:
+        if isinstance(self.gate, RuchbahStableMoEGate) and hasattr(self.gate, 'fixed_shape_mode') and self.gate.fixed_shape_mode:
             # Fixed shape mode: simpler processing
             scores, idx, aux_loss = self.gate(x)
             self._monitor_expert_balance(idx)
@@ -780,7 +782,7 @@ class ArcticMoELayer(nn.Module):
                         y[mask] += s_sel.unsqueeze(1) * expert(h_sel)
             
             return y.view(b, t, d), aux_loss
-        elif isinstance(self.gate, ArcticStableMoEGate):
+        elif isinstance(self.gate, RuchbahStableMoEGate):
             scores, idx, aux_loss = self.gate(x)
             # Handle the output of StableMoEGate with capacity limitation
             
@@ -806,7 +808,7 @@ class ArcticMoELayer(nn.Module):
             expert_assignment = [(scores, idx)]
         
         # Monitor expert load balance
-        if isinstance(self.gate, ArcticStableMoEGate):
+        if isinstance(self.gate, RuchbahStableMoEGate):
             # Create a representative idx for monitoring
             monitor_idx = torch.zeros(h.size(0), dtype=torch.long, device=h.device)
             for expert_id in range(self.num_experts):
@@ -820,7 +822,7 @@ class ArcticMoELayer(nn.Module):
         
         # Manage expert placement on GPU with predictive loading
         if self.num_experts > 8 and h.device.type == 'cuda':
-            if isinstance(self.gate, ArcticStableMoEGate):
+            if isinstance(self.gate, RuchbahStableMoEGate):
                 needed_experts = set(range(len(expert_assignment)))
                 # Predict future expert needs
                 if hasattr(self.gate, '_predict_future_load') and self.training:
@@ -856,7 +858,7 @@ class ArcticMoELayer(nn.Module):
         y = torch.zeros_like(h)
         expert_counts = torch.zeros(self.num_experts, device=h.device)
         
-        if isinstance(self.gate, ArcticStableMoEGate):
+        if isinstance(self.gate, RuchbahStableMoEGate):
             # Handle StableMoEGate output
             for expert_id in range(self.num_experts):
                 expert_found = False

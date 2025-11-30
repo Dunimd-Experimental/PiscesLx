@@ -17,9 +17,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Document understanding components for Arctic multimodal pipelines.
+"""Document understanding components for Ruchbah multimodal pipelines.
 
-The module defines :class:`ArcticDocEncoder`, a composite encoder that fuses
+The module defines :class:`RuchbahDocEncoder`, a composite encoder that fuses
 text, layout, table, and handwriting signals into unified document
 representations. It exposes modular sub-encoders for each modality and uses
 PiscesL1 logging infrastructure to trace initialization and inference phases.
@@ -29,16 +29,18 @@ import torch
 from torch import nn
 from typing import Any, Dict
 import torch.nn.functional as F
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 
-logger = PiscesLxCoreLog("Arctic.Core.Multimodal", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.Multimodal", file_path="logs/RuchbahCore.log")
 
-class ArcticDocEncoder(nn.Module):
+class RuchbahDocEncoder(nn.Module):
     """Document encoder integrating textual, layout, and handwriting signals.
 
     The encoder composes multiple modality-specific submodules (text, layout,
     table, handwriting) and aggregates their outputs into a shared latent
-    representation suitable for downstream Arctic agent workflows.
+    representation suitable for downstream Ruchbah agent workflows.
 
     Attributes:
         enabled (bool): Flag indicating whether the encoder is available.

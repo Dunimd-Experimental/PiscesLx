@@ -20,7 +20,7 @@
 from .config import PiscesLxToolsBenchmarkConfig
 from .builders import PiscesLxToolsModelConfigBuilder, PiscesLxToolsDatasetConfigBuilder, PiscesLxToolsMetricConfigBuilder, PiscesLxToolsTaskConfigBuilder
 from .result import PiscesLxToolsResultManager, PiscesLxToolsComparisonManager
-from .runner import PiscesLxToolsBenchmark, PiscesLxToolsBenchmarkConfig, PiscesLxToolsBenchmarkRunner, PiscesLxToolsBenchmarkComparer
+from .runner import PiscesLxToolsBenchmark, PiscesLxToolsBenchmarkRunner, PiscesLxToolsBenchmarkComparer
 
 __all__ = [
     "PiscesLxToolsBenchmarkConfig",

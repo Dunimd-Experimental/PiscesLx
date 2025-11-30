@@ -17,9 +17,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Meta-learning utilities for Arctic multi-path reasoning systems.
+"""Meta-learning utilities for Ruchbah multi-path reasoning systems.
 
-The module implements :class:`ArcticMultiPathMetaLearner`, which stores
+The module implements :class:`RuchbahMultiPathMetaLearner`, which stores
 reasoning experiences, mines successful patterns, and adapts inference
 parameters or priors to improve downstream multi-path reasoning engines.
 """
@@ -32,7 +32,7 @@ import torch.nn.functional as F
 from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional
 
-class ArcticMultiPathMetaLearner:
+class RuchbahMultiPathMetaLearner:
     """Record, analyze, and adapt multi-path reasoning behavior."""
 
     def __init__(self, model: nn.Module, learning_rate: float = 1e-5) -> None:

@@ -23,48 +23,29 @@ import importlib.util
 from types import ModuleType
 
 # Avoid importing utils at module import time to prevent side-effects
-PiscesLxCoreLog = None
-PiscesLxCoreConfigManager = None
+# Use dms_core logging exclusively
+import dms_core
 PiscesLxCoreCheckpointManager = None
-PiscesLxCoreHookBus = None
-PiscesLxCoreDeviceFacade = None
-PiscesLxCoreEnhancedCacheManager = None
-PiscesLxCoreObservabilityFacade = None
-PiscesLxCoreMetricsRegistry = None
 PiscesLxToolsProfiler = None
 PiscesLxToolsTrainConfig = None
 PiscesLxToolsQuantExporter = None
 PiscesLxToolsPreferenceTrainer = None
 
+
 def _lazy_imports_for_init():
-    global PiscesLxCoreLog, PiscesLxCoreHookBus, PiscesLxToolsProfiler, PiscesLxToolsTrainConfig
-    from utils.log.core import PiscesLxCoreLog as _Log
-    from utils.hooks.bus import PiscesLxCoreHookBus as _Bus
+    global PiscesLxToolsProfiler, PiscesLxToolsTrainConfig
     from .profiler import PiscesLxToolsProfiler as _Prof
     from .config import PiscesLxToolsTrainConfig as _Cfg
-    PiscesLxCoreLog = _Log
-    PiscesLxCoreHookBus = _Bus
     PiscesLxToolsProfiler = _Prof
     PiscesLxToolsTrainConfig = _Cfg
 
+
 def _lazy_imports_for_utils():
-    global PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager, PiscesLxCoreDeviceFacade, \
-        PiscesLxCoreEnhancedCacheManager, PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry, \
-        PiscesLxToolsQuantExporter, PiscesLxToolsPreferenceTrainer
-    from utils.config.manager import PiscesLxCoreConfigManager as _CfgMgr
+    global PiscesLxCoreCheckpointManager, PiscesLxToolsQuantExporter, PiscesLxToolsPreferenceTrainer
     from utils.checkpoint import PiscesLxCoreCheckpointManager as _Ckpt
-    from utils.device.facade import PiscesLxCoreDeviceFacade as _Dev
-    from utils.cache.enhanced import PiscesLxCoreEnhancedCacheManager as _CacheMgr
-    from utils.observability.facade import PiscesLxCoreObservabilityFacade as _Obs
-    from utils.observability.metrics import PiscesLxCoreMetricsRegistry as _Metrics
     from .quant_export import PiscesLxToolsQuantExporter as _QE
     from .pref_align import PiscesLxToolsPreferenceTrainer as _PT
-    PiscesLxCoreConfigManager = _CfgMgr
     PiscesLxCoreCheckpointManager = _Ckpt
-    PiscesLxCoreDeviceFacade = _Dev
-    PiscesLxCoreEnhancedCacheManager = _CacheMgr
-    PiscesLxCoreObservabilityFacade = _Obs
-    PiscesLxCoreMetricsRegistry = _Metrics
     PiscesLxToolsQuantExporter = _QE
     PiscesLxToolsPreferenceTrainer = _PT
 
@@ -93,13 +74,11 @@ class PiscesLxToolsTrainOrchestrator:
         # Lazy import minimal dependencies to avoid side-effects
         _lazy_imports_for_init()
         # Initialize logger
-        self._logger = PiscesLxCoreLog("pisceslx.tools.train.orchestrator")
+        self._logger = dms_core.log.get_logger("pisceslx.tools.train.orchestrator")
         self._logger.info("Orchestrator __init__ start")
         print("[orchestrator] __init__ enter")
         # Create a configuration object from the provided arguments
         self.cfg = PiscesLxToolsTrainConfig.from_args(args)
-        # Initialize the hook bus for event handling
-        self.hooks = PiscesLxCoreHookBus()
         # Initialize the profiler for performance monitoring
         self.profiler = PiscesLxToolsProfiler()
         
@@ -113,47 +92,26 @@ class PiscesLxToolsTrainOrchestrator:
         # Lazily import utils classes before using them
         _lazy_imports_for_utils()
         self._logger.info("init_utils: creating device_facade")
-        try:
-            self.device_facade = PiscesLxCoreDeviceFacade(self.args)
-            self._logger.info("init_utils: device_facade created")
-        except Exception as e:
-            self._logger.error(f"init_utils: device_facade creation failed: {e}")
-            class _CpuOnlyFacade:
-                def __init__(self, args=None):
-                    self.args = args
-                def setup_devices(self, mode: str = "auto"):
-                    return {"device_type": "cpu", "strategy": "cpu", "gpu_ids": [], "batch_size": 1}
-            self.device_facade = _CpuOnlyFacade(self.args)
-            self._logger.info("init_utils: fallback CPU-only facade in use")
-        
-        self._logger.info("init_utils: creating cache_manager")
-        # Initialize cache manager for training data caching
-        self.cache_manager = PiscesLxCoreEnhancedCacheManager.get_instance()
-        
-        self._logger.info("init_utils: deferring observability facade to run()")
-        # Defer observability facade creation to run() to avoid any heavy init here
-        self.observability = None
-        
-        self._logger.info("init_utils: creating metrics registry")
-        # Initialize metrics registry for training metrics
-        self.metrics_registry = PiscesLxCoreMetricsRegistry()
+        # Create a simple CPU-only facade as fallback
+        class _CpuOnlyFacade:
+            def __init__(self, args=None):
+                self.args = args
+            def setup_devices(self, mode: str = "auto"):
+                return {"device_type": "cpu", "strategy": "cpu", "gpu_ids": [], "batch_size": 1}
+        self.device_facade = _CpuOnlyFacade(self.args)
+        self._logger.info("init_utils: CPU-only facade in use")
         
         self._logger.info("init_utils: creating checkpoint manager")
         # Initialize checkpoint manager for model persistence
         self.checkpoint_manager = PiscesLxCoreCheckpointManager()
         
-        self._logger.info("init_utils: creating config manager")
-        # Initialize configuration manager for dynamic config updates
-        self.config_manager = PiscesLxCoreConfigManager()
-        
-        # Initialize distributed manager for multi-GPU coordination
-        self._logger.info("init_utils: importing/dist config")
-        from utils.device.dist import PiscesLxCoreDistConfig
-        self.dist_config = PiscesLxCoreDistConfig()
+        # Initialize distributed manager as a simple object
+        self._logger.info("init_utils: creating dist config")
+        self.dist_config = type('DistConfig', (), {'setup_process_group': lambda self: {}, 'is_distributed': lambda self: False})()
 
         # Initialize watermark manager (optional, controlled by env)
         self._logger.info("init_utils: creating watermark manager")
-        self.wm_manager = get_watermark_manager_from_env() if 'get_watermark_manager_from_env' in globals() else None
+        self.wm_manager = None
         # Defer device setup and init emit to run() to avoid blocking __init__
         self._logger.info("init_utils: deferring device setup to run()")
 
@@ -172,52 +130,23 @@ class PiscesLxToolsTrainOrchestrator:
         self._logger.info(f"Train orchestrator mode: {mode}")
         # Ensure utils classes are available
         _lazy_imports_for_utils()
-        # Lazy-create observability facade here
-        if self.observability is None:
-            try:
-                self._logger.info("run(): creating observability facade (lazy)")
-                self.observability = PiscesLxCoreObservabilityFacade()
-                self._logger.info("run(): observability facade created")
-            except Exception as e:
-                self._logger.error(f"run(): observability facade creation failed: {e}")
-                self.observability = None
-        # Perform deferred device setup and emit init event here
+        # Perform deferred device setup
         try:
             if not hasattr(self, 'device_facade') or self.device_facade is None:
                 self._logger.info("run(): creating device_facade (deferred)")
-                try:
-                    self.device_facade = PiscesLxCoreDeviceFacade(self.args)
-                except Exception as e:
-                    self._logger.error(f"run(): device_facade creation failed: {e}")
-                    class _CpuOnlyFacade:
-                        def __init__(self, args=None):
-                            self.args = args
-                        def setup_devices(self, mode: str = "auto"):
-                            return {"device_type": "cpu", "strategy": "cpu", "gpu_ids": [], "batch_size": 1}
-                    self.device_facade = _CpuOnlyFacade(self.args)
+                class _CpuOnlyFacade:
+                    def __init__(self, args=None):
+                        self.args = args
+                    def setup_devices(self, mode: str = "auto"):
+                        return {"device_type": "cpu", "strategy": "cpu", "gpu_ids": [], "batch_size": 1}
+                self.device_facade = _CpuOnlyFacade(self.args)
             self._logger.info("run(): calling setup_devices (deferred)")
             device_config = self.device_facade.setup_devices(mode="auto") if hasattr(self.device_facade, 'setup_devices') else {}
             self._logger.info("run(): setup_devices done")
             print("[orchestrator] setup_devices done")
-            self._logger.success("SETUP_DEVICES_DONE", event="train.milestone", stage="orchestrator.run", device_type=device_config.get("device_type"))
-            try:
-                self._logger.info("run(): emitting train.orchestrator.init")
-                self.hooks.emit("train.orchestrator.init", 
-                               config=self.cfg.dump_effective(),
-                               device_config=device_config,
-                               cache_enabled=self.cache_manager is not None,
-                               observability_enabled=self.observability is not None,
-                               distributed_enabled=self._is_distributed(),
-                               watermark_enabled=bool(self.wm_manager))
-                self._logger.info("run(): emit done")
-                self._logger.success("INIT_EMIT_DONE", event="train.milestone", stage="orchestrator.run")
-            except Exception as e:
-                self._logger.error(f"run(): emit failed: {e}")
+            self._logger.info(f"SETUP_DEVICES_DONE: device_type={device_config.get('device_type')}")
         except Exception as e:
             self._logger.error(f"run(): deferred device setup failed: {e}")
-        
-        # Emit training start event for observability
-        self.hooks.emit("train.start", mode=mode, config=self.cfg.dump_effective(), watermark_enabled=bool(getattr(self, 'wm_manager', None)))
         
         try:
             if mode == "standard":
@@ -228,16 +157,9 @@ class PiscesLxToolsTrainOrchestrator:
                 self.run_preference_alignment()
             else:
                 self._logger.error(f"Unknown train.mode: {mode}")
-                # Emit training error event
-                self.hooks.emit("train.error", error=f"Unknown train.mode: {mode}")
                 raise ValueError(f"Unknown train.mode: {mode}")
                 
-            # Emit training completion event
-            self.hooks.emit("train.complete", mode=mode)
-            
         except Exception as e:
-            # Emit training failure event with error details
-            self.hooks.emit("train.failure", error=str(e), mode=mode)
             self._logger.error(f"Training failed in mode {mode}: {e}")
             raise
 

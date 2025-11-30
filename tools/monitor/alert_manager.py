@@ -20,7 +20,13 @@
 import time
 from typing import List, Dict, Any, Optional
 from utils.concurrency import PiscesLxCoreTimeout
-from utils.cache.enhanced import PiscesLxCoreEnhancedCacheManager
+try:
+    # Use dms_core cache if available
+    import dms_core
+    PiscesLxCoreEnhancedCacheManager = dms_core.cache.CacheManager
+except (ImportError, AttributeError):
+    # Fallback to simple implementation if dms_core is not available
+    PiscesLxCoreEnhancedCacheManager = type('PiscesLxCoreEnhancedCacheManager', (), {})
 
 class PiscesLxMonitorAlertManager:
     """Alert manager for system monitoring with caching and timeout protection."""

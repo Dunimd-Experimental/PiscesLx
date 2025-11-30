@@ -23,7 +23,9 @@ import urllib.error
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 from typing import Any, Dict, List, Optional
 
 logger = PiscesLxCoreLog("PiscesLx.Tools.DataDownload.Sources")

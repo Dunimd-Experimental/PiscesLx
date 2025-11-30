@@ -19,7 +19,7 @@
 
 """Chain-of-thought reasoning module with adaptive memory integration.
 
-This module exposes :class:`ArcticCoTMemoryReasoner`, which augments
+This module exposes :class:`RuchbahCoTMemoryReasoner`, which augments
 transformer-based reasoning layers with adaptive depth control, memory
 retrieval, and auxiliary heads for diagnostics such as difficulty estimation
 and correction logits.
@@ -29,7 +29,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-class ArcticCoTMemoryReasoner(nn.Module):
+class RuchbahCoTMemoryReasoner(nn.Module):
     """Execute multi-step CoT reasoning with adaptive depth and memory fusion.
 
     The reasoner stacks transformer encoder layers, adjusts reasoning depth in

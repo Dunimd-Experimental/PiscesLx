@@ -22,9 +22,11 @@ from typing import Dict, Any, Union, List
 
 from dataclasses import asdict
 
-from utils.log.core import PiscesLxCoreLog
-from utils.config.loader import load_config_from_file
-from utils.device.manager import PiscesLxCoreDeviceManager
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
+load_config_from_file = dms_core.config.load
+PiscesLxCoreDeviceManager = dms_core.device.DeviceManager
 
 try:
     from evalscope import run_task
@@ -148,13 +150,20 @@ class PiscesLxToolsBenchmark:
             self.config = original_config
 
 
-class PiscesLxToolsBenchmarkConfig:
+class PiscesLxToolsBenchmarkConfigFactory:
     """PiscesLxTools Benchmark Configuration Factory"""
     
     @staticmethod
     def create(config: Union[str, Dict]) -> PiscesLxToolsBenchmarkConfig:
         """Create benchmark configuration from file or dict"""
-        return PiscesLxToolsBenchmarkConfig.create(config)
+        if isinstance(config, str):
+            # load_config_from_file is already defined above
+            config_data = load_config_from_file(config)
+            return PiscesLxToolsBenchmarkConfig(**config_data)
+        elif isinstance(config, dict):
+            return PiscesLxToolsBenchmarkConfig(**config)
+        else:
+            raise ValueError(f"Invalid config type: {type(config)}")
 
 
 class PiscesLxToolsBenchmarkRunner:
@@ -171,7 +180,21 @@ class PiscesLxToolsBenchmarkComparer:
     """PiscesLxTools Multiple Models Benchmark Comparer"""
     
     @staticmethod
-    def compare(results: Dict[str, Any]) -> Dict[str, Any]:
-        """Compare benchmark results"""
+    def compare(model_configs: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Compare multiple models by running benchmark for each and then generating comparison report"""
+        comparison_results: Dict[str, Any] = {}
+        
+        # Run benchmark for each model
+        for i, model_config in enumerate(model_configs):
+            model_name = model_config.get("model_name", f"model_{i+1}")
+            result = PiscesLxToolsBenchmarkRunner.run(model_config)
+            comparison_results[model_name] = result
+        
+        # Generate comparison report
         manager = PiscesLxToolsComparisonManager()
-        return manager.generate_comparison_report(results)
+        comparison_summary = manager.generate_comparison_report(comparison_results)
+        
+        return {
+            "comparison_results": comparison_results,
+            "comparison_summary": comparison_summary
+        }

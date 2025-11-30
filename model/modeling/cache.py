@@ -18,7 +18,7 @@
 # limitations under the License.
 
 """
-Unified cache manager module for Arctic model.
+Unified cache manager module for Ruchbah model.
 
 This module provides a unified cache manager that handles multiple caching
 mechanisms including KV cache for transformer layers, H2O sliding window cache,
@@ -28,13 +28,15 @@ multimodal generation cache, and speculative decoding cache.
 import math
 import torch
 import torch.nn.functional as F
-from ..config import ArcticConfig
+from ..config import RuchbahConfig
 from typing import Optional, Tuple, Dict, Any
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 
-logger = PiscesLxCoreLog("Arctic.Core.Modeling.Cache", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.Modeling.Cache", file_path="logs/RuchbahCore.log")
 
-class ArcticUnifiedCacheManager:
+class RuchbahUnifiedCacheManager:
     """
     Unified cache manager for transformer model inference.
 
@@ -44,13 +46,13 @@ class ArcticUnifiedCacheManager:
     policies to manage memory usage.
     """
 
-    def __init__(self, config: ArcticConfig):
+    def __init__(self, config: RuchbahConfig):
         """
         Initialize the unified cache manager.
 
         Args:
-            config (ArcticConfig or dict): Configuration object or dictionary
-                containing cache settings. Supports both ArcticConfig objects
+            config (RuchbahConfig or dict): Configuration object or dictionary
+                containing cache settings. Supports both RuchbahConfig objects
                 and plain dictionaries for flexibility.
         """
         self.config = config

@@ -17,9 +17,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""High-level orchestration helpers for Arctic multimodal agent behaviors.
+"""High-level orchestration helpers for Ruchbah multimodal agent behaviors.
 
-This module defines :class:`ArcticAgentic`, the coordination layer that binds
+This module defines :class:`RuchbahAgentic`, the coordination layer that binds
 perception, memory, reasoning, and tool execution for the PiscesL1 system. It
 acts as the compatibility surface between legacy MCP integrations and newer
 PiscesAgent-based flows, managing smart routing, capability registration, and
@@ -32,29 +32,31 @@ import torch
 import numpy as np
 from torch import nn
 from dataclasses import asdict
-from .types import ArcticMCPMessage
-from .reasoner import ArcticUnifiedReasoner
-from .audio import ArcticAudioEncoder
-from .vision import ArcticVisionEncoder
-from utils.log.core import PiscesLxCoreLog
+from .types import RuchbahMCPMessage
+from .reasoner import RuchbahUnifiedReasoner
+from .audio import RuchbahAudioEncoder
+from .vision import RuchbahVisionEncoder
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 from typing import Dict, Any, Union, List, Callable
 from .mcp import (
     PiscesLxCoreMCPProtocol,
-    ArcticMCPToolRegistry,
+    RuchbahMCPToolRegistry,
     PiscesLxCoreMCPTreeSearchReasoner,
 )
 from .types import (
-    ArcticAgenticState,
-    ArcticAgenticAction,
-    ArcticAgenticObservation,
-    ArcticAgenticMemory,
-    ArcticMCPMessageType,
+    RuchbahAgenticState,
+    RuchbahAgenticAction,
+    RuchbahAgenticObservation,
+    RuchbahAgenticMemory,
+    RuchbahMCPMessageType,
 )
 
-logger = PiscesLxCoreLog("Arctic.Core.Agentic", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.Agentic", file_path="logs/RuchbahCore.log")
 
-class ArcticAgentic(nn.Module):
-    """Multimodal control surface that orchestrates the Arctic agent runtime.
+class RuchbahAgentic(nn.Module):
+    """Multimodal control surface that orchestrates the Ruchbah agent runtime.
 
     The controller unifies perception, long-term memory, structured reasoning,
     and tool execution under the MCP (Model Context Protocol) contract. It can
@@ -69,7 +71,7 @@ class ArcticAgentic(nn.Module):
         tokenizer: Optional tokenizer leveraged for textual normalization and
             embedding fallback routines.
         agentic_id (str): Stable identifier used across MCP message exchanges.
-        memory (ArcticAgenticMemory): Persistent store that captures
+        memory (RuchbahAgenticMemory): Persistent store that captures
             observations, actions, and reflections for contextual retrieval.
         smart_routing_enabled (bool): Flag toggling intelligent routing between
             native and external tool execution surfaces.
@@ -110,21 +112,21 @@ class ArcticAgentic(nn.Module):
             # Standalone agent mode: construct local reasoning and perception stacks.
             self._base_model_ref = None
             self._model_ref = None
-            self._reasoner = ArcticUnifiedReasoner(cfg)
-            self._vision_encoder = ArcticVisionEncoder(cfg)
-            self._audio_encoder = ArcticAudioEncoder(cfg)
+            self._reasoner = RuchbahUnifiedReasoner(cfg)
+            self._vision_encoder = RuchbahVisionEncoder(cfg)
+            self._audio_encoder = RuchbahAudioEncoder(cfg)
         
         self.tree_reasoner = PiscesLxCoreMCPTreeSearchReasoner(None, tokenizer) if tokenizer else None
 
         # MCP agent infrastructure
-        self.memory = ArcticAgenticMemory([], [], [])
+        self.memory = RuchbahAgenticMemory([], [], [])
         
         # Initialize multipath reasoning backend
-        from .reasoner.multipath_core import ArcticMultiPathReasoningEngine
-        self.reasoning_engine = ArcticMultiPathReasoningEngine(cfg)
+        from .reasoner.multipath_core import RuchbahMultiPathReasoningEngine
+        self.reasoning_engine = RuchbahMultiPathReasoningEngine(cfg)
         
         # Enhanced MCP tool registry integrating the multipath reasoning engine
-        self.mcp_tools = ArcticMCPToolRegistry(
+        self.mcp_tools = RuchbahMCPToolRegistry(
             self.agentic_id, 
             self._handle_mcp_message,
             reasoning_engine=self.reasoning_engine
@@ -133,7 +135,7 @@ class ArcticAgentic(nn.Module):
         # Dual-track MCP protocol to coordinate native and external execution
         self.mcp_protocol = PiscesLxCoreMCPProtocol(self.agentic_id, self.mcp_tools)
         
-        self.state = ArcticAgenticState.IDLE
+        self.state = RuchbahAgenticState.IDLE
         self.mcp_peers: Dict[str, Dict[str, Any]] = {}
         self.mcp_capabilities: Dict[str, Dict[str, Any]] = {}
         
@@ -164,13 +166,13 @@ class ArcticAgentic(nn.Module):
         
         # MCP message handlers
         self.mcp_handlers = {
-            ArcticMCPMessageType.OBSERVATION.value: self._handle_observation,
-            ArcticMCPMessageType.ACTION.value: self._handle_action,
-            ArcticMCPMessageType.TOOL_CALL.value: self._handle_tool_call,
-            ArcticMCPMessageType.TOOL_RESULT.value: self._handle_tool_result,
-            ArcticMCPMessageType.CAPABILITY_REGISTER.value: self._handle_capability_register,
-            ArcticMCPMessageType.SYNC_REQUEST.value: self._handle_sync_request,
-            ArcticMCPMessageType.SYNC_RESPONSE.value: self._handle_sync_response,
+            RuchbahMCPMessageType.OBSERVATION.value: self._handle_observation,
+            RuchbahMCPMessageType.ACTION.value: self._handle_action,
+            RuchbahMCPMessageType.TOOL_CALL.value: self._handle_tool_call,
+            RuchbahMCPMessageType.TOOL_RESULT.value: self._handle_tool_result,
+            RuchbahMCPMessageType.CAPABILITY_REGISTER.value: self._handle_capability_register,
+            RuchbahMCPMessageType.SYNC_REQUEST.value: self._handle_sync_request,
+            RuchbahMCPMessageType.SYNC_RESPONSE.value: self._handle_sync_response,
         }
 
     @property
@@ -188,7 +190,7 @@ class ArcticAgentic(nn.Module):
         """Return the active reasoning module bound to the controller.
 
         Returns:
-            ArcticUnifiedReasoner: Shared base-model reasoner when available, or
+            RuchbahUnifiedReasoner: Shared base-model reasoner when available, or
             the locally instantiated fallback instance.
         """
         if self._base_model_ref:
@@ -200,7 +202,7 @@ class ArcticAgentic(nn.Module):
         """Retrieve the vision encoder responsible for image embeddings.
 
         Returns:
-            ArcticVisionEncoder: Encoder sourced from the base model when
+            RuchbahVisionEncoder: Encoder sourced from the base model when
             possible, falling back to the local implementation.
         """
         if self._base_model_ref:
@@ -212,7 +214,7 @@ class ArcticAgentic(nn.Module):
         """Expose the audio encoder for waveform or spectrogram processing.
 
         Returns:
-            ArcticAudioEncoder: Base-model audio encoder if present, else the
+            RuchbahAudioEncoder: Base-model audio encoder if present, else the
             locally provisioned encoder.
         """
         if self._base_model_ref:
@@ -348,7 +350,7 @@ class ArcticAgentic(nn.Module):
             "peak_memory_usage": 0,
             "total_tools_registered": 0
         }
-        print("[ArcticAgentic] All execution statistics reset")
+        print("[RuchbahAgentic] All execution statistics reset")
     
     def enable_smart_routing(self, enabled: bool = True):
         """Toggle smart routing heuristics for tool execution.
@@ -360,7 +362,7 @@ class ArcticAgentic(nn.Module):
             None
         """
         self.smart_routing_enabled = enabled
-        print(f"[ArcticAgentic] Smart routing {'enabled' if enabled else 'disabled'}")
+        print(f"[RuchbahAgentic] Smart routing {'enabled' if enabled else 'disabled'}")
         
         # Record state transitions to enable historical analysis of routing toggles.
         if not hasattr(self, 'routing_state_changes'):
@@ -380,14 +382,14 @@ class ArcticAgentic(nn.Module):
         """
         return getattr(self, 'routing_state_changes', [])
 
-    async def _handle_mcp_message(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
+    async def _handle_mcp_message(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
         """Route an MCP message to the corresponding handler coroutine.
 
         Args:
-            message (ArcticMCPMessage): Envelope containing the message type and payload.
+            message (RuchbahMCPMessage): Envelope containing the message type and payload.
 
         Returns:
-            ArcticMCPMessage: Response produced by the handler or an error state
+            RuchbahMCPMessage: Response produced by the handler or an error state
             update when the message type is unsupported.
         """
         handler = self.mcp_handlers.get(message.message_type)
@@ -395,22 +397,22 @@ class ArcticAgentic(nn.Module):
             return await handler(message)
         else:
             return PiscesLxCoreMCPProtocol.create_message(
-                ArcticMCPMessageType.STATE_UPDATE,
+                RuchbahMCPMessageType.STATE_UPDATE,
                 self.agent_id,
                 {"error": f"Unknown message type: {message.message_type}"}
             )
 
-    async def _handle_observation(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
+    async def _handle_observation(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
         """Persist an observation and acknowledge processing.
 
         Args:
-            message (ArcticMCPMessage): Observation payload emitted by a peer.
+            message (RuchbahMCPMessage): Observation payload emitted by a peer.
 
         Returns:
-            ArcticMCPMessage: Observation acknowledgement carrying embedding metadata.
+            RuchbahMCPMessage: Observation acknowledgement carrying embedding metadata.
         """
         observation_data = message.payload
-        observation = ArcticAgenticObservation(
+        observation = RuchbahAgenticObservation(
             modality=observation_data["modality"],
             content=observation_data["content"],
             metadata=observation_data.get("metadata", {})
@@ -420,7 +422,7 @@ class ArcticAgentic(nn.Module):
         obs_embedding = self.process_observation(observation)
         
         return PiscesLxCoreMCPProtocol.create_message(
-            ArcticMCPMessageType.OBSERVATION,
+            RuchbahMCPMessageType.OBSERVATION,
             self.agent_id,
             {
                 "status": "processed",
@@ -429,14 +431,14 @@ class ArcticAgentic(nn.Module):
             }
         )
 
-    async def _handle_action(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
+    async def _handle_action(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
         """Plan an action in response to an MCP action request.
 
         Args:
-            message (ArcticMCPMessage): Action request populated with contextual data.
+            message (RuchbahMCPMessage): Action request populated with contextual data.
 
         Returns:
-            ArcticMCPMessage: Action response including the serialized plan and agent state.
+            RuchbahMCPMessage: Action response including the serialized plan and agent state.
         """
         action_data = message.payload
         context = {
@@ -448,7 +450,7 @@ class ArcticAgentic(nn.Module):
         self.memory.add_action(action)
         
         return PiscesLxCoreMCPProtocol.create_message(
-            ArcticMCPMessageType.ACTION,
+            RuchbahMCPMessageType.ACTION,
             self.agent_id,
             {
                 "action": asdict(action),
@@ -456,15 +458,15 @@ class ArcticAgentic(nn.Module):
             }
         )
 
-    async def _handle_tool_call(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
+    async def _handle_tool_call(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
         """Process an MCP tool invocation and report execution metadata.
 
         Args:
-            message (ArcticMCPMessage): Serialized tool call request including
+            message (RuchbahMCPMessage): Serialized tool call request including
                 tool name, parameters, and optional routing hints.
 
         Returns:
-            ArcticMCPMessage: Response annotated with success flag, execution
+            RuchbahMCPMessage: Response annotated with success flag, execution
             mode, and serialized result payload.
         """
         tool_data = message.payload
@@ -492,7 +494,7 @@ class ArcticAgentic(nn.Module):
         
         # Create and return the tool result message with execution metadata
         return PiscesLxCoreMCPProtocol.create_message(
-            ArcticMCPMessageType.TOOL_RESULT,
+            RuchbahMCPMessageType.TOOL_RESULT,
             self.agent_id,
             {
                 "tool_name": tool_name,
@@ -503,18 +505,18 @@ class ArcticAgentic(nn.Module):
             }
         )
 
-    async def _handle_tool_result(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
+    async def _handle_tool_result(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
         """Record a tool execution result and signal completion.
 
         Args:
-            message (ArcticMCPMessage): Tool result payload referencing the originating agent.
+            message (RuchbahMCPMessage): Tool result payload referencing the originating agent.
 
         Returns:
-            ArcticMCPMessage: State update confirming the tool result has been assimilated.
+            RuchbahMCPMessage: State update confirming the tool result has been assimilated.
         """
         result_data = message.payload
         
-        observation = ArcticAgenticObservation(
+        observation = RuchbahAgenticObservation(
             modality="tool_result",
             content=result_data,
             metadata={"source": message.agent_id}
@@ -523,19 +525,19 @@ class ArcticAgentic(nn.Module):
         self.memory.add_observation(observation)
         
         return PiscesLxCoreMCPProtocol.create_message(
-            ArcticMCPMessageType.STATE_UPDATE,
+            RuchbahMCPMessageType.STATE_UPDATE,
             self.agent_id,
             {"status": "tool_result_processed", "result_id": str(uuid.uuid4())}
         )
 
-    async def _handle_capability_register(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
+    async def _handle_capability_register(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
         """Store a peer capability advertised over MCP.
 
         Args:
-            message (ArcticMCPMessage): Capability registration announcement.
+            message (RuchbahMCPMessage): Capability registration announcement.
 
         Returns:
-            ArcticMCPMessage: State update acknowledging the capability.
+            RuchbahMCPMessage: State update acknowledging the capability.
         """
         capability_data = message.payload
         capability_name = capability_data["capability"]
@@ -544,26 +546,26 @@ class ArcticAgentic(nn.Module):
             self.mcp_capabilities[f"{message.agent_id}.{capability_name}"] = capability_data
         
         return PiscesLxCoreMCPProtocol.create_message(
-            ArcticMCPMessageType.STATE_UPDATE,
+            RuchbahMCPMessageType.STATE_UPDATE,
             self.agent_id,
             {"status": "capability_registered", "capability": capability_name}
         )
 
-    async def _handle_sync_request(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
+    async def _handle_sync_request(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
         """Respond to synchronization requests from peers.
 
         Args:
-            message (ArcticMCPMessage): Synchronization request specifying desired data.
+            message (RuchbahMCPMessage): Synchronization request specifying desired data.
 
         Returns:
-            ArcticMCPMessage: Sync response containing capability or state data, or
+            RuchbahMCPMessage: Sync response containing capability or state data, or
             an error descriptor when the request type is unsupported.
         """
         sync_type = message.payload.get("type")
         
         if sync_type == "capability_discovery":
             return PiscesLxCoreMCPProtocol.create_message(
-                ArcticMCPMessageType.SYNC_RESPONSE,
+                RuchbahMCPMessageType.SYNC_RESPONSE,
                 self.agent_id,
                 {
                     "type": "capabilities",
@@ -572,7 +574,7 @@ class ArcticAgentic(nn.Module):
             )
         elif sync_type == "state_sync":
             return PiscesLxCoreMCPProtocol.create_message(
-                ArcticMCPMessageType.SYNC_RESPONSE,
+                RuchbahMCPMessageType.SYNC_RESPONSE,
                 self.agent_id,
                 {
                     "type": "state",
@@ -582,19 +584,19 @@ class ArcticAgentic(nn.Module):
             )
         
         return PiscesLxCoreMCPProtocol.create_message(
-            ArcticMCPMessageType.SYNC_RESPONSE,
+            RuchbahMCPMessageType.SYNC_RESPONSE,
             self.agent_id,
             {"error": "Unknown sync type"}
         )
 
-    async def _handle_sync_response(self, message: ArcticMCPMessage) -> ArcticMCPMessage:
+    async def _handle_sync_response(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
         """Consolidate synchronization data received from a peer.
 
         Args:
-            message (ArcticMCPMessage): Synchronization response carrying peer metadata.
+            message (RuchbahMCPMessage): Synchronization response carrying peer metadata.
 
         Returns:
-            ArcticMCPMessage: State update marking the synchronization cycle as complete.
+            RuchbahMCPMessage: State update marking the synchronization cycle as complete.
         """
         response_data = message.payload
         
@@ -604,16 +606,16 @@ class ArcticAgentic(nn.Module):
             }
         
         return PiscesLxCoreMCPProtocol.create_message(
-            ArcticMCPMessageType.STATE_UPDATE,
+            RuchbahMCPMessageType.STATE_UPDATE,
             self.agent_id,
             {"status": "sync_completed", "peer_id": message.agent_id}
         )
 
-    def process_observation(self, observation: ArcticAgenticObservation) -> torch.Tensor:
+    def process_observation(self, observation: RuchbahAgenticObservation) -> torch.Tensor:
         """Project an incoming observation into the shared embedding space.
 
         Args:
-            observation (ArcticAgenticObservation): Structured observation with
+            observation (RuchbahAgenticObservation): Structured observation with
                 modality label, content payload, and optional metadata.
 
         Returns:
@@ -662,7 +664,7 @@ class ArcticAgentic(nn.Module):
         # Fallback to zero tensor
         return torch.zeros(1, 1, self.cfg.hidden_size)
 
-    async def plan_action(self, context: Dict[str, Any]) -> ArcticAgenticAction:
+    async def plan_action(self, context: Dict[str, Any]) -> RuchbahAgenticAction:
         """Generate an agent action using retrieval-augmented reasoning.
 
         The planner retrieves contextual memories, encodes the query, and invokes
@@ -675,7 +677,7 @@ class ArcticAgentic(nn.Module):
                 observation and declared tool set.
 
         Returns:
-            ArcticAgenticAction: Structured action containing type, parameters,
+            RuchbahAgenticAction: Structured action containing type, parameters,
             confidence, and an explanatory reasoning trace.
         """
         # Retrieve semantically relevant memories to enrich the reasoning context.
@@ -779,7 +781,7 @@ class ArcticAgentic(nn.Module):
                 relevant_memories=relevant_memories
             )
             
-            return ArcticAgenticAction(
+            return RuchbahAgenticAction(
                 action_type=action_type,
                 parameters=action_params,
                 confidence=confidence,

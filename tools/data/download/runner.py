@@ -170,7 +170,9 @@ class PiscesLxToolsDataDatasetDownload:
         """
         # Reduce third-party log noise via our logging helper
         try:
-            from utils.log.core import set_external_logger_level
+            # Use dms_core logging exclusively
+            import dms_core
+            set_external_logger_level = dms_core.log.set_level
             set_external_logger_level("modelscope", "ERROR")
         except Exception:
             pass

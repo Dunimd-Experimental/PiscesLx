@@ -31,8 +31,8 @@ _LOG = None
 def get_logger():
     global _LOG
     if _LOG is None:
-        from utils.log.core import PiscesLxCoreLog
-        _LOG = PiscesLxCoreLog("pisceslx.manage")
+        import logging
+        _LOG = logging.getLogger("pisceslx.manage")
     return _LOG
 
 # List of available commands with their purposes
@@ -194,7 +194,7 @@ def main():
             # Weight-level watermark verification path
             try:
                 from utils.watermark.weights import verify_weights
-                from model import ArcticModel, ArcticConfig
+                from model import RuchbahModel, RuchbahConfig
                 from utils.checkpoint import load_ckpt
                 # Resolve ckpt path
                 if not args.ckpt:
@@ -223,8 +223,8 @@ def main():
                 if not os.path.exists(cfg_path):
                     _LOG.error(f"Model config not found: {cfg_path}", event="manage.error")
                     sys.exit(1)
-                cfg = ArcticConfig.from_json(cfg_path)
-                model = ArcticModel(cfg)
+                cfg = RuchbahConfig.from_json(cfg_path)
+                model = RuchbahModel(cfg)
                 # Load checkpoint weights
                 load_ckpt(model, None, 0, args.ckpt)
                 # Verify

@@ -17,10 +17,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Model Context Protocol integration helpers for Arctic multimodal agents.
+"""Model Context Protocol integration helpers for Ruchbah multimodal agents.
 
 The module defines registries and protocol adapters that extend the shared
-Pisces MCP infrastructure with Arctic-specific routing, reasoning hooks, and
+Pisces MCP infrastructure with Ruchbah-specific routing, reasoning hooks, and
 compatibility shims. The helpers coordinate tool registration, execution
 statistics, and message construction while preserving backward compatibility
 with utils.mcp implementations.
@@ -42,7 +42,7 @@ import utils.mcp
 from utils.mcp.execution import PiscesLxCoreMCPExecutionResult, PiscesLxCoreMCPExecutionManager
 # Import types with fallback for standalone testing
 try:
-    from .reasoner.multipath_core import ArcticMultiPathReasoningEngine
+    from .reasoner.multipath_core import RuchbahMultiPathReasoningEngine
 except ImportError:
     # Fallback for standalone testing
     import sys
@@ -51,14 +51,14 @@ except ImportError:
     parent_dir = os.path.dirname(current_dir)
     sys.path.insert(0, parent_dir)
     try:
-        from multimodal.reasoner.multipath_core import ArcticMultiPathReasoningEngine
+        from multimodal.reasoner.multipath_core import RuchbahMultiPathReasoningEngine
     except ImportError:
-        ArcticMultiPathReasoningEngine = None
+        RuchbahMultiPathReasoningEngine = None
 
-class ArcticMCPToolRegistry:
-    """Registry bridging Arctic tools with the shared Pisces MCP ecosystem.
+class RuchbahMCPToolRegistry:
+    """Registry bridging Ruchbah tools with the shared Pisces MCP ecosystem.
 
-    The registry augments :class:`PiscesLxCoreMCPRegistry` with Arctic-specific
+    The registry augments :class:`PiscesLxCoreMCPRegistry` with Ruchbah-specific
     tracking such as native/external execution statistics, dual registration with
     the unified executor, and optional integration with the multipath reasoning
     engine to inform execution decisions.
@@ -68,20 +68,20 @@ class ArcticMCPToolRegistry:
         message_handler (Callable): Callback used to dispatch inbound MCP messages.
         tools (Dict[str, Dict[str, Any]]): Metadata for registered tools.
         capabilities (Dict[str, Dict[str, Any]]): Registered capability descriptors.
-        reasoning_engine (Optional[ArcticMultiPathReasoningEngine]): Optional reasoning backend.
+        reasoning_engine (Optional[RuchbahMultiPathReasoningEngine]): Optional reasoning backend.
         execution_stats (Dict[str, Union[int, float]]): Local execution counters retained for compatibility.
         _native_tools (Dict[str, Callable]): Mapping of native tool names to their handlers.
         unified_executor (PiscesLxCoreMCPUnifiedToolExecutor): Shared executor used for dual registration.
         core_registry (PiscesLxCoreMCPRegistry): Underlying registry from ``utils.mcp``.
     """
 
-    def __init__(self, agentic_id: str, message_handler: Callable, reasoning_engine: Optional[ArcticMultiPathReasoningEngine] = None):
+    def __init__(self, agentic_id: str, message_handler: Callable, reasoning_engine: Optional[RuchbahMultiPathReasoningEngine] = None):
         """Initialize the registry and attach optional reasoning capabilities.
 
         Args:
             agentic_id (str): Identifier for the owning agent.
             message_handler (Callable): Coroutine invoked for inbound MCP messages.
-            reasoning_engine (Optional[ArcticMultiPathReasoningEngine]): Optional reasoning helper
+            reasoning_engine (Optional[RuchbahMultiPathReasoningEngine]): Optional reasoning helper
                 used to recommend execution modes.
         """
         self.agentic_id = agentic_id
@@ -132,7 +132,7 @@ class ArcticMCPToolRegistry:
                 priority=10  # High priority for native tools
             )
             self.unified_executor.register_tool(tool_metadata)
-            print(f"[ArcticMCPToolRegistry] Registered native tool: {name}")
+            print(f"[RuchbahMCPToolRegistry] Registered native tool: {name}")
         else:
             # Register with unified executor as external tool
             tool_metadata = PiscesLxCoreMCPToolMetadata(
@@ -143,7 +143,7 @@ class ArcticMCPToolRegistry:
                 priority=5  # Medium priority for external tools
             )
             self.unified_executor.register_tool(tool_metadata)
-            print(f"[ArcticMCPToolRegistry] Registered external tool: {name}")
+            print(f"[RuchbahMCPToolRegistry] Registered external tool: {name}")
         
         # Also register with core registry for base functionality
         await self.core_registry.register_tool(name, description, parameters, native_handler)
@@ -173,7 +173,7 @@ class ArcticMCPToolRegistry:
             "total_executions": 0,
             "average_execution_time": 0.0
         }
-        print("[ArcticMCPToolRegistry] Execution statistics reset")
+        print("[RuchbahMCPToolRegistry] Execution statistics reset")
     
     async def register_native_tool(self, name: str, description: str, 
                                    parameters: Dict[str, Any], handler: Callable):
@@ -188,19 +188,19 @@ class ArcticMCPToolRegistry:
         await self.register_tool(name, description, parameters, native_handler=handler)
 
 class PiscesLxCoreMCPProtocol:
-    """Protocol adapter enabling dual-track MCP execution for Arctic agents.
+    """Protocol adapter enabling dual-track MCP execution for Ruchbah agents.
 
     The adapter wraps :class:`utils.mcp.PiscesLxCoreMCPProtocol` to add metadata
-    for dual-track routing and to integrate with the Arctic tool registry when
+    for dual-track routing and to integrate with the Ruchbah tool registry when
     available.
     """
 
-    def __init__(self, agent_id: str, tool_registry: Optional[ArcticMCPToolRegistry] = None):
+    def __init__(self, agent_id: str, tool_registry: Optional[RuchbahMCPToolRegistry] = None):
         """Initialize the protocol adapter and link the optional tool registry.
 
         Args:
             agent_id (str): Identifier of the agent using the protocol.
-            tool_registry (Optional[ArcticMCPToolRegistry]): Registry providing
+            tool_registry (Optional[RuchbahMCPToolRegistry]): Registry providing
                 tool metadata and reasoning hooks.
         """
         # Initialize base protocol from utils.mcp using fully qualified name to avoid shadowing

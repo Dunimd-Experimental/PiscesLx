@@ -17,9 +17,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Core multi-path reasoning engine used by Arctic multimodal agents.
+"""Core multi-path reasoning engine used by Ruchbah multimodal agents.
 
-The module defines :class:`ArcticMultiPathReasoningEngine`, a composite
+The module defines :class:`RuchbahMultiPathReasoningEngine`, a composite
 reasoner that orchestrates transformer abstraction layers, multi-path
 attention, fact verification, and meta-cognitive feedback to generate
 chain-of-thought logits and diagnostic signals.
@@ -30,7 +30,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Any, Dict
 
-class ArcticMultiPathReasoningEngine(nn.Module):
+class RuchbahMultiPathReasoningEngine(nn.Module):
     """Execute multi-path chain-of-thought reasoning with adaptive abstraction."""
 
     def __init__(self, cfg):
@@ -301,7 +301,7 @@ class ArcticMultiPathReasoningEngine(nn.Module):
 
     def forward(self, hidden_states, input_ids=None, labels=None):
         """
-        Forward pass of the ArcticMultiPathReasoningEngine.
+        Forward pass of the RuchbahMultiPathReasoningEngine.
 
         Args:
             hidden_states (torch.Tensor): Input hidden states of shape [batch_size, seq_len, hidden_size].

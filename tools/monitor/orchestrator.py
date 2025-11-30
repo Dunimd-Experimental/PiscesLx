@@ -17,10 +17,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
+PiscesLxCoreConfigManager = dms_core.config.ConfigManager
 import time
 from typing import Any, Optional
-from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
+
 logger = PiscesLxCoreLog("pisceslx.data.download")
 from utils import PiscesLxCoreHookBus
 from utils import PiscesLxCoreEnhancedCacheManager

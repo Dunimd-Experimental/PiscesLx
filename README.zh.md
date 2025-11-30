@@ -27,29 +27,29 @@
     <img alt="ModelScope" src="https://img.shields.io/badge/ModelScope-Dunimd-1E6CFF?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTcuMDA2IDBDMy4xNDIgMCAwIDMuMTQyIDAgNy4wMDZTMy4xNDIgMTQuMDEyIDcuMDA2IDE0LjAxMkMxMC44NyAxNC4wMTIgMTQuMDEyIDEwLjg3IDE0LjAxMiA3LjAwNkMxNC4wMTIgMy4xNDIgMTAuODcgMCA3LjAwNiAwWiIgZmlsbD0iIzFFNkNGRiIvPgo8L3N2Zz4K"/>
 </a>
 
-采用 Arctic 架构的轻量级多模态混合专家模型（MoE），支持文本、图像、音频、视频、文档与智能体理解。PiscesL1（PiscesLx 系列，Dunimd团队）面向研究与实用，可在单张 RTX 4090 上运行，体系可扩展至 1T 参数规模。
+采用**Ruchbah架构**的轻量级多模态混合专家模型（MoE），支持文本、图像、音频、视频、文档与智能体理解。PiscesL1（PiscesLx 系列，Dunimd团队）面向研究与实用，可在单张 RTX 4090 上运行，体系可扩展至 1T 参数规模。
 
 </div>
 
-<h2 align="center">❄️ Arctic 架构</h2>
+<h2 align="center">Ruchbah架构(Reliable Unified Cognitive Hybrid Balanced Adaptive High-performance)</h2>
 
-### 🧠 ArcticUnifiedReasoner
-ArcticUnifiedReasoner 统一调度分层推理链（HRC），可以同时运行最多 8 路假设流，配合动态事实验证与元认知不确定性评分，为推理过程提供自检反馈。`<|start_hypothesis|>`, `<|start_evidence|>`, `<|start_conclusion|>`, `<|hypothesis_split|>`, `<|hypothesis_merge|>` 等控制符帮助外部工具精确追踪模型思维路径。
+### 🧠 RuchbahUnifiedReasoner
+RuchbahUnifiedReasoner 统一调度分层推理链（HRC），可以同时运行最多 8 路假设流，配合动态事实验证与元认知不确定性评分，为推理过程提供自检反馈。`<|start_hypothesis|>`, `<|start_evidence|>`, `<|start_conclusion|>`, `<|hypothesis_split|>`, `<|hypothesis_merge|>` 等控制符帮助外部工具精确追踪模型思维路径。
 
-### 🔧 Arctic MoE Scaling
-ArcticStableMoEGate 及其 LSTM 负载预测器负责 8 专家 Top-2 路由，集成装载噪声、固定形状执行与容量感知门控，既保证大模型训练稳定，也让小模型保持一致接口，方便在不同算力之间切换。
+### 🔧 Ruchbah MoE Scaling
+RuchbahStableMoEGate 及其 LSTM 负载预测器负责 8 专家 Top-2 路由，集成装载噪声、固定形状执行与容量感知门控，既保证大模型训练稳定，也让小模型保持一致接口，方便在不同算力之间切换。
 
 ### 🌐 Multimodal Perception Stack
-视觉、视频、音频、文档与智能体输入由 ArcticVisionEncoder（最高 1024px 的 NaViT 风格 patch）、ArcticVideoEncoder（带 3D RoPE 的帧级注意力）、ArcticAudioEncoder、ArcticDocEncoder（LayoutLMv3 风格结构推理）和 ArcticAgenticEncoder 统一规整，主干网络因此能够直接消费跨模态特征而无需额外的 token 化逻辑。
+视觉、视频、音频、文档与智能体输入由 RuchbahVisionEncoder（最高 1024px 的 NaViT 风格 patch）、RuchbahVideoEncoder（带 3D RoPE 的帧级注意力）、RuchbahAudioEncoder、RuchbahDocEncoder（LayoutLMv3 风格结构推理）和 RuchbahAgenticEncoder 统一规整，主干网络因此能够直接消费跨模态特征而无需额外的 token 化逻辑。
 
-### ⚛️ ArcticDynamicModalFusion
-ArcticDynamicModalFusion 通过跨模态注意力、模态感知位置嵌入与质量加权门控实现 token 级融合，可根据场景选择在文本序列前插入融合 token、拼接 3D 特征或输出压缩摘要，训练、推理、MCP 工具对齐均共用这一逻辑。
+### ⚛️ RuchbahDynamicModalFusion
+RuchbahDynamicModalFusion 通过跨模态注意力、模态感知位置嵌入与质量加权门控实现 token 级融合，可根据场景选择在文本序列前插入融合 token、拼接 3D 特征或输出压缩摘要，训练、推理、MCP 工具对齐均共用这一逻辑。
 
 ### 📏 Ultra-Long Context Fabric
-借助 YaRN RoPE + 动态 NTK 缩放、H2O 流式注意力、滑窗与压缩策略，Arctic 架构单序列可扩展至 10M+ token，并兼容推测式解码及高速 KV 缓存分段，适合长文档与多轮 Agent 工作负载。
+借助 YaRN RoPE + 动态 NTK 缩放、H2O 流式注意力、滑窗与压缩策略，Ruchbah 架构单序列可扩展至 10M+ token，并兼容推测式解码及高速 KV 缓存分段，适合长文档与多轮 Agent 工作负载。
 
-### 🤖 ArcticAgentic Runtime
-ArcticAgentic 是原生 MCP 感知的智能体运行时：可嵌入环境观测、维护持久记忆、调度工具调用并协调多智能体对话。由于与主干共享编码器与融合层，智能体轨迹可以直接通过 `python manage.py` 工作流训练或复盘。
+### 🤖 RuchbahAgentic Runtime
+RuchbahAgentic 是原生 MCP 感知的智能体运行时：可嵌入环境观测、维护持久记忆、调度工具调用并协调多智能体对话。由于与主干共享编码器与融合层，智能体轨迹可以直接通过 `python manage.py` 工作流训练或复盘。
 
 ### 🎯 Training Envelope & Optimization
 所有模型尺寸共用同一训练外壳：K-FAC 增强的梯度裁剪、多位量化（2/4/8）、LoRA/QLoRA 以及检查点流水线，让 0.5B–1.5B 规模在 ~14.6 GB GPU 上可行，同时保留一条直达 1T 参数的升级路径。一条命令（`python manage.py train|infer|benchmark`）即可覆盖全生命周期。

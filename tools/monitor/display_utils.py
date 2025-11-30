@@ -6,7 +6,7 @@
 # The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# You may not use this file except in compliance with the License.
+# you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -21,7 +21,6 @@ import os
 import platform
 from datetime import datetime
 from typing import Dict, Any, Optional, Tuple
-from utils import PiscesLxCoreLog
 
 
 class PiscesLxToolsMonitorDisplayUtils:
@@ -31,7 +30,7 @@ class PiscesLxToolsMonitorDisplayUtils:
     def get_progress_bar(percent: float, length: int = 30) -> str:
         """Create a progress bar string."""
         filled = int(length * percent / 100)
-        bar = '�? * filled + '�? * (length - filled)
+        bar = '#' * filled + '-' * (length - filled)
         return f"[{bar}] {percent:.1f}%"
 
     @staticmethod
@@ -65,8 +64,8 @@ class PiscesLxToolsMonitorDisplay:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         return f"""
 ╔══════════════════════════════════════════════════════════════════════════════════════════════════╗
-�?                                   PiscesL1 System Monitor                                      �?
-�?                                         {current_time}                                        �?
+│                                   PiscesL1 System Monitor                                      │
+│                                         {current_time}                                        │
 ╚══════════════════════════════════════════════════════════════════════════════════════════════════╝
 """
     
@@ -79,25 +78,25 @@ class PiscesLxToolsMonitorDisplay:
         cpu_percent_total = stats.get('cpu_percent_total', 0)
         cpu_freq = stats.get('cpu_freq', [])
         
-        lines = ["�?🖥�? CPU Status:                                                                                �?]
-        lines.append(f"�?   Total Usage: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(cpu_percent_total)}                                         �?)
+        lines = ["│ CPU Status:                                                                                │"]
+        lines.append(f"│   Total Usage: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(cpu_percent_total)}                                         │")
         
         # Per-core usage
         if 'cpu_percent_per_core' in stats:
             per_core = stats['cpu_percent_per_core']
             if per_core:
-                core_info = "�?   Per Core: "
+                core_info = "│   Per Core: "
                 for i, usage in enumerate(per_core[:8]):  # Show first 8 cores
                     core_info += f"C{i}:{usage:.0f}% "
-                lines.append(core_info.ljust(98) + "�?)
+                lines.append(core_info.ljust(98) + "│")
         
         # CPU frequency
         if cpu_freq and len(cpu_freq) > 0:
             avg_freq = sum(freq.current for freq in cpu_freq if hasattr(freq, 'current')) / len(cpu_freq)
             max_freq = max(freq.max for freq in cpu_freq if hasattr(freq, 'max'))
-            lines.append(f"�?   Frequency: {avg_freq/1000:.2f} GHz (max: {max_freq/1000:.2f} GHz)" + " " * (57 - len(f"{avg_freq/1000:.2f} GHz (max: {max_freq/1000:.2f} GHz)")) + "�?)
+            lines.append(f"│   Frequency: {avg_freq/1000:.2f} GHz (max: {max_freq/1000:.2f} GHz)" + " " * (57 - len(f"Frequency: {avg_freq/1000:.2f} GHz (max: {max_freq/1000:.2f} GHz)")) + "│")
         
-        lines.append("�? + " " * 98 + "�?)
+        lines.append("│ + " + " " * 98 + "│")
         return "\n".join(lines)
     
     def format_memory_section(self, stats: Dict[str, Any]) -> str:
@@ -106,17 +105,17 @@ class PiscesLxToolsMonitorDisplay:
             return ""
         
         memory = stats['memory']
-        lines = ["�?💾 Memory Status:                                                                               �?]
-        lines.append(f"�?   Usage: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(memory.get('percent', 0))}                                            �?)
-        lines.append(f"�?   Total: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(memory.get('total', 0))} | Used: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(memory.get('used', 0))} | Free: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(memory.get('free', 0))}" + " " * (23 - len(f"Total: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(memory.get('total', 0))} | Used: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(memory.get('used', 0))} | Free: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(memory.get('free', 0))}")) + "�?)
+        lines = ["│ Memory Status:                                                                               │"]
+        lines.append(f"│   Usage: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(memory.get('percent', 0))}                                            │")
+        lines.append(f"│   Total: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(memory.get('total', 0))} | Used: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(memory.get('used', 0))} | Free: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(memory.get('free', 0))}" + " " * (23 - len(f"Total: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(memory.get('total', 0))} | Used: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(memory.get('used', 0))} | Free: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(memory.get('free', 0))}")) + "│")
         
         # Swap information
         if 'swap' in stats and stats['swap']:
             swap = stats['swap']
             if swap.get('total', 0) > 0:
-                lines.append(f"�?   Swap: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(swap.get('percent', 0))} | Total: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(swap.get('total', 0))} | Used: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(swap.get('used', 0))}" + " " * (15 - len(f"Swap: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(swap.get('percent', 0))} | Total: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(swap.get('total', 0))} | Used: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(swap.get('used', 0))}")) + "�?)
+                lines.append(f"│   Swap: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(swap.get('percent', 0))} | Total: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(swap.get('total', 0))} | Used: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(swap.get('used', 0))}" + " " * (15 - len(f"Swap: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(swap.get('percent', 0))} | Total: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(swap.get('total', 0))} | Used: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(swap.get('used', 0))}")) + "│")
         
-        lines.append("�? + " " * 98 + "�?)
+        lines.append("│ + " + " " * 98 + "│")
         return "\n".join(lines)
     
     def format_gpu_section(self, stats: Dict[str, Any]) -> str:
@@ -125,7 +124,7 @@ class PiscesLxToolsMonitorDisplay:
             return ""
         
         gpu_list = stats['gpu']
-        lines = ["�?🎮 GPU Status:                                                                                  �?]
+        lines = ["│ GPU Status:                                                                                  │"]
         
         for i, gpu in enumerate(gpu_list):
             name = gpu.get('name', 'Unknown')
@@ -134,10 +133,10 @@ class PiscesLxToolsMonitorDisplay:
             mem_used = gpu.get('mem_used', 0)
             mem_total = gpu.get('mem_total', 0)
             
-            lines.append(f"�?   GPU {i}: {name[:20]}" + " " * (20 - len(name[:20])) + f"| Util: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(util)} | Mem: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(mem_percent)} �?)
-            lines.append(f"�?         Memory: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(mem_used)} / {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(mem_total)}" + " " * (60 - len(f"Memory: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(mem_used)} / {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(mem_total)}")) + "�?)
+            lines.append(f"│   GPU {i}: {name[:20]}" + " " * (20 - len(name[:20])) + f"| Util: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(util)} | Mem: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(mem_percent)} │")
+            lines.append(f"│         Memory: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(mem_used)} / {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(mem_total)}" + " " * (60 - len(f"Memory: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(mem_used)} / {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(mem_total)}")) + "│")
         
-        lines.append("�? + " " * 98 + "�?)
+        lines.append("│ + " + " " * 98 + "│")
         return "\n".join(lines)
     
     def format_disk_section(self, stats: Dict[str, Any]) -> str:
@@ -146,16 +145,16 @@ class PiscesLxToolsMonitorDisplay:
             return ""
         
         disk = stats['disk']
-        lines = ["�?💽 Disk Status:                                                                                 �?]
-        lines.append(f"�?   Usage: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(disk.get('percent', 0))}                                           �?)
-        lines.append(f"�?   Total: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk.get('total', 0))} | Used: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk.get('used', 0))} | Free: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk.get('free', 0))}" + " " * (22 - len(f"Total: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk.get('total', 0))} | Used: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk.get('used', 0))} | Free: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk.get('free', 0))}")) + "�?)
+        lines = ["│ Disk Status:                                                                                 │"]
+        lines.append(f"│   Usage: {PiscesLxToolsMonitorDisplayUtils.get_progress_bar(disk.get('percent', 0))}                                           │")
+        lines.append(f"│   Total: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk.get('total', 0))} | Used: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk.get('used', 0))} | Free: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk.get('free', 0))}" + " " * (22 - len(f"Total: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk.get('total', 0))} | Used: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk.get('used', 0))} | Free: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk.get('free', 0))}")) + "│")
         
         # Disk I/O if available
         if 'disk_io' in stats and stats['disk_io']:
             disk_io = stats['disk_io']
-            lines.append(f"�?   I/O: Read: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk_io.get('read_bytes', 0))} | Write: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk_io.get('write_bytes', 0))}" + " " * (39 - len(f"I/O: Read: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk_io.get('read_bytes', 0))} | Write: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk_io.get('write_bytes', 0))}")) + "�?)
+            lines.append(f"│   I/O: Read: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk_io.get('read_bytes', 0))} | Write: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk_io.get('write_bytes', 0))}" + " " * (39 - len(f"I/O: Read: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk_io.get('read_bytes', 0))} | Write: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(disk_io.get('write_bytes', 0))}")) + "│")
         
-        lines.append("�? + " " * 98 + "�?)
+        lines.append("│ + " + " " * 98 + "│")
         return "\n".join(lines)
     
     def format_network_section(self, stats: Dict[str, Any]) -> str:
@@ -164,15 +163,15 @@ class PiscesLxToolsMonitorDisplay:
             return ""
         
         network = stats['network']
-        lines = ["�?🌐 Network Status:                                                                               �?]
-        lines.append(f"�?   Sent: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(network.get('bytes_sent', 0))} | Received: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(network.get('bytes_recv', 0))}" + " " * (35 - len(f"Sent: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(network.get('bytes_sent', 0))} | Received: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(network.get('bytes_recv', 0))}")) + "�?)
-        lines.append(f"�?   Packets: Sent: {network.get('packets_sent', 0):,} | Received: {network.get('packets_recv', 0):,}" + " " * (33 - len(f"Packets: Sent: {network.get('packets_sent', 0):,} | Received: {network.get('packets_recv', 0):,}")) + "�?)
+        lines = ["│ Network Status:                                                                               │"]
+        lines.append(f"│   Sent: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(network.get('bytes_sent', 0))} | Received: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(network.get('bytes_recv', 0))}" + " " * (35 - len(f"Sent: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(network.get('bytes_sent', 0))} | Received: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(network.get('bytes_recv', 0))}")) + "│")
+        lines.append(f"│   Packets: Sent: {network.get('packets_sent', 0):,} | Received: {network.get('packets_recv', 0):,}" + " " * (33 - len(f"Packets: Sent: {network.get('packets_sent', 0):,} | Received: {network.get('packets_recv', 0):,}")) + "│")
         
         # Network errors if significant
         if network.get('errin', 0) > 0 or network.get('errout', 0) > 0:
-            lines.append(f"�?   Errors: In: {network.get('errin', 0):,} | Out: {network.get('errout', 0):,}" + " " * (44 - len(f"Errors: In: {network.get('errin', 0):,} | Out: {network.get('errout', 0):,}")) + "�?)
+            lines.append(f"│   Errors: In: {network.get('errin', 0):,} | Out: {network.get('errout', 0):,}" + " " * (44 - len(f"Errors: In: {network.get('errin', 0):,} | Out: {network.get('errout', 0):,}")) + "│")
         
-        lines.append("�? + " " * 98 + "�?)
+        lines.append("│ + " + " " * 98 + "│")
         return "\n".join(lines)
     
     def format_io_rates(self, stats: Dict[str, Any], last_net_io: Optional[Any], 
@@ -188,8 +187,8 @@ class PiscesLxToolsMonitorDisplay:
                 net_recv_rate = (current_net.get('bytes_recv', 0) - last_net_io.bytes_recv) / time_delta
                 
                 if net_sent_rate > 0 or net_recv_rate > 0:
-                    lines.append("�?📊 Network I/O Rates:                                                                             �?)
-                    lines.append(f"�?   Upload: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(net_sent_rate))}/s | Download: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(net_recv_rate))}/s" + " " * (37 - len(f"Upload: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(net_sent_rate))}/s | Download: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(net_recv_rate))}/s")) + "�?)
+                    lines.append("│ Network I/O Rates:                                                                             │")
+                    lines.append(f"│   Upload: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(net_sent_rate))}/s | Download: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(net_recv_rate))}/s" + " " * (37 - len(f"Upload: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(net_sent_rate))}/s | Download: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(net_recv_rate))}/s")) + "│")
             
             # Disk I/O rates
             if 'disk_io' in stats and last_disk_io and stats['disk_io']:
@@ -199,11 +198,11 @@ class PiscesLxToolsMonitorDisplay:
                 
                 if disk_read_rate > 0 or disk_write_rate > 0:
                     if not lines:  # Add header if not already added
-                        lines.append("�?📊 I/O Rates:                                                                                    �?)
-                    lines.append(f"�?   Disk Read: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(disk_read_rate))}/s | Write: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(disk_write_rate))}/s" + " " * (32 - len(f"Disk Read: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(disk_read_rate))}/s | Write: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(disk_write_rate))}/s")) + "�?)
+                        lines.append("│ I/O Rates:                                                                                    │")
+                    lines.append(f"│   Disk Read: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(disk_read_rate))}/s | Write: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(disk_write_rate))}/s" + " " * (32 - len(f"Disk Read: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(disk_read_rate))}/s | Write: {PiscesLxToolsMonitorDisplayUtils.bytes_to_human(int(disk_write_rate))}/s")) + "│")
         
         if lines:
-            lines.append("�? + " " * 98 + "�?)
+            lines.append("│ + " + " " * 98 + "│")
         
         return "\n".join(lines)
     

@@ -17,7 +17,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dynamic Mixture-of-Experts utilities for Arctic multimodal models."""
+"""Dynamic Mixture-of-Experts utilities for Ruchbah multimodal models."""
 
 import math
 from collections import OrderedDict
@@ -27,9 +27,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 
-logger = PiscesLxCoreLog("Arctic.Core.MoEDynamic", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.MoEDynamic", file_path="logs/RuchbahCore.log")
 
 def moe_init_weights(m: nn.Module) -> None:
     """Initialize MoE expert weights with Kaiming uniform and zero bias."""
@@ -40,7 +42,7 @@ def moe_init_weights(m: nn.Module) -> None:
             # Initialize the bias to zero.
             nn.init.zeros_(m.bias)
 
-class ArcticExpertChoiceRouter(nn.Module):
+class RuchbahExpertChoiceRouter(nn.Module):
     """Expert-choice router that allocates tokens to experts based on scores."""
 
     def __init__(self, hidden_size: int, num_experts: int, capacity_factor: float = 1.25, top_k: int = 2) -> None:
@@ -83,21 +85,21 @@ class ArcticExpertChoiceRouter(nn.Module):
         
         return expert_indices, dispatch_mask, load_balancing_loss
 
-class ArcticDynamicMoELayer(nn.Module):
+class RuchbahDynamicMoELayer(nn.Module):
     """Dynamic Mixture-of-Experts layer supporting expert migration across devices."""
     _layer_count = 0
 
     def __init__(self, cfg: Any, device: Optional[torch.device] = None, dtype: Optional[torch.dtype] = None) -> None:
         """Set up expert modules, router, and device management metadata."""
         super().__init__()
-        ArcticDynamicMoELayer._layer_count += 1
+        RuchbahDynamicMoELayer._layer_count += 1
         self.cfg = cfg
         # Get the number of top experts to select for each token.
         self.top_k = getattr(cfg, 'moe_top_k', 2)
         # Get the total number of experts.
         self.num_experts = getattr(cfg, 'moe_num_experts', 8)
         # Initialize the expert choice router.
-        self.router = ArcticExpertChoiceRouter(
+        self.router = RuchbahExpertChoiceRouter(
             cfg.hidden_size, 
             self.num_experts, 
             capacity_factor=getattr(cfg, 'moe_capacity_factor', 1.25),
@@ -121,12 +123,12 @@ class ArcticDynamicMoELayer(nn.Module):
         self._active_experts = OrderedDict()  # expert_id: last_used_step
         self._step = 0
         
-        if ArcticDynamicMoELayer._layer_count == 1:
+        if RuchbahDynamicMoELayer._layer_count == 1:
             try:
                 # Use the new logging system to replace the old logging call.
-                logger.info(f"ArcticDynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
+                logger.info(f"RuchbahDynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
             except UnicodeEncodeError:
-                print(f"[OK] ArcticDynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
+                print(f"[OK] RuchbahDynamicMoELayer: {self.num_experts} experts, top-{self.top_k} routing, capacity_factor={self.router.capacity_factor}")
     
     def _move_expert_to_gpu(self, expert_id: int) -> None:
         """Move an expert to GPU and update least-recently-used tracking."""

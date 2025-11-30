@@ -17,9 +17,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Video encoder utilities for Arctic multimodal agents.
+"""Video encoder utilities for Ruchbah multimodal agents.
 
-The module exposes :class:`ArcticVideoEncoder`, a wrapper around the vision
+The module exposes :class:`RuchbahVideoEncoder`, a wrapper around the vision
 encoder that augments per-frame embeddings with temporal modeling, action
 recognition, and summarization heuristics. It mirrors the detailed docstring
 style adopted across the multimodal stack and leaves model behavior unchanged.
@@ -28,23 +28,25 @@ style adopted across the multimodal stack and leaves model behavior unchanged.
 import torch
 from torch import nn
 from typing import Optional
-from .vision import ArcticVisionEncoder
-from utils.log.core import PiscesLxCoreLog
+from .vision import RuchbahVisionEncoder
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 
-logger = PiscesLxCoreLog("Arctic.Core.Multimodal", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.Multimodal", file_path="logs/RuchbahCore.log")
 
-class ArcticVideoEncoder(nn.Module):
+class RuchbahVideoEncoder(nn.Module):
     """Encode video frame sequences with optional 3D rotary positional modeling.
 
     The encoder delegates per-frame feature extraction to
-    :class:`ArcticVisionEncoder` and enriches temporal structure through
+    :class:`RuchbahVisionEncoder` and enriches temporal structure through
     convolution, attention, and lightweight analytic heads.
 
     Attributes:
         enabled (bool): Indicates whether the encoder is active.
         cfg: Configuration namespace providing ``hidden_size`` and ``n_head``.
         use_3d_rope (bool): Flag controlling 3D spatio-temporal RoPE handling.
-        frame_encoder (ArcticVisionEncoder): Backbone used for per-frame features.
+        frame_encoder (RuchbahVisionEncoder): Backbone used for per-frame features.
         temporal_processing (nn.ModuleDict): Temporal modules varying with RoPE usage.
         action_recognition (nn.ModuleDict): Heads that output coarse action logits
             and localization cues.
@@ -70,7 +72,7 @@ class ArcticVideoEncoder(nn.Module):
         # Determine whether to use 3D spatio-temporal RoPE.
         self.use_3d_rope = getattr(cfg, 'use_3d_spatio_temporal_rope', False)
         # Initialize the per-frame feature extractor.
-        self.frame_encoder = ArcticVisionEncoder(cfg)
+        self.frame_encoder = RuchbahVisionEncoder(cfg)
 
         if self.use_3d_rope:
             # Temporal processing modules activated when 3D RoPE is enabled.

@@ -18,7 +18,7 @@
 # limitations under the License.
 
 """
-Transformer block module for Arctic model.
+Transformer block module for Ruchbah model.
 
 This module implements a transformer block with attention and MLP layers,
 supporting Mixture-of-Experts (MoE), gradient checkpointing, and quantization.
@@ -26,15 +26,17 @@ supporting Mixture-of-Experts (MoE), gradient checkpointing, and quantization.
 
 import torch
 from torch import nn
-from .norms import ArcticRMSNorm
-from .attention import ArcticAttention
-from utils.log.core import PiscesLxCoreLog
-from ..moe import ArcticMoELayer as MoELayer
-from ..moe_dynamic import ArcticDynamicMoELayer
+from .norms import RuchbahRMSNorm
+from .attention import RuchbahAttention
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
+from ..moe import RuchbahMoELayer as MoELayer
+from ..moe_dynamic import RuchbahDynamicMoELayer
 
-logger = PiscesLxCoreLog("Arctic.Core.Modeling.Blocks", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.Modeling.Blocks", file_path="logs/RuchbahCore.log")
 
-class ArcticTransformerBlock(nn.Module):
+class RuchbahTransformerBlock(nn.Module):
     """
     Transformer block with attention and MLP layers.
 
@@ -57,7 +59,7 @@ class ArcticTransformerBlock(nn.Module):
             RuntimeError: If quantization setup fails and fallback also fails.
         """
         super().__init__()
-        self.attn = ArcticAttention(cfg, device=device, dtype=dtype)
+        self.attn = RuchbahAttention(cfg, device=device, dtype=dtype)
         self.cache_manager = None
         self.layer_idx = -1
 
@@ -72,13 +74,13 @@ class ArcticTransformerBlock(nn.Module):
                 use_stable_gate=True
             )
         else:
-            self.mlp = ArcticDynamicMoELayer(cfg, device=device, dtype=dtype)
+            self.mlp = RuchbahDynamicMoELayer(cfg, device=device, dtype=dtype)
 
         # Normalization layers: post-norm after residual, pre-norm before operations
-        self.norm1 = ArcticRMSNorm(cfg.hidden_size)
-        self.norm2 = ArcticRMSNorm(cfg.hidden_size)
-        self.pre_norm1 = ArcticRMSNorm(cfg.hidden_size)
-        self.pre_norm2 = ArcticRMSNorm(cfg.hidden_size)
+        self.norm1 = RuchbahRMSNorm(cfg.hidden_size)
+        self.norm2 = RuchbahRMSNorm(cfg.hidden_size)
+        self.pre_norm1 = RuchbahRMSNorm(cfg.hidden_size)
+        self.pre_norm2 = RuchbahRMSNorm(cfg.hidden_size)
 
         # Residual connection scaling factor: (2 * n_layers)^(-0.5)
         self.residual_scale = nn.Parameter(torch.ones(1) * (2.0 * cfg.n_layer) ** -0.5)

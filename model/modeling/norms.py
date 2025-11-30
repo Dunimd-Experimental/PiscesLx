@@ -18,7 +18,7 @@
 # limitations under the License.
 
 """
-Normalization and embedding modules for Arctic model.
+Normalization and embedding modules for Ruchbah model.
 
 This module provides RMS normalization and rotary position embedding
 implementations used in the transformer architecture.
@@ -30,7 +30,7 @@ from torch import nn
 
 def _arctic_init_weights(m):
     """
-    Initialize weights for Arctic model modules.
+    Initialize weights for Ruchbah model modules.
 
     Applies Kaiming uniform initialization for linear layers and normal
     initialization for embedding layers.
@@ -45,7 +45,7 @@ def _arctic_init_weights(m):
     elif isinstance(m, nn.Embedding):
         nn.init.normal_(m.weight, mean=0, std=0.02)
 
-class ArcticRMSNorm(nn.Module):
+class RuchbahRMSNorm(nn.Module):
     """
     Root Mean Square Layer Normalization.
 
@@ -80,7 +80,7 @@ class ArcticRMSNorm(nn.Module):
         rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
         return self.weight * x * rms
 
-class ArcticRotaryEmbedding(nn.Module):
+class RuchbahRotaryEmbedding(nn.Module):
     """
     Rotary position embedding (RoPE).
 

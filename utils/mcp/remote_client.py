@@ -32,19 +32,9 @@ from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass
 from abc import ABC, abstractmethod
 
-try:
-    from utils.log.core import PiscesLxCoreLog
-    logger = PiscesLxCoreLog("Arctic.Utils.MCP.RemoteClient")
-except ImportError:
-    # Fallback to simple logger if utils.log.core is not available
-    import logging
-    logger = logging.getLogger("Arctic.Utils.MCP.RemoteClient")
-    logger.setLevel(logging.INFO)
-    if not logger.handlers:
-        handler = logging.StreamHandler()
-        formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
+# Use dms_core logging exclusively
+import dms_core
+logger = dms_core.log.get_logger("Ruchbah.Utils.MCP.RemoteClient")
 
 # Import execution module with fallback for standalone testing
 try:
@@ -143,11 +133,11 @@ class PiscesLxCoreMCPRemoteClient(ABC):
             self._tool_cache[tool.name] = (tool, current_time)
 
 
-class PiscesLxCoreMCPArcticRemoteClient(PiscesLxCoreMCPRemoteClient):
-    """Arctic-specific remote MCP client implementation."""
+class PiscesLxCoreMCPRuchbahRemoteClient(PiscesLxCoreMCPRemoteClient):
+    """Ruchbah-specific remote MCP client implementation."""
     
     def __init__(self, client_id: str, config: Optional[_RemoteClientConfig] = None):
-        """Initialize Arctic remote MCP client."""
+        """Initialize Ruchbah remote MCP client."""
         super().__init__(client_id, config)
         self._socket: Optional[socket.socket] = None
         self._reader: Optional[asyncio.StreamReader] = None
@@ -357,12 +347,12 @@ class PiscesLxCoreMCPRemoteClientPool:
     def __init__(self, max_clients: int = 10):
         """Initialize client pool."""
         self.max_clients = max_clients
-        self.clients: Dict[str, PiscesLxCoreMCPArcticRemoteClient] = {}
+        self.clients: Dict[str, PiscesLxCoreMCPRuchbahRemoteClient] = {}
         self._lock = asyncio.Lock()
         
         logger.info(f"RemoteMCPClientPool initialized with max {max_clients} clients")
     
-    async def get_client(self, client_id: str, config: Optional[_RemoteClientConfig] = None) -> PiscesLxCoreMCPArcticRemoteClient:
+    async def get_client(self, client_id: str, config: Optional[_RemoteClientConfig] = None) -> PiscesLxCoreMCPRuchbahRemoteClient:
         """Get or create a client for the given ID."""
         async with self._lock:
             if client_id not in self.clients:
@@ -372,7 +362,7 @@ class PiscesLxCoreMCPRemoteClientPool:
                     await self.clients[oldest_client_id].disconnect()
                     del self.clients[oldest_client_id]
                 
-                self.clients[client_id] = PiscesLxCoreMCPArcticRemoteClient(client_id, config)
+                self.clients[client_id] = PiscesLxCoreMCPRuchbahRemoteClient(client_id, config)
             
             return self.clients[client_id]
     
@@ -399,33 +389,77 @@ class PiscesLxCoreMCPRemoteClientPool:
 _client_pool: Optional[PiscesLxCoreMCPRemoteClientPool] = None
 
 
-def get_remote_client_pool(max_clients: int = 10) -> PiscesLxCoreMCPRemoteClientPool:
-    """Get the global remote client pool instance."""
-    global _client_pool
-    if _client_pool is None:
-        _client_pool = PiscesLxCoreMCPRemoteClientPool(max_clients)
-    return _client_pool
-
-
-async def execute_remote_tool(
-    client_id: str,
-    tool_name: str,
-    parameters: Dict[str, Any],
-    config: Optional[_RemoteClientConfig] = None
-) -> PiscesLxCoreMCPExecutionResult:
-    """
-    Convenience function for remote tool execution.
+class PiscesLxCoreMCPRemoteClientPool:
+    """Pool for managing multiple remote MCP clients."""
     
-    Args:
-        client_id: Remote client identifier
-        tool_name: Name of the tool to execute
-        parameters: Parameters for the tool
-        config: Optional client configuration
+    def __init__(self, max_clients: int = 10):
+        """Initialize client pool."""
+        self.max_clients = max_clients
+        self.clients: Dict[str, PiscesLxCoreMCPRuchbahRemoteClient] = {}
+        self._lock = asyncio.Lock()
         
-    Returns:
-        Execution result
-    """
-    pool = get_remote_client_pool()
-    client = await pool.get_client(client_id, config)
+        logger.info(f"RemoteMCPClientPool initialized with max {max_clients} clients")
     
-    return await client.execute_tool(tool_name, parameters)
+    async def get_client(self, client_id: str, config: Optional[_RemoteClientConfig] = None) -> PiscesLxCoreMCPRuchbahRemoteClient:
+        """Get or create a client for the given ID."""
+        async with self._lock:
+            if client_id not in self.clients:
+                if len(self.clients) >= self.max_clients:
+                    # Remove oldest client
+                    oldest_client_id = min(self.clients.keys(), key=lambda k: id(k))
+                    await self.clients[oldest_client_id].disconnect()
+                    del self.clients[oldest_client_id]
+                
+                self.clients[client_id] = PiscesLxCoreMCPRuchbahRemoteClient(client_id, config)
+            
+            return self.clients[client_id]
+    
+    async def remove_client(self, client_id: str) -> bool:
+        """Remove a client from the pool."""
+        async with self._lock:
+            if client_id in self.clients:
+                await self.clients[client_id].disconnect()
+                del self.clients[client_id]
+                return True
+            return False
+    
+    async def shutdown(self):
+        """Shutdown all clients in the pool."""
+        async with self._lock:
+            for client in self.clients.values():
+                await client.disconnect()
+            self.clients.clear()
+        
+        logger.info("RemoteMCPClientPool shutdown completed")
+    
+    @staticmethod
+    def get_remote_client_pool(max_clients: int = 10) -> "PiscesLxCoreMCPRemoteClientPool":
+        """Get the global remote client pool instance."""
+        global _client_pool
+        if _client_pool is None:
+            _client_pool = PiscesLxCoreMCPRemoteClientPool(max_clients)
+        return _client_pool
+    
+    @staticmethod
+    async def execute_remote_tool(
+        client_id: str,
+        tool_name: str,
+        parameters: Dict[str, Any],
+        config: Optional[_RemoteClientConfig] = None
+    ) -> PiscesLxCoreMCPExecutionResult:
+        """
+        Convenience function for remote tool execution.
+        
+        Args:
+            client_id: Remote client identifier
+            tool_name: Name of the tool to execute
+            parameters: Parameters for the tool
+            config: Optional client configuration
+            
+        Returns:
+            Execution result
+        """
+        pool = PiscesLxCoreMCPRemoteClientPool.get_remote_client_pool()
+        client = await pool.get_client(client_id, config)
+        
+        return await client.execute_tool(tool_name, parameters)

@@ -17,9 +17,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Inference utilities for Arctic multi-path reasoning workflows.
+"""Inference utilities for Ruchbah multi-path reasoning workflows.
 
-The module exposes :class:`ArcticMultiPathInferenceEngine`, which samples
+The module exposes :class:`RuchbahMultiPathInferenceEngine`, which samples
 multiple reasoning branches, scores them with factual and logical heuristics,
 and selects the highest-confidence answer while optionally returning rich
 metadata for analysis.
@@ -32,7 +32,7 @@ from torch import nn
 import torch.nn.functional as F
 from typing import Any, Dict, List, Optional, Union
 
-class ArcticMultiPathInferenceEngine:
+class RuchbahMultiPathInferenceEngine:
     """Perform inference-time multi-path reasoning and confidence evaluation."""
 
     def __init__(

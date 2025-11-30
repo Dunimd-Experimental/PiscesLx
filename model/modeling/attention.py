@@ -18,9 +18,9 @@
 # limitations under the License.
 
 """
-Attention mechanism implementation for Arctic model.
+Attention mechanism implementation for Ruchbah model.
 
-This module defines the ArcticAttention class, which provides a multi-head attention
+This module defines the RuchbahAttention class, which provides a multi-head attention
 mechanism with rotary position embeddings and optional optimizations including:
 - Standard attention with optional fused QKV projections and sliding-window masking
 - H2O attention backend for very long contexts or when explicitly enabled
@@ -33,13 +33,15 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from .norms import _arctic_init_weights
-from utils.log.core import PiscesLxCoreLog
-from ..h2o_attention import ArcticH2OAttention
-from ..yarn_rope import ArcticYaRNRotaryEmbedding
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
+from ..h2o_attention import RuchbahH2OAttention
+from ..yarn_rope import RuchbahYaRNRotaryEmbedding
 
-logger = PiscesLxCoreLog("Arctic.Core.Modeling.Attention", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.Modeling.Attention", file_path="logs/RuchbahCore.log")
 
-class ArcticAttention(nn.Module):
+class RuchbahAttention(nn.Module):
     """
     Multi-head attention with optional H2O backend and sliding-window masking.
 
@@ -57,7 +59,7 @@ class ArcticAttention(nn.Module):
 
     def __init__(self, cfg, device=None, dtype=None):
         """
-        Initialize the ArcticAttention module.
+        Initialize the RuchbahAttention module.
 
         Args:
             cfg: Configuration object containing:
@@ -88,7 +90,7 @@ class ArcticAttention(nn.Module):
 
         if self.use_h2o:
             # Initialize H2O attention backend for long contexts
-            self.h2o_attention = ArcticH2OAttention(
+            self.h2o_attention = RuchbahH2OAttention(
                 hidden_size=cfg.hidden_size,
                 num_attention_heads=cfg.n_head,
                 max_position_embeddings=cfg.max_position_embeddings,
@@ -142,7 +144,7 @@ class ArcticAttention(nn.Module):
                 device=device,
                 dtype=dtype
             )
-            self.rope = ArcticYaRNRotaryEmbedding(
+            self.rope = RuchbahYaRNRotaryEmbedding(
                 self.head_dim,
                 cfg.max_position_embeddings,
                 cfg.rope_theta,
@@ -151,7 +153,7 @@ class ArcticAttention(nn.Module):
             )
             self.attn_dropout = nn.Dropout(getattr(cfg, 'attention_dropout', 0.0))
 
-        # Apply Arctic-specific parameter initialization
+        # Apply Ruchbah-specific parameter initialization
         self.apply(_arctic_init_weights)
 
     def forward(self, x, mask, past_key_values=None, use_cache=False, cache_manager=None):

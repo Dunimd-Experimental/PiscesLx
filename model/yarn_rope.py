@@ -22,7 +22,7 @@ import torch
 import torch.nn as nn
 from typing import Optional
 
-class ArcticYaRNRotaryEmbedding(nn.Module):
+class RuchbahYaRNRotaryEmbedding(nn.Module):
     """
     A module implementing YaRN (Yet Another RoPE Extension) with DynamicNTK for long-context positional encoding.
     Based on RoPE (Rotary Position Embedding), it supports dynamic scaling for handling different sequence lengths.
@@ -35,7 +35,7 @@ class ArcticYaRNRotaryEmbedding(nn.Module):
                  original_max_position_embeddings: int = 4096,
                  device: Optional[torch.device] = None):
         """
-        Initialize the ArcticYaRNRotaryEmbedding module.
+        Initialize the RuchbahYaRNRotaryEmbedding module.
 
         Args:
             dim (int): Dimension of the embeddings.

@@ -20,7 +20,9 @@
 import torch
 import torch.nn as nn
 from typing import Optional, Dict, Any, List, Union, Tuple
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError
 
 logger = PiscesLxCoreLog("PiscesLx.Core.Quantization.Utils")

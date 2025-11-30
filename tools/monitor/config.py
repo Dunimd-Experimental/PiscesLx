@@ -18,7 +18,13 @@
 # limitations under the License.
 
 from typing import Any, Optional
-from utils.config.manager import PiscesLxCoreConfigManager
+try:
+    # Use dms_core config if available
+    import dms_core
+    PiscesLxCoreConfigManager = dms_core.config.ConfigManager
+except (ImportError, AttributeError):
+    # Fallback to simple implementation if dms_core is not available
+    PiscesLxCoreConfigManager = type('PiscesLxCoreConfigManager', (), {})
 
 class PiscesLxToolsMonitorConfig:
     """Lightweight facade for monitor configuration.

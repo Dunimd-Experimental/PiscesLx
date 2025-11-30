@@ -17,25 +17,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Audio encoding utilities backing Arctic multimodal agents.
+"""Audio encoding utilities backing Ruchbah multimodal agents.
 
-This module defines :class:`ArcticAudioEncoder`, a multi-task audio feature
+This module defines :class:`RuchbahAudioEncoder`, a multi-task audio feature
 extractor that converts waveforms or spectrograms into hidden representations
 compatible with PiscesL1 multimodal stacks. It fuses spectral, prosodic, and
 affective signals while exposing auxiliary heads for emotion classification and
 intensity estimation. Logging is routed through :class:`PiscesLxCoreLog` to keep
-telemetry consistent across the Arctic runtime.
+telemetry consistent across the Ruchbah runtime.
 """
 
 import torch
 import numpy as np
 import torch.nn as nn
 from typing import Dict, Any, Optional
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 
-logger = PiscesLxCoreLog("Arctic.Core.Audio", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.Audio", file_path="logs/RuchbahCore.log")
 
-class ArcticAudioEncoder(nn.Module):
+class RuchbahAudioEncoder(nn.Module):
     """Multi-task audio encoder producing modality-aligned embeddings.
 
     The encoder ingests raw audio or pre-computed spectrograms, derives Mel

@@ -26,7 +26,9 @@ import numpy as np
 from enum import Enum
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, List, Union, Tuple
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError, PiscesLxCoreMemoryError
 
 # Define constants locally to avoid circular imports

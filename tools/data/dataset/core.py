@@ -24,7 +24,7 @@ from torch.utils.data import Dataset
 from typing import Optional, Dict, Any
 from model.tokenizer import get_tokenizer
 from utils import PiscesLxCoreCacheManagerFacade
-from model.multimodal import ArcticVisionEncoder as VisionEncoder, ArcticAudioEncoder as AudioEncoder, ArcticDocEncoder as DocEncoder, ArcticVideoEncoder as VideoEncoder
+from model.multimodal import RuchbahVisionEncoder as VisionEncoder, RuchbahAudioEncoder as AudioEncoder, RuchbahDocEncoder as DocEncoder, RuchbahVideoEncoder as VideoEncoder
 
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
 AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]

@@ -17,14 +17,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Configuration utilities for Arctic multimodal models."""
+"""Configuration utilities for Ruchbah multimodal models."""
 
 import json
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 @dataclass
-class ArcticConfig:
+class RuchbahConfig:
     """Dataclass encapsulating PiscesL1 model configuration parameters.
 
     Attributes:
@@ -226,14 +226,14 @@ class ArcticConfig:
     chinchilla_d_ratio: float = 1.0  # Internal cache for optimal D/N ratio
     
     @classmethod
-    def from_json(cls, path: str) -> 'ArcticConfig':
+    def from_json(cls, path: str) -> 'RuchbahConfig':
         """Load the model configuration from a JSON file.
 
         Args:
             path (str): The path to the JSON file containing the configuration.
 
         Returns:
-            ArcticConfig: An instance of the ArcticConfig class initialized with the loaded configuration.
+            RuchbahConfig: An instance of the RuchbahConfig class initialized with the loaded configuration.
         """
         with open(path, 'r') as f:
             config_data = json.load(f)

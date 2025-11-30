@@ -17,9 +17,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Multi-modal reasoning enhancer utilities for Arctic agents.
+"""Multi-modal reasoning enhancer utilities for Ruchbah agents.
 
-The module defines :class:`ArcticMultiModalReasoningEnhancer`, which fuses
+The module defines :class:`RuchbahMultiModalReasoningEnhancer`, which fuses
 text, vision, audio, and temporal context through attention-driven reasoning
 loops and produces calibrated confidence estimates for the final reasoning
 state.
@@ -28,7 +28,7 @@ state.
 import torch
 from torch import nn
 
-class ArcticMultiModalReasoningEnhancer(nn.Module):
+class RuchbahMultiModalReasoningEnhancer(nn.Module):
     """Enhance reasoning states via cross-modal attention and iterative refinement."""
     def __init__(self, cfg):
         """Instantiate the enhancer using configuration-provided hyperparameters.

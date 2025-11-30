@@ -16,9 +16,3 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-
-from configs.version import PVERSION
-
-__version__ = PVERSION
-__author__ = "Wenze Wei"
-__email__ = "dunimd@outlook.com"

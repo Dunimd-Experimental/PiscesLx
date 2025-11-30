@@ -33,7 +33,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple, Union
 
 @dataclass
-class ArcticMamba3Config:
+class RuchbahMamba3Config:
     """
     Configuration for Mamba-3 state space model.
 
@@ -76,7 +76,7 @@ class ArcticMamba3Config:
         if self.dt_rank == "auto":
             self.dt_rank = math.ceil(self.d_model / 16)
 
-class ArcticTrapezoidalDiscretization(nn.Module):
+class RuchbahTrapezoidalDiscretization(nn.Module):
     """
     Trapezoidal discretization for state space models.
 
@@ -130,7 +130,7 @@ class ArcticTrapezoidalDiscretization(nn.Module):
         return discretized
 
 
-class ArcticComplexStateSpace(nn.Module):
+class RuchbahComplexStateSpace(nn.Module):
     """
     Complex-valued state space model.
 
@@ -222,7 +222,7 @@ class ArcticComplexStateSpace(nn.Module):
 
         return result
 
-class ArcticMIMOStateSpace(nn.Module):
+class RuchbahMIMOStateSpace(nn.Module):
     """
     Multi-Input Multi-Output state space model.
 
@@ -277,7 +277,7 @@ class ArcticMIMOStateSpace(nn.Module):
 
         return y, new_state
 
-class ArcticSelectiveScan(nn.Module):
+class RuchbahSelectiveScan(nn.Module):
     """
     Selective scan mechanism for state space models.
 
@@ -350,7 +350,7 @@ class ArcticSelectiveScan(nn.Module):
 
         return final_output
 
-class ArcticMamba3Block(nn.Module):
+class RuchbahMamba3Block(nn.Module):
     """
     Complete Mamba-3 block implementation.
 
@@ -358,12 +358,12 @@ class ArcticMamba3Block(nn.Module):
     Mamba-3 features (trapezoidal discretization, complex state space, MIMO).
     """
 
-    def __init__(self, config: ArcticMamba3Config):
+    def __init__(self, config: RuchbahMamba3Config):
         """
         Initialize Mamba-3 block.
 
         Args:
-            config (ArcticMamba3Config): Configuration object for Mamba-3.
+            config (RuchbahMamba3Config): Configuration object for Mamba-3.
         """
         super().__init__()
         self.config = config
@@ -384,17 +384,17 @@ class ArcticMamba3Block(nn.Module):
         )
 
         # Selective scan mechanism
-        self.selective_scan = ArcticSelectiveScan(config.d_inner, config.dt_rank)
+        self.selective_scan = RuchbahSelectiveScan(config.d_inner, config.dt_rank)
 
         # Optional Mamba-3 features
         if config.use_trapezoidal:
-            self.trapezoidal = ArcticTrapezoidalDiscretization(config.d_inner, config.dt_rank)
+            self.trapezoidal = RuchbahTrapezoidalDiscretization(config.d_inner, config.dt_rank)
 
         if config.use_complex:
-            self.complex_ssm = ArcticComplexStateSpace(config.d_state, config.d_inner)
+            self.complex_ssm = RuchbahComplexStateSpace(config.d_state, config.d_inner)
 
         if config.use_mimo:
-            self.mimo_ssm = ArcticMIMOStateSpace(config.d_inner, config.d_state)
+            self.mimo_ssm = RuchbahMIMOStateSpace(config.d_inner, config.d_state)
 
         # Output projection
         self.out_proj = nn.Linear(config.d_inner, config.d_model, bias=config.bias)
@@ -464,7 +464,7 @@ class ArcticMamba3Block(nn.Module):
 
         return output
 
-class ArcticMamba3Integration(nn.Module):
+class RuchbahMamba3Integration(nn.Module):
     """
     High-level integration module for Mamba-3.
 
@@ -472,20 +472,20 @@ class ArcticMamba3Integration(nn.Module):
     for use in transformer architectures.
     """
 
-    def __init__(self, d_model: int, config: Optional[ArcticMamba3Config] = None):
+    def __init__(self, d_model: int, config: Optional[RuchbahMamba3Config] = None):
         """
         Initialize Mamba-3 integration module.
 
         Args:
             d_model (int): Model dimension (hidden size).
-            config (Optional[ArcticMamba3Config]): Configuration object. If None,
+            config (Optional[RuchbahMamba3Config]): Configuration object. If None,
                 creates default configuration with d_model.
         """
         super().__init__()
         if config is None:
-            config = ArcticMamba3Config(d_model=d_model)
+            config = RuchbahMamba3Config(d_model=d_model)
 
-        self.mamba3_block = ArcticMamba3Block(config)
+        self.mamba3_block = RuchbahMamba3Block(config)
         self.layer_norm = nn.LayerNorm(d_model)
 
     def forward(

@@ -17,7 +17,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Generation subsystems for Arctic multimodal content synthesis.
+"""Generation subsystems for Ruchbah multimodal content synthesis.
 
 This module exposes lightweight generators used in tests and mock pipelines to
 produce images, videos, audio, and document tensors. The implementation favors
@@ -30,10 +30,10 @@ import pandas as pd
 from torch import nn
 from typing import Optional
 from typing import Dict, Any, List
-from .types import ArcticGenerationCondition
+from .types import RuchbahGenerationCondition
 
-class ArcticUnifiedGeneration(nn.Module):
-    """Minimal multimodal generator for Arctic prototypes.
+class RuchbahUnifiedGeneration(nn.Module):
+    """Minimal multimodal generator for Ruchbah prototypes.
 
     The class synthesizes basic tensors for images, videos, audio, and documents
     by applying simple linear decoders to latent vectors modulated by time
@@ -74,11 +74,11 @@ class ArcticUnifiedGeneration(nn.Module):
             "format": nn.Sequential(nn.Linear(H, 128)),
         })
 
-    def _latent(self, condition: ArcticGenerationCondition) -> torch.Tensor:
+    def _latent(self, condition: RuchbahGenerationCondition) -> torch.Tensor:
         """Generate a pseudo-random latent vector conditioned on metadata.
 
         Args:
-            condition (ArcticGenerationCondition): Generation parameters including
+            condition (RuchbahGenerationCondition): Generation parameters including
                 textual prompts and optional emotion vectors.
 
         Returns:
@@ -93,11 +93,11 @@ class ArcticUnifiedGeneration(nn.Module):
         torch.manual_seed(int(seed * 10000) % 2147483647)
         return torch.randn(1, self.cfg.hidden_size)
 
-    def generate_image(self, condition: ArcticGenerationCondition, steps: int = 8) -> torch.Tensor:
+    def generate_image(self, condition: RuchbahGenerationCondition, steps: int = 8) -> torch.Tensor:
         """Generate a mock image tensor by iterative refinement.
 
         Args:
-            condition (ArcticGenerationCondition): Generation parameters.
+            condition (RuchbahGenerationCondition): Generation parameters.
             steps (int): Number of refinement iterations. Defaults to ``8``.
 
         Returns:
@@ -111,11 +111,11 @@ class ArcticUnifiedGeneration(nn.Module):
             x = 0.9 * x + 0.1 * img
         return x
 
-    def generate_video(self, condition: ArcticGenerationCondition, frames: int = 8, steps: int = 8) -> torch.Tensor:
+    def generate_video(self, condition: RuchbahGenerationCondition, frames: int = 8, steps: int = 8) -> torch.Tensor:
         """Generate a mock video tensor via iterative smoothing.
 
         Args:
-            condition (ArcticGenerationCondition): Generation parameters.
+            condition (RuchbahGenerationCondition): Generation parameters.
             frames (int): Number of video frames. Defaults to ``8``.
             steps (int): Number of refinement iterations. Defaults to ``8``.
 
@@ -130,11 +130,11 @@ class ArcticUnifiedGeneration(nn.Module):
             x = 0.9 * x + 0.1 * vid
         return x
 
-    def generate_audio(self, condition: ArcticGenerationCondition, length: int = 1024, steps: int = 8) -> torch.Tensor:
+    def generate_audio(self, condition: RuchbahGenerationCondition, length: int = 1024, steps: int = 8) -> torch.Tensor:
         """Synthesize a mock audio waveform.
 
         Args:
-            condition (ArcticGenerationCondition): Generation parameters.
+            condition (RuchbahGenerationCondition): Generation parameters.
             length (int): Desired waveform length. Defaults to ``1024``.
             steps (int): Number of refinement iterations. Defaults to ``8``.
 
@@ -149,11 +149,11 @@ class ArcticUnifiedGeneration(nn.Module):
             x = 0.9 * x + 0.1 * aud[:, :, :length]
         return x
 
-    def generate_document(self, condition: ArcticGenerationCondition, max_length: int = 100) -> Dict[str, torch.Tensor]:
+    def generate_document(self, condition: RuchbahGenerationCondition, max_length: int = 100) -> Dict[str, torch.Tensor]:
         """Produce placeholder document tensors for content, structure, and style.
 
         Args:
-            condition (ArcticGenerationCondition): Generation parameters.
+            condition (RuchbahGenerationCondition): Generation parameters.
             max_length (int): Maximum number of tokens for the content tensor. Defaults to ``100``.
 
         Returns:
@@ -168,11 +168,11 @@ class ArcticUnifiedGeneration(nn.Module):
         }
 
 
-class ArcticMultiModalGenerator:
+class RuchbahMultiModalGenerator:
     """High-level interface orchestrating placeholder multimodal generation.
 
     The wrapper coordinates between text prompts, emotion conditioning, and
-    cross-modal references to produce output tensors via ``ArcticUnifiedGeneration``.
+    cross-modal references to produce output tensors via ``RuchbahUnifiedGeneration``.
     It also applies placeholder watermarking metadata to illustrate post-processing
     hooks.
     """
@@ -181,12 +181,12 @@ class ArcticMultiModalGenerator:
         """Construct the generator facade.
 
         Args:
-            cfg: Configuration namespace shared with ``ArcticUnifiedGeneration``.
+            cfg: Configuration namespace shared with ``RuchbahUnifiedGeneration``.
             vision_encoder: Optional vision encoder reference.
             audio_encoder: Optional audio encoder reference.
         """
         self.cfg = cfg
-        self.unified_gen = ArcticUnifiedGeneration(cfg)
+        self.unified_gen = RuchbahUnifiedGeneration(cfg)
         self.vision_encoder = vision_encoder
         self.audio_encoder = audio_encoder
 
@@ -233,7 +233,7 @@ class ArcticMultiModalGenerator:
         Raises:
             ValueError: If ``modality`` is unsupported.
         """
-        condition = ArcticGenerationCondition(text_prompt=text, generation_params=kwargs)
+        condition = RuchbahGenerationCondition(text_prompt=text, generation_params=kwargs)
         metadata = {
             'prompt': text,
             'modality': modality,
@@ -270,7 +270,7 @@ class ArcticMultiModalGenerator:
         Raises:
             ValueError: If ``target_modality`` is unsupported.
         """
-        condition = ArcticGenerationCondition(generation_params=kwargs)
+        condition = RuchbahGenerationCondition(generation_params=kwargs)
         if source_modality == "image":
             condition.image_reference = input_data
         elif source_modality == "audio":
@@ -315,7 +315,7 @@ class ArcticMultiModalGenerator:
         Raises:
             ValueError: If ``target_modality`` is unsupported.
         """
-        condition = ArcticGenerationCondition(generation_params=kwargs)
+        condition = RuchbahGenerationCondition(generation_params=kwargs)
         if "image" in inputs:
             condition.image_reference = inputs["image"]
         if "audio" in inputs:
@@ -360,7 +360,7 @@ class ArcticMultiModalGenerator:
         Raises:
             ValueError: If ``modality`` is unsupported.
         """
-        condition = ArcticGenerationCondition(generation_params=kwargs)
+        condition = RuchbahGenerationCondition(generation_params=kwargs)
         metadata = {
             'emotion': emotion,
             'modality': modality,

@@ -311,7 +311,7 @@ class PiscesLxCoreAgenticObservation:
 
 
 class PiscesLxCoreMCPProtocol:
-    """Protocol for handling Arctic MCP messages and interactions."""
+    """Protocol for handling Ruchbah MCP messages and interactions."""
     
     def __init__(self, agent_id: str):
         """Initialize the PiscesLxCoreMCPProtocol instance.

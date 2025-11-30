@@ -27,7 +27,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-class ArcticH2OAttention(nn.Module):
+class RuchbahH2OAttention(nn.Module):
     """Implement H2O attention with heavy-hitter retention and streaming support."""
     
     def __init__(

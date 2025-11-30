@@ -26,13 +26,24 @@ from enum import Enum
 import multiprocessing as mp
 from dataclasses import dataclass
 from contextlib import contextmanager
-from utils.log.core import PiscesLxCoreLog
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_completed, Future
 from typing import Any, Callable, Iterable, List, Optional, Sequence, Tuple, Type, Dict, Union, Set
-from utils.error import PiscesLxCoreTimeoutError, PiscesLxCoreConcurrencyError, PiscesLxCoreMemoryError
 
-logger = PiscesLxCoreLog("PiscesLx.Core.Concurrency", file_path="logs/PLC/Concurrency.log")
+# Use dms_core logging instead of standard logging
+import dms_core
+logger = dms_core.log
+_module_log = logger
+
+# Custom error classes for backward compatibility
+class PiscesLxCoreTimeoutError(TimeoutError):
+    pass
+
+class PiscesLxCoreConcurrencyError(RuntimeError):
+    pass
+
+class PiscesLxCoreMemoryError(MemoryError):
+    pass
 
 class _TaskPriority(Enum):
     """Enumeration representing different task priority levels.
@@ -321,13 +332,9 @@ class PiscesLxCoreRetry:
                     self._failure_count = 0
                     self._circuit_open = False
                     try:
-                        self._log.info(
-                            "retry succeeded",
-                            event="concurrency.retry.success",
-                            attempts=attempt + 1,
-                        )
+                        logger._Finfo("PiscesLx.Core.Concurrency", f"retry succeeded: attempts={attempt + 1}")
                     except Exception as log_e:
-                        logger.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+                        logger._Fdebug("PiscesLx.Core.Concurrency", f"CONCURRENCY_LOG_ERROR: {str(log_e)}")
                 return result
                 
             except self.exceptions as e:
@@ -336,17 +343,9 @@ class PiscesLxCoreRetry:
                 
                 if attempt == self.max_attempts - 1:
                     try:
-                        self._log.error(
-                            "retry attempts exhausted",
-                            event="concurrency.retry.exhausted",
-                            attempts=self.max_attempts,
-                            final_delay=delay,
-                            error=str(e),
-                            error_class=type(e).__name__,
-                            failure_count=self._failure_count,
-                        )
+                        logger._Ferror("PiscesLx.Core.Concurrency", f"retry attempts exhausted: attempts={self.max_attempts}, final_delay={delay}, error={str(e)}, failure_count={self._failure_count}")
                     except Exception as log_e:
-                        _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+                        logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
                     raise PiscesLxCoreConcurrencyError(
                         "retry attempts exhausted",
                         context={
@@ -358,18 +357,9 @@ class PiscesLxCoreRetry:
                     )
                 
                 try:
-                    self._log.warning(
-                        "retrying after error",
-                        event="concurrency.retry.attempt",
-                        attempt=attempt + 1,
-                        max_attempts=self.max_attempts,
-                        delay_s=delay,
-                        error=str(e),
-                        error_class=type(e).__name__,
-                        failure_count=self._failure_count,
-                    )
+                    logger._Fwarn("PiscesLx.Core.Concurrency", f"retrying after error: attempt={attempt + 1}, max_attempts={self.max_attempts}, delay_s={delay}, error={str(e)}, failure_count={self._failure_count}")
                 except Exception as log_e:
-                    _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+                    logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
                 
                 time.sleep(delay)
                 
@@ -403,13 +393,9 @@ class PiscesLxCoreRetry:
         if self._failure_count == 0:
             self._circuit_open = False
             try:
-                self._log.info(
-                    "circuit breaker reset",
-                    event="concurrency.circuit_breaker.reset",
-                    failure_count=self._failure_count,
-                )
+                logger._Finfo("PiscesLx.Core.Concurrency", f"circuit breaker reset: failure_count={self._failure_count}")
             except Exception as log_e:
-                _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+                logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
     
     def _reset_circuit_breaker(self) -> None:
         """
@@ -422,12 +408,9 @@ class PiscesLxCoreRetry:
         self._failure_count = 0
         self._last_failure_time = 0.0
         try:
-            self._log.info(
-                "circuit breaker manually reset",
-                event="concurrency.circuit_breaker.manual_reset",
-            )
+            logger._Finfo("PiscesLx.Core.Concurrency", "circuit breaker manually reset")
         except Exception as log_e:
-            _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
     def _record_failure(self) -> None:
         """
@@ -443,14 +426,9 @@ class PiscesLxCoreRetry:
         if self._failure_count >= self.circuit_breaker_threshold:
             self._circuit_open = True
             try:
-                self._log.error(
-                    "circuit breaker opened",
-                    event="concurrency.circuit_breaker.open",
-                    failure_count=self._failure_count,
-                    threshold=self.circuit_breaker_threshold,
-                )
+                logger._Ferror("PiscesLx.Core.Concurrency", f"circuit breaker opened: failure_count={self._failure_count}, threshold={self.circuit_breaker_threshold}")
             except Exception as log_e:
-                _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+                logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
     def _is_circuit_open(self) -> bool:
         """
@@ -551,16 +529,9 @@ class PiscesLxCoreAsyncManager:
         self._task_counter += 1
 
         try:
-            logger.debug(
-                "submitting async task",
-                event="concurrency.async.submit",
-                priority=priority.value,
-                timeout=timeout,
-                queue_size=self._task_queue.qsize(),
-                running_tasks=len(self._running_tasks),
-            )
+            logger._Fdebug("PiscesLx.Core.Concurrency", f"submitting async task: priority={priority.value}, timeout={timeout}, queue_size={self._task_queue.qsize()}, running_tasks={len(self._running_tasks)}")
         except Exception as log_e:
-            _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
         # Create task with semaphore protection
         async def _wrapped_coro():
@@ -592,14 +563,9 @@ class PiscesLxCoreAsyncManager:
         """
         self._running_tasks.discard(task)
         try:
-            logger.debug(
-                "task completed",
-                event="concurrency.async.completed",
-                running_tasks=len(self._running_tasks),
-                exception=task.exception() if task.exception() else None,
-            )
+            logger._Fdebug("PiscesLx.Core.Concurrency", f"task completed: running_tasks={len(self._running_tasks)}, exception={task.exception() if task.exception() else None}")
         except Exception as log_e:
-            _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
     async def shutdown(self, timeout: float = 30.0) -> None:
         """
@@ -614,13 +580,9 @@ class PiscesLxCoreAsyncManager:
         self._shutdown = True
         
         try:
-            logger.info(
-                "shutting down async manager",
-                event="concurrency.async.shutdown",
-                running_tasks=len(self._running_tasks),
-            )
+            logger._Finfo("PiscesLx.Core.Concurrency", f"shutting down async manager: running_tasks={len(self._running_tasks)}")
         except Exception as log_e:
-            _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
         # Cancel remaining tasks
         if self._running_tasks:
@@ -633,25 +595,18 @@ class PiscesLxCoreAsyncManager:
             
             if pending:
                 try:
-                    logger.warning(
-                        "some tasks did not complete during shutdown",
-                        event="concurrency.async.shutdown_timeout",
-                        pending_tasks=len(pending),
-                    )
+                    logger._Fwarn("PiscesLx.Core.Concurrency", f"some tasks did not complete during shutdown: pending_tasks={len(pending)}")
                 except Exception as log_e:
-                    _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+                    logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
                 
                 # Force cancel remaining tasks
                 for task in pending:
                     task.cancel()
         
         try:
-            logger.info(
-                "async manager shutdown complete",
-                event="concurrency.async.shutdown_complete",
-            )
+            logger._Finfo("PiscesLx.Core.Concurrency", "async manager shutdown complete")
         except Exception as log_e:
-            logger.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
     
     def get_stats(self) -> Dict[str, Any]:
         """
@@ -725,14 +680,9 @@ class PiscesLxCoreResourcePool:
     async def initialize(self) -> None:
         """Initialize the pool by creating the minimum number of resources."""
         try:
-            logger.info(
-                "Initializing resource pool",
-                event="concurrency.pool.initialize",
-                min_size=self.min_size,
-                max_size=self.max_size,
-            )
+            logger._Finfo("PiscesLx.Core.Concurrency", f"Initializing resource pool: min_size={self.min_size}, max_size={self.max_size}")
         except Exception as log_e:
-            _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
         for _ in range(self.min_size):
             try:
@@ -740,14 +690,9 @@ class PiscesLxCoreResourcePool:
                 await self._pool.put(resource)
             except Exception as e:
                 try:
-                    logger.error(
-                        "Failed to create initial resource",
-                        event="concurrency.pool.init_failed",
-                        error=str(e),
-                        error_class=type(e).__name__,
-                    )
+                    logger._Ferror("PiscesLx.Core.Concurrency", f"Failed to create initial resource: error={str(e)}")
                 except Exception as log_e:
-                    _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+                    logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
     async def _create_resource(self) -> Any:
         """Create a new resource.
@@ -765,14 +710,9 @@ class PiscesLxCoreResourcePool:
         self._created_count += 1
 
         try:
-            logger.debug(
-                "Created new resource",
-                event="concurrency.pool.resource_created",
-                total_created=self._created_count,
-                active=self._active_count,
-            )
+            logger._Fdebug("PiscesLx.Core.Concurrency", f"Created new resource: total_created={self._created_count}, active={self._active_count}")
         except Exception as log_e:
-            _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
         return resource
 
@@ -792,15 +732,9 @@ class PiscesLxCoreResourcePool:
             raise PiscesLxCoreConcurrencyError("Resource pool is shutdown")
 
         try:
-            self._log.debug(
-                "Acquiring resource",
-                event="concurrency.pool.acquire",
-                queue_size=self._pool.qsize(),
-                active=self._active_count,
-                created=self._created_count,
-            )
+            logger._Fdebug("PiscesLx.Core.Concurrency", f"Acquiring resource: queue_size={self._pool.qsize()}, active={self._active_count}, created={self._created_count}")
         except Exception as log_e:
-            _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
         async with self._semaphore:
             try:
@@ -810,12 +744,9 @@ class PiscesLxCoreResourcePool:
                 # Perform health check if the check function is provided
                 if self.health_check and not self.health_check(resource):
                     try:
-                        logger.warning(
-                            "Resource failed health check, creating new one",
-                            event="concurrency.pool.health_check_failed",
-                        )
+                        logger._Fwarn("PiscesLx.Core.Concurrency", "Resource failed health check, creating new one")
                     except Exception as log_e:
-                        _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+                        logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
                     await self._destroy_resource(resource)
                     resource = await self._create_resource()
 
@@ -840,14 +771,9 @@ class PiscesLxCoreResourcePool:
         self._active_count -= 1
 
         try:
-            self._log.debug(
-                "Releasing resource",
-                event="concurrency.pool.release",
-                queue_size=self._pool.qsize(),
-                active=self._active_count,
-            )
+            logger._Fdebug("PiscesLx.Core.Concurrency", f"Releasing resource: queue_size={self._pool.qsize()}, active={self._active_count}")
         except Exception as log_e:
-            _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
         if self._shutdown:
             await self._destroy_resource(resource)
@@ -873,14 +799,9 @@ class PiscesLxCoreResourcePool:
                 await asyncio.get_event_loop().run_in_executor(None, resource.disconnect)
         except Exception as e:
             try:
-                self._log.warning(
-                    "Error destroying resource",
-                    event="concurrency.pool.destroy_error",
-                    error=str(e),
-                    error_class=type(e).__name__,
-                )
+                logger._Fwarn("PiscesLx.Core.Concurrency", f"Error destroying resource: error={str(e)}")
             except Exception as log_e:
-                _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+                logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
         finally:
             self._created_count -= 1
 
@@ -893,14 +814,9 @@ class PiscesLxCoreResourcePool:
         self._shutdown = True
 
         try:
-            self._log.info(
-                "Shutting down resource pool",
-                event="concurrency.pool.shutdown",
-                active=self._active_count,
-                created=self._created_count,
-            )
+            logger._Finfo("PiscesLx.Core.Concurrency", f"Shutting down resource pool: active={self._active_count}, created={self._created_count}")
         except Exception as log_e:
-            _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
         # Destroy all resources in the pool
         while not self._pool.empty():
@@ -950,13 +866,9 @@ class PiscesLxCoreConcurrencyManager:
     async def initialize(self) -> None:
         """Initialize the concurrency manager, including the async manager and resource pools."""
         try:
-            self._log.info(
-                "Initializing concurrency manager",
-                event="concurrency.manager.initialize",
-                config=self.config,
-            )
+            logger._Finfo("PiscesLx.Core.Concurrency", f"Initializing concurrency manager: config={self.config}")
         except Exception as log_e:
-            _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
         # Initialize the async manager
         self._async_manager = PiscesLxCoreAsyncManager(
@@ -1097,15 +1009,9 @@ class PiscesLxCoreConcurrencyManager:
         self._shutdown = True
 
         try:
-            self._log.info(
-                "Shutting down concurrency manager",
-                event="concurrency.manager.shutdown",
-                resource_pools=len(self._resource_pools),
-                executors=len(self._parallel_executors),
-                retry_handlers=len(self._retry_handlers),
-            )
+            logger._Finfo("PiscesLx.Core.Concurrency", f"Shutting down concurrency manager: resource_pools={len(self._resource_pools)}, executors={len(self._parallel_executors)}, retry_handlers={len(self._retry_handlers)}")
         except Exception as log_e:
-            _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+            logger.debug("CONCURRENCY_LOG_ERROR", extra={"error": str(log_e)})
 
         # Shutdown the async manager
         if self._async_manager:
@@ -1157,7 +1063,7 @@ class PiscesLxCoreConcurrencyManager:
                 else:
                     loop.run_until_complete(self.shutdown())
             except Exception as log_e:
-                _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
+                _module_log._Fdebug("PiscesLx.Core.Concurrency", f"CONCURRENCY_LOG_ERROR: {str(log_e)}")
 
 
 class PiscesLxCoreParallel:
@@ -1188,6 +1094,7 @@ class PiscesLxCoreParallel:
         self.timeout = timeout
         self.error_handler = error_handler
         self.result_processor = result_processor
+        self._log = logger
 
     def map(self, func: Callable[[Any], Any], items: Sequence[Any]) -> List[Any]:
         """Execute a function on a sequence of items in parallel.
@@ -1209,15 +1116,7 @@ class PiscesLxCoreParallel:
             self.max_workers = min(len(items), 16)
 
         try:
-            self._log.info(
-                "Starting parallel execution",
-                event="concurrency.parallel.start",
-                backend=self.backend.value,
-                items=len(items),
-                max_workers=self.max_workers,
-                chunk_size=self.chunk_size,
-                timeout=self.timeout,
-            )
+            self._log._Finfo("PiscesLx.Core.Concurrency", f"Starting parallel execution: backend={self.backend.value}, items={len(items)}, max_workers={self.max_workers}, chunk_size={self.chunk_size}, timeout={self.timeout}")
         except Exception as log_e:
             _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
 
@@ -1248,24 +1147,13 @@ class PiscesLxCoreParallel:
                         results.append(fallback_result)
                     except Exception as e:
                         try:
-                            self._log.error(
-                                "Error handler failed",
-                                event="concurrency.parallel.error_handler_failed",
-                                error=str(e),
-                                error_class=type(e).__name__,
-                            )
+                            self._log._Ferror("PiscesLx.Core.Concurrency", f"Error handler failed: error={str(e)}")
                         except Exception as log_e:
                             _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
 
         except Exception as e:
             try:
-                self._log.error(
-                    "Parallel execution failed",
-                    event="concurrency.parallel.failed",
-                    error=str(e),
-                    error_class=type(e).__name__,
-                    duration=time.time() - start_time,
-                )
+                self._log._Ferror("PiscesLx.Core.Concurrency", f"Parallel execution failed: error={str(e)}, duration={time.time() - start_time}")
             except Exception as log_e:
                 _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
             raise PiscesLxCoreConcurrencyError(
@@ -1276,16 +1164,7 @@ class PiscesLxCoreParallel:
 
         duration = time.time() - start_time
         try:
-            self._log.info(
-                "Parallel execution completed",
-                event="concurrency.parallel.completed",
-                backend=self.backend.value,
-                items=len(items),
-                results=len(results),
-                errors=len(errors),
-                duration=duration,
-                throughput=len(items) / duration if duration > 0 else 0,
-            )
+            self._log._Finfo("PiscesLx.Core.Concurrency", f"Parallel execution completed: backend={self.backend.value}, items={len(items)}, results={len(results)}, errors={len(errors)}, duration={duration}, throughput={len(items) / duration if duration > 0 else 0}")
         except Exception as log_e:
             _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
 
@@ -1322,12 +1201,7 @@ class PiscesLxCoreParallel:
                         errors.append((e, item))
                     else:
                         try:
-                            self._log.error(
-                                "Threaded execution item failed",
-                                event="concurrency.threaded.item_failed",
-                                error=str(e),
-                                error_class=type(e).__name__,
-                            )
+                            self._log._Ferror("PiscesLx.Core.Concurrency", f"Threaded execution item failed: error={str(e)}")
                         except Exception as log_e:
                             _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
                         raise PiscesLxCoreConcurrencyError(
@@ -1371,13 +1245,7 @@ class PiscesLxCoreParallel:
                             errors.append((e, item))
                     else:
                         try:
-                            self._log.error(
-                                "Multiprocess execution chunk failed",
-                                event="concurrency.multiprocess.chunk_failed",
-                                chunk_size=len(chunk),
-                                error=str(e),
-                                error_class=type(e).__name__,
-                            )
+                            self._log._Ferror("PiscesLx.Core.Concurrency", f"Multiprocess execution chunk failed: chunk_size={len(chunk)}, error={str(e)}")
                         except Exception as log_e:
                             _module_log.debug("CONCURRENCY_LOG_ERROR", error=str(log_e))
                         raise PiscesLxCoreConcurrencyError(

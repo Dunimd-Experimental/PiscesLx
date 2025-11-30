@@ -69,7 +69,9 @@ def setup_inference_device(device_pref: str):
     Choose an inference device using unified Device Facade.
     """
     import torch
-    from utils.device.facade import PiscesLxCoreDeviceFacade
+    # Use dms_core device facade exclusively
+    import dms_core
+    PiscesLxCoreDeviceFacade = dms_core.device.DeviceFacade
     facade = PiscesLxCoreDeviceFacade(args=None)
     if device_pref == "auto":
         dev_cfg = facade.setup_devices(mode="auto")
@@ -125,7 +127,7 @@ class VLLMEngine:
         # Determine dtype and tensor_parallel from device orchestrator if dtype is auto
         try:
             if dtype == "auto":
-                from utils.device.facade import PiscesLxCoreDeviceFacade
+                # PiscesLxCoreDeviceFacade is already defined above
                 f = PiscesLxCoreDeviceFacade(args=None)
                 dev_cfg = f.setup_devices(mode="auto")
                 torch_dtype = f.amp_dtype(dev_cfg.get("dtype", "auto"))
@@ -481,7 +483,7 @@ def _infer_impl(args: Any) -> None:
     import torch
     from PIL import Image
     from model.tokenizer import get_tokenizer
-    from model import ArcticModel, ArcticConfig
+    from model import RuchbahModel, RuchbahConfig
     from transformers import BitsAndBytesConfig
     import torch.nn.functional as F
     import asyncio
@@ -527,7 +529,7 @@ def _infer_impl(args: Any) -> None:
     if not config_path:
         logger.error(f"Config file not found for model_size={model_size}. Tried: {_candidates}")
         raise FileNotFoundError(f"Config file not found. Tried: {_candidates}")
-    cfg = ArcticConfig.from_json(config_path)
+    cfg = RuchbahConfig.from_json(config_path)
     import json as _json
     with open(config_path, 'r', encoding='utf-8') as _f:
         _full_cfg = _json.load(_f)
@@ -535,14 +537,14 @@ def _infer_impl(args: Any) -> None:
     # Automatically select the inference device (GPU if available, otherwise CPU)
     device = setup_inference_device('auto')
     # Prepare mixed precision settings from unified Device Facade
-    from utils.device.facade import PiscesLxCoreDeviceFacade
+    # PiscesLxCoreDeviceFacade is already defined above
     f = PiscesLxCoreDeviceFacade(args)
     _dev_cfg = f.setup_devices(mode="auto")
     _amp_dtype = f.amp_dtype(_dev_cfg.get("dtype", "auto"))
     _mp_enabled = bool(_dev_cfg.get("mixed_precision", torch.cuda.is_available())) and torch.cuda.is_available()
     # Initialize model
     try:
-        model = ArcticModel(cfg)
+        model = RuchbahModel(cfg)
         logger.success(f"Model initialized with config: {model_size}")
     except Exception as e:
         logger.error(f"Failed to initialize model: {e}")

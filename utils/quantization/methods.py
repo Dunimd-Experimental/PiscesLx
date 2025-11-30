@@ -21,7 +21,9 @@ import torch
 import torch.nn as nn
 from typing import Optional, Any, Dict
 from .core import QuantizationConfig, QuantizationMetrics
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError
 
 logger = PiscesLxCoreLog("PiscesLx.Core.Quantization.Methods")
@@ -45,8 +47,8 @@ class BitsAndBytesQuantizer:
         if bnb_config is not None:
             # Create a new model with the BitsAndBytes quantization config
             try:
-                from model import ArcticModel
-                quantized_model = ArcticModel(model.config, quantization_config=bnb_config)
+                from model import RuchbahModel
+                quantized_model = RuchbahModel(model.config, quantization_config=bnb_config)
                 quantized_model.load_state_dict(model.state_dict(), strict=False)
                 return quantized_model
             except Exception as e:
@@ -225,8 +227,8 @@ class GPTQQuantizer:
             quantized_state_dict = gptq_model.state_dict()
             
             # Create new model with quantized weights
-            from model import ArcticModel
-            quantized_model = ArcticModel(model.config)
+            from model import RuchbahModel
+            quantized_model = RuchbahModel(model.config)
             quantized_model.load_state_dict(quantized_state_dict, strict=False)
             
             return quantized_model
@@ -288,8 +290,8 @@ class AWQQuantizer:
             quantized_state_dict = awq_model.state_dict()
             
             # Create new model with quantized weights
-            from model import ArcticModel
-            quantized_model = ArcticModel(model.config)
+            from model import RuchbahModel
+            quantized_model = RuchbahModel(model.config)
             quantized_model.load_state_dict(quantized_state_dict, strict=False)
             
             return quantized_model

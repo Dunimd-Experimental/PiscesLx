@@ -17,17 +17,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .model import ArcticModel
-from .attention import ArcticAttention
-from .blocks import ArcticTransformerBlock
-from .cache import ArcticUnifiedCacheManager
-from .norms import ArcticRMSNorm, ArcticRotaryEmbedding
+from .model import RuchbahModel
+from .attention import RuchbahAttention
+from .blocks import RuchbahTransformerBlock
+from .cache import RuchbahUnifiedCacheManager
+from .norms import RuchbahRMSNorm, RuchbahRotaryEmbedding
 
 __all__ = [
-    "ArcticUnifiedCacheManager",
-    "ArcticRMSNorm",
-    "ArcticRotaryEmbedding",
-    "ArcticAttention",
-    "ArcticTransformerBlock",
-    "ArcticModel",
+    "RuchbahUnifiedCacheManager",
+    "RuchbahRMSNorm",
+    "RuchbahRotaryEmbedding",
+    "RuchbahAttention",
+    "RuchbahTransformerBlock",
+    "RuchbahModel",
 ]

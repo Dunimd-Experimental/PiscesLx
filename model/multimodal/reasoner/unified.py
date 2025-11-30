@@ -17,9 +17,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unified routing logic for Arctic's Chain-of-Thought and multi-path reasoners.
+"""Unified routing logic for Ruchbah's Chain-of-Thought and multi-path reasoners.
 
-The module defines :class:`ArcticUnifiedReasoner`, which selects between the
+The module defines :class:`RuchbahUnifiedReasoner`, which selects between the
 CoT memory reasoner and the multi-path reasoning engine based on problem
 complexity and sequence length while preserving a consistent forward interface.
 """
@@ -28,10 +28,10 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from typing import Any, Dict, Optional
-from .cot_memory import ArcticCoTMemoryReasoner
-from .multipath_core import ArcticMultiPathReasoningEngine
+from .cot_memory import RuchbahCoTMemoryReasoner
+from .multipath_core import RuchbahMultiPathReasoningEngine
 
-class ArcticUnifiedReasoner(nn.Module):
+class RuchbahUnifiedReasoner(nn.Module):
     """Route queries between CoT-with-memory and multi-path reasoning cores."""
 
     def __init__(self, cfg: Any):
@@ -44,10 +44,10 @@ class ArcticUnifiedReasoner(nn.Module):
         self.cfg = cfg
 
         # Initialize the CoT with Memory reasoner.
-        self.cot_reasoner = ArcticCoTMemoryReasoner(cfg)
+        self.cot_reasoner = RuchbahCoTMemoryReasoner(cfg)
 
         # Initialize the Multi-Path reasoning engine.
-        self.multi_path_core = ArcticMultiPathReasoningEngine(cfg)
+        self.multi_path_core = RuchbahMultiPathReasoningEngine(cfg)
 
         # Fetch routing parameters with fallbacks.
         self.enable_multi_path_core = getattr(cfg, "enable_multi_path_core", True)
@@ -65,7 +65,7 @@ class ArcticUnifiedReasoner(nn.Module):
         elif "hidden_states" in kwargs and torch.is_tensor(kwargs["hidden_states"]):
             hidden_states = kwargs["hidden_states"]
         else:
-            # Generate a random tensor fallback to mimic ArcticReasoner behavior.
+            # Generate a random tensor fallback to mimic RuchbahReasoner behavior.
             hidden_size = getattr(self.cfg, "hidden_size", 1024)
             hidden_states = torch.randn(1, 1, hidden_size, device=next(self.parameters()).device)
 
@@ -107,7 +107,7 @@ class ArcticUnifiedReasoner(nn.Module):
         labels: Optional[torch.Tensor] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
-        """Execute a forward pass compatible with ArcticReasoner outputs."""
+        """Execute a forward pass compatible with RuchbahReasoner outputs."""
         device = next(self.parameters()).device
         hidden_states = self._extract_hidden_states(input_ids, kwargs).to(device)
 

@@ -21,11 +21,12 @@ import torch
 import torch.nn as nn
 from torch.optim.optimizer import Optimizer
 from typing import Dict, List, Optional, Any, Union
-import logging
 from dataclasses import dataclass
 import math
 
-logger = logging.getLogger(__name__)
+# Use dms_core logging exclusively
+import dms_core
+logger = dms_core.log.get_logger(__name__)
 
 @dataclass
 class GaLoreConfig:

@@ -17,7 +17,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Type definitions shared across Arctic multimodal subsystems.
+"""Type definitions shared across Ruchbah multimodal subsystems.
 
 The module enumerates agent lifecycle states, MCP message classifications, and
 dataclass representations for generation inputs, message envelopes, and memory
@@ -31,8 +31,8 @@ from enum import Enum
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 
-class ArcticAgenticState(Enum):
-    """Enumerate agent execution phases for Arctic workflows."""
+class RuchbahAgenticState(Enum):
+    """Enumerate agent execution phases for Ruchbah workflows."""
 
     IDLE = "idle"
     THINKING = "thinking"
@@ -41,7 +41,7 @@ class ArcticAgenticState(Enum):
     COMPLETED = "completed"
     ERROR = "error"
 
-class ArcticMCPMessageType(Enum):
+class RuchbahMCPMessageType(Enum):
     """Enumerate MCP message categories exchanged with orchestrators."""
 
     OBSERVATION = "observation"
@@ -55,7 +55,7 @@ class ArcticMCPMessageType(Enum):
     SYNC_RESPONSE = "sync_response"
 
 @dataclass
-class ArcticGenerationCondition:
+class RuchbahGenerationCondition:
     """Capture conditioning signals that steer multimodal generation.
 
     Attributes:
@@ -74,11 +74,11 @@ class ArcticGenerationCondition:
     generation_params: Optional[Dict[str, Any]] = None
 
 @dataclass
-class ArcticMCPMessage:
+class RuchbahMCPMessage:
     """Represent an MCP transport envelope carrying agent messages.
 
     Attributes:
-        message_type (str): One of :class:`ArcticMCPMessageType` describing intent.
+        message_type (str): One of :class:`RuchbahMCPMessageType` describing intent.
         agentic_id (str): Identifier linking the payload to a specific agent run.
         payload (Dict[str, Any]): Arbitrary serialized data associated with the message.
         timestamp (str): ISO formatted timestamp supplied by the caller.
@@ -94,7 +94,7 @@ class ArcticMCPMessage:
     priority: str = "normal"
 
 @dataclass
-class ArcticAgenticAction:
+class RuchbahAgenticAction:
     """Describe an agent action selection with supporting metadata.
 
     Attributes:
@@ -110,7 +110,7 @@ class ArcticAgenticAction:
     reasoning: str = ""
 
 @dataclass
-class ArcticAgenticObservation:
+class RuchbahAgenticObservation:
     """Capture external observations consumed by the agent.
 
     Attributes:
@@ -124,12 +124,12 @@ class ArcticAgenticObservation:
     metadata: Dict[str, Any]
 
 @dataclass
-class ArcticAgenticMemory:
-    """In-memory buffer mirroring the functionality of :class:`ArcticMemoryManager`.
+class RuchbahAgenticMemory:
+    """In-memory buffer mirroring the functionality of :class:`RuchbahMemoryManager`.
 
     Attributes:
-        observations (List[ArcticAgenticObservation]): Stored observation entries.
-        actions (List[ArcticAgenticAction]): Recorded action decisions.
+        observations (List[RuchbahAgenticObservation]): Stored observation entries.
+        actions (List[RuchbahAgenticAction]): Recorded action decisions.
         reflections (List[str]): Reflective notes captured during execution.
 
     Notes:
@@ -139,8 +139,8 @@ class ArcticAgenticMemory:
         manager implementation.
     """
 
-    observations: List[ArcticAgenticObservation]
-    actions: List[ArcticAgenticAction]
+    observations: List[RuchbahAgenticObservation]
+    actions: List[RuchbahAgenticAction]
     reflections: List[str]
 
     def __post_init__(self) -> None:
@@ -151,11 +151,11 @@ class ArcticAgenticMemory:
         self.max_memory_size = 1000
         self.compression_threshold = 0.7
 
-    def add_observation(self, observation: ArcticAgenticObservation) -> None:
+    def add_observation(self, observation: RuchbahAgenticObservation) -> None:
         """Append an observation and generate embedding/importance metadata.
 
         Args:
-            observation (ArcticAgenticObservation): Observation record to persist.
+            observation (RuchbahAgenticObservation): Observation record to persist.
         """
 
         self.observations.append(observation)
@@ -189,7 +189,7 @@ class ArcticAgenticMemory:
         if len(self.observations) > self.max_memory_size:
             self.compress_memory()
 
-    def add_action(self, action: ArcticAgenticAction) -> None:
+    def add_action(self, action: RuchbahAgenticAction) -> None:
         """Append an action and seed synthetic retrieval metadata."""
 
         self.actions.append(action)

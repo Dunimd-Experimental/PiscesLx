@@ -17,7 +17,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Vision encoders and utilities for Arctic multimodal agents.
+"""Vision encoders and utilities for Ruchbah multimodal agents.
 
 This module houses components that transform raw images and video frames into
 feature representations consumed across the Pisces multimodal stack. It
@@ -31,12 +31,14 @@ import numpy as np
 from torch import nn
 from PIL import Image
 import torch.nn.functional as F
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 from typing import Any, Dict, List, Optional, Tuple
 
-logger = PiscesLxCoreLog("Arctic.Core.Multimodal", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.Multimodal", file_path="logs/RuchbahCore.log")
 
-class ArcticSpatioTemporalRoPE3D(nn.Module):
+class RuchbahSpatioTemporalRoPE3D(nn.Module):
     """3D spatio-temporal rotary positional embedding for video inputs.
 
     The module extends the standard 2D RoPE formulation by incorporating an
@@ -155,7 +157,7 @@ class ArcticSpatioTemporalRoPE3D(nn.Module):
         return torch.cat((-x2, x1), dim=-1)
 
 
-class ArcticVisualTextProcessor(nn.Module):
+class RuchbahVisualTextProcessor(nn.Module):
     """Encode text rendered as images for H-Network tokenization support."""
 
     def __init__(self, hidden_size: int, patch_size: int = 14) -> None:
@@ -189,7 +191,7 @@ class ArcticVisualTextProcessor(nn.Module):
             nn.LayerNorm(hidden_size)
         )
 
-        logger.info(f"ArcticVisualTextProcessor initialized: hidden_size={hidden_size}, patch_size={patch_size}")
+        logger.info(f"RuchbahVisualTextProcessor initialized: hidden_size={hidden_size}, patch_size={patch_size}")
 
     def forward(self, text_images: torch.Tensor) -> torch.Tensor:
         """Convert batches of rendered text images into patch embeddings.
@@ -215,17 +217,17 @@ class ArcticVisualTextProcessor(nn.Module):
         # Apply text-specific compression restoring the ``hidden_size`` dimension.
         compressed = self.text_compressor(patches)
 
-        logger.debug(f"ArcticVisualTextProcessor: {text_images.shape} -> {compressed.shape}")
+        logger.debug(f"RuchbahVisualTextProcessor: {text_images.shape} -> {compressed.shape}")
 
         return compressed
 
 
-class ArcticVisionEncoder(nn.Module):
+class RuchbahVisionEncoder(nn.Module):
     """Vision backbone producing multimodal features and auxiliary predictions.
 
     The encoder tokenizes images into patch embeddings, supports optional 3D
     RoPE for video streams, and attaches detection, segmentation, and reasoning
-    heads used by downstream Arctic modules.
+    heads used by downstream Ruchbah modules.
 
     Args:
         cfg: Configuration namespace supplying hyperparameters such as
@@ -262,7 +264,7 @@ class ArcticVisionEncoder(nn.Module):
 
     def _create_visual_text_processor(self):
         """Instantiate a processor specialized for rendered text inputs."""
-        return ArcticVisualTextProcessor(self.hidden_size, self.patch_size)
+        return RuchbahVisualTextProcessor(self.hidden_size, self.patch_size)
 
     def process_visual_text(self, text_images: torch.Tensor) -> torch.Tensor:
         """Project rendered text images into embeddings via the text processor.
@@ -340,7 +342,7 @@ class ArcticVisionEncoder(nn.Module):
         self.use_3d_rope = getattr(cfg, 'use_3d_spatio_temporal_rope', False)
         self.max_temporal_frames = getattr(cfg, 'max_temporal_frames', 64)
         if self.use_3d_rope:
-            self.spatio_temporal_rope = ArcticSpatioTemporalRoPE3D(
+            self.spatio_temporal_rope = RuchbahSpatioTemporalRoPE3D(
                 dim=self.hidden_size,
                 max_temporal_frames=self.max_temporal_frames,
                 max_spatial_h=max_patches_h,
@@ -551,7 +553,7 @@ class ArcticVisionEncoder(nn.Module):
 
     def forward(self, pixel_values, video_shape=None):
         """
-        Forward pass of the ArcticVisionEncoder.
+        Forward pass of the RuchbahVisionEncoder.
 
         Args:
             pixel_values (torch.Tensor): Input pixel values.

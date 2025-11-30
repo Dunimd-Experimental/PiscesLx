@@ -17,9 +17,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Memory management utilities for Arctic multimodal agents.
+"""Memory management utilities for Ruchbah multimodal agents.
 
-The module implements :class:`ArcticMemoryManager`, which captures agent
+The module implements :class:`RuchbahMemoryManager`, which captures agent
 observations, actions, and reflections while providing semantic retrieval,
 importance scoring, and lightweight memory compression. Optional background
 monitoring tracks tensor allocations to surface high memory usage.
@@ -32,13 +32,15 @@ import psutil
 import weakref
 import threading
 from collections import defaultdict
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 from typing import List, Dict, Any, Optional
-from .types import ArcticAgenticObservation, ArcticAgenticAction
+from .types import RuchbahAgenticObservation, RuchbahAgenticAction
 
-logger = PiscesLxCoreLog("Arctic.Core.Memory", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.Memory", file_path="logs/RuchbahCore.log")
 
-class ArcticMemoryManager:
+class RuchbahMemoryManager:
     """Manage agent memory buffers with optional monitoring and retrieval support.
 
     The manager stores observations, actions, and reflections, generates
@@ -46,8 +48,8 @@ class ArcticMemoryManager:
     launches a background thread to monitor process memory usage.
 
     Attributes:
-        observations (List[ArcticAgenticObservation]): Recorded observations.
-        actions (List[ArcticAgenticAction]): Logged agent actions.
+        observations (List[RuchbahAgenticObservation]): Recorded observations.
+        actions (List[RuchbahAgenticAction]): Logged agent actions.
         reflections (List[str]): Captured reflective notes.
         embeddings (List[torch.Tensor]): Embeddings for retrieval and scoring.
         importance_scores (List[float]): Normalized importance values aligned with embeddings.
@@ -67,8 +69,8 @@ class ArcticMemoryManager:
             enable_background (bool): If ``True``, spawn a monitoring thread that
                 periodically inspects process memory usage. Defaults to ``True``.
         """
-        self.observations: List[ArcticAgenticObservation] = []  # List to store agent observations
-        self.actions: List[ArcticAgenticAction] = []  # List to store agent actions
+        self.observations: List[RuchbahAgenticObservation] = []  # List to store agent observations
+        self.actions: List[RuchbahAgenticAction] = []  # List to store agent actions
         self.reflections: List[str] = []  # List to store reflections
 
         # Attributes for enhanced memory management
@@ -179,12 +181,12 @@ class ArcticMemoryManager:
 
         logger.debug(f"Registered tensor '{name}' shape={shape} bytes={nbytes} device={device}")
 
-    def add_observation(self, observation: ArcticAgenticObservation):
+    def add_observation(self, observation: RuchbahAgenticObservation):
         """
         Add an observation to the memory and generate its corresponding embedding and importance score.
 
         Args:
-            observation (ArcticAgenticObservation): The observation to be added.
+            observation (RuchbahAgenticObservation): The observation to be added.
         """
         self.observations.append(observation)
         try:
@@ -219,11 +221,11 @@ class ArcticMemoryManager:
         if len(self.observations) > self.max_memory_size:
             self.compress_memory()
 
-    def add_action(self, action: ArcticAgenticAction):
+    def add_action(self, action: RuchbahAgenticAction):
         """Add an action entry and synthesize placeholder embedding/importance data.
 
         Args:
-            action (ArcticAgenticAction): Action to store in memory buffers.
+            action (RuchbahAgenticAction): Action to store in memory buffers.
         """
         self.actions.append(action)
         # Generate a random embedding for the action

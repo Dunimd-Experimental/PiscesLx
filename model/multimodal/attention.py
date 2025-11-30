@@ -17,9 +17,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Cross-modal attention primitives for Arctic multimodal encoders.
+"""Cross-modal attention primitives for Ruchbah multimodal encoders.
 
-This module exposes :class:`ArcticCrossModalAttention`, a lightweight wrapper
+This module exposes :class:`RuchbahCrossModalAttention`, a lightweight wrapper
 around multi-head attention tuned for multimodal fusion. It provides optional
 integration with xFormers memory-efficient kernels while preserving a PyTorch
 fallback path, enabling deployment across both research and production
@@ -31,7 +31,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-class ArcticCrossModalAttention(nn.Module):
+class RuchbahCrossModalAttention(nn.Module):
     """Multi-head attention layer for fusing heterogeneous modality embeddings.
 
     The layer projects inputs into query/key/value spaces, performs scaled

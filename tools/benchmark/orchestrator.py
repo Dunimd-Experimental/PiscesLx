@@ -20,9 +20,11 @@
 import os
 import json
 from .config import MODALITY_DATASETS
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 from typing import List, Dict, Any, Optional
-from .runner import run_single_benchmark, compare_multiple_models
+from .runner import PiscesLxToolsBenchmarkRunner, PiscesLxToolsBenchmark
 
 class PiscesLxToolsBenchmarkOrchestrator:
     """Orchestrator to integrate benchmark with manage.py command.
@@ -96,23 +98,23 @@ class PiscesLxToolsBenchmarkOrchestrator:
             return
         model_path = models[0]
         overrides = self._service_overrides()
-        result = run_single_benchmark(
-            model_path=model_path,
-            datasets=datasets,
-            model_name=None,
-            metrics=["accuracy"],
-            batch_size=2,
-            max_length=min(getattr(self.args, "seq_len", 512) or 512, 1024),
-            temperature=0.7,
-            top_p=0.9,
-            output_dir="benchmark_results",
-            device="auto",
-            debug=True,
-            use_cache=True,
-            save_predictions=False,
-            modality=os.getenv("PISCES_BENCHMARK_MODALITY", "text"),
+        result = PiscesLxToolsBenchmarkRunner.run({
+            "model_path": model_path,
+            "datasets": datasets,
+            "model_name": None,
+            "metrics": ["accuracy"],
+            "batch_size": 2,
+            "max_length": min(getattr(self.args, "seq_len", 512) or 512, 1024),
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "output_dir": "benchmark_results",
+            "device": "auto",
+            "debug": True,
+            "use_cache": True,
+            "save_predictions": False,
+            "modality": os.getenv("PISCES_BENCHMARK_MODALITY", "text"),
             **overrides,
-        )
+        })
         print(json.dumps(result.get("summary", {}), indent=2))
         self.logger.success("Self-tests completed", event="benchmark.selftest.done")
 
@@ -127,25 +129,42 @@ class PiscesLxToolsBenchmarkOrchestrator:
 
         if len(models) == 1:
             model_path = models[0]
-            result = run_single_benchmark(
-                model_path=model_path,
-                datasets=datasets,
-                model_name=None,
-                metrics=["accuracy"],
-                batch_size=getattr(self.args, "seq_len", 512) and getattr(self.args, "seq_len", 512) // 64 or 8,
-                max_length=getattr(self.args, "seq_len", 2048) or 2048,
-                temperature=0.7,
-                top_p=0.9,
-                output_dir="benchmark_results",
-                device="auto",
-                debug=bool(getattr(self.args, "perf", False)),
-                use_cache=True,
-                save_predictions=True,
-                modality=os.getenv("PISCES_BENCHMARK_MODALITY", "text"),
+            result = PiscesLxToolsBenchmarkRunner.run({
+                "model_path": model_path,
+                "datasets": datasets,
+                "model_name": None,
+                "metrics": ["accuracy"],
+                "batch_size": getattr(self.args, "seq_len", 512) and getattr(self.args, "seq_len", 512) // 64 or 8,
+                "max_length": getattr(self.args, "seq_len", 2048) or 2048,
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "output_dir": "benchmark_results",
+                "device": "auto",
+                "debug": bool(getattr(self.args, "perf", False)),
+                "use_cache": True,
+                "save_predictions": True,
+                "modality": os.getenv("PISCES_BENCHMARK_MODALITY", "text"),
                 **overrides,
-            )
+            })
             print(json.dumps(result.get("summary", {}), indent=2))
         else:
+            benchmark = PiscesLxToolsBenchmark({
+                "model_path": models[0],
+                "datasets": datasets,
+                "model_name": None,
+                "metrics": ["accuracy"],
+                "batch_size": getattr(self.args, "seq_len", 512) and getattr(self.args, "seq_len", 512) // 64 or 8,
+                "max_length": getattr(self.args, "seq_len", 2048) or 2048,
+                "temperature": 0.7,
+                "top_p": 0.9,
+                "output_dir": "benchmark_results",
+                "device": "auto",
+                "debug": bool(getattr(self.args, "perf", False)),
+                "use_cache": True,
+                "save_predictions": False,
+                "modality": os.getenv("PISCES_BENCHMARK_MODALITY", "text"),
+                **overrides,
+            })
             model_configs = []
             for p in models:
                 model_configs.append({
@@ -153,17 +172,17 @@ class PiscesLxToolsBenchmarkOrchestrator:
                     "model_name": None,
                     "datasets": datasets,
                     "metrics": ["accuracy"],
-                    "output_dir": "benchmark_results",
-                    "device": "auto",
-                    "debug": bool(getattr(self.args, "perf", False)),
                     "batch_size": getattr(self.args, "seq_len", 512) and getattr(self.args, "seq_len", 512) // 64 or 8,
                     "max_length": getattr(self.args, "seq_len", 2048) or 2048,
                     "temperature": 0.7,
                     "top_p": 0.9,
+                    "output_dir": "benchmark_results",
+                    "device": "auto",
+                    "debug": bool(getattr(self.args, "perf", False)),
                     "use_cache": True,
                     "save_predictions": False,
                     "modality": os.getenv("PISCES_BENCHMARK_MODALITY", "text"),
                     **overrides,
                 })
-            results = compare_multiple_models(model_configs)
+            results = benchmark.compare_models(model_configs)
             print(json.dumps(results.get("comparison_summary", {}), indent=2))

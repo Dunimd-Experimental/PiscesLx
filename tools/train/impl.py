@@ -22,10 +22,14 @@ import sys
 import json
 import torch
 import warnings
-from utils.device.facade import PiscesLxCoreDeviceFacade
-from utils.device.manager import PiscesLxCoreDeviceManager
-from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-from utils import PiscesLxCoreConfigManager, PiscesLxCoreCheckpointManager
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreDeviceFacade = dms_core.device.DeviceFacade
+PiscesLxCoreDeviceManager = dms_core.device.DeviceManager
+PiscesLxCoreLog = dms_core.log.get_logger
+PiscesLxCoreConfigManager = dms_core.config.ConfigManager
+
+from utils import PiscesLxCoreCheckpointManager
 from utils.optim.galore import GaLoreOptimizer, GaLoreConfig, create_galore_optimizer
 # Optional weight watermark utilities
 try:
@@ -82,7 +86,7 @@ def setup_distributed_training():
     Initializes process group, selects device, and recommends simple 3D parallel config.
     """
     import torch
-    from utils.device.facade import PiscesLxCoreDeviceFacade
+    # PiscesLxCoreDeviceFacade is already defined above
 
     logger = PiscesLxCoreLog("pisceslx.tools.train.impl.setup_distributed_training")
 
@@ -297,7 +301,7 @@ def create_dataloader(dataset, batch_size, is_distributed, world_size=1, rank=0,
 
 def collate_fn(batch):
     """
-    Memory-optimized collate function for Arctic architecture.
+    Memory-optimized collate function for Ruchbah architecture.
 
     Args:
         batch: A batch of data samples.
@@ -352,7 +356,7 @@ def _train_impl(args):
     from tools.data.dataset import PiscesDataset
     from torch.utils.data import DataLoader
     from model.tokenizer import get_tokenizer
-    from model import ArcticModel, ArcticConfig
+    from model import RuchbahModel, RuchbahConfig
     from utils.checkpoint import save_ckpt, load_ckpt
     from torch.optim.lr_scheduler import ReduceLROnPlateau
     from transformers.optimization import get_linear_schedule_with_warmup
@@ -455,7 +459,7 @@ def _train_impl(args):
     # Auto-detect quantization needs based on hardware resources (only if not explicitly disabled)
     if not hasattr(args, 'no_quant') and not hasattr(args, 'force_quant') and not hasattr(args, 'quant'):
         try:
-            from utils.device.manager import PiscesLxCoreDeviceManager
+            # PiscesLxCoreDeviceManager is already defined above
             device_manager = PiscesLxCoreDeviceManager()
             # Get inference strategy to check quantization recommendations
             strategy = device_manager.get_inference_strategy(model_size=model_size)
@@ -576,7 +580,7 @@ def _train_impl(args):
     else:
         # Use unified device facade's batch_size unless CLI explicitly overrides
         try:
-            from utils.device.facade import PiscesLxCoreDeviceFacade
+            # PiscesLxCoreDeviceFacade is already defined above
             f = PiscesLxCoreDeviceFacade(args)
             dev_cfg_b = f.setup_devices(mode="auto")
             dev_bs = int(dev_cfg_b.get("batch_size", batch_size))
@@ -587,7 +591,7 @@ def _train_impl(args):
         effective_batch_size = batch_size
     
     # Set up mixed precision training via unified device facade
-    from utils.device.facade import PiscesLxCoreDeviceFacade
+    # PiscesLxCoreDeviceFacade is already defined above
     f = PiscesLxCoreDeviceFacade(args)
     _dev_cfg = f.setup_devices(mode="distributed" if is_distributed else "auto")
     _amp_dtype = f.amp_dtype(_dev_cfg.get("dtype", "auto"))
@@ -609,14 +613,14 @@ def _train_impl(args):
     # Apply silently without printing suggestions
         
     logger.info(f"Device setup completed: {device}")
-    logger.info("Loading ArcticConfig...")
+    logger.info("Loading RuchbahConfig...")
     config = config_path
     if not os.path.exists(config):
         logger.error(f"Config file {config} not found. Please provide a valid --model_size")
         sys.exit(1)
     logger.info(f"Loading config file: {config}")
-    cfg = ArcticConfig.from_json(config)
-    logger.info("ArcticConfig loaded.")
+    cfg = RuchbahConfig.from_json(config)
+    logger.info("RuchbahConfig loaded.")
     
     # Apply Chinchilla scaling law optimization if enabled
     if cfg.chinchilla_optimal and cfg.chinchilla_c_budget > 0:
@@ -643,7 +647,7 @@ def _train_impl(args):
         except Exception as e:
             logger.warning(f"Chinchilla optimization failed: {e}. Using original configuration.")
 
-    logger.info("Initializing ArcticModel with Reasoner...")
+    logger.info("Initializing RuchbahModel with Reasoner...")
     _emit('on_train_start', args=args)
     
     # Always - on Reasoner: Tokenizer setup
@@ -707,7 +711,7 @@ def _train_impl(args):
             else:
                 logger.error(f"Unsupported quantization bits: {quant_bits}. Supported: 2, 4, 8")
                 sys.exit(1)
-        model = ArcticModel(cfg, device=device, dtype=_amp_dtype, quantization_config=quant_config) if quant_config else ArcticModel(cfg, device=device, dtype=_amp_dtype)
+        model = RuchbahModel(cfg, device=device, dtype=_amp_dtype, quantization_config=quant_config) if quant_config else RuchbahModel(cfg, device=device, dtype=_amp_dtype)
         if force_lora:
             lora_config = LoraConfig(
                 r=8, lora_alpha=32, target_modules=["q_proj", "v_proj", "o_proj"],
@@ -727,7 +731,7 @@ def _train_impl(args):
                 total_params = sum(p.numel() for p in model.parameters())
                 logger.info(f"Trainable parameters: {trainable_params:,} / {total_params:,} ({100 * trainable_params / total_params:.2f}%)")
     else:
-        model = ArcticModel(cfg, device=device, dtype=_amp_dtype)
+        model = RuchbahModel(cfg, device=device, dtype=_amp_dtype)
 
     if model is not None:
         model.resize_token_embeddings(len(tokenizer))
@@ -748,7 +752,7 @@ def _train_impl(args):
         logger.info(f"Gradient Checkpointing not available for this model.")
         
     model = model.to(device)
-    logger.info("ArcticModel initialized.")
+    logger.info("RuchbahModel initialized.")
     # DataParallel removed; rely on DDP when is_distributed=True
     logger.info("Initializing optimizer and scheduler...")
     
@@ -967,7 +971,7 @@ def _train_impl(args):
         if not os.path.exists(cache_path):
             logger.error(f"Local dataset not found: {cache_path}")
             raise FileNotFoundError(f"Dataset '{dataset}' not found at {cache_path}. Please ensure the dataset is properly downloaded and cached.")
-        # Convert ArcticConfig to dict if needed
+        # Convert RuchbahConfig to dict if needed
         if hasattr(cfg, 'to_dict'):
             config_dict = cfg.__dict__ if hasattr(cfg, '__dict__') else {}
         elif hasattr(cfg, '__dict__'):

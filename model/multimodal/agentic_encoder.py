@@ -17,32 +17,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compatibility module that bridges legacy Arctic agent encoder pipelines.
+"""Compatibility module that bridges legacy Ruchbah agent encoder pipelines.
 
 The shim keeps historical integrations operational while newer flows migrate to
 PiscesAgent-backed implementations. It exposes the original encoder interface,
-yet dispatches all multimodal processing to :class:`ArcticAgentic`, allowing
-callers that still depend on ``ArcticAgenticEncoder`` to reuse their existing
+yet dispatches all multimodal processing to :class:`RuchbahAgentic`, allowing
+callers that still depend on ``RuchbahAgenticEncoder`` to reuse their existing
 data marshaling logic without modification.
 """
 
 import torch
 from torch import nn
-from .agentic import ArcticAgentic
+from .agentic import RuchbahAgentic
 from typing import Any, Dict, List, Tuple
-from .types import ArcticAgenticObservation
+from .types import RuchbahAgenticObservation
 
-class ArcticAgenticEncoder(nn.Module):
-    """Wrapper that preserves the legacy Arctic agent encoder interface.
+class RuchbahAgenticEncoder(nn.Module):
+    """Wrapper that preserves the legacy Ruchbah agent encoder interface.
 
-    The encoder delegates multimodal encoding duties to :class:`ArcticAgentic` so
+    The encoder delegates multimodal encoding duties to :class:`RuchbahAgentic` so
     that older integration points can continue to rely on the pre-PiscesAgent
     contract.
 
     Attributes:
         enabled (bool): Flag indicating whether the encoder is active.
         cfg: Configuration namespace with model hyperparameters.
-        pisces_agentic (ArcticAgentic): Underlying agent implementation handling
+        pisces_agentic (RuchbahAgentic): Underlying agent implementation handling
             observation processing and reasoning.
     """
 
@@ -58,14 +58,14 @@ class ArcticAgenticEncoder(nn.Module):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
-        self.pisces_agentic = ArcticAgentic(cfg)
+        self.pisces_agentic = RuchbahAgentic(cfg)
         
     def forward(self, agent_input):
         """Delegate a raw observation to the underlying Pisces agent.
 
         Args:
             agent_input: Observation payload accepted by
-                :meth:`ArcticAgentic.process_observation`.
+                :meth:`RuchbahAgentic.process_observation`.
 
         Returns:
             torch.Tensor: Encoded feature tensor produced by the delegated agent.

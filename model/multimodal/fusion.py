@@ -17,11 +17,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Dynamic multimodal fusion utilities for PiscesL1 Arctic agents.
+"""Dynamic multimodal fusion utilities for PiscesL1 Ruchbah agents.
 
-This module implements :class:`ArcticDynamicModalFusion`, which harmonizes
+This module implements :class:`RuchbahDynamicModalFusion`, which harmonizes
 token representations across modalities, applies cross-modal attention, and
-manages gated generation pathways. It integrates with the Arctic memory
+manages gated generation pathways. It integrates with the Ruchbah memory
 manager and hardware adaptation layers to orchestrate caching and gradient
 configurations.
 """
@@ -30,12 +30,12 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from typing import Dict, Optional
-from .memory import ArcticMemoryManager
-from .hw import ArcticHardwareAdaptiveConfig
-from .attention import ArcticCrossModalAttention
+from .memory import RuchbahMemoryManager
+from .hw import RuchbahHardwareAdaptiveConfig
+from .attention import RuchbahCrossModalAttention
 
-class ArcticDynamicModalFusion(nn.Module):
-    """Dynamic multimodal fusion backbone for Arctic workflows.
+class RuchbahDynamicModalFusion(nn.Module):
+    """Dynamic multimodal fusion backbone for Ruchbah workflows.
 
     The module tokenizes modality-specific inputs, enriches them with learned
     positional and modality embeddings, and performs cross-modal attention
@@ -48,13 +48,13 @@ class ArcticDynamicModalFusion(nn.Module):
         weight_cache (Dict[str, torch.Tensor]): Cache for previously fused outputs keyed by modality presence signatures.
         cache_size_limit (int): Maximum number of cached signatures retained.
         cache_manager: Optional external cache manager reused across agent subsystems.
-        memory_manager (ArcticMemoryManager): Manager responsible for tracking tensor lifetimes.
-        hw (ArcticHardwareAdaptiveConfig): Hardware adaptation helper used to derive gradient configuration.
+        memory_manager (RuchbahMemoryManager): Manager responsible for tracking tensor lifetimes.
+        hw (RuchbahHardwareAdaptiveConfig): Hardware adaptation helper used to derive gradient configuration.
         grad_conf (Dict[str, Any]): Gradient settings retrieved from the hardware adapter.
         unified_tokenizer (nn.ModuleDict): Mapping from modality to tokenization modules that project raw inputs.
         unified_pos_embed (nn.Parameter): Learned positional embeddings shared across modalities.
         modality_tokens (nn.Embedding): Trainable embeddings encoding modality identity.
-        cross_modal_attn (ArcticCrossModalAttention): Attention layer performing cross-modality reasoning.
+        cross_modal_attn (RuchbahCrossModalAttention): Attention layer performing cross-modality reasoning.
         understanding_gate (nn.Sequential): Gating module producing global understanding signals.
         generation_gates (nn.ModuleDict): Modality-specific gates used to modulate generation outputs.
         _generation_cache (Dict[str, torch.Tensor]): Storage for latest modality-specific outputs produced by ``forward``.
@@ -75,10 +75,10 @@ class ArcticDynamicModalFusion(nn.Module):
         self.weight_cache: Dict[str, torch.Tensor] = {}
         self.cache_size_limit = 1000
         self.cache_manager = cache_manager
-        self.memory_manager = ArcticMemoryManager(enable_background=(cache_manager is None))
+        self.memory_manager = RuchbahMemoryManager(enable_background=(cache_manager is None))
         self.memory_manager.start_monitoring()
         # Initialize hardware adaptive configuration
-        self.hw = ArcticHardwareAdaptiveConfig()
+        self.hw = RuchbahHardwareAdaptiveConfig()
         self.grad_conf = self.hw.get_gradient_config()
 
         # Unified tokenization for different modalities
@@ -94,7 +94,7 @@ class ArcticDynamicModalFusion(nn.Module):
         self.modality_tokens = nn.Embedding(len(self.modalities), self.hidden_size)
 
         # Native cross-modal token-level attention
-        self.cross_modal_attn = ArcticCrossModalAttention(cfg)
+        self.cross_modal_attn = RuchbahCrossModalAttention(cfg)
 
         # Understanding and generation gating mechanisms
         self.understanding_gate = nn.Sequential(

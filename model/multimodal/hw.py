@@ -17,7 +17,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Hardware detection utilities for Arctic multimodal agents.
+"""Hardware detection utilities for Ruchbah multimodal agents.
 
 The helper classes in this module infer hardware capabilities such as device
 type, gradient capacities, and checkpoint segmentation hints. They expose
@@ -27,7 +27,7 @@ their workloads.
 
 from typing import Dict
 
-class ArcticHardwareAdaptiveConfig:
+class RuchbahHardwareAdaptiveConfig:
     """Hardware adapter that derives configuration tiers from detected devices.
 
     Attributes:

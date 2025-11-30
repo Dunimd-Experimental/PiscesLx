@@ -97,7 +97,7 @@ Thumbs.db
 temp/
 tmp/
 
-# Arctic Architecture Specific
+# Ruchbah Architecture Specific
 ckpt/
 checkpoints/
 outputs/

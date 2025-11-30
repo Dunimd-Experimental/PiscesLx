@@ -38,7 +38,7 @@ def show_version():
         
         # Display basic version info (removed UL changelog functionality)
         print("")
-        print("🟢\tPiscesL1 - Arctic Architecture")
+        print("🟢\tPiscesL1 - Ruchbah Architecture")
         print(f"🟢\tVersion: {current_version}")
         print("🟢\tProject: PiscesLx Series by Dunimd Project Group")
         print("")

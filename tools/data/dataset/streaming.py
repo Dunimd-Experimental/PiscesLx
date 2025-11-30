@@ -24,7 +24,7 @@ from .memory import PiscesLxToolsMemoryMonitor
 from torch.utils.data import IterableDataset
 from typing import Iterator, Dict, List, Optional
 from model.tokenizer import get_tokenizer
-from model.multimodal import ArcticVisionEncoder, ArcticAudioEncoder, ArcticDocEncoder, ArcticVideoEncoder
+from model.multimodal import RuchbahVisionEncoder, RuchbahAudioEncoder, RuchbahDocEncoder, RuchbahVideoEncoder
 
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
 AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]
@@ -52,10 +52,10 @@ class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
         self.config = config or {}
         self.memory = PiscesLxToolsMemoryMonitor(threshold_gb=8.0)
         # Initialize multimodal encoders if config is provided
-        self.vision_encoder = ArcticVisionEncoder(config) if config else None
-        self.audio_encoder = ArcticAudioEncoder(config) if config else None
-        self.doc_encoder = ArcticDocEncoder(config) if config else None
-        self.video_encoder = ArcticVideoEncoder(config) if config else None
+        self.vision_encoder = RuchbahVisionEncoder(config) if config else None
+        self.audio_encoder = RuchbahAudioEncoder(config) if config else None
+        self.doc_encoder = RuchbahDocEncoder(config) if config else None
+        self.video_encoder = RuchbahVideoEncoder(config) if config else None
         self._index: List[Dict] = self._build_index()
 
     def _build_index(self) -> List[Dict]:

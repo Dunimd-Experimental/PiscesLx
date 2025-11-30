@@ -27,7 +27,9 @@ try:
     from transformers import AutoTokenizer
 except ImportError:
     AutoTokenizer = None
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 from utils.error import PiscesLxCoreValidationError, PiscesLxCoreIOError
 
 logger = PiscesLxCoreLog("PiscesLx.Core.Quantization.Calibration")

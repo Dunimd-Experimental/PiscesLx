@@ -18,10 +18,12 @@
 # limitations under the License.
 
 import os
-from utils.log.core import PiscesLxCoreLog
+import dms_core
 import warnings
 from pathlib import Path
 from utils import PiscesLxCoreCacheManagerFacade
+
+PiscesLxCoreLog = dms_core.log.get_logger
 
 class PiscesLxToolsDataDownloadCache:
     """
@@ -77,10 +79,11 @@ class PiscesLxToolsDataDownloadCache:
         
         # Reduce the log level of third-party libraries
         # Reduce the log level of third-party libraries
-        import logging
-        logging.getLogger("modelscope").setLevel(logging.ERROR)
-        logging.getLogger("datasets").setLevel(logging.WARNING)
-        logging.getLogger("transformers").setLevel(logging.WARNING)
+        # Use dms_core logging to set external logger levels
+        import dms_core
+        dms_core.log.set_level("modelscope", "ERROR")
+        dms_core.log.set_level("datasets", "WARNING")
+        dms_core.log.set_level("transformers", "WARNING")
         
         # Ignore user warnings from third-party libraries
         warnings.filterwarnings("ignore", category=UserWarning, module="modelscope")

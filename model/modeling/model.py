@@ -18,9 +18,9 @@
 # limitations under the License.
 
 """
-Main model implementation for Arctic.
+Main model implementation for Ruchbah.
 
-This module implements the complete Arctic model architecture including
+This module implements the complete Ruchbah model architecture including
 transformer layers, multimodal encoders, reasoning components, and generation
 capabilities with support for hybrid attention-Mamba blocks.
 """
@@ -28,30 +28,32 @@ capabilities with support for hybrid attention-Mamba blocks.
 import torch
 from torch import nn
 import torch.nn.functional as F
-from .norms import ArcticRMSNorm
-from ..config import ArcticConfig
-from .hybrid import ArcticHybridBlock
-from utils.log.core import PiscesLxCoreLog
-from .blocks import ArcticTransformerBlock
-from .cache import ArcticUnifiedCacheManager
+from .norms import RuchbahRMSNorm
+from ..config import RuchbahConfig
+from .hybrid import RuchbahHybridBlock
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
+from .blocks import RuchbahTransformerBlock
+from .cache import RuchbahUnifiedCacheManager
 from typing import Optional, Tuple, Dict, Any
-from ..multimodal.reasoner.enhancer import ArcticMultiModalReasoningEnhancer
-from ..speculative_decoder import ArcticAdaptiveSpeculativeDecoder, ArcticSpeculativeConfig
+from ..multimodal.reasoner.enhancer import RuchbahMultiModalReasoningEnhancer
+from ..speculative_decoder import RuchbahAdaptiveSpeculativeDecoder, RuchbahSpeculativeConfig
 from ..multimodal import (
-    ArcticUnifiedReasoner,
-    ArcticVisionEncoder,
-    ArcticAudioEncoder,
-    ArcticDocEncoder,
-    ArcticVideoEncoder,
-    ArcticAgenticEncoder,
-    ArcticDynamicModalFusion
+    RuchbahUnifiedReasoner,
+    RuchbahVisionEncoder,
+    RuchbahAudioEncoder,
+    RuchbahDocEncoder,
+    RuchbahVideoEncoder,
+    RuchbahAgenticEncoder,
+    RuchbahDynamicModalFusion
 )
 
-logger = PiscesLxCoreLog("Arctic.Core.Modeling.Model", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.Modeling.Model", file_path="logs/RuchbahCore.log")
 
-class ArcticModel(nn.Module):
+class RuchbahModel(nn.Module):
     """
-    Main Arctic model implementation.
+    Main Ruchbah model implementation.
 
     Implements a transformer-based language model with support for multimodal
     inputs, hybrid attention-Mamba blocks, reasoning capabilities, and
@@ -72,7 +74,7 @@ class ArcticModel(nn.Module):
 
     def __init__(self, cfg, device=None, dtype=None, quantization_config=None, lora_config=None):
         """
-        Initialize the Arctic model.
+        Initialize the Ruchbah model.
 
         Args:
             cfg: Configuration object containing model hyperparameters.
@@ -82,7 +84,7 @@ class ArcticModel(nn.Module):
             lora_config (object, optional): Configuration for LoRA adapters.
         """
         super().__init__()
-        logger.debug("ArcticModel: __init__ start")
+        logger.debug("RuchbahModel: __init__ start")
         self.cfg = cfg
         self.config = cfg
 
@@ -116,18 +118,18 @@ class ArcticModel(nn.Module):
             "dynamic_quantization": True,
             "cache_eviction_policy": "lru"
         })
-        self.cache_manager = ArcticUnifiedCacheManager(cache_config)
+        self.cache_manager = RuchbahUnifiedCacheManager(cache_config)
 
         # Initialize token embedding
-        logger.debug("ArcticModel: initializing embedding...")
+        logger.debug("RuchbahModel: initializing embedding...")
         self.embed = nn.Embedding(cfg.vocab_size, cfg.hidden_size, device=device, dtype=dtype)
 
         # Initialize transformer layers
-        logger.debug(f"ArcticModel: initializing {cfg.n_layer} transformer layers...")
+        logger.debug(f"RuchbahModel: initializing {cfg.n_layer} transformer layers...")
         self.layers = nn.ModuleList([])
         for i in range(cfg.n_layer):
             if (i % 4 == 0) or (i == cfg.n_layer - 1):
-                logger.debug(f"ArcticModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
+                logger.debug(f"RuchbahModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
 
             # Select block type based on configuration
             use_hybrid = getattr(cfg, 'use_mamba3', False)
@@ -135,22 +137,22 @@ class ArcticModel(nn.Module):
                 # Check if this layer should use Mamba-3
                 mamba3_layers = getattr(cfg, 'mamba3_layers', [])
                 if not mamba3_layers or i in mamba3_layers:
-                    logger.debug(f"ArcticModel: using ArcticHybridBlock for layer {i+1}")
-                    block = ArcticHybridBlock(
+                    logger.debug(f"RuchbahModel: using RuchbahHybridBlock for layer {i+1}")
+                    block = RuchbahHybridBlock(
                         cfg,
                         device=device,
                         dtype=dtype,
                         quantization_config=self.quantization_config
                     )
                 else:
-                    block = ArcticTransformerBlock(
+                    block = RuchbahTransformerBlock(
                         cfg,
                         device=device,
                         dtype=dtype,
                         quantization_config=self.quantization_config
                     )
             else:
-                block = ArcticTransformerBlock(
+                block = RuchbahTransformerBlock(
                     cfg,
                     device=device,
                     dtype=dtype,
@@ -163,18 +165,18 @@ class ArcticModel(nn.Module):
             self.layers.append(block)
 
         # Initialize final normalization layer
-        logger.debug("ArcticModel: initializing norm...")
-        self.norm = ArcticRMSNorm(cfg.hidden_size)
+        logger.debug("RuchbahModel: initializing norm...")
+        self.norm = RuchbahRMSNorm(cfg.hidden_size)
 
         # Initialize multimodal encoders
-        logger.debug("ArcticModel: initializing multimodal encoders...")
-        self.vision = ArcticVisionEncoder(cfg)
-        self.video = ArcticVideoEncoder(cfg)
-        self.audio = ArcticAudioEncoder(cfg)
-        self.doc = ArcticDocEncoder(cfg)
+        logger.debug("RuchbahModel: initializing multimodal encoders...")
+        self.vision = RuchbahVisionEncoder(cfg)
+        self.video = RuchbahVideoEncoder(cfg)
+        self.audio = RuchbahAudioEncoder(cfg)
+        self.doc = RuchbahDocEncoder(cfg)
 
-        self.agent_encoder = ArcticAgenticEncoder(cfg)
-        self.modal_fusion = ArcticDynamicModalFusion(cfg)
+        self.agent_encoder = RuchbahAgenticEncoder(cfg)
+        self.modal_fusion = RuchbahDynamicModalFusion(cfg)
 
         # Unregister agent_encoder to avoid traversing non-core infrastructure during .to()
         try:
@@ -184,7 +186,7 @@ class ArcticModel(nn.Module):
             pass
 
         # Initialize output heads
-        logger.debug("ArcticModel: initializing output heads...")
+        logger.debug("RuchbahModel: initializing output heads...")
         self.lm_head = nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
         self.task_head = nn.Linear(cfg.hidden_size, cfg.task_classes, device=device, dtype=dtype)
         self.eval_head = nn.Linear(cfg.hidden_size, cfg.eval_dims, device=device, dtype=dtype)
@@ -193,20 +195,20 @@ class ArcticModel(nn.Module):
         self.fusion_proj = nn.Linear(cfg.hidden_size, cfg.hidden_size, bias=False, device=device, dtype=dtype)
 
         # Initialize reasoning components
-        logger.debug("ArcticModel: initializing reasoner...")
-        self.reasoner = ArcticUnifiedReasoner(cfg)
+        logger.debug("RuchbahModel: initializing reasoner...")
+        self.reasoner = RuchbahUnifiedReasoner(cfg)
         self.reasoner.initialize_reasoning_tokens(None)
 
-        logger.debug("ArcticModel: initializing multi-modal reasoning enhancer...")
-        self.mm_reasoning_enhancer = ArcticMultiModalReasoningEnhancer(cfg)
+        logger.debug("RuchbahModel: initializing multi-modal reasoning enhancer...")
+        self.mm_reasoning_enhancer = RuchbahMultiModalReasoningEnhancer(cfg)
 
         # Initialize agentic module
-        logger.debug("ArcticModel: initializing agentic...")
+        logger.debug("RuchbahModel: initializing agentic...")
         try:
-            from ..multimodal import ArcticAgentic
+            from ..multimodal import RuchbahAgentic
         except ImportError:
-            ArcticAgentic = None
-        self.agentic = ArcticAgentic(cfg, model=self)
+            RuchbahAgentic = None
+        self.agentic = RuchbahAgentic(cfg, model=self)
 
         # Unregister agentic to avoid circular traversals during .to()/._apply()
         # It holds weak references and includes non-training infrastructure
@@ -217,8 +219,8 @@ class ArcticModel(nn.Module):
             pass
 
         # Initialize speculative decoder
-        logger.debug("ArcticModel: initializing speculative decoder...")
-        self.speculative_config = ArcticSpeculativeConfig(
+        logger.debug("RuchbahModel: initializing speculative decoder...")
+        self.speculative_config = RuchbahSpeculativeConfig(
             num_candidates=getattr(cfg, 'speculative_candidates', 4),
             draft_length=getattr(cfg, 'speculative_draft_length', 5),
             acceptance_threshold=getattr(cfg, 'speculative_acceptance_threshold', 0.8),
@@ -226,8 +228,8 @@ class ArcticModel(nn.Module):
             top_k=getattr(cfg, 'speculative_top_k', 50),
             top_p=getattr(cfg, 'speculative_top_p', 0.9)
         )
-        self.speculative_decoder = ArcticAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
-        logger.debug("ArcticModel: speculative decoder initialized")
+        self.speculative_decoder = RuchbahAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
+        logger.debug("RuchbahModel: speculative decoder initialized")
 
         # Unregister non-core modules to avoid .to() recursion
         try:
@@ -242,13 +244,13 @@ class ArcticModel(nn.Module):
             try:
                 from peft import get_peft_model
                 self = get_peft_model(self, lora_config)
-                logger.debug("ArcticModel: LoRA adapters injected (peft)")
+                logger.debug("RuchbahModel: LoRA adapters injected (peft)")
             except Exception as e:
                 logger.error(f"LoRA injection failed: {e}")
 
         total_params = sum(p.numel() for p in self.parameters())
-        logger.debug(f"ArcticModel: total parameters = {total_params/1e6:.2f}M")
-        logger.debug("ArcticModel: __init__ end")
+        logger.debug(f"RuchbahModel: total parameters = {total_params/1e6:.2f}M")
+        logger.debug("RuchbahModel: __init__ end")
 
     def set_gradient_checkpointing(self, enabled: bool = True):
         """

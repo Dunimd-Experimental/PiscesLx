@@ -23,13 +23,15 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
-from utils.log.core import PiscesLxCoreLog
+# Use dms_core logging exclusively
+import dms_core
+PiscesLxCoreLog = dms_core.log.get_logger
 from typing import List, Tuple, Optional, Dict, Any
 
-logger = PiscesLxCoreLog("Arctic.Core.SpeculativeDecoder", file_path="logs/ArcticCore.log")
+logger = PiscesLxCoreLog("Ruchbah.Core.SpeculativeDecoder", file_path="logs/RuchbahCore.log")
 
 @dataclass
-class ArcticSpeculativeConfig:
+class RuchbahSpeculativeConfig:
     """Configuration class for speculative decoding parameters with stability bounds.
 
     Attributes:
@@ -53,18 +55,18 @@ class ArcticSpeculativeConfig:
         self.top_k = max(1, min(1000, self.top_k))
         self.top_p = max(0.1, min(1.0, self.top_p))
 
-class ArcticSpeculativeDecoder(nn.Module):
+class RuchbahSpeculativeDecoder(nn.Module):
     """Multi-path speculative decoder for efficient autoregressive text generation.
 
     This decoder uses a draft model to generate candidate tokens and a main model to verify them,
     aiming to speed up the generation process.
     """
     
-    def __init__(self, config: ArcticSpeculativeConfig, model: nn.Module, tokenizer=None, on_stats: Optional[Any]=None):
-        """Initialize the ArcticSpeculativeDecoder.
+    def __init__(self, config: RuchbahSpeculativeConfig, model: nn.Module, tokenizer=None, on_stats: Optional[Any]=None):
+        """Initialize the RuchbahSpeculativeDecoder.
 
         Args:
-            config (ArcticSpeculativeConfig): Configuration object containing decoder parameters.
+            config (RuchbahSpeculativeConfig): Configuration object containing decoder parameters.
             model (nn.Module): Main language model for verification.
             tokenizer: Tokenizer for text processing. Defaults to None.
             on_stats (Optional[Any]): Optional callback function to receive generation statistics. Defaults to None.
@@ -437,17 +439,17 @@ class ArcticSpeculativeDecoder(nn.Module):
             
             return best_candidates
 
-class ArcticAdaptiveSpeculativeDecoder(ArcticSpeculativeDecoder):
+class RuchbahAdaptiveSpeculativeDecoder(RuchbahSpeculativeDecoder):
     """Adaptive speculative decoder that adjusts parameters based on performance history.
 
     This decoder dynamically adapts its parameters to optimize generation speed and acceptance rate.
     """
     
-    def __init__(self, config: ArcticSpeculativeConfig, model: nn.Module, tokenizer=None):
-        """Initialize the ArcticAdaptiveSpeculativeDecoder.
+    def __init__(self, config: RuchbahSpeculativeConfig, model: nn.Module, tokenizer=None):
+        """Initialize the RuchbahAdaptiveSpeculativeDecoder.
 
         Args:
-            config (ArcticSpeculativeConfig): Configuration object containing decoder parameters.
+            config (RuchbahSpeculativeConfig): Configuration object containing decoder parameters.
             model (nn.Module): Main language model for verification.
             tokenizer: Tokenizer for text processing. Defaults to None.
         """
