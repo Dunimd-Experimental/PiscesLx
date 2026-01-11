@@ -176,7 +176,26 @@ class RuchbahModel(nn.Module):
         self.doc = RuchbahDocEncoder(cfg)
 
         self.agent_encoder = RuchbahAgenticEncoder(cfg)
-        self.modal_fusion = RuchbahDynamicModalFusion(cfg)
+        
+        # Support both legacy and enhanced fusion modules
+        use_enhanced_fusion = getattr(cfg, 'use_enhanced_fusion', False)
+        if use_enhanced_fusion:
+            from ..multimodal import RuchbahEnhancedModalFusion, RuchbahModalFusionConfig
+            fusion_config = RuchbahModalFusionConfig(
+                hidden_size=cfg.hidden_size,
+                num_modalities=6,
+                num_heads=getattr(cfg, 'num_heads', 16),
+                num_layers=4,
+                dropout=0.1,
+                use_quality_aware_fusion=True,
+                use_modality_attention=True,
+                use_cross_modal_alignment=True
+            )
+            self.modal_fusion = RuchbahEnhancedModalFusion(fusion_config)
+            logger.debug("RuchbahModel: using RuchbahEnhancedModalFusion")
+        else:
+            self.modal_fusion = RuchbahDynamicModalFusion(cfg)
+            logger.debug("RuchbahModel: using legacy RuchbahDynamicModalFusion")
 
         # Unregister agent_encoder to avoid traversing non-core infrastructure during .to()
         try:

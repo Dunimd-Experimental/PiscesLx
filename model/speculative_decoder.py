@@ -55,11 +55,106 @@ class RuchbahSpeculativeConfig:
         self.top_k = max(1, min(1000, self.top_k))
         self.top_p = max(0.1, min(1.0, self.top_p))
 
+class RuchbahParallelVerifier(nn.Module):
+    """Parallel verifier for speculative decoding that processes all draft tokens in a single forward pass."""
+    
+    def __init__(self, config: RuchbahSpeculativeConfig, model: nn.Module):
+        """Initialize the parallel verifier.
+        
+        Args:
+            config (RuchbahSpeculativeConfig): Configuration object.
+            model (nn.Module): Main language model.
+        """
+        super().__init__()
+        self.config = config
+        self.model = model
+        self.vocab_size = getattr(model.config, 'vocab_size', 65536)
+    
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        draft_ids: torch.Tensor,
+        past_key_values: Optional[Any] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, Any]:
+        """Verify all draft tokens in parallel.
+        
+        Args:
+            input_ids: Input token IDs [B, T].
+            draft_ids: Draft token IDs [B, L].
+            past_key_values: KV cache from previous forward pass.
+            
+        Returns:
+            Tuple of (accepted_ids, num_accepted, new_past_key_values).
+        """
+        device = input_ids.device
+        batch_size, draft_len = draft_ids.shape
+        
+        full_sequence = torch.cat([input_ids, draft_ids], dim=1)
+        
+        with torch.no_grad():
+            outputs = self.model(
+                full_sequence,
+                use_cache=True,
+                past_key_values=past_key_values,
+            )
+            
+            if isinstance(outputs, dict):
+                logits = outputs.get('logits', outputs)
+                new_past_key = outputs.get('past_key_values', None)
+            else:
+                logits = outputs
+                new_past_key = None
+            
+            start_idx = input_ids.shape[1]
+            draft_logits = logits[:, start_idx:, :]  # [B, L, V]
+            
+            draft_probs = F.softmax(draft_logits, dim=-1)
+            
+            token_probs = torch.gather(
+                draft_probs,
+                dim=-1,
+                index=draft_ids.unsqueeze(-1),
+            ).squeeze(-1)  # [B, L]
+            
+            acceptance_mask = torch.zeros_like(token_probs, dtype=torch.bool)
+            
+            for b in range(batch_size):
+                cum_prob = 1.0
+                for i in range(draft_len):
+                    p_draft = token_probs[b, i].item()
+                    p_accept = min(1.0, cum_prob / (p_draft + 1e-8))
+                    
+                    if p_accept >= self.config.acceptance_threshold and p_draft > 1e-8:
+                        acceptance_mask[b, i] = True
+                        cum_prob *= p_draft
+                    else:
+                        break
+            
+            accepted_lengths = acceptance_mask.sum(dim=1)
+            max_accepted = accepted_lengths.max().item()
+            
+            if max_accepted == 0:
+                next_token = torch.multinomial(draft_probs[:, 0], num_samples=1)
+                return next_token, 1, new_past_key
+            
+            accepted_ids = torch.zeros(batch_size, max_accepted, dtype=torch.long, device=device)
+            for b in range(batch_size):
+                accepted_ids[b, :accepted_lengths[b]] = draft_ids[b, :accepted_lengths[b]]
+            
+            num_accepted = int(max_accepted)
+            
+            return accepted_ids, num_accepted, new_past_key
+
+
 class RuchbahSpeculativeDecoder(nn.Module):
     """Multi-path speculative decoder for efficient autoregressive text generation.
 
     This decoder uses a draft model to generate candidate tokens and a main model to verify them,
-    aiming to speed up the generation process.
+    aiming to speed up the generation process with:
+    - Parallel verification (single forward pass)
+    - Adaptive parameter adjustment
+    - Robust fallback mechanisms
+    - Comprehensive performance statistics
     """
     
     def __init__(self, config: RuchbahSpeculativeConfig, model: nn.Module, tokenizer=None, on_stats: Optional[Any]=None):
@@ -77,7 +172,307 @@ class RuchbahSpeculativeDecoder(nn.Module):
         self.tokenizer = tokenizer
         self.on_stats = on_stats
         self.draft_model = self._create_draft_model()
+        self.parallel_verifier = RuchbahParallelVerifier(config, model)
+        
         self.verification_head = nn.Linear(model.config.hidden_size, config.num_candidates)
+        self.performance_history = []
+        self.adaptation_interval = 10
+        
+    def _create_draft_model(self) -> nn.Module:
+        """Create a lightweight draft model for fast token generation.
+
+        This method constructs a smaller version of the main model to generate draft sequences quickly,
+        avoiding tight coupling with the main model's configuration.
+
+        Returns:
+            nn.Module: A lightweight draft model.
+        """
+        vocab_size = getattr(self.model.config, 'vocab_size', 65536)
+        base_hidden = getattr(self.model.config, 'hidden_size', 2048)
+        base_layers = getattr(self.model.config, 'num_layers', getattr(self.model.config, 'n_layer', 24))
+        base_heads = getattr(self.model.config, 'num_heads', getattr(self.model.config, 'n_head', 16))
+
+        hidden_size = max(512, base_hidden // 2)
+        num_layers = max(2, base_layers // 4)
+        preferred_max = max(4, min(8, max(1, base_heads // 2)))
+        candidates = [h for h in range(preferred_max, 0, -1) if hidden_size % h == 0]
+        nhead = candidates[0] if candidates else max(1, min(preferred_max, base_heads))
+        hidden_size = ((hidden_size + nhead - 1) // nhead) * nhead
+
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_size,
+            nhead=nhead,
+            dim_feedforward=hidden_size * 4,
+            batch_first=True
+        )
+        encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+
+        draft = nn.ModuleDict({
+            'embed': nn.Embedding(vocab_size, hidden_size),
+            'encoder': encoder,
+            'lm': nn.Linear(hidden_size, vocab_size)
+        })
+
+        def forward_fn(input_ids: torch.Tensor):
+            x = draft['embed'](input_ids)
+            x = draft['encoder'](x)
+            logits = draft['lm'](x)
+            return logits
+
+        draft.forward = forward_fn
+        return draft
+        
+    def speculative_generate(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        max_length: int = 100,
+        cache_manager=None,
+        **model_kwargs
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        """Generate tokens using multi-path speculative decoding.
+
+        Args:
+            input_ids (torch.Tensor): Input token IDs with shape [batch_size, seq_len].
+            attention_mask (Optional[torch.Tensor]): Attention mask. Defaults to None.
+            max_length (int): Maximum generation length. Defaults to 100.
+            cache_manager: Optional cache manager for speculative generation. Defaults to None.
+            **model_kwargs: Additional model arguments.
+
+        Returns:
+            Tuple[torch.Tensor, Dict[str, Any]]: Generated token IDs and generation statistics.
+        """
+        if len(self.performance_history) >= self.adaptation_interval:
+            self._adapt_parameters()
+        
+        batch_size = input_ids.shape[0]
+        device = input_ids.device
+        
+        generated_ids = input_ids.clone()
+        stats = {
+            'method': 'speculative',
+            'total_draft_tokens': 0,
+            'accepted_tokens': 0,
+            'rejected_tokens': 0,
+            'draft_acceptance_rate': 0.0,
+            'speedup': 1.0,
+            'iter_accept': [],
+            'total_time_ms': 0.0,
+            'avg_accept_per_iter': 0.0,
+            'max_accept_in_iter': 0,
+            'batch_size': batch_size,
+        }
+        _t0 = time.time()
+        
+        past_key_values = None
+        
+        while generated_ids.shape[1] < max_length:
+            if cache_manager is not None:
+                cached = cache_manager.get_speculative_cache(self.config.draft_length)
+                if cached is not None:
+                    return cached, {'from_cache': True}
+            
+            draft_ids, draft_logits = self._generate_draft_sequence(
+                generated_ids, attention_mask, **model_kwargs
+            )
+            
+            accepted_ids, num_accepted = self._verify_and_accept(
+                generated_ids, draft_ids, past_key_values, **model_kwargs
+            )
+            
+            generated_ids = torch.cat([generated_ids, accepted_ids], dim=1)
+            
+            if attention_mask is None:
+                attention_mask = torch.ones_like(generated_ids, dtype=torch.long, device=device)
+            else:
+                add_len = accepted_ids.shape[1]
+                attention_mask = torch.cat([
+                    attention_mask,
+                    torch.ones((attention_mask.shape[0], add_len), device=device, dtype=attention_mask.dtype)
+                ], dim=1)
+            
+            stats['total_draft_tokens'] += draft_ids.shape[1]
+            stats['accepted_tokens'] += num_accepted
+            stats['rejected_tokens'] += max(0, draft_ids.shape[1] - num_accepted)
+            stats['iter_accept'].append(int(num_accepted))
+            
+            stats['max_accept_in_iter'] = max(stats['max_accept_in_iter'], int(num_accepted))
+            
+            if num_accepted == 0:
+                streak = stats.get('_zero_accept_streak', 0) + 1
+                stats['_zero_accept_streak'] = streak
+                
+                if streak >= 3:
+                    logger.debug("Multiple zero-accept iterations, falling back to standard generation")
+                    fallback_ids, fallback_stats = self._standard_generate(
+                        generated_ids, attention_mask, max_length, **model_kwargs
+                    )
+                    stats.update({k: v for k, v in fallback_stats.items() if k not in stats})
+                    generated_ids = fallback_ids
+                    break
+                
+                if num_accepted == 0 and draft_ids.shape[1] > 0:
+                    outputs = self.model(generated_ids, attention_mask=attention_mask, **model_kwargs)
+                    logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                    next_logits = logits[:, -1, :]
+                    
+                    next_logits = self._apply_sampling(next_logits)
+                    probs = F.softmax(next_logits, dim=-1)
+                    next_token = torch.multinomial(probs, num_samples=1)
+                    
+                    generated_ids = torch.cat([generated_ids, next_token], dim=1)
+                    attention_mask = torch.cat([
+                        attention_mask,
+                        torch.ones((attention_mask.shape[0], 1), device=device, dtype=attention_mask.dtype)
+                    ], dim=1)
+                    
+                    stats['accepted_tokens'] += 1
+                    stats['iter_accept'][-1] = 1
+                    stats['_zero_accept_streak'] = 0
+                    
+                    continue
+            
+            stats['_zero_accept_streak'] = 0
+            
+            if generated_ids.shape[1] >= max_length:
+                break
+        
+        if stats['total_draft_tokens'] > 0:
+            stats['draft_acceptance_rate'] = stats['accepted_tokens'] / stats['total_draft_tokens']
+            avg_accept = sum(stats['iter_accept']) / max(1, len(stats['iter_accept']))
+            stats['avg_accept_per_iter'] = avg_accept
+            stats['speedup'] = 1.0 + (stats['accepted_tokens'] / max(1, stats['rejected_tokens']))
+        
+        stats['total_time_ms'] = (time.time() - _t0) * 1000.0
+        stats['num_iterations'] = len(stats['iter_accept'])
+        
+        if cache_manager is not None:
+            cache_manager.set_sculative_cache(self.config.draft_length, generated_ids)
+        
+        try:
+            logger.debug(f"[SpecDecode] draft_len={self.config.draft_length}, "
+                  f"accept_rate={stats['draft_acceptance_rate']:.3f}, "
+                  f"avg_accept={stats['avg_accept_per_iter']:.1f}, "
+                  f"speedup={stats['speedup']:.2f}, "
+                  f"time_ms={stats['total_time_ms']:.1f}")
+        except Exception:
+            pass
+        
+        if self.on_stats is not None:
+            try:
+                self.on_stats(stats)
+            except Exception:
+                pass
+        
+        self.performance_history.append({
+            'acceptance_rate': stats.get('draft_acceptance_rate', 0),
+            'speedup': stats.get('speedup', 1),
+            'avg_accept': stats.get('avg_accept_per_iter', 0),
+        })
+        
+        return generated_ids, stats
+    
+    def _apply_sampling(self, logits: torch.Tensor) -> torch.Tensor:
+        """Apply temperature, top-k, and top-p sampling to logits.
+        
+        Args:
+            logits: Input logits tensor.
+            
+        Returns:
+            Processed logits tensor.
+        """
+        if self.config.temperature > 0:
+            temp = max(0.1, min(2.0, self.config.temperature))
+            logits = logits / temp
+            
+        if self.config.top_k > 0:
+            top_k_logits, top_k_indices = torch.topk(
+                logits, min(self.config.top_k, logits.size(-1))
+            )
+            logits = torch.full_like(logits, float('-inf'))
+            logits.scatter_(-1, top_k_indices, top_k_logits)
+            
+        if self.config.top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+            cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+            sorted_indices_to_remove = cumulative_probs > self.config.top_p
+            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+            sorted_indices_to_remove[..., 0] = 0
+            indices_to_remove = sorted_indices_to_remove.scatter(
+                -1, sorted_indices, sorted_indices_to_remove
+            )
+            logits[indices_to_remove] = float('-inf')
+            
+        return logits
+    
+    def _verify_and_accept(
+        self,
+        input_ids: torch.Tensor,
+        draft_ids: torch.Tensor,
+        past_key_values: Optional[Any],
+        **model_kwargs
+    ) -> Tuple[torch.Tensor, int]:
+        """Verify draft tokens and return accepted ones.
+        
+        Args:
+            input_ids: Input token IDs.
+            draft_ids: Draft token IDs.
+            past_key_values: KV cache from previous pass.
+            **model_kwargs: Additional arguments.
+            
+        Returns:
+            Tuple of (accepted_ids, num_accepted).
+        """
+        if draft_ids.shape[1] == 0:
+            return draft_ids, 0
+        
+        accepted_ids, num_accepted = self.parallel_verifier(
+            input_ids, draft_ids, past_key_values
+        )
+        
+        return accepted_ids, num_accepted
+    
+    def _standard_generate(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        max_length: int,
+        **model_kwargs
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        """Standard autoregressive generation as fallback.
+        
+        Args:
+            input_ids: Input token IDs.
+            attention_mask: Attention mask.
+            max_length: Maximum generation length.
+            **model_kwargs: Additional arguments.
+            
+        Returns:
+            Tuple of (generated_ids, stats).
+        """
+        stats = {'method': 'standard_fallback'}
+        start_time = time.time()
+        
+        current_ids = input_ids
+        current_mask = attention_mask
+        
+        while current_ids.shape[1] < max_length:
+            with torch.no_grad():
+                outputs = self.model(current_ids, attention_mask=current_mask, **model_kwargs)
+                logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                next_logits = self._apply_sampling(logits[:, -1, :])
+                probs = F.softmax(next_logits, dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+                
+                current_ids = torch.cat([current_ids, next_token], dim=1)
+                current_mask = torch.cat([
+                    current_mask,
+                    torch.ones((current_mask.shape[0], 1), device=current_ids.device, dtype=current_mask.dtype)
+                ], dim=1)
+        
+        stats['total_time_ms'] = (time.time() - start_time) * 1000.0
+        
+        return current_ids, stats
         
     def _create_draft_model(self) -> nn.Module:
         """Create a lightweight draft model for fast token generation.

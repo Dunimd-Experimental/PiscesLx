@@ -27,6 +27,299 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+class RuchbahDynamicH2OAttention(nn.Module):
+    """
+    Dynamic H2O Attention with adaptive compression and hierarchical caching.
+    
+    Enhances the base H2O attention with:
+    - Dynamic compression ratio based on sequence complexity
+    - Hierarchical cache levels (recent, compressed, archived)
+    - PagedAttention integration support
+    """
+    
+    def __init__(
+        self,
+        hidden_size: int,
+        num_attention_heads: int,
+        max_position_embeddings: int = 10485760,
+        compression_ratio: int = 8,
+        heavy_hitter_ratio: float = 0.1,
+        streaming_window: int = 16384,
+        dropout: float = 0.1,
+        num_cache_levels: int = 3,
+        enable_paged_attention: bool = False
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_attention_heads
+        self.head_dim = hidden_size // num_attention_heads
+        self.max_position_embeddings = max_position_embeddings
+        self.compression_ratio = compression_ratio
+        self.heavy_hitter_ratio = heavy_hitter_ratio
+        self.streaming_window = streaming_window
+        self.num_cache_levels = num_cache_levels
+        self.enable_paged_attention = enable_paged_attention
+        
+        self.q_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.k_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.v_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.o_proj = nn.Linear(hidden_size, hidden_size, bias=False)
+        self.dropout = nn.Dropout(dropout)
+        
+        self.complexity_predictor = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 4),
+            nn.ReLU(),
+            nn.Linear(hidden_size // 4, 1),
+            nn.Sigmoid()
+        )
+        
+        self.dynamic_compressor = nn.ModuleDict({
+            'recent': nn.Identity(),
+            'compressed': nn.Sequential(
+                nn.Linear(hidden_size, hidden_size // 2),
+                nn.ReLU(),
+                nn.Linear(hidden_size // 2, hidden_size)
+            ),
+            'archived': nn.Sequential(
+                nn.Linear(hidden_size, hidden_size // 4),
+                nn.ReLU(),
+                nn.Linear(hidden_size // 4, hidden_size)
+            )
+        })
+        
+        self.level_attention = nn.ModuleDict({
+            'recent': nn.MultiheadAttention(hidden_size, num_attention_heads // 3, batch_first=True),
+            'compressed': nn.MultiheadAttention(hidden_size, num_attention_heads // 3, batch_first=True),
+            'archived': nn.MultiheadAttention(hidden_size, num_attention_heads // 3, batch_first=True)
+        })
+        
+        self.level_fusion = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(),
+            nn.Linear(hidden_size, num_cache_levels),
+            nn.Softmax(dim=-1)
+        )
+        
+        self.register_buffer('cache_sizes', torch.tensor([streaming_window // 2, streaming_window * 2, max_position_embeddings // 16]))
+        
+    def _predict_sequence_complexity(self, hidden_states: torch.Tensor) -> torch.Tensor:
+        batch_size, seq_len, hidden_size = hidden_states.shape
+        pooled = hidden_states.mean(dim=1)
+        complexity = self.complexity_predictor(pooled)
+        return complexity.squeeze(-1)
+    
+    def _compute_dynamic_compression(self, hidden_states: torch.Tensor, complexity: torch.Tensor) -> int:
+        base_ratio = self.compression_ratio
+        adaptive_ratio = int(base_ratio * (1 + complexity.item()))
+        adaptive_ratio = max(2, min(16, adaptive_ratio))
+        return adaptive_ratio
+    
+    def _build_hierarchical_cache(
+        self,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        importance_scores: torch.Tensor
+    ) -> Dict[str, Tuple[torch.Tensor, torch.Tensor]]:
+        batch_size, num_heads, seq_len, head_dim = key_states.shape
+        
+        sorted_indices = torch.argsort(importance_scores, dim=-1, descending=True)
+        
+        recent_size = min(int(self.cache_sizes[0].item()), seq_len)
+        compressed_size = min(int(self.cache_sizes[1].item()), seq_len)
+        archived_size = min(int(self.cache_sizes[2].item()), seq_len)
+        
+        recent_indices = sorted_indices[:, :, :recent_size]
+        compressed_indices = sorted_indices[:, :, recent_size:recent_size + compressed_size]
+        archived_indices = sorted_indices[:, :, recent_size + compressed_size:recent_size + compressed_size + archived_size]
+        
+        recent_keys = torch.gather(key_states, 2, recent_indices.unsqueeze(-1).expand(-1, -1, -1, head_dim))
+        recent_values = torch.gather(value_states, 2, recent_indices.unsqueeze(-1).expand(-1, -1, -1, head_dim))
+        
+        compressed_keys = torch.gather(key_states, 2, compressed_indices.unsqueeze(-1).expand(-1, -1, -1, head_dim))
+        compressed_values = torch.gather(value_states, 2, compressed_indices.unsqueeze(-1).expand(-1, -1, -1, head_dim))
+        
+        if archived_indices.shape[-1] > 0:
+            archived_keys = torch.gather(key_states, 2, archived_indices.unsqueeze(-1).expand(-1, -1, -1, head_dim))
+            archived_values = torch.gather(value_states, 2, archived_indices.unsqueeze(-1).expand(-1, -1, -1, head_dim))
+        else:
+            archived_keys = torch.zeros(batch_size, num_heads, 0, head_dim, device=key_states.device)
+            archived_values = torch.zeros(batch_size, num_heads, 0, head_dim, device=value_states.device)
+        
+        return {
+            'recent': (recent_keys, recent_values),
+            'compressed': (compressed_keys, compressed_values),
+            'archived': (archived_keys, archived_values)
+        }
+    
+    def _fuse_hierarchical_outputs(
+        self,
+        outputs: Dict[str, torch.Tensor],
+        query_states: torch.Tensor
+    ) -> torch.Tensor:
+        batch_size, num_heads, seq_len, head_dim = query_states.shape
+        
+        query_pooled = query_states.mean(dim=2, keepdim=True)
+        level_weights = self.level_fusion(query_pooled.transpose(1, 2).transpose(2, 3))
+        level_weights = level_weights.transpose(1, 3).squeeze(0)
+        
+        fused_output = torch.zeros_like(outputs['recent'])
+        for i, level_name in enumerate(['recent', 'compressed', 'archived']):
+            weight = level_weights[:, :, i:i+1, :].unsqueeze(-1)
+            fused_output = fused_output + weight * outputs[level_name]
+        
+        return fused_output
+    
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor]] = None,
+        output_attentions: bool = False,
+        use_cache: bool = False,
+        cache_manager=None,
+    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor]]]:
+        batch_size, seq_len, _ = hidden_states.shape
+        
+        query_states = self.q_proj(hidden_states).view(
+            batch_size, seq_len, self.num_heads, self.head_dim
+        ).transpose(1, 2)
+        
+        key_states = self.k_proj(hidden_states).view(
+            batch_size, seq_len, self.num_heads, self.head_dim
+        ).transpose(1, 2)
+        
+        value_states = self.v_proj(hidden_states).view(
+            batch_size, seq_len, self.num_heads, self.head_dim
+        ).transpose(1, 2)
+        
+        if past_key_value is not None:
+            past_key, past_value = past_key_value
+            key_states = torch.cat([past_key, key_states], dim=2)
+            value_states = torch.cat([past_value, value_states], dim=2)
+        
+        complexity = self._predict_sequence_complexity(hidden_states)
+        dynamic_compression = self._compute_dynamic_compression(hidden_states, complexity)
+        
+        if seq_len > self.streaming_window:
+            compressed_key = self._compress_states(key_states, dynamic_compression)
+            compressed_value = self._compress_states(value_states, dynamic_compression)
+            attention_key = compressed_key
+            attention_value = compressed_value
+        else:
+            attention_key = key_states
+            attention_value = value_states
+        
+        attention_output = self._streaming_attention(
+            query_states, attention_key, attention_value,
+            attention_mask, cache_manager
+        )
+        
+        attention_output = self.o_proj(attention_output.transpose(1, 2).contiguous().view(batch_size, seq_len, hidden_size))
+        attention_output = self.dropout(attention_output)
+        
+        return attention_output, (key_states, value_states)
+    
+    def _compress_states(
+        self,
+        states: torch.Tensor,
+        compression_ratio: int = None
+    ) -> torch.Tensor:
+        batch_size, num_heads, seq_len, head_dim = states.shape
+        ratio = compression_ratio or self.compression_ratio
+        
+        if seq_len <= self.streaming_window:
+            return states
+        
+        compressed_length = (seq_len + ratio - 1) // ratio
+        flat = states.view(batch_size * num_heads, seq_len, head_dim)
+        token_importance = torch.norm(flat, dim=-1)
+        token_importance = F.softmax(token_importance, dim=-1)
+        
+        pad_len = compressed_length * ratio - seq_len
+        if pad_len > 0:
+            pad_states = torch.zeros(batch_size * num_heads, pad_len, head_dim, device=states.device, dtype=states.dtype)
+            pad_weights = torch.zeros(batch_size * num_heads, pad_len, device=states.device, dtype=token_importance.dtype)
+            flat = torch.cat([flat, pad_states], dim=1)
+            token_importance = torch.cat([token_importance, pad_weights], dim=1)
+        
+        flat = flat.view(batch_size * num_heads, compressed_length, ratio, head_dim)
+        w = token_importance.view(batch_size * num_heads, compressed_length, ratio)
+        w_sum = w.sum(dim=2, keepdim=True) + 1e-8
+        pooled = (flat * w.unsqueeze(-1)).sum(dim=2) / w_sum
+        
+        return pooled.view(batch_size, num_heads, compressed_length, head_dim)
+    
+    def _streaming_attention(
+        self,
+        query_states: torch.Tensor,
+        key_states: torch.Tensor,
+        value_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        cache_manager=None
+    ) -> torch.Tensor:
+        batch_size, num_heads, seq_len, head_dim = query_states.shape
+        device = query_states.device
+        
+        if seq_len <= self.streaming_window:
+            attention_scores = torch.matmul(query_states, key_states.transpose(-2, -1)) / math.sqrt(head_dim)
+            if attention_mask is not None:
+                attention_scores = attention_scores + attention_mask
+            attention_weights = F.softmax(attention_scores, dim=-1)
+            attention_weights = self.dropout(attention_weights)
+            return torch.matmul(attention_weights, value_states)
+        
+        output_states = torch.zeros_like(query_states)
+        
+        importance_scores = self._calculate_importance_scores(key_states, value_states)
+        cache_dict = self._build_hierarchical_cache(key_states, value_states, importance_scores)
+        
+        for start_idx in range(0, seq_len, self.streaming_window):
+            end_idx = min(start_idx + self.streaming_window, seq_len)
+            window_size = end_idx - start_idx
+            
+            window_query = query_states[:, :, start_idx:end_idx, :]
+            
+            level_outputs = {}
+            for level_name, (level_keys, level_values) in cache_dict.items():
+                if level_keys.shape[2] > 0:
+                    level_q = window_query.reshape(batch_size * num_heads, window_size, head_dim)
+                    level_k = level_keys.reshape(batch_size * num_heads, -1, head_dim)
+                    level_v = level_values.reshape(batch_size * num_heads, -1, head_dim)
+                    
+                    row_pos = torch.arange(start_idx, end_idx, device=device)
+                    pos_expanded = torch.arange(level_keys.shape[2], device=device).view(1, 1, -1)
+                    pos_expanded = pos_expanded.expand(batch_size, num_heads, -1)
+                    allowed = pos_expanded.unsqueeze(2) <= row_pos.view(1, 1, window_size, 1)
+                    
+                    disallow = ~allowed
+                    attn_mask = disallow.reshape(batch_size * num_heads, window_size, -1)
+                    
+                    level_out = F.scaled_dot_product_attention(
+                        level_q, level_k, level_v,
+                        attn_mask=attn_mask,
+                        dropout_p=self.dropout.p if self.training else 0.0,
+                        is_causal=False
+                    )
+                    level_outputs[level_name] = level_out.reshape(batch_size, num_heads, window_size, head_dim)
+            
+            if level_outputs:
+                window_output = self._fuse_hierarchical_outputs(level_outputs, window_query)
+                output_states[:, :, start_idx:end_idx, :] = window_output
+        
+        return output_states
+    
+    def _calculate_importance_scores(self, key_states: torch.Tensor, value_states: torch.Tensor) -> torch.Tensor:
+        batch_size, num_heads, seq_len, head_dim = key_states.shape
+        key_magnitude = torch.norm(key_states, dim=-1)
+        value_magnitude = torch.norm(value_states, dim=-1)
+        importance = key_magnitude + value_magnitude
+        position_weights = torch.exp(-torch.arange(seq_len, device=key_states.device).float() / 100.0)
+        position_weights = position_weights.unsqueeze(0).unsqueeze(0)
+        importance = importance * position_weights
+        importance = F.softmax(importance, dim=-1)
+        return importance
+
+
 class RuchbahH2OAttention(nn.Module):
     """Implement H2O attention with heavy-hitter retention and streaming support."""
     

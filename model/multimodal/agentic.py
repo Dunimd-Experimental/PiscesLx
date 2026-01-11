@@ -24,6 +24,11 @@ perception, memory, reasoning, and tool execution for the PiscesL1 system. It
 acts as the compatibility surface between legacy MCP integrations and newer
 PiscesAgent-based flows, managing smart routing, capability registration, and
 context-aware action planning.
+
+Enhanced with:
+- Semantic encoding for improved text representation
+- Real tool execution capabilities
+- Complete state machine for workflow management
 """
 
 import uuid
@@ -32,16 +37,20 @@ import torch
 import numpy as np
 from torch import nn
 from dataclasses import asdict
+from datetime import datetime
 from .types import RuchbahMCPMessage
 from .reasoner import RuchbahUnifiedReasoner
 from .audio import RuchbahAudioEncoder
 from .vision import RuchbahVisionEncoder
+from .semantic_encoder import RuchbahSemanticEncoder
+from .tool_executor import RuchbahToolExecutor, RuchbahToolResult
+from .state_machine import RuchbahStateMachine, RuchbahAgenticState, RuchbahAgenticEvent
 # Use dms_core logging exclusively
 import dms_core
 PiscesLxCoreLog = dms_core.log.get_logger
 from typing import Dict, Any, Union, List, Callable
 from .mcp import (
-    PiscesLxCoreMCPProtocol,
+    RuchbahCoreMCPProtocol,
     RuchbahMCPToolRegistry,
     PiscesLxCoreMCPTreeSearchReasoner,
 )
@@ -133,7 +142,28 @@ class RuchbahAgentic(nn.Module):
         )
         
         # Dual-track MCP protocol to coordinate native and external execution
-        self.mcp_protocol = PiscesLxCoreMCPProtocol(self.agentic_id, self.mcp_tools)
+        self.mcp_protocol = RuchbahCoreMCPProtocol(self.agentic_id, self.mcp_tools)
+        
+        # Semantic encoder for improved text representation
+        self.semantic_encoder = RuchbahSemanticEncoder(
+            hidden_size=getattr(cfg, 'hidden_size', 2048),
+            vocab_size=getattr(cfg, 'vocab_size', 71164),
+            embedding_dim=512,
+            max_seq_len=512
+        )
+        
+        # Tool executor for real tool execution
+        self.tool_executor = RuchbahToolExecutor(
+            base_path=".",
+            enable_caching=True
+        )
+        
+        # State machine for workflow management
+        self.state_machine = RuchbahStateMachine()
+        
+        # Execution history and statistics
+        self.execution_history: List[Dict[str, Any]] = []
+        self.step_counter = 0
         
         self.state = RuchbahAgenticState.IDLE
         self.mcp_peers: Dict[str, Dict[str, Any]] = {}
@@ -149,11 +179,12 @@ class RuchbahAgentic(nn.Module):
         }
         
         # Performance monitoring state
-        from datetime import datetime
         self.performance_monitor = {
             "start_time": datetime.now(),
             "peak_memory_usage": 0,
-            "total_tools_registered": 0
+            "total_tools_registered": 0,
+            "total_steps_completed": 0,
+            "total_errors": 0
         }
         
         # Coordinate marking support flag for vision-assisted operations
@@ -163,6 +194,9 @@ class RuchbahAgentic(nn.Module):
         self.action_type_head = nn.Linear(cfg.hidden_size, 10)  # Predict 10 action categories
         self.action_param_head = nn.Linear(cfg.hidden_size, cfg.hidden_size)
         self.confidence_head = nn.Linear(cfg.hidden_size, 1)
+        
+        # Register state machine callbacks
+        self._setup_state_machine_callbacks()
         
         # MCP message handlers
         self.mcp_handlers = {
@@ -174,6 +208,17 @@ class RuchbahAgentic(nn.Module):
             RuchbahMCPMessageType.SYNC_REQUEST.value: self._handle_sync_request,
             RuchbahMCPMessageType.SYNC_RESPONSE.value: self._handle_sync_response,
         }
+    
+    def _setup_state_machine_callbacks(self):
+        def on_transition_callback(state: RuchbahAgenticState, event: RuchbahAgenticEvent, metadata: Dict[str, Any]):
+            self.performance_monitor["total_steps_completed"] += 1
+        
+        self.state_machine.on_event(RuchbahAgenticEvent.ACTION_COMPLETE, on_transition_callback)
+        
+        def on_error_callback(state: RuchbahAgenticState, event: RuchbahAgenticEvent, metadata: Dict[str, Any]):
+            self.performance_monitor["total_errors"] += 1
+        
+        self.state_machine.on_event(RuchbahAgenticEvent.FAILURE, on_error_callback)
 
     @property
     def base_model(self):
@@ -396,7 +441,7 @@ class RuchbahAgentic(nn.Module):
         if handler:
             return await handler(message)
         else:
-            return PiscesLxCoreMCPProtocol.create_message(
+            return RuchbahCoreMCPProtocol.create_message(
                 RuchbahMCPMessageType.STATE_UPDATE,
                 self.agent_id,
                 {"error": f"Unknown message type: {message.message_type}"}
@@ -421,7 +466,7 @@ class RuchbahAgentic(nn.Module):
         self.memory.add_observation(observation)
         obs_embedding = self.process_observation(observation)
         
-        return PiscesLxCoreMCPProtocol.create_message(
+        return RuchbahCoreMCPProtocol.create_message(
             RuchbahMCPMessageType.OBSERVATION,
             self.agent_id,
             {
@@ -449,7 +494,7 @@ class RuchbahAgentic(nn.Module):
         action = await self.plan_action(context)
         self.memory.add_action(action)
         
-        return PiscesLxCoreMCPProtocol.create_message(
+        return RuchbahCoreMCPProtocol.create_message(
             RuchbahMCPMessageType.ACTION,
             self.agent_id,
             {
@@ -493,7 +538,7 @@ class RuchbahAgentic(nn.Module):
                 success = False
         
         # Create and return the tool result message with execution metadata
-        return PiscesLxCoreMCPProtocol.create_message(
+        return RuchbahCoreMCPProtocol.create_message(
             RuchbahMCPMessageType.TOOL_RESULT,
             self.agent_id,
             {
@@ -524,7 +569,7 @@ class RuchbahAgentic(nn.Module):
         
         self.memory.add_observation(observation)
         
-        return PiscesLxCoreMCPProtocol.create_message(
+        return RuchbahCoreMCPProtocol.create_message(
             RuchbahMCPMessageType.STATE_UPDATE,
             self.agent_id,
             {"status": "tool_result_processed", "result_id": str(uuid.uuid4())}
@@ -545,7 +590,7 @@ class RuchbahAgentic(nn.Module):
         if message.agent_id != self.agent_id:
             self.mcp_capabilities[f"{message.agent_id}.{capability_name}"] = capability_data
         
-        return PiscesLxCoreMCPProtocol.create_message(
+        return RuchbahCoreMCPProtocol.create_message(
             RuchbahMCPMessageType.STATE_UPDATE,
             self.agent_id,
             {"status": "capability_registered", "capability": capability_name}
@@ -564,7 +609,7 @@ class RuchbahAgentic(nn.Module):
         sync_type = message.payload.get("type")
         
         if sync_type == "capability_discovery":
-            return PiscesLxCoreMCPProtocol.create_message(
+            return RuchbahCoreMCPProtocol.create_message(
                 RuchbahMCPMessageType.SYNC_RESPONSE,
                 self.agent_id,
                 {
@@ -573,7 +618,7 @@ class RuchbahAgentic(nn.Module):
                 }
             )
         elif sync_type == "state_sync":
-            return PiscesLxCoreMCPProtocol.create_message(
+            return RuchbahCoreMCPProtocol.create_message(
                 RuchbahMCPMessageType.SYNC_RESPONSE,
                 self.agent_id,
                 {
@@ -583,7 +628,7 @@ class RuchbahAgentic(nn.Module):
                 }
             )
         
-        return PiscesLxCoreMCPProtocol.create_message(
+        return RuchbahCoreMCPProtocol.create_message(
             RuchbahMCPMessageType.SYNC_RESPONSE,
             self.agent_id,
             {"error": "Unknown sync type"}
@@ -605,7 +650,7 @@ class RuchbahAgentic(nn.Module):
                 "capabilities": response_data.get("capabilities", [])
             }
         
-        return PiscesLxCoreMCPProtocol.create_message(
+        return RuchbahCoreMCPProtocol.create_message(
             RuchbahMCPMessageType.STATE_UPDATE,
             self.agent_id,
             {"status": "sync_completed", "peer_id": message.agent_id}
@@ -1186,3 +1231,113 @@ class RuchbahAgentic(nn.Module):
         self._coordinate_detection_enabled = enabled
         if hasattr(self.vision_encoder, 'enable_detection'):
             self.vision_encoder.enable_detection(enabled)
+    
+    async def execute_tool_with_state_machine(
+        self,
+        tool_name: str,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Execute tool with state machine tracking.
+        
+        Args:
+            tool_name: Name of the tool to execute
+            **kwargs: Tool-specific parameters
+            
+        Returns:
+            Dictionary containing execution result and state information
+        """
+        if not self.state_machine.can_transition(RuchbahAgenticEvent.ACTION_START):
+            return {
+                "success": False,
+                "error": "Cannot execute tool in current state",
+                "current_state": self.state_machine.current_state.name
+            }
+        
+        self.state_machine.transition(RuchbahAgenticEvent.ACTION_START, {"tool": tool_name})
+        
+        self.step_counter += 1
+        
+        result = await self.tool_executor.execute(tool_name, **kwargs)
+        
+        if result.success:
+            self.state_machine.transition(RuchbahAgenticEvent.ACTION_COMPLETE, {
+                "tool": tool_name,
+                "execution_time": result.execution_time
+            })
+            
+            execution_record = {
+                "step": self.step_counter,
+                "tool": tool_name,
+                "success": True,
+                "execution_time": result.execution_time,
+                "timestamp": datetime.now().isoformat(),
+                "state": self.state_machine.current_state.name
+            }
+            self.execution_history.append(execution_record)
+            
+            return {
+                "success": True,
+                "output": result.output,
+                "execution_time": result.execution_time,
+                "metadata": result.metadata,
+                "state": self.state_machine.current_state.name
+            }
+        else:
+            self.state_machine.transition(RuchbahAgenticEvent.FAILURE, {
+                "tool": tool_name,
+                "error": result.error_message,
+                "error_type": result.error_type
+            })
+            
+            return {
+                "success": False,
+                "error": result.error_message,
+                "error_type": result.error_type,
+                "execution_time": result.execution_time,
+                "state": self.state_machine.current_state.name
+            }
+    
+    def get_state_machine_status(self) -> Dict[str, Any]:
+        """Get current state machine status and statistics.
+        
+        Returns:
+            Dictionary containing state machine information
+        """
+        return {
+            "current_state": self.state_machine.current_state.name,
+            "available_events": [e.name for e in self.state_machine.get_available_events()],
+            "is_terminal": self.state_machine.is_terminal_state(),
+            "is_active": self.state_machine.is_active_state(),
+            "statistics": self.state_machine.get_state_statistics(),
+            "execution_history": self.execution_history[-10:],
+            "step_counter": self.step_counter
+        }
+    
+    def get_tool_executor_status(self) -> Dict[str, Any]:
+        """Get tool executor status and statistics.
+        
+        Returns:
+            Dictionary containing tool executor information
+        """
+        return {
+            "tools": self.tool_executor.list_tools(),
+            "statistics": self.tool_executor.get_statistics()
+        }
+    
+    def encode_text_with_semantics(self, text: str, encode_type: str = "semantic") -> Dict[str, Any]:
+        """Encode text using semantic encoder.
+        
+        Args:
+            text: Text to encode
+            encode_type: Type of encoding ('semantic' or 'simple')
+            
+        Returns:
+            Dictionary containing encoded representations
+        """
+        return self.semantic_encoder(text, encode_type=encode_type)
+    
+    def reset_state_machine(self):
+        """Reset the state machine to initial state."""
+        self.state_machine.reset()
+        self.step_counter = 0
+        self.execution_history = []

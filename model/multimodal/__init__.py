@@ -25,6 +25,7 @@ from .agentic import RuchbahAgentic
 from .agentic_encoder import RuchbahAgenticEncoder
 from .attention import RuchbahCrossModalAttention
 from .fusion import RuchbahDynamicModalFusion
+from .enhanced_fusion import RuchbahEnhancedModalFusion, RuchbahModalFusionConfig
 from .generator import RuchbahUnifiedGeneration, RuchbahMultiModalGenerator
 from .hw import RuchbahHardwareAdaptiveConfig
 from .reasoner import RuchbahUnifiedReasoner
@@ -50,6 +51,8 @@ __all__ = [
     "RuchbahAgenticEncoder",
     "RuchbahCrossModalAttention",
     "RuchbahDynamicModalFusion",
+    "RuchbahEnhancedModalFusion",
+    "RuchbahModalFusionConfig",
     "RuchbahUnifiedGeneration",
     "RuchbahMultiModalGenerator",
     "RuchbahHardwareAdaptiveConfig",

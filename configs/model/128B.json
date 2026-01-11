@@ -40,6 +40,15 @@
     "batch_size": 1,
     "accum": 256,
     "max_accum": 512,
+    "smart_accum_enabled": true,
+    "smart_accum": {
+      "min_accum": 1,
+      "memory_threshold": 0.8,
+      "loss_window": 10,
+      "grad_window": 5,
+      "adjustment_factor": 0.1,
+      "warmup_steps": 200
+    },
     "seq_len": 32,
     "force_quant": true,
     "force_lora": true,
@@ -70,14 +79,47 @@
       "warmup_steps": 10,
       "use_kfac": true,
       "kfac_update_freq": 100,
-      "kfac_damping": 0.001
+      "kfac_damping": 0.001,
+      "enable_layer_coordination": true,
+      "layer_coordination_strength": 0.5,
+      "layer_group_window": 3
     },
     "schedulers": {
-      "text": {},
-      "vision": {},
-      "audio": {},
-      "fusion": {},
-      "other": {}
+      "text": {
+        "warmup_steps": 300,
+        "T_0": 3000,
+        "T_mult": 2,
+        "eta_min": 1e-7,
+        "warmup_start_lr": 0
+      },
+      "vision": {
+        "warmup_steps": 150,
+        "T_0": 1500,
+        "T_mult": 2,
+        "eta_min": 1e-7,
+        "warmup_start_lr": 0
+      },
+      "audio": {
+        "warmup_steps": 225,
+        "T_0": 2250,
+        "T_mult": 2,
+        "eta_min": 5e-8,
+        "warmup_start_lr": 0
+      },
+      "fusion": {
+        "warmup_steps": 75,
+        "T_0": 750,
+        "T_mult": 1,
+        "eta_min": 2e-7,
+        "warmup_start_lr": 0
+      },
+      "other": {
+        "warmup_steps": 300,
+        "T_0": 2400,
+        "T_mult": 1,
+        "eta_min": 1e-7,
+        "warmup_start_lr": 0
+      }
     }
   },
   "inference_config": {

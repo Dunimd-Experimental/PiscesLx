@@ -34,6 +34,18 @@ from .modeling import (
 from .multimodal.reasoner.multipath_core import RuchbahMultiPathReasoningEngine
 from .multimodal.reasoner.multipath_meta import RuchbahMultiPathMetaLearner
 from .multimodal.reasoner.enhancer import RuchbahMultiModalReasoningEnhancer
+from .multimodal.reasoner import (
+    RuchbahUnifiedReasoner,
+    RuchbahRecursiveDepthReasoner,
+    RuchbahRecursiveReasoningConfig,
+    RuchbahThoughtTreeReasoner,
+    RuchbahEnhancedReasoningSystem,
+    RuchbahEnhancedReasoningConfig,
+)
+from .multimodal import (
+    RuchbahEnhancedModalFusion,
+    RuchbahModalFusionConfig,
+)
 
 __all__ = [
     "RuchbahConfig",
@@ -56,4 +68,12 @@ __all__ = [
     "RuchbahMultiPathReasoningEngine",
     "RuchbahMultiPathMetaLearner",
     "RuchbahMultiModalReasoningEnhancer",
+    "RuchbahUnifiedReasoner",
+    "RuchbahRecursiveDepthReasoner",
+    "RuchbahRecursiveReasoningConfig",
+    "RuchbahThoughtTreeReasoner",
+    "RuchbahEnhancedReasoningSystem",
+    "RuchbahEnhancedReasoningConfig",
+    "RuchbahEnhancedModalFusion",
+    "RuchbahModalFusionConfig",
 ]

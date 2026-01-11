@@ -590,6 +590,95 @@ class RuchbahStableMoEGate(nn.Module):
         
         return torch.cat(final_scores), torch.cat(final_indices), torch.tensor(0.0, device=x.device)
 
+class RuchbahExpertOrientedRouter(nn.Module):
+    """
+    Expert-Oriented Router for improved MoE load balancing.
+    
+    This router uses expert capability embeddings and similarity-based routing
+    to achieve better load distribution compared to LSTM-based prediction.
+    """
+    
+    def __init__(self, hidden_size, num_experts, top_k=2, device=None, dtype=None,
+                 expert_embed_dim=64, capacity_factor=1.0, enable_expert_affinity=False):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self.expert_embed_dim = expert_embed_dim
+        self.capacity_factor = capacity_factor
+        
+        self.gate = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
+        
+        self.expert_embeddings = nn.Parameter(torch.randn(num_experts, expert_embed_dim))
+        
+        self.expert_capability_encoder = nn.Sequential(
+            nn.Linear(expert_embed_dim, expert_embed_dim),
+            nn.SiLU(),
+            nn.Linear(expert_embed_dim, expert_embed_dim)
+        )
+        
+        self.input_encoder = nn.Sequential(
+            nn.Linear(hidden_size, expert_embed_dim),
+            nn.SiLU(),
+            nn.Linear(expert_embed_dim, expert_embed_dim)
+        )
+        
+        self.similarity_scorer = nn.Bilinear(expert_embed_dim, expert_embed_dim, 1)
+        
+        self.affinity_gate = nn.Sequential(
+            nn.Linear(hidden_size * 2, hidden_size // 4),
+            nn.SiLU(),
+            nn.Linear(hidden_size // 4, 1),
+            nn.Sigmoid()
+        ) if enable_expert_affinity else None
+        
+        self.register_buffer('expert_usage_count', torch.zeros(num_experts))
+        self.register_buffer('total_routed', torch.tensor(0.0))
+        self.register_buffer('affinity_matrix', torch.eye(num_experts))
+        
+    def forward(self, x, task_embedding=None):
+        batch_size, seq_len, hidden_size = x.shape
+        x_flat = x.view(-1, hidden_size)
+        
+        logits = self.gate(x_flat)
+        
+        input_embeddings = self.input_encoder(x_flat)
+        encoded_expert_embeds = self.expert_capability_encoder(self.expert_embeddings)
+        
+        similarity_scores = []
+        for i in range(self.num_experts):
+            score = self.similarity_scorer(input_embeddings, encoded_expert_embeds[i:i+1].expand_as(input_embeddings))
+            similarity_scores.append(score)
+        similarity_scores = torch.cat(similarity_scores, dim=-1)
+        
+        combined_logits = logits + 0.3 * similarity_scores
+        
+        if task_embedding is not None and self.affinity_gate is not None:
+            tiled_task = task_embedding.unsqueeze(0).expand(x_flat.size(0), -1)
+            affinity = self.affinity_gate(torch.cat([x_flat, tiled_task], dim=-1))
+            combined_logits = combined_logits * (0.5 + 0.5 * affinity)
+        
+        scores = F.softmax(combined_logits, dim=-1)
+        
+        top_scores, top_idx = torch.topk(scores, self.top_k, dim=-1)
+        top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
+        
+        if self.training:
+            self.expert_usage_count.scatter_add_(0, top_idx.view(-1), torch.ones_like(top_idx, dtype=torch.float32).view(-1))
+            self.total_routed += x_flat.size(0)
+            
+            usage = self.expert_usage_count / (self.total_routed + 1e-8)
+            ideal = 1.0 / self.num_experts
+            imbalance = torch.var(usage) / (ideal + 1e-8)
+            
+            if imbalance > 0.15:
+                correction = (ideal - usage) * 0.1
+                combined_logits = combined_logits + correction.unsqueeze(0)
+                scores = F.softmax(combined_logits, dim=-1)
+        
+        return top_scores, top_idx, scores
+
+
 class RuchbahMoELayer(nn.Module):
     """
     Mixture of Experts layer with improved load balancing and stability.

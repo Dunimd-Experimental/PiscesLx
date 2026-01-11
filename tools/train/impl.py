@@ -24,6 +24,7 @@ import torch
 import warnings
 # Use dms_core logging exclusively
 import dms_core
+
 PiscesLxCoreDeviceFacade = dms_core.device.DeviceFacade
 PiscesLxCoreDeviceManager = dms_core.device.DeviceManager
 PiscesLxCoreLog = dms_core.log.get_logger
@@ -31,6 +32,7 @@ PiscesLxCoreConfigManager = dms_core.config.ConfigManager
 
 from utils import PiscesLxCoreCheckpointManager
 from utils.optim.galore import GaLoreOptimizer, GaLoreConfig, create_galore_optimizer
+from tools.train.multitask import MultiTaskLossBalancer, AdaptiveMultiTaskScheduler
 # Optional weight watermark utilities
 try:
     from utils.watermark.weights import watermarked_regularizer, verify_weights
@@ -427,6 +429,15 @@ def _train_impl(args):
     max_epochs_stop = int(training_config.get('max_epochs_stop', 6))
     auto_export_safetensors = bool(training_config.get('auto_export_safetensors', False))
 
+    # Multi-task learning configuration
+    multitask_enabled = bool(training_config.get('multitask_enabled', True))
+    multitask_strategy = training_config.get('multitask_strategy', 'adaptive')
+    multitask_update_freq = int(training_config.get('multitask_update_freq', 100))
+    multitask_alpha = float(training_config.get('multitask_alpha', 0.9))
+    multitask_gradnorm_alpha = float(training_config.get('multitask_gradnorm_alpha', 1.5))
+    multitask_init_weights = training_config.get('multitask_init_weights', None)
+    multitask_importance = training_config.get('multitask_importance', None)
+
     # De-hardcode collate max seq len: take from training_config if provided
     # Default to training seq_len to avoid duplication
     global COLLATE_MAX_SEQ_LEN
@@ -477,50 +488,180 @@ def _train_impl(args):
     save_dir = str(cache_manager.get_cache_dir("ckpt"))
     os.makedirs(save_dir, exist_ok=True)
     
-    class DynamicGradientAccumulator:
+    class IntelligentGradientAccumulator:
         """
-        Safe dynamic gradient accumulation based on gradient norm monitoring.
+        Intelligent gradient accumulation with multi-metric based adaptive adjustment.
+
+        This accumulator dynamically adjusts gradient accumulation steps based on:
+        1. Gradient norm stability
+        2. Loss variance
+        3. Memory usage
+        4. Training progress
+        5. Learning rate changes
 
         Args:
             base_accum (int): The base gradient accumulation steps.
             max_accum (int): The maximum gradient accumulation steps.
+            min_accum (int, optional): The minimum gradient accumulation steps. Defaults to 1.
             target_grad_norm (float, optional): The target gradient norm. Defaults to 1.0.
-            safety_factor (float, optional): The safety factor. Defaults to 0.8.
+            memory_threshold (float, optional): Memory usage threshold (0-1). Defaults to 0.9.
+            loss_window (int, optional): Window size for loss variance calculation. Defaults to 10.
+            grad_window (int, optional): Window size for gradient norm calculation. Defaults to 5.
+            adjustment_factor (float, optional): Adjustment aggressiveness. Defaults to 0.1.
+            warmup_steps (int, optional): Steps before enabling dynamic adjustment. Defaults to 100.
         """
-        def __init__(self, base_accum, max_accum, target_grad_norm=1.0, safety_factor=0.8):
+        def __init__(self, base_accum, max_accum, min_accum=1, target_grad_norm=1.0,
+                     memory_threshold=0.9, loss_window=10, grad_window=5,
+                     adjustment_factor=0.1, warmup_steps=100):
             self.base_accum = base_accum
             self.max_accum = max_accum
+            self.min_accum = min_accum
             self.target_grad_norm = target_grad_norm
-            self.safety_factor = safety_factor
-            self.current_accum = base_accum
-            self.grad_norm_history = []
-            self.stable_steps = 0
+            self.memory_threshold = memory_threshold
+            self.loss_window = loss_window
+            self.grad_window = grad_window
+            self.adjustment_factor = adjustment_factor
+            self.warmup_steps = warmup_steps
             
-        def should_step(self, grad_norm):
+            self.current_accum = base_accum
+            self.step_count = 0
+            
+            self.grad_norm_history = []
+            self.loss_history = []
+            self.memory_history = []
+            
+            self.stable_steps = 0
+            self.adjustment_history = []
+            
+        def should_step(self, grad_norm, loss=None, memory_usage=None):
             """
-            Determine whether to perform a gradient update based on the gradient norm.
+            Determine whether to perform a gradient update based on multiple metrics.
 
             Args:
                 grad_norm (float): The current gradient norm.
+                loss (float, optional): The current loss value. Defaults to None.
+                memory_usage (float, optional): Current memory usage (0-1). Defaults to None.
 
             Returns:
                 bool: Whether to perform a gradient update.
             """
-            self.grad_norm_history.append(grad_norm)
-            if len(self.grad_norm_history) > 10:
-                self.grad_norm_history.pop(0)
-            if len(self.grad_norm_history) >= 3:
-                recent_avg = sum(self.grad_norm_history[-3:]) / 3
-                if recent_avg < self.target_grad_norm * 0.5 and self.current_accum < self.max_accum:
-                    self.current_accum = min(self.current_accum + 1, self.max_accum)
-                    self.stable_steps = 0
-                elif recent_avg > self.target_grad_norm * 2.0 and self.current_accum > self.base_accum:
-                    self.current_accum = max(self.current_accum - 1, self.base_accum)
-                    self.stable_steps = 0
-                else:
-                    self.stable_steps += 1
-            return len(self.grad_norm_history) >= self.current_accum
+            self.step_count += 1
             
+            self.grad_norm_history.append(grad_norm)
+            if len(self.grad_norm_history) > self.grad_window:
+                self.grad_norm_history.pop(0)
+            
+            if loss is not None:
+                self.loss_history.append(loss)
+                if len(self.loss_history) > self.loss_window:
+                    self.loss_history.pop(0)
+            
+            if memory_usage is not None:
+                self.memory_history.append(memory_usage)
+                if len(self.memory_history) > 5:
+                    self.memory_history.pop(0)
+            
+            if self.step_count < self.warmup_steps:
+                return len(self.grad_norm_history) >= self.current_accum
+            
+            adjustment = self._compute_adjustment()
+            
+            if adjustment > 0:
+                self.current_accum = min(self.current_accum + adjustment, self.max_accum)
+                self.stable_steps = 0
+            elif adjustment < 0:
+                self.current_accum = max(self.current_accum + adjustment, self.min_accum)
+                self.stable_steps = 0
+            else:
+                self.stable_steps += 1
+            
+            self.adjustment_history.append(adjustment)
+            if len(self.adjustment_history) > 20:
+                self.adjustment_history.pop(0)
+            
+            return len(self.grad_norm_history) >= self.current_accum
+        
+        def _compute_adjustment(self):
+            """
+            Compute accumulation adjustment based on multiple metrics.
+
+            Returns:
+                int: Adjustment value (positive for increase, negative for decrease, 0 for no change).
+            """
+            adjustment = 0
+            
+            if len(self.grad_norm_history) >= 3:
+                recent_grad_norm = sum(self.grad_norm_history[-3:]) / 3
+                grad_variance = self._compute_variance(self.grad_norm_history[-min(5, len(self.grad_norm_history)):])
+                
+                if recent_grad_norm < self.target_grad_norm * 0.5 and grad_variance < 0.2:
+                    adjustment += 1
+                elif recent_grad_norm > self.target_grad_norm * 2.0:
+                    adjustment -= 1
+            
+            if len(self.loss_history) >= 5:
+                loss_variance = self._compute_variance(self.loss_history[-min(10, len(self.loss_history)):])
+                loss_trend = self._compute_trend(self.loss_history[-min(5, len(self.loss_history)):])
+                
+                if loss_variance < 0.01 and abs(loss_trend) < 0.001:
+                    adjustment += 1
+                elif loss_variance > 0.1:
+                    adjustment -= 1
+            
+            if self.memory_history and len(self.memory_history) >= 3:
+                avg_memory = sum(self.memory_history[-3:]) / 3
+                if avg_memory > self.memory_threshold:
+                    adjustment -= 2
+                elif avg_memory < self.memory_threshold * 0.7:
+                    adjustment += 1
+            
+            if self.stable_steps > 50 and len(self.adjustment_history) >= 10:
+                recent_adjustments = self.adjustment_history[-10:]
+                if all(adj == 0 for adj in recent_adjustments):
+                    if self.current_accum < self.max_accum:
+                        adjustment += 1
+            
+            return int(adjustment * self.adjustment_factor * 10)
+        
+        def _compute_variance(self, values):
+            """
+            Compute variance of values.
+
+            Args:
+                values (list): List of values.
+
+            Returns:
+                float: Variance.
+            """
+            if len(values) < 2:
+                return 0.0
+            mean = sum(values) / len(values)
+            return sum((x - mean) ** 2 for x in values) / len(values)
+        
+        def _compute_trend(self, values):
+            """
+            Compute linear trend of values.
+
+            Args:
+                values (list): List of values.
+
+            Returns:
+                float: Trend coefficient.
+            """
+            if len(values) < 2:
+                return 0.0
+            n = len(values)
+            x = list(range(n))
+            sum_x = sum(x)
+            sum_y = sum(values)
+            sum_xy = sum(x[i] * values[i] for i in range(n))
+            sum_x2 = sum(xi ** 2 for xi in x)
+            
+            denominator = n * sum_x2 - sum_x ** 2
+            if denominator == 0:
+                return 0.0
+            return (n * sum_xy - sum_x * sum_y) / denominator
+        
         def get_current_accum(self):
             """
             Get the current gradient accumulation steps.
@@ -528,18 +669,64 @@ def _train_impl(args):
             Returns:
                 int: The current gradient accumulation steps.
             """
-            return max(1, int(self.current_accum * self.safety_factor))
-            
+            return max(self.min_accum, int(self.current_accum))
+        
+        def get_stats(self):
+            """
+            Get accumulator statistics.
+
+            Returns:
+                dict: Statistics dictionary.
+            """
+            return {
+                'current_accum': self.current_accum,
+                'step_count': self.step_count,
+                'stable_steps': self.stable_steps,
+                'avg_grad_norm': sum(self.grad_norm_history) / len(self.grad_norm_history) if self.grad_norm_history else 0.0,
+                'avg_loss': sum(self.loss_history) / len(self.loss_history) if self.loss_history else 0.0,
+                'avg_memory': sum(self.memory_history) / len(self.memory_history) if self.memory_history else 0.0,
+                'recent_adjustments': self.adjustment_history[-5:] if len(self.adjustment_history) >= 5 else self.adjustment_history
+            }
+        
         def reset(self):
             """
             Reset the gradient accumulation state.
             """
             self.current_accum = self.base_accum
+            self.step_count = 0
             self.grad_norm_history.clear()
+            self.loss_history.clear()
+            self.memory_history.clear()
             self.stable_steps = 0
+            self.adjustment_history.clear()
     
-    # Initialize the dynamic gradient accumulator
-    grad_accumulator = DynamicGradientAccumulator(accum, max_accum)
+    # Initialize the intelligent gradient accumulator
+    smart_accum_enabled = training_config.get('smart_accum_enabled', True)
+    smart_accum_config = training_config.get('smart_accum', {})
+    
+    if smart_accum_enabled:
+        min_accum = smart_accum_config.get('min_accum', 1)
+        memory_threshold = smart_accum_config.get('memory_threshold', 0.9)
+        loss_window = smart_accum_config.get('loss_window', 10)
+        grad_window = smart_accum_config.get('grad_window', 5)
+        adjustment_factor = smart_accum_config.get('adjustment_factor', 0.1)
+        warmup_steps = smart_accum_config.get('warmup_steps', 100)
+        
+        grad_accumulator = IntelligentGradientAccumulator(
+            base_accum=accum,
+            max_accum=max_accum,
+            min_accum=min_accum,
+            target_grad_norm=1.0,
+            memory_threshold=memory_threshold,
+            loss_window=loss_window,
+            grad_window=grad_window,
+            adjustment_factor=adjustment_factor,
+            warmup_steps=warmup_steps
+        )
+        logger.info(f"Intelligent gradient accumulation enabled: base={accum}, max={max_accum}, min={min_accum}")
+    else:
+        grad_accumulator = IntelligentGradientAccumulator(accum, max_accum)
+        logger.info(f"Using default gradient accumulation: base={accum}, max={max_accum}")
     
     min_plateau_epoch = 5
     scheduler = None
@@ -886,9 +1073,12 @@ def _train_impl(args):
         )
     # Use base optimizer for LR schedulers if GaLore wrapper is used
     scheduler_optimizer = base_optimizer if 'base_optimizer' in locals() and galore_enabled else optimizer
+    
+    from tools.train.lr_scheduler import CosineAnnealingWarmupRestarts, ModalityAwareCosineScheduler
+    
     def create_modality_scheduler(optimizer, modality_name, base_scheduler_config):
         """
-        Create a learning rate scheduler for a specific modality.
+        Create a learning rate scheduler for a specific modality with warmup and restarts.
 
         Args:
             optimizer (torch.optim.Optimizer): The optimizer to apply the scheduler to.
@@ -898,28 +1088,75 @@ def _train_impl(args):
         Returns:
             torch.optim.lr_scheduler._LRScheduler: A learning rate scheduler object.
         """
+        warmup_steps = base_scheduler_config.get('warmup_steps', 100)
+        T_0 = base_scheduler_config.get('T_0', 1000)
+        T_mult = base_scheduler_config.get('T_mult', 2)
+        eta_min = base_scheduler_config.get('eta_min', 1e-7)
+        warmup_start_lr = base_scheduler_config.get('warmup_start_lr', 0)
+        
         if modality_name == 'vision':
-            return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                optimizer, T_0=10, T_mult=2, eta_min=1e-7
+            return CosineAnnealingWarmupRestarts(
+                optimizer,
+                warmup_steps=warmup_steps,
+                T_0=T_0,
+                T_mult=T_mult,
+                eta_min=eta_min,
+                warmup_start_lr=warmup_start_lr
             )
         elif modality_name == 'audio':
-            return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                optimizer, T_0=15, T_mult=2, eta_min=5e-8
+            return CosineAnnealingWarmupRestarts(
+                optimizer,
+                warmup_steps=warmup_steps,
+                T_0=T_0,
+                T_mult=T_mult,
+                eta_min=eta_min,
+                warmup_start_lr=warmup_start_lr
             )
         elif modality_name == 'fusion':
-            return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                optimizer, T_0=5, T_mult=1, eta_min=2e-7
+            return CosineAnnealingWarmupRestarts(
+                optimizer,
+                warmup_steps=warmup_steps,
+                T_0=T_0,
+                T_mult=T_mult,
+                eta_min=eta_min,
+                warmup_start_lr=warmup_start_lr
             )
         else:
-            return torch.optim.lr_scheduler.CosineAnnealingWarmRestarts(
-                optimizer, T_0=8, T_mult=1, eta_min=1e-7
+            return CosineAnnealingWarmupRestarts(
+                optimizer,
+                warmup_steps=warmup_steps,
+                T_0=T_0,
+                T_mult=T_mult,
+                eta_min=eta_min,
+                warmup_start_lr=warmup_start_lr
             )
     
     # Modality schedulers use config overrides if provided
     modality_schedulers = {}
     sched_cfg = training_config.get('schedulers', {})
+    
+    # Default scheduler configuration
+    default_scheduler_config = {
+        'warmup_steps': 100,
+        'T_0': 1000,
+        'T_mult': 2,
+        'eta_min': 1e-7,
+        'warmup_start_lr': 0
+    }
+    
+    # Modality-specific default configurations
+    modality_defaults = {
+        'text': {'warmup_steps': 100, 'T_0': 1000, 'T_mult': 2, 'eta_min': 1e-7, 'warmup_start_lr': 0},
+        'vision': {'warmup_steps': 50, 'T_0': 500, 'T_mult': 2, 'eta_min': 1e-7, 'warmup_start_lr': 0},
+        'audio': {'warmup_steps': 75, 'T_0': 750, 'T_mult': 2, 'eta_min': 5e-8, 'warmup_start_lr': 0},
+        'fusion': {'warmup_steps': 25, 'T_0': 250, 'T_mult': 1, 'eta_min': 2e-7, 'warmup_start_lr': 0},
+        'other': {'warmup_steps': 100, 'T_0': 800, 'T_mult': 1, 'eta_min': 1e-7, 'warmup_start_lr': 0}
+    }
+    
     for modality in ['text', 'vision', 'audio', 'fusion', 'other']:
-        scheduler_obj = create_modality_scheduler(scheduler_optimizer, modality, sched_cfg.get(modality, {}))
+        modality_config = modality_defaults.get(modality, default_scheduler_config.copy())
+        modality_config.update(sched_cfg.get(modality, {}))
+        scheduler_obj = create_modality_scheduler(scheduler_optimizer, modality, modality_config)
         if scheduler_obj is not None:
             modality_schedulers[modality] = scheduler_obj
     
@@ -1019,7 +1256,30 @@ def _train_impl(args):
                 optimizer.zero_grad()
                 grad_accumulator.reset()
                 grad_clipper.reset()
-                
+
+                multitask_balancer = None
+                multitask_scheduler = None
+                if multitask_enabled:
+                    multitask_balancer = MultiTaskLossBalancer(
+                        num_tasks=5,
+                        strategy=multitask_strategy,
+                        init_weights=multitask_init_weights,
+                        task_importance=multitask_importance,
+                        alpha=multitask_alpha,
+                        update_freq=multitask_update_freq,
+                        gradnorm_alpha=multitask_gradnorm_alpha,
+                        device=device
+                    )
+                    multitask_scheduler = AdaptiveMultiTaskScheduler(
+                        num_tasks=5,
+                        base_lr=lr,
+                        weight_update_strategy='loss_ratio',
+                        warmup_steps=100,
+                        min_lr_factor=0.1,
+                        max_lr_factor=10.0
+                    )
+                    logger.info(f"Multi-task learning enabled with strategy: {multitask_strategy}")
+
                 for step, batch in enumerate(train_loader):
                     model_keys = ["input_ids", "labels", "pixel_values", "audio_input"]
                     device_batch = {
@@ -1044,17 +1304,28 @@ def _train_impl(args):
                         
                         if hasattr(outputs, 'task_losses') and outputs.task_losses is not None:
                             task_losses = outputs.task_losses
-                            if not hasattr(model, 'log_vars'):
-                                num_tasks = len(task_losses)
-                                model.log_vars = torch.nn.Parameter(torch.zeros(num_tasks))
-                                model.log_vars.to(device)
-                            precision = torch.exp(-model.log_vars)
-                            weighted_losses = precision * task_losses + 0.5 * model.log_vars
-                            loss = weighted_losses.sum()
-                            if step % 100 == 0:
-                                uncertainties = torch.exp(model.log_vars)
-                                for i, uncertainty in enumerate(uncertainties):
-                                    logger.debug(f"Task {i} uncertainty: {uncertainty.item():.4f}")
+                            
+                            if multitask_balancer is not None:
+                                shared_params = [p for n, p in model.named_parameters() if p.requires_grad and 'shared' in n.lower()]
+                                loss, current_weights = multitask_balancer(task_losses, shared_params, return_weights=True)
+                                multitask_balancer.update_step()
+                                
+                                if step % multitask_update_freq == 0:
+                                    logger.info(f"Task weights: {current_weights.cpu().tolist()}")
+                                    if multitask_scheduler is not None:
+                                        multitask_scheduler.update(task_losses.cpu().tolist(), current_weights.cpu().tolist())
+                            else:
+                                if not hasattr(model, 'log_vars'):
+                                    num_tasks = len(task_losses)
+                                    model.log_vars = torch.nn.Parameter(torch.zeros(num_tasks))
+                                    model.log_vars.to(device)
+                                precision = torch.exp(-model.log_vars)
+                                weighted_losses = precision * task_losses + 0.5 * model.log_vars
+                                loss = weighted_losses.sum()
+                                if step % 100 == 0:
+                                    uncertainties = torch.exp(model.log_vars)
+                                    for i, uncertainty in enumerate(uncertainties):
+                                        logger.debug(f"Task {i} uncertainty: {uncertainty.item():.4f}")
                         
                         if loss is None and outputs.get("loss") is not None:
                             loss = outputs.get("loss")
@@ -1094,6 +1365,11 @@ def _train_impl(args):
                                 grad_norm += param.grad.data.norm(2).item() ** 2
                         grad_norm = grad_norm ** 0.5
                         
+                        memory_usage = None
+                        if torch.cuda.is_available():
+                            memory_allocated = torch.cuda.memory_allocated(device) / torch.cuda.max_memory_allocated(device)
+                            memory_usage = memory_allocated if torch.cuda.max_memory_allocated(device) > 0 else 0.0
+                        
                         # If using AMP, unscale gradients before any clipping to record inf checks
                         if scaler is not None and optimizer is not None:
                             try:
@@ -1105,7 +1381,8 @@ def _train_impl(args):
                         if global_grad_norm > 1.0:
                             logger.debug(f"Global gradient clipping applied: norm={global_grad_norm:.4f}")
                         
-                        if grad_accumulator.should_step(grad_norm):
+                        current_loss = loss.item() if loss is not None else None
+                        if grad_accumulator.should_step(grad_norm, loss=current_loss, memory_usage=memory_usage):
                             params = model.parameters() if not hasattr(model, 'module') else model.module.parameters()
                             total_norm, clip_coef, was_clipped = grad_clipper.update_and_clip(params, optimizer, scaler)
                             torch.cuda.empty_cache()
@@ -1122,7 +1399,9 @@ def _train_impl(args):
                                 if step % 50 == 0:
                                     current_threshold = grad_clipper.get_current_threshold()
                                     clip_ratio = (1.0 - clip_coef) * 100 if was_clipped else 0.0
+                                    stats = grad_accumulator.get_stats()
                                     logger.info(f"GradClip: norm={total_norm:.4f}, threshold={current_threshold:.4f}, clipped={was_clipped}, clip_ratio={clip_ratio:.1f}%")
+                                    logger.info(f"SmartAccum: accum={stats['current_accum']}, stable_steps={stats['stable_steps']}, avg_grad_norm={stats['avg_grad_norm']:.4f}, avg_loss={stats['avg_loss']:.4f}, avg_memory={stats['avg_memory']:.2f}")
                     else:
                         logger.debug(f"Warning: Skipping step {step} due to invalid loss (None or no grad).")
                         continue
@@ -1187,7 +1466,8 @@ def _train_impl(args):
                     save_ckpt(model, optimizer, epoch + 1, checkpoint_path)
                     logger.info(f"Checkpoint saved: {checkpoint_path}")
                     _emit('on_checkpoint_saved', path=checkpoint_path, epoch=epoch+1)
-                    logger.info(f"Epoch {epoch + 1} complete | Final accum: {grad_accumulator.get_current_accum()} | Avg grad norm: {sum(grad_accumulator.grad_norm_history[-5:])/min(5, len(grad_accumulator.grad_norm_history)):.4f}")
+                    stats = grad_accumulator.get_stats()
+                    logger.info(f"Epoch {epoch + 1} complete | Accum: {stats['current_accum']} | Steps: {stats['step_count']} | Stable: {stats['stable_steps']} | Avg grad norm: {stats['avg_grad_norm']:.4f} | Avg loss: {stats['avg_loss']:.4f} | Avg memory: {stats['avg_memory']:.2f}")
                     
                     if epoch+1 == min_plateau_epoch:
                         from torch.optim.lr_scheduler import ReduceLROnPlateau
@@ -1240,6 +1520,7 @@ def _train_impl(args):
 class AdaptiveGradientClipper:
     """
     Adaptive gradient clipper with K - FAC Hessian approximation for second - order optimization.
+    Enhanced with multi-layer coordination for stable training across different layer types.
 
     Args:
         initial_max_norm (float, optional): The initial maximum gradient norm. Defaults to 1.0.
@@ -1251,11 +1532,15 @@ class AdaptiveGradientClipper:
         use_kfac (bool, optional): Whether to use K - FAC preconditioning. Defaults to True.
         kfac_update_freq (int, optional): The frequency of updating K - FAC matrices. Defaults to 100.
         kfac_damping (float, optional): The damping factor for K - FAC preconditioning. Defaults to 0.001.
+        enable_layer_coordination (bool, optional): Whether to enable multi-layer coordination. Defaults to True.
+        layer_coordination_strength (float, optional): Strength of layer coordination (0.0-1.0). Defaults to 0.5.
+        layer_group_window (int, optional): Number of layers to coordinate with. Defaults to 3.
     """
     
     def __init__(self, initial_max_norm=1.0, history_length=100, percentile=95, 
                  min_clip=0.1, max_clip=10.0, warmup_steps=10, use_kfac=True, 
-                 kfac_update_freq=100, kfac_damping=0.001):
+                 kfac_update_freq=100, kfac_damping=0.001, enable_layer_coordination=True,
+                 layer_coordination_strength=0.5, layer_group_window=3):
         self.initial_max_norm = initial_max_norm
         self.current_max_norm = initial_max_norm
         self.history_length = history_length
@@ -1266,6 +1551,9 @@ class AdaptiveGradientClipper:
         self.use_kfac = use_kfac
         self.kfac_update_freq = kfac_update_freq
         self.kfac_damping = kfac_damping
+        self.enable_layer_coordination = enable_layer_coordination
+        self.layer_coordination_strength = layer_coordination_strength
+        self.layer_group_window = layer_group_window
         
         self.grad_norm_history = []
         self.step_count = 0
@@ -1273,10 +1561,17 @@ class AdaptiveGradientClipper:
         self.fisher_matrices = {}
         self.grad_momentum = {}
         self.kfac_step = 0
+        
+        self.layer_grad_norms = {}
+        self.layer_clip_thresholds = {}
+        self.layer_groups = {}
+        self.layer_history = {}
+        self.layer_coordination_factors = {}
     
     def update_and_clip(self, parameters, optimizer=None, scaler=None):
         """
         Update the gradient clipping threshold and clip the gradients.
+        Enhanced with multi-layer coordination for stable training across different layer types.
 
         Args:
             parameters (iterable): An iterable of parameters to clip gradients for.
@@ -1292,6 +1587,11 @@ class AdaptiveGradientClipper:
         
         # Expert-level gradient clipping for MoE layers
         self._apply_expert_gradient_clip(parameters)
+        
+        # Multi-layer coordination: track and coordinate gradients across layers
+        if self.enable_layer_coordination:
+            self._track_layer_gradients(parameters)
+            self._coordinate_layer_gradients(parameters)
         
         if self.use_kfac and self.step_count > self.warmup_steps:
             total_norm = self._calculate_natural_gradient_norm(parameters)
@@ -1330,14 +1630,19 @@ class AdaptiveGradientClipper:
         if total_norm > 0:
             if self.use_kfac and self.step_count > self.warmup_steps:
                 self._apply_kfac_preconditioning(parameters)
-            clip_coef = max_norm / (total_norm + 1e-6)
-            was_clipped = clip_coef < 1.0
-            if scaler is not None and optimizer is not None:
-                scaler.unscale_(optimizer)
-            clip_coef_clamped = min(clip_coef, 1.0)
-            for param in parameters:
-                if param.grad is not None:
-                    param.grad.data.mul_(clip_coef_clamped)
+            
+            # Apply layer-wise clipping with coordination
+            if self.enable_layer_coordination:
+                total_norm, clip_coef_clamped, was_clipped = self._apply_layer_wise_clipping(parameters, max_norm, total_norm)
+            else:
+                clip_coef = max_norm / (total_norm + 1e-6)
+                was_clipped = clip_coef < 1.0
+                if scaler is not None and optimizer is not None:
+                    scaler.unscale_(optimizer)
+                clip_coef_clamped = min(clip_coef, 1.0)
+                for param in parameters:
+                    if param.grad is not None:
+                        param.grad.data.mul_(clip_coef_clamped)
             return total_norm, clip_coef_clamped, was_clipped
         return total_norm, 1.0, False
     
@@ -1478,6 +1783,165 @@ class AdaptiveGradientClipper:
                     if grad_norm > expert_clip_threshold:
                         clip_coef = expert_clip_threshold / (grad_norm + 1e-8)
                         param.grad.data.mul_(clip_coef)
+    
+    def _get_layer_identifier(self, param):
+        """
+        Extract layer identifier from parameter for coordination.
+        
+        Args:
+            param: The parameter to extract layer identifier from.
+            
+        Returns:
+            str: Layer identifier string.
+        """
+        param_name = getattr(param, 'name', '')
+        if not isinstance(param_name, str):
+            param_name = ''
+        
+        # Extract layer number and type from parameter name
+        # Common patterns: 'layers.0.self_attn', 'encoder.layers.5', 'vision_encoder.layer.3'
+        import re
+        layer_match = re.search(r'layers?\.(\d+)', param_name)
+        if layer_match:
+            layer_num = int(layer_match.group(1))
+            # Determine layer type
+            if 'vision' in param_name.lower():
+                layer_type = 'vision'
+            elif 'audio' in param_name.lower():
+                layer_type = 'audio'
+            elif 'moe' in param_name.lower() or 'experts' in param_name.lower():
+                layer_type = 'moe'
+            elif 'mamba' in param_name.lower():
+                layer_type = 'mamba'
+            elif 'attention' in param_name.lower() or 'attn' in param_name.lower():
+                layer_type = 'attention'
+            else:
+                layer_type = 'default'
+            return f"{layer_type}_{layer_num}"
+        
+        # Fallback to parameter name hash for non-layer parameters
+        return f"other_{hash(param_name) % 1000}"
+    
+    def _track_layer_gradients(self, parameters):
+        """
+        Track gradient norms per layer for coordination.
+        
+        Args:
+            parameters (iterable): An iterable of parameters to track gradients for.
+        """
+        for param in parameters:
+            if param.grad is not None:
+                layer_id = self._get_layer_identifier(param)
+                grad_norm = param.grad.data.norm(2).item()
+                
+                if layer_id not in self.layer_grad_norms:
+                    self.layer_grad_norms[layer_id] = []
+                    self.layer_history[layer_id] = []
+                
+                self.layer_grad_norms[layer_id].append(grad_norm)
+                
+                # Maintain history for each layer
+                if len(self.layer_grad_norms[layer_id]) > self.history_length:
+                    self.layer_grad_norms[layer_id].pop(0)
+    
+    def _coordinate_layer_gradients(self, parameters):
+        """
+        Coordinate gradient clipping thresholds across layers to ensure stable training.
+        Uses sliding window coordination to balance gradients between adjacent layers.
+        
+        Args:
+            parameters (iterable): An iterable of parameters to coordinate gradients for.
+        """
+        if not self.layer_grad_norms:
+            return
+        
+        # Calculate average gradient norm for each layer
+        layer_avg_norms = {}
+        for layer_id, norms in self.layer_grad_norms.items():
+            if norms:
+                layer_avg_norms[layer_id] = sum(norms) / len(norms)
+        
+        # Sort layers by their average norm
+        sorted_layers = sorted(layer_avg_norms.items(), key=lambda x: x[1])
+        
+        # Calculate coordination factors based on neighboring layers
+        for i, (layer_id, avg_norm) in enumerate(sorted_layers):
+            # Find neighboring layers within the window
+            neighbors = []
+            for j in range(max(0, i - self.layer_group_window), min(len(sorted_layers), i + self.layer_group_window + 1)):
+                if j != i:
+                    neighbors.append(sorted_layers[j][1])
+            
+            if neighbors:
+                # Calculate coordination factor as ratio to neighbors
+                neighbor_avg = sum(neighbors) / len(neighbors)
+                if neighbor_avg > 0:
+                    coord_factor = avg_norm / neighbor_avg
+                    # Clip coordination factor to reasonable range
+                    coord_factor = max(0.5, min(2.0, coord_factor))
+                    self.layer_coordination_factors[layer_id] = coord_factor
+                else:
+                    self.layer_coordination_factors[layer_id] = 1.0
+            else:
+                self.layer_coordination_factors[layer_id] = 1.0
+    
+    def _apply_layer_wise_clipping(self, parameters, global_max_norm, total_norm):
+        """
+        Apply layer-wise gradient clipping with coordination.
+        Each layer gets its own clipping threshold based on its gradient history and coordination with neighbors.
+        
+        Args:
+            parameters (iterable): An iterable of parameters to clip gradients for.
+            global_max_norm (float): The global maximum gradient norm.
+            total_norm (float): The total gradient norm across all parameters.
+            
+        Returns:
+            tuple: A tuple containing the total gradient norm, the clipping coefficient, and a boolean indicating whether clipping occurred.
+        """
+        was_clipped = False
+        total_clipped_norm = 0.0
+        
+        for param in parameters:
+            if param.grad is not None:
+                layer_id = self._get_layer_identifier(param)
+                grad_norm = param.grad.data.norm(2).item()
+                
+                # Determine layer-specific clipping threshold
+                if layer_id in self.layer_grad_norms and len(self.layer_grad_norms[layer_id]) > 10:
+                    # Use layer-specific history
+                    layer_history = self.layer_grad_norms[layer_id]
+                    try:
+                        import numpy as np
+                        layer_percentile = np.percentile(layer_history, self.percentile)
+                    except ImportError:
+                        layer_percentile = sum(layer_history) / len(layer_history)
+                    
+                    # Apply coordination factor
+                    coord_factor = self.layer_coordination_factors.get(layer_id, 1.0)
+                    layer_threshold = layer_percentile * coord_factor
+                    
+                    # Blend with global threshold
+                    layer_max_norm = (1.0 - self.layer_coordination_strength) * global_max_norm + \
+                                    self.layer_coordination_strength * layer_threshold
+                else:
+                    # Use global threshold for layers without enough history
+                    layer_max_norm = global_max_norm
+                
+                # Apply clipping
+                if grad_norm > layer_max_norm:
+                    clip_coef = layer_max_norm / (grad_norm + 1e-6)
+                    param.grad.data.mul_(clip_coef)
+                    was_clipped = True
+                    total_clipped_norm += layer_max_norm ** 2
+                else:
+                    total_clipped_norm += grad_norm ** 2
+        
+        # Recalculate total norm after clipping
+        total_norm = total_clipped_norm ** 0.5
+        clip_coef_clamped = global_max_norm / (total_norm + 1e-6) if total_norm > 0 else 1.0
+        clip_coef_clamped = min(clip_coef_clamped, 1.0)
+        
+        return total_norm, clip_coef_clamped, was_clipped
 
 def validate_train_args(args):
     """

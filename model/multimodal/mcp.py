@@ -187,7 +187,7 @@ class RuchbahMCPToolRegistry:
         """
         await self.register_tool(name, description, parameters, native_handler=handler)
 
-class PiscesLxCoreMCPProtocol:
+class RuchbahCoreMCPProtocol:
     """Protocol adapter enabling dual-track MCP execution for Ruchbah agents.
 
     The adapter wraps :class:`utils.mcp.PiscesLxCoreMCPProtocol` to add metadata

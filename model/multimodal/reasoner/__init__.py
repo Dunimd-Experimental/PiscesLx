@@ -21,9 +21,11 @@ from .unified import RuchbahUnifiedReasoner
 from .cot_memory import RuchbahCoTMemoryReasoner
 from .multipath_meta import RuchbahMultiPathMetaLearner
 from .enhancer import RuchbahMultiModalReasoningEnhancer
+from .recursive_depth import RuchbahRecursiveDepthReasoner, RuchbahRecursiveReasoningConfig, RuchbahThoughtTreeReasoner
 from .multipath_core import RuchbahMultiPathReasoningEngine
 from .multipath_infer import RuchbahMultiPathInferenceEngine
 from .multipath_system import RuchbahUnifiedMultiPathReasoningSystem
+from .enhanced_system import RuchbahEnhancedReasoningSystem, RuchbahEnhancedReasoningConfig
 
 __all__ = [
     "RuchbahUnifiedReasoner",
@@ -33,4 +35,9 @@ __all__ = [
     "RuchbahMultiPathInferenceEngine",
     "RuchbahMultiPathMetaLearner",
     "RuchbahUnifiedMultiPathReasoningSystem",
+    "RuchbahRecursiveDepthReasoner",
+    "RuchbahRecursiveReasoningConfig",
+    "RuchbahThoughtTreeReasoner",
+    "RuchbahEnhancedReasoningSystem",
+    "RuchbahEnhancedReasoningConfig",
 ]

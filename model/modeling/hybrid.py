@@ -38,78 +38,47 @@ from .mamba3 import RuchbahMamba3Integration, RuchbahMamba3Config
 
 logger = PiscesLxCoreLog("Ruchbah.Core.Modeling.Hybrid", file_path="logs/RuchbahCore.log")
 
-class RuchbahIntelligentGate(nn.Module):
+class RuchbahProgressiveHybridGate(nn.Module):
     """
-    Gating mechanism for fusing attention and Mamba-3 outputs.
-
-    Computes adaptive weights to combine attention and Mamba-3 outputs based on
-    sequence characteristics. Supports learned, adaptive, and fixed gating strategies.
+    Progressive hybrid gating mechanism for stable Transformer-Mamba3 training.
+    
+    Implements gradual transition from Transformer-only to full hybrid mode
+    based on training progress and sequence characteristics.
     """
-
-    def __init__(self, d_model: int, gate_type: str = "learned"):
-        """
-        Initialize the gating mechanism.
-
-        Args:
-            d_model (int): Model dimension (hidden size).
-            gate_type (str): Type of gating mechanism. Options: 'learned', 'adaptive',
-                or 'fixed'. Defaults to 'learned'.
-        """
+    
+    def __init__(self, d_model: int, total_steps: int = 100000):
         super().__init__()
         self.d_model = d_model
-        self.gate_type = gate_type
-
-        if gate_type == "learned":
-            # Learned gating: uses concatenated features from all inputs
-            self.gate_proj = nn.Sequential(
-                nn.Linear(d_model * 3, d_model),
-                nn.SiLU(),
-                nn.Linear(d_model, d_model // 2),
-                nn.SiLU(),
-                nn.Linear(d_model // 2, 2),
-                nn.Softmax(dim=-1)
-            )
-        elif gate_type == "adaptive":
-            # Adaptive gating: uses sequence statistics and content features
-            self.seq_stats_proj = nn.Linear(4, d_model // 4)
-            self.content_proj = nn.Linear(d_model, d_model // 4)
-            self.gate_proj = nn.Sequential(
-                nn.Linear(d_model // 2, d_model // 8),
-                nn.SiLU(),
-                nn.Linear(d_model // 8, 2),
-                nn.Softmax(dim=-1)
-            )
-
+        self.total_steps = total_steps
+        
+        self.seq_stats_proj = nn.Linear(4, d_model // 4)
+        self.content_proj = nn.Linear(d_model, d_model // 4)
+        self.gate_proj = nn.Sequential(
+            nn.Linear(d_model // 2, d_model // 8),
+            nn.SiLU(),
+            nn.Linear(d_model // 8, 2),
+            nn.Softmax(dim=-1)
+        )
+        
+        self.register_buffer('current_step', torch.tensor(0))
+        self.hybrid_ratio = nn.Parameter(torch.tensor(0.0))
+        
+        self.fixed_short = torch.tensor([[0.7, 0.3]])
+        self.fixed_long = torch.tensor([[0.3, 0.7]])
+    
     def _compute_sequence_stats(self, x: torch.Tensor) -> torch.Tensor:
-        """
-        Compute sequence-level statistics for adaptive gating.
-
-        Calculates mean, standard deviation, maximum, and minimum values across
-        the sequence dimension, then aggregates them globally.
-
-        Args:
-            x (torch.Tensor): Input tensor of shape [batch, seq_len, d_model].
-
-        Returns:
-            torch.Tensor: Statistics tensor of shape [batch, 4] containing
-                global mean, std, max, and min values.
-        """
-        # Compute per-dimension statistics
         seq_mean = x.mean(dim=1)
         seq_std = x.std(dim=1)
         seq_max = x.max(dim=1)[0]
         seq_min = x.min(dim=1)[0]
-
-        # Aggregate across dimensions to get global statistics
         stats = torch.stack([
             seq_mean.mean(dim=1),
             seq_std.mean(dim=1),
             seq_max.mean(dim=1),
             seq_min.mean(dim=1)
         ], dim=-1)
-
         return stats
-
+    
     def forward(
         self,
         attention_out: torch.Tensor,
@@ -117,85 +86,40 @@ class RuchbahIntelligentGate(nn.Module):
         hidden_states: torch.Tensor,
         sequence_length: int
     ) -> Dict[str, torch.Tensor]:
-        """
-        Compute gating weights and fuse attention and Mamba-3 outputs.
-
-        Args:
-            attention_out (torch.Tensor): Attention output tensor of shape
-                [batch, seq_len, d_model].
-            mamba_out (torch.Tensor): Mamba-3 output tensor of shape
-                [batch, seq_len, d_model].
-            hidden_states (torch.Tensor): Original hidden states tensor of shape
-                [batch, seq_len, d_model].
-            sequence_length (int): Current sequence length.
-
-        Returns:
-            Dict[str, torch.Tensor]: Dictionary containing:
-                - fused_output: Fused output tensor [batch, seq_len, d_model]
-                - attention_weight: Attention gate weight [batch] or [batch, 1, 1]
-                - mamba_weight: Mamba gate weight [batch] or [batch, 1, 1]
-                - gate_type: String indicating the gate type used
-        """
         batch_size = hidden_states.shape[0]
-
-        if self.gate_type == "learned":
-            # Global pooling for efficient gating computation
-            attn_pooled = attention_out.mean(dim=1)
-            mamba_pooled = mamba_out.mean(dim=1)
-            hidden_pooled = hidden_states.mean(dim=1)
-
-            # Concatenate pooled features
-            gate_input = torch.cat([attn_pooled, mamba_pooled, hidden_pooled], dim=-1)
-            gate_weights = self.gate_proj(gate_input)
-
-            # Extract weights and expand for broadcasting
-            attn_weight = gate_weights[:, 0:1].unsqueeze(1)
-            mamba_weight = gate_weights[:, 1:2].unsqueeze(1)
-
-        elif self.gate_type == "adaptive":
-            # Compute sequence statistics
-            seq_stats = self._compute_sequence_stats(hidden_states)
-            seq_features = self.seq_stats_proj(seq_stats)
-
-            # Compute content features
-            content_features = hidden_states.mean(dim=1)
-            content_features = self.content_proj(content_features)
-
-            # Combine sequence and content features
-            combined_features = torch.cat([seq_features, content_features], dim=-1)
-            gate_weights = self.gate_proj(combined_features)
-
-            # Extract weights and expand for broadcasting
-            attn_weight = gate_weights[:, 0:1].unsqueeze(1).unsqueeze(1)
-            mamba_weight = gate_weights[:, 1:2].unsqueeze(1).unsqueeze(1)
-
-        else:  # Fixed gating
-            # Fixed weights based on sequence length threshold
-            if sequence_length > 4096:
-                # Long sequences: favor Mamba-3
-                attn_weight = torch.full(
-                    (batch_size, 1, 1), 0.3, device=hidden_states.device
-                )
-                mamba_weight = torch.full(
-                    (batch_size, 1, 1), 0.7, device=hidden_states.device
-                )
-            else:
-                # Short sequences: favor attention
-                attn_weight = torch.full(
-                    (batch_size, 1, 1), 0.7, device=hidden_states.device
-                )
-                mamba_weight = torch.full(
-                    (batch_size, 1, 1), 0.3, device=hidden_states.device
-                )
-
-        # Apply gating: weighted combination of attention and Mamba outputs
+        
+        if self.training:
+            self.current_step += 1
+        
+        progress = min(1.0, self.current_step.item() / self.total_steps)
+        current_hybrid_ratio = torch.sigmoid(self.hybrid_ratio) * progress
+        
+        if sequence_length > 4096:
+            fixed_weights = self.fixed_long.to(hidden_states.device)
+        else:
+            fixed_weights = self.fixed_short.to(hidden_states.device)
+        
+        seq_stats = self._compute_sequence_stats(hidden_states)
+        seq_features = self.seq_stats_proj(seq_stats)
+        content_features = hidden_states.mean(dim=1)
+        content_features = self.content_proj(content_features)
+        combined_features = torch.cat([seq_features, content_features], dim=-1)
+        adaptive_weights = self.gate_proj(combined_features)
+        
+        final_attn = fixed_weights[0, 0] * (1 - current_hybrid_ratio) + adaptive_weights[:, 0] * current_hybrid_ratio
+        final_mamba = fixed_weights[0, 1] * (1 - current_hybrid_ratio) + adaptive_weights[:, 1] * current_hybrid_ratio
+        
+        attn_weight = final_attn.unsqueeze(0).unsqueeze(0) if final_attn.dim() == 0 else final_attn.unsqueeze(0)
+        mamba_weight = final_mamba.unsqueeze(0).unsqueeze(0) if final_mamba.dim() == 0 else final_mamba.unsqueeze(0)
+        
         fused_output = attn_weight * attention_out + mamba_weight * mamba_out
-
+        
         return {
             "fused_output": fused_output,
-            "attention_weight": attn_weight.squeeze(),
-            "mamba_weight": mamba_weight.squeeze(),
-            "gate_type": self.gate_type
+            "attention_weight": attn_weight.squeeze() if attn_weight.dim() > 1 else attn_weight,
+            "mamba_weight": mamba_weight.squeeze() if mamba_weight.dim() > 1 else mamba_weight,
+            "gate_type": "progressive_hybrid",
+            "hybrid_ratio": current_hybrid_ratio
         }
 
 
@@ -236,8 +160,7 @@ class RuchbahHybridBlock(nn.Module):
         self.mamba3 = RuchbahMamba3Integration(cfg.hidden_size, self.mamba3_config)
 
         # Gating mechanism for fusion
-        gate_type = getattr(cfg, 'hybrid_gate_type', 'adaptive')
-        self.intelligent_gate = RuchbahIntelligentGate(cfg.hidden_size, gate_type)
+        self.progressive_gate = RuchbahProgressiveHybridGate(cfg.hidden_size, total_steps=getattr(cfg, 'hybrid_total_steps', 100000))
 
         # Normalization layers
         self.norm_attention = RuchbahRMSNorm(cfg.hidden_size)
@@ -443,7 +366,7 @@ class RuchbahHybridBlock(nn.Module):
             mamba_out = self._forward_mamba3(hidden_states, attention_mask)
 
             # Intelligent fusion of attention and Mamba outputs
-            fusion_result = self.intelligent_gate(
+            fusion_result = self.progressive_gate(
                 attn_out, mamba_out, hidden_states, seq_len
             )
 
@@ -456,7 +379,8 @@ class RuchbahHybridBlock(nn.Module):
             logger.debug(
                 f"Layer {self.layer_idx}: Sequence length {seq_len}, "
                 f"Attention weight: {fusion_result['attention_weight'].mean():.3f}, "
-                f"Mamba weight: {fusion_result['mamba_weight'].mean():.3f}"
+                f"Mamba weight: {fusion_result['mamba_weight'].mean():.3f}, "
+                f"Hybrid ratio: {fusion_result.get('hybrid_ratio', 0):.3f}"
             )
 
         else:
