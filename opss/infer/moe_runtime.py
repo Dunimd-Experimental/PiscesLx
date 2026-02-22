@@ -71,10 +71,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils.dc import PiscesLxLogger
-from configs.version import VERSION
-
+from utils.paths import get_log_file
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
+from configs.version import VERSION
 
 class POPSSMoERoutingStrategy(Enum):
     """MoE routing strategy enumeration."""
@@ -310,7 +310,7 @@ class ExpertCacheManager:
             'total_accesses': 0,
         }
         
-        self._LOG = get_logger("pisceslx.ops.infer.moe_expert_cache")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
     
     def _compute_input_hash(self, hidden_states: torch.Tensor) -> str:
         """
@@ -481,7 +481,7 @@ class BatchExpertSharing:
             'computations_saved': 0,
         }
         
-        self._LOG = get_logger("popss.ops.infer.batch_sharing")
+        self._LOG = PiscesLxLogger("popss.ops.infer.batch_sharing")
     
     def compute_similarity(self, input_ids_1: Tuple[int, ...], input_ids_2: Tuple[int, ...]) -> float:
         """
@@ -634,7 +634,7 @@ class LoadBalancer:
         self.expert_calls: List[int] = []
         self.lock = threading.Lock()
         
-        self._LOG = get_logger("popss.ops.infer.load_balancer")
+        self._LOG = PiscesLxLogger("popss.ops.infer.load_balancer")
     
     def record_routing(
         self,
@@ -817,7 +817,7 @@ class POPSSMoERuntimeOperator(PiscesLxOperatorInterface):
         self.name = "infer.moe_runtime"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("pisceslx.ops.infer.moe_runtime")
+        self._LOG = PiscesLxLogger("pisceslx.ops.infer.moe_runtime")
         
         self.config = config or POPSSMoERuntimeConfig()
         self.num_experts = 64

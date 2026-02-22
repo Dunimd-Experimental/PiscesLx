@@ -25,11 +25,11 @@ from typing import Any, Dict, Optional
 import torch
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
-
-from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Opss.Infer", file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
 
 

@@ -20,14 +20,10 @@
 
 from typing import Any, Optional
 
-try:
-    from utils.dc import PiscesLxConfiguration
-    _CONFIG_AVAILABLE = True
-except ImportError:
-    _CONFIG_AVAILABLE = False
+from utils.dc import PiscesLxConfiguration
 
 
-class _SimpleConfigManager:
+class PiscesLxCoreConfigManager:
     """Simple config manager fallback when utils.dc is not available."""
     def __init__(self):
         self._config: dict = {}
@@ -37,9 +33,6 @@ class _SimpleConfigManager:
     
     def set(self, key: str, value: Any) -> None:
         self._config[key] = value
-
-
-PiscesLxCoreConfigManager = _SimpleConfigManager
 
 
 class PiscesLxToolsMonitorConfig:

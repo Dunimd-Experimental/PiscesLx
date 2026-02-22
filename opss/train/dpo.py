@@ -86,6 +86,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda.amp import GradScaler, autocast
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
@@ -222,7 +224,7 @@ class POPSSDPODataset(Dataset):
         self.max_response_length = max_response_length
         
         self.samples = self._load_data(data_path)
-        self._LOG = get_logger("pisceslx.ops.train.dpo.dataset")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         self._LOG.info(f"Loaded {len(self.samples)} preference samples from {data_path}")
     
     def _load_data(self, data_path: str) -> List[Dict[str, Any]]:
@@ -457,7 +459,7 @@ class POPSSDPOTrainingOperator(PiscesLxOperatorInterface):
         """
         super().__init__()
         self.config = config or POPSSDPOTrainingConfig()
-        self._LOG = get_logger("pisceslx.ops.train.dpo")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         
         # Determine device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

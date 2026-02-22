@@ -51,6 +51,8 @@ import math
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 
 
@@ -126,7 +128,7 @@ class POPSSRingAttentionOperator(PiscesLxOperatorInterface):
         self.name = "infer.ring_attention"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("popss.ops.infer.ring_attention")
+        self._LOG =PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         self.config = config or POPSSRingAttentionConfig()
         
         self._ring_initialized = False

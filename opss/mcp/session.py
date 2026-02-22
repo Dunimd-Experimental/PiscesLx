@@ -64,6 +64,7 @@ from typing import Dict, List, Any, Optional, Set, Callable
 from collections import defaultdict
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_filer
 
 from .types import (
     POPSSMCPSessionMemory,
@@ -152,7 +153,7 @@ class POPSSMCPSession:
         Returns:
             PiscesLxLogger: Configured logger instance.
         """
-        logger = get_logger(f"PiscesLx.Core.MCP.Session.{self.session_id[:8]}")
+        logger = PiscesLxLogger("PiscesLx.Opss.MCP",file_path=get_log_file("PiscesLx.Opss.MCP"), enable_file=True)
         return logger
     
     def create_execution_context(self, tool_name: str, arguments: Dict[str, Any]) -> str:

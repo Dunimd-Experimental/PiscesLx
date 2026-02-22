@@ -22,7 +22,7 @@ from .manager import PiscesLxToolsDataDatasetManager
 from .loader import PiscesLxToolsDataOptimizedDataLoader, PiscesLxToolsDataBatchConfig
 from .streaming import PiscesLxToolsDataLargeScaleStreamingDataset
 from .memory import PiscesLxToolsDataMemoryMonitor, PiscesLxToolsDataStreamingDataBuffer
-from .core import Dataset as PiscesDataset
+from .core import Dataset as PiscesLxDataset
 
 __all__ = [
     "PiscesLxToolsDataDatasetManager",
@@ -31,5 +31,5 @@ __all__ = [
     "PiscesLxToolsDataLargeScaleStreamingDataset",
     "PiscesLxToolsDataMemoryMonitor",
     "PiscesLxToolsDataStreamingDataBuffer",
-    "PiscesDataset"
+    "PiscesLxDataset"
 ]

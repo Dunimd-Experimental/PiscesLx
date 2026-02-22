@@ -30,11 +30,11 @@ from .caches import PiscesLxToolsDataDownloadCache
 from datasets import load_from_disk, Dataset
 from typing import Optional, Set, List, Tuple
 from tools.data.clean import DatasetCleaner
-from .config import PiscesLxToolsDataConfigLoader, PiscesLxToolsDataDownloadConfig, DatasetItem
+from .config import PiscesLxToolsDataConfigLoader, PiscesLxToolsDataDownloadConfig, PiscesLxToolsDatasetItem
 from .sources import PiscesLxToolsDataSourceRouter
 
 from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.Tools.Data"), enable_file=True)
 
 class PiscesLxToolsDataDatasetDownload:
     @staticmethod
@@ -336,7 +336,7 @@ class PiscesLxToolsDataDatasetDownload:
 
         # Generate download tasks and deduplicate by dataset name
         seen_names: Set[str] = set()
-        def preferred_sources_for(d: DatasetItem) -> List[str]:
+        def preferred_sources_for(d: PiscesLxToolsDatasetItem) -> List[str]:
             if getattr(d, "source", None):
                 return [d.source]
             if getattr(d, "source_preference", None):

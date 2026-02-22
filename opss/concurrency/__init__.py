@@ -46,11 +46,11 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 from concurrent.futures import TimeoutError as FutureTimeoutError
 
 from utils.dc import PiscesLxLogger
-from configs.version import VERSION
+from utils.paths import get_log_file
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
+from configs.version import VERSION
 
-from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Opss.Concurrency", file_path=get_log_file("PiscesLx.Opss.Concurrency"), enable_file=True)
 
 
@@ -371,7 +371,7 @@ class POPSSConcurrencyOperator(PiscesLxOperatorInterface):
         self.name = "concurrency"
         self.version = VERSION
         self.config = config or POPSSConcurrencyConfig()
-        self._LOG = get_logger("pisceslx.ops.concurrency")
+        self._LOG = PiscesLxLogger("pisceslx.ops.concurrency")
     
     @property
     def description(self) -> str:
@@ -490,13 +490,8 @@ __all__ = [
     "POPSSConcurrencyConfig",
     "POPSSRetryConfig",
     "POPSSTimeoutOperator",
-    "TimeoutOperator",
-    "RetryOperator",
     "POPSSRetryOperator",
     "POPSSParallelOperator",
     "POPSSAsyncOperator",
     "POPSSConcurrencyOperator",
 ]
-
-RetryOperator = POPSSRetryOperator
-TimeoutOperator = POPSSTimeoutOperator

@@ -25,18 +25,8 @@ import threading
 import platform
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Callable
-
-try:
-    import psutil
-    _PSUTIL_AVAILABLE = True
-except ImportError:
-    _PSUTIL_AVAILABLE = False
-
-try:
-    import pynvml
-    _PYNVML_AVAILABLE = True
-except ImportError:
-    _PYNVML_AVAILABLE = False
+import psutil
+import pynvml
 
 from .store import POPSSRunStore
 from .controller import POPSSRunController
@@ -139,8 +129,6 @@ class POPSSResourceMonitor:
     def _init_nvml(self) -> bool:
         if not self._enable_gpu:
             return False
-        if not _PYNVML_AVAILABLE:
-            return False
         if self._nvml_initialized:
             return self._gpu_handle is not None
         try:
@@ -164,7 +152,7 @@ class POPSSResourceMonitor:
             return False
 
     def _shutdown_nvml(self) -> None:
-        if self._nvml_initialized and _PYNVML_AVAILABLE:
+        if self._nvml_initialized:
             try:
                 pynvml.nvmlShutdown()
             except Exception:
@@ -194,8 +182,6 @@ class POPSSResourceMonitor:
         return result
 
     def _get_process_info(self, pid: int) -> Optional[Dict[str, Any]]:
-        if not _PSUTIL_AVAILABLE:
-            return None
         try:
             proc = psutil.Process(pid)
             with proc.oneshot():

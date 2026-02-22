@@ -65,8 +65,11 @@ Usage:
 
 from typing import Any, Dict, List, Optional, Callable
 from dataclasses import dataclass
-import logging
 import asyncio
+
+
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 from .config import OPSSConfig
 
@@ -124,7 +127,7 @@ class PiscesLxOPSSIntegration:
             config: OPSS configuration
         """
         self.config = config
-        self._LOG = logging.getLogger(self.__class__.__name__)
+        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
         
         self._mcp_plaza = None
         self._agent_registry = None

@@ -67,9 +67,6 @@ Usage Examples:
     >>> 
     >>> # Verify model ownership
     >>> score, passed = operator.verify(model)
-
-Author: PiscesL1 Development Team
-Version: 1.0.0
 """
 
 import math

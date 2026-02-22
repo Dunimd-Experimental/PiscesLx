@@ -63,9 +63,6 @@ Usage Examples:
     >>> # Decode bitstream to payload
     >>> decoded = operator.decode(bitstream)
     >>> print(decoded["model"])
-
-Author: PiscesL1 Development Team
-Version: 1.0.0
 """
 
 import json

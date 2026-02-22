@@ -74,9 +74,6 @@ Usage Examples:
     >>> 
     >>> # Extract watermark from content
     >>> extracted = operator.extract(content)
-
-Author: PiscesL1 Development Team
-Version: 1.0.0
 """
 
 import re
@@ -102,8 +99,6 @@ from .config import (
 )
 from .protocol_operator import POPSSWatermarkProtocolOperator
 
-PiscesLxProtocolOperator = POPSSWatermarkProtocolOperator
-
 
 class POPSSContentWatermarkOperator(PiscesLxBaseOperator):
     """
@@ -115,7 +110,7 @@ class POPSSContentWatermarkOperator(PiscesLxBaseOperator):
     
     Attributes:
         config (POPSSWatermarkConfig): Watermark configuration
-        protocol_operator (PiscesLxProtocolOperator): Payload framing operator
+        protocol_operator (POPSSWatermarkProtocolOperator): Payload framing operator
         zero_width_chars (List[str]): Zero-width character mapping
         
     Input Format:
@@ -142,7 +137,7 @@ class POPSSContentWatermarkOperator(PiscesLxBaseOperator):
         self.version = VERSION
         self.description = "Multi-modal content watermarking for text, image, and audio"
         self.config = config or POPSSWatermarkConfig()
-        self.protocol_operator = PiscesLxProtocolOperator()
+        self.protocol_operator = POPSSWatermarkProtocolOperator()
         self.zero_width_chars = ["\u200B", "\u200C", "\u200D", "\uFEFF"]
         self.char_to_bits = {v: k for k, v in {
             "00": self.zero_width_chars[0],
@@ -921,7 +916,7 @@ class POPSSWatermarkContentOperator(PiscesLxBaseOperator):
         self.version = VERSION
         self.description = "Multi-modal content watermarking for text, image, and audio"
         self.config = config or POPSSWatermarkConfig()
-        self.protocol_operator = PiscesLxProtocolOperator()
+        self.protocol_operator = POPSSWatermarkProtocolOperator()
     
     @classmethod
     def create(cls, config: Optional[POPSSWatermarkConfig] = None) -> 'POPSSWatermarkContentOperator':

@@ -22,7 +22,7 @@ import time
 from typing import List, Dict, Any, Optional
 
 
-class _SimpleCacheManager:
+class PiscesLxCoreEnhancedCacheManager:
     """Simple cache manager fallback."""
     def __init__(self):
         self._cache: Dict[str, Any] = {}
@@ -37,10 +37,7 @@ class _SimpleCacheManager:
                 return entry["value"]
             del self._cache[key]
         return None
-
-
-PiscesLxCoreEnhancedCacheManager = _SimpleCacheManager
-
+        
 
 class PiscesLxMonitorAlertManager:
     """Alert manager for system monitoring with caching and threshold checking."""

@@ -41,6 +41,8 @@ import torch
 import torch.nn as nn
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
@@ -115,7 +117,7 @@ class YvQuantizationEngine:
             config: Quantization configuration. Uses defaults if None.
         """
         self.config = config or QuantizationEngineConfig()
-        self._LOG = get_logger("poopss.ops.quantize.engine")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         self.device = self._setup_device()
         
         self.quantization_methods: Dict[str, Any] = {}
@@ -616,7 +618,7 @@ class POPSSQuantizationEngineOperator(PiscesLxOperatorInterface):
         self.name = "quantize.engine"
         self.version = VERSION
         self.type = "quantize"
-        self._LOG = get_logger("pisceslx.ops.quantize.engine")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         self.engine: Optional[YvQuantizationEngine] = None
     
     @property

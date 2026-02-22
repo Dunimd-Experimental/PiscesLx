@@ -26,7 +26,7 @@ from typing import List, Optional
 from configs.version import VERSION
 
 @dataclass
-class DatasetItem:
+class PiscesLxToolsDatasetItem:
     """
     Represents a configuration item for a dataset, including source preferences.
     """
@@ -88,7 +88,7 @@ class PiscesLxToolsDataDownloadConfig:
     max_samples_per_dataset: int = 50000  # Maximum number of samples per dataset
     post_download_clean: bool = True  # Whether to perform cleanup after download
     source_preference: List[str] = None  # Default source preference list
-    datasets: List[DatasetItem] = None  # List of dataset configuration items
+    datasets: List[PiscesLxToolsDatasetItem] = None  # List of dataset configuration items
     
     def __post_init__(self):
         """
@@ -154,11 +154,11 @@ class PiscesLxToolsDataConfigLoader:
         if "version" in raw and raw["version"] == "{{VERSION}}":
             raw["version"] = VERSION
         
-        # Initialize list to store DatasetItem objects
-        items: List[DatasetItem] = []
+        # Initialize list to store PiscesLxToolsDatasetItem objects
+        items: List[PiscesLxToolsDatasetItem] = []
         for i, d in enumerate(datasets_raw):
             try:
-                item = DatasetItem(
+                item = PiscesLxToolsDatasetItem(
                     name=d["name"],
                     save=d["save"],
                     desc=d.get("desc", d["save"]),
@@ -192,5 +192,5 @@ class PiscesLxToolsDataConfigLoader:
         
         return cfg
 
-__all__ = ["DatasetItem", "PiscesLxToolsDataDownloadConfig", "PiscesLxToolsDataConfigLoader"]
+__all__ = ["PiscesLxToolsDatasetItem", "PiscesLxToolsDataDownloadConfig", "PiscesLxToolsDataConfigLoader"]
 

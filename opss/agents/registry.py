@@ -44,8 +44,6 @@ Usage:
     agents = registry.list_agents(capability=POPSSAgentCapability.CODE_GENERATION)
 """
 
-from __future__ import annotations
-
 import threading
 import uuid
 from dataclasses import dataclass, field

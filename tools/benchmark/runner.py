@@ -25,13 +25,8 @@ from dataclasses import asdict
 
 from utils.dc import PiscesLxLogger, PiscesLxConfiguration, PiscesLxSystemMonitor
 
-try:
-    from evalscope import run_task
-    from evalscope.summarizer import Summarizer
-except ImportError:
-    # Fallback for when evalscope is not available
-    run_task = None
-    Summarizer = None
+from evalscope import run_task
+from evalscope.summarizer import Summarizer
 
 from .config import PiscesLxToolsBenchmarkConfig
 from .builders import PiscesLxToolsTaskConfigBuilder
@@ -90,11 +85,7 @@ class PiscesLxToolsBenchmark:
         )
         try:
             task_config = PiscesLxToolsTaskConfigBuilder.build(self.config)
-            if run_task is None:
-                raise ImportError("evalscope is not available")
             results = run_task(task_config)
-            if Summarizer is None:
-                raise ImportError("evalscope.summarizer is not available")
             summarizer = Summarizer()
             summary = summarizer.summarize(results)
             self.result_manager.save_results(results, summary, self.config)

@@ -24,8 +24,6 @@ MCP Tool Base Classes
 Provides the base class for all MCP tools in the PiscesL1 system.
 """
 
-from __future__ import annotations
-
 import asyncio
 import time
 from abc import ABC, abstractmethod
@@ -33,6 +31,8 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, ClassVar
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 
 
@@ -55,7 +55,7 @@ class POPSSMCPToolBase(ABC):
     tags: ClassVar[List[str]] = []
     
     def __init__(self):
-        self._LOG = get_logger(f"POPSSMCPTool.{self.name}")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.MCP",file_path=get_log_file("PiscesLx.Opss.MCP"), enable_file=True)
     
     @abstractmethod
     async def execute(self, arguments: Dict[str, Any]) -> POPSSMCPToolResult:
@@ -145,7 +145,7 @@ class POPSSMCPToolRegistry:
     @classmethod
     def register(cls, tool: POPSSMCPToolBase) -> None:
         cls._tools[tool.name] = tool
-        get_logger("POPSSMCPToolRegistry").info(f"Registered tool: {tool.name}")
+        PiscesLxLogger("PiscesLx.Opss.MCP",file_path=get_log_file("PiscesLx.Opss.MCP"), enable_file=True).info(f"Registered tool: {tool.name}")
     
     @classmethod
     def unregister(cls, name: str) -> bool:

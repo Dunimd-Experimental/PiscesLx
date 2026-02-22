@@ -48,6 +48,8 @@ from torch.distributed.fsdp import (
 )
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
@@ -170,7 +172,7 @@ class POPSSFSDPTrainingOperator(PiscesLxOperatorInterface):
         self.name = "fsdp.training"
         self.version = VERSION
         self.type = "training"
-        self._LOG = get_logger("pisceslx.ops.train.fsdp")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         
     @property
     def description(self) -> str:

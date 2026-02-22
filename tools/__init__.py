@@ -29,7 +29,7 @@ _LAZY_EXPORTS = {
     'PiscesLxToolsDataDownloadConfig': 'tools.data.download.config',
     'PiscesLxToolsDataDownloadCache': 'tools.data.download.caches',
     'PiscesLxToolsDataConfigLoader': 'tools.data.download.config',
-    'DatasetItem': 'tools.data.download.config',
+    'PiscesLxToolsDatasetItem': 'tools.data.download.config',
     # Infer
     'PiscesLxInferOrchestrator': 'tools.infer.orchestrator',
     'PiscesLxToolsInferRunner': 'tools.infer.runner',

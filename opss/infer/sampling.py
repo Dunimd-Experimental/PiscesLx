@@ -38,6 +38,8 @@ import torch.nn.functional as F
 from torch.cuda.amp import autocast
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
@@ -80,7 +82,7 @@ class POPSSSamplingOperator(PiscesLxOperatorInterface):
         self.name = "sampling.inference"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("popss.ops.infer.sampling")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         
     @property
     def description(self) -> str:
@@ -432,7 +434,7 @@ class POPSSBeamSearchOperator(PiscesLxOperatorInterface):
         self.name = "beam_search.inference"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("popss.ops.infer.beam_search")
+        self._LOG = PiscesLxLogger("popss.ops.infer.beam_search")
         
     @property
     def description(self) -> str:

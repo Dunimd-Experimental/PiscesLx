@@ -55,6 +55,8 @@ import math
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 
 
@@ -143,7 +145,7 @@ class POPSSFlashAttention3Operator(PiscesLxOperatorInterface):
         self.name = "infer.flash_attention_3"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("popss.ops.infer.flash_attention_3")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         self.config = config or POPSSFlashAttention3Config()
         
         self._backend = self._detect_backend()

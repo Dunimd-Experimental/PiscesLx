@@ -50,7 +50,11 @@ from typing import Any, Dict, List, Optional, Set
 import yaml
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
+
+_LOG = PiscesLxLogger("PiscesLx.Opss.Agents",file_path=get_log_file("PiscesLx.Opss.Agents"), enable_file=True)
 
 
 @dataclass
@@ -122,15 +126,6 @@ class POPSSPromptLoader:
     _file_timestamps: Dict[str, float] = {}
     _lock = threading.RLock()
     
-    _LOG: PiscesLxLogger = None
-    
-    @classmethod
-    def _get_logger(cls) -> PiscesLxLogger:
-        """Get or create logger."""
-        if cls._LOG is None:
-            cls._LOG = get_logger("POPSSPromptLoader")
-        return cls._LOG
-    
     @classmethod
     def load(cls, expert_type: str, use_cache: bool = True) -> POPSSPromptConfig:
         """
@@ -169,7 +164,7 @@ class POPSSPromptLoader:
             cls._cache[expert_type] = config
             cls._file_timestamps[expert_type] = prompt_file.stat().st_mtime
             
-            cls._get_logger().debug(f"Loaded prompt: {expert_type}")
+            _LOG.debug(f"Loaded prompt: {expert_type}")
             return config
     
     @classmethod
@@ -205,7 +200,7 @@ class POPSSPromptLoader:
                                 expert_type, use_cache=use_cache
                             )
                         except Exception as e:
-                            cls._get_logger().warning(
+                            _LOG.warning(
                                 f"Failed to load {expert_type}: {e}"
                             )
         
@@ -289,7 +284,7 @@ class POPSSPromptLoader:
         try:
             return behavior_prompt.format(**kwargs)
         except KeyError as e:
-            cls._get_logger().warning(
+            _LOG.warning(
                 f"Missing variable {e} for {expert_type}"
             )
             return behavior_prompt
@@ -406,7 +401,7 @@ class POPSSPromptLoader:
         with cls._lock:
             cls._cache.clear()
             cls._file_timestamps.clear()
-            cls._get_logger().info("Prompt cache cleared")
+            _LOG.info("Prompt cache cleared")
     
     @classmethod
     def validate_prompt(cls, expert_type: str) -> Dict[str, Any]:
@@ -503,5 +498,5 @@ class POPSSPromptLoader:
         with open(prompt_file, 'w', encoding='utf-8') as f:
             yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
         
-        cls._get_logger().info(f"Created prompt file: {prompt_file}")
+        _LOG.info(f"Created prompt file: {prompt_file}")
         return prompt_file

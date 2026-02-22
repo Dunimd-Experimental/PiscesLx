@@ -68,7 +68,9 @@ import json
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass, field
 from enum import Enum
-import logging
+
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 
 class PiscesLxAgentMode(Enum):
@@ -182,7 +184,7 @@ class PiscesLxAgentInterceptor:
     
     def __init__(self):
         """Initialize the agent interceptor."""
-        self._LOG = logging.getLogger(self.__class__.__name__)
+        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
         self._intercept_count = 0
         self._mode_counts: Dict[str, int] = {mode.value: 0 for mode in PiscesLxAgentMode}
     

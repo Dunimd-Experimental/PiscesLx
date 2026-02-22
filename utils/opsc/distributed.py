@@ -72,6 +72,7 @@ from ..dc import (
     PiscesLxLogger, PiscesLxMetrics, PiscesLxTracing,
     PiscesLxDevice, PiscesLxDeviceType, PiscesLxDeviceStatus, PiscesLxSystemMonitor
 )
+from utils.paths import get_log_file
 
 
 class PiscesLxParallelismType(Enum):

@@ -68,9 +68,11 @@ Usage:
 
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
-import logging
 import time
 import threading
+
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 from .config import RunConfig
 
@@ -141,7 +143,7 @@ class PiscesLxRunIntegration:
             config: Run configuration
         """
         self.config = config
-        self._LOG = logging.getLogger(self.__class__.__name__)
+        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
         
         self._run_store = None
         self._controller = None

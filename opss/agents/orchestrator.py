@@ -46,8 +46,6 @@ Usage:
     result = await orchestrator.orchestrate("Analyze this data and generate a report")
 """
 
-from __future__ import annotations
-
 import asyncio
 import uuid
 from abc import ABC, abstractmethod
@@ -57,6 +55,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, TypeVar
 
 from utils.dc import PiscesLxLogger, PiscesLxMetrics, PiscesLxTracing
+from utils.paths import get_log_file
 from utils.opsc.executor import PiscesLxOperatorExecutor
 from utils.opsc.interface import PiscesLxOperatorStatus
 
@@ -69,6 +68,8 @@ from .base import (
     POPSSAgentCapability,
 )
 from .registry import POPSSAggregentRegistry, POPSSAggregentType
+
+_LOG = PiscesLxLogger("PiscesLx.Opss.Agents",file_path=get_log_file("PiscesLx.Opss.Agents"), enable_file=True)
 
 T = TypeVar('T')
 
@@ -245,7 +246,6 @@ class POPSSBaseOrchestrator(ABC):
         self.config = config
         self.registry = config.registry
 
-        self._LOG = self._configure_logging()
         self._metrics = PiscesLxMetrics()
         self._tracing = PiscesLxTracing()
 
@@ -272,13 +272,9 @@ class POPSSBaseOrchestrator(ABC):
             'on_complete': [],
         }
 
-        self._LOG.info("orchestrator_initialized",
+        _LOG.info("orchestrator_initialized",
                         max_parallel=config.max_parallel_agents,
                         strategy=config.default_strategy.value)
-
-    def _configure_logging(self) -> PiscesLxLogger:
-        """Configure logging for orchestrator."""
-        return get_logger("POPSSOrchestrator")
 
     @abstractmethod
     async def create_plan(self, task: str, context: Optional[Dict[str, Any]] = None) -> POPSSOrchestrationPlan:
@@ -307,7 +303,7 @@ class POPSSBaseOrchestrator(ABC):
                 try:
                     callback(data)
                 except Exception as e:
-                    self._LOG.error("callback_error", event=event, error=str(e))
+                    _LOG.error("callback_error", event=event, error=str(e))
 
     async def orchestrate(self, task: str, **kwargs) -> POPSSOrchestrationResult:
         """
@@ -326,7 +322,7 @@ class POPSSBaseOrchestrator(ABC):
             attributes={"task": task[:100], "plan_id": plan_id}
         )
 
-        self._LOG.info("orchestration_started", plan_id=plan_id, task=task[:100])
+        _LOG.info("orchestration_started", plan_id=plan_id, task=task[:100])
 
         context = kwargs.get('context', {})
 
@@ -361,7 +357,7 @@ class POPSSBaseOrchestrator(ABC):
             'result': result,
         })
 
-        self._LOG.info("orchestration_completed",
+        _LOG.info("orchestration_completed",
                         plan_id=plan_id,
                         success=result.success,
                         execution_time=result.total_execution_time)
@@ -384,7 +380,7 @@ class POPSSBaseOrchestrator(ABC):
     def shutdown(self) -> None:
         """Shutdown the orchestrator."""
         self.executor.shutdown(wait=True)
-        self._LOG.info("orchestrator_shutdown")
+        _LOG.info("orchestrator_shutdown")
 
 
 class POPSSDynamicOrchestrator(POPSSBaseOrchestrator):
@@ -408,7 +404,7 @@ class POPSSDynamicOrchestrator(POPSSBaseOrchestrator):
         self._agent_selectors: Dict[str, Callable] = {}
         self._stage_templates: Dict[str, POPSSOrchestrationStage] = {}
 
-        self._LOG.info("dynamic_orchestrator_initialized")
+        _LOG.info("dynamic_orchestrator_initialized")
 
     def register_agent_selector(self, capability: POPSSAgentCapability, selector: Callable) -> None:
         """Register a custom agent selector for a capability."""
@@ -457,7 +453,7 @@ class POPSSDynamicOrchestrator(POPSSBaseOrchestrator):
             }
         )
 
-        self._LOG.info("plan_created",
+        _LOG.info("plan_created",
                         plan_id=plan_id,
                         stages=len(stages),
                         agents=len(selected_agents))
@@ -844,4 +840,4 @@ class POPSSDynamicOrchestrator(POPSSBaseOrchestrator):
     def shutdown(self) -> None:
         """Shutdown the dynamic orchestrator."""
         super().shutdown()
-        self._LOG.info("dynamic_orchestrator_shutdown")
+        _LOG.info("dynamic_orchestrator_shutdown")

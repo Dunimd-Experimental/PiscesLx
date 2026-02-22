@@ -95,8 +95,6 @@ from .pipeline import TrainingPipelineOperator, CurriculumLearningOperator, Pisc
 from .watermark import TrainingWatermarkIntegrationOperator, TrainingPipelineWatermarkOperator
 
 from utils.paths import get_cache_dir
-
-
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=get_log_file("PiscesLx.Tools.Train"), enable_file=True)
 
@@ -538,7 +536,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         results: List[Dict[str, Any]] = []
         for idx, ds_name in enumerate(dataset_list):
-            train_ds = dm.load(subset=str(ds_name), split="train", max_samples=None)
+            train_ds = dm.load(name=str(ds_name), subset=str(ds_name), split="train", max_samples=None, config=model_cfg)
             train_loader = DataLoader(train_ds, **dl_kwargs)
 
             if idx == 0:

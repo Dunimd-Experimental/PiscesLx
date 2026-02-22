@@ -96,7 +96,6 @@ import json
 import time
 import uuid
 import io
-import logging
 from typing import Any, Dict, List, Optional, Union, AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -105,6 +104,9 @@ import torch
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 from .config import (
     InferenceConfig,
@@ -164,7 +166,7 @@ from .opss_integration import PiscesLxOPSSIntegration
 from .run_integration import PiscesLxRunIntegration
 
 
-_LOG = logging.getLogger(__name__)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
 
 
 class PiscesLxInferService:
@@ -244,7 +246,7 @@ class PiscesLxInferService:
         self._error_count = 0
         self._latencies: List[float] = []
         
-        self._LOG = logging.getLogger(self.__class__.__name__)
+        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
     
     @asynccontextmanager
     async def lifespan(self, app: FastAPI):
@@ -1160,7 +1162,7 @@ class PiscesLxBackendServer:
         self.serve_config = getattr(args, 'serve_config', None)
         self.model_path = getattr(args, 'model_path', None)
         
-        self._LOG = logging.getLogger(self.__class__.__name__)
+        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
     
     def _build_config(self) -> ServiceConfig:
         """Build service configuration from CLI arguments."""

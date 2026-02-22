@@ -37,6 +37,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
@@ -76,7 +78,7 @@ class POPSSSpeculativeDecodingOperator(PiscesLxOperatorInterface):
         self.name = "speculative.decoding"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("popss.ops.infer.speculative")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         
     @property
     def description(self) -> str:
@@ -367,7 +369,7 @@ class POPSSAssistedDecodingOperator(POPSSSpeculativeDecodingOperator):
         self.name = "assisted.decoding"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("popss.ops.infer.assisted")
+        self._LOG = PiscesLxLogger("popss.ops.infer.assisted")
     
     @property
     def description(self) -> str:

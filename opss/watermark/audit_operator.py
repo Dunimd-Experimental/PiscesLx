@@ -66,9 +66,6 @@ Usage Examples:
     >>> 
     >>> # Generate audit report
     >>> report = operator.generate_report(start_date, end_date)
-
-Author: PiscesL1 Development Team
-Version: 1.0.0
 """
 
 import json

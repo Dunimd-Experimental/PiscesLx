@@ -207,7 +207,7 @@ python manage.py help
 | monitor    | 系统监控（GPU/CPU/内存）                                         |
 | download   | 下载数据集                                                       |
 | benchmark  | 模型评测与基准测试                                               |
-| mcp        | MCP 工具管理（status / warmup / refresh-cache）                  |
+| mcp        | MCP 工具管理（status / warmup / refresh-cache） |
 | watermark  | 水印检测（文本/文件/图像/音频/视频/模型权重）                    |
 | action     | 后台进程管理（提交/状态/控制）                                   |
 | help       | 显示帮助信息                                                     |
@@ -341,8 +341,7 @@ python manage.py download
 | torch | BSD-style | torchvision | BSD-style |
 | torchaudio | BSD-style | torch-directml | MIT |
 | transformers | Apache 2.0 | tokenizers | Apache 2.0 |
-| datasets | Apache 2.0 | huggingface-hub | Apache 2.0 |
-| modelscope | Apache 2.0 | opencv-python | MIT |
+| huggingface-hub | Apache 2.0 | modelscope | Apache 2.0 |
 | numpy | BSD 3-Clause | addict | MIT |
 | accelerate | Apache 2.0 | einops | MIT |
 | timm | Apache 2.0 | pytorch-lightning | Apache 2.0 |
@@ -357,14 +356,15 @@ python manage.py download
 | ijson | BSD 3-Clause | pyarrow | Apache 2.0 |
 | tqdm | MIT | jsonlines | MIT |
 | streamlit | Apache 2.0 | PyYAML | MIT |
-| GitPython | BSD 3-Clause | mcp | MIT |
+| GitPython | BSD 3-Clause | opencv-python | MIT |
+| numpy | BSD 3-Clause | addict | MIT |
 | openai | Apache 2.0 | requests | Apache 2.0 |
 | beautifulsoup4 | MIT | psutil | BSD 3-Clause |
 | pytz | MIT | pywin32 | PSF |
 | duckduckgo-search | MIT | plotly | MIT |
+| evalscope | Apache 2.0 |  |  |
 | safetensors | Apache 2.0 | deepspeed | Apache 2.0 |
-| mpi4py | BSD 3-Clause | evalscope | Apache 2.0 |
-| fastmcp | MIT | aiofiles | Apache 2.0 |
+| aiofiles | Apache 2.0 |  |  |
 | pathlib2 | MIT | textual | MIT |
 | dmsc | Apache 2.0 |  |  |
 

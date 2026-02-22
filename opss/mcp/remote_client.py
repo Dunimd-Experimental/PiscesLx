@@ -31,6 +31,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from enum import Enum
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 class POPSSMCPMessageType(Enum):
     TOOL_CALL = 1
@@ -100,7 +101,7 @@ class POPSSMCPClient:
         self._LOG.info("POPSSMCPClient initialized")
     
     def _configure_logging(self) -> PiscesLxLogger:
-        _LOG = get_logger("PiscesLx.Core.MCP.Remote")
+        _LOG = PiscesLxLogger("PiscesLx.Opss.MCP",file_path=get_log_file("PiscesLx.Opss.MCP"), enable_file=True)
         return _LOG
     
     def connect(self) -> bool:

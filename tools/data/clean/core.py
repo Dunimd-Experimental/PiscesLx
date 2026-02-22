@@ -27,7 +27,7 @@ from utils.dc import PiscesLxLogger
 from utils.paths import get_cache_dir
 
 from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Tools.Data.Clean", file_path=get_log_file("PiscesLx.Tools.Data.Clean"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.Tools.Data"), enable_file=True)
 
 class DatasetClean:
     """

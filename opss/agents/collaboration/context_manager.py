@@ -26,6 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 class POPSSContextScope(Enum):
     GLOBAL = "global"
@@ -127,7 +128,7 @@ class POPSSContextManager:
         self._LOG.info("POPSSContextManager initialized")
     
     def _configure_logging(self) -> PiscesLxLogger:
-        logger = get_logger("PiscesLx.Core.Agents.Collaboration.ContextManager")
+        logger = PiscesLxLogger("PiscesLx.Opss.Agents",file_path=get_log_file("PiscesLx.Opss.Agents"), enable_file=True)
         return logger
     
     def create_context(self, context_id: str, scope: POPSSContextScope, 

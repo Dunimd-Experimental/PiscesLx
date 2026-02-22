@@ -26,6 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 class POPSSConflictType(Enum):
     RESOURCE = "resource"
@@ -130,7 +131,7 @@ class POPSSConflictResolver:
         self._LOG.info("POPSSConflictResolver initialized")
     
     def _configure_logging(self) -> PiscesLxLogger:
-        logger = get_logger("PiscesLx.Core.Agents.Collaboration.ConflictResolver")
+        logger = PiscesLxLogger("PiscesLx.Opss.Agents",file_path=get_log_file("PiscesLx.Opss.Agents"), enable_file=True)
         return logger
     
     def detect_conflicts(

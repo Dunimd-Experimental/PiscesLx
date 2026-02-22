@@ -31,16 +31,12 @@ from pathlib import Path
 from contextlib import contextmanager
 import tempfile
 import hashlib
-
-try:
-    import resource
-except ImportError:
-    resource = None
+import resource
 
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 
-_LOG = PiscesLxLogger("PiscesLx.Opss.Mcp", file_path=get_log_file("PiscesLx.Opss.Mcp"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Opss.MCP",file_path=get_log_file("PiscesLx.Opss.MCP"), enable_file=True)
 
 @dataclass
 class POPSSSandboxConfig:

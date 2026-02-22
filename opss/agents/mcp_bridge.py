@@ -70,7 +70,6 @@ Thread Safety:
     use appropriate locking mechanisms for concurrent access.
 """
 
-from __future__ import annotations
 
 import asyncio
 import uuid
@@ -81,6 +80,8 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type, TypeVa
 from concurrent.futures import ThreadPoolExecutor
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 
 from .base import (
@@ -95,6 +96,8 @@ from ..mcp import (
     POPSSMCPPlaza,
     POPSSMCPSession,
 )
+
+_LOG = PiscesLxLogger("PiscesLx.Opss.Agents",file_path=get_log_file("PiscesLx.Opss.Agents"), enable_file=True)
 
 T = TypeVar('T')
 
@@ -291,8 +294,6 @@ class POPSSMCPBridge:
         self.config = config
         self.mcp_plaza = config.mcp_plaza
         
-        self._LOG = self._configure_logging()
-        
         # Tool metadata cache
         self._tool_cache: Dict[str, POPSSToolInfo] = {}
         self._cache_timestamp: Optional[datetime] = None
@@ -321,17 +322,7 @@ class POPSSMCPBridge:
         if self.config.auto_discover_tools:
             self._discover_tools()
         
-        self._LOG.info("POPSSMCPBridge initialized")
-    
-    def _configure_logging(self) -> PiscesLxLogger:
-        """
-        Configure and return a logger instance for the MCP bridge.
-        
-        Returns:
-            PiscesLxLogger: Configured logger instance for MCP operations.
-        """
-        logger = get_logger("PiscesLx.Core.Agents.MCPBridge")
-        return logger
+        _LOG.info("POPSSMCPBridge initialized")
     
     def _discover_tools(self):
         """
@@ -354,9 +345,9 @@ class POPSSMCPBridge:
                 self._trigger_callback('on_tool_discovered', tool_name)
             
             self._cache_timestamp = datetime.now()
-            self._LOG.info(f"Discovered {len(self._tool_cache)} tools")
+            _LOG.info(f"Discovered {len(self._tool_cache)} tools")
         except Exception as e:
-            self._LOG.error(f"Tool discovery failed: {e}")
+            _LOG.error(f"Tool discovery failed: {e}")
     
     def _refresh_cache_if_needed(self):
         """
@@ -392,7 +383,7 @@ class POPSSMCPBridge:
                     tags=set(tool_info.get('tags', [])),
                 )
         except Exception as e:
-            self._LOG.error(f"Failed to cache tool info for {tool_name}: {e}")
+            _LOG.error(f"Failed to cache tool info for {tool_name}: {e}")
     
     def _invalidate_cache(self):
         """
@@ -898,7 +889,7 @@ class POPSSMCPBridge:
             try:
                 callback(*args, **kwargs)
             except Exception as e:
-                self._LOG.error(f"Callback error for {event_name}: {e}")
+                _LOG.error(f"Callback error for {event_name}: {e}")
     
     def shutdown(self):
         """
@@ -916,7 +907,7 @@ class POPSSMCPBridge:
         
         self._async_executor.shutdown(wait=True)
         
-        self._LOG.info("MCP Bridge shutdown")
+        _LOG.info("MCP Bridge shutdown")
     
     def __enter__(self):
         """Context manager entry."""

@@ -77,20 +77,15 @@ from typing import (
     Union
 )
 
-if TYPE_CHECKING:
-    from .interface import (
-        PiscesLxOperatorInterface,
-        PiscesLxOperatorResult,
-        PiscesLxOperatorStatus
-    )
-    from .registry import PiscesLxOperatorRegistry
-else:
-    from .interface import PiscesLxOperatorResult, PiscesLxOperatorStatus
+from .interface import PiscesLxOperatorResult, PiscesLxOperatorStatus
+from .registry import PiscesLxOperatorRegistry
 
 from ..dc import (
     PiscesLxLogger, PiscesLxMetrics, PiscesLxTracing,
     PiscesLxSystemMonitor
 )
+
+from utils.paths import get_log_file
 
 
 @dataclass
@@ -152,7 +147,7 @@ class PiscesLxOperatorExecutor:
 
     def __init__(
         self,
-        registry: 'PiscesLxOperatorRegistry',
+        registry: PiscesLxOperatorRegistry,
         max_workers: int = 4
     ):
         """

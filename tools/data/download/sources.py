@@ -28,7 +28,7 @@ from utils.dc import PiscesLxLogger
 from typing import Any, Dict, List, Optional
 
 from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.Tools.Data"), enable_file=True)
 
 # Verbose switch: set PISCESLX_DOWNLOAD_VERBOSE=1 to see detailed debug logs
 _VERBOSE = (os.getenv("PISCESLX_DOWNLOAD_VERBOSE", "0") == "1")

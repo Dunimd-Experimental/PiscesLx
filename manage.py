@@ -146,7 +146,6 @@ import sys
 import json
 import argparse
 from pathlib import Path
-from configs.version import CVERSION
 
 
 def _import_yaml():

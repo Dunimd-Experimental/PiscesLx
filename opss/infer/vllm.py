@@ -39,20 +39,15 @@ from threading import Lock
 import torch
 import torch.nn as nn
 
-try:
-    from vllm import LLM, SamplingParams
-    from vllm.outputs import RequestOutput
-    from vllm.lora.request import LoRARequest
-    VLLM_AVAILABLE = True
-except ImportError:
-    VLLM_AVAILABLE = False
-    LLM = None
-    SamplingParams = None
-    LoRARequest = None
+from vllm import LLM, SamplingParams
+from vllm.outputs import RequestOutput
+from vllm.lora.request import LoRARequest
 
 from utils.dc import PiscesLxLogger
-from configs.version import VERSION
+from utils.paths import get_log_file
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
+
+from configs.version import VERSION
 
 
 @dataclass
@@ -81,10 +76,6 @@ class POPSSVLLMConfig:
     quantization: Optional[str] = None
     kv_cache_dtype: str = "auto"
     attention_backend: str = "FLASH_ATTN"
-    
-    def __post_init__(self):
-        if not VLLM_AVAILABLE:
-            self._LOG.warning("vLLM not available, will fall back to native inference")
 
 
 @dataclass
@@ -164,7 +155,7 @@ class PrefixCacheManager:
             "memory_freed_bytes": 0,
             "total_accesses": 0,
         }
-        self._LOG = get_logger("pisceslx.ops.infer.prefix_cache")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
     
     def _compute_prompt_hash(self, token_ids: Tuple[int, ...]) -> str:
         """Compute hash for token sequence."""
@@ -407,7 +398,7 @@ class POPSSMultiLoRAOperator(PiscesLxOperatorInterface):
         self.name = "vllm.multi_lora"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("popss.ops.infer.multi_lora")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         
         self.loaded_adapters: Dict[str, Dict[str, Any]] = {}
         self.adapter_lock = Lock()
@@ -515,9 +506,6 @@ class POPSSMultiLoRAOperator(PiscesLxOperatorInterface):
     
     def _load_adapter(self, adapter_name: str, adapter_path: str, priority: int) -> LoRARequest:
         """Load a LoRA adapter."""
-        if not VLLM_AVAILABLE or LoRARequest is None:
-            raise RuntimeError("vLLM LoRA support not available")
-        
         lora_request = LoRARequest(
             lora_name=adapter_name,
             lora_path=adapter_path,
@@ -631,7 +619,7 @@ class POPSSPrefixCachingOperator(PiscesLxOperatorInterface):
         self.name = "vllm.prefix_caching"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("popss.ops.infer.prefix_caching")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         
         max_bytes = int(max_memory_mb * 1024 * 1024) if max_memory_mb else None
         
@@ -794,7 +782,7 @@ class POPSSChunkedPrefillOperator(PiscesLxOperatorInterface):
         self.name = "vllm.chunked_prefill"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("popss.ops.infer.chunked_prefill")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         
         memory_bytes = int(memory_budget_mb * 1024 * 1024) if memory_budget_mb else None
         
@@ -905,7 +893,7 @@ class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
         self.name = "vllm.inference"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("popss.ops.infer.vllm")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         self.vllm_engine = None
         
         self.multi_lora_operator = POPSSMultiLoRAOperator()
@@ -971,9 +959,6 @@ class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
             else:
                 config = POPSSVLLMConfig(model_path=model_path)
             
-            if not VLLM_AVAILABLE:
-                return self._fallback_inference(model_path, prompts, config, sampling_params_dict, start_time)
-            
             self._LOG.info(f"Initializing vLLM engine with {len(prompts)} prompts")
             
             if self.vllm_engine is None:
@@ -1022,9 +1007,6 @@ class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
     
     def _initialize_vllm_engine(self, config: POPSSVLLMConfig):
         """Initialize vLLM engine with given configuration."""
-        if not VLLM_AVAILABLE:
-            raise RuntimeError("vLLM is not available")
-        
         engine_args = {
             "model": config.model_path,
             "tokenizer": config.tokenizer_path or config.model_path,

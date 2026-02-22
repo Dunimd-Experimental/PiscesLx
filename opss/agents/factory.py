@@ -50,8 +50,6 @@ Usage:
     ])
 """
 
-from __future__ import annotations
-
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -59,6 +57,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Type, TypeVar, Union
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 from .base import (
     POPSSBaseAgent,
@@ -71,15 +70,10 @@ from .base import (
     POPSSPromptBasedAgent,
 )
 
-try:
-    from .loader import POPSSPromptLoader, POPSSPromptConfig
-    PROMPT_LOADER_AVAILABLE = True
-except ImportError:
-    PROMPT_LOADER_AVAILABLE = False
-    POPSSPromptLoader = None
-    POPSSPromptConfig = None
+from .loader import POPSSPromptLoader, POPSSPromptConfig
 
 T = TypeVar('T', bound=POPSSBaseAgent)
+_LOG = PiscesLxLogger("PiscesLx.Opss.Agents",file_path=get_log_file("PiscesLx.Opss.Agents"), enable_file=True)
 
 
 class POPSSExpertFactory:
@@ -110,15 +104,6 @@ class POPSSExpertFactory:
     _expert_instances: Dict[str, POPSSBaseAgent] = {}
     _model_client: Optional[Any] = None
     
-    _LOG: PiscesLxLogger = None
-    
-    @classmethod
-    def _get_logger(cls) -> PiscesLxLogger:
-        """Get or create logger."""
-        if cls._LOG is None:
-            cls._LOG = get_logger("POPSSExpertFactory")
-        return cls._LOG
-    
     @classmethod
     def set_model_client(cls, client: Any) -> None:
         """
@@ -128,7 +113,7 @@ class POPSSExpertFactory:
             client: Model client instance
         """
         cls._model_client = client
-        cls._get_logger().info("Model client set")
+        _LOG.info("Model client set")
     
     @classmethod
     def register(
@@ -149,13 +134,13 @@ class POPSSExpertFactory:
             True if registration succeeded
         """
         if expert_type in cls._expert_classes and not override:
-            cls._get_logger().warning(
+            _LOG.warning(
                 f"Expert already registered: {expert_type}"
             )
             return False
         
         cls._expert_classes[expert_type] = expert_class
-        cls._get_logger().info(f"Registered expert class: {expert_type}")
+        _LOG.info(f"Registered expert class: {expert_type}")
         return True
     
     @classmethod
@@ -171,7 +156,7 @@ class POPSSExpertFactory:
         """
         if expert_type in cls._expert_classes:
             del cls._expert_classes[expert_type]
-            cls._get_logger().info(f"Unregistered expert: {expert_type}")
+            _LOG.info(f"Unregistered expert: {expert_type}")
             return True
         return False
     
@@ -231,12 +216,11 @@ class POPSSExpertFactory:
         if expert_type in cls._expert_classes:
             return "code"
         
-        if PROMPT_LOADER_AVAILABLE:
-            try:
-                POPSSPromptLoader.load(expert_type)
-                return "prompt"
-            except FileNotFoundError:
-                pass
+        try:
+            POPSSPromptLoader.load(expert_type)
+            return "prompt"
+        except FileNotFoundError:
+            pass
         
         return "prompt"
     
@@ -267,9 +251,6 @@ class POPSSExpertFactory:
         **kwargs
     ) -> POPSSBaseAgent:
         """Create expert from prompt file."""
-        if not PROMPT_LOADER_AVAILABLE:
-            raise RuntimeError("Prompt loader not available")
-        
         config = config or POPSSAgentConfig(
             name=expert_type,
             expert_type=expert_type,
@@ -343,7 +324,7 @@ class POPSSExpertFactory:
                     **kwargs
                 )
             except Exception as e:
-                cls._get_logger().error(
+                _LOG.error(
                     f"Failed to create {expert_type}: {e}"
                 )
         
@@ -365,14 +346,10 @@ class POPSSExpertFactory:
         Returns:
             Dictionary of experts in the cluster
         """
-        if not PROMPT_LOADER_AVAILABLE:
-            cls._get_logger().warning("Prompt loader not available")
-            return {}
-        
         experts_by_category = POPSSPromptLoader.list_by_category()
         
         if cluster_name not in experts_by_category:
-            cls._get_logger().warning(f"Cluster not found: {cluster_name}")
+            _LOG.warning(f"Cluster not found: {cluster_name}")
             return {}
         
         return cls.create_batch(
@@ -405,7 +382,7 @@ class POPSSExpertFactory:
                     model_client=model_client
                 )
             except Exception as e:
-                cls._get_logger().error(
+                _LOG.error(
                     f"Failed to create {expert_type}: {e}"
                 )
         
@@ -421,8 +398,7 @@ class POPSSExpertFactory:
         """
         expert_types = set(cls._expert_classes.keys())
         
-        if PROMPT_LOADER_AVAILABLE:
-            expert_types.update(POPSSPromptLoader.list_available())
+        expert_types.update(POPSSPromptLoader.list_available())
         
         return sorted(expert_types)
     
@@ -434,10 +410,7 @@ class POPSSExpertFactory:
         Returns:
             Dictionary mapping category to expert types
         """
-        categories = {}
-        
-        if PROMPT_LOADER_AVAILABLE:
-            categories = POPSSPromptLoader.list_by_category()
+        categories = POPSSPromptLoader.list_by_category()
         
         for expert_type in cls._expert_classes:
             expert = cls._expert_classes[expert_type]
@@ -474,18 +447,17 @@ class POPSSExpertFactory:
             info["source"] = "registered_class"
             info["class_name"] = cls._expert_classes[expert_type].__name__
         
-        if PROMPT_LOADER_AVAILABLE:
-            try:
-                prompt_config = POPSSPromptLoader.load(expert_type)
-                info["available"] = True
-                info["mode"] = "prompt"
-                info["source"] = prompt_config.source
-                info["version"] = prompt_config.version
-                info["has_system_prompt"] = bool(prompt_config.system_prompt)
-                info["has_behavior_prompt"] = bool(prompt_config.behavior_prompt)
-                info["has_output_schema"] = bool(prompt_config.output_schema)
-            except FileNotFoundError:
-                pass
+        try:
+            prompt_config = POPSSPromptLoader.load(expert_type)
+            info["available"] = True
+            info["mode"] = "prompt"
+            info["source"] = prompt_config.source
+            info["version"] = prompt_config.version
+            info["has_system_prompt"] = bool(prompt_config.system_prompt)
+            info["has_behavior_prompt"] = bool(prompt_config.behavior_prompt)
+            info["has_output_schema"] = bool(prompt_config.output_schema)
+        except FileNotFoundError:
+            pass
         
         return info
     
@@ -493,7 +465,7 @@ class POPSSExpertFactory:
     def clear_cache(cls) -> None:
         """Clear singleton instance cache."""
         cls._expert_instances.clear()
-        cls._get_logger().info("Expert cache cleared")
+        _LOG.info("Expert cache cleared")
     
     @classmethod
     def get_cache_info(cls) -> Dict[str, Any]:

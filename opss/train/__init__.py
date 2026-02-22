@@ -67,7 +67,7 @@ See Also:
 
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent.parent))
+
 from configs.version import VERSION, AUTHOR
 
 from .kfac import (

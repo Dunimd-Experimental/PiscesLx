@@ -59,9 +59,6 @@ Usage Examples:
     ...     model_id="PiscesL1-1.5B",
     ...     risk_level="medium"
     ... )
-
-Author: PiscesL1 Development Team
-Version: 1.0.0
 """
 
 import hashlib

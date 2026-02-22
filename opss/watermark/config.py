@@ -63,12 +63,8 @@ Usage Examples:
     ...     watermark_strength=1e-5,
     ...     redundancy_level=3
     ... )
-
-Author: PiscesL1 Development Team
-Version: 1.0.0
 """
 
-from __future__ import annotations
 
 import os
 import json

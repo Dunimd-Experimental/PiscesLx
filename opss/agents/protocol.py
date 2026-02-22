@@ -72,8 +72,6 @@ Thread Safety:
     asyncio tasks concurrently. Internal state is protected by asyncio.Lock.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
 import uuid
@@ -85,7 +83,11 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Type, TypeVar
 from concurrent.futures import ThreadPoolExecutor
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
+
+_LOG = PiscesLxLogger("PiscesLx.Opss.Agents",file_path=get_log_file("PiscesLx.Opss.Agents"), enable_file=True)
 
 T = TypeVar('T')
 
@@ -272,7 +274,6 @@ class POPSSProtocolHandler:
                 default configuration values will be used.
         """
         self.config = config or POPSSProtocolConfig()
-        self._LOG = self._configure_logging()
         
         # Initialize message handlers for each message type
         self._message_handlers: Dict[POPSSProtocolMessageType, List[Callable]] = {
@@ -299,17 +300,7 @@ class POPSSProtocolHandler:
             thread_name_prefix="piscesl1_protocol"
         )
         
-        self._LOG.info("POPSSProtocolHandler initialized")
-    
-    def _configure_logging(self) -> PiscesLxLogger:
-        """
-        Configure and return a logger instance for the protocol handler.
-        
-        Returns:
-            PiscesLxLogger: Configured logger instance for protocol operations.
-        """
-        logger = get_logger("PiscesLx.Core.Agents.Protocol")
-        return logger
+        _LOG.info("POPSSProtocolHandler initialized")
     
     def register_handler(self, message_type: POPSSProtocolMessageType, handler: Callable):
         """
@@ -538,14 +529,14 @@ class POPSSProtocolHandler:
         Args:
             message: The POPSSProtocolMessage to transmit.
         """
-        self._LOG.debug(f"Transmitting message: {message.message_id} -> {message.receiver}")
+        _LOG.debug(f"Transmitting message: {message.message_id} -> {message.receiver}")
         
         # Call all registered handlers for this message type
         for handler in self._message_handlers.get(message.message_type, []):
             try:
                 await handler(message)
             except Exception as e:
-                self._LOG.error(f"Error in message handler: {e}")
+                _LOG.error(f"Error in message handler: {e}")
     
     async def handle_message(self, message: POPSSProtocolMessage):
         """
@@ -586,7 +577,7 @@ class POPSSProtocolHandler:
                 try:
                     await handler(message)
                 except Exception as e:
-                    self._LOG.error(f"Error in notification handler: {e}")
+                    _LOG.error(f"Error in notification handler: {e}")
         
         # Handle ERROR messages - set exception on pending futures
         elif message.message_type == POPSSProtocolMessageType.ERROR:
@@ -776,4 +767,4 @@ class POPSSProtocolHandler:
             if not future.done():
                 future.cancel()
         
-        self._LOG.info("Protocol handler shutdown")
+        _LOG.info("Protocol handler shutdown")

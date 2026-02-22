@@ -26,6 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 from concurrent.futures import ThreadPoolExecutor
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 class POPSSAggregationStrategy(Enum):
     CONCATENATE = "concatenate"
@@ -104,7 +105,7 @@ class POPSSResultAggregator:
         self._LOG.info("POPSSResultAggregator initialized")
     
     def _configure_logging(self) -> PiscesLxLogger:
-        logger = get_logger("PiscesLx.Core.Agents.Collaboration.ResultAggregator")
+        logger = PiscesLxLogger("PiscesLx.Opss.Agents",file_path=get_log_file("PiscesLx.Opss.Agents"), enable_file=True)
         return logger
     
     async def aggregate(

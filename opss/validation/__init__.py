@@ -250,7 +250,7 @@ class POPSSValidatorOperator(PiscesLxOperatorInterface):
         super().__init__()
         self.name = "validation"
         self.version = VERSION
-        self._LOG = get_logger("pisceslx.ops.validation")
+        self._LOG = PiscesLxLogger("pisceslx.ops.validation")
         self._custom_rules: Dict[str, POPSSValidationRule] = {}
     
     @property

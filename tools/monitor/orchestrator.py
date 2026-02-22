@@ -28,7 +28,7 @@ from typing import Dict, Any, Optional, List
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 from .config import PiscesLxToolsMonitorConfig
-from .context_utils import PiscesLxMonitorCache, PiscesLxMonitorGlobalContext
+from .context_utils import PiscesLxMonitorCache, PiscesLxMonitorContextManager
 from .stats_collector import PiscesLxMonitorStatsCollector
 from .data_manager import PiscesLxMonitorDataManager
 from .alert_manager import PiscesLxMonitorAlertManager

@@ -83,8 +83,6 @@ Thread Safety:
     asyncio queues and proper synchronization.
 """
 
-from __future__ import annotations
-
 import asyncio
 import uuid
 from dataclasses import dataclass, field
@@ -95,6 +93,9 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
+_LOG =_LOG = PiscesLxLogger("PiscesLx.Opss.Agents",file_path=get_log_file("PiscesLx.Opss.Agents"), enable_file=True)
 
 from .base import (
     POPSSBaseAgent,
@@ -429,8 +430,6 @@ class POPSSSwarmCoordinator:
         self.config = config
         self.registry = config.registry
         
-        self._LOG = self._configure_logging()
-        
         # Agent membership tracking
         self._members: Dict[str, POPSSSwarmMember] = {}
         self._tasks: Dict[str, POPSSSwarmTask] = {}
@@ -476,17 +475,7 @@ class POPSSSwarmCoordinator:
             thread_name_prefix="piscesl1_swarm"
         )
         
-        self._LOG.info("POPSSSwarmCoordinator initialized")
-    
-    def _configure_logging(self) -> PiscesLxLogger:
-        """
-        Configure and return a logger instance for the swarm coordinator.
-        
-        Returns:
-            PiscesLxLogger: Configured logger instance.
-        """
-        logger = get_logger("PiscesLx.Core.Agents.Swarm")
-        return logger
+        _LOG.info("POPSSSwarmCoordinator initialized")
     
     def initialize(self) -> bool:
         """
@@ -507,16 +496,16 @@ class POPSSSwarmCoordinator:
                 self._coordinator = self.registry.get_agent(self.config.coordinator_id)
             
             if not self._coordinator:
-                self._LOG.warning("No coordinator agent configured, using default coordination")
+                _LOG.warning("No coordinator agent configured, using default coordination")
             
             # Start background processing tasks
             self._start_background_tasks()
             
-            self._LOG.info("Swarm coordinator initialized")
+            _LOG.info("Swarm coordinator initialized")
             return True
             
         except Exception as e:
-            self._LOG.error(f"Failed to initialize swarm coordinator: {e}")
+            _LOG.error(f"Failed to initialize swarm coordinator: {e}")
             return False
     
     def register_agent(self, agent_id: str, agent_type: POPSSAggregentType, name: str, 
@@ -542,7 +531,7 @@ class POPSSSwarmCoordinator:
             ... )
         """
         if len(self._members) >= self.config.max_agents:
-            self._LOG.warning("Maximum agents reached")
+            _LOG.warning("Maximum agents reached")
             return False
         
         member = POPSSSwarmMember(
@@ -563,7 +552,7 @@ class POPSSSwarmCoordinator:
             'name': name,
         })
         
-        self._LOG.info(f"Agent joined swarm: {name} ({agent_id})")
+        _LOG.info(f"Agent joined swarm: {name} ({agent_id})")
         return True
     
     def unregister_agent(self, agent_id: str) -> bool:
@@ -600,7 +589,7 @@ class POPSSSwarmCoordinator:
             'name': member.name,
         })
         
-        self._LOG.info(f"Agent left swarm: {member.name} ({agent_id})")
+        _LOG.info(f"Agent left swarm: {member.name} ({agent_id})")
         return True
     
     def _setup_topology_connections(self, member: POPSSSwarmMember):
@@ -709,7 +698,7 @@ class POPSSSwarmCoordinator:
             'priority': priority,
         })
         
-        self._LOG.info(f"Task received: {task_id} ({task_type})")
+        _LOG.info(f"Task received: {task_id} ({task_type})")
         
         return task_id
     
@@ -737,7 +726,7 @@ class POPSSSwarmCoordinator:
             agent_ids = self._select_agents_for_task(task)
         
         if not agent_ids:
-            self._LOG.warning(f"No suitable agents found for task: {task_id}")
+            _LOG.warning(f"No suitable agents found for task: {task_id}")
             return False
         
         task.assigned_agents = agent_ids
@@ -762,7 +751,7 @@ class POPSSSwarmCoordinator:
             'assigned_agents': agent_ids,
         })
         
-        self._LOG.info(f"Task assigned: {task_id} -> {agent_ids}")
+        _LOG.info(f"Task assigned: {task_id} -> {agent_ids}")
         return True
     
     def _select_agents_for_task(self, task: POPSSSwarmTask) -> List[str]:
@@ -1012,7 +1001,7 @@ class POPSSSwarmCoordinator:
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
-                self._LOG.error(f"Error processing tasks: {e}")
+                _LOG.error(f"Error processing tasks: {e}")
     
     async def _process_messages(self):
         """Background task for processing messages from the queue."""
@@ -1031,7 +1020,7 @@ class POPSSSwarmCoordinator:
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
-                self._LOG.error(f"Error processing messages: {e}")
+                _LOG.error(f"Error processing messages: {e}")
     
     async def _heartbeat_monitor(self):
         """Background task for monitoring agent health via heartbeats."""
@@ -1045,14 +1034,14 @@ class POPSSSwarmCoordinator:
                 # Check for timed out agents
                 for agent_id, member in list(self._members.items()):
                     if member.last_heartbeat < timeout_threshold:
-                        self._LOG.warning(f"Agent timed out: {agent_id}")
+                        _LOG.warning(f"Agent timed out: {agent_id}")
                         member.status = "unavailable"
                         
                         if member.current_task:
                             await self._handle_task_timeout(member.current_task)
                 
             except Exception as e:
-                self._LOG.error(f"Error in heartbeat monitor: {e}")
+                _LOG.error(f"Error in heartbeat monitor: {e}")
     
     async def _handle_task_timeout(self, task_id: str):
         """
@@ -1161,7 +1150,7 @@ class POPSSSwarmCoordinator:
                 try:
                     callback(data)
                 except Exception as e:
-                    self._LOG.error(f"Error in callback for {event}: {e}")
+                    _LOG.error(f"Error in callback for {event}: {e}")
     
     def shutdown(self):
         """
@@ -1177,7 +1166,7 @@ class POPSSSwarmCoordinator:
         
         self._async_executor.shutdown(wait=True)
         
-        self._LOG.info("Swarm coordinator shutdown")
+        _LOG.info("Swarm coordinator shutdown")
     
     def __enter__(self):
         """Context manager entry - initializes the coordinator."""

@@ -65,6 +65,7 @@ from ..dc import (
     PiscesLxDeviceCapabilities, PiscesLxDeviceHealthMetrics,
     PiscesLxResourcePool, PiscesLxSystemMonitor
 )
+from utils.paths import get_log_file
 
 
 class PiscesLxResourceType(Enum):

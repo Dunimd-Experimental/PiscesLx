@@ -150,6 +150,55 @@ class YvGenerationConfig:
             self.max_sequence_length = defaults.max_seq_len
 
 
+class YvGenerationModality(Enum):
+    """Supported generation modalities."""
+    IMAGE = auto()
+    VIDEO = auto()
+    AUDIO = auto()
+    DOCUMENT = auto()
+    TEXT = auto()
+
+
+@dataclass
+class YvGenerationResult:
+    """Result from generation operation.
+    
+    Attributes:
+        success: Whether generation succeeded.
+        modality: The generated modality.
+        content: Generated content (tensor, dict, or bytes).
+        metadata: Generation metadata.
+        generation_time: Time taken to generate.
+        watermark: Optional watermark info.
+        error: Error message if failed.
+    """
+    success: bool
+    modality: YvGenerationModality
+    content: Optional[Union[torch.Tensor, Dict[str, torch.Tensor], bytes]] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    generation_time: float = 0.0
+    watermark: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+
+@dataclass
+class YvGenerationCondition:
+    """Conditioning for generation operations.
+    
+    Attributes:
+        text_prompt: Text prompt for generation.
+        image_prompt: Optional image conditioning.
+        audio_prompt: Optional audio conditioning.
+        modality: Target modality.
+        generation_params: Additional generation parameters.
+    """
+    text_prompt: Optional[str] = None
+    image_prompt: Optional[torch.Tensor] = None
+    audio_prompt: Optional[torch.Tensor] = None
+    modality: YvGenerationModality = YvGenerationModality.IMAGE
+    generation_params: Dict[str, Any] = field(default_factory=dict)
+
+
 class YvSelfDevelopedGenerator(nn.Module):
     """Fully self-developed multimodal generator using Yv architecture.
     
@@ -549,37 +598,6 @@ class YvSelfDevelopedGenerator(nn.Module):
         pixels = pixels.view(-1, 3, 64, 64)  # RGB image
         
         return torch.clamp(pixels, -1, 1)
-
-
-class YvGenerationModality(Enum):
-    """Supported generation modalities."""
-    IMAGE = auto()
-    VIDEO = auto()
-    AUDIO = auto()
-    DOCUMENT = auto()
-    TEXT = auto()
-
-
-@dataclass
-class YvGenerationResult:
-    """Result from generation operation.
-    
-    Attributes:
-        success: Whether generation succeeded.
-        modality: The generated modality.
-        content: Generated content (tensor, dict, or bytes).
-        metadata: Generation metadata.
-        generation_time: Time taken to generate.
-        watermark: Optional watermark info.
-        error: Error message if failed.
-    """
-    success: bool
-    modality: YvGenerationModality
-    content: Optional[Union[torch.Tensor, Dict[str, torch.Tensor], bytes]] = None
-    metadata: Dict[str, Any] = field(default_factory=dict)
-    generation_time: float = 0.0
-    watermark: Optional[Dict[str, Any]] = None
-    error: Optional[str] = None
 
 
 class YvGenerationBackend(ABC):

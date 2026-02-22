@@ -29,7 +29,7 @@ from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Tools.Monitor", file_path=get_log_file("PiscesLx.Tools.Monitor"), enable_file=True)
 
 
-class _SimpleCache:
+class PiscesLxMonitorCache:
     def __init__(self):
         self._kv: Dict[str, Any] = {}
         self._root = get_cache_dir("monitor")
@@ -42,9 +42,6 @@ class _SimpleCache:
 
     def set(self, key: str, value: Any, ttl: Optional[float] = None) -> None:
         self._kv[key] = value
-
-
-PiscesLxMonitorCache = _SimpleCache
 
 
 class _SimpleDeviceManager:
@@ -95,7 +92,7 @@ class PiscesLxMonitorUtils:
     def __init__(self):
         """Initialize utility components."""
         self.fs_manager = PiscesLxFilesystem()
-        self.cache_manager = _SimpleCache()
+        self.cache_manager = PiscesLxMonitorCache()
         self.device_manager = _SimpleDeviceManager()
         self.logger = PiscesLxLogger("PiscesLx.Tools.Monitor", file_path=get_log_file("PiscesLx.Tools.Monitor"), enable_file=True)
 
@@ -111,7 +108,7 @@ class PiscesLxMonitorUtils:
         """Get filesystem manager."""
         return self.fs_manager
 
-    def get_logger(self):
+    def PiscesLxLogger(self):
         """Get logger."""
         return self.logger
 
@@ -162,12 +159,9 @@ class PiscesLxMonitorContextManager:
         """Get global filesystem manager."""
         return self._utils_manager.get_fs_manager()
 
-    def get_logger(self):
+    def PiscesLxLogger(self):
         """Get global logger."""
         return self._utils_manager.get_logger()
-
-
-PiscesLxMonitorGlobalContext = PiscesLxMonitorContextManager()
 
 MONITOR_DATA_CACHE_KEY = "piscesl1_monitor_data"
 MONITOR_LAST_IO_CACHE_KEY = "piscesl1_monitor_last_io"

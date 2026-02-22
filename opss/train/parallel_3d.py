@@ -53,6 +53,7 @@ import math
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 from configs.version import VERSION
 
 
@@ -151,7 +152,7 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
         self.name = "train.parallel_3d"
         self.version = VERSION
         self.type = "training"
-        self._LOG = get_logger("popss.ops.train.parallel_3d")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         self.config = config or POPSSParallel3DConfig()
         
         self._initialized = False

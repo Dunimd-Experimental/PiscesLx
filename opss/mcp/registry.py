@@ -30,6 +30,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 from .types import (
     POPSSMCPToolMetadata,
@@ -103,7 +104,7 @@ class POPSSMCPToolRegistry:
         self._LOG.info("POPSSMCPToolRegistry initialized")
     
     def _configure_logging(self) -> PiscesLxLogger:
-        logger = get_logger("PiscesLx.Core.MCP.Registry")
+        logger = PiscesLxLogger("PiscesLx.Opss.MCP",file_path=get_log_file("PiscesLx.Opss.MCP"), enable_file=True)
         return logger
     
     def register_tool(

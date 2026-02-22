@@ -78,8 +78,8 @@ Key Features:
     - Comprehensive metadata and audit trails
 
 Usage Examples:
-    >>> from opss.watermark.orchestrator import PiscesLxWatermarkOrchestrator
-    >>> orchestrator = PiscesLxWatermarkOrchestrator()
+    >>> from opss.watermark.orchestrator import POPSSWatermarkOrchestrator
+    >>> orchestrator = POPSSWatermarkOrchestrator()
     >>> 
     >>> # Configure for a jurisdiction
     >>> orchestrator.configure(jurisdiction="CN", strength=1e-5)
@@ -89,9 +89,6 @@ Usage Examples:
     >>> 
     >>> # Verify watermark
     >>> verified = orchestrator.verify(content)
-
-Author: PiscesL1 Development Team
-Version: 1.0.0
 """
 
 import time
@@ -149,15 +146,15 @@ class POPSSWatermarkOrchestrator(PiscesLxBaseOperator):
         - Weight: Codebook-based regularization for model ownership
     
     Attributes:
-        config (PiscesLxWatermarkConfig): Watermark configuration containing
+        config (POPSSWatermarkConfig): Watermark configuration containing
             jurisdiction settings, strength parameters, and compliance options
-        content_operator (PiscesLxContentWatermarkOperator): Handles content
+        content_operator (POPSSContentWatermarkOperator): Handles content
             watermarking for text, images, and audio
-        weight_operator (PiscesLxWeightWatermarkOperator): Handles model weight
+        weight_operator (POPSSWeightWatermarkOperator): Handles model weight
             watermarking for ownership verification
-        compliance_operator (PiscesLxComplianceOperator): Validates configurations
+        compliance_operator (POPSSComplianceOperator): Validates configurations
             against regulatory requirements
-        audit_operator (PiscesLxAuditOperator): Manages audit trail logging
+        audit_operator (POPSSAuditOperator): Manages audit trail logging
         _stats (Dict): Operation statistics for monitoring
         
     Input Format:
@@ -186,16 +183,16 @@ class POPSSWatermarkOrchestrator(PiscesLxBaseOperator):
         >>> print(result["watermark_id"])
     """
     
-    def __init__(self, config: Optional[PiscesLxWatermarkConfig] = None):
+    def __init__(self, config: Optional[POPSSWatermarkConfig] = None):
         super().__init__()
-        self.name = "pisceslx_watermark_orchestrator"
+        self.name = "popss_watermark_orchestrator"
         self.version = VERSION
         self.description = "Unified watermark orchestrator for content and weight watermarking"
-        self.config = config or PiscesLxWatermarkConfig()
-        self.content_operator = PiscesLxContentWatermarkOperator(self.config)
-        self.weight_operator = PiscesLxWeightWatermarkOperator(self.config)
-        self.compliance_operator = PiscesLxComplianceOperator(self.config)
-        self.audit_operator = PiscesLxAuditOperator(self.config)
+        self.config = config or POPSSWatermarkConfig()
+        self.content_operator = POPSSContentWatermarkOperator(self.config)
+        self.weight_operator = POPSSWeightWatermarkOperator(self.config)
+        self.compliance_operator = POPSSComplianceOperator(self.config)
+        self.audit_operator = POPSSAuditOperator(self.config)
         self._stats = {
             "total_operations": 0,
             "embed_operations": 0,
@@ -744,9 +741,9 @@ class POPSSWatermarkOrchestrator(PiscesLxBaseOperator):
         if threshold:
             self.config.verify_threshold = threshold
         
-        self.content_operator = PiscesLxContentWatermarkOperator(self.config)
-        self.weight_operator = PiscesLxWeightWatermarkOperator(self.config)
-        self.compliance_operator = PiscesLxComplianceOperator(self.config)
+        self.content_operator = POPSSContentWatermarkOperator(self.config)
+        self.weight_operator = POPSSWeightWatermarkOperator(self.config)
+        self.compliance_operator = POPSSComplianceOperator(self.config)
     
     def embed(self, content: Any, metadata: Optional[Dict[str, Any]] = None,
              user_id: str = "anonymous") -> Dict[str, Any]:
@@ -910,8 +907,8 @@ class POPSSWatermarkOrchestrator(PiscesLxBaseOperator):
 
 
 def create_watermark_orchestrator(
-    config: Optional[PiscesLxWatermarkConfig] = None
-) -> PiscesLxWatermarkOrchestrator:
+    config: Optional[POPSSWatermarkConfig] = None
+) -> POPSSWatermarkOrchestrator:
     """
     Factory function to create a watermark orchestrator instance.
     
@@ -923,23 +920,23 @@ def create_watermark_orchestrator(
             a default configuration will be used.
     
     Returns:
-        PiscesLxWatermarkOrchestrator: Configured orchestrator instance
+        POPSSWatermarkOrchestrator: Configured orchestrator instance
     
     Example:
         >>> orchestrator = create_watermark_orchestrator()
         >>> result = orchestrator.embed("Hello, World!")
     """
-    return PiscesLxWatermarkOrchestrator(config=config)
+    return POPSSWatermarkOrchestrator(config=config)
 
 
-class POPSSWatermarkOrchestrator(PiscesLxBaseOperator):
+class POPSSWatermarkOrchestratorEnhanced(PiscesLxBaseOperator):
     """
     Enhanced Watermark Orchestrator with unified factory.
     
     This class combines all orchestration functions into a cohesive
     operator with factory methods for unified watermark management.
-    It provides the same functionality as PiscesLxWatermarkOrchestrator
-    but with a standardized naming convention for the POPSS module.
+    It provides the same functionality as POPSSWatermarkOrchestrator
+    but with additional enhancements for production use.
     
     This orchestrator serves as the primary production interface for
     watermark operations, offering:
@@ -955,7 +952,7 @@ class POPSSWatermarkOrchestrator(PiscesLxBaseOperator):
         description (str): Human-readable description
     
     Instance Attributes:
-        config (PiscesLxWatermarkConfig): Watermark configuration
+        config (POPSSWatermarkConfig): Watermark configuration
         content_operator: Content watermarking operator
         weight_operator: Weight watermarking operator
         compliance_operator: Compliance validation operator
@@ -966,16 +963,16 @@ class POPSSWatermarkOrchestrator(PiscesLxBaseOperator):
         create: Factory method to create orchestrator instance
     """
     
-    def __init__(self, config: Optional[PiscesLxWatermarkConfig] = None):
+    def __init__(self, config: Optional[POPSSWatermarkConfig] = None):
         super().__init__()
-        self.name = "pisceslx_watermark_orchestrator"
+        self.name = "popss_watermark_orchestrator_enhanced"
         self.version = VERSION
         self.description = "Unified watermark orchestration for multi-modal content"
-        self.config = config or PiscesLxWatermarkConfig()
-        self.content_operator = PiscesLxContentWatermarkOperator(config=config)
-        self.weight_operator = PiscesLxWeightWatermarkOperator(config=config)
-        self.compliance_operator = PiscesLxComplianceOperator(config=config)
-        self.audit_operator = PiscesLxAuditOperator(config=config)
+        self.config = config or POPSSWatermarkConfig()
+        self.content_operator = POPSSContentWatermarkOperator(config=config)
+        self.weight_operator = POPSSWeightWatermarkOperator(config=config)
+        self.compliance_operator = POPSSComplianceOperator(config=config)
+        self.audit_operator = POPSSAuditOperator(config=config)
         self._stats = {
             "total_operations": 0,
             "embed_operations": 0,
@@ -984,7 +981,7 @@ class POPSSWatermarkOrchestrator(PiscesLxBaseOperator):
         }
     
     @classmethod
-    def create(cls, config: Optional[PiscesLxWatermarkConfig] = None) -> 'POPSSWatermarkOrchestrator':
+    def create(cls, config: Optional[POPSSWatermarkConfig] = None) -> 'POPSSWatermarkOrchestratorEnhanced':
         """Factory method to create a watermark orchestrator."""
         return cls(config=config)
 

@@ -466,6 +466,3 @@ class POPSSActivationCollectorOperator(PiscesLxOperatorInterface):
             }
         
         return activation_stats
-
-
-

@@ -20,7 +20,7 @@
 
 from .runner import PiscesLxToolsDataDatasetDownload
 from .sources import PiscesLxToolsDataSourceRouter
-from .config import PiscesLxToolsDataDownloadConfig, PiscesLxToolsDataConfigLoader, DatasetItem
+from .config import PiscesLxToolsDataDownloadConfig, PiscesLxToolsDataConfigLoader, PiscesLxToolsDatasetItem
 from .caches import PiscesLxToolsDataDownloadCache
 
 __all__ = [
@@ -29,5 +29,5 @@ __all__ = [
     "PiscesLxToolsDataDownloadConfig",
     "PiscesLxToolsDataDownloadCache",
     "PiscesLxToolsDataConfigLoader",
-    "DatasetItem"
+    "PiscesLxToolsDatasetItem"
 ]

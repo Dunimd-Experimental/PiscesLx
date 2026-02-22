@@ -276,7 +276,7 @@ class POPSSToolRegistry:
         if self._initialized:
             return
         
-        self._LOG = get_logger("POPSSToolRegistry")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.AM",file_path=get_log_file("PiscesLx.Opss.AM"), enable_file=True)
         
         self._tools: Dict[str, POPSSToolInfo] = {}
         self._tools_by_name: Dict[str, str] = {}

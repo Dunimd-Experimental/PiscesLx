@@ -188,11 +188,12 @@ class PiscesLxLogger:
             self._file_handler = None
     
     def _write_to_file(self, level: str, msg: str) -> None:
-        """Write log message to file."""
+        """Write log message to file with DMSC-compatible format."""
         if self._file_handler:
             import datetime
             timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            self._file_handler.write(f"[{timestamp}] [{level}] {self.name}: {msg}\n")
+            level_fixed = level[:5].ljust(5)
+            self._file_handler.write(f"{timestamp} | {level_fixed} | {self.name} | event={msg} | {msg}\n")
             self._file_handler.flush()
     
     def debug(self, msg: str, **kwargs) -> None:

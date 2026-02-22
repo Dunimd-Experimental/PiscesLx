@@ -52,6 +52,8 @@ import math
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 
 
@@ -140,7 +142,7 @@ class POPSSMambaOperator(PiscesLxOperatorInterface):
         self.name = "infer.mamba"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("popss.ops.infer.mamba")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         self.config = config or POPSSMambaConfig()
         
         self._init_parameters()
@@ -418,7 +420,7 @@ class POPSSMamba2Operator(PiscesLxOperatorInterface):
         self.name = "infer.mamba2"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = get_logger("popss.ops.infer.mamba2")
+        self._LOG = PiscesLxLogger("popss.ops.infer.mamba2")
         self.config = config or POPSSMambaConfig(ssm_type=POPSSSSMType.MAMBA2)
         
         self._mamba1 = POPSSMambaOperator(self.config)

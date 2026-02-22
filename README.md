@@ -341,8 +341,7 @@ Open source packages and their agreement information used by this project:
 | torch | BSD-style | torchvision | BSD-style |
 | torchaudio | BSD-style | torch-directml | MIT |
 | transformers | Apache 2.0 | tokenizers | Apache 2.0 |
-| datasets | Apache 2.0 | huggingface-hub | Apache 2.0 |
-| modelscope | Apache 2.0 | opencv-python | MIT |
+| huggingface-hub | Apache 2.0 | modelscope | Apache 2.0 |
 | numpy | BSD 3-Clause | addict | MIT |
 | accelerate | Apache 2.0 | einops | MIT |
 | timm | Apache 2.0 | pytorch-lightning | Apache 2.0 |
@@ -357,14 +356,15 @@ Open source packages and their agreement information used by this project:
 | ijson | BSD 3-Clause | pyarrow | Apache 2.0 |
 | tqdm | MIT | jsonlines | MIT |
 | streamlit | Apache 2.0 | PyYAML | MIT |
-| GitPython | BSD 3-Clause | mcp | MIT |
+| GitPython | BSD 3-Clause | opencv-python | MIT |
+| numpy | BSD 3-Clause | addict | MIT |
 | openai | Apache 2.0 | requests | Apache 2.0 |
 | beautifulsoup4 | MIT | psutil | BSD 3-Clause |
 | pytz | MIT | pywin32 | PSF |
 | duckduckgo-search | MIT | plotly | MIT |
+| evalscope | Apache 2.0 |  |  |
 | safetensors | Apache 2.0 | deepspeed | Apache 2.0 |
-| mpi4py | BSD 3-Clause | evalscope | Apache 2.0 |
-| fastmcp | MIT | aiofiles | Apache 2.0 |
+| aiofiles | Apache 2.0 |  |  |
 | pathlib2 | MIT | textual | MIT |
 | dmsc | Apache 2.0 |  |  |
 

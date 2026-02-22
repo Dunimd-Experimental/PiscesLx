@@ -36,11 +36,11 @@ from dataclasses import dataclass
 from typing import Tuple, Optional, Dict, Any, List
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
-
-from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Opss.Scaling", file_path=get_log_file("PiscesLx.Opss.Scaling"), enable_file=True)
 
 
@@ -215,7 +215,7 @@ class POPSSScalingOperator(PiscesLxOperatorInterface):
         self.name = "scaling"
         self.version = VERSION
         self.config = config or POPSSScalingConfig()
-        self._LOG = get_logger("pisceslx.ops.scaling")
+        self._LOG = PiscesLxLogger("pisceslx.ops.scaling")
     
     @property
     def description(self) -> str:

@@ -74,6 +74,7 @@ from ..dc import (
     PiscesLxDevice, PiscesLxDeviceType, PiscesLxDeviceStatus,
     PiscesLxSystemMonitor
 )
+from utils.paths import get_log_file
 
 
 class PiscesLxDeviceTypePreference(Enum):

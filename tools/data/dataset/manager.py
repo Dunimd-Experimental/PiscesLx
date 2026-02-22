@@ -34,7 +34,7 @@ class PiscesLxToolsDataDatasetManager:
         """
         pass
 
-    def load(self, subset: str = "tiny", split: str = "train", config: Optional[Dict[str, Any]] = None, max_samples: Optional[int] = None) -> Dataset:
+    def load(self, name: str = None, subset: str = "tiny", split: str = "train", config: Optional[Dict[str, Any]] = None, max_samples: Optional[int] = None) -> Dataset:
         """
         Load a dataset based on the specified subset and split.
 
@@ -43,6 +43,7 @@ class PiscesLxToolsDataDatasetManager:
         Otherwise, it creates a new Dataset instance directly.
 
         Args:
+            name (str, optional): The name of the dataset. Defaults to None.
             subset (str, optional): The name of the dataset subset. Defaults to "tiny".
             split (str, optional): The split of the dataset, e.g., "train", "val", "test". Defaults to "train".
             config (Optional[Dict[str, Any]], optional): Configuration dictionary for the dataset. Defaults to None.
@@ -54,9 +55,9 @@ class PiscesLxToolsDataDatasetManager:
         # Retrieve the registered builder for the subset
         builder = DATASETS.get(subset)
         if builder:
-            ds = builder(subset=subset, split=split, config=config, max_samples=max_samples)
+            ds = builder(name=name, subset=subset, split=split, config=config, max_samples=max_samples)
             return ds
-        ds = Dataset(subset=subset, split=split, config=config, max_samples=max_samples)
+        ds = Dataset(name=name, subset=subset, split=split, config=config, max_samples=max_samples)
         return ds
 
     def dataloader(self, dataset, batch_config: Optional[PiscesLxToolsDataBatchConfig] = None):

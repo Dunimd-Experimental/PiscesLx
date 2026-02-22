@@ -29,6 +29,7 @@ from collections import deque
 from pathlib import Path
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 from .types import (
     POPSSMCPConfiguration,
@@ -126,7 +127,7 @@ class POPSSMCPMonitor:
         self._LOG.info("POPSSMCPMonitor initialized")
     
     def _configure_logging(self) -> PiscesLxLogger:
-        _LOG = get_logger("PiscesLx.Core.MCP.Monitor")
+        _LOG = PiscesLxLogger("PiscesLx.Opss.MCP",file_path=get_log_file("PiscesLx.Opss.MCP"), enable_file=True)
         return _LOG
     
     def _register_default_health_checks(self):

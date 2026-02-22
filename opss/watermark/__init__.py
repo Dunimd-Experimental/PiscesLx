@@ -66,7 +66,7 @@ Usage Examples:
 
 import sys
 from pathlib import Path
-sys.path.append(str(Path(__file__).parent.parent.parent))
+
 from configs.version import VERSION, AUTHOR
 
 from .config import (
@@ -133,7 +133,7 @@ __all__ = [
     "POPSSWatermarkDefaultConfigFactory",
     "POPSSWatermarkComplianceValidator",
     "POPSSWatermarkProtocolOperator",
-    "POPSSWatermarkFrameInfo",
+    "POPSSFrameInfo",
     "POPSSWatermarkDCTOperator",
     "POPSSWatermarkContentOperator",
     "POPSSContentWatermarkOperator",

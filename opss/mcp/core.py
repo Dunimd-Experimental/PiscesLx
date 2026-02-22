@@ -35,6 +35,8 @@ from urllib.parse import urlparse
 import socket
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
 from configs.version import VERSION
 
 from .types import (
@@ -125,7 +127,7 @@ class POPSSMCPPlaza:
         self._LOG.info(f"POPSSMCPPlaza initialized with config: max_workers={self.config.max_workers}")
     
     def _configure_logging(self) -> PiscesLxLogger:
-        logger = get_logger("PiscesLx.Core.MCP.Plaza")
+        logger = PiscesLxLogger("PiscesLx.Opss.MCP",file_path=get_log_file("PiscesLx.Opss.MCP"), enable_file=True)
         return logger
     
     def initialize(self) -> bool:

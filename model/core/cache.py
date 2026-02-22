@@ -1678,7 +1678,8 @@ class YvUnifiedCacheManager:
 
     def __init__(self, config: Union[YvCacheConfig, Dict[str, Any], Any]):
         if isinstance(config, dict):
-            self.config = YvCacheConfig(**config)
+            filtered_config = {k: v for k, v in config.items() if k in YvCacheConfig.__dataclass_fields__}
+            self.config = YvCacheConfig(**filtered_config)
         elif isinstance(config, YvCacheConfig):
             self.config = config
         else:

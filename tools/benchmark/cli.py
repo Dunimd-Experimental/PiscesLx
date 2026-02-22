@@ -35,18 +35,18 @@ _LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("Pisces
 
 def main():
     parser = argparse.ArgumentParser(
-        description="PiscesL1 Benchmark with EvalScope",
+        description="PiscesLx Benchmark",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Examples:
-  # Single model benchmark
-  python -m tools.benchmark.cli --model-path /path/to/model --datasets mmlu ceval
+            Examples:
+                # Single model benchmark
+                python -m tools.benchmark.cli --model-path /path/to/model --datasets mmlu ceval
 
-  # Compare multiple models
-  python -m tools.benchmark.cli --compare /path/to/model1 /path/to/model2 --datasets mmlu
+                # Compare multiple models
+                python -m tools.benchmark.cli --compare /path/to/model1 /path/to/model2 --datasets mmlu
 
-  # Custom configuration
-  python -m tools.benchmark.cli --model-path /path/to/model --batch-size 16 --max-length 4096
+                # Custom configuration
+                python -m tools.benchmark.cli --model-path /path/to/model --batch-size 16 --max-length 4096
         """,
     )
 

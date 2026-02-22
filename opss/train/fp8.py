@@ -47,15 +47,13 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 
-try:
-    import transformer_engine.pytorch as te
-    from transformer_engine.common.recipe import Format, DelayedScaling, _Format
-    TRANSFORMER_ENGINE_AVAILABLE = True
-except ImportError:
-    TRANSFORMER_ENGINE_AVAILABLE = False
-    te = None
+import transformer_engine.pytorch as te
+from transformer_engine.common.recipe import Format, DelayedScaling, _Format
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
+from configs.version import VERSION
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
@@ -134,14 +132,6 @@ class FP8TrainingConfig:
     save_optimizer_state: bool = True
     load_optimizer_state: bool = False
     resume_from: Optional[str] = None
-    
-    def __post_init__(self):
-        if isinstance(self.max_grad_norm, str):
-            self.max_grad_norm = float(self.max_grad_norm)
-        
-        if not TRANSFORMER_ENGINE_AVAILABLE:
-            self.fp8_format = "BF16"
-            logging.warning("Transformer Engine not available, falling back to BF16")
 
 
 class TextDataset(Dataset):
@@ -232,9 +222,9 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
     def __init__(self):
         super().__init__()
         self.name = "fp8.training"
-        self.version = "2.0.0"
+        self.version = VERSION
         self.type = "training"
-        self._LOG = get_logger("pisceslx.ops.train.fp8")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         
         self._check_hardware()
     
@@ -369,7 +359,7 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
                         enabled=True,
                         dtype=torch.bfloat16 if config.use_bf16 else torch.float16
                     ) if device.type == 'cuda' else nullcontext():
-                        if TRANSFORMER_ENGINE_AVAILABLE and config.fp8_format != "BF16":
+                        if config.fp8_format != "BF16":
                             with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
                                 outputs = model(
                                     input_ids=input_ids,
@@ -452,7 +442,7 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
                     'training_history': training_history,
                     'checkpoint_path': str(checkpoint_dir / "checkpoint_final.pt"),
                     'fp8_statistics': {
-                        'fp8_enabled': TRANSFORMER_ENGINE_AVAILABLE,
+                        'fp8_enabled': True,
                         'format_used': config.fp8_format,
                         'amax_history_len': config.fp8_amax_history_len
                     }
@@ -461,7 +451,7 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
                 metadata={
                     'config': {k: str(v) for k, v in config.__dict__.items()},
                     'model_size': sum(p.numel() for p in model.parameters()),
-                    'training_mode': 'fp8' if TRANSFORMER_ENGINE_AVAILABLE else 'bf16'
+                    'training_mode': 'fp8'
                 }
             )
             
@@ -476,9 +466,6 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
     
     def _create_fp8_recipe(self, config: FP8TrainingConfig):
         """Create FP8 scaling recipe."""
-        if not TRANSFORMER_ENGINE_AVAILABLE:
-            return None
-        
         try:
             format_type = Format[config.fp8_format] if hasattr(Format, config.fp8_format) else Format.HYBRID
         except (KeyError, AttributeError):

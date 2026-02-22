@@ -40,17 +40,14 @@ import torch
 import torch.nn as nn
 import torch.cuda.memory as cuda_memory
 
-try:
-    import numpy as np
-    NUMPY_AVAILABLE = True
-except ImportError:
-    NUMPY_AVAILABLE = False
+import numpy as np
 
 from utils.dc import PiscesLxLogger
-from configs.version import VERSION
-
+from utils.paths import get_log_file
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from utils.opsc.interface import PiscesLxOperatorConfig
+
+from configs.version import VERSION
 
 
 @dataclass
@@ -110,7 +107,7 @@ class YvQuantizationBenchmark:
             config: Benchmark configuration.
         """
         self.config = config or BenchmarkConfig()
-        self._LOG = get_logger("poopss.ops.quantize.benchmark")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         
         self.baseline_results: Optional[BenchmarkResult] = None
         self.current_results: Optional[BenchmarkResult] = None
@@ -651,7 +648,7 @@ class MemoryProfiler:
     """Memory profiling utility."""
     
     def __init__(self):
-        self._LOG = get_logger("poopss.ops.quantize.benchmark.memory")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         self.snapshots = []
     
     def snapshot(self, label: str = ""):
@@ -694,7 +691,7 @@ class POPSSQuantizationBenchmarkOperator(PiscesLxOperatorInterface):
         self.name = "quantize.benchmark"
         self.version = VERSION
         self.type = "quantize"
-        self._LOG = get_logger("pisceslx.ops.quantize.benchmark")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         self.benchmark_suite: Optional[YvQuantizationBenchmark] = None
     
     @property

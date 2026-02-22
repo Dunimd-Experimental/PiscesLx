@@ -31,6 +31,7 @@ from queue import Queue, Empty
 from collections import deque
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 from .types import (
     POPSSMCPConfiguration,
@@ -50,7 +51,7 @@ class POPSSMCPUnifiedToolExecutor:
         self._LOG.info("POPSSMCPUnifiedToolExecutor initialized")
     
     def _configure_logging(self) -> PiscesLxLogger:
-        _LOG = get_logger("PiscesLx.Core.MCP.UnifiedExecutor")
+        _LOG = PiscesLxLogger("PiscesLx.Opss.MCP",file_path=get_log_file("PiscesLx.Opss.MCP"), enable_file=True)
         return _LOG
     
     def register_tool(self, tool_metadata: Any):
@@ -152,7 +153,7 @@ class POPSSMCPExecutionManager:
         self._LOG.info("POPSSMCPExecutionManager initialized")
     
     def _configure_logging(self) -> PiscesLxLogger:
-        _LOG = get_logger("PiscesLx.Core.MCP.Execution")
+        _LOG = PiscesLxLogger("PiscesLx.Core.MCP.Execution")
         return _LOG
     
     def _setup_thread_pool(self):

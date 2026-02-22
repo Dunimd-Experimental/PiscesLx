@@ -109,10 +109,6 @@ Integration:
     - Configuration: Supports PiscesLxOperatorConfig dataclasses
     - Monitoring: Compatible with PiscesLxCoreMetrics
     - Tracing: Supports PiscesLxCoreTracing integration
-
-Version: 1.0.0
-Author: Dunimd Team
-License: Apache License 2.0
 """
 
 from .interface import (

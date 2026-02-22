@@ -21,22 +21,11 @@
 import os
 from typing import Dict, List, Any, Optional
 
-try:
-    from evalscope.models import ModelConfig
-    from evalscope.metrics import MetricConfig
-    from evalscope.datasets import DatasetConfig
-    from evalscope import TaskConfig
-except ImportError:
-    # Fallback for when evalscope is not available
-    ModelConfig = None
-    MetricConfig = None
-    DatasetConfig = None
-    TaskConfig = None
-
-try:
-    from evalscope.constants import EvalType
-except Exception:
-    EvalType = None  # type: ignore
+from evalscope.models import ModelConfig
+from evalscope.metrics import MetricConfig
+from evalscope.datasets import DatasetConfig
+from evalscope import TaskConfig
+from evalscope.constants import EvalType
 
 from .config import PiscesLxToolsBenchmarkConfig
 
@@ -98,7 +87,7 @@ class PiscesLxToolsTaskConfigBuilder:
 
         optional_kwargs: Dict[str, Any] = {}
         if config.eval_type is not None:
-            if EvalType is not None and hasattr(EvalType, config.eval_type.upper()):
+            if hasattr(EvalType, config.eval_type.upper()):
                 optional_kwargs["eval_type"] = getattr(EvalType, config.eval_type.upper())
             else:
                 optional_kwargs["eval_type"] = config.eval_type

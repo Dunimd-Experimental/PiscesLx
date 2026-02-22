@@ -27,9 +27,10 @@ from datetime import datetime
 from typing import Any, Optional, Dict, Tuple, List
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 # Import new modular components
-from .context_utils import PiscesLxMonitorGlobalContext
+from .context_utils import PiscesLxMonitorContextManager
 from .stats_collector import PiscesLxMonitorStatsCollector
 from .alert_manager import PiscesLxMonitorAlertManager
 from .data_manager import PiscesLxMonitorDataManager
@@ -51,7 +52,7 @@ class PiscesLxToolsMonitorImpl:
         }
         
         # Initialize context manager
-        self.context_manager = PiscesLxMonitorGlobalContext
+        self.context_manager = PiscesLxMonitorContextManager
         
         # Initialize components
         self.fs_manager = self.context_manager.get_fs_manager()

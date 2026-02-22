@@ -93,6 +93,7 @@ from enum import Enum
 
 from configs.version import VERSION
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 from utils.opsc.interface import (
     PiscesLxOperatorInterface,
@@ -260,7 +261,7 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
     
     def _setup_logger(self):
         """Setup operator logger."""
-        return get_logger("pisceslx.opss.train.modality_scheduler")
+        return PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
     
     @property
     def name(self) -> str:
