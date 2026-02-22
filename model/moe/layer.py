@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -98,7 +98,8 @@ from utils.dc import PiscesLxLogger
 from .gate import moe_init_weights
 from .expert import YvSharedExpert, YvExpertConfig, YvExpertType
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("Yv.Moe", file_path=get_log_file("Yv.Moe"), enable_file=True)
 
 
 class YvExpertChoiceRouter(nn.Module):

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -21,7 +21,8 @@
 from typing import Any
 from utils.dc import PiscesLxLogger, PiscesLxConfiguration
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("PiscesLx.Tools.Monitor", file_path=get_log_file("PiscesLx.Tools.Monitor"), enable_file=True)
 from . import impl as _impl
 from .impl import PiscesLxToolsMonitorImpl
 

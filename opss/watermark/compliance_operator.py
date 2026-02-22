@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -878,7 +878,7 @@ class POPSSComplianceOperator(PiscesLxBaseOperator):
 
 def create_compliance_operator(
     config: Optional[POPSSWatermarkConfig] = None
-) -> PiscesLxComplianceOperator:
+) -> POPSSComplianceOperator:
     """
     Factory function to create a compliance operator instance.
     

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -151,7 +151,8 @@ from opss.watermark import (
     POPSSWatermarkDefaultConfigFactory
 )
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=get_log_file("PiscesLx.Tools.Train"), enable_file=True)
 
 
 def setup_training_device(local_rank: int = -1, device_pref: str = "auto") -> torch.device:

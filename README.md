@@ -34,7 +34,7 @@ A high-performance multimodal Mixture-of-Experts (MoE) model featuring the **Yv 
 
 </div>
 
-<h2 align="center">Yv Architecture (Yielding vision)</h2>
+<h2 align="center">Yv Architecture</h2>
 
 ### 🧠 YvUnifiedReasoner - Unified Reasoning System
 

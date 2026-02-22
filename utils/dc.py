@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -161,49 +161,88 @@ class PiscesLxCoreError(Exception):
 class PiscesLxLogger:
     """DMSC-based structured logging."""
     
-    def __init__(self, name: str, context: Optional[Dict[str, Any]] = None):
+    def __init__(
+        self, 
+        name: str, 
+        context: Optional[Dict[str, Any]] = None,
+        file_path: Optional[str] = None,
+        enable_file: bool = False
+    ):
         self.name = name
         self._context = context or {}
         self._ctx = _PiscesLxRuntime.context()
+        self._file_path = file_path
+        self._enable_file = enable_file
+        self._file_handler = None
+        
+        if enable_file and file_path:
+            self._init_file_handler(file_path)
+    
+    def _init_file_handler(self, file_path: str) -> None:
+        """Initialize file handler for logging to file."""
+        import os
+        try:
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            self._file_handler = open(file_path, 'a', encoding='utf-8')
+        except Exception:
+            self._file_handler = None
+    
+    def _write_to_file(self, level: str, msg: str) -> None:
+        """Write log message to file."""
+        if self._file_handler:
+            import datetime
+            timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            self._file_handler.write(f"[{timestamp}] [{level}] {self.name}: {msg}\n")
+            self._file_handler.flush()
     
     def debug(self, msg: str, **kwargs) -> None:
+        formatted = self._format(msg, **kwargs)
         logger = self._ctx.logger
         if hasattr(logger, 'debug'):
-            logger.debug(self.name, self._format(msg, **kwargs))
+            logger.debug(self.name, formatted)
         else:
-            print(f"[DEBUG] {self.name}: {self._format(msg, **kwargs)}")
+            print(f"[DEBUG] {self.name}: {formatted}")
+        self._write_to_file("DEBUG", formatted)
     
     def info(self, msg: str, **kwargs) -> None:
+        formatted = self._format(msg, **kwargs)
         logger = self._ctx.logger
         if hasattr(logger, 'info'):
-            logger.info(self.name, self._format(msg, **kwargs))
+            logger.info(self.name, formatted)
         else:
-            print(f"[INFO] {self.name}: {self._format(msg, **kwargs)}")
+            print(f"[INFO] {self.name}: {formatted}")
+        self._write_to_file("INFO", formatted)
     
     def warning(self, msg: str, **kwargs) -> None:
+        formatted = self._format(msg, **kwargs)
         logger = self._ctx.logger
         if hasattr(logger, 'warn'):
-            logger.warn(self.name, self._format(msg, **kwargs))
+            logger.warn(self.name, formatted)
         elif hasattr(logger, 'warning'):
-            logger.warning(self.name, self._format(msg, **kwargs))
+            logger.warning(self.name, formatted)
         else:
-            print(f"[WARNING] {self.name}: {self._format(msg, **kwargs)}")
+            print(f"[WARNING] {self.name}: {formatted}")
+        self._write_to_file("WARNING", formatted)
     
     def error(self, msg: str, **kwargs) -> None:
+        formatted = self._format(msg, **kwargs)
         logger = self._ctx.logger
         if hasattr(logger, 'error'):
-            logger.error(self.name, self._format(msg, **kwargs))
+            logger.error(self.name, formatted)
         else:
-            print(f"[ERROR] {self.name}: {self._format(msg, **kwargs)}")
+            print(f"[ERROR] {self.name}: {formatted}")
+        self._write_to_file("ERROR", formatted)
     
     def critical(self, msg: str, **kwargs) -> None:
+        formatted = self._format(msg, **kwargs)
         logger = self._ctx.logger
         if hasattr(logger, 'critical'):
-            logger.critical(self.name, self._format(msg, **kwargs))
+            logger.critical(self.name, formatted)
         elif hasattr(logger, 'error'):
-            logger.error(self.name, self._format(msg, **kwargs))
+            logger.error(self.name, formatted)
         else:
-            print(f"[CRITICAL] {self.name}: {self._format(msg, **kwargs)}")
+            print(f"[CRITICAL] {self.name}: {formatted}")
+        self._write_to_file("CRITICAL", formatted)
     
     def _format(self, msg: str, **kwargs) -> str:
         if self._context:

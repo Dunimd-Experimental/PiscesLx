@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -33,7 +33,8 @@ from tools.data.clean import DatasetCleaner
 from .config import PiscesLxToolsDataConfigLoader, PiscesLxToolsDataDownloadConfig, DatasetItem
 from .sources import PiscesLxToolsDataSourceRouter
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
 
 class PiscesLxToolsDataDatasetDownload:
     @staticmethod
@@ -99,7 +100,7 @@ class PiscesLxToolsDataDatasetDownload:
         # Set up HuggingFace mirror if needed in child process
         PiscesLxToolsDataSourceRouter.setup_hf_mirror()
         
-        logger = PiscesLxLogger("pisceslx.data.download")
+        logger = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
         logger.info(f"Starting download: {dataset_name} -> {save_name}")
         max_retries = 3
         
@@ -319,7 +320,7 @@ class PiscesLxToolsDataDatasetDownload:
             cfg (PiscesLxToolsDataDownloadConfig): Download configuration object.
         """
         # Logger for this run
-        logger = PiscesLxLogger("pisceslx.data.download")
+        logger = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
         logger.info(f"Starting download with config: {cfg}")
         logger.info(f"Using data directory: {self._DATA}")
         logger.info(f"Using cache directory: {self._DATATEMP}")
@@ -436,7 +437,7 @@ class PiscesLxToolsDataDatasetDownload:
 
     def _cleanup_caches(self) -> None:
         """Clean temporary caches after a run."""
-        logger = PiscesLxLogger("pisceslx.data.download")
+        logger = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
         try:
             # Delegate to cache context cleanup
             self._cache.cleanup_cache()

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -40,7 +40,8 @@ from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("PiscesLx.Opss.Scaling", file_path=get_log_file("PiscesLx.Opss.Scaling"), enable_file=True)
 
 
 @dataclass

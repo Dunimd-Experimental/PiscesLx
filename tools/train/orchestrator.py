@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -48,7 +48,7 @@ Configuration Sources:
 
 Usage Examples:
     From Configuration File:
-        >>> orchestrator = TrainingOrchestrator("config.yaml")
+        >>> orchestrator = PiscesLxTrainOrchestrator("config.yaml")
         >>> orchestrator.initialize_training(
         ...     model_class=MyModel,
         ...     train_dataloader_factory=train_loader_fn,
@@ -58,10 +58,10 @@ Usage Examples:
 
     From Dictionary:
         >>> config = {"model_name": "gpt-7b", "max_steps": 100000}
-        >>> orchestrator = TrainingOrchestrator(config)
+        >>> orchestrator = PiscesLxTrainOrchestrator(config)
 
     Advanced Usage:
-        >>> orchestrator = TrainingOrchestrator(config)
+        >>> orchestrator = PiscesLxTrainOrchestrator(config)
         >>> orchestrator.initialize_training(...)
         >>> 
         >>> # Custom training loop
@@ -97,11 +97,12 @@ from .watermark import TrainingWatermarkIntegrationOperator, TrainingPipelineWat
 from utils.paths import get_cache_dir
 
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=get_log_file("PiscesLx.Tools.Train"), enable_file=True)
 
 
 @PiscesLxOperatorRegistrar()
-class TrainingOrchestrator(PiscesLxBaseOperator):
+class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
     """
     Training Orchestrator
     
@@ -116,7 +117,7 @@ class TrainingOrchestrator(PiscesLxBaseOperator):
         is_initialized: Whether training components are initialized
         
     Example:
-        >>> orchestrator = TrainingOrchestrator("config.yaml")
+        >>> orchestrator = PiscesLxTrainOrchestrator("config.yaml")
         >>> orchestrator.initialize_training(
         ...     model_class=MyModel,
         ...     train_dataloader_factory=train_fn,
@@ -157,9 +158,9 @@ class TrainingOrchestrator(PiscesLxBaseOperator):
         self._val_dataloader_factory: Optional[Callable] = None
         
         if self.stage:
-            _LOG.info(f"TrainingOrchestrator initialized with stage={self.stage.value}")
+            _LOG.info(f"PiscesLxTrainOrchestrator initialized with stage={self.stage.value}")
         else:
-            _LOG.info("TrainingOrchestrator initialized")
+            _LOG.info("PiscesLxTrainOrchestrator initialized")
 
     def _normalize_train_config(self, config: Optional[Union[PiscesLxOperatorConfig, TrainingConfig, str, Dict[str, Any]]]) -> TrainingConfig:
         if isinstance(config, TrainingConfig):
@@ -294,7 +295,7 @@ class TrainingOrchestrator(PiscesLxBaseOperator):
         
         _LOG.info("Applied training config from model config file")
 
-    def switch_stage(self, new_stage, **stage_config) -> 'TrainingOrchestrator':
+    def switch_stage(self, new_stage, **stage_config) -> 'PiscesLxTrainOrchestrator':
         """
         Switch to a new training stage.
         
@@ -789,7 +790,7 @@ class TrainingOrchestrator(PiscesLxBaseOperator):
     def initialize_training(self, model_class: type, 
                           train_dataloader_factory: Callable,
                           val_dataloader_factory: Optional[Callable] = None,
-                          **model_kwargs) -> 'TrainingOrchestrator':
+                          **model_kwargs) -> 'PiscesLxTrainOrchestrator':
         """
         Initialize the complete training environment.
         
@@ -1190,8 +1191,5 @@ class TrainingOrchestrator(PiscesLxBaseOperator):
         self.current_phase = state.get('current_phase', 'initialized')
         
         _LOG.info(f"Training state loaded from {filepath}")
-
-
-PiscesLxToolsTrainOrchestrator = TrainingOrchestrator
 
 

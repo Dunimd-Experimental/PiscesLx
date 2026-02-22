@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -20,15 +20,10 @@
 
 import time
 from typing import List, Dict, Any, Optional
-from opss.concurrency import TimeoutOperator
-try:
-    from utils.dc import PiscesLxConfiguration
-    _CONFIG_AVAILABLE = True
-except ImportError:
-    _CONFIG_AVAILABLE = False
+
 
 class _SimpleCacheManager:
-    """Simple cache manager fallback when utils.dc is not available."""
+    """Simple cache manager fallback."""
     def __init__(self):
         self._cache: Dict[str, Any] = {}
     
@@ -43,96 +38,61 @@ class _SimpleCacheManager:
             del self._cache[key]
         return None
 
+
 PiscesLxCoreEnhancedCacheManager = _SimpleCacheManager
 
+
 class PiscesLxMonitorAlertManager:
-    """Alert manager for system monitoring with caching and timeout protection."""
+    """Alert manager for system monitoring with caching and threshold checking."""
     
-    def __init__(self, cache_manager: PiscesLxCoreEnhancedCacheManager, logger):
+    def __init__(self, config, cache):
         """Initialize the alert manager."""
-        self.cache_manager = cache_manager
-        self.logger = logger
-        self.alert_thresholds = {
+        self.config = config
+        self.cache = cache
+        self.alert_thresholds = config.thresholds if hasattr(config, 'thresholds') else {
             'cpu_percent': 90,
             'memory_percent': 90,
             'gpu_util': 95,
             'gpu_mem_percent': 95,
             'disk_percent': 90,
-            'error_rate': 0.01  # 1%
+            'error_rate': 0.01
         }
+    
+    def check(self, stats: Dict[str, Any]) -> List[str]:
+        """Check for system alerts based on thresholds."""
+        alerts = []
+        
+        if stats.get('cpu_percent_total', 0) > self.alert_thresholds['cpu_percent']:
+            alerts.append(f"High CPU: {stats['cpu_percent_total']:.1f}%")
+        
+        mem = stats.get('memory', {}) or {}
+        if mem.get('percent', 0) > self.alert_thresholds['memory_percent']:
+            alerts.append(f"High Memory: {mem['percent']:.1f}%")
+        
+        for i, gpu in enumerate(stats.get('gpu', []) or []):
+            if gpu.get('util', 0) > self.alert_thresholds['gpu_util']:
+                alerts.append(f"GPU {i} High Util: {gpu['util']}%")
+            if gpu.get('mem_percent', 0) > self.alert_thresholds['gpu_mem_percent']:
+                alerts.append(f"GPU {i} High Mem: {gpu['mem_percent']:.1f}%")
+        
+        for disk in stats.get('disk_usage', []) or []:
+            if disk.get('percent', 0) > self.alert_thresholds['disk_percent']:
+                alerts.append(f"Disk {disk['mountpoint']}: {disk['percent']}%")
+        
+        if alerts:
+            self.cache.set('last_alerts', {'timestamp': time.time(), 'alerts': alerts})
+        
+        return alerts
     
     def check_alerts(self, stats: Dict[str, Any], observability_metrics: Optional[Dict[str, Any]] = None) -> List[str]:
         """Check for system alerts and log them."""
-        try:
-            alerts = []
-            
-            # Check CPU usage
-            if stats and 'cpu_percent_total' in stats:
-                cpu_percent = stats['cpu_percent_total']
-                if cpu_percent > self.alert_thresholds['cpu_percent']:
-                    alerts.append(f"High CPU usage: {cpu_percent:.1f}%")
-                    self.logger.warning(f"ALERT: High CPU usage detected: {cpu_percent:.1f}%")
-            
-            # Check memory usage
-            if stats and 'memory' in stats:
-                mem_percent = stats['memory'].get('percent', 0)
-                if mem_percent > self.alert_thresholds['memory_percent']:
-                    alerts.append(f"High memory usage: {mem_percent:.1f}%")
-                    self.logger.warning(f"ALERT: High memory usage detected: {mem_percent:.1f}%")
-            
-            # Check GPU usage
-            if stats and 'gpu' in stats:
-                for i, gpu in enumerate(stats['gpu']):
-                    gpu_util = gpu.get('util', 0)
-                    if gpu_util > self.alert_thresholds['gpu_util']:
-                        alerts.append(f"GPU {i} high utilization: {gpu_util}%")
-                        self.logger.warning(f"ALERT: GPU {i} high utilization: {gpu_util}%")
-                    
-                    gpu_mem_percent = gpu.get('mem_percent', 0)
-                    if gpu_mem_percent > self.alert_thresholds['gpu_mem_percent']:
-                        alerts.append(f"GPU {i} high memory usage: {gpu_mem_percent:.1f}%")
-                        self.logger.warning(f"ALERT: GPU {i} high memory usage: {gpu_mem_percent:.1f}%")
-            
-            # Check disk usage
-            if stats and 'disk' in stats:
-                disk_percent = stats['disk'].get('percent', 0)
-                if disk_percent > self.alert_thresholds['disk_percent']:
-                    alerts.append(f"High disk usage: {disk_percent:.1f}%")
-                    self.logger.warning(f"ALERT: High disk usage detected: {disk_percent:.1f}%")
-            
-            # Check observability metrics
-            if observability_metrics:
-                error_rate = observability_metrics.get('error_rate', 0)
-                if error_rate > self.alert_thresholds['error_rate']:
-                    alerts.append(f"High error rate: {error_rate:.4f}")
-                    self.logger.warning(f"ALERT: High error rate detected: {error_rate:.4f}")
-                
-                # Log metrics to file only
-                throughput = observability_metrics.get('throughput', 0)
-                p95_latency = observability_metrics.get('p95_latency', 0)
-                self.logger.info(f"Observability metrics: throughput={throughput:.2f}, "
-                               f"p95_latency={p95_latency:.2f}, error_rate={error_rate:.4f}")
-            
-            # Cache alerts for history tracking
-            if alerts:
-                self.cache_manager.set("last_alerts", {
-                    'timestamp': time.time(),
-                    'alerts': alerts
-                }, ttl=300.0)  # Keep for 5 minutes
-            
-            return alerts
-        except Exception as e:
-            self.logger.error("Error checking alerts", error=str(e))
-            return []
+        return self.check(stats)
     
     def update_threshold(self, metric: str, threshold: float) -> None:
         """Update alert threshold for a specific metric."""
         if metric in self.alert_thresholds:
             old_threshold = self.alert_thresholds[metric]
             self.alert_thresholds[metric] = threshold
-            self.logger.info(f"Updated alert threshold for {metric}: {old_threshold} -> {threshold}")
-        else:
-            self.logger.warning(f"Unknown metric for threshold update: {metric}")
     
     def get_thresholds(self) -> Dict[str, float]:
         """Get current alert thresholds."""

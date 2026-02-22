@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -53,7 +53,7 @@ class PiscesLxTrainingRunReporter:
         enable_heartbeat: bool = True,
         enable_gpu_monitor: bool = True,
     ):
-        self._logger = PiscesLxLogger("PiscesLxTrainingRunReporter")
+        self._logger = PiscesLxLogger("PiscesLx.Tools.Train.RunReporter", file_path=get_log_file("PiscesLx.Tools.Train.RunReporter"), enable_file=True)
         self._store = POPSSRunStore(run_id, run_dir=run_dir)
         self._ctl = POPSSRunController(self._store)
         self._control_interval_s = float(control_interval_s or 0.5)

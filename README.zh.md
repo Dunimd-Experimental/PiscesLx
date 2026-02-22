@@ -34,7 +34,7 @@
 
 </div>
 
-<h2 align="center">Yv架构 (Yielding vision)</h2>
+<h2 align="center">Yv架构</h2>
 
 ### 🧠 YvUnifiedReasoner - 统一推理系统
 

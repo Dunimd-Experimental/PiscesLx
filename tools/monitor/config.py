@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -19,11 +19,13 @@
 # limitations under the License.
 
 from typing import Any, Optional
+
 try:
     from utils.dc import PiscesLxConfiguration
     _CONFIG_AVAILABLE = True
 except ImportError:
     _CONFIG_AVAILABLE = False
+
 
 class _SimpleConfigManager:
     """Simple config manager fallback when utils.dc is not available."""
@@ -36,42 +38,41 @@ class _SimpleConfigManager:
     def set(self, key: str, value: Any) -> None:
         self._config[key] = value
 
+
 PiscesLxCoreConfigManager = _SimpleConfigManager
 
+
 class PiscesLxToolsMonitorConfig:
-    """Lightweight facade for monitor configuration.
+    """Monitor configuration management."""
 
-    For now it only normalizes CLI inputs into a namespaced dictionary.
-    Later, we can extend it to merge configs from JSON.
-    """
+    DEFAULT_THRESHOLDS = {
+        'cpu_percent': 90,
+        'memory_percent': 90,
+        'gpu_util': 95,
+        'gpu_mem_percent': 95,
+        'disk_percent': 90,
+    }
 
-    def __init__(self, data: dict) -> None:
-        """Initialize the configuration object.
-
-        Args:
-            data (dict): The configuration data.
-        """
-        self.data = data
-        # Initialize the config manager from utils
+    def __init__(self, data=None) -> None:
+        """Initialize the configuration object."""
+        self.data = data or {}
         self.config_manager = PiscesLxCoreConfigManager()
+        
+        args = data.get('args') if isinstance(data, dict) else None
+        
+        self.update_interval = getattr(args, 'update_interval', 1) if args else 1
+        self.log_interval = getattr(args, 'log_interval', 60) if args else 60
+        self.buffer_size = 60
+        self.thresholds = self.DEFAULT_THRESHOLDS.copy()
 
     @classmethod
     def from_args(cls, args: Any) -> "PiscesLxToolsMonitorConfig":
-        """Create a config object from CLI args.
-
-        Args:
-            args (Any): Command line arguments object.
-
-        Returns:
-            PiscesLxToolsMonitorConfig: A new instance of the configuration object.
-        """
-        d: dict = {}
-        # If monitor_mode is provided in args, add it to the config dictionary
+        """Create a config object from CLI args."""
+        d: dict = {'args': args}
         if getattr(args, "monitor_mode", None):
             d.setdefault("monitor", {})
             d["monitor"]["mode"] = args.monitor_mode
             
-        # Add update interval and log interval if provided
         if getattr(args, "update_interval", None):
             d.setdefault("monitor", {})
             d["monitor"]["update_interval"] = args.update_interval
@@ -83,15 +84,7 @@ class PiscesLxToolsMonitorConfig:
         return cls(d)
 
     def get(self, key: str, default: Optional[Any] = None) -> Any:
-        """Perform dot-path retrieval from the underlying config dict.
-
-        Args:
-            key (str): The dot-separated key path to retrieve.
-            default (Optional[Any], optional): The default value to return if the key is not found. Defaults to None.
-
-        Returns:
-            Any: The value at the specified key path, or the default value if not found.
-        """
+        """Perform dot-path retrieval from the underlying config dict."""
         cur: Any = self.data
         for part in key.split("."):
             if not isinstance(cur, dict) or part not in cur:
@@ -99,10 +92,11 @@ class PiscesLxToolsMonitorConfig:
             cur = cur[part]
         return cur
 
-    def dump_effective(self) -> dict:
-        """Return a shallow copy of the effective configuration.
+    def update_threshold(self, metric: str, value: float) -> None:
+        """Update alert threshold for a metric."""
+        if metric in self.thresholds:
+            self.thresholds[metric] = value
 
-        Returns:
-            dict: A shallow copy of the current configuration data.
-        """
+    def dump_effective(self) -> dict:
+        """Return a shallow copy of the effective configuration."""
         return dict(self.data)

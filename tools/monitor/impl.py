@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -27,12 +27,6 @@ from datetime import datetime
 from typing import Any, Optional, Dict, Tuple, List
 
 from utils.dc import PiscesLxLogger
-from utils import PiscesLxCoreObservabilityManager
-from utils import PiscesLxCoreHookBus
-from utils import PiscesLxCoreEnhancedCacheManager
-from opss.concurrency import TimeoutOperator
-from utils import PiscesLxCoreFS
-from utils import PiscesLxCoreDeviceManager
 
 # Import new modular components
 from .context_utils import PiscesLxMonitorGlobalContext
@@ -46,6 +40,16 @@ class PiscesLxToolsMonitorImpl:
     
     def __init__(self):
         """Initialize monitor with modular components."""
+        # Configuration - must be defined first
+        self.UPDATE_INTERVAL = 1
+        self.LOG_INTERVAL = 60
+        self.ANOMALY_THRESHOLD = {
+            'cpu_percent_total': 20,
+            'memory_percent': 10,
+            'gpu_util': 15,
+            'disk_percent': 5,
+        }
+        
         # Initialize context manager
         self.context_manager = PiscesLxMonitorGlobalContext
         
@@ -55,10 +59,9 @@ class PiscesLxToolsMonitorImpl:
         self.device_manager = self.context_manager.get_device_manager()
         self.logger = self.context_manager.get_logger()
         try:
-            self.console_logger = PiscesLxLogger("pisceslx.monitor.console", console=True, enable_file=False)
-        except TypeError:
-            # Backward compatibility: older logger may not accept enable_file flag
-            self.console_logger = PiscesLxLogger("pisceslx.monitor.console")
+            self.console_logger = PiscesLxLogger("PiscesLx.Tools.Monitor.Console", file_path=get_log_file("PiscesLx.Tools.Monitor.Console"), enable_file=True)
+        except Exception:
+            self.console_logger = PiscesLxLogger("PiscesLx.Tools.Monitor.Console")
         
         # Initialize modular components with shared dependencies
         self.stats_collector = PiscesLxMonitorStatsCollector(
@@ -76,8 +79,8 @@ class PiscesLxToolsMonitorImpl:
         )
         self.display = PiscesLxToolsMonitorDisplay()
         
-        # Initialize observability manager
-        self.observability_manager = PiscesLxCoreObservabilityManager()
+        # Use simple cache-based monitoring instead of observability
+        self._monitoring_active = False
         
         # Configuration
         self.UPDATE_INTERVAL = 1  # 1 second sampling interval
@@ -177,24 +180,16 @@ class PiscesLxToolsMonitorImpl:
     
     def _init_logging(self):
         """Initialize logging configuration."""
-        self.MONITOR_LOG_DIR = self.fs_manager.path_join(
-            self.fs_manager.get_project_root(), '.pisceslx', 'logs'
-        )
-        self.fs_manager.ensure_dir(self.MONITOR_LOG_DIR)
-        self.MONITOR_LOG_FILE = self.fs_manager.path_join(self.MONITOR_LOG_DIR, 'monitor.log')
+        import os
+        self.MONITOR_LOG_DIR = os.path.join(os.getcwd(), '.pisceslx', 'logs')
+        os.makedirs(self.MONITOR_LOG_DIR, exist_ok=True)
+        self.MONITOR_LOG_FILE = os.path.join(self.MONITOR_LOG_DIR, 'monitor.log')
         
-        # Use separate logger for monitor with console disabled
-        self.monitor_logger = PiscesLxLogger(
-            "pisceslx.monitor.file", 
-            file_path=self.MONITOR_LOG_FILE, 
-            console=False, 
-            enable_file=True
-        )
-        self.obs_logger = PiscesLxLogger("pisceslx.monitor.observability")
+        self.monitor_logger = PiscesLxLogger("PiscesLx.Tools.Monitor.File", file_path=get_log_file("PiscesLx.Tools.Monitor.File"), enable_file=True)
+        self.obs_logger = PiscesLxLogger("PiscesLx.Tools.Monitor.Observability", file_path=get_log_file("PiscesLx.Tools.Monitor.Observability"), enable_file=True)
     
-    @PiscesLxCoreRetry(max_attempts=3, delay=1.0)
     def get_observability_metrics(self):
-        """Get metrics from observability framework."""
+        """Get metrics using simple psutil monitoring."""
         try:
             # Check cache first
             cache_key = "observability_metrics"
@@ -202,43 +197,45 @@ class PiscesLxToolsMonitorImpl:
             if cached_metrics and time.time() - cached_metrics.get('timestamp', 0) < 5.0:
                 return cached_metrics.get('data')
             
-            # Start monitoring session if not active
-            if not self.observability_manager.is_monitoring_active():
-                session_config = {
-                    "session_id": "system_monitor",
-                    "interval": 5.0,
-                    "enable_gpu": self.gpu_enabled
+            # Get system metrics directly with psutil
+            metrics = {
+                "cpu_percent_total": psutil.cpu_percent(interval=0.1),
+                "memory": {
+                    "percent": psutil.virtual_memory().percent,
+                    "available": psutil.virtual_memory().available,
+                    "total": psutil.virtual_memory().total
+                },
+                "disk": {
+                    "percent": psutil.disk_usage('/').percent
                 }
-                self.observability_manager.start_monitoring(session_config)
+            }
             
-            # Get system metrics with short timeout and safe fallback
-            metrics = None
-            try:
-                with TimeoutOperator(seconds=0.5):
-                    metrics = self.observability_manager.get_system_metrics()
-            except Exception:
-                metrics = None
+            # Add GPU metrics if available
+            if self.gpu_enabled and self.gpu_count > 0:
+                try:
+                    gpu_metrics = []
+                    for i in range(self.gpu_count):
+                        gpu_metrics.append({
+                            "id": i,
+                            "utilization": 0,
+                            "memory_used": 0,
+                            "memory_total": 0
+                        })
+                    metrics["gpu"] = gpu_metrics
+                except Exception:
+                    pass
             
             # Cache results
-            if metrics:
-                self.cache_manager.set(cache_key, {
-                    'timestamp': time.time(),
-                    'data': metrics
-                }, ttl=5.0)
-                
-                # Log metrics to file only
-                self.obs_logger.info(f"Observability metrics: {metrics}")
+            self.cache_manager.set(cache_key, {
+                'timestamp': time.time(),
+                'data': metrics
+            })
             
-            # Fallback to last cached or minimal defaults
-            if metrics is None:
-                if cached_metrics:
-                    return cached_metrics.get('data')
-                return {"cpu_percent_total": psutil.cpu_percent(interval=None), "memory": {"percent": psutil.virtual_memory().percent}}
             return metrics
             
         except Exception as e:
-            self.logger.error(f"Failed to get observability metrics: {e}")
-            return None
+            self.logger.error(f"Failed to get system metrics: {e}")
+            return {"cpu_percent_total": psutil.cpu_percent(interval=None), "memory": {"percent": psutil.virtual_memory().percent}}
     
     def get_system_stats(self) -> Dict[str, Any]:
         """Get comprehensive system statistics."""

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -139,7 +139,7 @@ from .agent_interceptor import PiscesLxAgentInterceptor, PiscesLxAgentMode
 from .opss_integration import PiscesLxOPSSIntegration
 from .run_integration import PiscesLxRunIntegration
 
-from .orchestrator import InferenceOrchestrator
+from .orchestrator import PiscesLxInferOrchestrator
 from .watermark import InferenceWatermarkIntegrationOperator, InferencePipelineWatermarkOperator
 
 from configs.version import VERSION, AUTHOR
@@ -161,7 +161,7 @@ __all__ = [
     "MODEL_SPECS",
     "get_model_spec",
     "list_available_models",
-    "InferenceOrchestrator",
+    "PiscesLxInferOrchestrator",
     "InferenceWatermarkIntegrationOperator",
     "InferencePipelineWatermarkOperator",
     "PiscesLxModelRouter",

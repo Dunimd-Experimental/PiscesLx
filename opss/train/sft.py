@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -112,7 +112,7 @@ class POPSSSFTDataset(Dataset):
         self.ignore_index = ignore_index
         
         self.samples = self._load_data(data_path)
-        self._LOG = PiscesLxLogger("pisceslx.ops.train.sft.dataset")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train.Sft.Dataset", file_path=get_log_file("PiscesLx.Opss.Train.Sft.Dataset"), enable_file=True)
         self._LOG.info(f"Loaded {len(self.samples)} samples from {data_path}")
     
     def _load_data(self, data_path: str) -> List[Dict[str, Any]]:
@@ -193,7 +193,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
         self._name = "sft.training"
         self._version = VERSION
         self.type = "training"
-        self._LOG = PiscesLxLogger("pisceslx.ops.train.sft")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train.Sft", file_path=get_log_file("PiscesLx.Opss.Train.Sft"), enable_file=True)
         
     @property
     def name(self) -> str:
@@ -354,7 +354,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 self.global_step = 0
                 self.total_loss = 0.0
                 self.training_history = []
-                self._LOG = PiscesLxLogger("pisceslx.ops.train.sft.trainer")
+                self._LOG = PiscesLxLogger("PiscesLx.Opss.Train.Sft.Trainer", file_path=get_log_file("PiscesLx.Opss.Train.Sft.Trainer"), enable_file=True)
                 
                 if config.use_fp16 or config.use_bf16:
                     self.scaler = GradScaler()

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -144,10 +144,15 @@ Exit Codes:
 import os
 import sys
 import json
-import yaml
 import argparse
 from pathlib import Path
 from configs.version import CVERSION
+
+
+def _import_yaml():
+    global yaml
+    import yaml
+    return yaml
 
 
 ROOT = os.path.abspath(os.path.dirname(__file__))
@@ -174,7 +179,8 @@ def _get_logger():
         is not yet available.
     """
     from utils.dc import PiscesLxLogger
-    return PiscesLxLogger("pisceslx.manage")
+    from utils.paths import get_log_file
+    return PiscesLxLogger("PiscesLx.Manage", file_path=get_log_file("PiscesLx.Manage"), enable_file=True)
 
 
 COMMANDS = [
@@ -341,10 +347,8 @@ def main():
         from tools.help import help
         help()
     elif args.command == 'train':
-        print("[manage] train branch enter")
-        from tools.train.orchestrator import PiscesLxToolsTrainOrchestrator
-        orchestrator = PiscesLxToolsTrainOrchestrator(args)
-        print("[manage] orchestrator created")
+        from tools.train.orchestrator import PiscesLxTrainOrchestrator
+        orchestrator = PiscesLxTrainOrchestrator(args)
         orchestrator.run(args)
     elif args.command == 'serve':
         from tools.infer.server import PiscesLxBackendServer
@@ -423,7 +427,7 @@ def main():
                 try:
                     from configs.version import VERSION
                     with open('configs/watermark.yaml', 'r', encoding='utf-8') as wf:
-                        wm_cfg = yaml.safe_load(wf) or {}
+                        wm_cfg = _import_yaml().safe_load(wf) or {}
                         # Replace {{VERSION}} placeholder with actual version
                         if "watermark_system" in wm_cfg and wm_cfg["watermark_system"].get("version") == "{{VERSION}}":
                             wm_cfg["watermark_system"]["version"] = VERSION

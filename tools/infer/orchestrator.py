@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -44,11 +44,12 @@ from .core import PiscesLxInferenceEngine
 from .pipeline import InferencePipelineOperator, PromptEngineeringOperator
 
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
 
 
 @PiscesLxOperatorRegistrar()
-class InferenceOrchestrator(PiscesLxBaseOperator):
+class PiscesLxInferOrchestrator(PiscesLxBaseOperator):
     """
     Inference Orchestrator.
     Unified management of all components in the inference pipeline.
@@ -71,7 +72,7 @@ class InferenceOrchestrator(PiscesLxBaseOperator):
         self.current_session = "default"
         self.inference_sessions = {}
         
-        _LOG.info("InferenceOrchestrator initialized")
+        _LOG.info("PiscesLxInferOrchestrator initialized")
 
     def run(self, args) -> Dict[str, Any]:
         params: Dict[str, Any] = {}
@@ -267,7 +268,7 @@ class InferenceOrchestrator(PiscesLxBaseOperator):
     
     def initialize_inference(self, model_path: str,
                            tokenizer_path: Optional[str] = None,
-                           **model_kwargs) -> 'InferenceOrchestrator':
+                           **model_kwargs) -> 'PiscesLxInferOrchestrator':
         """
         Initialize complete inference environment.
         
@@ -594,8 +595,5 @@ class InferenceOrchestrator(PiscesLxBaseOperator):
         
         self.infer_config = InferenceConfig.from_dict(state['config'])
         self.current_session = state.get('current_session', 'default')
-        
+
         _LOG.info(f"Inference state loaded from {filepath}")
-
-
-PiscesLxToolsInferOrchestrator = InferenceOrchestrator

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -25,7 +25,8 @@ from utils.opsc.interface import PiscesLxOperatorConfig
 from utils.opsc.registry import PiscesLxOperatorRegistrar
 from utils.dc import PiscesLxLogger
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
 
 @PiscesLxOperatorRegistrar()
 class InferenceWatermarkIntegrationOperator(PiscesLxTransformOperator):

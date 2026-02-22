@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -150,7 +150,7 @@ Version History:
 
 from .core import PiscesLxTrainingOperator
 from .config import TrainingConfig
-from .orchestrator import TrainingOrchestrator
+from .orchestrator import PiscesLxTrainOrchestrator
 from .watermark import TrainingWatermarkIntegrationOperator, TrainingPipelineWatermarkOperator
 
 from configs.version import VERSION, AUTHOR
@@ -161,7 +161,7 @@ __author__ = AUTHOR
 __all__ = [
     "PiscesLxTrainingOperator",
     "TrainingConfig", 
-    "TrainingOrchestrator",
+    "PiscesLxTrainOrchestrator",
     "TrainingWatermarkIntegrationOperator",
     "TrainingPipelineWatermarkOperator"
 ]

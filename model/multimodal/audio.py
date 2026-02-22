@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -71,7 +71,8 @@ import torch.nn.functional as F
 from typing import Dict, Any, Optional, List, Tuple
 from utils.dc import PiscesLxLogger
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("Yv.Multimodal", file_path=get_log_file("Yv.Multimodal"), enable_file=True)
 
 class YvAudioEncoder(nn.Module):
     """Multi-task audio encoder producing modality-aligned embeddings.

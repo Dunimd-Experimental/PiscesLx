@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -715,8 +715,8 @@ class POPSSContentWatermarkOperator(PiscesLxBaseOperator):
         return "unknown"
     
     def _create_payload(self, payload: Dict[str, Any], metadata: Dict[str, Any], 
-                       content_type: str) -> PiscesLxWatermarkPayload:
-        watermark_payload = PiscesLxWatermarkPayload(
+                       content_type: str) -> POPSSWatermarkPayload:
+        watermark_payload = POPSSWatermarkPayload(
             model_id=self.config.model_id,
             version=self.config.version,
             user_hash=hashlib.sha256(

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -56,14 +56,14 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 
-class PiscesLxXMLMode(Enum):
+class YvXMLMode(Enum):
     SINGLE = "single"
     SWARM = "swarm"
     SEQUENTIAL = "sequential"
 
 
 @dataclass
-class PiscesLxAgenticToolCall:
+class YvAgenticToolCall:
     tool_name: str
     parameters: Dict[str, Any]
     raw_match: str
@@ -74,7 +74,7 @@ class PiscesLxAgenticToolCall:
 
 
 @dataclass
-class PiscesLxAgenticAgentCall:
+class YvAgenticAgentCall:
     agent_name: str
     raw_match: str
     start_pos: int
@@ -84,7 +84,7 @@ class PiscesLxAgenticAgentCall:
 
 
 @dataclass
-class PiscesLxAgenticGroup:
+class YvAgenticGroup:
     agents: List[str]
     mode: str
     raw_match: str
@@ -93,19 +93,19 @@ class PiscesLxAgenticGroup:
 
 
 @dataclass
-class PiscesLxParsedAgenticCall:
+class YvParsedAgenticCall:
     raw_match: str
     start_pos: int
     end_pos: int
     mode: str = "single"
-    agents: List[PiscesLxAgenticAgentCall] = field(default_factory=list)
-    tools: List[PiscesLxAgenticToolCall] = field(default_factory=list)
-    agent_group: Optional[PiscesLxAgenticGroup] = None
+    agents: List[YvAgenticAgentCall] = field(default_factory=list)
+    tools: List[YvAgenticToolCall] = field(default_factory=list)
+    agent_group: Optional[YvAgenticGroup] = None
     context_refs: List[str] = field(default_factory=list)
     parameters: Dict[str, Any] = field(default_factory=dict)
 
 
-class PiscesLxMCPXMLParser:
+class YvMCPXMLParser:
     def __init__(self):
         self._setup_patterns()
     
@@ -347,9 +347,9 @@ class PiscesLxMCPXMLParser:
             return {"raw": param_text}
 
 
-class PiscesLxMCPXMLGenerator:
+class YvMCPXMLGenerator:
     def __init__(self):
-        self.parser = PiscesLxMCPXMLParser()
+        self.parser = YvMCPXMLParser()
     
     def generate_agentic_call(
         self,
@@ -453,5 +453,5 @@ class PiscesLxMCPXMLGenerator:
             return f'<result success="false"><error>{escaped_error}</error></result>'
 
 
-xml_parser = PiscesLxMCPXMLParser()
-xml_generator = PiscesLxMCPXMLGenerator()
+xml_parser = YvMCPXMLParser()
+xml_generator = YvMCPXMLGenerator()

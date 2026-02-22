@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -162,7 +162,7 @@ class FSDPDataset(torch.utils.data.Dataset):
         }
 
 
-class FSDPTrainingOperator(PiscesLxOperatorInterface):
+class POPSSFSDPTrainingOperator(PiscesLxOperatorInterface):
     """Complete FSDP training operator implementation."""
     
     def __init__(self):
@@ -436,4 +436,3 @@ class FSDPTrainingOperator(PiscesLxOperatorInterface):
 
 
 # Alias for backward compatibility
-FSDPOperator = FSDPTrainingOperator

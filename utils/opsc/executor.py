@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -166,7 +166,8 @@ class PiscesLxOperatorExecutor:
         self.max_workers = max_workers
         self.thread_pool = ThreadPoolExecutor(max_workers=max_workers)
         self.active_executions: Dict[str, PiscesLxExecutionContext] = {}
-        self.logger = PiscesLxLogger(self.__class__.__name__)
+        from utils.paths import get_log_file
+        self.logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.{self.__class__.__name__}", file_path=get_log_file(f"PiscesLx.Core.OPSC.{self.__class__.__name__}"), enable_file=True)
         self.metrics = PiscesLxMetrics()
         self.tracing = PiscesLxTracing()
         self.system_monitor = PiscesLxSystemMonitor()

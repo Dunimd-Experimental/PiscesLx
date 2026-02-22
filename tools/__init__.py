@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -31,12 +31,12 @@ _LAZY_EXPORTS = {
     'PiscesLxToolsDataConfigLoader': 'tools.data.download.config',
     'DatasetItem': 'tools.data.download.config',
     # Infer
-    'PiscesLxToolsInferOrchestrator': 'tools.infer.orchestrator',
+    'PiscesLxInferOrchestrator': 'tools.infer.orchestrator',
     'PiscesLxToolsInferRunner': 'tools.infer.runner',
     'PiscesLxToolsInferConfig': 'tools.infer.config',
     'PiscesLxToolsInferImpl': 'tools.infer.impl',
     # Train
-    'PiscesLxToolsTrainOrchestrator': 'tools.train.orchestrator',
+    'PiscesLxTrainOrchestrator': 'tools.train.orchestrator',
     'PiscesLxToolsTrainRunner': 'tools.train.runner',
     'PiscesLxToolsTrainConfig': 'tools.train.config',
     'PiscesLxToolsTrainImpl': 'tools.train.impl',

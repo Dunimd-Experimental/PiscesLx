@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -85,7 +85,8 @@ import torch.nn.functional as F
 from typing import Any, Dict, List, Optional, Tuple
 from utils.dc import PiscesLxLogger
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("Yv.Multimodal", file_path=get_log_file("Yv.Multimodal"), enable_file=True)
 
 class YvSpatioTemporalRoPE3D(nn.Module):
     """3D spatio-temporal rotary positional embedding for video inputs.

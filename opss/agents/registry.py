@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -181,7 +181,8 @@ class POPSSAggregentRegistry:
             opsc_registry: Optional OPSC registry to use
         """
         from utils.dc import PiscesLxLogger, PiscesLxMetrics
-        self._LOG = PiscesLxLogger("POPSSAggregentRegistry")
+        from utils.paths import get_log_file
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Agents.Registry", file_path=get_log_file("PiscesLx.Opss.Agents.Registry"), enable_file=True)
         self._metrics = PiscesLxMetrics()
 
         self._opsc_registry = opsc_registry or PiscesLxOperatorRegistryHub.get_registry()

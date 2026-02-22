@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -292,7 +292,7 @@ class PiscesLxMemoryPool:
         self.free_blocks: Set[int] = set(range(total_memory_bytes // block_size))
         self._lock = threading.RLock()
         self._metrics = PiscesLxMetrics()
-        self._logger = PiscesLxLogger(f"MemoryPool-{device_id}")
+        self._logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.MemoryPool-{device_id}", file_path=get_log_file(f"PiscesLx.Core.OPSC.MemoryPool"), enable_file=True)
 
         self._metrics.gauge("memory_pool_total_gb", total_memory_bytes / (1024 ** 3))
 
@@ -438,7 +438,7 @@ class PiscesLxCUDAScheduler:
         self._next_event_id = 0
         self._lock = threading.RLock()
         self._metrics = PiscesLxMetrics()
-        self._logger = PiscesLxLogger(f"CUDAScheduler-{device_id}")
+        self._logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.CUDAScheduler-{device_id}", file_path=get_log_file("PiscesLx.Core.OPSC.CUDAScheduler"), enable_file=True)
 
         self._create_default_stream()
 
@@ -767,7 +767,7 @@ class PiscesLxGPUScheduler:
         self._next_allocation_id = 0
         self._lock = threading.RLock()
         self._metrics = PiscesLxMetrics()
-        self._logger = PiscesLxLogger("GPUScheduler")
+        self._logger = PiscesLxLogger("PiscesLx.Core.OPSC.GPUScheduler", file_path=get_log_file("PiscesLx.Core.OPSC.GPUScheduler"), enable_file=True)
 
         self._initialize_devices()
 
@@ -1154,7 +1154,7 @@ class PiscesLxResourceEstimator:
             "xxl": {"hidden_size": 4096, "num_layers": 64, "num_heads": 64},
         }
         self._lock = threading.RLock()
-        self._logger = PiscesLxLogger("ResourceEstimator")
+        self._logger = PiscesLxLogger("PiscesLx.Core.OPSC.ResourceEstimator", file_path=get_log_file("PiscesLx.Core.OPSC.ResourceEstimator"), enable_file=True)
 
     def estimate_attention_memory(
         self,

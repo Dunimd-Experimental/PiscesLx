@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -65,7 +65,7 @@ Usage Example:
     >>> result = await registry.execute_tool("search", query="hello")
 
 Note:
-    Extends opss.mcp.POPSSMCPRegistry with Yv-specific features.
+    Extends opss.mcp.POPSSMCPToolRegistry with Yv-specific features.
     Integrates with YvMultiPathReasoningEngine for intelligent routing.
 """
 
@@ -76,7 +76,7 @@ from datetime import datetime
 from typing import Dict, Any, Callable, List, Optional, Union
 from opss.mcp import (
     POPSSMCPMessageType, POPSSMCPMessage, POPSSAgenticAction, POPSSAgenticObservation,
-    POPSSMCPRegistry, POPSSMCPUnifiedToolExecutor,
+    POPSSMCPToolRegistry, POPSSMCPUnifiedToolExecutor,
     get_unified_tool_executor, POPSSMCPTreeSearchReasoner,
     POPSSMCPToolMetadata, POPSSMCPToolType
 )
@@ -100,7 +100,7 @@ except ImportError:
 class YvMCPToolRegistry:
     """Registry bridging Yv tools with the shared Pisces MCP ecosystem.
     
-    A comprehensive tool registry that extends POPSSMCPRegistry with Yv-specific
+    A comprehensive tool registry that extends POPSSMCPToolRegistry with Yv-specific
     features including native/external execution tracking, dual registration with the
     unified executor, and optional integration with the multipath reasoning engine.
     
@@ -136,7 +136,7 @@ class YvMCPToolRegistry:
         execution_stats (Dict[str, Union[int, float]]): Local execution counters.
         _native_tools (Dict[str, Callable]): Mapping of native tool names to handlers.
         unified_executor (POPSSMCPUnifiedToolExecutor): Shared executor for dual registration.
-        core_registry (opss.mcp.POPSSMCPRegistry): Underlying registry from opss.mcp.
+        core_registry (opss.mcp.POPSSMCPToolRegistry): Underlying registry from opss.mcp.
     
     Example:
         >>> registry = YvMCPToolRegistry(
@@ -146,7 +146,7 @@ class YvMCPToolRegistry:
         >>> await registry.register_tool("search", "Search tool", {}, search_handler)
     
     Note:
-        Extends opss.mcp.POPSSMCPRegistry with Yv-specific features.
+        Extends opss.mcp.POPSSMCPToolRegistry with Yv-specific features.
         Execution stats include native_executions, external_calls, total_executions.
     """
 
@@ -161,7 +161,7 @@ class YvMCPToolRegistry:
         
         Note:
             Initializes unified_executor via get_unified_tool_executor().
-            Creates core_registry as POPSSMCPRegistry instance.
+            Creates core_registry as POPSSMCPToolRegistry instance.
         """
         self.agentic_id = agentic_id
         self.message_handler = message_handler
@@ -180,7 +180,7 @@ class YvMCPToolRegistry:
         self.unified_executor = get_unified_tool_executor()
         
         # Initialize core registry for base functionality
-        self.core_registry = POPSSMCPRegistry()
+        self.core_registry = POPSSMCPToolRegistry()
     
     async def register_tool(self, name: str, description: str, parameters: Dict[str, Any], native_handler: Optional[Callable] = None):
         """Register a tool with both the unified executor and core registry.

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -28,7 +28,8 @@ from .quality import PiscesLxToolsDataQualityController
 from typing import Optional, Dict, Any, List, Tuple
 from datasets import load_from_disk, Dataset, concatenate_datasets
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("PiscesLx.Tools.Data.Clean", file_path=get_log_file("PiscesLx.Tools.Data.Clean"), enable_file=True)
 
 class DatasetCleaner:
     @staticmethod

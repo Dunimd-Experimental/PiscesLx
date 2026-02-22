@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -596,8 +596,6 @@ def quantize_pipeline(model: nn.Module,
     out = result.output or {}
     return out["quantized_model"], out
 
-
-QuantizationPipelineOperator = POPSSQuantizationPipelineOperator
 
 
 class QuantizationEvaluator:

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -48,13 +48,18 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from utils.dc import PiscesLxLogger
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
-from utils.error import PiscesLxCoreTimeoutError as _BaseTimeoutError
 
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("PiscesLx.Opss.Concurrency", file_path=get_log_file("PiscesLx.Opss.Concurrency"), enable_file=True)
 
 
-class POPSSTimeoutError(_BaseTimeoutError):
+class PiscesLxCoreTimeoutError(TimeoutError):
+    """Timeout error for concurrency operations."""
+    pass
+
+
+class POPSSTimeoutError(PiscesLxCoreTimeoutError):
     """Timeout error for concurrency operations."""
     pass
 
@@ -477,6 +482,7 @@ class POPSSConcurrencyOperator(PiscesLxOperatorInterface):
 
 
 __all__ = [
+    "PiscesLxCoreTimeoutError",
     "POPSSTimeoutError",
     "POPSSConcurrencyError",
     "POPSSTaskPriority",
@@ -484,8 +490,13 @@ __all__ = [
     "POPSSConcurrencyConfig",
     "POPSSRetryConfig",
     "POPSSTimeoutOperator",
+    "TimeoutOperator",
+    "RetryOperator",
     "POPSSRetryOperator",
     "POPSSParallelOperator",
     "POPSSAsyncOperator",
     "POPSSConcurrencyOperator",
 ]
+
+RetryOperator = POPSSRetryOperator
+TimeoutOperator = POPSSTimeoutOperator

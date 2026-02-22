@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -70,6 +70,9 @@ from typing import (
     List,
     Optional
 )
+
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 if TYPE_CHECKING:
     from .interface import (
@@ -185,7 +188,7 @@ class PiscesLxOperatorCore:
             self.registry,
             max_workers=self.config.max_concurrent_executors
         )
-        self.logger = PiscesLxLogger(self.__class__.__name__)
+        self.logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.{self.__class__.__name__}", file_path=get_log_file(f"PiscesLx.Core.OPSC.{self.__class__.__name__}"), enable_file=True)
         self._initialized = False
 
         if self.config.enable_heterogeneous:

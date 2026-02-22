@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -20,203 +20,148 @@
 
 import psutil
 from typing import Dict, Any, Optional, List
-from opss.concurrency import RetryOperator
-from utils import PiscesLxCoreEnhancedCacheManager
-from utils import PiscesLxCoreDeviceManager
 
 
 class PiscesLxMonitorStatsCollector:
-    """System statistics collector with caching and retry mechanisms."""
-    
-    def __init__(self, cache_manager: PiscesLxCoreEnhancedCacheManager, 
-                 device_manager: PiscesLxCoreDeviceManager):
-        """Initialize the stats collector with cache and device managers."""
+    """System statistics collector."""
+
+    def __init__(self, cache_manager=None, device_manager=None):
         self.cache_manager = cache_manager
         self.device_manager = device_manager
         self.gpu_enabled = False
         self.gpu_count = 0
-        self._retry_cpu = RetryOperator(max_attempts=2, base_delay=0.5)
-        self._retry_gpu = RetryOperator(max_attempts=2, base_delay=0.5)
-        self._init_gpu_detection()
-    
-    def _init_gpu_detection(self):
-        """Initialize GPU detection using device manager with fallback."""
+        self.pynvml = None
+        self._init_gpu()
+
+    def _init_gpu(self):
         try:
-            gpu_devices = self.device_manager.get_gpu_devices()
-            self.gpu_count = len(gpu_devices)
+            import pynvml
+            pynvml.nvmlInit()
+            self.gpu_count = pynvml.nvmlDeviceGetCount()
             if self.gpu_count > 0:
                 self.gpu_enabled = True
+                self.pynvml = pynvml
         except Exception:
-            # Fallback to pynvml
-            try:
-                import pynvml
-                pynvml.nvmlInit()
-                self.gpu_count = pynvml.nvmlDeviceGetCount()
-                if self.gpu_count > 0:
-                    self.gpu_enabled = True
-            except Exception:
-                self.gpu_enabled = False
-    
-    def get_cpu_info(self) -> Optional[Dict[str, Any]]:
-        """Get CPU information with caching."""
-        try:
-            # Check cache first
-            cache_key = "cpu_info"
-            cached_info = self.cache_manager.get(cache_key)
-            if cached_info and time.time() - cached_info.get('timestamp', 0) < 2.0:
-                return cached_info.get('data')
-            
-            cpu_percent = psutil.cpu_percent(interval=1)
-            cpu_count = psutil.cpu_count()
-            cpu_freq = psutil.cpu_freq()
-            cpu_stats = psutil.cpu_stats()
-            
-            cpu_info = {
-                "cpu_percent": cpu_percent,
-                "cpu_count": cpu_count,
-                "cpu_freq_current": cpu_freq.current if cpu_freq else 0,
-                "cpu_freq_max": cpu_freq.max if cpu_freq else 0,
-                "cpu_ctx_switches": cpu_stats.ctx_switches,
-                "cpu_interrupts": cpu_stats.interrupts
-            }
-            
-            # Cache the result
-            self.cache_manager.set(cache_key, {
-                'timestamp': time.time(),
-                'data': cpu_info
-            }, ttl=2.0)
-            
-            return cpu_info
-        except Exception:
-            return None
-    
-    def get_gpu_stats(self) -> Optional[List[Dict[str, Any]]]:
-        """Get GPU statistics with device manager integration."""
-        if not self.gpu_enabled:
-            return None
-        
-        try:
-            # Check cache first
-            cache_key = "gpu_stats"
-            cached_stats = self.cache_manager.get(cache_key)
-            if cached_stats and time.time() - cached_stats.get('timestamp', 0) < 2.0:
-                return cached_stats.get('data')
-            
-            gpu_stats = []
-            
-            # Try device manager first
-            try:
-                gpu_devices = self.device_manager.get_gpu_devices()
-                for device in gpu_devices:
-                    gpu_info = self.device_manager.get_gpu_info(device)
-                    if gpu_info:
-                        gpu_stats.append({
-                            'name': gpu_info.get("name", "Unknown"),
-                            'util': gpu_info.get("gpu_utilization", 0),
-                            'mem_total': gpu_info.get("memory_total", 0),
-                            'mem_used': gpu_info.get("memory_used", 0),
-                            'mem_percent': gpu_info.get("memory_percent", 0)
-                        })
-            except Exception:
-                # Fallback to pynvml
-                if self.gpu_count > 0:
-                    import pynvml
-                    for i in range(self.gpu_count):
-                        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-                        util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                        mem_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-                        name = pynvml.nvmlDeviceGetName(handle)
-                        if isinstance(name, bytes):
-                            name = name.decode('utf-8')
-                        gpu_stats.append({
-                            'name': name,
-                            'util': util.gpu,
-                            'mem_total': mem_info.total,
-                            'mem_used': mem_info.used,
-                            'mem_percent': (mem_info.used / mem_info.total) * 100 if mem_info.total > 0 else 0
-                        })
-            
-            # Cache the results
-            self.cache_manager.set(cache_key, {
-                'timestamp': time.time(),
-                'data': gpu_stats
-            }, ttl=2.0)
-            
-            return gpu_stats
-        except Exception:
-            return None
-    
-    def get_system_stats(self) -> Dict[str, Any]:
-        """Gather all system statistics."""
+            pass
+
+    def collect(self) -> Dict[str, Any]:
         stats = {}
         
-        # CPU usage statistics
         stats['cpu_percent_total'] = psutil.cpu_percent(percpu=False)
         stats['cpu_percent_per_core'] = psutil.cpu_percent(percpu=True)
         try:
             stats['cpu_freq'] = psutil.cpu_freq(percpu=True)
         except Exception:
-            stats['cpu_freq'] = None
+            stats['cpu_freq'] = []
         
-        # Memory usage statistics
         mem = psutil.virtual_memory()
         stats['memory'] = {
             'total': mem.total,
-            'available': mem.available,
-            'percent': mem.percent,
             'used': mem.used,
-            'free': mem.free
+            'free': mem.free,
+            'percent': mem.percent
         }
         
-        # Swap usage statistics
         swap = psutil.swap_memory()
         stats['swap'] = {
             'total': swap.total,
             'used': swap.used,
-            'free': swap.free,
             'percent': swap.percent
         }
         
-        # Disk usage statistics
-        disk = psutil.disk_usage('/')
-        stats['disk'] = {
-            'total': disk.total,
-            'used': disk.used,
-            'free': disk.free,
-            'percent': (disk.used / disk.total) * 100 if disk.total > 0 else 0
-        }
+        if self.gpu_enabled:
+            stats['gpu'] = self._collect_gpu()
         
-        # Network statistics
-        net_io = psutil.net_io_counters()
-        stats['network'] = {
-            'bytes_sent': net_io.bytes_sent,
-            'bytes_recv': net_io.bytes_recv,
-            'packets_sent': net_io.packets_sent,
-            'packets_recv': net_io.packets_recv,
-            'errin': net_io.errin,
-            'errout': net_io.errout,
-            'dropin': net_io.dropin,
-            'dropout': net_io.dropout
-        }
-        
-        # Disk I/O statistics
-        disk_io = psutil.disk_io_counters()
-        if disk_io:
-            stats['disk_io'] = {
-                'read_count': disk_io.read_count,
-                'write_count': disk_io.write_count,
-                'read_bytes': disk_io.read_bytes,
-                'write_bytes': disk_io.write_bytes,
-                'read_time': disk_io.read_time,
-                'write_time': disk_io.write_time
-            }
-        else:
-            stats['disk_io'] = None
-        
-        # Process statistics
-        stats['process_count'] = len(psutil.pids())
-        
-        # Boot time
-        stats['boot_time'] = psutil.boot_time()
+        stats['disk_usage'] = self._collect_disk()
+        stats['network'] = self._collect_network()
         
         return stats
+
+    def _collect_gpu(self) -> List[Dict[str, Any]]:
+        gpu_stats = []
+        for i in range(self.gpu_count):
+            handle = self.pynvml.nvmlDeviceGetHandleByIndex(i)
+            util = self.pynvml.nvmlDeviceGetUtilizationRates(handle)
+            mem_info = self.pynvml.nvmlDeviceGetMemoryInfo(handle)
+            name = self.pynvml.nvmlDeviceGetName(handle)
+            if isinstance(name, bytes):
+                name = name.decode('utf-8')
+            gpu_stats.append({
+                'name': name,
+                'util': util.gpu,
+                'mem_total': mem_info.total,
+                'mem_used': mem_info.used,
+                'mem_percent': (mem_info.used / mem_info.total) * 100 if mem_info.total > 0 else 0
+            })
+        return gpu_stats
+
+    def _collect_disk(self) -> List[Dict[str, Any]]:
+        disk_stats = []
+        for partition in psutil.disk_partitions():
+            try:
+                usage = psutil.disk_usage(partition.mountpoint)
+                disk_stats.append({
+                    'device': partition.device,
+                    'mountpoint': partition.mountpoint,
+                    'total': usage.total,
+                    'used': usage.used,
+                    'percent': usage.percent
+                })
+            except (PermissionError, FileNotFoundError):
+                continue
+        return disk_stats
+
+    def _collect_network(self) -> Dict[str, Any]:
+        net = psutil.net_io_counters()
+        return {
+            'bytes_sent': net.bytes_sent,
+            'bytes_recv': net.bytes_recv,
+            'packets_sent': net.packets_sent,
+            'packets_recv': net.packets_recv
+        }
+
+    def get_cpu_usage(self) -> float:
+        return psutil.cpu_percent(interval=0.1)
+
+    def get_memory_usage(self) -> Dict[str, Any]:
+        mem = psutil.virtual_memory()
+        return {
+            "total": mem.total,
+            "available": mem.available,
+            "percent": mem.percent,
+            "used": mem.used,
+            "free": mem.free
+        }
+
+    def get_disk_usage(self) -> Dict[str, Any]:
+        disk = psutil.disk_usage('/')
+        return {
+            "total": disk.total,
+            "used": disk.used,
+            "free": disk.free,
+            "percent": disk.percent
+        }
+
+    def get_network_io(self) -> Dict[str, Any]:
+        net = psutil.net_io_counters()
+        return {
+            "bytes_sent": net.bytes_sent,
+            "bytes_recv": net.bytes_recv,
+            "packets_sent": net.packets_sent,
+            "packets_recv": net.packets_recv
+        }
+
+    def get_gpu_usage(self) -> List[Dict[str, Any]]:
+        if self.gpu_enabled:
+            return self._collect_gpu()
+        return []
+
+    def get_all_stats(self) -> Dict[str, Any]:
+        return self.collect()
+
+    def get_system_stats(self) -> Dict[str, Any]:
+        return self.collect()
+
+    def shutdown(self):
+        if self.gpu_enabled and self.pynvml:
+            self.pynvml.nvmlShutdown()

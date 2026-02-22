@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -48,8 +48,9 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
-_LOG = PiscesLxLogger(__name__)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
 
 
 @dataclass

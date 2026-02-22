@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -70,7 +70,7 @@ class AdvancedQuantizationConfig(PiscesLxOperatorConfig):
     sensitivity_metric: str = "mse"
 
 
-class SensitivityAnalysisOperator(PiscesLxOperatorInterface):
+class POPSSSensitivityAnalysisOperator(PiscesLxOperatorInterface):
     """
     Layer Sensitivity Analysis Operator.
     
@@ -646,5 +646,3 @@ def advanced_quantize(model: nn.Module,
     }
 
 
-POPSSSensitivityAnalysisOperator = SensitivityAnalysisOperator
-AdaptiveBitAllocationOperator = POPSSAdaptiveBitAllocationOperator

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -104,9 +104,10 @@ Thread Safety:
 
 import torch
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 
-_LOG = PiscesLxLogger("pisceslx.tools.check")
+_LOG = PiscesLxLogger("PiscesLx.Tools.Check", file_path=get_log_file("PiscesLx.Tools.Check"), enable_file=True)
 
 
 def check(args=None, extra=None):

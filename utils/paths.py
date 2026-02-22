@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -102,9 +102,6 @@ from pathlib import Path
 from typing import Optional
 
 from utils.dc import PiscesLxConfiguration, PiscesLxFilesystem, PiscesLxLogger
-
-
-_LOG = PiscesLxLogger(__name__)
 
 
 def load_runtime_configuration() -> PiscesLxConfiguration:
@@ -311,3 +308,27 @@ def get_work_dir(name: str) -> str:
         Checkpoint directory: .pisceslx/checkpoints/epoch_10
     """
     return get_cache_dir(name)
+
+
+def get_log_file(module_name: str) -> str:
+    """
+    Get the log file path for a module.
+    
+    Args:
+        module_name: The module name (e.g., "model.core.attention")
+    
+    Returns:
+        str: The log file path (e.g., ".pisceslx/logs/model/core.log")
+    """
+    parts = module_name.split(".")
+    if len(parts) >= 2:
+        log_dir = get_cache_dir(f"logs/{parts[0]}/{parts[1]}")
+    elif len(parts) == 1:
+        log_dir = get_cache_dir(f"logs/{parts[0]}")
+    else:
+        log_dir = get_cache_dir("logs")
+    
+    return str(Path(log_dir) / "output.log")
+
+
+_LOG = PiscesLxLogger("PiscesLx.Core.Paths", file_path=get_log_file("PiscesLx.Core.Paths"), enable_file=True)

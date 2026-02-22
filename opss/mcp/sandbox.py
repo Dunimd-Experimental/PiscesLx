@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -38,8 +38,9 @@ except ImportError:
     resource = None
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
-_LOG = PiscesLxLogger(__name__)
+_LOG = PiscesLxLogger("PiscesLx.Opss.Mcp", file_path=get_log_file("PiscesLx.Opss.Mcp"), enable_file=True)
 
 @dataclass
 class POPSSSandboxConfig:

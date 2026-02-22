@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -90,7 +90,8 @@ class PiscesLxOperatorRegistry:
         self._categories: Dict[str, Set[str]] = defaultdict(set)
         self._lock = threading.RLock()
         from ..dc import PiscesLxLogger, PiscesLxMetrics
-        self.logger = PiscesLxLogger(self.__class__.__name__)
+        from utils.paths import get_log_file
+        self.logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.{self.__class__.__name__}", file_path=get_log_file(f"PiscesLx.Core.OPSC.{self.__class__.__name__}"), enable_file=True)
         self._metrics = PiscesLxMetrics()
 
     @staticmethod

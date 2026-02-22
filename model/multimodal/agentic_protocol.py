@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -29,16 +29,16 @@ Protocol Flow:
                   ↓
     xml_parser.extract_agentic_calls()
                   ↓
-    PiscesLxAgenticProtocol.process_model_output()
+    YvAgenticProtocol.process_model_output()
                   ↓
     Execute via Agent Orchestrator or Tool Executor
                   ↓
     Return result wrapped in <result> XML tags
 
 Key Components:
-    - PiscesLxAgenticProtocol: Main protocol handler
-    - PiscesLxAgenticContext: Execution context container
-    - PiscesLxAgenticResult: Standardized result container
+    - YvAgenticProtocol: Main protocol handler
+    - YvAgenticContext: Execution context container
+    - YvAgenticResult: Standardized result container
 
 See Also:
     - model.multimodal.xml_utils: XML parsing utilities
@@ -53,34 +53,34 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .xml_utils import (
-    PiscesLxMCPXMLParser,
-    PiscesLxMCPXMLGenerator,
-    PiscesLxParsedAgenticCall,
-    PiscesLxAgenticToolCall,
-    PiscesLxAgenticAgentCall,
-    PiscesLxAgenticGroup,
+    YvMCPXMLParser,
+    YvMCPXMLGenerator,
+    YvParsedAgenticCall,
+    YvAgenticToolCall,
+    YvAgenticAgentCall,
+    YvAgenticGroup,
 )
 
 
-class PiscesLxAgenticExecutionMode(Enum):
+class YvAgenticExecutionMode(Enum):
     SINGLE = "single"
     SWARM = "swarm"
     SEQUENTIAL = "sequential"
 
 
 @dataclass
-class PiscesLxAgenticContext:
+class YvAgenticContext:
     execution_id: str
     session_id: str
     mode: str
     start_time: float
-    agent_calls: List[PiscesLxParsedAgenticCall]
+    agent_calls: List[YvParsedAgenticCall]
     metadata: Dict[str, Any] = field(default_factory=dict)
     intermediate_results: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
-class PiscesLxAgenticResult:
+class YvAgenticResult:
     success: bool
     output: Any
     execution_time: float
@@ -92,18 +92,18 @@ class PiscesLxAgenticResult:
     intermediate_results: List[Dict[str, Any]] = field(default_factory=list)
 
 
-class PiscesLxAgenticProtocol:
+class YvAgenticProtocol:
     def __init__(self):
-        self.parser = PiscesLxMCPXMLParser()
-        self.generator = PiscesLxMCPXMLGenerator()
-        self.contexts: Dict[str, PiscesLxAgenticContext] = {}
+        self.parser = YvMCPXMLParser()
+        self.generator = YvMCPXMLGenerator()
+        self.contexts: Dict[str, YvAgenticContext] = {}
     
     def process_model_output(
         self,
         model_output: str,
         session_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None
-    ) -> Tuple[str, Optional[PiscesLxAgenticContext]]:
+    ) -> Tuple[str, Optional[YvAgenticContext]]:
         agentic_calls = self.parser.extract_agentic_calls(model_output)
         
         if not agentic_calls:
@@ -118,7 +118,7 @@ class PiscesLxAgenticProtocol:
         else:
             mode = "sequential"
         
-        context = PiscesLxAgenticContext(
+        context = YvAgenticContext(
             execution_id=execution_id,
             session_id=session_id,
             mode=mode,
@@ -133,14 +133,14 @@ class PiscesLxAgenticProtocol:
     
     def get_pending_tool_calls(
         self,
-        context: PiscesLxAgenticContext
-    ) -> List[Tuple[PiscesLxAgenticAgentCall, List[PiscesLxAgenticToolCall]]]:
+        context: YvAgenticContext
+    ) -> List[Tuple[YvAgenticAgentCall, List[YvAgenticToolCall]]]:
         pending = []
         
         for call in context.agent_calls:
             if call.agent_group:
                 for agent_name in call.agent_group.agents:
-                    agent_call = PiscesLxAgenticAgentCall(
+                    agent_call = YvAgenticAgentCall(
                         agent_name=agent_name,
                         raw_match="",
                         start_pos=0,
@@ -155,7 +155,7 @@ class PiscesLxAgenticProtocol:
     
     def create_result_wrapper(
         self,
-        result: PiscesLxAgenticResult
+        result: YvAgenticResult
     ) -> str:
         return self.generator.generate_result_xml(
             success=result.success,
@@ -166,7 +166,7 @@ class PiscesLxAgenticProtocol:
     
     def create_result_wrapper_with_metadata(
         self,
-        result: PiscesLxAgenticResult
+        result: YvAgenticResult
     ) -> str:
         result_xml = self.create_result_wrapper(result)
         
@@ -179,10 +179,10 @@ class PiscesLxAgenticProtocol:
     
     def merge_results(
         self,
-        results: List[PiscesLxAgenticResult]
-    ) -> PiscesLxAgenticResult:
+        results: List[YvAgenticResult]
+    ) -> YvAgenticResult:
         if not results:
-            return PiscesLxAgenticResult(
+            return YvAgenticResult(
                 success=False,
                 output=None,
                 execution_time=0.0,
@@ -207,7 +207,7 @@ class PiscesLxAgenticProtocol:
         for r in results:
             all_intermediate.extend(r.intermediate_results)
         
-        return PiscesLxAgenticResult(
+        return YvAgenticResult(
             success=all_success,
             output=merged_output,
             execution_time=total_time,
@@ -222,7 +222,7 @@ class PiscesLxAgenticProtocol:
     
     def extract_tools_from_call(
         self,
-        call: PiscesLxParsedAgenticCall
+        call: YvParsedAgenticCall
     ) -> List[Dict[str, Any]]:
         tools = []
         
@@ -238,7 +238,7 @@ class PiscesLxAgenticProtocol:
     
     def get_agent_names(
         self,
-        call: PiscesLxParsedAgenticCall
+        call: YvParsedAgenticCall
     ) -> List[str]:
         if call.agent_group:
             return call.agent_group.agents
@@ -247,7 +247,7 @@ class PiscesLxAgenticProtocol:
     
     def validate_call(
         self,
-        call: PiscesLxParsedAgenticCall
+        call: YvParsedAgenticCall
     ) -> Tuple[bool, Optional[str]]:
         if not call.agents and not call.agent_group:
             return False, "No agent or agent group specified"
@@ -257,13 +257,13 @@ class PiscesLxAgenticProtocol:
     def get_context(
         self,
         execution_id: str
-    ) -> Optional[PiscesLxAgenticContext]:
+    ) -> Optional[YvAgenticContext]:
         return self.contexts.get(execution_id)
     
     def remove_context(
         self,
         execution_id: str
-    ) -> Optional[PiscesLxAgenticContext]:
+    ) -> Optional[YvAgenticContext]:
         return self.contexts.pop(execution_id, None)
     
     def get_statistics(self) -> Dict[str, Any]:
@@ -273,4 +273,4 @@ class PiscesLxAgenticProtocol:
         }
 
 
-protocol = PiscesLxAgenticProtocol()
+protocol = YvAgenticProtocol()

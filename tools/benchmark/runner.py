@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -37,7 +37,9 @@ from .config import PiscesLxToolsBenchmarkConfig
 from .builders import PiscesLxToolsTaskConfigBuilder
 from .result import PiscesLxToolsResultManager, PiscesLxToolsComparisonManager
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+
+_LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
 
 
 class PiscesLxToolsBenchmark:
@@ -45,7 +47,7 @@ class PiscesLxToolsBenchmark:
 
     def __init__(self, config: Union[str, Dict, PiscesLxToolsBenchmarkConfig]):
         self.config = self._load_config(config)
-        self.logger = PiscesLxLogger(f"pisceslx.tools.benchmark.{self.config.model_name or 'default'}")
+        self.logger = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
 
         # Setup device
         self._system_monitor = PiscesLxSystemMonitor()

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -27,7 +27,8 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 from utils.dc import PiscesLxLogger
 from typing import Any, Dict, List, Optional
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
 
 # Verbose switch: set PISCESLX_DOWNLOAD_VERBOSE=1 to see detailed debug logs
 _VERBOSE = (os.getenv("PISCESLX_DOWNLOAD_VERBOSE", "0") == "1")

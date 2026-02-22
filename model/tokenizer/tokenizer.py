@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -105,7 +105,8 @@ import numpy as np
 from typing import Any, Dict, Optional, List, Union
 from pathlib import Path
 
-_LOG = PiscesLxLogger(__name__)
+from utils.paths import get_log_file
+_LOG = PiscesLxLogger("Yv.Tokenizer", file_path=get_log_file("Yv.Tokenizer"), enable_file=True)
 
 MULTIMODAL_TOKENS = [
     "<agentic>", "</agentic>", 

@@ -1,4 +1,4 @@
-#!/usr/bin/env/python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -43,7 +43,6 @@ from .registry import (
     get_unified_tool_executor,
 )
 
-POPSSMCPRegistry = POPSSMCPToolRegistry
 
 from .execution import (
     POPSSMCPExecutionManager,
@@ -107,7 +106,7 @@ __all__ = [
     "POPSSAgenticObservation",
     "POPSSMCPProtocol",
     "POPSSMCPToolRegistry",
-    "POPSSMCPRegistry",
+    "POPSSMCPToolRegistry",
     "get_unified_tool_executor",
     "POPSSMCPExecutionManager",
     "POPSSMCPUnifiedToolExecutor",
