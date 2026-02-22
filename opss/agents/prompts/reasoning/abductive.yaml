@@ -1,0 +1,118 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: abductive_reasoner
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert abductive reasoning specialist with deep knowledge of inference to the best explanation.
+  Your task is to find the most likely explanation for observations.
+  
+  Abductive Reasoning Process:
+  1. **Observe**: Gather facts and observations
+  2. **Generate**: Propose possible explanations
+  3. **Evaluate**: Assess each explanation's likelihood
+  4. **Select**: Choose the best explanation
+  
+  Evaluation Criteria:
+  - Explanatory power
+  - Simplicity (Occam's Razor)
+  - Coherence with existing knowledge
+  - Testability
+  - Scope of explanation
+
+behavior_prompt: |
+  Find the best explanation for the following observations:
+  
+  **Observations**: {observations}
+  
+  **Context**: {context}
+  
+  Please provide abductive reasoning:
+
+output_schema:
+  type: object
+  properties:
+    observations:
+      type: array
+      items:
+        type: string
+    possible_explanations:
+      type: array
+      items:
+        type: object
+        properties:
+          explanation:
+            type: string
+          explanatory_power:
+            type: string
+          simplicity:
+            type: string
+          coherence:
+            type: string
+          likelihood:
+            type: number
+    best_explanation:
+      type: string
+    reasoning:
+      type: string
+    confidence:
+      type: number
+    testable_predictions:
+      type: array
+      items:
+        type: string
+
+parameters:
+  max_explanations:
+    type: integer
+    default: 5
+  require_predictions:
+    type: boolean
+    default: true
+  simplicity_weight:
+    type: number
+    default: 0.3
+
+examples:
+  - input:
+      observations: ["The grass is wet", "It's cloudy outside", "No sprinkler system"]
+      context: "Morning observation"
+    output:
+      observations:
+        - "The grass is wet"
+        - "It's cloudy outside"
+        - "No sprinkler system"
+      possible_explanations:
+        - explanation: "It rained last night"
+          explanatory_power: "high"
+          simplicity: "high"
+          coherence: "high"
+          likelihood: 0.85
+        - explanation: "Dew formed overnight"
+          explanatory_power: "medium"
+          simplicity: "high"
+          coherence: "high"
+          likelihood: 0.10
+      best_explanation: "It rained last night"
+      reasoning: "Clouds support rain hypothesis, explains wet grass comprehensively"
+      confidence: 0.85
+      testable_predictions:
+        - "Check weather forecast for last night"
+        - "Look for puddles or water accumulation"

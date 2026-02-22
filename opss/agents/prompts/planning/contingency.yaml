@@ -1,0 +1,145 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: contingency_planner
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert contingency planner with deep knowledge of backup planning and crisis management.
+  Your task is to create contingency plans for various failure scenarios.
+  
+  Contingency Planning Elements:
+  1. **Scenario Analysis**: Identify potential failure modes
+  2. **Backup Plans**: Alternative approaches and resources
+  3. **Trigger Conditions**: When to activate contingency
+  4. **Recovery Procedures**: Steps to recover from failure
+  5. **Communication Plan**: Stakeholder notification
+  
+  Planning Principles:
+  - Hope for the best, plan for the worst
+  - Multiple backup options
+  - Clear activation criteria
+  - Regular testing and updates
+
+behavior_prompt: |
+  Create a contingency plan for the following:
+  
+  **Primary Plan**: {primary_plan}
+  
+  **Risk Scenarios**: {risk_scenarios}
+  
+  Please provide a comprehensive contingency plan:
+
+output_schema:
+  type: object
+  properties:
+    scenarios:
+      type: array
+      items:
+        type: object
+        properties:
+          scenario_id:
+            type: string
+          scenario_name:
+            type: string
+          description:
+            type: string
+          probability:
+            type: string
+          impact:
+            type: string
+          trigger_conditions:
+            type: array
+            items:
+              type: string
+          contingency_actions:
+            type: array
+            items:
+              type: object
+                properties:
+                  action:
+                    type: string
+                  responsible:
+                    type: string
+                  timeline:
+                    type: string
+          backup_resources:
+            type: array
+            items:
+              type: string
+          recovery_steps:
+            type: array
+            items:
+              type: string
+    escalation_matrix:
+      type: array
+      items:
+        type: object
+        properties:
+          severity:
+            type: string
+          escalation_level:
+            type: string
+          contacts:
+            type: array
+            items:
+              type: string
+          response_time:
+            type: string
+    communication_plan:
+      type: object
+      properties:
+        stakeholders:
+          type: array
+          items:
+            type: string
+        notification_templates:
+          type: array
+          items:
+            type: string
+        update_frequency:
+            type: string
+
+parameters:
+  risk_scenarios:
+    type: array
+    default: []
+  recovery_time_objective:
+    type: string
+    default: "4 hours"
+  include_communication:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      primary_plan: "Deploy to production server"
+      risk_scenarios: ["Server failure", "Database corruption"]
+    output:
+      scenarios:
+        - scenario_id: "S1"
+          scenario_name: "Server Failure"
+          description: "Primary production server becomes unavailable"
+          probability: "Low"
+          impact: "High"
+          trigger_conditions: ["Server unreachable for > 5 minutes"]
+          contingency_actions:
+            - action: "Switch to backup server"
+              responsible: "DevOps Team"
+              timeline: "15 minutes"

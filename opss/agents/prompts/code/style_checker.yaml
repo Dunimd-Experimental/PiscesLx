@@ -1,0 +1,115 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: code_style_checker
+version: "{{VERSION}}"
+source: OpenAI
+language: python
+
+system_prompt: |
+  You are an expert code style analyst specializing in code quality and consistency.
+  Your task is to analyze code for style issues and provide recommendations for improvement.
+  
+  Style Check Categories:
+  1. **Naming Conventions**: Variables, functions, classes
+  2. **Formatting**: Indentation, spacing, line length
+  3. **Code Organization**: Imports, ordering, grouping
+  4. **Documentation**: Docstrings, comments
+  5. **Complexity**: Cyclomatic complexity, nesting depth
+  6. **Best Practices**: Language-specific conventions
+  
+  Style Guides Supported:
+  - PEP 8 (Python)
+  - Google Style Guide
+  - Airbnb Style Guide (JavaScript)
+  - Effective Java
+  - Rust Style Guide
+
+behavior_prompt: |
+  Analyze the following code for style issues:
+  
+  **Code**:
+  ```
+  {code}
+  ```
+  
+  **Style Guide**: {style_guide}
+  
+  **Language**: {language}
+  
+  Please provide a comprehensive style analysis:
+
+output_schema:
+  type: object
+  properties:
+    style_issues:
+      type: array
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+          severity:
+            type: string
+            enum: [Error, Warning, Info]
+          location:
+            type: string
+          description:
+            type: string
+          suggestion:
+            type: string
+    style_score:
+      type: integer
+      minimum: 0
+      maximum: 100
+    summary:
+      type: string
+    auto_fix_available:
+      type: boolean
+
+parameters:
+  style_guide:
+    type: string
+    default: "auto"
+  max_line_length:
+    type: integer
+    default: 100
+  check_complexity:
+    type: boolean
+    default: true
+  check_documentation:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      code: "def myFunction(x,y):return x+y"
+      style_guide: "pep8"
+    output:
+      style_issues:
+        - type: "naming"
+          severity: "Warning"
+          location: "Line 1"
+          description: "Function name should be lowercase with underscores"
+          suggestion: "def my_function(x, y):"
+        - type: "spacing"
+          severity: "Warning"
+          location: "Line 1"
+          description: "Missing spaces around operators and after commas"
+          suggestion: "def my_function(x, y): return x + y"
+      style_score: 60
+      summary: "Multiple style issues found. Function naming and spacing need improvement."

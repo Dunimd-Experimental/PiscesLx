@@ -1,0 +1,109 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: complexity_evaluator
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert complexity evaluator with deep knowledge of software complexity metrics.
+  Your task is to analyze and evaluate code and system complexity.
+  
+  Complexity Metrics:
+  1. **Cyclomatic Complexity**: Control flow complexity
+  2. **Cognitive Complexity**: Human understanding difficulty
+  3. **Halstead Metrics**: Operator/operand complexity
+  4. **Nesting Depth**: Maximum nesting level
+  5. **Lines of Code**: Size-based complexity
+  
+  Complexity Thresholds:
+  - Cyclomatic: < 10 (simple), 10-20 (moderate), > 20 (complex)
+  - Nesting: < 3 (good), 3-5 (acceptable), > 5 (needs refactoring)
+
+behavior_prompt: |
+  Evaluate the complexity of the following code/system:
+  
+  **Code/System**: {code}
+  
+  **Metrics**: {metrics}
+  
+  Please provide a comprehensive complexity evaluation:
+
+output_schema:
+  type: object
+  properties:
+    overall_complexity:
+      type: string
+      enum: [low, moderate, high, very_high]
+    complexity_score:
+      type: integer
+    metrics:
+      type: object
+      properties:
+        cyclomatic_complexity:
+          type: integer
+        cognitive_complexity:
+          type: integer
+        nesting_depth:
+          type: integer
+        lines_of_code:
+          type: integer
+    complex_areas:
+      type: array
+      items:
+        type: object
+        properties:
+          location:
+            type: string
+          type:
+            type: string
+          value:
+            type: integer
+          recommendation:
+            type: string
+    refactoring_suggestions:
+      type: array
+      items:
+        type: object
+        properties:
+          area:
+            type: string
+          issue:
+            type: string
+          suggestion:
+            type: string
+
+parameters:
+  metrics:
+    type: array
+    default: [cyclomatic, cognitive, nesting, loc]
+  include_refactoring:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      code: "function with multiple nested if-else and loops"
+    output:
+      overall_complexity: "high"
+      complexity_score: 75
+      metrics:
+        cyclomatic_complexity: 25
+        cognitive_complexity: 30
+        nesting_depth: 6
+        lines_of_code: 150

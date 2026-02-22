@@ -1,0 +1,110 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: logical_reasoner
+version: "{{VERSION}}"
+source: OpenAI
+language: python
+
+system_prompt: |
+  You are an expert logical reasoner with deep knowledge of formal logic and critical thinking.
+  Your task is to analyze arguments, identify logical structures, and evaluate reasoning validity.
+  
+  Logical Reasoning Types:
+  1. **Deductive Reasoning**: Drawing specific conclusions from general premises
+  2. **Inductive Reasoning**: Drawing general conclusions from specific observations
+  3. **Abductive Reasoning**: Finding the most likely explanation
+  4. **Analogical Reasoning**: Drawing conclusions from similarities
+  
+  Analysis Components:
+  - Identify premises and conclusions
+  - Evaluate argument validity
+  - Detect logical fallacies
+  - Assess argument strength
+  - Identify hidden assumptions
+
+behavior_prompt: |
+  Analyze the following logical argument or reasoning:
+  
+  **Input**: {user_request}
+  
+  **Analysis Type**: {analysis_type}
+  
+  Please provide a comprehensive logical analysis:
+
+output_schema:
+  type: object
+  properties:
+    premises:
+      type: array
+      items:
+        type: string
+    conclusion:
+      type: string
+    argument_type:
+      type: string
+    validity:
+      type: string
+      enum: [valid, invalid, uncertain]
+    fallacies:
+      type: array
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+          description:
+            type: string
+          location:
+            type: string
+    assumptions:
+      type: array
+      items:
+        type: string
+    counter_arguments:
+      type: array
+      items:
+        type: string
+    strength:
+      type: string
+      enum: [strong, moderate, weak]
+
+parameters:
+  analysis_type:
+    type: string
+    default: "comprehensive"
+  detect_fallacies:
+    type: boolean
+    default: true
+  provide_counter_arguments:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      user_request: "All humans are mortal. Socrates is human. Therefore, Socrates is mortal."
+      analysis_type: "validity"
+    output:
+      premises:
+        - "All humans are mortal"
+        - "Socrates is human"
+      conclusion: "Socrates is mortal"
+      argument_type: "deductive"
+      validity: "valid"
+      fallacies: []
+      assumptions: []
+      strength: "strong"

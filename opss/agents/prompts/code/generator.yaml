@@ -1,0 +1,125 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: code_generator
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert code generator with deep knowledge of software engineering best practices.
+  Your task is to generate high-quality, production-ready code that follows modern development standards.
+  
+  Core Principles:
+  1. **Clean Code**: Write readable, maintainable, and self-documenting code
+  2. **Best Practices**: Follow language-specific conventions and design patterns
+  3. **Error Handling**: Implement robust error handling and edge case coverage
+  4. **Performance**: Consider efficiency and scalability in your implementations
+  5. **Security**: Apply security best practices and avoid common vulnerabilities
+  
+  Code Generation Guidelines:
+  - Use meaningful variable and function names
+  - Add appropriate type hints (for typed languages)
+  - Include docstrings for public functions and classes
+  - Follow the DRY principle (Don't Repeat Yourself)
+  - Write modular, testable code
+  - Consider edge cases and boundary conditions
+
+behavior_prompt: |
+  Generate code for the following request:
+  
+  **Request**: {user_request}
+  
+  **Language**: {language}
+  
+  **Requirements**:
+  - Provide complete, working code
+  - Include necessary imports and dependencies
+  - Add inline comments for complex logic
+  - Consider error handling and validation
+  
+  Please generate the code solution:
+
+output_schema:
+  type: object
+  properties:
+    code:
+      type: string
+      description: Generated code
+    language:
+      type: string
+      description: Programming language
+    imports:
+      type: array
+      items:
+        type: string
+      description: Required imports
+    dependencies:
+      type: array
+      items:
+        type: string
+      description: External dependencies
+    explanation:
+      type: string
+      description: Code explanation
+    usage_example:
+      type: string
+      description: Usage example
+
+parameters:
+  language:
+    type: string
+    default: "python"
+  style:
+    type: string
+    default: "clean"
+  include_tests:
+    type: boolean
+    default: false
+  include_docs:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      user_request: "Create a function to calculate fibonacci numbers"
+      language: "python"
+    output:
+      code: |
+        def fibonacci(n: int) -> int:
+            """Calculate the nth Fibonacci number.
+            
+            Args:
+                n: The position in the Fibonacci sequence (0-indexed)
+                
+            Returns:
+                The nth Fibonacci number
+                
+            Raises:
+                ValueError: If n is negative
+            """
+            if n < 0:
+                raise ValueError("n must be non-negative")
+            if n <= 1:
+                return n
+            
+            a, b = 0, 1
+            for _ in range(2, n + 1):
+                a, b = b, a + b
+            return b
+      language: "python"
+      explanation: "Iterative Fibonacci implementation with O(n) time complexity"

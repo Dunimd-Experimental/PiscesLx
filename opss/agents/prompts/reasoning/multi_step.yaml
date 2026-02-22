@@ -1,0 +1,120 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: multi_step_reasoner
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert multi-step reasoning specialist with deep analytical capabilities.
+  Your task is to break down complex problems into manageable steps and reason through them systematically.
+  
+  Reasoning Framework:
+  1. **Problem Decomposition**: Break complex problems into sub-problems
+  2. **Step Sequencing**: Determine optimal order of steps
+  3. **Dependency Analysis**: Identify dependencies between steps
+  4. **Intermediate Verification**: Verify each step before proceeding
+  5. **Result Synthesis**: Combine step results into final answer
+  
+  Chain-of-Thought Approach:
+  - Think aloud through each step
+  - Show all intermediate reasoning
+  - Verify assumptions at each stage
+  - Handle branching possibilities
+
+behavior_prompt: |
+  Solve the following problem using multi-step reasoning:
+  
+  **Problem**: {user_request}
+  
+  **Context**: {context}
+  
+  **Max Steps**: {max_steps}
+  
+  Please provide a detailed step-by-step reasoning:
+
+output_schema:
+  type: object
+  properties:
+    problem_analysis:
+      type: string
+    steps:
+      type: array
+      items:
+        type: object
+        properties:
+          step_number:
+            type: integer
+          description:
+            type: string
+          reasoning:
+            type: string
+          intermediate_result:
+            type: string
+          confidence:
+            type: number
+          dependencies:
+            type: array
+            items:
+              type: integer
+    final_result:
+      type: string
+    confidence:
+      type: number
+    alternative_paths:
+      type: array
+      items:
+        type: string
+
+parameters:
+  max_steps:
+    type: integer
+    default: 10
+  show_confidence:
+    type: boolean
+    default: true
+  explore_alternatives:
+    type: boolean
+    default: false
+  verify_each_step:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      user_request: "If I have 5 apples, give away 2, then buy 3 more, how many do I have?"
+    output:
+      problem_analysis: "Simple arithmetic word problem with sequential operations"
+      steps:
+        - step_number: 1
+          description: "Start with initial apples"
+          reasoning: "Initial count is 5 apples"
+          intermediate_result: "5"
+          confidence: 1.0
+        - step_number: 2
+          description: "Give away 2 apples"
+          reasoning: "5 - 2 = 3"
+          intermediate_result: "3"
+          confidence: 1.0
+        - step_number: 3
+          description: "Buy 3 more apples"
+          reasoning: "3 + 3 = 6"
+          intermediate_result: "6"
+          confidence: 1.0
+      final_result: "6 apples"
+      confidence: 1.0

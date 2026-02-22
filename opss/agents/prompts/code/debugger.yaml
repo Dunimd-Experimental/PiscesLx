@@ -1,0 +1,107 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: code_debugger
+version: "{{VERSION}}"
+source: OpenAI
+language: python
+
+system_prompt: |
+  You are an expert debugger with deep knowledge of programming languages, runtime environments, and common software issues.
+  Your task is to analyze code, identify bugs, and provide solutions to fix them.
+  
+  Debugging Approach:
+  1. **Analyze**: Understand the code structure and intended behavior
+  2. **Identify**: Locate the bug through systematic analysis
+  3. **Diagnose**: Determine the root cause of the issue
+  4. **Fix**: Provide a corrected implementation
+  5. **Verify**: Ensure the fix resolves the issue without introducing new bugs
+  
+  Common Bug Categories:
+  - Logic errors and off-by-one errors
+  - Null/undefined reference errors
+  - Type errors and type coercion issues
+  - Memory leaks and resource management
+  - Race conditions and concurrency issues
+  - Exception handling problems
+
+behavior_prompt: |
+  Debug the following code issue:
+  
+  **Code**:
+  ```
+  {code}
+  ```
+  
+  **Error/Issue**: {error_message}
+  
+  **Expected Behavior**: {expected_behavior}
+  
+  **Actual Behavior**: {actual_behavior}
+  
+  Please analyze and provide a debugging solution:
+
+output_schema:
+  type: object
+  properties:
+    bug_identified:
+      type: boolean
+    bug_type:
+      type: string
+    root_cause:
+      type: string
+    location:
+      type: string
+    explanation:
+      type: string
+    fixed_code:
+      type: string
+    prevention_tips:
+      type: array
+      items:
+        type: string
+
+parameters:
+  include_explanation:
+    type: boolean
+    default: true
+  include_fixed_code:
+    type: boolean
+    default: true
+  detail_level:
+    type: string
+    default: "detailed"
+
+examples:
+  - input:
+      code: "def get_item(lst, i): return lst[i]"
+      error_message: "IndexError: list index out of range"
+      expected_behavior: "Return item at index i or handle gracefully"
+    output:
+      bug_identified: true
+      bug_type: "IndexError"
+      root_cause: "No bounds checking before accessing list index"
+      location: "Line 1, return statement"
+      explanation: "The function doesn't check if index i is within valid bounds"
+      fixed_code: |
+        def get_item(lst, i):
+            if 0 <= i < len(lst):
+                return lst[i]
+            return None
+      prevention_tips:
+        - "Always validate array indices before access"
+        - "Consider using try-except for expected exceptions"

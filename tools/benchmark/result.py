@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -23,11 +24,9 @@ import datetime
 from typing import Dict, Any
 from dataclasses import asdict
 
-# Use dms_core logging exclusively
-import dms_core
-PiscesLxCoreLog = dms_core.log.get_logger
+from utils.dc import PiscesLxLogger
 
-_logger = PiscesLxCoreLog("pisceslx.tools.benchmark")
+_LOG = PiscesLxLogger(__name__)
 
 from .config import PiscesLxToolsBenchmarkConfig
 
@@ -57,7 +56,7 @@ class PiscesLxToolsResultManager:
         with open(config_file, 'w', encoding='utf-8') as f:
             json.dump(asdict(config), f, indent=2, ensure_ascii=False)
 
-        _logger.success(
+        _LOG.info(
             "Benchmark results saved successfully",
             event="benchmark.save_results",
             output_dir=self.output_dir,

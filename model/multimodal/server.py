@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -19,7 +20,7 @@
 
 """Server utilities that expose multimodal generation through MCP.
 
-The module defines :class:`RuchbahMCPGenerationServer`, which mediates between the
+The module defines :class:`YvMCPGenerationServer`, which mediates between the
 Pisces multimodal generator and Model Context Protocol (MCP) clients. Requests
 can trigger synchronous generations or opt into progress streaming updates.
 """
@@ -30,7 +31,7 @@ import asyncio
 import pandas as pd
 from typing import Any, Dict
 
-class RuchbahMCPGenerationServer:
+class YvMCPGenerationServer:
     """Serve multimodal generation requests with optional streaming feedback.
 
     Args:

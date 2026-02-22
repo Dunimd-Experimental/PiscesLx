@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -19,7 +20,7 @@
 
 import psutil
 from typing import Dict, Any, Optional, List
-from utils.concurrency import PiscesLxCoreRetry
+from opss.concurrency import RetryOperator
 from utils import PiscesLxCoreEnhancedCacheManager
 from utils import PiscesLxCoreDeviceManager
 
@@ -34,6 +35,8 @@ class PiscesLxMonitorStatsCollector:
         self.device_manager = device_manager
         self.gpu_enabled = False
         self.gpu_count = 0
+        self._retry_cpu = RetryOperator(max_attempts=2, base_delay=0.5)
+        self._retry_gpu = RetryOperator(max_attempts=2, base_delay=0.5)
         self._init_gpu_detection()
     
     def _init_gpu_detection(self):
@@ -54,7 +57,6 @@ class PiscesLxMonitorStatsCollector:
             except Exception:
                 self.gpu_enabled = False
     
-    @PiscesLxCoreRetry(max_attempts=2, delay=0.5)
     def get_cpu_info(self) -> Optional[Dict[str, Any]]:
         """Get CPU information with caching."""
         try:
@@ -88,7 +90,6 @@ class PiscesLxMonitorStatsCollector:
         except Exception:
             return None
     
-    @PiscesLxCoreRetry(max_attempts=2, delay=0.5)
     def get_gpu_stats(self) -> Optional[List[Dict[str, Any]]]:
         """Get GPU statistics with device manager integration."""
         if not self.gpu_enabled:

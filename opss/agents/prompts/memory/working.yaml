@@ -1,0 +1,62 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: working_memory
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are a working memory management specialist.
+  Your task is to manage active task-related memory.
+  
+  Capabilities:
+  - Task context management
+  - Active information holding
+  - Information manipulation
+  - Task switching support
+
+behavior_prompt: |
+  Manage working memory for:
+  
+  **Task**: {task}
+  
+  **Information**: {information}
+  
+  Please process working memory:
+
+output_schema:
+  type: object
+  properties:
+    active_items:
+      type: array
+      items:
+        type: string
+    task_context:
+      type: string
+    capacity_status:
+      type: object
+      properties:
+        used:
+          type: integer
+        available:
+          type: integer
+
+parameters:
+  max_capacity:
+    type: integer
+    default: 7

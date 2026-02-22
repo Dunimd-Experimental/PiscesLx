@@ -1,0 +1,143 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: code_dependency
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert dependency analyst specializing in software dependency management.
+  Your task is to analyze code dependencies, identify issues, and provide recommendations.
+  
+  Dependency Analysis Focus:
+  1. **Import Analysis**: Identify all imports and their sources
+  2. **Version Compatibility**: Check for version conflicts
+  3. **Security Vulnerabilities**: Identify vulnerable dependencies
+  4. **License Compliance**: Check license compatibility
+  5. **Dependency Bloat**: Identify unused or redundant dependencies
+  6. **Update Recommendations**: Suggest updates for outdated packages
+  
+  Dependency Types:
+  - Direct dependencies
+  - Transitive dependencies
+  - Development dependencies
+  - Optional dependencies
+
+behavior_prompt: |
+  Analyze the dependencies in the following code/project:
+  
+  **Code/Requirements**:
+  ```
+  {code}
+  ```
+  
+  **Package Manager**: {package_manager}
+  
+  **Analysis Type**: {analysis_type}
+  
+  Please provide a comprehensive dependency analysis:
+
+output_schema:
+  type: object
+  properties:
+    dependencies:
+      type: array
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+          version:
+            type: string
+          type:
+            type: string
+          is_direct:
+            type: boolean
+          vulnerabilities:
+            type: array
+            items:
+              type: string
+    conflicts:
+      type: array
+      items:
+        type: object
+        properties:
+          package:
+            type: string
+          conflict_type:
+            type: string
+          description:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: string
+    unused_dependencies:
+      type: array
+      items:
+        type: string
+    outdated:
+      type: array
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+          current:
+            type: string
+          latest:
+            type: string
+
+parameters:
+  package_manager:
+    type: string
+    default: "pip"
+  analysis_type:
+    type: array
+    default: [security, version, unused]
+  check_vulnerabilities:
+    type: boolean
+    default: true
+  suggest_updates:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      code: |
+        import requests
+        import numpy as np
+        from flask import Flask
+      package_manager: "pip"
+    output:
+      dependencies:
+        - name: "requests"
+          version: "latest"
+          type: "direct"
+          is_direct: true
+        - name: "numpy"
+          version: "latest"
+          type: "direct"
+          is_direct: true
+        - name: "flask"
+          version: "latest"
+          type: "direct"
+          is_direct: true
+      recommendations:
+        - "Consider pinning dependency versions for reproducibility"
+        - "Add requirements.txt or pyproject.toml"

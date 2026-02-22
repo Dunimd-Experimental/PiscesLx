@@ -1,0 +1,64 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: episodic_memory
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an episodic memory management specialist.
+  Your task is to manage event-based memories and experiences.
+  
+  Capabilities:
+  - Event storage
+  - Experience retrieval
+  - Timeline organization
+  - Context preservation
+
+behavior_prompt: |
+  Manage episodic memory for:
+  
+  **Event**: {event}
+  
+  **Operation**: {operation}
+  
+  Please process episodic memory:
+
+output_schema:
+  type: object
+  properties:
+    events:
+      type: array
+      items:
+        type: object
+        properties:
+          timestamp:
+            type: string
+          description:
+            type: string
+          context:
+            type: string
+    timeline:
+      type: array
+      items:
+        type: string
+
+parameters:
+  operation:
+    type: string
+    default: "store"

@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -18,10 +19,28 @@
 # limitations under the License.
 
 import os
-import sys
 from datetime import datetime
-from typing import Dict, Any, Optional, List, Tuple
-from utils import PiscesLxCoreCacheManagerFacade, PiscesLxCoreDeviceManager, PiscesLxCoreFS, PiscesLxCoreDecorators, PiscesLxCoreLog
+from typing import Dict, Any, Optional, List
+
+from utils.dc import PiscesLxDeviceDiscovery, PiscesLxFilesystem, PiscesLxLogger
+from utils.paths import get_cache_dir
+
+_LOG = PiscesLxLogger(__name__)
+
+class _SimpleCache:
+    def __init__(self):
+        self._kv: Dict[str, Any] = {}
+        self._root = get_cache_dir("monitor")
+
+    def get_cache_dir(self, name: str) -> str:
+        return get_cache_dir(os.path.join("monitor", str(name)))
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._kv.get(key, default)
+
+    def set(self, key: str, value: Any, ttl: Optional[float] = None) -> None:
+        self._kv[key] = value
+
 
 class PiscesLxMonitorContext:
     """Runtime context management for monitoring operations."""
@@ -49,10 +68,7 @@ class PiscesLxMonitorContext:
             try:
                 hook(event_type, data)
             except Exception as e:
-                # Use project's log system for error reporting
-                from utils import PiscesLxCoreLog
-                error_logger = PiscesLxCoreLog("pisceslx.monitor.context")
-                error_logger.error(f"Hook error: {e}")
+                _LOG.error("monitor_hook_error", error=str(e), event_type=event_type)
 
 
 class PiscesLxMonitorUtils:
@@ -60,38 +76,24 @@ class PiscesLxMonitorUtils:
     
     def __init__(self):
         """Initialize utility components."""
-        self.fs_manager = PiscesLxCoreFS()
-        self.cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
-        self.device_manager = PiscesLxCoreDeviceManager()
-        
-        # Build log paths dynamically
-        monitor_log_dir = self.fs_manager.logs_dir()
-        monitor_log_file = monitor_log_dir / "monitor.log"
-        
-        # Ensure log directory exists
-        self.fs_manager.ensure_dir_exists(monitor_log_dir)
-        
-        # Initialize logger using project's log system
-        self.logger = PiscesLxCoreLog(
-            name="pisceslx.monitor.file",
-            file_path=str(monitor_log_file),
-            console=False,  # Disable console output to avoid polluting app.log
-            enable_file=True
-        )
+        self.fs_manager = PiscesLxFilesystem()
+        self.cache_manager = _SimpleCache()
+        self.device_manager = PiscesLxDeviceDiscovery()
+        self.logger = PiscesLxLogger("pisceslx.monitor")
     
-    def get_cache_manager(self) -> PiscesLxCoreCacheManagerFacade:
+    def get_cache_manager(self):
         """Get cache manager."""
         return self.cache_manager
     
-    def get_device_manager(self) -> PiscesLxCoreDeviceManager:
+    def get_device_manager(self):
         """Get device manager."""
         return self.device_manager
     
-    def get_fs_manager(self) -> PiscesLxCoreFS:
+    def get_fs_manager(self):
         """Get filesystem manager."""
         return self.fs_manager
     
-    def get_logger(self) -> PiscesLxCoreLog:
+    def get_logger(self):
         """Get logger."""
         return self.logger
 
@@ -103,6 +105,16 @@ class PiscesLxMonitorContextManager:
         """Initialize global context manager."""
         self._context_manager = PiscesLxMonitorContext()
         self._utils_manager = PiscesLxMonitorUtils()
+
+    def set_utils(self, cache_manager=None, device_manager=None, fs_manager=None, logger=None) -> None:
+        if cache_manager is not None:
+            self._utils_manager.cache_manager = cache_manager
+        if device_manager is not None:
+            self._utils_manager.device_manager = device_manager
+        if fs_manager is not None:
+            self._utils_manager.fs_manager = fs_manager
+        if logger is not None:
+            self._utils_manager.logger = logger
     
     def set_context(self, key: str, value: Any) -> None:
         """Set global context value."""
@@ -120,19 +132,19 @@ class PiscesLxMonitorContextManager:
         """Emit global event."""
         self._context_manager.emit_event(event_type, data)
     
-    def get_cache_manager(self) -> PiscesLxCoreCacheManagerFacade:
+    def get_cache_manager(self):
         """Get global cache manager."""
         return self._utils_manager.get_cache_manager()
     
-    def get_device_manager(self) -> PiscesLxCoreDeviceManager:
+    def get_device_manager(self):
         """Get global device manager."""
         return self._utils_manager.get_device_manager()
     
-    def get_fs_manager(self) -> PiscesLxCoreFS:
+    def get_fs_manager(self):
         """Get global filesystem manager."""
         return self._utils_manager.get_fs_manager()
     
-    def get_logger(self) -> PiscesLxCoreLog:
+    def get_logger(self):
         """Get global logger."""
         return self._utils_manager.get_logger()
 

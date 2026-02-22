@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -20,10 +21,10 @@
 """
 ReAct (Reasoning + Acting) Agentic for PiscesL1.
 
-Implements the complete Goal → Plan → Execute → Reflect闭环 with:
+Implements the complete Goal -> Plan -> Execute -> Reflect closed loop with:
 - Goal Understanding: Understand user's true intent
 - Task Decomposition: Break down complex tasks
-- ReAct Loop: Think → Act → Observe → Reflect循环
+- ReAct Loop: Think -> Act -> Observe -> Reflect cycle
 - Self-Correction: Automatic error recovery
 - Memory Integration: Persistent context
 
@@ -42,8 +43,9 @@ from pathlib import Path
 import torch
 import torch.nn as nn
 
-from utils import PiscesLxCoreLog
-logger = PiscesLxCoreLog("pisceslx.model.multimodal.react_agentic")
+from utils.dc import PiscesLxLogger
+
+_LOG = PiscesLxLogger(__name__)
 
 
 class AgenticState(Enum):
@@ -71,6 +73,18 @@ class ActionType(Enum):
     PLAN_TASK = "plan_task"
     REFLECT = "reflect"
     FINISH = "finish"
+
+
+class RetryStrategy(Enum):
+    """Retry strategy for error recovery."""
+    IMMEDIATE = "immediate"
+    BACKOFF = "backoff"
+    ALTERNATE = "alternate"
+    DEGRADE = "degrade"
+    SKIP = "skip"
+    ABORT = "abort"
+    ESCALATE = "escalate"
+    CHECKPOINT_RESTORE = "checkpoint_restore"
 
 
 @dataclass
@@ -177,7 +191,7 @@ class Reflection:
     corrections: List[str] = field(default_factory=list)
 
 
-class RuchbahGoalUnderstanding(nn.Module):
+class YvGoalUnderstanding(nn.Module):
     """Goal understanding module.
     
     Analyzes user input to understand true intent, constraints, and success criteria.
@@ -293,7 +307,7 @@ Output as JSON:
             )
 
 
-class RuchbahTaskDecomposition(nn.Module):
+class YvTaskDecomposition(nn.Module):
     """Task decomposition module.
     
     Breaks down complex goals into executable steps.
@@ -388,7 +402,7 @@ Output as JSON array:
                 )
                 
         except (json.JSONDecodeError, ValueError) as e:
-            logger.warning(f"Failed to parse steps: {e}")
+            _LOG.warning(f"Failed to parse steps: {e}")
             plan.add_step(
                 description=f"Complete the goal: {goal.intent}",
                 action_type=ActionType.ANSWER,
@@ -399,10 +413,10 @@ Output as JSON array:
         return plan
 
 
-class RuchbahReActEngine(nn.Module):
+class YvReActEngine(nn.Module):
     """ReAct (Reasoning + Acting) engine.
     
-    Implements the Think → Act → Observe → Reflect循环.
+    Implements the Think -> Act -> Observe -> Reflect cycle.
     """
     
     def __init__(self, hidden_size: int = 4096, max_history: int = 20):
@@ -578,8 +592,8 @@ Thought:"""
         )
 
 
-class RuchbahSelfCorrection(nn.Module):
-    """Self-correction module for error recovery."""
+class YvSelfCorrection(nn.Module):
+    """Self-correction module for error recovery with multi-level retry strategies."""
     
     def __init__(self, hidden_size: int = 4096):
         """Initialize self-correction module."""
@@ -597,6 +611,12 @@ class RuchbahSelfCorrection(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_size, hidden_size),
         )
+        
+        self._retry_history: Dict[str, List[Dict]] = {}
+        self._error_patterns: Dict[str, Dict] = {}
+        self._max_retry_attempts: int = 5
+        self._base_backoff_delay: float = 1.0
+        self._max_backoff_delay: float = 60.0
     
     def analyze_error(self, error: str, action_type: ActionType) -> Dict[str, Any]:
         """Analyze error type and suggest recovery.
@@ -618,13 +638,17 @@ class RuchbahSelfCorrection(nn.Module):
             error_type = "permission_denied"
         elif "invalid" in error_lower or "wrong" in error_lower:
             error_type = "invalid_input"
+        elif "connection" in error_lower or "network" in error_lower:
+            error_type = "network_error"
+        elif "rate" in error_lower or "limit" in error_lower:
+            error_type = "rate_limit"
         else:
             error_type = "unknown"
         
         return {
             "error_type": error_type,
             "action_type": action_type.value,
-            "should_retry": error_type in ["timeout", "resource_not_found"],
+            "should_retry": error_type in ["timeout", "resource_not_found", "network_error", "rate_limit"],
             "should_alternate": error_type in ["permission_denied", "invalid_input"],
             "should_abort": error_type == "unknown" and len(error) > 100,
         }
@@ -659,9 +683,252 @@ class RuchbahSelfCorrection(nn.Module):
                 "message": "Skipping this step",
                 "changes": ["Mark step as optional", "Continue with next step"],
             }
+    
+    def determine_retry_strategy(
+        self,
+        error: str,
+        attempt_count: int,
+        context: Dict[str, Any]
+    ) -> RetryStrategy:
+        """Determine the optimal retry strategy based on error and context.
+        
+        Args:
+            error: The error message.
+            attempt_count: Number of attempts so far.
+            context: Current execution context.
+            
+        Returns:
+            RetryStrategy: The recommended retry strategy.
+        """
+        error_analysis = self.analyze_error(error, ActionType.TOOL_CALL)
+        error_type = error_analysis["error_type"]
+        
+        if attempt_count >= self._max_retry_attempts:
+            return RetryStrategy.ESCALATE
+        
+        if error_type in ["timeout", "network_error", "rate_limit"]:
+            if attempt_count == 0:
+                return RetryStrategy.IMMEDIATE
+            elif attempt_count < 3:
+                return RetryStrategy.BACKOFF
+            else:
+                return RetryStrategy.ALTERNATE
+        
+        elif error_type in ["permission_denied"]:
+            return RetryStrategy.ESCALATE
+        
+        elif error_type in ["invalid_input", "resource_not_found"]:
+            if attempt_count < 2:
+                return RetryStrategy.ALTERNATE
+            else:
+                return RetryStrategy.SKIP
+        
+        else:
+            if attempt_count < 2:
+                return RetryStrategy.BACKOFF
+            elif attempt_count < 4:
+                return RetryStrategy.ALTERNATE
+            else:
+                return RetryStrategy.ESCALATE
+    
+    def calculate_backoff_time(
+        self,
+        attempt_count: int,
+        base_delay: float = None,
+        max_delay: float = None
+    ) -> float:
+        """Calculate backoff time using exponential strategy with jitter.
+        
+        Args:
+            attempt_count: Current attempt number.
+            base_delay: Base delay in seconds.
+            max_delay: Maximum delay cap.
+            
+        Returns:
+            float: Delay time in seconds.
+        """
+        import random
+        
+        base = base_delay or self._base_backoff_delay
+        maximum = max_delay or self._max_backoff_delay
+        
+        exponential_delay = base * (2 ** attempt_count)
+        
+        jitter = random.uniform(0.8, 1.2)
+        delay = exponential_delay * jitter
+        
+        return min(delay, maximum)
+    
+    def generate_alternate_actions(
+        self,
+        failed_action: Dict[str, Any],
+        error_info: Dict[str, Any]
+    ) -> List[Dict[str, Any]]:
+        """Generate alternative actions for a failed action.
+        
+        Args:
+            failed_action: The action that failed.
+            error_info: Information about the error.
+            
+        Returns:
+            List[Dict[str, Any]]: List of alternative actions.
+        """
+        alternatives = []
+        action_type = failed_action.get("type", "unknown")
+        error_type = error_info.get("error_type", "unknown")
+        
+        if action_type == "tool_call":
+            tool_name = failed_action.get("tool", "")
+            
+            if error_type == "timeout":
+                alternatives.append({
+                    "type": "tool_call",
+                    "tool": tool_name,
+                    "params": {**failed_action.get("params", {}), "timeout": 60},
+                    "reason": "Increased timeout",
+                })
+            
+            alternatives.append({
+                "type": "tool_call",
+                "tool": f"{tool_name}_fallback",
+                "params": failed_action.get("params", {}),
+                "reason": "Using fallback tool",
+            })
+        
+        elif action_type == "search":
+            alternatives.append({
+                "type": "search",
+                "query": failed_action.get("query", "") + " simplified",
+                "reason": "Simplified search query",
+            })
+        
+        elif action_type == "code_exec":
+            alternatives.append({
+                "type": "code_exec",
+                "code": f"# Simplified version\n{failed_action.get('code', '')}",
+                "reason": "Simplified code execution",
+            })
+        
+        alternatives.append({
+            "type": "ask_human",
+            "question": f"The action '{action_type}' failed. How should I proceed?",
+            "reason": "Escalate to user",
+        })
+        
+        return alternatives[:3]
+    
+    def should_escalate(
+        self,
+        consecutive_failures: int,
+        error_pattern: str
+    ) -> bool:
+        """Determine if the situation should be escalated.
+        
+        Args:
+            consecutive_failures: Number of consecutive failures.
+            error_pattern: Pattern of errors encountered.
+            
+        Returns:
+            bool: True if should escalate.
+        """
+        if consecutive_failures >= self._max_retry_attempts:
+            return True
+        
+        critical_errors = ["permission_denied", "security_violation", "data_corruption"]
+        if error_pattern in critical_errors:
+            return True
+        
+        pattern_data = self._error_patterns.get(error_pattern, {})
+        if pattern_data.get("escalation_rate", 0) > 0.5:
+            return True
+        
+        return False
+    
+    def learn_from_error(
+        self,
+        error: str,
+        resolution: str,
+        success: bool
+    ):
+        """Learn from an error for future improvement.
+        
+        Args:
+            error: The error encountered.
+            resolution: The resolution attempted.
+            success: Whether the resolution succeeded.
+        """
+        error_analysis = self.analyze_error(error, ActionType.TOOL_CALL)
+        error_type = error_analysis["error_type"]
+        
+        if error_type not in self._error_patterns:
+            self._error_patterns[error_type] = {
+                "count": 0,
+                "resolutions": {},
+                "success_rate": 0.0,
+            }
+        
+        pattern = self._error_patterns[error_type]
+        pattern["count"] += 1
+        
+        if resolution not in pattern["resolutions"]:
+            pattern["resolutions"][resolution] = {"attempts": 0, "successes": 0}
+        
+        pattern["resolutions"][resolution]["attempts"] += 1
+        if success:
+            pattern["resolutions"][resolution]["successes"] += 1
+        
+        total_successes = sum(r["successes"] for r in pattern["resolutions"].values())
+        total_attempts = sum(r["attempts"] for r in pattern["resolutions"].values())
+        pattern["success_rate"] = total_successes / max(total_attempts, 1)
+    
+    def get_error_pattern_prediction(
+        self,
+        action_type: ActionType
+    ) -> float:
+        """Predict the likelihood of error for an action type.
+        
+        Args:
+            action_type: The type of action to evaluate.
+            
+        Returns:
+            float: Predicted error probability.
+        """
+        action_errors = 0
+        total_errors = 0
+        
+        for error_type, pattern in self._error_patterns.items():
+            if action_type.value in str(pattern.get("affected_actions", [])):
+                action_errors += pattern["count"]
+            total_errors += pattern["count"]
+        
+        if total_errors == 0:
+            return 0.1
+        
+        return action_errors / total_errors
+    
+    def get_retry_statistics(self) -> Dict[str, Any]:
+        """Get statistics about retry attempts and outcomes."""
+        total_retries = sum(len(history) for history in self._retry_history.values())
+        
+        successful_retries = sum(
+            sum(1 for attempt in history if attempt.get("success"))
+            for history in self._retry_history.values()
+        )
+        
+        return {
+            "total_retry_attempts": total_retries,
+            "successful_retries": successful_retries,
+            "success_rate": successful_retries / max(total_retries, 1),
+            "error_patterns": len(self._error_patterns),
+            "most_common_errors": sorted(
+                self._error_patterns.keys(),
+                key=lambda k: self._error_patterns[k]["count"],
+                reverse=True
+            )[:5],
+        }
 
 
-class RuchbahReActAgentic(nn.Module):
+class YvReActAgentic(nn.Module):
     """Complete ReAct Agentic for PiscesL1.
     
     Integrates Goal Understanding, Task Decomposition, ReAct Engine,
@@ -679,14 +946,25 @@ class RuchbahReActAgentic(nn.Module):
         self.hidden_size = hidden_size
         self.max_steps = max_steps
         
-        self.goal_understanding = RuchbahGoalUnderstanding(hidden_size)
-        self.task_decomposition = RuchbahTaskDecomposition(hidden_size)
-        self.react_engine = RuchbahReActEngine(hidden_size)
-        self.self_correction = RuchbahSelfCorrection(hidden_size)
+        self.goal_understanding = YvGoalUnderstanding(hidden_size)
+        self.task_decomposition = YvTaskDecomposition(hidden_size)
+        self.react_engine = YvReActEngine(hidden_size)
+        self.self_correction = YvSelfCorrection(hidden_size)
         
         self.goal_encoder = nn.Linear(hidden_size, hidden_size)
         self.plan_encoder = nn.Linear(hidden_size, hidden_size)
         self.history_encoder = nn.Linear(hidden_size, hidden_size)
+        
+        self._checkpoint_storage: Dict[str, Dict] = {}
+        self._retry_policy: Dict[str, Any] = {
+            "max_attempts": 3,
+            "base_delay": 1.0,
+            "max_delay": 60.0,
+        }
+        self._execution_context: Dict[str, Any] = {}
+        self._interruption_flag: bool = False
+        self._last_checkpoint_time: float = 0.0
+        self._checkpoint_interval: float = 300.0
         
     def run(self, user_input: str, model, tokenizer, 
             tools: Dict[str, Any] = None, verbose: bool = False) -> Dict[str, Any]:
@@ -709,16 +987,16 @@ class RuchbahReActAgentic(nn.Module):
         state = AgenticState.UNDERSTANDING
         
         if verbose:
-            print(f"\n🎯 Goal: {goal.intent}")
-            print(f"📋 Constraints: {goal.constraints}")
+            _LOG.info(f"Goal: {goal.intent}")
+            _LOG.info(f"Constraints: {goal.constraints}")
         
         plan = self.task_decomposition.decompose(goal, model, tokenizer)
         state = AgenticState.PLANNING
         
         if verbose:
-            print(f"\n📝 Plan ({len(plan.steps)} steps):")
+            _LOG.info(f"Plan ({len(plan.steps)} steps):")
             for i, step in enumerate(plan.steps):
-                print(f"  {i+1}. [{step.action_type.value}] {step.description}")
+                _LOG.info(f"  {i+1}. [{step.action_type.value}] {step.description}")
         
         history = []
         context = ""
@@ -731,8 +1009,8 @@ class RuchbahReActAgentic(nn.Module):
             action = self.react_engine.select_action(goal, plan, thought, context)
             
             if verbose:
-                print(f"\n🤔 Thought: {thought[:100]}...")
-                print(f"🎬 Action: {action.action_type.value}")
+                _LOG.debug(f"Thought: {thought[:100]}...")
+                _LOG.debug(f"Action: {action.action_type.value}")
             
             if action.action_type == ActionType.FINISH:
                 state = AgenticState.COMPLETED
@@ -747,7 +1025,7 @@ class RuchbahReActAgentic(nn.Module):
             observation = self.react_engine.observe(action, result, execution_time)
             
             if verbose:
-                status = "✅" if observation.success else "❌"
+                status = "[OK]" if observation.success else "[FAIL]"
                 print(f"{status} Result: {str(result)[:100]}...")
             
             history.append({
@@ -852,10 +1130,258 @@ class RuchbahReActAgentic(nn.Module):
             return "Waiting for human input"
         
         return f"Action {action.action_type.value} completed"
+    
+    def run_with_persistence(
+        self,
+        user_input: str,
+        model,
+        tokenizer,
+        tools: Dict[str, Any] = None,
+        config: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """Run agentic task with checkpoint persistence for long-running execution.
+        
+        Args:
+            user_input: User's request.
+            model: Language model.
+            tokenizer: Tokenizer.
+            tools: Available tools dict.
+            config: Execution configuration.
+            
+        Returns:
+            Agentic result dict with checkpoint info.
+        """
+        config = config or {}
+        checkpoint_interval = config.get("checkpoint_interval", self._checkpoint_interval)
+        enable_recovery = config.get("enable_recovery", True)
+        
+        self._execution_context = {
+            "user_input": user_input,
+            "start_time": time.time(),
+            "config": config,
+        }
+        
+        try:
+            result = self.run(user_input, model, tokenizer, tools, config.get("verbose", False))
+            
+            checkpoint_id = self.save_execution_state()
+            result["checkpoint_id"] = checkpoint_id
+            
+            return result
+            
+        except Exception as e:
+            if enable_recovery:
+                checkpoint_id = self.save_execution_state()
+                return {
+                    "success": False,
+                    "error": str(e),
+                    "checkpoint_id": checkpoint_id,
+                    "can_resume": True,
+                }
+            raise
+    
+    def resume_from_checkpoint(
+        self,
+        checkpoint_id: str,
+        model,
+        tokenizer,
+        tools: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """Resume execution from a saved checkpoint.
+        
+        Args:
+            checkpoint_id: The checkpoint to resume from.
+            model: Language model.
+            tokenizer: Tokenizer.
+            tools: Available tools dict.
+            
+        Returns:
+            Agentic result dict.
+        """
+        if checkpoint_id not in self._checkpoint_storage:
+            return {
+                "success": False,
+                "error": f"Checkpoint {checkpoint_id} not found",
+            }
+        
+        checkpoint = self._checkpoint_storage[checkpoint_id]
+        
+        self._execution_context = checkpoint.get("execution_context", {})
+        user_input = self._execution_context.get("user_input", "")
+        
+        result = self.run(user_input, model, tokenizer, tools)
+        
+        result["resumed_from"] = checkpoint_id
+        
+        return result
+    
+    def handle_interruption(self, signal: str = None) -> Dict[str, Any]:
+        """Handle execution interruption and save checkpoint.
+        
+        Args:
+            signal: Interruption signal (optional).
+            
+        Returns:
+            Dict with checkpoint info.
+        """
+        self._interruption_flag = True
+        
+        checkpoint_id = self.save_execution_state()
+        
+        return {
+            "interrupted": True,
+            "checkpoint_id": checkpoint_id,
+            "can_resume": True,
+            "signal": signal,
+        }
+    
+    def execute_with_recovery(
+        self,
+        action: 'Action',
+        tools: Dict[str, Any],
+        model,
+        tokenizer,
+        retry_policy: Dict[str, Any] = None
+    ) -> Any:
+        """Execute action with automatic recovery on failure.
+        
+        Args:
+            action: Action to execute.
+            tools: Available tools.
+            model: Language model.
+            tokenizer: Tokenizer.
+            retry_policy: Custom retry policy.
+            
+        Returns:
+            Action result.
+        """
+        policy = retry_policy or self._retry_policy
+        max_attempts = policy.get("max_attempts", 3)
+        
+        attempt = 0
+        last_error = None
+        
+        while attempt < max_attempts:
+            try:
+                result = self._execute_action(action, tools, model, tokenizer)
+                return result
+                
+            except Exception as e:
+                last_error = str(e)
+                
+                strategy = self.self_correction.determine_retry_strategy(
+                    last_error, attempt, self._execution_context
+                )
+                
+                if strategy == RetryStrategy.ABORT:
+                    break
+                elif strategy == RetryStrategy.SKIP:
+                    return {"skipped": True, "reason": last_error}
+                elif strategy == RetryStrategy.ESCALATE:
+                    return {"escalate": True, "error": last_error}
+                
+                if strategy == RetryStrategy.BACKOFF:
+                    delay = self.self_correction.calculate_backoff_time(
+                        attempt,
+                        policy.get("base_delay", 1.0),
+                        policy.get("max_delay", 60.0)
+                    )
+                    time.sleep(delay)
+                
+                attempt += 1
+        
+        return {"failed": True, "error": last_error, "attempts": attempt}
+    
+    def save_execution_state(self) -> str:
+        """Save current execution state as a checkpoint.
+        
+        Returns:
+            str: Checkpoint ID.
+        """
+        import uuid
+        
+        checkpoint_id = str(uuid.uuid4())
+        
+        self._checkpoint_storage[checkpoint_id] = {
+            "execution_context": self._execution_context.copy(),
+            "timestamp": time.time(),
+            "status": "interrupted" if self._interruption_flag else "saved",
+        }
+        
+        self._last_checkpoint_time = time.time()
+        
+        return checkpoint_id
+    
+    def restore_execution_state(self, checkpoint_id: str) -> bool:
+        """Restore execution state from a checkpoint.
+        
+        Args:
+            checkpoint_id: The checkpoint to restore.
+            
+        Returns:
+            bool: True if restoration succeeded.
+        """
+        if checkpoint_id not in self._checkpoint_storage:
+            return False
+        
+        checkpoint = self._checkpoint_storage[checkpoint_id]
+        self._execution_context = checkpoint.get("execution_context", {}).copy()
+        self._interruption_flag = False
+        
+        return True
+    
+    def get_execution_progress(self) -> Dict[str, Any]:
+        """Get current execution progress.
+        
+        Returns:
+            Dict[str, Any]: Progress information.
+        """
+        start_time = self._execution_context.get("start_time", time.time())
+        elapsed = time.time() - start_time
+        
+        return {
+            "elapsed_time": elapsed,
+            "checkpoint_count": len(self._checkpoint_storage),
+            "last_checkpoint": self._last_checkpoint_time,
+            "interrupted": self._interruption_flag,
+            "has_context": bool(self._execution_context),
+        }
+    
+    def estimate_completion_time(self) -> float:
+        """Estimate remaining execution time.
+        
+        Returns:
+            float: Estimated remaining time in seconds.
+        """
+        start_time = self._execution_context.get("start_time", time.time())
+        elapsed = time.time() - start_time
+        
+        estimated_total = elapsed * 1.5
+        
+        return max(0, estimated_total - elapsed)
+    
+    def list_checkpoints(self) -> List[Dict[str, Any]]:
+        """List all available checkpoints.
+        
+        Returns:
+            List[Dict[str, Any]]: List of checkpoint summaries.
+        """
+        return [
+            {
+                "checkpoint_id": cp_id,
+                "timestamp": cp["timestamp"],
+                "status": cp["status"],
+            }
+            for cp_id, cp in self._checkpoint_storage.items()
+        ]
+    
+    def clear_checkpoints(self):
+        """Clear all stored checkpoints."""
+        self._checkpoint_storage.clear()
 
 
 def create_react_agentic(hidden_size: int = 4096, 
-                         max_steps: int = 20) -> RuchbahReActAgentic:
+                         max_steps: int = 20) -> YvReActAgentic:
     """Factory function to create ReAct Agentic.
     
     Args:
@@ -865,20 +1391,4 @@ def create_react_agentic(hidden_size: int = 4096,
     Returns:
         ReAct Agentic instance
     """
-    return RuchbahReActAgentic(hidden_size, max_steps)
-
-
-class SimpleSearchTool:
-    """Simple search tool for demonstration."""
-    
-    def __call__(self, query: str) -> str:
-        """Search for query."""
-        return f"Search results for: {query}"
-
-
-class SimpleCodeExecutor:
-    """Simple code execution tool for demonstration."""
-    
-    def __call__(self, code: str) -> str:
-        """Execute code."""
-        return f"Code executed: {len(code)} characters"
+    return YvReActAgentic(hidden_size, max_steps)

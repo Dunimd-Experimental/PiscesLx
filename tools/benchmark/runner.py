@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -22,11 +23,7 @@ from typing import Dict, Any, Union, List
 
 from dataclasses import asdict
 
-# Use dms_core logging exclusively
-import dms_core
-PiscesLxCoreLog = dms_core.log.get_logger
-load_config_from_file = dms_core.config.load
-PiscesLxCoreDeviceManager = dms_core.device.DeviceManager
+from utils.dc import PiscesLxLogger, PiscesLxConfiguration, PiscesLxSystemMonitor
 
 try:
     from evalscope import run_task
@@ -40,7 +37,7 @@ from .config import PiscesLxToolsBenchmarkConfig
 from .builders import PiscesLxToolsTaskConfigBuilder
 from .result import PiscesLxToolsResultManager, PiscesLxToolsComparisonManager
 
-_logger = PiscesLxCoreLog("pisceslx.tools.benchmark")
+_LOG = PiscesLxLogger(__name__)
 
 
 class PiscesLxToolsBenchmark:
@@ -48,12 +45,14 @@ class PiscesLxToolsBenchmark:
 
     def __init__(self, config: Union[str, Dict, PiscesLxToolsBenchmarkConfig]):
         self.config = self._load_config(config)
-        self.logger = _logger.bind(benchmark_model=self.config.model_name)
+        self.logger = PiscesLxLogger(f"pisceslx.tools.benchmark.{self.config.model_name or 'default'}")
 
         # Setup device
-        self.device_manager = PiscesLxCoreDeviceManager()
+        self._system_monitor = PiscesLxSystemMonitor()
         if self.config.device == "auto":
-            self.config.device = self.device_manager.get_optimal_device()
+            devices = self._system_monitor.list_devices()
+            gpu_devices = [d for d in devices if d.device_type.name == "GPU"]
+            self.config.device = "cuda" if gpu_devices else "cpu"
 
         # Initialize managers
         self.result_manager = PiscesLxToolsResultManager(self.config.output_dir)
@@ -61,7 +60,6 @@ class PiscesLxToolsBenchmark:
 
         self.logger.info(
             "Initialized PiscesL1Benchmark",
-            event="benchmark.initialized",
             model_path=self.config.model_path,
             device=self.config.device,
             datasets=self.config.datasets,
@@ -70,8 +68,9 @@ class PiscesLxToolsBenchmark:
 
     def _load_config(self, config: Union[str, Dict, PiscesLxToolsBenchmarkConfig]) -> PiscesLxToolsBenchmarkConfig:
         if isinstance(config, str):
-            config_data = load_config_from_file(config)
-            return PiscesLxToolsBenchmarkConfig(**config_data)
+            cfg = PiscesLxConfiguration()
+            cfg.load_from_file(config)
+            return PiscesLxToolsBenchmarkConfig(**cfg.to_dict())
         elif isinstance(config, dict):
             return PiscesLxToolsBenchmarkConfig(**config)
         elif isinstance(config, PiscesLxToolsBenchmarkConfig):
@@ -83,7 +82,6 @@ class PiscesLxToolsBenchmark:
         """Run benchmark using EvalScope"""
         self.logger.info(
             "Starting benchmark evaluation",
-            event="benchmark.start",
             model_path=self.config.model_path,
             datasets=self.config.datasets,
             metrics=self.config.metrics,
@@ -98,9 +96,8 @@ class PiscesLxToolsBenchmark:
             summarizer = Summarizer()
             summary = summarizer.summarize(results)
             self.result_manager.save_results(results, summary, self.config)
-            self.logger.success(
+            self.logger.info(
                 "Benchmark completed successfully",
-                event="benchmark.completed",
                 output_dir=self.config.output_dir,
                 results_count=len(results),
             )
@@ -108,7 +105,6 @@ class PiscesLxToolsBenchmark:
         except Exception as e:
             self.logger.error(
                 "Benchmark failed",
-                event="benchmark.failed",
                 error=str(e),
                 error_type=type(e).__name__,
             )
@@ -117,7 +113,6 @@ class PiscesLxToolsBenchmark:
     def compare_models(self, model_configs: List[Dict[str, Any]]) -> Dict[str, Any]:
         self.logger.info(
             "Starting model comparison",
-            event="benchmark.comparison.start",
             model_count=len(model_configs),
         )
         comparison_results: Dict[str, Any] = {}
@@ -127,22 +122,19 @@ class PiscesLxToolsBenchmark:
                 model_name = model_config.get("name", f"model_{i+1}")
                 self.logger.info(
                     f"Evaluating model {i+1}/{len(model_configs)}",
-                    event="benchmark.model.evaluation.start",
                     model_name=model_name,
                 )
                 merged_config = {**asdict(original_config), **model_config}
                 self.config = PiscesLxToolsBenchmarkConfig(**merged_config)
                 result = self.run_benchmark()
                 comparison_results[model_name] = result
-                self.logger.success(
+                self.logger.info(
                     f"Model {model_name} evaluation completed",
-                    event="benchmark.model.evaluation.completed",
                     model_name=model_name,
                 )
             comparison_summary = self.comparison_manager.generate_comparison_report(comparison_results)
-            self.logger.success(
+            self.logger.info(
                 "Model comparison completed",
-                event="benchmark.comparison.completed",
                 models=list(comparison_results.keys()),
             )
             return {"comparison_results": comparison_results, "comparison_summary": comparison_summary}
@@ -157,9 +149,9 @@ class PiscesLxToolsBenchmarkConfigFactory:
     def create(config: Union[str, Dict]) -> PiscesLxToolsBenchmarkConfig:
         """Create benchmark configuration from file or dict"""
         if isinstance(config, str):
-            # load_config_from_file is already defined above
-            config_data = load_config_from_file(config)
-            return PiscesLxToolsBenchmarkConfig(**config_data)
+            cfg = PiscesLxConfiguration()
+            cfg.load_from_file(config)
+            return PiscesLxToolsBenchmarkConfig(**cfg.to_dict())
         elif isinstance(config, dict):
             return PiscesLxToolsBenchmarkConfig(**config)
         else:

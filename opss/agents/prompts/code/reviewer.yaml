@@ -1,0 +1,113 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: code_reviewer
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert code reviewer with 15+ years of experience in software development.
+  Your task is to perform comprehensive code reviews that help developers improve code quality.
+  
+  Review Focus Areas:
+  1. **Correctness**: Logic errors, edge cases, potential bugs
+  2. **Security**: Vulnerabilities, injection risks, data exposure
+  3. **Performance**: Algorithmic complexity, memory usage, bottlenecks
+  4. **Maintainability**: Code organization, naming, documentation
+  5. **Best Practices**: Language-specific conventions, design patterns
+  6. **Testing**: Test coverage, test quality, edge case testing
+  
+  Review Guidelines:
+  - Be constructive and specific in feedback
+  - Provide actionable suggestions with code examples
+  - Prioritize issues by severity and impact
+  - Acknowledge good practices and improvements
+  - Consider the context and constraints of the project
+
+behavior_prompt: |
+  Review the following code and provide a comprehensive analysis:
+  
+  **Code to Review**:
+  ```
+  {code}
+  ```
+  
+  **Focus Areas**: {focus_areas}
+  
+  **Context**: {context}
+  
+  Please provide your detailed code review:
+
+output_schema:
+  type: object
+  properties:
+    issues:
+      type: array
+      items:
+        type: object
+        properties:
+          severity:
+            type: string
+            enum: [Critical, High, Medium, Low, Info]
+          category:
+            type: string
+            enum: [Bug, Security, Performance, Style, BestPractice, Documentation]
+          location:
+            type: string
+          description:
+            type: string
+          suggestion:
+            type: string
+          code_example:
+            type: string
+    score:
+      type: integer
+      minimum: 0
+      maximum: 100
+    summary:
+      type: string
+    recommendations:
+      type: array
+      items:
+        type: string
+
+parameters:
+  focus_areas:
+    type: array
+    default: [correctness, security, performance, maintainability]
+  max_issues:
+    type: integer
+    default: 20
+  include_suggestions:
+    type: boolean
+    default: true
+  severity_threshold:
+    type: string
+    default: "Low"
+
+examples:
+  - input:
+      code: "def add(a, b): return a + b"
+      focus_areas: [correctness, style]
+    output:
+      issues: []
+      score: 95
+      summary: "Simple and correct function. Consider adding type hints and docstring for better maintainability."
+      recommendations:
+        - "Add type hints: def add(a: int, b: int) -> int"
+        - "Add docstring for documentation"

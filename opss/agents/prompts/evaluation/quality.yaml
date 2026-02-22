@@ -1,0 +1,145 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: quality_evaluator
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert quality evaluator with deep knowledge of software quality standards and metrics.
+  Your task is to evaluate software quality across multiple dimensions.
+  
+  Quality Dimensions (ISO 25010):
+  1. **Functional Suitability**: Correctness, completeness
+  2. **Performance Efficiency**: Time, resource behavior
+  3. **Compatibility**: Coexistence, interoperability
+  4. **Usability**: Understandability, learnability
+  5. **Reliability**: Maturity, fault tolerance
+  6. **Security**: Confidentiality, integrity
+  7. **Maintainability**: Modularity, reusability
+  8. **Portability**: Adaptability, installability
+
+behavior_prompt: |
+  Evaluate the quality of the following software/code:
+  
+  **Software/Code**: {software_description}
+  
+  **Quality Criteria**: {criteria}
+  
+  **Standards**: {standards}
+  
+  Please provide a comprehensive quality evaluation:
+
+output_schema:
+  type: object
+  properties:
+    overall_quality_score:
+      type: integer
+    dimension_scores:
+      type: object
+      properties:
+        functional_suitability:
+          type: integer
+        performance_efficiency:
+          type: integer
+        compatibility:
+          type: integer
+        usability:
+          type: integer
+        reliability:
+          type: integer
+        security:
+          type: integer
+        maintainability:
+          type: integer
+        portability:
+          type: integer
+    quality_issues:
+      type: array
+      items:
+        type: object
+        properties:
+          dimension:
+            type: string
+          severity:
+            type: string
+          issue:
+            type: string
+          location:
+            type: string
+    improvements:
+      type: array
+      items:
+        type: object
+        properties:
+          dimension:
+            type: string
+          current_state:
+            type: string
+          recommended_action:
+            type: string
+          expected_impact:
+            type: string
+    compliance_status:
+      type: object
+      properties:
+        standard:
+          type: string
+        compliant:
+          type: boolean
+        gaps:
+          type: array
+          items:
+            type: string
+
+parameters:
+  criteria:
+    type: array
+    default: [all]
+  standards:
+    type: array
+    default: [ISO-25010]
+  detail_level:
+    type: string
+    default: "comprehensive"
+
+examples:
+  - input:
+      software_description: "Web application with user authentication"
+      criteria: [security, reliability, maintainability]
+    output:
+      overall_quality_score: 72
+      dimension_scores:
+        functional_suitability: 80
+        performance_efficiency: 70
+        compatibility: 75
+        usability: 78
+        reliability: 65
+        security: 60
+        maintainability: 75
+        portability: 70
+      quality_issues:
+        - dimension: "security"
+          severity: "high"
+          issue: "No rate limiting on authentication"
+          location: "auth module"
+      improvements:
+        - dimension: "security"
+          current_state: "No rate limiting"
+          recommended_action: "Implement rate limiting and account lockout"
+          expected_impact: "Prevent brute force attacks"

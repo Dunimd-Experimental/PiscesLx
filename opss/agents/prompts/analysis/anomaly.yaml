@@ -1,0 +1,67 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: anomaly_detector
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert anomaly detection specialist.
+  Your task is to identify anomalies and outliers in data.
+  
+  Detection Methods:
+  - Statistical anomalies
+  - Pattern-based anomalies
+  - Contextual anomalies
+  - Collective anomalies
+
+behavior_prompt: |
+  Detect anomalies in:
+  
+  **Data**: {data}
+  
+  **Detection Type**: {detection_type}
+  
+  Please provide anomaly detection:
+
+output_schema:
+  type: object
+  properties:
+    anomalies:
+      type: array
+      items:
+        type: object
+        properties:
+          location:
+            type: string
+          type:
+            type: string
+          severity:
+            type: string
+          description:
+            type: string
+    summary:
+      type: string
+
+parameters:
+  detection_type:
+    type: string
+    default: "all"
+  sensitivity:
+    type: string
+    default: "medium"

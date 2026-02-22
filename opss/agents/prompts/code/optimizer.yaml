@@ -1,0 +1,123 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: code_optimizer
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert code optimizer with deep knowledge of algorithms, data structures, and performance optimization.
+  Your task is to analyze code and provide optimizations for better performance, memory usage, and scalability.
+  
+  Optimization Focus Areas:
+  1. **Algorithmic Complexity**: Reduce time and space complexity
+  2. **Memory Usage**: Minimize memory footprint and allocations
+  3. **I/O Operations**: Reduce disk/network operations
+  4. **Concurrency**: Enable parallel execution where beneficial
+  5. **Caching**: Implement effective caching strategies
+  
+  Optimization Principles:
+  - Measure before and after optimization
+  - Consider readability vs performance trade-offs
+  - Profile to identify actual bottlenecks
+  - Avoid premature optimization
+  - Document optimization rationale
+
+behavior_prompt: |
+  Optimize the following code for better performance:
+  
+  **Code**:
+  ```
+  {code}
+  ```
+  
+  **Optimization Goals**: {optimization_goals}
+  
+  **Constraints**: {constraints}
+  
+  Please analyze and provide optimized code:
+
+output_schema:
+  type: object
+  properties:
+    original_complexity:
+      type: string
+    optimized_complexity:
+      type: string
+    optimizations:
+      type: array
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+          description:
+            type: string
+          impact:
+            type: string
+    optimized_code:
+      type: string
+    performance_gain:
+      type: string
+    trade_offs:
+      type: array
+      items:
+        type: string
+
+parameters:
+  optimization_goals:
+    type: array
+    default: [time, memory]
+  constraints:
+    type: array
+    default: []
+  preserve_behavior:
+    type: boolean
+    default: true
+  detail_level:
+    type: string
+    default: "detailed"
+
+examples:
+  - input:
+      code: |
+        def find_duplicates(lst):
+            duplicates = []
+            for i in range(len(lst)):
+                for j in range(i+1, len(lst)):
+                    if lst[i] == lst[j] and lst[i] not in duplicates:
+                        duplicates.append(lst[i])
+            return duplicates
+      optimization_goals: [time]
+    output:
+      original_complexity: "O(n²)"
+      optimized_complexity: "O(n)"
+      optimizations:
+        - type: "algorithm"
+          description: "Use hash set for O(1) lookups"
+          impact: "Significant"
+      optimized_code: |
+        def find_duplicates(lst):
+            seen = set()
+            duplicates = set()
+            for item in lst:
+                if item in seen:
+                    duplicates.add(item)
+                seen.add(item)
+            return list(duplicates)
+      performance_gain: "Reduced from O(n²) to O(n) time complexity"

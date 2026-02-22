@@ -1,12 +1,13 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
+# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -49,10 +50,9 @@ from torch.utils.data import Dataset, DataLoader, IterableDataset
 from torch.utils.data.dataset import T_co
 import numpy as np
 
-import dms_core
-PiscesLxCoreLog = dms_core.log.get_logger
+from utils.dc import PiscesLxLogger
 
-logger = PiscesLxCoreLog("pisceslx.tools.data.datamodule")
+_LOG = PiscesLxLogger(__name__)
 
 
 @dataclass
@@ -169,7 +169,7 @@ class PiscesL1BaseDataset(Dataset):
         
         self._load_data_sources()
         
-        logger.info(
+        _LOG.info(
             f"Loaded {len(self)} samples for {split} from {len(self.data_sources)} sources"
         )
     
@@ -197,7 +197,7 @@ class PiscesL1BaseDataset(Dataset):
         weight = source.get("weight", 1.0)
         
         if not os.path.exists(path):
-            logger.warning(f"Text data not found: {path}")
+            _LOG.warning(f"Text data not found: {path}")
             return
         
         samples = []
@@ -227,7 +227,7 @@ class PiscesL1BaseDataset(Dataset):
         weight = source.get("weight", 1.0)
         
         if not os.path.exists(caption_path):
-            logger.warning(f"Caption data not found: {caption_path}")
+            _LOG.warning(f"Caption data not found: {caption_path}")
             return
         
         samples = []
@@ -257,7 +257,7 @@ class PiscesL1BaseDataset(Dataset):
         weight = source.get("weight", 1.0)
         
         if not os.path.exists(path):
-            logger.warning(f"Conversation data not found: {path}")
+            _LOG.warning(f"Conversation data not found: {path}")
             return
         
         samples = []
@@ -283,7 +283,7 @@ class PiscesL1BaseDataset(Dataset):
         weight = source.get("weight", 1.0)
         
         if not os.path.exists(path):
-            logger.warning(f"Preference data not found: {path}")
+            _LOG.warning(f"Preference data not found: {path}")
             return
         
         samples = []
@@ -453,7 +453,7 @@ class PiscesL1MultimodalDataset(PiscesL1BaseDataset):
                 )
                 image_features = image_inputs.get("pixel_values", None)
             except Exception as e:
-                logger.warning(f"Failed to load image: {image_path}, error: {e}")
+                _LOG.warning(f"Failed to load image: {image_path}, error: {e}")
         
         return {
             "input_ids": encoding["input_ids"].squeeze(0),
@@ -769,7 +769,7 @@ def datamodule_main(args):
     
     train_loader = datamodule.train_dataloader()
     
-    logger.info(f"Training batches: {len(train_loader)}")
+    _LOG.info(f"Training batches: {len(train_loader)}")
     
     for batch in train_loader:
         logger.info(f"Batch keys: {batch.keys()}")
@@ -777,7 +777,7 @@ def datamodule_main(args):
     
     datamodule.teardown()
     
-    logger.success("DataModule test completed")
+    _LOG.info("DataModule test completed")
 
 
 if __name__ == "__main__":

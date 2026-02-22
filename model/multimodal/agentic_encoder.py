@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -17,32 +18,32 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compatibility module that bridges legacy Ruchbah agent encoder pipelines.
+"""Compatibility module that bridges legacy Yv agent encoder pipelines.
 
 The shim keeps historical integrations operational while newer flows migrate to
 PiscesAgent-backed implementations. It exposes the original encoder interface,
-yet dispatches all multimodal processing to :class:`RuchbahAgentic`, allowing
-callers that still depend on ``RuchbahAgenticEncoder`` to reuse their existing
+yet dispatches all multimodal processing to :class:`YvAgentic`, allowing
+callers that still depend on ``YvAgenticEncoder`` to reuse their existing
 data marshaling logic without modification.
 """
 
 import torch
 from torch import nn
-from .agentic import RuchbahAgentic
+from .agentic import YvAgentic
 from typing import Any, Dict, List, Tuple
-from .types import RuchbahAgenticObservation
+from .types import YvAgenticObservation
 
-class RuchbahAgenticEncoder(nn.Module):
-    """Wrapper that preserves the legacy Ruchbah agent encoder interface.
+class YvAgenticEncoder(nn.Module):
+    """Wrapper that preserves the legacy Yv agent encoder interface.
 
-    The encoder delegates multimodal encoding duties to :class:`RuchbahAgentic` so
+    The encoder delegates multimodal encoding duties to :class:`YvAgentic` so
     that older integration points can continue to rely on the pre-PiscesAgent
     contract.
 
     Attributes:
         enabled (bool): Flag indicating whether the encoder is active.
         cfg: Configuration namespace with model hyperparameters.
-        pisces_agentic (RuchbahAgentic): Underlying agent implementation handling
+        pisces_agentic (YvAgentic): Underlying agent implementation handling
             observation processing and reasoning.
     """
 
@@ -58,14 +59,14 @@ class RuchbahAgenticEncoder(nn.Module):
         super().__init__()
         self.enabled = True
         self.cfg = cfg
-        self.pisces_agentic = RuchbahAgentic(cfg)
+        self.pisces_agentic = YvAgentic(cfg)
         
     def forward(self, agent_input):
         """Delegate a raw observation to the underlying Pisces agent.
 
         Args:
             agent_input: Observation payload accepted by
-                :meth:`RuchbahAgentic.process_observation`.
+                :meth:`YvAgentic.process_observation`.
 
         Returns:
             torch.Tensor: Encoded feature tensor produced by the delegated agent.

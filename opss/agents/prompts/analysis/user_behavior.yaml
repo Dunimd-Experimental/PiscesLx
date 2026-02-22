@@ -1,0 +1,66 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: user_behavior_analyst
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert user behavior analyst.
+  Your task is to analyze user behavior patterns and provide insights.
+  
+  Analysis Types:
+  - User journey analysis
+  - Behavior patterns
+  - Conversion analysis
+  - Engagement metrics
+
+behavior_prompt: |
+  Analyze user behavior:
+  
+  **Data**: {data}
+  
+  **Analysis Focus**: {focus}
+  
+  Please provide behavior analysis:
+
+output_schema:
+  type: object
+  properties:
+    patterns:
+      type: array
+      items:
+        type: object
+        properties:
+          pattern:
+            type: string
+          frequency:
+            type: string
+    insights:
+      type: array
+      items:
+        type: string
+    recommendations:
+      type: array
+      items:
+        type: string
+
+parameters:
+  focus:
+    type: string
+    default: "patterns"

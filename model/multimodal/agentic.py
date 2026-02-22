@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -17,70 +18,141 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""High-level orchestration helpers for Ruchbah multimodal agent behaviors.
+"""High-level orchestration helpers for Yv multimodal agent behaviors.
 
-This module defines :class:`RuchbahAgentic`, the coordination layer that binds
-perception, memory, reasoning, and tool execution for the PiscesL1 system. It
-acts as the compatibility surface between legacy MCP integrations and newer
-PiscesAgent-based flows, managing smart routing, capability registration, and
-context-aware action planning.
+This module provides comprehensive agent orchestration components for the Yv
+model, including perception, memory, reasoning, and tool execution coordination
+for the PiscesL1 system.
 
-Enhanced with:
-- Semantic encoding for improved text representation
-- Real tool execution capabilities
-- Complete state machine for workflow management
+Module Components:
+    1. YvAgentic:
+       - Multimodal control surface for agent runtime
+       - Perception encoding (vision, audio, semantic)
+       - Memory management and retrieval
+       - Reasoning and action planning
+       - Tool execution with smart routing
+
+Key Features:
+    - MCP (Model Context Protocol) contract compliance
+    - Multi-encoder perception (vision, audio, semantic)
+    - Persistent memory with contextual retrieval
+    - Structured reasoning via YvUnifiedReasoner
+    - Smart routing between native and external tools
+    - State machine for workflow management
+    - Performance monitoring and telemetry
+
+Performance Characteristics:
+    - Perception: O(N * hidden_size) per modality
+    - Memory retrieval: O(log N) with FAISS indexing
+    - Reasoning: O(T * hidden_size) where T = reasoning steps
+    - Tool execution: Depends on tool complexity
+
+Usage Example:
+    >>> from model.multimodal.agentic import YvAgentic
+    >>> 
+    >>> # Initialize agent
+    >>> agent = YvAgentic(config, tokenizer=tokenizer)
+    >>> 
+    >>> # Process observation
+    >>> observation = {"text": "What is the weather?", "image": image_tensor}
+    >>> result = agent.process(observation)
+    >>> 
+    >>> # Execute action
+    >>> action = agent.select_action(result)
+    >>> response = agent.execute_action(action)
+
+Note:
+    Acts as compatibility surface between legacy MCP and PiscesAgent flows.
+    Supports both standalone and upstream model configurations.
+    Integrates with YvStateMachine for workflow management.
 """
 
 import uuid
 import json
+import asyncio
 import torch
 import numpy as np
 from torch import nn
 from dataclasses import asdict
 from datetime import datetime
-from .types import RuchbahMCPMessage
-from .reasoner import RuchbahUnifiedReasoner
-from .audio import RuchbahAudioEncoder
-from .vision import RuchbahVisionEncoder
-from .semantic_encoder import RuchbahSemanticEncoder
-from .tool_executor import RuchbahToolExecutor, RuchbahToolResult
-from .state_machine import RuchbahStateMachine, RuchbahAgenticState, RuchbahAgenticEvent
-# Use dms_core logging exclusively
-import dms_core
-PiscesLxCoreLog = dms_core.log.get_logger
-from typing import Dict, Any, Union, List, Callable
+from .types import YvMCPMessage
+from ..reasoning import YvUnifiedReasoner
+from .audio import YvAudioEncoder
+from .vision import YvVisionEncoder
+from .semantic_encoder import YvSemanticEncoder
+from .tool_executor import YvToolExecutor, YvToolResult
+from .state_machine import YvStateMachine, YvAgenticState, YvAgenticEvent
+from utils.dc import PiscesLxLogger
+from typing import Dict, Any, Union, List, Callable, Optional
 from .mcp import (
-    RuchbahCoreMCPProtocol,
-    RuchbahMCPToolRegistry,
-    PiscesLxCoreMCPTreeSearchReasoner,
+    YvCoreMCPProtocol,
+    YvMCPToolRegistry,
+    POPSSMCPTreeSearchReasoner,
+)
+from opss.am import (
+    POPSSToolRegistry,
+    POPSSToolType,
+    POPSSToolResult,
 )
 from .types import (
-    RuchbahAgenticState,
-    RuchbahAgenticAction,
-    RuchbahAgenticObservation,
-    RuchbahAgenticMemory,
-    RuchbahMCPMessageType,
+    YvAgenticState,
+    YvAgenticAction,
+    YvAgenticObservation,
+    YvAgenticMemory,
+    YvMCPMessageType,
 )
 
-logger = PiscesLxCoreLog("Ruchbah.Core.Agentic", file_path="logs/RuchbahCore.log")
+_LOG = PiscesLxLogger(__name__)
 
-class RuchbahAgentic(nn.Module):
-    """Multimodal control surface that orchestrates the Ruchbah agent runtime.
-
-    The controller unifies perception, long-term memory, structured reasoning,
-    and tool execution under the MCP (Model Context Protocol) contract. It can
-    operate in a standalone configuration with local encoders or attach to an
-    upstream Pisces base model for shared infrastructure. Smart routing logic
-    selects between native and external tool executors while maintaining rich
-    telemetry on decision quality.
-
+class YvAgentic(nn.Module):
+    """Multimodal control surface that orchestrates the Yv agent runtime.
+    
+    A comprehensive agent controller that unifies perception, long-term memory,
+    structured reasoning, and tool execution under the MCP (Model Context Protocol)
+    contract. Supports both standalone configuration with local encoders and
+    upstream Pisces base model integration.
+    
+    Architecture:
+        1. Perception:
+           - Vision encoding via YvVisionEncoder
+           - Audio encoding via YvAudioEncoder
+           - Semantic encoding via YvSemanticEncoder
+        
+        2. Memory:
+           - YvAgenticMemory for persistent storage
+           - Observation, action, and reflection tracking
+           - Contextual retrieval with FAISS indexing
+        
+        3. Reasoning:
+           - YvUnifiedReasoner for structured reasoning
+           - YvMultiPathReasoningEngine for multipath reasoning
+           - POPSSMCPTreeSearchReasoner for tree search
+        
+        4. Tool Execution:
+           - YvToolExecutor for native tools
+           - YvMCPToolRegistry for MCP tools
+           - Smart routing between native and external executors
+        
+        5. State Management:
+           - YvStateMachine for workflow control
+           - State transitions via YvAgenticEvent
+    
+    Key Features:
+        - MCP (Model Context Protocol) contract compliance
+        - Multi-encoder perception (vision, audio, semantic)
+        - Persistent memory with contextual retrieval
+        - Structured reasoning via YvUnifiedReasoner
+        - Smart routing between native and external tools
+        - State machine for workflow management
+        - Performance monitoring and telemetry
+    
     Attributes:
         cfg: Configuration namespace that enumerates model hyper-parameters and
             feature toggles consumed by encoders and the reasoning engine.
         tokenizer: Optional tokenizer leveraged for textual normalization and
             embedding fallback routines.
         agentic_id (str): Stable identifier used across MCP message exchanges.
-        memory (RuchbahAgenticMemory): Persistent store that captures
+        memory (YvAgenticMemory): Persistent store that captures
             observations, actions, and reflections for contextual retrieval.
         smart_routing_enabled (bool): Flag toggling intelligent routing between
             native and external tool execution surfaces.
@@ -88,14 +160,27 @@ class RuchbahAgentic(nn.Module):
             registration events, resource usage, and uptime metadata.
         execution_stats (Dict[str, int]): Aggregated counts of routing decisions
             partitioned by execution mode.
+    
+    Example:
+        >>> agent = YvAgentic(config, tokenizer=tokenizer)
+        >>> observation = {"text": "What is the weather?"}
+        >>> result = agent.process(observation)
+        >>> action = agent.select_action(result)
+    
+    Note:
+        Supports both standalone and upstream model configurations.
+        Uses weak references for model to avoid submodule registration.
+        Integrates with YvStateMachine for workflow management.
     """
 
     def __init__(self, cfg, tokenizer=None, model=None, agentic_id: str = None):
         """Construct the agent controller and wire supporting infrastructure.
-
+        
         Args:
-            cfg: Configuration object describing encoder dimensions, reasoning
-                backends, and routing defaults.
+            cfg: Configuration object describing:
+                - hidden_size: Encoder dimension
+                - Encoder and reasoning backend settings
+                - Routing defaults
             tokenizer: Optional tokenizer used to embed textual observations and
                 tool outputs when language models are available.
             model: Optional Pisces base model providing shared encoders and
@@ -103,6 +188,10 @@ class RuchbahAgentic(nn.Module):
                 references to avoid affecting module registration.
             agentic_id (str, optional): Pre-assigned identifier. A UUID v4 is
                 generated when the parameter is omitted.
+        
+        Note:
+            Uses weakref for model reference to prevent circular dependencies.
+            Instantiates standalone components when model is not provided.
         """
         super().__init__()
         self.cfg = cfg
@@ -121,51 +210,54 @@ class RuchbahAgentic(nn.Module):
             # Standalone agent mode: construct local reasoning and perception stacks.
             self._base_model_ref = None
             self._model_ref = None
-            self._reasoner = RuchbahUnifiedReasoner(cfg)
-            self._vision_encoder = RuchbahVisionEncoder(cfg)
-            self._audio_encoder = RuchbahAudioEncoder(cfg)
+            self._reasoner = YvUnifiedReasoner(cfg)
+            self._vision_encoder = YvVisionEncoder(cfg)
+            self._audio_encoder = YvAudioEncoder(cfg)
         
-        self.tree_reasoner = PiscesLxCoreMCPTreeSearchReasoner(None, tokenizer) if tokenizer else None
+        self.tree_reasoner = POPSSMCPTreeSearchReasoner(None, tokenizer) if tokenizer else None
 
         # MCP agent infrastructure
-        self.memory = RuchbahAgenticMemory([], [], [])
+        self.memory = YvAgenticMemory([], [], [])
         
         # Initialize multipath reasoning backend
-        from .reasoner.multipath_core import RuchbahMultiPathReasoningEngine
-        self.reasoning_engine = RuchbahMultiPathReasoningEngine(cfg)
+        from ..reasoning import YvMultiPathReasoningEngine
+        self.reasoning_engine = YvMultiPathReasoningEngine(cfg)
         
         # Enhanced MCP tool registry integrating the multipath reasoning engine
-        self.mcp_tools = RuchbahMCPToolRegistry(
+        self.mcp_tools = YvMCPToolRegistry(
             self.agentic_id, 
             self._handle_mcp_message,
             reasoning_engine=self.reasoning_engine
         )
         
+        # Unified tool registry for MCP tools, Agent experts, and native functions
+        self.tool_registry = POPSSToolRegistry.get_instance()
+        
         # Dual-track MCP protocol to coordinate native and external execution
-        self.mcp_protocol = RuchbahCoreMCPProtocol(self.agentic_id, self.mcp_tools)
+        self.mcp_protocol = YvCoreMCPProtocol(self.agentic_id, self.mcp_tools)
         
         # Semantic encoder for improved text representation
-        self.semantic_encoder = RuchbahSemanticEncoder(
+        self.semantic_encoder = YvSemanticEncoder(
             hidden_size=getattr(cfg, 'hidden_size', 2048),
-            vocab_size=getattr(cfg, 'vocab_size', 71164),
+            vocab_size=getattr(cfg, 'vocab_size', 151646),
             embedding_dim=512,
             max_seq_len=512
         )
         
         # Tool executor for real tool execution
-        self.tool_executor = RuchbahToolExecutor(
+        self.tool_executor = YvToolExecutor(
             base_path=".",
             enable_caching=True
         )
         
         # State machine for workflow management
-        self.state_machine = RuchbahStateMachine()
+        self.state_machine = YvStateMachine()
         
         # Execution history and statistics
         self.execution_history: List[Dict[str, Any]] = []
         self.step_counter = 0
         
-        self.state = RuchbahAgenticState.IDLE
+        self.state = YvAgenticState.IDLE
         self.mcp_peers: Dict[str, Dict[str, Any]] = {}
         self.mcp_capabilities: Dict[str, Dict[str, Any]] = {}
         
@@ -200,25 +292,25 @@ class RuchbahAgentic(nn.Module):
         
         # MCP message handlers
         self.mcp_handlers = {
-            RuchbahMCPMessageType.OBSERVATION.value: self._handle_observation,
-            RuchbahMCPMessageType.ACTION.value: self._handle_action,
-            RuchbahMCPMessageType.TOOL_CALL.value: self._handle_tool_call,
-            RuchbahMCPMessageType.TOOL_RESULT.value: self._handle_tool_result,
-            RuchbahMCPMessageType.CAPABILITY_REGISTER.value: self._handle_capability_register,
-            RuchbahMCPMessageType.SYNC_REQUEST.value: self._handle_sync_request,
-            RuchbahMCPMessageType.SYNC_RESPONSE.value: self._handle_sync_response,
+            YvMCPMessageType.OBSERVATION.value: self._handle_observation,
+            YvMCPMessageType.ACTION.value: self._handle_action,
+            YvMCPMessageType.TOOL_CALL.value: self._handle_tool_call,
+            YvMCPMessageType.TOOL_RESULT.value: self._handle_tool_result,
+            YvMCPMessageType.CAPABILITY_REGISTER.value: self._handle_capability_register,
+            YvMCPMessageType.SYNC_REQUEST.value: self._handle_sync_request,
+            YvMCPMessageType.SYNC_RESPONSE.value: self._handle_sync_response,
         }
     
     def _setup_state_machine_callbacks(self):
-        def on_transition_callback(state: RuchbahAgenticState, event: RuchbahAgenticEvent, metadata: Dict[str, Any]):
+        def on_transition_callback(state: YvAgenticState, event: YvAgenticEvent, metadata: Dict[str, Any]):
             self.performance_monitor["total_steps_completed"] += 1
         
-        self.state_machine.on_event(RuchbahAgenticEvent.ACTION_COMPLETE, on_transition_callback)
+        self.state_machine.on_event(YvAgenticEvent.ACTION_COMPLETE, on_transition_callback)
         
-        def on_error_callback(state: RuchbahAgenticState, event: RuchbahAgenticEvent, metadata: Dict[str, Any]):
+        def on_error_callback(state: YvAgenticState, event: YvAgenticEvent, metadata: Dict[str, Any]):
             self.performance_monitor["total_errors"] += 1
         
-        self.state_machine.on_event(RuchbahAgenticEvent.FAILURE, on_error_callback)
+        self.state_machine.on_event(YvAgenticEvent.FAILURE, on_error_callback)
 
     @property
     def base_model(self):
@@ -235,7 +327,7 @@ class RuchbahAgentic(nn.Module):
         """Return the active reasoning module bound to the controller.
 
         Returns:
-            RuchbahUnifiedReasoner: Shared base-model reasoner when available, or
+            YvUnifiedReasoner: Shared base-model reasoner when available, or
             the locally instantiated fallback instance.
         """
         if self._base_model_ref:
@@ -247,7 +339,7 @@ class RuchbahAgentic(nn.Module):
         """Retrieve the vision encoder responsible for image embeddings.
 
         Returns:
-            RuchbahVisionEncoder: Encoder sourced from the base model when
+            YvVisionEncoder: Encoder sourced from the base model when
             possible, falling back to the local implementation.
         """
         if self._base_model_ref:
@@ -259,7 +351,7 @@ class RuchbahAgentic(nn.Module):
         """Expose the audio encoder for waveform or spectrogram processing.
 
         Returns:
-            RuchbahAudioEncoder: Base-model audio encoder if present, else the
+            YvAudioEncoder: Base-model audio encoder if present, else the
             locally provisioned encoder.
         """
         if self._base_model_ref:
@@ -395,7 +487,7 @@ class RuchbahAgentic(nn.Module):
             "peak_memory_usage": 0,
             "total_tools_registered": 0
         }
-        print("[RuchbahAgentic] All execution statistics reset")
+        print("[YvAgentic] All execution statistics reset")
     
     def enable_smart_routing(self, enabled: bool = True):
         """Toggle smart routing heuristics for tool execution.
@@ -407,7 +499,7 @@ class RuchbahAgentic(nn.Module):
             None
         """
         self.smart_routing_enabled = enabled
-        print(f"[RuchbahAgentic] Smart routing {'enabled' if enabled else 'disabled'}")
+        print(f"[YvAgentic] Smart routing {'enabled' if enabled else 'disabled'}")
         
         # Record state transitions to enable historical analysis of routing toggles.
         if not hasattr(self, 'routing_state_changes'):
@@ -427,37 +519,37 @@ class RuchbahAgentic(nn.Module):
         """
         return getattr(self, 'routing_state_changes', [])
 
-    async def _handle_mcp_message(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
+    async def _handle_mcp_message(self, message: YvMCPMessage) -> YvMCPMessage:
         """Route an MCP message to the corresponding handler coroutine.
 
         Args:
-            message (RuchbahMCPMessage): Envelope containing the message type and payload.
+            message (YvMCPMessage): Envelope containing the message type and payload.
 
         Returns:
-            RuchbahMCPMessage: Response produced by the handler or an error state
+            YvMCPMessage: Response produced by the handler or an error state
             update when the message type is unsupported.
         """
         handler = self.mcp_handlers.get(message.message_type)
         if handler:
             return await handler(message)
         else:
-            return RuchbahCoreMCPProtocol.create_message(
-                RuchbahMCPMessageType.STATE_UPDATE,
+            return YvCoreMCPProtocol.create_message(
+                YvMCPMessageType.STATE_UPDATE,
                 self.agent_id,
                 {"error": f"Unknown message type: {message.message_type}"}
             )
 
-    async def _handle_observation(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
+    async def _handle_observation(self, message: YvMCPMessage) -> YvMCPMessage:
         """Persist an observation and acknowledge processing.
 
         Args:
-            message (RuchbahMCPMessage): Observation payload emitted by a peer.
+            message (YvMCPMessage): Observation payload emitted by a peer.
 
         Returns:
-            RuchbahMCPMessage: Observation acknowledgement carrying embedding metadata.
+            YvMCPMessage: Observation acknowledgement carrying embedding metadata.
         """
         observation_data = message.payload
-        observation = RuchbahAgenticObservation(
+        observation = YvAgenticObservation(
             modality=observation_data["modality"],
             content=observation_data["content"],
             metadata=observation_data.get("metadata", {})
@@ -466,8 +558,8 @@ class RuchbahAgentic(nn.Module):
         self.memory.add_observation(observation)
         obs_embedding = self.process_observation(observation)
         
-        return RuchbahCoreMCPProtocol.create_message(
-            RuchbahMCPMessageType.OBSERVATION,
+        return YvCoreMCPProtocol.create_message(
+            YvMCPMessageType.OBSERVATION,
             self.agent_id,
             {
                 "status": "processed",
@@ -476,14 +568,14 @@ class RuchbahAgentic(nn.Module):
             }
         )
 
-    async def _handle_action(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
+    async def _handle_action(self, message: YvMCPMessage) -> YvMCPMessage:
         """Plan an action in response to an MCP action request.
 
         Args:
-            message (RuchbahMCPMessage): Action request populated with contextual data.
+            message (YvMCPMessage): Action request populated with contextual data.
 
         Returns:
-            RuchbahMCPMessage: Action response including the serialized plan and agent state.
+            YvMCPMessage: Action response including the serialized plan and agent state.
         """
         action_data = message.payload
         context = {
@@ -494,8 +586,8 @@ class RuchbahAgentic(nn.Module):
         action = await self.plan_action(context)
         self.memory.add_action(action)
         
-        return RuchbahCoreMCPProtocol.create_message(
-            RuchbahMCPMessageType.ACTION,
+        return YvCoreMCPProtocol.create_message(
+            YvMCPMessageType.ACTION,
             self.agent_id,
             {
                 "action": asdict(action),
@@ -503,15 +595,15 @@ class RuchbahAgentic(nn.Module):
             }
         )
 
-    async def _handle_tool_call(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
+    async def _handle_tool_call(self, message: YvMCPMessage) -> YvMCPMessage:
         """Process an MCP tool invocation and report execution metadata.
 
         Args:
-            message (RuchbahMCPMessage): Serialized tool call request including
+            message (YvMCPMessage): Serialized tool call request including
                 tool name, parameters, and optional routing hints.
 
         Returns:
-            RuchbahMCPMessage: Response annotated with success flag, execution
+            YvMCPMessage: Response annotated with success flag, execution
             mode, and serialized result payload.
         """
         tool_data = message.payload
@@ -538,8 +630,8 @@ class RuchbahAgentic(nn.Module):
                 success = False
         
         # Create and return the tool result message with execution metadata
-        return RuchbahCoreMCPProtocol.create_message(
-            RuchbahMCPMessageType.TOOL_RESULT,
+        return YvCoreMCPProtocol.create_message(
+            YvMCPMessageType.TOOL_RESULT,
             self.agent_id,
             {
                 "tool_name": tool_name,
@@ -550,18 +642,18 @@ class RuchbahAgentic(nn.Module):
             }
         )
 
-    async def _handle_tool_result(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
+    async def _handle_tool_result(self, message: YvMCPMessage) -> YvMCPMessage:
         """Record a tool execution result and signal completion.
 
         Args:
-            message (RuchbahMCPMessage): Tool result payload referencing the originating agent.
+            message (YvMCPMessage): Tool result payload referencing the originating agent.
 
         Returns:
-            RuchbahMCPMessage: State update confirming the tool result has been assimilated.
+            YvMCPMessage: State update confirming the tool result has been assimilated.
         """
         result_data = message.payload
         
-        observation = RuchbahAgenticObservation(
+        observation = YvAgenticObservation(
             modality="tool_result",
             content=result_data,
             metadata={"source": message.agent_id}
@@ -569,20 +661,20 @@ class RuchbahAgentic(nn.Module):
         
         self.memory.add_observation(observation)
         
-        return RuchbahCoreMCPProtocol.create_message(
-            RuchbahMCPMessageType.STATE_UPDATE,
+        return YvCoreMCPProtocol.create_message(
+            YvMCPMessageType.STATE_UPDATE,
             self.agent_id,
             {"status": "tool_result_processed", "result_id": str(uuid.uuid4())}
         )
 
-    async def _handle_capability_register(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
+    async def _handle_capability_register(self, message: YvMCPMessage) -> YvMCPMessage:
         """Store a peer capability advertised over MCP.
 
         Args:
-            message (RuchbahMCPMessage): Capability registration announcement.
+            message (YvMCPMessage): Capability registration announcement.
 
         Returns:
-            RuchbahMCPMessage: State update acknowledging the capability.
+            YvMCPMessage: State update acknowledging the capability.
         """
         capability_data = message.payload
         capability_name = capability_data["capability"]
@@ -590,27 +682,27 @@ class RuchbahAgentic(nn.Module):
         if message.agent_id != self.agent_id:
             self.mcp_capabilities[f"{message.agent_id}.{capability_name}"] = capability_data
         
-        return RuchbahCoreMCPProtocol.create_message(
-            RuchbahMCPMessageType.STATE_UPDATE,
+        return YvCoreMCPProtocol.create_message(
+            YvMCPMessageType.STATE_UPDATE,
             self.agent_id,
             {"status": "capability_registered", "capability": capability_name}
         )
 
-    async def _handle_sync_request(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
+    async def _handle_sync_request(self, message: YvMCPMessage) -> YvMCPMessage:
         """Respond to synchronization requests from peers.
 
         Args:
-            message (RuchbahMCPMessage): Synchronization request specifying desired data.
+            message (YvMCPMessage): Synchronization request specifying desired data.
 
         Returns:
-            RuchbahMCPMessage: Sync response containing capability or state data, or
+            YvMCPMessage: Sync response containing capability or state data, or
             an error descriptor when the request type is unsupported.
         """
         sync_type = message.payload.get("type")
         
         if sync_type == "capability_discovery":
-            return RuchbahCoreMCPProtocol.create_message(
-                RuchbahMCPMessageType.SYNC_RESPONSE,
+            return YvCoreMCPProtocol.create_message(
+                YvMCPMessageType.SYNC_RESPONSE,
                 self.agent_id,
                 {
                     "type": "capabilities",
@@ -618,8 +710,8 @@ class RuchbahAgentic(nn.Module):
                 }
             )
         elif sync_type == "state_sync":
-            return RuchbahCoreMCPProtocol.create_message(
-                RuchbahMCPMessageType.SYNC_RESPONSE,
+            return YvCoreMCPProtocol.create_message(
+                YvMCPMessageType.SYNC_RESPONSE,
                 self.agent_id,
                 {
                     "type": "state",
@@ -628,20 +720,20 @@ class RuchbahAgentic(nn.Module):
                 }
             )
         
-        return RuchbahCoreMCPProtocol.create_message(
-            RuchbahMCPMessageType.SYNC_RESPONSE,
+        return YvCoreMCPProtocol.create_message(
+            YvMCPMessageType.SYNC_RESPONSE,
             self.agent_id,
             {"error": "Unknown sync type"}
         )
 
-    async def _handle_sync_response(self, message: RuchbahMCPMessage) -> RuchbahMCPMessage:
+    async def _handle_sync_response(self, message: YvMCPMessage) -> YvMCPMessage:
         """Consolidate synchronization data received from a peer.
 
         Args:
-            message (RuchbahMCPMessage): Synchronization response carrying peer metadata.
+            message (YvMCPMessage): Synchronization response carrying peer metadata.
 
         Returns:
-            RuchbahMCPMessage: State update marking the synchronization cycle as complete.
+            YvMCPMessage: State update marking the synchronization cycle as complete.
         """
         response_data = message.payload
         
@@ -650,17 +742,17 @@ class RuchbahAgentic(nn.Module):
                 "capabilities": response_data.get("capabilities", [])
             }
         
-        return RuchbahCoreMCPProtocol.create_message(
-            RuchbahMCPMessageType.STATE_UPDATE,
+        return YvCoreMCPProtocol.create_message(
+            YvMCPMessageType.STATE_UPDATE,
             self.agent_id,
             {"status": "sync_completed", "peer_id": message.agent_id}
         )
 
-    def process_observation(self, observation: RuchbahAgenticObservation) -> torch.Tensor:
+    def process_observation(self, observation: YvAgenticObservation) -> torch.Tensor:
         """Project an incoming observation into the shared embedding space.
 
         Args:
-            observation (RuchbahAgenticObservation): Structured observation with
+            observation (YvAgenticObservation): Structured observation with
                 modality label, content payload, and optional metadata.
 
         Returns:
@@ -709,7 +801,7 @@ class RuchbahAgentic(nn.Module):
         # Fallback to zero tensor
         return torch.zeros(1, 1, self.cfg.hidden_size)
 
-    async def plan_action(self, context: Dict[str, Any]) -> RuchbahAgenticAction:
+    async def plan_action(self, context: Dict[str, Any]) -> YvAgenticAction:
         """Generate an agent action using retrieval-augmented reasoning.
 
         The planner retrieves contextual memories, encodes the query, and invokes
@@ -722,7 +814,7 @@ class RuchbahAgentic(nn.Module):
                 observation and declared tool set.
 
         Returns:
-            RuchbahAgenticAction: Structured action containing type, parameters,
+            YvAgenticAction: Structured action containing type, parameters,
             confidence, and an explanatory reasoning trace.
         """
         # Retrieve semantically relevant memories to enrich the reasoning context.
@@ -826,7 +918,7 @@ class RuchbahAgentic(nn.Module):
                 relevant_memories=relevant_memories
             )
             
-            return RuchbahAgenticAction(
+            return YvAgenticAction(
                 action_type=action_type,
                 parameters=action_params,
                 confidence=confidence,
@@ -1246,21 +1338,21 @@ class RuchbahAgentic(nn.Module):
         Returns:
             Dictionary containing execution result and state information
         """
-        if not self.state_machine.can_transition(RuchbahAgenticEvent.ACTION_START):
+        if not self.state_machine.can_transition(YvAgenticEvent.ACTION_START):
             return {
                 "success": False,
                 "error": "Cannot execute tool in current state",
                 "current_state": self.state_machine.current_state.name
             }
         
-        self.state_machine.transition(RuchbahAgenticEvent.ACTION_START, {"tool": tool_name})
+        self.state_machine.transition(YvAgenticEvent.ACTION_START, {"tool": tool_name})
         
         self.step_counter += 1
         
         result = await self.tool_executor.execute(tool_name, **kwargs)
         
         if result.success:
-            self.state_machine.transition(RuchbahAgenticEvent.ACTION_COMPLETE, {
+            self.state_machine.transition(YvAgenticEvent.ACTION_COMPLETE, {
                 "tool": tool_name,
                 "execution_time": result.execution_time
             })
@@ -1283,7 +1375,7 @@ class RuchbahAgentic(nn.Module):
                 "state": self.state_machine.current_state.name
             }
         else:
-            self.state_machine.transition(RuchbahAgenticEvent.FAILURE, {
+            self.state_machine.transition(YvAgenticEvent.FAILURE, {
                 "tool": tool_name,
                 "error": result.error_message,
                 "error_type": result.error_type
@@ -1341,3 +1433,352 @@ class RuchbahAgentic(nn.Module):
         self.state_machine.reset()
         self.step_counter = 0
         self.execution_history = []
+    
+    def register_agent_expert(
+        self,
+        agent: Any,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        capabilities: Optional[set] = None,
+        priority: int = 5,
+    ) -> str:
+        """Register an Agent expert to the unified tool registry.
+        
+        Args:
+            agent: Agent expert instance
+            name: Optional name for the expert
+            description: Optional description
+            capabilities: Optional set of capabilities
+            priority: Priority level (higher = more preferred)
+            
+        Returns:
+            Tool ID of the registered expert
+        """
+        return self.tool_registry.register_agent_expert(
+            agent=agent,
+            name=name,
+            description=description,
+            capabilities=capabilities,
+            priority=priority,
+        )
+    
+    def register_native_function(
+        self,
+        func: Callable,
+        name: Optional[str] = None,
+        description: str = "",
+        parameters: Optional[Dict[str, Any]] = None,
+        capabilities: Optional[set] = None,
+        priority: int = 5,
+    ) -> str:
+        """Register a native function to the unified tool registry.
+        
+        Args:
+            func: Function to register
+            name: Optional name for the function
+            description: Description of the function
+            parameters: Parameter schema
+            capabilities: Optional set of capabilities
+            priority: Priority level
+            
+        Returns:
+            Tool ID of the registered function
+        """
+        return self.tool_registry.register_native_function(
+            func=func,
+            name=name,
+            description=description,
+            parameters=parameters,
+            capabilities=capabilities,
+            priority=priority,
+        )
+    
+    def list_available_tools(self, tool_type: Optional[POPSSToolType] = None) -> List[Dict[str, Any]]:
+        """List all available tools from the unified registry.
+        
+        Args:
+            tool_type: Optional filter by tool type
+            
+        Returns:
+            List of tool information dictionaries
+        """
+        tools = self.tool_registry.list_tools(tool_type=tool_type)
+        return [
+            {
+                "name": t.name,
+                "type": t.tool_type.value,
+                "description": t.description,
+                "capabilities": list(t.capabilities),
+                "priority": t.priority,
+            }
+            for t in tools
+        ]
+    
+    def search_tools(self, query: str) -> List[Dict[str, Any]]:
+        """Search for tools matching a query.
+        
+        Args:
+            query: Search query string
+            
+        Returns:
+            List of matching tools
+        """
+        tools = self.tool_registry.search_tools(query)
+        return [
+            {
+                "name": t.name,
+                "type": t.tool_type.value,
+                "description": t.description,
+                "capabilities": list(t.capabilities),
+            }
+            for t in tools
+        ]
+    
+    async def execute_unified_tool(
+        self,
+        name_or_id: str,
+        arguments: Dict[str, Any],
+        timeout: float = 60.0,
+    ) -> POPSSToolResult:
+        """Execute a tool from the unified registry (MCP tool, Agent expert, or native function).
+        
+        Args:
+            name_or_id: Tool name or ID
+            arguments: Arguments to pass to the tool
+            timeout: Execution timeout in seconds
+            
+        Returns:
+            POPSSToolResult containing execution result
+        """
+        return await self.tool_registry.execute(
+            name_or_id=name_or_id,
+            arguments=arguments,
+            context=None,
+            timeout=timeout,
+        )
+    
+    def execute_unified_tool_sync(
+        self,
+        name_or_id: str,
+        arguments: Dict[str, Any],
+        timeout: float = 60.0,
+    ) -> POPSSToolResult:
+        """Synchronous version of execute_unified_tool.
+        
+        Args:
+            name_or_id: Tool name or ID
+            arguments: Arguments to pass to the tool
+            timeout: Execution timeout in seconds
+            
+        Returns:
+            POPSSToolResult containing execution result
+        """
+        return self.tool_registry.execute_sync(
+            name_or_id=name_or_id,
+            arguments=arguments,
+            context=None,
+            timeout=timeout,
+        )
+    
+    def get_tool_registry_stats(self) -> Dict[str, Any]:
+        """Get statistics from the unified tool registry.
+        
+        Returns:
+            Dictionary containing registry statistics
+        """
+        return self.tool_registry.get_stats()
+    
+    def set_mcp_plaza_for_registry(self, plaza: Any):
+        """Set MCP Plaza for the unified tool registry.
+        
+        Args:
+            plaza: MCP Plaza instance
+        """
+        self.tool_registry.set_mcp_plaza(plaza)
+    
+    def set_mcp_bridge_for_registry(self, bridge: Any):
+        """Set MCP Bridge for the unified tool registry.
+        
+        Args:
+            bridge: MCP Bridge instance
+        """
+        self.tool_registry.set_mcp_bridge(bridge)
+    
+    async def execute_with_long_running_support(
+        self,
+        tool_name: str,
+        checkpoint_interval: float = 300.0,
+        max_retries: int = 3,
+        **kwargs
+    ) -> Dict[str, Any]:
+        """Execute a tool with long-running task support.
+        
+        Provides checkpoint management, automatic recovery, and progress
+        tracking for extended execution scenarios.
+        
+        Args:
+            tool_name: Name of the tool to execute.
+            checkpoint_interval: Interval between checkpoints in seconds.
+            max_retries: Maximum number of retry attempts.
+            **kwargs: Additional arguments for the tool.
+            
+        Returns:
+            Dict[str, Any]: Execution result with checkpoint info.
+        """
+        import time as time_module
+        
+        start_time = time_module.time()
+        last_checkpoint_time = start_time
+        
+        execution_context = {
+            "tool_name": tool_name,
+            "kwargs": kwargs,
+            "start_time": start_time,
+        }
+        
+        snapshot = self.state_machine.create_snapshot(execution_context)
+        
+        attempt = 0
+        last_error = None
+        
+        while attempt < max_retries:
+            try:
+                result = await self.execute_unified_tool(tool_name, **kwargs)
+                
+                if result.success:
+                    return {
+                        "success": True,
+                        "result": result,
+                        "checkpoint_id": snapshot.snapshot_id,
+                        "execution_time": time_module.time() - start_time,
+                    }
+                
+                last_error = result.error if hasattr(result, 'error') else "Unknown error"
+                
+            except Exception as e:
+                last_error = str(e)
+            
+            current_time = time_module.time()
+            if current_time - last_checkpoint_time >= checkpoint_interval:
+                snapshot = self.state_machine.create_snapshot(execution_context)
+                last_checkpoint_time = current_time
+            
+            attempt += 1
+            
+            if attempt < max_retries:
+                delay = min(2 ** attempt, 30)
+                await asyncio.sleep(delay)
+        
+        return {
+            "success": False,
+            "error": last_error,
+            "attempts": attempt,
+            "checkpoint_id": snapshot.snapshot_id,
+            "execution_time": time_module.time() - start_time,
+        }
+    
+    def create_execution_checkpoint(self) -> str:
+        """Create a checkpoint of the current execution state.
+        
+        Returns:
+            str: Checkpoint ID for later restoration.
+        """
+        execution_context = {
+            "state": self.state.value if hasattr(self.state, 'value') else str(self.state),
+            "step_counter": self.step_counter,
+            "execution_history": self.execution_history[-10:],
+        }
+        
+        snapshot = self.state_machine.create_snapshot(execution_context)
+        
+        return snapshot.snapshot_id
+    
+    def restore_from_checkpoint(self, checkpoint_id: str) -> bool:
+        """Restore execution state from a checkpoint.
+        
+        Args:
+            checkpoint_id: The checkpoint to restore from.
+            
+        Returns:
+            bool: True if restoration succeeded.
+        """
+        snapshot = self.state_machine.get_snapshot(checkpoint_id)
+        
+        if snapshot is None:
+            return False
+        
+        context = snapshot.execution_context
+        
+        if "step_counter" in context:
+            self.step_counter = context["step_counter"]
+        
+        if "execution_history" in context:
+            self.execution_history = context["execution_history"]
+        
+        return self.state_machine.restore_from_snapshot(snapshot)
+    
+    def get_long_running_status(self) -> Dict[str, Any]:
+        """Get status of long-running execution capabilities.
+        
+        Returns:
+            Dict[str, Any]: Status information.
+        """
+        recovery_stats = self.state_machine.get_recovery_statistics()
+        
+        return {
+            "current_state": self.state.value if hasattr(self.state, 'value') else str(self.state),
+            "step_counter": self.step_counter,
+            "execution_history_length": len(self.execution_history),
+            "recovery_available": recovery_stats["can_recover"],
+            "snapshot_count": recovery_stats["snapshot_count"],
+            "performance_stats": self.performance_monitor.copy(),
+        }
+    
+    def handle_execution_interruption(self) -> Dict[str, Any]:
+        """Handle an execution interruption gracefully.
+        
+        Creates a checkpoint and prepares for potential resume.
+        
+        Returns:
+            Dict[str, Any]: Interruption handling result.
+        """
+        checkpoint_id = self.create_execution_checkpoint()
+        
+        self.state = YvAgenticState.WAITING
+        
+        return {
+            "interrupted": True,
+            "checkpoint_id": checkpoint_id,
+            "can_resume": True,
+            "current_step": self.step_counter,
+        }
+    
+    def get_recovery_options(self) -> List[Dict[str, Any]]:
+        """Get available recovery options after a failure.
+        
+        Returns:
+            List[Dict[str, Any]]: List of recovery options.
+        """
+        options = []
+        
+        snapshots = self.state_machine.list_snapshots()
+        for snap in snapshots[:5]:
+            options.append({
+                "type": "restore_checkpoint",
+                "checkpoint_id": snap["snapshot_id"],
+                "timestamp": snap["timestamp"],
+                "state": snap["state"],
+            })
+        
+        if self.state == YvAgenticState.FAILED:
+            options.append({
+                "type": "retry_from_failure",
+                "description": "Retry the failed operation",
+            })
+        
+        options.append({
+            "type": "restart",
+            "description": "Start fresh execution",
+        })
+        
+        return options

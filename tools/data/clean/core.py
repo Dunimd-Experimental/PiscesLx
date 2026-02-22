@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -22,9 +23,10 @@ from .rules import PiscesLxToolsDataStreamCleaner as StreamCleaner
 from .pipeline import DatasetCleaner
 from .quality import PiscesLxToolsDataQualityController as DataQualityController
 from typing import Optional, Dict, Any, Tuple, List
-from utils import PiscesLxCoreLog, PiscesLxCoreCacheManagerFacade
+from utils.dc import PiscesLxLogger
+from utils.paths import get_cache_dir
 
-logger = PiscesLxCoreLog("PiscesLx.Tools.DataClean")
+_LOG = PiscesLxLogger(__name__)
 
 class DatasetClean:
     """
@@ -33,13 +35,13 @@ class DatasetClean:
     and supports fast cleaning, automatic cleaning, single dataset processing, and quality analysis.
     """
 
-    def __init__(self, cache_manager: Optional[Any] = None, data_cache_dir: str = "./clean_cache"):
+    def __init__(self, cache_manager: Optional[Any] = None, data_cache_dir: Optional[str] = None):
         """
         Initialize the DatasetClean instance.
         Get the cache manager instance and set the data cache directory.
         """
-        self.cache = cache_manager or PiscesLxCoreCacheManagerFacade.get_instance()
-        self.data_cache_dir = data_cache_dir
+        self.cache = cache_manager
+        self.data_cache_dir = data_cache_dir or get_cache_dir("data_cache")
 
     def run(
         self,
@@ -103,7 +105,7 @@ class DatasetClean:
             Any: The result of fast cleaning.
         """
         input_dir = input_dir or self.data_cache_dir
-        logger.debug(f"Fast clean start | input_dir={input_dir} output_dir={output_dir}")
+        _LOG.debug("Fast clean start", input_dir=input_dir, output_dir=output_dir)
         try:
             return DatasetCleaner.fast_clean(
                 input_dir=input_dir,
@@ -114,7 +116,7 @@ class DatasetClean:
                 enable_multiprocessing=enable_multiprocessing,
             )
         finally:
-            logger.success("Fast clean finished")
+            _LOG.info("Fast clean finished")
 
     def auto_clean(
         self,
@@ -139,7 +141,7 @@ class DatasetClean:
         """
         input_dir = input_dir or self.data_cache_dir
         output_dir = output_dir or os.path.join(self.data_cache_dir, "data_clean")
-        logger.debug(f"Auto clean start | input_dir={input_dir} output_dir={output_dir}")
+        _LOG.debug(f"Auto clean start | input_dir={input_dir} output_dir={output_dir}")
         os.makedirs(output_dir, exist_ok=True)
         ok = DatasetCleaner.auto_clean(
             input_dir=input_dir,
@@ -148,7 +150,7 @@ class DatasetClean:
             workers=workers,
             **clean_kwargs,
         )
-        logger.success("Auto clean finished")
+        _LOG.info("Auto clean finished")
         return ok
 
     def process_one(
@@ -176,14 +178,14 @@ class DatasetClean:
         if not input_path or not output_path:
             raise ValueError("process_one requires input_path and output_path")
         os.makedirs(os.path.dirname(output_path), exist_ok=True)
-        logger.debug(f"Process dataset | input={input_path} output={output_path} text_field={text_field}")
+        _LOG.debug(f"Process dataset | input={input_path} output={output_path} text_field={text_field}")
         retained, total = DatasetCleaner.process_dataset(
             input_path=input_path,
             output_path=output_path,
             text_field=text_field,
             **clean_kwargs,
         )
-        logger.success(f"Process finished | retained={retained}/{total}")
+        _LOG.info(f"Process finished | retained={retained}/{total}")
         return retained, total
 
     def analyze(self, dataset_path: str) -> Dict[str, Any]:
@@ -201,13 +203,13 @@ class DatasetClean:
         """
         if not dataset_path:
             raise ValueError("analyze requires dataset_path")
-        logger.debug(f"Analyze dataset quality | path={dataset_path}")
+        _LOG.debug(f"Analyze dataset quality | path={dataset_path}")
         controller = DataQualityController(
             quality_threshold=0.7, diversity_threshold=0.5, min_samples_per_domain=100
         )
         stats = controller.analyze_dataset_quality(dataset_path)
         if "error" in stats:
-            logger.error(f"Analyze failed: {stats['error']}")
+            _LOG.error(f"Analyze failed: {stats['error']}")
         else:
-            logger.success("Analyze finished")
+            _LOG.info("Analyze finished")
         return stats

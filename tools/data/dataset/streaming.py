@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -23,8 +24,8 @@ import torch
 from .memory import PiscesLxToolsMemoryMonitor
 from torch.utils.data import IterableDataset
 from typing import Iterator, Dict, List, Optional
-from model.tokenizer import get_tokenizer
-from model.multimodal import RuchbahVisionEncoder, RuchbahAudioEncoder, RuchbahDocEncoder, RuchbahVideoEncoder
+from model.tokenizer import YvTokenizer
+from model.multimodal import YvVisionEncoder, YvAudioEncoder, YvDocEncoder, YvVideoEncoder
 
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
 AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]
@@ -48,14 +49,14 @@ class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
         super().__init__()
         
         self.data_sources = data_sources
-        self.tokenizer = get_tokenizer()
+        self.tokenizer = YvTokenizer()
         self.config = config or {}
         self.memory = PiscesLxToolsMemoryMonitor(threshold_gb=8.0)
         # Initialize multimodal encoders if config is provided
-        self.vision_encoder = RuchbahVisionEncoder(config) if config else None
-        self.audio_encoder = RuchbahAudioEncoder(config) if config else None
-        self.doc_encoder = RuchbahDocEncoder(config) if config else None
-        self.video_encoder = RuchbahVideoEncoder(config) if config else None
+        self.vision_encoder = YvVisionEncoder(config) if config else None
+        self.audio_encoder = YvAudioEncoder(config) if config else None
+        self.doc_encoder = YvDocEncoder(config) if config else None
+        self.video_encoder = YvVideoEncoder(config) if config else None
         self._index: List[Dict] = self._build_index()
 
     def _build_index(self) -> List[Dict]:

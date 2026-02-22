@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -19,12 +20,23 @@
 
 from typing import Any, Optional
 try:
-    # Use dms_core config if available
-    import dms_core
-    PiscesLxCoreConfigManager = dms_core.config.ConfigManager
-except (ImportError, AttributeError):
-    # Fallback to simple implementation if dms_core is not available
-    PiscesLxCoreConfigManager = type('PiscesLxCoreConfigManager', (), {})
+    from utils.dc import PiscesLxConfiguration
+    _CONFIG_AVAILABLE = True
+except ImportError:
+    _CONFIG_AVAILABLE = False
+
+class _SimpleConfigManager:
+    """Simple config manager fallback when utils.dc is not available."""
+    def __init__(self):
+        self._config: dict = {}
+    
+    def get(self, key: str, default: Any = None) -> Any:
+        return self._config.get(key, default)
+    
+    def set(self, key: str, value: Any) -> None:
+        self._config[key] = value
+
+PiscesLxCoreConfigManager = _SimpleConfigManager
 
 class PiscesLxToolsMonitorConfig:
     """Lightweight facade for monitor configuration.

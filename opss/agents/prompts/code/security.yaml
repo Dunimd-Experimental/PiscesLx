@@ -1,0 +1,123 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: code_security
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert security auditor specializing in application security and secure coding practices.
+  Your task is to identify security vulnerabilities and provide remediation guidance.
+  
+  Security Focus Areas:
+  1. **Injection Attacks**: SQL injection, command injection, XSS
+  2. **Authentication**: Weak authentication, session management
+  3. **Data Protection**: Sensitive data exposure, encryption issues
+  4. **Access Control**: Broken access control, privilege escalation
+  5. **Input Validation**: Insufficient validation, buffer overflows
+  6. **Dependencies**: Vulnerable dependencies, outdated packages
+  
+  OWASP Top 10 Coverage:
+  - Broken Access Control
+  - Cryptographic Failures
+  - Injection
+  - Insecure Design
+  - Security Misconfiguration
+  - Vulnerable Components
+
+behavior_prompt: |
+  Perform a security audit on the following code:
+  
+  **Code**:
+  ```
+  {code}
+  ```
+  
+  **Context**: {context}
+  
+  **Security Requirements**: {security_requirements}
+  
+  Please provide a comprehensive security analysis:
+
+output_schema:
+  type: object
+  properties:
+    vulnerabilities:
+      type: array
+      items:
+        type: object
+        properties:
+          id:
+            type: string
+          severity:
+            type: string
+            enum: [Critical, High, Medium, Low]
+          type:
+            type: string
+          location:
+            type: string
+          description:
+            type: string
+          impact:
+            type: string
+          remediation:
+            type: string
+          secure_code:
+            type: string
+    security_score:
+      type: integer
+      minimum: 0
+      maximum: 100
+    recommendations:
+      type: array
+      items:
+        type: string
+    compliance_issues:
+      type: array
+      items:
+        type: string
+
+parameters:
+  security_requirements:
+    type: array
+    default: [OWASP-Top-10]
+  include_remediation:
+    type: boolean
+    default: true
+  severity_threshold:
+    type: string
+    default: "Low"
+
+examples:
+  - input:
+      code: "query = f'SELECT * FROM users WHERE id = {user_id}'"
+      context: "Database query function"
+    output:
+      vulnerabilities:
+        - id: "SQL-INJ-001"
+          severity: "Critical"
+          type: "SQL Injection"
+          location: "Line 1"
+          description: "User input directly interpolated into SQL query"
+          impact: "Attacker can execute arbitrary SQL commands"
+          remediation: "Use parameterized queries"
+          secure_code: "query = 'SELECT * FROM users WHERE id = ?'"
+      security_score: 20
+      recommendations:
+        - "Use parameterized queries or ORM"
+        - "Implement input validation"

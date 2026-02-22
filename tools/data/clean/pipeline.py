@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -21,12 +22,13 @@ import os
 import gc
 import pandas as pd
 from .rules import PiscesLxToolsDataStreamCleaner as StreamCleaner, AUTO_FIELDS
-from utils import PiscesLxCoreCacheManagerFacade, PiscesLxCoreLog
+from utils.dc import PiscesLxLogger
+from utils.paths import get_cache_dir
 from .quality import PiscesLxToolsDataQualityController
 from typing import Optional, Dict, Any, List, Tuple
 from datasets import load_from_disk, Dataset, concatenate_datasets
 
-logger = PiscesLxCoreLog("PiscesLx.Tools.DataClean.Pipeline")
+_LOG = PiscesLxLogger(__name__)
 
 class DatasetCleaner:
     @staticmethod
@@ -233,8 +235,7 @@ class DatasetCleaner:
         Raises:
             FileNotFoundError: If the input directory does not exist.
         """
-        cache = PiscesLxCoreCacheManagerFacade.get_instance()
-        input_dir = input_dir or cache.get_cache_dir("data_cache")
+        input_dir = input_dir or get_cache_dir("data_cache")
         if not os.path.exists(input_dir):
             raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
 
@@ -269,7 +270,7 @@ class DatasetCleaner:
                     gc.collect()
                 return concatenate_datasets(chunk) if chunk else None
             except Exception as e:
-                logger.error(f"Worker failed: {ds_path} {e}")
+                _LOG.error(f"Worker failed: {ds_path} {e}")
                 return None
 
         with Pool(processes=workers) as pool:
@@ -280,7 +281,7 @@ class DatasetCleaner:
         merged = concatenate_datasets(valid)
         if "source" in merged.column_names:
             merged = merged.remove_columns(["source"])
-        logger.success(f"Merged cleaned datasets: {len(merged)} rows")
+        _LOG.info(f"Merged cleaned datasets: {len(merged)} rows")
         return merged
 
     @staticmethod
@@ -333,13 +334,13 @@ class DatasetCleaner:
             in_p = os.path.join(input_dir, name)
             if os.path.isdir(in_p) and not name.endswith("_clean"):
                 if not DatasetCleaner.is_download_complete(in_p):
-                    logger.debug(f"Dataset {name} download not complete, skip")
+                    _LOG.debug(f"Dataset {name} download not complete, skip")
                     continue
                 out_p = os.path.join(output_dir, f"{name}_clean")
                 if not os.path.exists(out_p):
                     todo.append((name, in_p, out_p))
                 else:
-                    logger.success(f"Cleaned dataset exists: {out_p}, skip")
+                    _LOG.info(f"Cleaned dataset exists: {out_p}, skip")
 
         import multiprocessing as mp
         from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -348,7 +349,7 @@ class DatasetCleaner:
             for name, in_p, out_p in todo:
                 DatasetCleaner._process_single_dataset(name, in_p, out_p, media_fields, **clean_kwargs)
         else:
-            logger.debug(f"Using {workers} processes to clean {len(todo)} datasets...")
+            _LOG.debug(f"Using {workers} processes to clean {len(todo)} datasets...")
             args = [(n, i, o, media_fields, clean_kwargs) for (n, i, o) in todo]
             with ProcessPoolExecutor(max_workers=workers) as ex:
                 fut = {ex.submit(DatasetCleaner._process_single_dataset_wrapper, a): a[0] for a in args}
@@ -357,11 +358,11 @@ class DatasetCleaner:
                     try:
                         cleaned, total = f.result()
                         if cleaned == 0:
-                            logger.debug(f"No valid samples left after cleaning {name} (original {total})")
+                            _LOG.debug(f"No valid samples left after cleaning {name} (original {total})")
                         else:
-                            logger.success(f"Cleaning successful: {name} -> {name}_clean | {cleaned}/{total}")
+                            _LOG.info(f"Cleaning successful: {name} -> {name}_clean | {cleaned}/{total}")
                     except Exception as e:
-                        logger.error(f"Error cleaning {name}: {e}")
+                        _LOG.error(f"Error cleaning {name}: {e}")
         return True
 
     @staticmethod
@@ -393,16 +394,16 @@ class DatasetCleaner:
         """
         try:
             if not os.path.exists(input_path):
-                logger.debug(f"Dataset does not exist: {input_path}")
+                _LOG.debug(f"Dataset does not exist: {input_path}")
                 return (0, 0)
             try:
                 dataset = load_from_disk(input_path)
                 if len(dataset) == 0:
-                    logger.debug(f"Dataset {dataset_name} is empty, skip")
+                    _LOG.debug(f"Dataset {dataset_name} is empty, skip")
                     return (0, 0)
-                logger.debug(f"Processing dataset: {dataset_name} ({len(dataset)} rows)")
+                _LOG.debug(f"Processing dataset: {dataset_name} ({len(dataset)} rows)")
             except Exception as e:
-                logger.error(f"Failed to load dataset {dataset_name}: {e}")
+                _LOG.error(f"Failed to load dataset {dataset_name}: {e}")
                 return (0, 0)
             if media_fields:
                 cleaned, total = DatasetCleaner.process_multimodal_dataset(input_path, output_path, media_fields=media_fields, **clean_kwargs)
@@ -410,7 +411,7 @@ class DatasetCleaner:
                 cleaned, total = DatasetCleaner.process_dataset(input_path, output_path, **clean_kwargs)
             return (cleaned, total)
         except Exception as e:
-            logger.error(f"Error cleaning {dataset_name}: {e}")
+            _LOG.error(f"Error cleaning {dataset_name}: {e}")
             return (0, 0)
 
     @staticmethod
@@ -450,7 +451,7 @@ class DatasetCleaner:
             text_scores.extend(ts)
             media_scores.extend(ms)
             gc.collect()
-            logger.debug(f"Processed chunk {i // chunk_size + 1}/{(total - 1) // chunk_size + 1}")
+            _LOG.debug(f"Processed chunk {i // chunk_size + 1}/{(total - 1) // chunk_size + 1}")
         if enable_quality_scoring:
             idx = [i for i, s in enumerate(text_scores) if s >= quality_threshold]
             cleaned_rows = [cleaned_rows[i] for i in idx]

@@ -1,0 +1,117 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: math_reasoner
+version: "{{VERSION}}"
+source: OpenAI
+language: python
+
+system_prompt: |
+  You are an expert mathematical reasoner with deep knowledge of mathematics and problem-solving.
+  Your task is to solve mathematical problems step by step with clear reasoning.
+  
+  Mathematical Domains:
+  1. **Algebra**: Equations, inequalities, polynomials
+  2. **Calculus**: Derivatives, integrals, limits
+  3. **Geometry**: Shapes, angles, proofs
+  4. **Statistics**: Probability, distributions, inference
+  5. **Number Theory**: Primes, divisibility, modular arithmetic
+  6. **Linear Algebra**: Matrices, vectors, transformations
+  
+  Problem-Solving Approach:
+  1. Understand the problem
+  2. Identify relevant concepts and formulas
+  3. Plan the solution approach
+  4. Execute step-by-step calculations
+  5. Verify the answer
+  6. Provide intuitive explanation
+
+behavior_prompt: |
+  Solve the following mathematical problem:
+  
+  **Problem**: {user_request}
+  
+  **Domain**: {domain}
+  
+  **Detail Level**: {detail_level}
+  
+  Please provide a step-by-step solution:
+
+output_schema:
+  type: object
+  properties:
+    problem_type:
+      type: string
+    approach:
+      type: string
+    steps:
+      type: array
+      items:
+        type: object
+        properties:
+          step_number:
+            type: integer
+          description:
+            type: string
+          calculation:
+            type: string
+          result:
+            type: string
+    final_answer:
+      type: string
+    verification:
+      type: string
+    explanation:
+      type: string
+    formulas_used:
+      type: array
+      items:
+        type: string
+
+parameters:
+  domain:
+    type: string
+    default: "auto"
+  detail_level:
+    type: string
+    default: "detailed"
+  show_verification:
+    type: boolean
+    default: true
+  use_latex:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      user_request: "What is the derivative of x² + 3x + 2?"
+      domain: "calculus"
+    output:
+      problem_type: "differentiation"
+      approach: "Apply power rule to each term"
+      steps:
+        - step_number: 1
+          description: "Apply power rule to x²"
+          calculation: "d/dx(x²) = 2x"
+        - step_number: 2
+          description: "Apply power rule to 3x"
+          calculation: "d/dx(3x) = 3"
+        - step_number: 3
+          description: "Derivative of constant is 0"
+          calculation: "d/dx(2) = 0"
+      final_answer: "2x + 3"
+      verification: "Check: derivative of 2x + 3 is 2, which matches second derivative of original"

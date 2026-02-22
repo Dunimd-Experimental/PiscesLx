@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -17,31 +18,108 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Document understanding components for Ruchbah multimodal pipelines.
+"""Document understanding components for Yv multimodal pipelines.
 
-The module defines :class:`RuchbahDocEncoder`, a composite encoder that fuses
-text, layout, table, and handwriting signals into unified document
-representations. It exposes modular sub-encoders for each modality and uses
-PiscesL1 logging infrastructure to trace initialization and inference phases.
+This module provides comprehensive document processing components for the Yv
+model, including text encoding, layout analysis, table understanding, and
+handwriting recognition capabilities.
+
+Module Components:
+    1. YvDocEncoder:
+       - Multi-language text encoding (Latin, Chinese, Arabic)
+       - Layout analysis with reading order prediction
+       - Table structure detection and semantic analysis
+       - Handwriting recognition with style analysis
+       - Cross-modal document fusion
+
+Key Features:
+    - Multi-language support (100 languages)
+    - Script-specific transformer encoders
+    - Layout classification (15 layout types)
+    - Geometric reasoning (9 spatial relations)
+    - Table structure detection (rows, columns, cells)
+    - Data type classification (8 types)
+    - Handwriting recognition (10,000 character vocabulary)
+    - Named entity extraction (50 entity types)
+    - Document type classification (20 types)
+
+Performance Characteristics:
+    - Text encoding: O(L^2 * hidden_size) with transformer
+    - Layout encoding: O(N * hidden_size) where N = layout elements
+    - Table understanding: O(T * hidden_size) where T = table cells
+    - Handwriting recognition: O(S * hidden_size) where S = strokes
+    - Total complexity: O(max(L^2, N, T, S) * hidden_size)
+
+Usage Example:
+    >>> from model.multimodal.doc import YvDocEncoder
+    >>> 
+    >>> # Initialize encoder
+    >>> encoder = YvDocEncoder(config)
+    >>> 
+    >>> # Encode document
+    >>> doc_features = encoder({"text": "Document content", "layout": layout_tensor})
+    >>> 
+    >>> # Encode plain text
+    >>> features = encoder("Plain text document")
+
+Note:
+    Default vocabulary size: 50,000 tokens
+    Default max sequence length: 512 tokens
+    Supports text, layout, table, and handwriting inputs.
 """
 
 import torch
 from torch import nn
 from typing import Any, Dict
 import torch.nn.functional as F
-# Use dms_core logging exclusively
-import dms_core
-PiscesLxCoreLog = dms_core.log.get_logger
+from utils.dc import PiscesLxLogger
 
-logger = PiscesLxCoreLog("Ruchbah.Core.Multimodal", file_path="logs/RuchbahCore.log")
+_LOG = PiscesLxLogger(__name__)
 
-class RuchbahDocEncoder(nn.Module):
+class YvDocEncoder(nn.Module):
     """Document encoder integrating textual, layout, and handwriting signals.
-
-    The encoder composes multiple modality-specific submodules (text, layout,
-    table, handwriting) and aggregates their outputs into a shared latent
-    representation suitable for downstream Ruchbah agent workflows.
-
+    
+    A comprehensive document encoder that composes multiple modality-specific
+    submodules (text, layout, table, handwriting) and aggregates their outputs
+    into a shared latent representation suitable for downstream Yv agent
+    workflows.
+    
+    Architecture:
+        1. Text Encoder:
+           - Embedding layer (50,000 vocab)
+           - Positional encoding (512 max length)
+           - Script-specific encoders (Latin, Chinese, Arabic)
+           - Language detection (100 languages)
+        
+        2. Layout Encoder:
+           - Spatial encoder (8-dim geometric features)
+           - Reading order prediction
+           - Layout classification (15 types)
+           - Geometric reasoning (9 relations)
+        
+        3. Table Understanding:
+           - Structure detection (rows, columns, cells)
+           - Content analysis (data types, numerical)
+           - Table QA module
+        
+        4. Handwriting Recognition:
+           - Stroke encoder (bidirectional LSTM)
+           - Character recognizer (10,000 vocab)
+           - Style analyzer (20 features)
+           - Line segmenter (CNN-based)
+        
+        5. Document Fusion:
+           - Text-layout cross-attention
+           - Hierarchical encoder (3 layers)
+           - Entity and key-value extraction
+    
+    Key Features:
+        - Multi-language support with script-specific encoders
+        - Layout analysis with reading order prediction
+        - Table structure detection and semantic analysis
+        - Handwriting recognition with style analysis
+        - Cross-modal document fusion
+    
     Attributes:
         enabled (bool): Flag indicating whether the encoder is available.
         cfg: Configuration namespace describing hidden sizes and head counts.
@@ -59,14 +137,28 @@ class RuchbahDocEncoder(nn.Module):
             cross-modality fusion.
         final_proj (nn.ModuleDict): Projection heads that prepare fused
             features for downstream tasks.
+    
+    Example:
+        >>> encoder = YvDocEncoder(config)
+        >>> doc_features = encoder({"text": "Document", "layout": layout})
+        >>> 
+        >>> # Access language detection
+        >>> lang_logits = encoder.text_encoder['language_detector'](features)
+    
+    Note:
+        Default vocabulary size: 50,000 tokens
+        Default max sequence length: 512 tokens
+        Supports text, layout, table, and handwriting inputs.
     """
 
     def __init__(self, cfg):
         """Initialize the composite document encoder.
-
+        
         Args:
-            cfg: Configuration object containing parameters such as
-                ``hidden_size`` and ``n_head``.
+            cfg: Configuration object containing parameters such as:
+                - hidden_size: Output embedding dimension
+                - n_head: Number of attention heads
+                - Vocabulary and sequence length are fixed defaults
         """
         super().__init__()
         self.enabled = True
@@ -74,7 +166,7 @@ class RuchbahDocEncoder(nn.Module):
         self.vocab_size = 50000
         self.max_length = 512
         
-        logger.debug(f"DocEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        _LOG.debug(f"DocEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         
         # Text encoder module with multi-language support
         self.text_encoder = nn.ModuleDict({
@@ -288,19 +380,29 @@ class RuchbahDocEncoder(nn.Module):
             )
         })
         
-        logger.debug("DocEncoder: __init__ end")
+        _LOG.debug("DocEncoder: __init__ end")
     
     def _tokenize_text(self, text):
         """Tokenize text inputs using a simple character-level heuristic.
-
+        
+        Converts raw text strings into token indices using a hash-based
+        character-level tokenization scheme. Pre-computed token tensors
+        are passed through unchanged.
+        
         Args:
             text (Union[str, torch.Tensor]): Raw text or precomputed token IDs.
-
+                - str: Will be character-tokenized and padded
+                - torch.Tensor: Returned unchanged
+        
         Returns:
             torch.Tensor: Tensor of token indices with length ``max_length``.
+                Padded with zeros if input is shorter than max_length.
+        
+        Note:
+            Uses hash(c) % vocab_size for character tokenization.
+            Truncates to max_length (512) characters.
         """
         if isinstance(text, str):
-            # Perform simple character-level tokenization
             tokens = [hash(c) % self.vocab_size for c in text[:self.max_length]]
             tokens += [0] * (self.max_length - len(tokens))
             return torch.tensor(tokens)
@@ -308,13 +410,23 @@ class RuchbahDocEncoder(nn.Module):
     
     def _encode_layout(self, layout):
         """Encode layout geometry into latent features.
-
+        
+        Processes bounding box coordinates and derived spatial statistics
+        through the spatial encoder to produce layout-aware features.
+        
         Args:
             layout (Union[torch.Tensor, None]): Layout tensor capturing bounding
                 boxes and derived spatial statistics.
-
+                Expected shape: [N, 8] where 8 = [x0, y0, x1, y1, w, h, cx, cy]
+                If None, uses default full-page layout [[0, 0, 1, 1]].
+        
         Returns:
             torch.Tensor: Layout feature tensor following spatial encoding.
+                Shape: [N, hidden_size // 4] after encoding.
+        
+        Note:
+            Default layout assumes normalized coordinates [0, 1].
+            Spatial encoder applies LayerNorm and SiLU activations.
         """
         if layout is None:
             # Use default layout: full page
@@ -328,15 +440,27 @@ class RuchbahDocEncoder(nn.Module):
     
     def forward(self, doc_input):
         """Encode the provided document payload into multimodal features.
-
+        
+        Main entry point for document encoding. Processes text and layout
+        inputs through their respective encoders and fuses them through
+        cross-attention and hierarchical encoding.
+        
         Args:
             doc_input (Union[str, torch.Tensor, dict]): Document input expressed
                 as raw text, token IDs, or a dictionary with ``input_ids`` and
                 ``layout`` fields.
-
+                - str: Raw text to be tokenized
+                - torch.Tensor: Pre-computed token IDs
+                - dict: Dictionary with 'input_ids'/'text' and 'layout' keys
+        
         Returns:
             torch.Tensor: Encoded document features with shape
             ``(batch_size, 1, hidden_size)``.
+        
+        Note:
+            Returns zero tensor if doc_input is None or text_input is None.
+            Applies mean pooling over sequence dimension.
+            Uses cross-attention for text-layout fusion.
         """
         if doc_input is None:
             device = next(self.parameters()).device

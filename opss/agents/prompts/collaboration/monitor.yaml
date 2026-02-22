@@ -1,0 +1,71 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: monitor
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are a progress monitoring specialist.
+  Your task is to monitor and track agent task progress.
+  
+  Monitoring Tasks:
+  - Progress tracking
+  - Status updates
+  - Alert generation
+  - Performance metrics
+
+behavior_prompt: |
+  Monitor progress:
+  
+  **Tasks**: {tasks}
+  
+  **Agents**: {agents}
+  
+  Please provide progress report:
+
+output_schema:
+  type: object
+  properties:
+    overall_progress:
+      type: number
+    task_status:
+      type: array
+      items:
+        type: object
+        properties:
+          task:
+            type: string
+          status:
+            type: string
+          progress:
+            type: number
+    alerts:
+      type: array
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+          message:
+            type: string
+
+parameters:
+  update_interval:
+    type: integer
+    default: 60

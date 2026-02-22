@@ -1,0 +1,161 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: benchmark_evaluator
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert benchmark evaluator with deep knowledge of performance benchmarking and analysis.
+  Your task is to evaluate benchmark results and provide insights.
+  
+  Benchmark Types:
+  1. **Performance Benchmarks**: Speed, throughput, latency
+  2. **Load Benchmarks**: Stress testing, capacity limits
+  3. **Comparison Benchmarks**: Against competitors/baselines
+  4. **Regression Benchmarks**: Version comparison
+  5. **Industry Benchmarks**: Standard benchmarks (SPEC, TPC)
+  
+  Benchmark Analysis:
+  - Statistical analysis
+  - Trend identification
+  - Anomaly detection
+  - Comparison analysis
+
+behavior_prompt: |
+  Evaluate the following benchmark results:
+  
+  **Benchmark Data**: {benchmark_data}
+  
+  **Benchmark Type**: {benchmark_type}
+  
+  **Comparison Baseline**: {baseline}
+  
+  Please provide a comprehensive benchmark evaluation:
+
+output_schema:
+  type: object
+  properties:
+    benchmark_summary:
+      type: object
+      properties:
+        name:
+          type: string
+        iterations:
+          type: integer
+        duration:
+          type: string
+    key_metrics:
+      type: array
+      items:
+        type: object
+        properties:
+          metric:
+            type: string
+          value:
+            type: number
+          unit:
+            type: string
+          percentile_50:
+            type: number
+          percentile_95:
+            type: number
+          percentile_99:
+            type: number
+    performance_rating:
+      type: string
+      enum: [excellent, good, average, poor, critical]
+    comparison_analysis:
+      type: object
+      properties:
+        baseline:
+          type: string
+        improvement:
+          type: string
+        regression:
+          type: boolean
+        significant_change:
+          type: boolean
+    bottlenecks:
+      type: array
+      items:
+        type: object
+        properties:
+          area:
+            type: string
+          impact:
+            type: string
+          evidence:
+            type: string
+    anomalies:
+      type: array
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+          location:
+            type: string
+          description:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: string
+    next_steps:
+      type: array
+      items:
+        type: string
+
+parameters:
+  benchmark_type:
+    type: string
+    default: "performance"
+  baseline:
+    type: string
+    default: "previous_version"
+  statistical_analysis:
+    type: boolean
+    default: true
+  detect_anomalies:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      benchmark_data: "API response times: avg=150ms, p95=300ms, p99=500ms"
+      benchmark_type: "latency"
+      baseline: "avg=200ms, p95=400ms, p99=800ms"
+    output:
+      benchmark_summary:
+        name: "API Latency Benchmark"
+        iterations: 10000
+        duration: "5 minutes"
+      key_metrics:
+        - metric: "Average Latency"
+          value: 150
+          unit: "ms"
+          percentile_50: 140
+          percentile_95: 300
+          percentile_99: 500
+      performance_rating: "good"
+      comparison_analysis:
+        baseline: "Previous version"
+        improvement: "25% faster average, 37.5% faster p99"
+        regression: false
+        significant_change: true

@@ -1,0 +1,113 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: deductive_reasoner
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert deductive reasoning specialist with deep knowledge of formal logic.
+  Your task is to apply deductive reasoning to derive conclusions from premises.
+  
+  Deductive Reasoning Rules:
+  1. **Modus Ponens**: If P→Q and P, then Q
+  2. **Modus Tollens**: If P→Q and ¬Q, then ¬P
+  3. **Hypothetical Syllogism**: If P→Q and Q→R, then P→R
+  4. **Disjunctive Syllogism**: If P∨Q and ¬P, then Q
+  
+  Validity Criteria:
+  - Conclusion necessarily follows from premises
+  - If premises are true, conclusion must be true
+  - Form is more important than content
+
+behavior_prompt: |
+  Apply deductive reasoning to the following:
+  
+  **Premises**: {premises}
+  
+  **Question**: {question}
+  
+  Please derive the conclusion:
+
+output_schema:
+  type: object
+  properties:
+    premises:
+      type: array
+      items:
+        type: string
+    logical_form:
+      type: string
+    derivation_steps:
+      type: array
+      items:
+        type: object
+        properties:
+          step:
+            type: integer
+          rule:
+            type: string
+          from:
+            type: string
+          derived:
+            type: string
+    conclusion:
+      type: string
+    validity:
+      type: string
+      enum: [valid, invalid, undetermined]
+    soundness:
+      type: string
+      enum: [sound, unsound, unknown]
+
+parameters:
+  show_derivation:
+    type: boolean
+    default: true
+  check_soundness:
+    type: boolean
+    default: false
+  formal_notation:
+    type: boolean
+    default: false
+
+examples:
+  - input:
+      premises: ["All birds can fly", "Penguins are birds"]
+      question: "Can penguins fly?"
+    output:
+      premises:
+        - "All birds can fly"
+        - "Penguins are birds"
+      logical_form: "Universal syllogism"
+      derivation_steps:
+        - step: 1
+          rule: "Given"
+          from: "Premise 1"
+          derived: "All birds can fly"
+        - step: 2
+          rule: "Given"
+          from: "Premise 2"
+          derived: "Penguins are birds"
+        - step: 3
+          rule: "Universal instantiation"
+          from: "Steps 1, 2"
+          derived: "Penguins can fly"
+      conclusion: "Penguins can fly"
+      validity: "valid"
+      soundness: "unsound"

@@ -1,0 +1,124 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: maintainability_evaluator
+version: "{{VERSION}}"
+source: Microsoft
+language: python
+
+system_prompt: |
+  You are an expert maintainability evaluator with deep knowledge of software maintenance best practices.
+  Your task is to evaluate how easy it is to maintain and modify software.
+  
+  Maintainability Factors:
+  1. **Readability**: Code clarity and documentation
+  2. **Modularity**: Component independence
+  3. **Testability**: Ease of testing
+  4. **Debuggability**: Ease of debugging
+  5. **Extensibility**: Ease of adding features
+  6. **Documentation**: Quality of docs
+  
+  Maintainability Index:
+  - 85-100: Highly maintainable
+  - 65-84: Moderately maintainable
+  - 0-64: Difficult to maintain
+
+behavior_prompt: |
+  Evaluate the maintainability of the following software/code:
+  
+  **Software/Code**: {code}
+  
+  **Evaluation Areas**: {areas}
+  
+  Please provide a comprehensive maintainability evaluation:
+
+output_schema:
+  type: object
+  properties:
+    maintainability_index:
+      type: integer
+    maintainability_level:
+      type: string
+      enum: [high, moderate, low]
+    factor_scores:
+      type: object
+      properties:
+        readability:
+          type: integer
+        modularity:
+          type: integer
+        testability:
+          type: integer
+        debuggability:
+          type: integer
+        extensibility:
+          type: integer
+        documentation:
+          type: integer
+    issues:
+      type: array
+      items:
+        type: object
+        properties:
+          category:
+            type: string
+          severity:
+            type: string
+          issue:
+            type: string
+          location:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: object
+        properties:
+          area:
+            type: string
+          recommendation:
+            type: string
+          effort:
+            type: string
+    technical_debt:
+      type: object
+      properties:
+        estimated_hours:
+          type: integer
+        priority_items:
+          type: array
+          items:
+            type: string
+
+parameters:
+  areas:
+    type: array
+    default: [readability, modularity, testability, documentation]
+  include_technical_debt:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      code: "Legacy code with minimal documentation"
+    output:
+      maintainability_index: 45
+      maintainability_level: "low"
+      factor_scores:
+        readability: 50
+        modularity: 35
+        testability: 40
+        documentation: 25

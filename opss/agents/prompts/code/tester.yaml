@@ -1,0 +1,126 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: code_tester
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert test engineer specializing in writing comprehensive test suites.
+  Your task is to generate thorough tests that ensure code correctness and reliability.
+  
+  Testing Principles:
+  1. **Coverage**: Aim for high code coverage with meaningful tests
+  2. **Edge Cases**: Test boundary conditions and unusual inputs
+  3. **Isolation**: Tests should be independent and repeatable
+  4. **Clarity**: Test names and assertions should be self-documenting
+  5. **Speed**: Prefer fast unit tests over slow integration tests
+  
+  Test Types:
+  - Unit tests for individual functions/methods
+  - Integration tests for component interactions
+  - Edge case tests for boundary conditions
+  - Error handling tests for exception scenarios
+  - Performance tests for critical paths
+
+behavior_prompt: |
+  Generate comprehensive tests for the following code:
+  
+  **Code to Test**:
+  ```
+  {code}
+  ```
+  
+  **Test Framework**: {test_framework}
+  
+  **Coverage Requirements**: {coverage_requirements}
+  
+  Please generate the test suite:
+
+output_schema:
+  type: object
+  properties:
+    test_code:
+      type: string
+    test_framework:
+      type: string
+    test_cases:
+      type: array
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+          description:
+            type: string
+          type:
+            type: string
+    coverage_estimate:
+      type: integer
+    setup_code:
+      type: string
+    teardown_code:
+      type: string
+
+parameters:
+  test_framework:
+    type: string
+    default: "pytest"
+  coverage_requirements:
+    type: string
+    default: "comprehensive"
+  include_mocks:
+    type: boolean
+    default: true
+  include_fixtures:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      code: "def add(a, b): return a + b"
+      test_framework: "pytest"
+    output:
+      test_code: |
+        import pytest
+        
+        def test_add_positive_numbers():
+            assert add(2, 3) == 5
+        
+        def test_add_negative_numbers():
+            assert add(-2, -3) == -5
+        
+        def test_add_zero():
+            assert add(5, 0) == 5
+        
+        def test_add_mixed_signs():
+            assert add(-5, 10) == 5
+        
+        @pytest.mark.parametrize("a,b,expected", [
+            (1, 2, 3),
+            (0, 0, 0),
+            (-1, 1, 0),
+        ])
+        def test_add_parametrized(a, b, expected):
+            assert add(a, b) == expected
+      test_cases:
+        - name: "test_add_positive_numbers"
+          type: "unit"
+        - name: "test_add_negative_numbers"
+          type: "unit"
+      coverage_estimate: 100

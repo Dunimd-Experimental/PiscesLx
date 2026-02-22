@@ -1,12 +1,13 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
+# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -46,10 +47,9 @@ import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
-import dms_core
-PiscesLxCoreLog = dms_core.log.get_logger
+from utils.dc import PiscesLxLogger
 
-logger = PiscesLxCoreLog("pisceslx.tools.benchmark")
+_LOG = PiscesLxLogger(__name__)
 
 
 @dataclass
@@ -152,10 +152,10 @@ class MMLUDataset(PiscesL1BenchmarkDataset):
                         "answer": item["answer"],
                     })
             except Exception as e:
-                logger.warning(f"Failed to load {subject}: {e}")
+                _LOG.warning(f"Failed to load {subject}: {e}")
         
         super().__init__(all_data, tokenizer)
-        logger.info(f"MMLU dataset: {len(self.data)} samples")
+        _LOG.info(f"MMLU dataset: {len(self.data)} samples")
     
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         item = self.data[idx]
@@ -212,7 +212,7 @@ class HumanEvalDataset(PiscesL1BenchmarkDataset):
             })
         
         super().__init__(data, tokenizer)
-        logger.info(f"HumanEval dataset: {len(self.data)} samples")
+        _LOG.info(f"HumanEval dataset: {len(self.data)} samples")
     
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         item = self.data[idx]
@@ -253,7 +253,7 @@ class GSM8KDataset(PiscesL1BenchmarkDataset):
             })
         
         super().__init__(data, tokenizer)
-        logger.info(f"GSM8K dataset: {len(self.data)} samples")
+        _LOG.info(f"GSM8K dataset: {len(self.data)} samples")
     
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         item = self.data[idx]
@@ -306,11 +306,11 @@ class PiscesL1BenchmarkEvaluator:
         self.results = {}
         self.lock = threading.Lock()
         
-        logger.info("PiscesL1BenchmarkEvaluator initialized")
+        _LOG.info("PiscesL1BenchmarkEvaluator initialized")
     
     def evaluate_mmlu(self) -> Dict[str, float]:
         """Evaluate on MMLU benchmark."""
-        logger.info("Evaluating MMLU...")
+        _LOG.info("Evaluating MMLU...")
         
         dataset = MMLUDataset(self.tokenizer, split="test")
         dataloader = DataLoader(
@@ -364,13 +364,13 @@ class PiscesL1BenchmarkEvaluator:
             "total_samples": sum(total_by_subject.values()),
         }
         
-        logger.info(f"MMLU Average Accuracy: {avg_accuracy:.4f}")
+        _LOG.info(f"MMLU Average Accuracy: {avg_accuracy:.4f}")
         
         return self.results["mmlu"]
     
     def evaluate_humaneval(self) -> Dict[str, float]:
         """Evaluate on HumanEval benchmark."""
-        logger.info("Evaluating HumanEval...")
+        _LOG.info("Evaluating HumanEval...")
         
         dataset = HumanEvalDataset(self.tokenizer)
         dataloader = DataLoader(
@@ -424,7 +424,7 @@ class PiscesL1BenchmarkEvaluator:
                             correct += 1
                             
                     except Exception as e:
-                        logger.debug(f"Evaluation error for {task_id}: {e}")
+                        _LOG.debug(f"Evaluation error for {task_id}: {e}")
         
         pass_rate = correct / max(1, total)
         
@@ -434,13 +434,13 @@ class PiscesL1BenchmarkEvaluator:
             "total": total,
         }
         
-        logger.info(f"HumanEval Pass Rate: {pass_rate:.4f}")
+        _LOG.info(f"HumanEval Pass Rate: {pass_rate:.4f}")
         
         return self.results["humaneval"]
     
     def evaluate_gsm8k(self) -> Dict[str, float]:
         """Evaluate on GSM8K benchmark."""
-        logger.info("Evaluating GSM8K...")
+        _LOG.info("Evaluating GSM8K...")
         
         dataset = GSM8KDataset(self.tokenizer, split="test")
         dataloader = DataLoader(
@@ -489,7 +489,7 @@ class PiscesL1BenchmarkEvaluator:
             "total": total,
         }
         
-        logger.info(f"GSM8K Accuracy: {accuracy:.4f}")
+        _LOG.info(f"GSM8K Accuracy: {accuracy:.4f}")
         
         return self.results["gsm8k"]
     
@@ -510,7 +510,7 @@ class PiscesL1BenchmarkEvaluator:
         Returns:
             Complete benchmark results dictionary.
         """
-        logger.info("Running all benchmarks...")
+        _LOG.info("Running all benchmarks...")
         
         benchmarks = self.config.benchmarks
         
@@ -519,6 +519,8 @@ class PiscesL1BenchmarkEvaluator:
             
             if benchmark == "mmlu":
                 self.evaluate_mmlu()
+            elif benchmark == "mmlu_pro":
+                self._evaluate_mmlu_pro()
             elif benchmark == "humaneval":
                 self.evaluate_humaneval()
             elif benchmark == "gsm8k":
@@ -527,6 +529,32 @@ class PiscesL1BenchmarkEvaluator:
                 self._evaluate_hellaswag()
             elif benchmark == "truthfulqa":
                 self._evaluate_truthfulqa()
+            elif benchmark == "gpqa":
+                self._evaluate_gpqa()
+            elif benchmark == "bbh":
+                self._evaluate_bbh()
+            elif benchmark == "drop":
+                self._evaluate_drop()
+            elif benchmark == "winogrande":
+                self._evaluate_winogrande()
+            elif benchmark == "piqa":
+                self._evaluate_piqa()
+            elif benchmark == "math":
+                self._evaluate_math()
+            elif benchmark == "mbpp":
+                self._evaluate_mbpp()
+            elif benchmark == "ifeval":
+                self._evaluate_ifeval()
+            elif benchmark == "arc":
+                self._evaluate_arc()
+            elif benchmark == "ceval":
+                self._evaluate_ceval()
+            elif benchmark == "cmmlu":
+                self._evaluate_cmmlu()
+            elif benchmark == "agieval":
+                self._evaluate_agieval()
+            else:
+                _LOG.warning(f"Unknown benchmark: {benchmark}")
         
         self.results["summary"] = self._generate_summary()
         
@@ -537,7 +565,7 @@ class PiscesL1BenchmarkEvaluator:
     
     def _evaluate_hellaswag(self) -> Dict[str, float]:
         """Evaluate on HellaSwag benchmark."""
-        logger.info("Evaluating HellaSwag...")
+        _LOG.info("Evaluating HellaSwag...")
         
         from datasets import load_dataset
         
@@ -591,13 +619,13 @@ class PiscesL1BenchmarkEvaluator:
             "total": total,
         }
         
-        logger.info(f"HellaSwag Accuracy: {accuracy:.4f}")
+        _LOG.info(f"HellaSwag Accuracy: {accuracy:.4f}")
         
         return self.results["hellaswag"]
     
     def _evaluate_truthfulqa(self) -> Dict[str, float]:
         """Evaluate on TruthfulQA benchmark."""
-        logger.info("Evaluating TruthfulQA...")
+        _LOG.info("Evaluating TruthfulQA...")
         
         from datasets import load_dataset
         
@@ -641,6 +669,865 @@ class PiscesL1BenchmarkEvaluator:
         
         return self.results.get("truthfulqa", {})
     
+    def _evaluate_mmlu_pro(self) -> Dict[str, float]:
+        """Evaluate on MMLU-Pro benchmark - harder version of MMLU."""
+        _LOG.info("Evaluating MMLU-Pro...")
+        
+        from datasets import load_dataset
+        
+        dataset = load_dataset("TIGER-Lab/MMLU-Pro", split="test")
+        
+        correct = 0
+        total = 0
+        
+        self.model.eval()
+        
+        for item in tqdm(dataset, desc="MMLU-Pro"):
+            question = item["question"]
+            choices = item["options"]
+            answer = item["answer_index"]
+            
+            prompt = f"""Answer the following multiple-choice question.
+
+Question: {question}
+
+Options:
+"""
+            for i, choice in enumerate(choices):
+                prompt += f"{chr(65 + i)}. {choice}\n"
+            prompt += "\nAnswer: "
+            
+            encoding = self.tokenizer(
+                prompt,
+                max_length=2048,
+                truncation=True,
+                return_tensors="pt",
+            ).to(self.config.device)
+            
+            with torch.no_grad():
+                output = self.model.generate(
+                    encoding["input_ids"],
+                    max_new_tokens=10,
+                    temperature=0.0,
+                    do_sample=False,
+                )
+                
+                generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+            
+            total += 1
+            if generated and generated[0].upper() == chr(65 + answer):
+                correct += 1
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["mmlu_pro"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"MMLU-Pro Accuracy: {accuracy:.4f}")
+        return self.results["mmlu_pro"]
+    
+    def _evaluate_gpqa(self) -> Dict[str, float]:
+        """Evaluate on GPQA - graduate-level science questions."""
+        _LOG.info("Evaluating GPQA...")
+        
+        from datasets import load_dataset
+        
+        try:
+            dataset = load_dataset("Idavidrein/gpqa", "gpqa_main", split="train")
+        except Exception:
+            dataset = load_dataset("Idavidrein/gpqa", split="train")
+        
+        correct = 0
+        total = 0
+        
+        self.model.eval()
+        
+        for item in tqdm(dataset, desc="GPQA"):
+            question = item["Question"]
+            choices = [item["Correct Answer"], item["Incorrect Answer 1"], 
+                      item["Incorrect Answer 2"], item["Incorrect Answer 3"]]
+            
+            import random
+            random.shuffle(choices)
+            correct_idx = choices.index(item["Correct Answer"])
+            
+            prompt = f"""Answer this graduate-level science question.
+
+Question: {question}
+
+Options:
+A. {choices[0]}
+B. {choices[1]}
+C. {choices[2]}
+D. {choices[3]}
+
+Answer: """
+            
+            encoding = self.tokenizer(
+                prompt,
+                max_length=2048,
+                truncation=True,
+                return_tensors="pt",
+            ).to(self.config.device)
+            
+            with torch.no_grad():
+                output = self.model.generate(
+                    encoding["input_ids"],
+                    max_new_tokens=10,
+                    temperature=0.0,
+                    do_sample=False,
+                )
+                
+                generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+            
+            total += 1
+            if generated and generated[0].upper() == chr(65 + correct_idx):
+                correct += 1
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["gpqa"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"GPQA Accuracy: {accuracy:.4f}")
+        return self.results["gpqa"]
+    
+    def _evaluate_bbh(self) -> Dict[str, float]:
+        """Evaluate on Big-Bench Hard - challenging reasoning tasks."""
+        _LOG.info("Evaluating BBH...")
+        
+        from datasets import load_dataset
+        
+        correct = 0
+        total = 0
+        
+        bbh_tasks = [
+            "boolean_expressions", "causal_judgment", "date_understanding",
+            "disambiguation_qa", "dyck_languages", "formal_fallacies",
+            "geometric_shapes", "hyperbaton", "logical_deduction_five_objects",
+            "logical_deduction_seven_objects", "logical_deduction_three_objects",
+            "movie_recommendation", "multistep_arithmetic_two", "navigate",
+            "object_counting", "penguins_in_a_table", "reasoning_about_colored_objects",
+            "ruin_names", "salient_translation_error_detection", "snarks",
+            "sports_understanding", "temporal_sequences", "tracking_shuffled_objects_five_objects",
+            "tracking_shuffled_objects_seven_objects", "tracking_shuffled_objects_three_objects",
+            "web_of_lies", "word_sorting"
+        ]
+        
+        self.model.eval()
+        
+        for task in bbh_tasks:
+            try:
+                dataset = load_dataset("lukaemon/bbh", task, split="test")
+                
+                for item in tqdm(dataset, desc=f"BBH-{task}", leave=False):
+                    prompt = f"{item['input']}\n\nAnswer: "
+                    
+                    encoding = self.tokenizer(
+                        prompt,
+                        max_length=2048,
+                        truncation=True,
+                        return_tensors="pt",
+                    ).to(self.config.device)
+                    
+                    with torch.no_grad():
+                        output = self.model.generate(
+                            encoding["input_ids"],
+                            max_new_tokens=64,
+                            temperature=0.0,
+                            do_sample=False,
+                        )
+                        
+                        generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+                    
+                    total += 1
+                    target = item.get("target", "").strip()
+                    if target.lower() in generated.lower():
+                        correct += 1
+                        
+            except Exception as e:
+                _LOG.warning(f"BBH task {task} failed: {e}")
+                continue
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["bbh"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"BBH Accuracy: {accuracy:.4f}")
+        return self.results["bbh"]
+    
+    def _evaluate_drop(self) -> Dict[str, float]:
+        """Evaluate on DROP - discrete reasoning over text."""
+        _LOG.info("Evaluating DROP...")
+        
+        from datasets import load_dataset
+        
+        dataset = load_dataset("drop", split="validation")
+        
+        correct = 0
+        total = 0
+        
+        self.model.eval()
+        
+        for item in tqdm(dataset, desc="DROP"):
+            passage = item["passage"]
+            question = item["question"]
+            answers = item["answers_spans"]["spans"]
+            
+            prompt = f"""Read the passage and answer the question with a number or span.
+
+Passage: {passage}
+
+Question: {question}
+
+Answer: """
+            
+            encoding = self.tokenizer(
+                prompt,
+                max_length=4096,
+                truncation=True,
+                return_tensors="pt",
+            ).to(self.config.device)
+            
+            with torch.no_grad():
+                output = self.model.generate(
+                    encoding["input_ids"],
+                    max_new_tokens=32,
+                    temperature=0.0,
+                    do_sample=False,
+                )
+                
+                generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+            
+            total += 1
+            for ans in answers:
+                if ans.lower() in generated.lower():
+                    correct += 1
+                    break
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["drop"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"DROP Accuracy: {accuracy:.4f}")
+        return self.results["drop"]
+    
+    def _evaluate_winogrande(self) -> Dict[str, float]:
+        """Evaluate on WinoGrande - commonsense reasoning."""
+        _LOG.info("Evaluating WinoGrande...")
+        
+        from datasets import load_dataset
+        
+        dataset = load_dataset("winogrande", "winogrande_xl", split="validation")
+        
+        correct = 0
+        total = 0
+        
+        self.model.eval()
+        
+        for item in tqdm(dataset, desc="WinoGrande"):
+            sentence = item["sentence"]
+            option1 = item["option1"]
+            option2 = item["option2"]
+            answer = item["answer"]
+            
+            prompt = f"""Fill in the blank with the correct option.
+
+Sentence: {sentence}
+
+Option 1: {option1}
+Option 2: {option2}
+
+Answer (1 or 2): """
+            
+            encoding = self.tokenizer(
+                prompt,
+                max_length=512,
+                truncation=True,
+                return_tensors="pt",
+            ).to(self.config.device)
+            
+            with torch.no_grad():
+                output = self.model.generate(
+                    encoding["input_ids"],
+                    max_new_tokens=10,
+                    temperature=0.0,
+                    do_sample=False,
+                )
+                
+                generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+            
+            total += 1
+            if answer in generated or (answer == "1" and "1" in generated) or (answer == "2" and "2" in generated):
+                correct += 1
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["winogrande"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"WinoGrande Accuracy: {accuracy:.4f}")
+        return self.results["winogrande"]
+    
+    def _evaluate_piqa(self) -> Dict[str, float]:
+        """Evaluate on PIQA - physical commonsense reasoning."""
+        _LOG.info("Evaluating PIQA...")
+        
+        from datasets import load_dataset
+        
+        dataset = load_dataset("piqa", split="validation")
+        
+        correct = 0
+        total = 0
+        
+        self.model.eval()
+        
+        for item in tqdm(dataset, desc="PIQA"):
+            goal = item["goal"]
+            sol1 = item["sol1"]
+            sol2 = item["sol2"]
+            label = item["label"]
+            
+            prompt = f"""Which solution is more physically plausible?
+
+Goal: {goal}
+
+Solution 1: {sol1}
+Solution 2: {sol2}
+
+Answer (1 or 2): """
+            
+            encoding = self.tokenizer(
+                prompt,
+                max_length=512,
+                truncation=True,
+                return_tensors="pt",
+            ).to(self.config.device)
+            
+            with torch.no_grad():
+                output = self.model.generate(
+                    encoding["input_ids"],
+                    max_new_tokens=10,
+                    temperature=0.0,
+                    do_sample=False,
+                )
+                
+                generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+            
+            total += 1
+            if str(label) in generated or (label == 0 and "1" in generated) or (label == 1 and "2" in generated):
+                correct += 1
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["piqa"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"PIQA Accuracy: {accuracy:.4f}")
+        return self.results["piqa"]
+    
+    def _evaluate_math(self) -> Dict[str, float]:
+        """Evaluate on MATH benchmark - competition mathematics."""
+        _LOG.info("Evaluating MATH...")
+        
+        from datasets import load_dataset
+        
+        dataset = load_dataset("lighteval/MATH", "all", split="test")
+        
+        correct = 0
+        total = 0
+        
+        self.model.eval()
+        
+        for item in tqdm(dataset, desc="MATH"):
+            problem = item["problem"]
+            solution = item["solution"]
+            
+            prompt = f"""Solve this math problem. Show your work and put the final answer in a box.
+
+Problem: {problem}
+
+Solution: """
+            
+            encoding = self.tokenizer(
+                prompt,
+                max_length=2048,
+                truncation=True,
+                return_tensors="pt",
+            ).to(self.config.device)
+            
+            with torch.no_grad():
+                output = self.model.generate(
+                    encoding["input_ids"],
+                    max_new_tokens=512,
+                    temperature=0.0,
+                    do_sample=False,
+                )
+                
+                generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True)
+            
+            total += 1
+            if self._extract_final_number(generated) == self._extract_final_number(solution):
+                correct += 1
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["math"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"MATH Accuracy: {accuracy:.4f}")
+        return self.results["math"]
+    
+    def _evaluate_mbpp(self) -> Dict[str, float]:
+        """Evaluate on MBPP - Mostly Basic Python Problems."""
+        _LOG.info("Evaluating MBPP...")
+        
+        from datasets import load_dataset
+        
+        dataset = load_dataset("mbpp", split="test")
+        
+        correct = 0
+        total = 0
+        
+        self.model.eval()
+        
+        for item in tqdm(dataset, desc="MBPP"):
+            prompt_text = item["prompt"]
+            test_cases = item.get("test_list", [])
+            
+            prompt = f"""Write a Python function to solve the following problem.
+
+Problem: {prompt_text}
+
+Your solution should pass these test cases:
+{chr(10).join(test_cases)}
+
+Solution:
+```python
+"""
+            
+            encoding = self.tokenizer(
+                prompt,
+                max_length=1024,
+                truncation=True,
+                return_tensors="pt",
+            ).to(self.config.device)
+            
+            with torch.no_grad():
+                output = self.model.generate(
+                    encoding["input_ids"],
+                    max_new_tokens=256,
+                    temperature=0.0,
+                    do_sample=False,
+                )
+                
+                generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True)
+            
+            total += 1
+            try:
+                code = generated.split("```")[0] if "```" in generated else generated
+                exec_globals = {}
+                exec(code, exec_globals)
+                passed = True
+                for test in test_cases[:1]:
+                    try:
+                        exec(test, exec_globals)
+                    except AssertionError:
+                        passed = False
+                        break
+                if passed:
+                    correct += 1
+            except Exception:
+                pass
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["mbpp"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"MBPP Accuracy: {accuracy:.4f}")
+        return self.results["mbpp"]
+    
+    def _evaluate_ifeval(self) -> Dict[str, float]:
+        """Evaluate on IFEval - instruction following evaluation."""
+        _LOG.info("Evaluating IFEval...")
+        
+        from datasets import load_dataset
+        
+        try:
+            dataset = load_dataset("google/IFEval", split="train")
+        except Exception:
+            dataset = load_dataset("wis-k/instruction-following-eval", split="train")
+        
+        correct = 0
+        total = 0
+        
+        self.model.eval()
+        
+        for item in tqdm(dataset, desc="IFEval"):
+            prompt_text = item["prompt"]
+            
+            encoding = self.tokenizer(
+                prompt_text,
+                max_length=2048,
+                truncation=True,
+                return_tensors="pt",
+            ).to(self.config.device)
+            
+            with torch.no_grad():
+                output = self.model.generate(
+                    encoding["input_ids"],
+                    max_new_tokens=512,
+                    temperature=0.7,
+                    do_sample=True,
+                )
+                
+                generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True)
+            
+            total += 1
+            instructions = item.get("instruction_id_list", [])
+            if not instructions:
+                correct += 1
+            else:
+                satisfied = 0
+                for inst in instructions:
+                    if self._check_instruction_followed(generated, inst):
+                        satisfied += 1
+                if satisfied == len(instructions):
+                    correct += 1
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["ifeval"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"IFEval Accuracy: {accuracy:.4f}")
+        return self.results["ifeval"]
+    
+    def _check_instruction_followed(self, response: str, instruction: str) -> bool:
+        """Check if a specific instruction was followed."""
+        instruction = instruction.lower()
+        response_lower = response.lower()
+        
+        if "length" in instruction:
+            words = len(response.split())
+            if "at least" in instruction:
+                import re
+                match = re.search(r"at least (\d+)", instruction)
+                if match:
+                    return words >= int(match.group(1))
+            elif "at most" in instruction or "maximum" in instruction:
+                import re
+                match = re.search(r"(?:at most|maximum) (\d+)", instruction)
+                if match:
+                    return words <= int(match.group(1))
+        
+        if "keyword" in instruction or "word" in instruction:
+            import re
+            keywords = re.findall(r'"([^"]+)"', instruction)
+            for kw in keywords:
+                if kw.lower() not in response_lower:
+                    return False
+            return True
+        
+        if "format" in instruction:
+            if "json" in instruction:
+                try:
+                    import json
+                    json.loads(response)
+                    return True
+                except Exception:
+                    return False
+            if "bullet" in instruction or "list" in instruction:
+                return response.strip().startswith(("-", "*", "1."))
+        
+        return True
+    
+    def _evaluate_arc(self) -> Dict[str, float]:
+        """Evaluate on ARC - AI2 Reasoning Challenge."""
+        _LOG.info("Evaluating ARC...")
+        
+        from datasets import load_dataset
+        
+        correct = 0
+        total = 0
+        
+        for split_name in ["ARC-Easy", "ARC-Challenge"]:
+            try:
+                dataset = load_dataset("ai2_arc", split_name, split="test")
+            except Exception:
+                continue
+            
+            for item in tqdm(dataset, desc=f"ARC-{split_name}"):
+                question = item["question"]
+                choices = item["choices"]["text"]
+                labels = item["choices"]["label"]
+                answer_key = item["answerKey"]
+                
+                prompt = f"""Answer this science question.
+
+Question: {question}
+
+Options:
+"""
+                for label, choice in zip(labels, choices):
+                    prompt += f"{label}. {choice}\n"
+                prompt += "\nAnswer: "
+                
+                encoding = self.tokenizer(
+                    prompt,
+                    max_length=1024,
+                    truncation=True,
+                    return_tensors="pt",
+                ).to(self.config.device)
+                
+                with torch.no_grad():
+                    output = self.model.generate(
+                        encoding["input_ids"],
+                        max_new_tokens=10,
+                        temperature=0.0,
+                        do_sample=False,
+                    )
+                    
+                    generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+                
+                total += 1
+                if answer_key in generated or (generated and generated[0].upper() == answer_key):
+                    correct += 1
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["arc"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"ARC Accuracy: {accuracy:.4f}")
+        return self.results["arc"]
+    
+    def _evaluate_ceval(self) -> Dict[str, float]:
+        """Evaluate on C-Eval - Chinese evaluation benchmark."""
+        _LOG.info("Evaluating C-Eval...")
+        
+        from datasets import load_dataset
+        
+        correct = 0
+        total = 0
+        
+        try:
+            dataset = load_dataset("ceval/ceval-exam", "all", split="val")
+        except Exception:
+            dataset = load_dataset("ceval", split="val")
+        
+        for item in tqdm(dataset, desc="C-Eval"):
+            question = item["question"]
+            choices = [item["A"], item["B"], item["C"], item["D"]]
+            answer = item["answer"]
+            
+            prompt = f"""Answer the following multiple choice question.
+
+Question: {question}
+
+Options:
+A. {choices[0]}
+B. {choices[1]}
+C. {choices[2]}
+D. {choices[3]}
+
+Answer: """
+            
+            encoding = self.tokenizer(
+                prompt,
+                max_length=1024,
+                truncation=True,
+                return_tensors="pt",
+            ).to(self.config.device)
+            
+            with torch.no_grad():
+                output = self.model.generate(
+                    encoding["input_ids"],
+                    max_new_tokens=10,
+                    temperature=0.0,
+                    do_sample=False,
+                )
+                
+                generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+            
+            total += 1
+            if answer.upper() in generated.upper():
+                correct += 1
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["ceval"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"C-Eval Accuracy: {accuracy:.4f}")
+        return self.results["ceval"]
+    
+    def _evaluate_cmmlu(self) -> Dict[str, float]:
+        """Evaluate on CMMLU - Chinese massive multitask language understanding."""
+        _LOG.info("Evaluating CMMLU...")
+        
+        from datasets import load_dataset
+        
+        correct = 0
+        total = 0
+        
+        try:
+            dataset = load_dataset("cmmlu", "all", split="test")
+        except Exception:
+            return {"accuracy": 0.0, "correct": 0, "total": 0}
+        
+        for item in tqdm(dataset, desc="CMMLU"):
+            question = item["Question"]
+            choices = [item["A"], item["B"], item["C"], item["D"]]
+            answer = item["Answer"]
+            
+            prompt = f"""Please answer the following question.
+
+Question: {question}
+
+Options:
+A. {choices[0]}
+B. {choices[1]}
+C. {choices[2]}
+D. {choices[3]}
+
+Answer: """
+            
+            encoding = self.tokenizer(
+                prompt,
+                max_length=1024,
+                truncation=True,
+                return_tensors="pt",
+            ).to(self.config.device)
+            
+            with torch.no_grad():
+                output = self.model.generate(
+                    encoding["input_ids"],
+                    max_new_tokens=10,
+                    temperature=0.0,
+                    do_sample=False,
+                )
+                
+                generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+            
+            total += 1
+            if answer.upper() in generated.upper():
+                correct += 1
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["cmmlu"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"CMMLU Accuracy: {accuracy:.4f}")
+        return self.results["cmmlu"]
+    
+    def _evaluate_agieval(self) -> Dict[str, float]:
+        """Evaluate on AGIEval - AGI-oriented evaluation."""
+        _LOG.info("Evaluating AGIEval...")
+        
+        from datasets import load_dataset
+        
+        correct = 0
+        total = 0
+        
+        agieval_tasks = ["sat_en", "sat_math", "aqua_rat", "lsat_ar", "lsat_lr", "lsat_rc", "logiqa_en"]
+        
+        for task in agieval_tasks:
+            try:
+                dataset = load_dataset("dmayhem93/agieval", task, split="test")
+            except Exception:
+                continue
+            
+            for item in tqdm(dataset, desc=f"AGIEval-{task}"):
+                question = item.get("query", item.get("question", ""))
+                choices = item.get("options", item.get("choices", []))
+                answer = item.get("gold", item.get("answer", ""))
+                
+                if not choices:
+                    continue
+                
+                prompt = f"""Answer the following question.
+
+{question}
+
+Options:
+"""
+                for i, choice in enumerate(choices):
+                    prompt += f"{chr(65 + i)}. {choice}\n"
+                prompt += "\nAnswer: "
+                
+                encoding = self.tokenizer(
+                    prompt,
+                    max_length=2048,
+                    truncation=True,
+                    return_tensors="pt",
+                ).to(self.config.device)
+                
+                with torch.no_grad():
+                    output = self.model.generate(
+                        encoding["input_ids"],
+                        max_new_tokens=10,
+                        temperature=0.0,
+                        do_sample=False,
+                    )
+                    
+                    generated = self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+                
+                total += 1
+                if str(answer).upper() in generated.upper():
+                    correct += 1
+        
+        accuracy = correct / max(1, total)
+        
+        self.results["agieval"] = {
+            "accuracy": accuracy,
+            "correct": correct,
+            "total": total,
+        }
+        
+        _LOG.info(f"AGIEval Accuracy: {accuracy:.4f}")
+        return self.results["agieval"]
+    
     def _generate_summary(self) -> Dict[str, Any]:
         """Generate benchmark summary."""
         summary = {
@@ -675,7 +1562,7 @@ class PiscesL1BenchmarkEvaluator:
         with open(output_path, 'w', encoding='utf-8') as f:
             json.dump(self.results, f, indent=2, ensure_ascii=False)
         
-        logger.success(f"Benchmark results saved to {output_path}")
+        _LOG.info(f"Benchmark results saved to {output_path}")
     
     def print_summary(self) -> None:
         """Print benchmark summary."""
@@ -720,8 +1607,8 @@ def create_benchmark_evaluator(
 def benchmark_main(args):
     """Main entry point for benchmark evaluation."""
     from transformers import AutoTokenizer
-    from model.modeling import RuchbahModel
-    from model.config import RuchbahConfig
+    from model.modeling import YvModel
+    from model.config import YvConfig
     
     config = PiscesL1BenchmarkConfig(
         model_path=args.model_path,
@@ -730,12 +1617,12 @@ def benchmark_main(args):
         benchmarks=args.benchmarks.split(","),
     )
     
-    logger.info(f"Loading tokenizer from {config.model_path}")
+    _LOG.info(f"Loading tokenizer from {config.model_path}")
     tokenizer = AutoTokenizer.from_pretrained(config.model_path)
     
-    logger.info(f"Loading model from {config.model_path}")
-    model_config = RuchbahConfig.from_json(os.path.join(config.model_path, "config.json"))
-    model = RuchbahModel(model_config)
+    _LOG.info(f"Loading model from {config.model_path}")
+    model_config = YvConfig.from_json(os.path.join(config.model_path, "config.json"))
+    model = YvModel(model_config)
     model = model.from_pretrained(config.model_path)
     
     if config.device == "cuda":
@@ -749,7 +1636,7 @@ def benchmark_main(args):
     
     evaluator.print_summary()
     
-    logger.success("Benchmark evaluation completed")
+    _LOG.info("Benchmark evaluation completed")
 
 
 if __name__ == "__main__":

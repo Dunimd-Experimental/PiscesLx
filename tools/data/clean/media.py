@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -18,9 +19,9 @@
 # limitations under the License.
 
 from typing import Optional
-from utils import PiscesLxCoreLog
+from utils.dc import PiscesLxLogger
 
-logger = PiscesLxCoreLog("PiscesLx.Tools.DataClean.Media")
+_LOG = PiscesLxLogger(__name__)
 
 class MediaCleaner:
     @staticmethod
@@ -69,7 +70,7 @@ class MediaCleaner:
                     return None
             return image_path
         except Exception as e:
-            logger.debug(f"Image quality cleaning failed for {image_path}: {e}")
+            _LOG.debug(f"Image quality cleaning failed for {image_path}: {e}")
             return None
 
     @staticmethod
@@ -156,7 +157,7 @@ class MediaCleaner:
                 return None
             return audio_path
         except Exception as e:
-            logger.debug(f"Audio quality cleaning failed for {audio_path}: {e}")
+            _LOG.debug(f"Audio quality cleaning failed for {audio_path}: {e}")
             return None
 
     @staticmethod
@@ -251,7 +252,7 @@ class MediaCleaner:
                 return None
             return video_path
         except Exception as e:
-            logger.debug(f"Video quality cleaning failed for {video_path}: {e}")
+            _LOG.debug(f"Video quality cleaning failed for {video_path}: {e}")
             return None
 
     @staticmethod
@@ -338,7 +339,7 @@ class MediaCleaner:
                 return None
             return doc_path
         except Exception as e:
-            logger.debug(f"Document quality cleaning failed for {doc_path}: {e}")
+            _LOG.debug(f"Document quality cleaning failed for {doc_path}: {e}")
             return None
 
     @staticmethod

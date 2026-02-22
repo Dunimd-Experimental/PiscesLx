@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -17,131 +18,126 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from utils.validate import PiscesLxCoreValidator
-from utils.checkpoint import PiscesLxCoreCheckpointManager
-from utils.concurrency import PiscesLxCoreTimeout, PiscesLxCoreRetry, PiscesLxCoreParallel
-from utils.error import (
+"""
+Core utilities module for PiscesLx.
+
+This module provides basic utilities for error handling, concurrency,
+and other core functionality.
+
+For advanced operators (quantization, checkpoint, scaling, validation, concurrency),
+please use the opss module instead:
+    from opss.quantize import QuantizationEngine
+    from opss.train.checkpoint import CheckpointOperator
+    from opss.scaling import PiscesLxChinchillaScaler
+    from opss.validation import ValidatorOperator
+    from opss.concurrency import ConcurrencyOperator
+"""
+
+from utils.dc import (
     PiscesLxCoreError,
     PiscesLxCoreErrorCode,
-    PiscesLxCoreValidationError,
-    PiscesLxCoreConcurrencyError,
-    PiscesLxCoreTimeoutError,
-    PiscesLxCoreNetworkError,
-    PiscesLxCoreMemoryError,
+    PiscesLxCoreErrorContext,
+    PiscesLxCoreLogLevel,
 )
 
-# Quantization module
-from .quantization import PiscesLxCoreQuantizer
 
-# Import dms_core library
-import dms_core
+class PiscesLxCoreValidationError(PiscesLxCoreError):
+    """Validation-specific error."""
 
-# MCP module - all exports centralized here
-from utils.mcp.types import (
-    PiscesLxCoreMCPToolMetadata,
-    PiscesLxCoreMCPExecutionContext,
-    PiscesLxCoreMCPModuleStats,
-    PiscesLxCoreMCPModuleStatus,
-    PiscesLxCoreMCPHealthStatus,
-    PiscesLxCoreMCPPerformanceMetrics,
-    PiscesLxCoreMCPConfiguration,
-    PiscesLxCoreMCPFileWatcherConfig,
-    PiscesLxCoreMCPMessageType,
-    PiscesLxCoreMCPMessage,
-    PiscesLxCoreAgenticAction,
-    PiscesLxCoreAgenticObservation,
-    PiscesLxCoreMCPProtocol
-)
-from utils.mcp.monitor import PiscesLxCoreMCPMonitor
-from utils.mcp.session import PiscesLxCoreMCPSession
-from utils.mcp.registry import PiscesLxCoreMCPRegistry
-from utils.mcp.tools import PiscesLxCoreMCPTools
-from utils.mcp.xml_utils import (
-    PiscesLxCoreMCPAgenticCall, PiscesLxCoreMCPXMLParser, PiscesLxCoreMCPXMLGenerator
-)
-from utils.mcp.execution import (
-    PiscesLxCoreMCPExecutionMode, PiscesLxCoreMCPExecutionStatus, PiscesLxCoreMCPExecutionResult, PiscesLxCoreMCPExecutionConfig,
-    PiscesLxCoreMCPExecutionManager
-)
-from utils.mcp.remote_client import (
-    PiscesLxCoreMCPRemoteClient, PiscesLxCoreMCPRuchbahRemoteClient, PiscesLxCoreMCPRemoteClientPool
-)
-from utils.mcp.tool_executor import (
-    PiscesLxCoreMCPToolType, PiscesLxCoreMCPToolMetadata, PiscesLxCoreMCPExecutionContext,
-    PiscesLxCoreMCPNativeToolExecutor, PiscesLxCoreMCPInternalToolExecutor, PiscesLxCoreMCPExternalToolExecutor,
-    PiscesLxCoreMCPUnifiedToolExecutor
-)
-from utils.mcp.core import PiscesLxCoreMCPPlaza
-from utils.mcp.arctic_extensions import PiscesLxCoreMCPTreeSearchReasoner
+    def __init__(
+        self,
+        message: str,
+        field: str = "unknown",
+        value = None,
+        context = None
+    ):
+        self.field = field
+        self.value = value
+        super().__init__(
+            PiscesLxCoreErrorCode.VALIDATION_ERROR,
+            message,
+            context
+        )
+
+
+class PiscesLxCoreConcurrencyError(PiscesLxCoreError):
+    """Concurrency-specific error."""
+
+    def __init__(
+        self,
+        message: str,
+        resource: str = "unknown",
+        context = None
+    ):
+        self.resource = resource
+        super().__init__(
+            PiscesLxCoreErrorCode.INTERNAL_ERROR,
+            message,
+            context
+        )
+
+
+class PiscesLxCoreTimeoutError(PiscesLxCoreError):
+    """Timeout-specific error."""
+
+    def __init__(
+        self,
+        message: str,
+        timeout_ms: float = 0.0,
+        context = None
+    ):
+        self.timeout_ms = timeout_ms
+        super().__init__(
+            PiscesLxCoreErrorCode.TIMEOUT_ERROR,
+            message,
+            context
+        )
+
+
+class PiscesLxCoreNetworkError(PiscesLxCoreError):
+    """Network-specific error."""
+
+    def __init__(
+        self,
+        message: str,
+        endpoint: str = "unknown",
+        context = None
+    ):
+        self.endpoint = endpoint
+        super().__init__(
+            PiscesLxCoreErrorCode.SERVICE_UNAVAILABLE,
+            message,
+            context
+        )
+
+
+class PiscesLxCoreMemoryError(PiscesLxCoreError):
+    """Memory-specific error."""
+
+    def __init__(
+        self,
+        message: str,
+        required_bytes: int = 0,
+        available_bytes: int = 0,
+        context = None
+    ):
+        self.required_bytes = required_bytes
+        self.available_bytes = available_bytes
+        super().__init__(
+            PiscesLxCoreErrorCode.INTERNAL_ERROR,
+            message,
+            context
+        )
+
 
 __all__ = [
-    # Core utilities
-    'PiscesLxCoreValidator',
-    'PiscesLxCoreTimeout', 
-    'PiscesLxCoreRetry', 
-    'PiscesLxCoreParallel',
-    'PiscesLxCoreCheckpointManager',
-
-    
-    # Error taxonomy
     'PiscesLxCoreError',
     'PiscesLxCoreErrorCode',
+    'PiscesLxCoreErrorContext',
+    'PiscesLxCoreLogLevel',
     'PiscesLxCoreValidationError',
     'PiscesLxCoreConcurrencyError',
     'PiscesLxCoreTimeoutError',
     'PiscesLxCoreNetworkError',
     'PiscesLxCoreMemoryError',
-    
-    # Quantization
-    'PiscesLxCoreQuantizer',
-    
-    # MCP module - all exports centralized here
-    # Core classes
-    'PiscesLxCoreMCPPlaza',
-    'PiscesLxCoreMCPMonitor', 
-    'PiscesLxCoreMCPSession',
-    'PiscesLxCoreMCPRegistry',
-    'PiscesLxCoreMCPTools',
-    
-    # XML utilities
-    'PiscesLxCoreMCPAgenticCall',
-    'PiscesLxCoreMCPXMLParser',
-    'PiscesLxCoreMCPXMLGenerator',
-    
-    # Execution
-    'PiscesLxCoreMCPExecutionMode',
-    'PiscesLxCoreMCPExecutionStatus',
-    'PiscesLxCoreMCPExecutionResult',
-    'PiscesLxCoreMCPExecutionConfig',
-    'PiscesLxCoreMCPExecutionManager',
-    
-    # Remote client
-    'PiscesLxCoreMCPRemoteClient',
-    'PiscesLxCoreMCPRuchbahRemoteClient',
-    'PiscesLxCoreMCPRemoteClientPool',
-    
-    # Tool executor
-    'PiscesLxCoreMCPToolType',
-    'PiscesLxCoreMCPToolMetadata',
-    'PiscesLxCoreMCPExecutionContext',
-    'PiscesLxCoreMCPNativeToolExecutor',
-    'PiscesLxCoreMCPInternalToolExecutor',
-    'PiscesLxCoreMCPExternalToolExecutor',
-    'PiscesLxCoreMCPUnifiedToolExecutor',
-    
-    # Data types
-    'PiscesLxCoreMCPToolMetadata',
-    'PiscesLxCoreMCPExecutionContext',
-    'PiscesLxCoreMCPModuleStats',
-    'PiscesLxCoreMCPModuleStatus',
-    'PiscesLxCoreMCPHealthStatus',
-    'PiscesLxCoreMCPPerformanceMetrics',
-    'PiscesLxCoreMCPConfiguration',
-    'PiscesLxCoreMCPFileWatcherConfig',
-    'PiscesLxCoreMCPTreeSearchReasoner',
-    'PiscesLxCoreMCPMessageType',
-    'PiscesLxCoreMCPMessage',
-    'PiscesLxCoreAgenticAction',
-    'PiscesLxCoreAgenticObservation',
-    'PiscesLxCoreMCPProtocol',
 ]

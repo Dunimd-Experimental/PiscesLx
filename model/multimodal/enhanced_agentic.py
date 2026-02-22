@@ -1,12 +1,13 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
+# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -20,11 +21,11 @@
 """
 Enhanced Agentic Capabilities for PiscesL1.
 
-核心增强：
-- 长期规划引擎：100+步骤任务分解
-- 工具编排引擎：条件分支+循环+回退
-- 自我评估系统：多维度质量评估
-- 持久化记忆：向量数据库存储
+Core enhancements:
+- Long-term planning engine: 100+ step task decomposition
+- Tool orchestration engine: conditional branching, loops + fallbacks
+- Self-evaluation system: multi-dimensional quality assessment
+- Persistent memory: vector database storage
 """
 
 import torch
@@ -34,17 +35,17 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from dataclasses import dataclass, field
 from enum import Enum
 import json
+import time
 
 
-class RuchbahLongTermPlanner(nn.Module):
-    """
-    长期规划引擎，支持100+步骤的复杂任务分解和动态重规划。
+class YvLongTermPlanner(nn.Module):
+    """Long-term planning engine supporting 100+ step complex task decomposition.
     
-    核心能力：
-    - 层次化任务分解（目标→阶段→步骤）
-    - 依赖关系分析（DAG构建）
-    - 关键路径识别
-    - 动态重规划触发
+    Core capabilities:
+    - Hierarchical task decomposition (goal -> stage -> step)
+    - Dependency analysis (DAG construction)
+    - Critical path identification
+    - Dynamic re-planning trigger
     """
     
     def __init__(
@@ -113,7 +114,7 @@ class RuchbahLongTermPlanner(nn.Module):
             nn.Linear(hidden_size // 2, 3)
         )
     
-    def forward(self, goal: str, context: Dict[str, Any]) -> 'RuchbahTaskGraph':
+    def forward(self, goal: str, context: Dict[str, Any]) -> 'YvTaskGraph':
         batch_size = 1
         
         goal_embedding = self._encode_goal(goal, context)
@@ -133,7 +134,7 @@ class RuchbahLongTermPlanner(nn.Module):
         
         critical_nodes = self._identify_critical_path(steps, dependencies)
         
-        return RuchbahTaskGraph(
+        return YvTaskGraph(
             goal=goal,
             stages=stages,
             steps=steps,
@@ -195,7 +196,7 @@ class RuchbahLongTermPlanner(nn.Module):
         stage_embedding: torch.Tensor,
         context: Dict[str, Any],
         complexity: Dict[str, float]
-    ) -> 'RuchbahTaskStage':
+    ) -> 'YvTaskStage':
         num_steps = max(3, int(self.max_steps / self.num_stages * complexity['overall']))
         
         stage_name = f"Stage {stage_id + 1}"
@@ -203,7 +204,7 @@ class RuchbahLongTermPlanner(nn.Module):
         
         success_criteria = [f"Complete all steps in {stage_name}"]
         
-        return RuchbahTaskStage(
+        return YvTaskStage(
             stage_id=stage_id,
             name=stage_name,
             description=description,
@@ -214,10 +215,10 @@ class RuchbahLongTermPlanner(nn.Module):
     
     def _generate_steps(
         self,
-        stages: List['RuchbahTaskStage'],
+        stages: List['YvTaskStage'],
         context: Dict[str, Any],
         goal_embedding: torch.Tensor
-    ) -> List['RuchbahPlanStep']:
+    ) -> List['YvPlanStep']:
         steps = []
         step_id = 0
         
@@ -227,7 +228,7 @@ class RuchbahLongTermPlanner(nn.Module):
                 step_name = f"{stage.name} - Step {step_idx + 1}"
                 description = f"Execute {step_name}"
                 
-                step = RuchbahPlanStep(
+                step = YvPlanStep(
                     step_id=step_id,
                     name=step_name,
                     description=description,
@@ -241,7 +242,7 @@ class RuchbahLongTermPlanner(nn.Module):
         
         return steps[:self.max_steps]
     
-    def _analyze_dependencies(self, steps: List['RuchbahPlanStep']) -> List[Tuple[int, int]]:
+    def _analyze_dependencies(self, steps: List['YvPlanStep']) -> List[Tuple[int, int]]:
         dependencies = []
         for i, step in enumerate(steps):
             if step.stage_id > 0:
@@ -251,8 +252,9 @@ class RuchbahLongTermPlanner(nn.Module):
                 )
                 dependencies.append((prev_stage_last_step, i))
             
-            if step_id := step.dependencies:
-                for dep in step_id:
+            step_deps = getattr(step, 'dependencies', [])
+            if step_deps:
+                for dep in step_deps:
                     if dep < i:
                         dependencies.append((dep, i))
         
@@ -260,7 +262,7 @@ class RuchbahLongTermPlanner(nn.Module):
     
     def _identify_critical_path(
         self,
-        steps: List['RuchbahPlanStep'],
+        steps: List['YvPlanStep'],
         dependencies: List[Tuple[int, int]]
     ) -> List[int]:
         if not steps:
@@ -349,17 +351,289 @@ class RuchbahLongTermPlanner(nn.Module):
                 total += 1
         
         return overruns / (total + 1e-8)
-
-
-class RuchbahToolOrchestrator(nn.Module):
-    """
-    工具编排引擎，支持复杂的工具组合和条件调用。
     
-    核心能力：
-    - 工具链自动组合
-    - 条件分支处理
-    - 循环执行控制
-    - 错误恢复与回退
+    def save_checkpoint(
+        self,
+        task_graph: YvTaskGraph,
+        execution_state: Dict[str, Any]
+    ) -> YvCheckpoint:
+        """Save a checkpoint of the current execution state.
+        
+        Creates a complete snapshot of the task execution state for
+        recovery from failures or interruptions.
+        
+        Args:
+            task_graph: The current task graph being executed.
+            execution_state: Additional execution context and state.
+            
+        Returns:
+            YvCheckpoint: The created checkpoint.
+        """
+        import time
+        import uuid
+        
+        checkpoint_id = str(uuid.uuid4())
+        timestamp = time.time()
+        
+        completed_steps = task_graph.completed_steps.copy()
+        failed_steps = task_graph.failed_steps.copy()
+        
+        can_resume = len(completed_steps) < len(task_graph.steps)
+        
+        total_retries = sum(task_graph.retry_counts.values())
+        
+        checkpoint = YvCheckpoint(
+            checkpoint_id=checkpoint_id,
+            task_graph=task_graph,
+            completed_steps=completed_steps,
+            failed_steps=failed_steps,
+            execution_context=execution_state,
+            timestamp=timestamp,
+            can_resume=can_resume,
+            retry_count=total_retries,
+            error_history=task_graph.error_history.copy(),
+            metadata={
+                "goal": task_graph.goal,
+                "total_steps": len(task_graph.steps),
+                "progress": len(completed_steps) / max(len(task_graph.steps), 1),
+            }
+        )
+        
+        task_graph.checkpoint_history.append(checkpoint_id)
+        task_graph.last_checkpoint_time = timestamp
+        
+        return checkpoint
+    
+    def restore_checkpoint(
+        self,
+        checkpoint: YvCheckpoint,
+        checkpoint_storage: Dict[str, YvCheckpoint] = None
+    ) -> Optional[YvTaskGraph]:
+        """Restore execution state from a checkpoint.
+        
+        Args:
+            checkpoint: The checkpoint to restore from.
+            checkpoint_storage: Optional storage to retrieve checkpoint by ID.
+            
+        Returns:
+            Optional[YvTaskGraph]: The restored task graph, or None if failed.
+        """
+        if checkpoint is None:
+            return None
+        
+        if not checkpoint.can_resume:
+            return None
+        
+        task_graph = checkpoint.task_graph
+        if task_graph is None:
+            return None
+        
+        task_graph.completed_steps = checkpoint.completed_steps.copy()
+        task_graph.failed_steps = checkpoint.failed_steps.copy()
+        task_graph.error_history = checkpoint.error_history.copy()
+        task_graph.interrupted = False
+        task_graph.interruption_point = None
+        
+        for step in task_graph.steps:
+            if step.step_id in checkpoint.completed_steps:
+                step.status = "completed"
+            elif step.step_id in checkpoint.failed_steps:
+                step.status = "failed"
+            else:
+                step.status = "pending"
+        
+        return task_graph
+    
+    def should_save_checkpoint(
+        self,
+        step_id: int,
+        time_elapsed: float,
+        task_graph: YvTaskGraph
+    ) -> bool:
+        """Determine if a checkpoint should be saved.
+        
+        Args:
+            step_id: Current step being executed.
+            time_elapsed: Time elapsed since last checkpoint.
+            task_graph: The current task graph.
+            
+        Returns:
+            bool: True if a checkpoint should be saved.
+        """
+        if time_elapsed >= task_graph.checkpoint_interval:
+            return True
+        
+        steps_since_checkpoint = len(task_graph.completed_steps) - len(task_graph.checkpoint_history) * 10
+        if steps_since_checkpoint >= 10:
+            return True
+        
+        if step_id in task_graph.critical_nodes:
+            return True
+        
+        return False
+    
+    def get_recovery_point(
+        self,
+        task_graph: YvTaskGraph,
+        checkpoints: Dict[str, YvCheckpoint]
+    ) -> int:
+        """Find the best recovery point in the task graph.
+        
+        Args:
+            task_graph: The current task graph.
+            checkpoints: Available checkpoints.
+            
+        Returns:
+            int: The step ID to resume from.
+        """
+        if not task_graph.completed_steps:
+            return 0
+        
+        last_completed = max(task_graph.completed_steps)
+        
+        if task_graph.failed_steps:
+            last_failed = max(task_graph.failed_steps)
+            for step in task_graph.steps:
+                if step.step_id > last_failed and step.step_id not in task_graph.completed_steps:
+                    return step.step_id
+        
+        for step in task_graph.steps:
+            if step.step_id > last_completed:
+                return step.step_id
+        
+        return last_completed
+    
+    def estimate_remaining_time(
+        self,
+        task_graph: YvTaskGraph,
+        avg_step_time: float = 1.0
+    ) -> float:
+        """Estimate remaining execution time.
+        
+        Args:
+            task_graph: The current task graph.
+            avg_step_time: Average time per step.
+            
+        Returns:
+            float: Estimated remaining time in seconds.
+        """
+        total_steps = len(task_graph.steps)
+        completed_steps = len(task_graph.completed_steps)
+        remaining_steps = total_steps - completed_steps
+        
+        base_estimate = remaining_steps * avg_step_time
+        
+        failed_steps = len(task_graph.failed_steps)
+        retry_overhead = failed_steps * avg_step_time * 0.5
+        
+        critical_remaining = sum(
+            1 for step in task_graph.steps
+            if step.step_id in task_graph.critical_nodes
+            and step.step_id not in task_graph.completed_steps
+        )
+        critical_overhead = critical_remaining * avg_step_time * 0.3
+        
+        return base_estimate + retry_overhead + critical_overhead
+    
+    def update_progress(
+        self,
+        task_graph: YvTaskGraph,
+        step_id: int,
+        status: str,
+        time_taken: float
+    ) -> Dict[str, Any]:
+        """Update task graph progress.
+        
+        Args:
+            task_graph: The task graph to update.
+            step_id: The step that was processed.
+            status: The new status of the step.
+            time_taken: Time taken for the step.
+            
+        Returns:
+            Dict[str, Any]: Progress report.
+        """
+        import time
+        
+        if status == "completed":
+            if step_id not in task_graph.completed_steps:
+                task_graph.completed_steps.append(step_id)
+        elif status == "failed":
+            if step_id not in task_graph.failed_steps:
+                task_graph.failed_steps.append(step_id)
+            task_graph.retry_counts[step_id] = task_graph.retry_counts.get(step_id, 0) + 1
+        
+        for step in task_graph.steps:
+            if step.step_id == step_id:
+                step.status = status
+                break
+        
+        task_graph.elapsed_time += time_taken
+        total_steps = len(task_graph.steps)
+        task_graph.progress_percentage = len(task_graph.completed_steps) / max(total_steps, 1) * 100
+        
+        return {
+            "step_id": step_id,
+            "status": status,
+            "progress_percentage": task_graph.progress_percentage,
+            "completed_steps": len(task_graph.completed_steps),
+            "failed_steps": len(task_graph.failed_steps),
+            "remaining_steps": total_steps - len(task_graph.completed_steps),
+            "elapsed_time": task_graph.elapsed_time,
+            "estimated_remaining": self.estimate_remaining_time(task_graph),
+        }
+    
+    def get_progress_report(self, task_graph: YvTaskGraph) -> Dict[str, Any]:
+        """Generate a comprehensive progress report.
+        
+        Args:
+            task_graph: The task graph to report on.
+            
+        Returns:
+            Dict[str, Any]: Detailed progress report.
+        """
+        total_steps = len(task_graph.steps)
+        completed = len(task_graph.completed_steps)
+        failed = len(task_graph.failed_steps)
+        
+        stage_progress = {}
+        for stage in task_graph.stages:
+            stage_steps = [s for s in task_graph.steps if s.stage_id == stage.stage_id]
+            stage_completed = sum(1 for s in stage_steps if s.step_id in task_graph.completed_steps)
+            stage_progress[stage.name] = {
+                "completed": stage_completed,
+                "total": len(stage_steps),
+                "percentage": stage_completed / max(len(stage_steps), 1) * 100
+            }
+        
+        return {
+            "goal": task_graph.goal,
+            "current_phase": task_graph.current_phase,
+            "overall_progress": task_graph.progress_percentage,
+            "completed_steps": completed,
+            "failed_steps": failed,
+            "pending_steps": total_steps - completed - failed,
+            "total_steps": total_steps,
+            "elapsed_time": task_graph.elapsed_time,
+            "estimated_remaining": self.estimate_remaining_time(task_graph),
+            "stage_progress": stage_progress,
+            "critical_nodes_remaining": sum(
+                1 for nid in task_graph.critical_nodes
+                if nid not in task_graph.completed_steps
+            ),
+            "checkpoint_count": len(task_graph.checkpoint_history),
+            "interrupted": task_graph.interrupted,
+        }
+
+
+class YvToolOrchestrator(nn.Module):
+    """Tool orchestration engine supporting complex tool composition and conditional calls.
+    
+    Core capabilities:
+    - Automatic tool chain composition
+    - Conditional branching
+    - Loop execution control
+    - Error recovery and fallback
     """
     
     def __init__(
@@ -404,12 +678,17 @@ class RuchbahToolOrchestrator(nn.Module):
         self.fallback_strategies = {}
         
         self.register_buffer('tool_usage_stats', torch.zeros(max_tools, 3))
+        
+        self._failure_history: Dict[str, List[Dict]] = {}
+        self._success_alternatives: Dict[str, List[str]] = {}
+        self._tool_health_scores: Dict[str, float] = {}
+        self._fallback_chains: Dict[str, List[str]] = {}
     
     def compose_tool_chain(
         self,
         goal: str,
         available_tools: List[Dict[str, Any]]
-    ) -> 'RuchbahToolChain':
+    ) -> 'YvToolChain':
         goal_embedding = self._encode_goal(goal)
         
         required_capabilities = self._analyze_required_capabilities(goal, available_tools)
@@ -422,7 +701,7 @@ class RuchbahToolOrchestrator(nn.Module):
         
         fallback_strategies = self._generate_fallbacks(execution_order)
         
-        return RuchbahToolChain(
+        return YvToolChain(
             tools=execution_order,
             conditions=conditional_branches,
             fallback_strategies=fallback_strategies,
@@ -537,12 +816,12 @@ class RuchbahToolOrchestrator(nn.Module):
         self,
         tools: List[Dict[str, Any]],
         available_tools: List[Dict[str, Any]]
-    ) -> List['RuchbahToolCondition']:
+    ) -> List['YvToolCondition']:
         conditions = []
         
         for i, tool in enumerate(tools):
             if 'condition' in tool:
-                condition = RuchbahToolCondition(
+                condition = YvToolCondition(
                     trigger_tool=tool['name'],
                     condition_type=tool['condition'].get('type', 'if'),
                     condition_expression=tool['condition'].get('expression', ''),
@@ -571,7 +850,7 @@ class RuchbahToolOrchestrator(nn.Module):
     
     def execute_with_conditionals(
         self,
-        tool_chain: 'RuchbahToolChain',
+        tool_chain: 'YvToolChain',
         context: Dict[str, Any]
     ) -> Dict[str, Any]:
         results = {}
@@ -644,7 +923,7 @@ class RuchbahToolOrchestrator(nn.Module):
     
     def _evaluate_condition(
         self,
-        condition: 'RuchbahToolCondition',
+        condition: 'YvToolCondition',
         result: Dict[str, Any],
         context: Dict[str, Any]
     ) -> bool:
@@ -668,17 +947,282 @@ class RuchbahToolOrchestrator(nn.Module):
             result = self._execute_tool({'name': tool_name}, context, previous_results)
             results[tool_name] = result
         return results
-
-
-class RuchbahSelfEvaluator(nn.Module):
-    """
-    自我评估系统，对执行结果进行多维度质量评估。
     
-    评估维度：
-    - 正确性：结果是否符合预期
-    - 完整性：是否覆盖所有要求
-    - 效率：资源使用是否合理
-    - 一致性：与历史行为是否一致
+    def build_fallback_chain(
+        self,
+        tool_name: str,
+        error_type: str
+    ) -> List[str]:
+        """Build an intelligent fallback chain for a failed tool.
+        
+        Analyzes failure history and success patterns to construct
+        an optimal fallback chain.
+        
+        Args:
+            tool_name: The tool that failed.
+            error_type: The type of error encountered.
+            
+        Returns:
+            List[str]: Ordered list of fallback tools to try.
+        """
+        if tool_name in self._fallback_chains:
+            cached_chain = self._fallback_chains[tool_name]
+            return cached_chain
+        
+        chain = []
+        
+        if tool_name in self.fallback_strategies:
+            chain.extend(self.fallback_strategies[tool_name])
+        
+        if tool_name in self._success_alternatives:
+            alternatives = self._success_alternatives[tool_name]
+            for alt in alternatives:
+                if alt not in chain:
+                    chain.append(alt)
+        
+        for other_tool, failures in self._failure_history.items():
+            if other_tool != tool_name:
+                for failure in failures:
+                    if failure.get('error_type') == error_type:
+                        if failure.get('successful_alternative') and failure['successful_alternative'] not in chain:
+                            chain.append(failure['successful_alternative'])
+        
+        sorted_chain = sorted(
+            chain,
+            key=lambda t: self._tool_health_scores.get(t, 0.5),
+            reverse=True
+        )
+        
+        self._fallback_chains[tool_name] = sorted_chain
+        return sorted_chain
+    
+    def execute_with_retry(
+        self,
+        tool_step: Dict[str, Any],
+        context: Dict[str, Any],
+        retry_policy: YvRetryPolicy
+    ) -> Dict[str, Any]:
+        """Execute a tool with retry and fallback support.
+        
+        Args:
+            tool_step: The tool step to execute.
+            context: Execution context.
+            retry_policy: Retry policy configuration.
+            
+        Returns:
+            Dict[str, Any]: Execution result.
+        """
+        import time
+        
+        tool_name = tool_step.get('name', 'unknown')
+        attempt = 0
+        last_error = None
+        start_time = time.time()
+        
+        while attempt < retry_policy.max_attempts:
+            try:
+                result = self._execute_tool(tool_step, context, {})
+                
+                if result.get('status') == 'success':
+                    self.update_tool_health(tool_name, True, time.time() - start_time)
+                    return result
+                
+                last_error = result.get('error', 'unknown_error')
+                
+            except Exception as e:
+                last_error = str(e)
+            
+            error_type = self._classify_error(last_error)
+            
+            if not retry_policy.should_retry(error_type, attempt):
+                break
+            
+            delay = retry_policy.calculate_delay(attempt)
+            time.sleep(delay)
+            attempt += 1
+        
+        fallback_chain = self.build_fallback_chain(tool_name, self._classify_error(last_error))
+        
+        for fallback_tool in fallback_chain:
+            try:
+                fallback_result = self._execute_tool(
+                    {'name': fallback_tool},
+                    context,
+                    {}
+                )
+                
+                if fallback_result.get('status') == 'success':
+                    self.learn_from_failure(tool_name, last_error, fallback_tool)
+                    fallback_result['fallback_used'] = True
+                    fallback_result['original_tool'] = tool_name
+                    return fallback_result
+                    
+            except Exception:
+                continue
+        
+        return {
+            'status': 'failed',
+            'error': last_error,
+            'attempts': attempt + 1,
+            'fallbacks_tried': len(fallback_chain),
+        }
+    
+    def _classify_error(self, error_message: str) -> str:
+        """Classify an error message into an error type."""
+        error_lower = str(error_message).lower()
+        
+        if 'timeout' in error_lower:
+            return 'timeout'
+        elif 'connection' in error_lower or 'network' in error_lower:
+            return 'connection_error'
+        elif 'rate' in error_lower or 'limit' in error_lower:
+            return 'rate_limit'
+        elif 'permission' in error_lower or 'access' in error_lower:
+            return 'permission_error'
+        elif 'not found' in error_lower or 'missing' in error_lower:
+            return 'not_found'
+        else:
+            return 'unknown'
+    
+    def learn_from_failure(
+        self,
+        tool_name: str,
+        error: str,
+        successful_alternative: str
+    ):
+        """Learn from a failure to improve future fallback selection.
+        
+        Args:
+            tool_name: The tool that failed.
+            error: The error encountered.
+            successful_alternative: The alternative that succeeded.
+        """
+        if tool_name not in self._failure_history:
+            self._failure_history[tool_name] = []
+        
+        error_type = self._classify_error(error)
+        
+        self._failure_history[tool_name].append({
+            'error_type': error_type,
+            'error_message': str(error)[:200],
+            'successful_alternative': successful_alternative,
+            'timestamp': time.time() if 'time' in dir() else 0,
+        })
+        
+        if tool_name not in self._success_alternatives:
+            self._success_alternatives[tool_name] = []
+        
+        if successful_alternative not in self._success_alternatives[tool_name]:
+            self._success_alternatives[tool_name].append(successful_alternative)
+        
+        if tool_name in self._fallback_chains:
+            del self._fallback_chains[tool_name]
+    
+    def get_tool_health_status(self, tool_name: str) -> Dict[str, Any]:
+        """Get health status for a tool.
+        
+        Args:
+            tool_name: The tool to check.
+            
+        Returns:
+            Dict[str, Any]: Health status information.
+        """
+        health_score = self._tool_health_scores.get(tool_name, 0.5)
+        
+        failure_count = len(self._failure_history.get(tool_name, []))
+        
+        alternatives = self._success_alternatives.get(tool_name, [])
+        
+        return {
+            'tool_name': tool_name,
+            'health_score': health_score,
+            'failure_count': failure_count,
+            'available_alternatives': alternatives,
+            'status': 'healthy' if health_score > 0.7 else 'degraded' if health_score > 0.3 else 'unhealthy',
+        }
+    
+    def update_tool_health(
+        self,
+        tool_name: str,
+        success: bool,
+        execution_time: float
+    ):
+        """Update tool health score based on execution result.
+        
+        Args:
+            tool_name: The tool that was executed.
+            success: Whether the execution succeeded.
+            execution_time: Time taken for execution.
+        """
+        current_score = self._tool_health_scores.get(tool_name, 0.5)
+        
+        if success:
+            new_score = current_score + 0.05 * (1 - current_score)
+        else:
+            new_score = current_score - 0.1 * current_score
+        
+        self._tool_health_scores[tool_name] = max(0.0, min(1.0, new_score))
+    
+    def get_optimal_fallback(
+        self,
+        tool_name: str,
+        context: Dict[str, Any]
+    ) -> Optional[str]:
+        """Get the optimal fallback tool for a given tool and context.
+        
+        Args:
+            tool_name: The tool that needs a fallback.
+            context: Current execution context.
+            
+        Returns:
+            Optional[str]: The best fallback tool, or None.
+        """
+        chain = self.build_fallback_chain(tool_name, 'unknown')
+        
+        if not chain:
+            return None
+        
+        for fallback in chain:
+            health = self.get_tool_health_status(fallback)
+            if health['health_score'] > 0.5:
+                return fallback
+        
+        return chain[0] if chain else None
+    
+    def get_fallback_statistics(self) -> Dict[str, Any]:
+        """Get statistics about fallback usage and effectiveness."""
+        total_failures = sum(len(failures) for failures in self._failure_history.values())
+        
+        successful_alternatives = sum(
+            len(alts) for alts in self._success_alternatives.values()
+        )
+        
+        avg_health = (
+            sum(self._tool_health_scores.values()) / len(self._tool_health_scores)
+            if self._tool_health_scores else 0.5
+        )
+        
+        return {
+            'total_recorded_failures': total_failures,
+            'successful_alternatives_found': successful_alternatives,
+            'tools_with_fallbacks': len(self._fallback_chains),
+            'average_tool_health': avg_health,
+            'most_failed_tools': sorted(
+                self._failure_history.keys(),
+                key=lambda t: len(self._failure_history[t]),
+                reverse=True
+            )[:5],
+        }
+
+
+class YvSelfEvaluator(nn.Module):
+    """Self-evaluation system for multi-dimensional quality assessment.
+    
+    Evaluation dimensions:
+    - Correctness: whether results meet expectations
+    - Completeness: whether all requirements are covered
+    - Efficiency: whether resource usage is reasonable
+    - Consistency: whether consistent with historical behavior
     """
     
     def __init__(self, hidden_size: int = 4096):
@@ -725,13 +1269,16 @@ class RuchbahSelfEvaluator(nn.Module):
             nn.ReLU(),
             nn.Linear(hidden_size // 4, 5)
         )
+        
+        self._error_patterns: Dict[str, YvErrorPattern] = {}
+        self._tool_health_scores: Dict[str, float] = {}
     
     def evaluate_execution(
         self,
         goal: str,
         execution_result: Dict[str, Any],
         context: Dict[str, Any]
-    ) -> 'RuchbahExecutionEvaluation':
+    ) -> 'YvExecutionEvaluation':
         features = self._build_evaluation_features(goal, execution_result, context)
         
         correctness = self.correctness_evaluator(features).item()
@@ -755,7 +1302,7 @@ class RuchbahSelfEvaluator(nn.Module):
         
         quality_details = self.quality_scorer(features[0].unsqueeze(0))[0]
         
-        return RuchbahExecutionEvaluation(
+        return YvExecutionEvaluation(
             overall_score=overall_score,
             correctness=correctness,
             completeness=completeness,
@@ -855,7 +1402,7 @@ class RuchbahSelfEvaluator(nn.Module):
     
     def generate_iterative_improvement(
         self,
-        evaluation: 'RuchbahExecutionEvaluation',
+        evaluation: 'YvExecutionEvaluation',
         current_result: Dict[str, Any],
         goal: str
     ) -> Dict[str, Any]:
@@ -873,7 +1420,7 @@ class RuchbahSelfEvaluator(nn.Module):
     
     def _determine_retry_strategy(
         self,
-        evaluation: 'RuchbahExecutionEvaluation'
+        evaluation: 'YvExecutionEvaluation'
     ) -> str:
         if evaluation.correctness < 0.5:
             return "change_tool"
@@ -883,17 +1430,266 @@ class RuchbahSelfEvaluator(nn.Module):
             return "optimize_parameters"
         else:
             return "retry_same"
-
-
-class RuchbahPersistentMemory(nn.Module):
-    """
-    持久化记忆系统，支持跨会话的经验积累和知识复用。
     
-    存储内容：
-    - 成功案例：高效完成任务的执行模式
-    - 失败教训：需要避免的错误模式
-    - 工具经验：工具使用技巧和最佳实践
-    - 用户偏好：用户的个性化设置
+    def analyze_error_pattern(
+        self,
+        execution_history: List[Dict[str, Any]]
+    ) -> YvErrorPattern:
+        """Analyze execution history to identify error patterns.
+        
+        Args:
+            execution_history: List of execution records with errors.
+            
+        Returns:
+            YvErrorPattern: Identified error pattern.
+        """
+        if not execution_history:
+            return None
+        
+        error_counts: Dict[str, int] = {}
+        error_contexts: Dict[str, List[Dict]] = {}
+        error_actions: Dict[str, List[str]] = {}
+        
+        for record in execution_history:
+            if record.get('status') == 'failed':
+                error_msg = record.get('error', 'unknown')
+                error_type = self._classify_error_type(error_msg)
+                
+                error_counts[error_type] = error_counts.get(error_type, 0) + 1
+                
+                if error_type not in error_contexts:
+                    error_contexts[error_type] = []
+                error_contexts[error_type].append(record.get('context', {}))
+                
+                if error_type not in error_actions:
+                    error_actions[error_type] = []
+                action = record.get('action', 'unknown')
+                if action not in error_actions[error_type]:
+                    error_actions[error_type].append(action)
+        
+        if not error_counts:
+            return None
+        
+        most_common = max(error_counts.keys(), key=lambda k: error_counts[k])
+        
+        import uuid
+        pattern = YvErrorPattern(
+            pattern_id=str(uuid.uuid4()),
+            error_signature=most_common,
+            frequency=error_counts[most_common],
+            affected_actions=error_actions.get(most_common, []),
+            effective_solutions=self._find_effective_solutions(most_common, execution_history),
+            success_rate_after_retry=self._calculate_retry_success_rate(most_common, execution_history),
+            last_occurrence=time.time(),
+            context_patterns=error_contexts.get(most_common, [])[:5],
+        )
+        
+        return pattern
+    
+    def _classify_error_type(self, error_message: str) -> str:
+        """Classify error message into a type signature."""
+        error_lower = str(error_message).lower()
+        
+        if 'timeout' in error_lower:
+            return 'timeout_error'
+        elif 'connection' in error_lower or 'network' in error_lower:
+            return 'network_error'
+        elif 'permission' in error_lower or 'access' in error_lower:
+            return 'permission_error'
+        elif 'not found' in error_lower or 'missing' in error_lower:
+            return 'not_found_error'
+        elif 'invalid' in error_lower or 'format' in error_lower:
+            return 'validation_error'
+        elif 'memory' in error_lower or 'resource' in error_lower:
+            return 'resource_error'
+        else:
+            return 'unknown_error'
+    
+    def _find_effective_solutions(
+        self,
+        error_type: str,
+        execution_history: List[Dict[str, Any]]
+    ) -> List[str]:
+        """Find solutions that have worked for this error type."""
+        solutions = []
+        
+        for record in execution_history:
+            if record.get('status') == 'success':
+                prev_errors = record.get('previous_errors', [])
+                if any(self._classify_error_type(e) == error_type for e in prev_errors):
+                    solution = record.get('solution', 'retry')
+                    if solution not in solutions:
+                        solutions.append(solution)
+        
+        if not solutions:
+            solutions = ['retry', 'use_fallback', 'skip_step']
+        
+        return solutions[:5]
+    
+    def _calculate_retry_success_rate(
+        self,
+        error_type: str,
+        execution_history: List[Dict[str, Any]]
+    ) -> float:
+        """Calculate success rate after retrying this error type."""
+        retries = 0
+        successes = 0
+        
+        for record in execution_history:
+            if record.get('error_type') == error_type:
+                retries += 1
+                if record.get('retry_success', False):
+                    successes += 1
+        
+        return successes / max(retries, 1)
+    
+    def predict_failure_risk(
+        self,
+        current_step: Dict[str, Any],
+        context: Dict[str, Any]
+    ) -> float:
+        """Predict the risk of failure for the current step.
+        
+        Args:
+            current_step: The step to evaluate.
+            context: Current execution context.
+            
+        Returns:
+            float: Risk score between 0 and 1.
+        """
+        risk_factors = []
+        
+        tool_name = current_step.get('tool', 'unknown')
+        if tool_name in self._tool_health_scores:
+            health = self._tool_health_scores[tool_name]
+            risk_factors.append(1 - health)
+        
+        step_complexity = current_step.get('complexity', 0.5)
+        risk_factors.append(step_complexity * 0.3)
+        
+        dependencies = current_step.get('dependencies', [])
+        failed_deps = sum(1 for d in dependencies if context.get(f'dep_{d}_failed', False))
+        if dependencies:
+            risk_factors.append(failed_deps / len(dependencies))
+        
+        if risk_factors:
+            return sum(risk_factors) / len(risk_factors)
+        return 0.3
+    
+    def suggest_preventive_actions(
+        self,
+        risk_score: float
+    ) -> List[str]:
+        """Suggest preventive actions based on risk score.
+        
+        Args:
+            risk_score: The calculated risk score.
+            
+        Returns:
+            List[str]: Suggested preventive actions.
+        """
+        actions = []
+        
+        if risk_score > 0.7:
+            actions.extend([
+                "Consider using a fallback tool",
+                "Pre-validate inputs before execution",
+                "Set up checkpoint before this step",
+                "Prepare alternative execution path",
+            ])
+        elif risk_score > 0.5:
+            actions.extend([
+                "Monitor execution closely",
+                "Have fallback ready",
+                "Consider splitting into smaller steps",
+            ])
+        elif risk_score > 0.3:
+            actions.extend([
+                "Standard monitoring",
+                "Log execution details",
+            ])
+        else:
+            actions.append("Proceed with normal execution")
+        
+        return actions
+    
+    def update_error_knowledge(
+        self,
+        error: str,
+        resolution: str,
+        success: bool
+    ):
+        """Update error knowledge base with new information.
+        
+        Args:
+            error: The error encountered.
+            resolution: The resolution attempted.
+            success: Whether the resolution succeeded.
+        """
+        error_type = self._classify_error_type(error)
+        
+        if error_type not in self._error_patterns:
+            self._error_patterns[error_type] = YvErrorPattern(
+                pattern_id=f"pattern_{error_type}",
+                error_signature=error_type,
+                frequency=1,
+                affected_actions=[],
+                effective_solutions=[resolution] if success else [],
+                success_rate_after_retry=1.0 if success else 0.0,
+                last_occurrence=time.time(),
+            )
+        else:
+            pattern = self._error_patterns[error_type]
+            pattern.frequency += 1
+            pattern.last_occurrence = time.time()
+            
+            if success and resolution not in pattern.effective_solutions:
+                pattern.effective_solutions.append(resolution)
+            
+            total = pattern.frequency
+            current_rate = pattern.success_rate_after_retry
+            pattern.success_rate_after_retry = (current_rate * (total - 1) + (1 if success else 0)) / total
+    
+    def get_similar_error_cases(
+        self,
+        error_signature: str,
+        limit: int = 5
+    ) -> List[Dict[str, Any]]:
+        """Get similar error cases from history.
+        
+        Args:
+            error_signature: The error signature to match.
+            limit: Maximum number of cases to return.
+            
+        Returns:
+            List[Dict[str, Any]]: Similar error cases.
+        """
+        similar = []
+        
+        for pattern_id, pattern in self._error_patterns.items():
+            match_score = pattern.matches(error_signature, {})
+            if match_score > 0.3:
+                similar.append({
+                    'pattern_id': pattern_id,
+                    'error_signature': pattern.error_signature,
+                    'frequency': pattern.frequency,
+                    'solutions': pattern.effective_solutions,
+                    'success_rate': pattern.success_rate_after_retry,
+                    'match_score': match_score,
+                })
+        
+        similar.sort(key=lambda x: x['match_score'], reverse=True)
+        return similar[:limit]
+
+
+class YvPersistentMemory(nn.Module):
+    """Persistent memory system supporting cross-session experience accumulation.
+    
+    Storage contents:
+    - Success cases: efficient execution patterns
+    - Failure lessons: error patterns to avoid
+    - Tool experience: usage tips and best practices
+    - User preferences: personalized settings
     """
     
     def __init__(
@@ -932,7 +1728,7 @@ class RuchbahPersistentMemory(nn.Module):
         self.register_buffer('case_types', torch.zeros(max_cases, dtype=torch.long))
         self.register_buffer('case_count', torch.tensor(0))
     
-    def store_experience(self, experience: 'RuchbahAgentExperience'):
+    def store_experience(self, experience: 'YvAgentExperience'):
         embedding = self._extract_experience_embedding(experience)
         
         quality = self._assess_experience_quality(experience)
@@ -956,12 +1752,12 @@ class RuchbahPersistentMemory(nn.Module):
     
     def _extract_experience_embedding(
         self,
-        experience: 'RuchbahAgentExperience'
+        experience: 'YvAgentExperience'
     ) -> torch.Tensor:
         features = []
         
         goal_tokens = torch.tensor([ord(c) for c in experience.goal[:50]], dtype=torch.float32)
-        goal_features = F.normalize(goal_features.unsqueeze(0), p=2, dim=-1)
+        goal_features = F.normalize(goal_tokens.unsqueeze(0), p=2, dim=-1)
         features.append(goal_features.squeeze(0))
         
         success_rate = torch.tensor([experience.success_rate])
@@ -978,7 +1774,7 @@ class RuchbahPersistentMemory(nn.Module):
         
         return self.memory_encoder(combined.unsqueeze(0))
     
-    def _assess_experience_quality(self, experience: 'RuchbahAgentExperience') -> float:
+    def _assess_experience_quality(self, experience: 'YvAgentExperience') -> float:
         quality = 0.0
         
         quality += experience.success_rate * 0.5
@@ -992,7 +1788,7 @@ class RuchbahPersistentMemory(nn.Module):
         
         return min(1.0, quality)
     
-    def _get_case_type(self, experience: 'RuchbahAgentExperience') -> int:
+    def _get_case_type(self, experience: 'YvAgentExperience') -> int:
         if experience.success_rate > 0.8:
             return 0
         elif experience.success_rate > 0.5:
@@ -1000,7 +1796,7 @@ class RuchbahPersistentMemory(nn.Module):
         else:
             return 2
     
-    def _record_tool_experience(self, tool_usage: 'RuchbahToolUsage'):
+    def _record_tool_experience(self, tool_usage: 'YvToolUsage'):
         tool_name = tool_usage.tool_name
         if tool_name not in self.tool_experience:
             self.tool_experience[tool_name] = {
@@ -1022,7 +1818,7 @@ class RuchbahPersistentMemory(nn.Module):
         self,
         query: str,
         k: int = 5
-    ) -> List['RuchbahSimilarCase']:
+    ) -> List['YvSimilarCase']:
         query_embedding = self._encode_query(query)
         
         similarities = F.cosine_similarity(
@@ -1037,7 +1833,7 @@ class RuchbahPersistentMemory(nn.Module):
         for idx, sim in zip(top_k.indices, top_k.values):
             if idx < len(self.case_library):
                 case = self.case_library[idx]
-                similar_cases.append(RuchbahSimilarCase(
+                similar_cases.append(YvSimilarCase(
                     case=case,
                     similarity=sim.item(),
                     relevance_score=self._calculate_relevance(case, query)
@@ -1070,7 +1866,7 @@ class RuchbahPersistentMemory(nn.Module):
         
         return min(1.0, relevance)
     
-    def get_tool_recommendations(self, task_type: str) -> List['RuchbahToolRecommendation']:
+    def get_tool_recommendations(self, task_type: str) -> List['YvToolRecommendation']:
         relevant_experiences = self.retrieve_similar_experiences(task_type, k=10)
         
         tool_usage_stats = {}
@@ -1091,7 +1887,7 @@ class RuchbahPersistentMemory(nn.Module):
         
         recommendations = []
         for tool_name, stats in tool_usage_stats.items():
-            recommendations.append(RuchbahToolRecommendation(
+            recommendations.append(YvToolRecommendation(
                 tool_name=tool_name,
                 success_probability=stats['success_rate'],
                 usage_count=stats['count'],
@@ -1103,7 +1899,8 @@ class RuchbahPersistentMemory(nn.Module):
 
 
 @dataclass
-class RuchbahTaskStage:
+class YvTaskStage:
+    """Task stage data class."""
     stage_id: int
     name: str
     description: str
@@ -1113,7 +1910,8 @@ class RuchbahTaskStage:
 
 
 @dataclass
-class RuchbahPlanStep:
+class YvPlanStep:
+    """Plan step data class."""
     step_id: int
     name: str
     description: str
@@ -1124,26 +1922,225 @@ class RuchbahPlanStep:
 
 
 @dataclass
-class RuchbahTaskGraph:
+class YvTaskGraph:
+    """Task graph data class with checkpoint and recovery support."""
     goal: str
-    stages: List[RuchbahTaskStage]
-    steps: List[RuchbahPlanStep]
+    stages: List[YvTaskStage]
+    steps: List[YvPlanStep]
     dependencies: List[Tuple[int, int]]
     critical_nodes: List[int]
     complexity: Dict[str, float]
     current_phase: str = "planning"
+    execution_start_time: float = 0.0
+    last_checkpoint_time: float = 0.0
+    checkpoint_interval: float = 300.0
+    elapsed_time: float = 0.0
+    progress_percentage: float = 0.0
+    interrupted: bool = False
+    interruption_point: Optional[int] = None
+    checkpoint_history: List[str] = field(default_factory=list)
+    completed_steps: List[int] = field(default_factory=list)
+    failed_steps: List[int] = field(default_factory=list)
+    retry_counts: Dict[int, int] = field(default_factory=dict)
+    error_history: List[Dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
-class RuchbahToolChain:
+class YvCheckpoint:
+    """Checkpoint for long-running task execution.
+    
+    Captures complete execution state for recovery from failures
+    and interruption handling.
+    
+    Attributes:
+        checkpoint_id: Unique identifier for the checkpoint.
+        task_graph: The task graph at checkpoint time.
+        completed_steps: List of completed step IDs.
+        failed_steps: List of failed step IDs.
+        execution_context: Context information for resuming.
+        timestamp: When the checkpoint was created.
+        can_resume: Whether this checkpoint can be resumed.
+        retry_count: Total retry count across all steps.
+        error_history: History of errors encountered.
+    """
+    checkpoint_id: str
+    task_graph: Optional[YvTaskGraph]
+    completed_steps: List[int]
+    failed_steps: List[int]
+    execution_context: Dict[str, Any]
+    timestamp: float
+    can_resume: bool
+    retry_count: int
+    error_history: List[Dict[str, Any]]
+    metadata: Dict[str, Any] = field(default_factory=dict)
+    
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert checkpoint to dictionary for serialization."""
+        return {
+            "checkpoint_id": self.checkpoint_id,
+            "completed_steps": self.completed_steps,
+            "failed_steps": self.failed_steps,
+            "execution_context": self.execution_context,
+            "timestamp": self.timestamp,
+            "can_resume": self.can_resume,
+            "retry_count": self.retry_count,
+            "error_history": self.error_history,
+            "metadata": self.metadata,
+        }
+
+
+class YvBackoffStrategy(Enum):
+    """Backoff strategy for retry operations."""
+    EXPONENTIAL = "exponential"
+    LINEAR = "linear"
+    CONSTANT = "constant"
+    FIBONACCI = "fibonacci"
+    JITTERED = "jittered"
+
+
+@dataclass
+class YvRetryPolicy:
+    """Retry policy for error recovery.
+    
+    Defines comprehensive retry behavior including backoff strategies,
+    maximum attempts, and error classification.
+    
+    Attributes:
+        max_attempts: Maximum number of retry attempts.
+        base_delay: Base delay in seconds for backoff.
+        max_delay: Maximum delay cap in seconds.
+        exponential_base: Base for exponential backoff.
+        jitter: Whether to add random jitter to delays.
+        retryable_errors: List of error types that can be retried.
+        backoff_strategy: The backoff strategy to use.
+        timeout: Maximum time for retry operations.
+        escalate_after: Number of failures before escalation.
+    """
+    max_attempts: int = 3
+    base_delay: float = 1.0
+    max_delay: float = 60.0
+    exponential_base: float = 2.0
+    jitter: bool = True
+    retryable_errors: List[str] = field(default_factory=lambda: [
+        "timeout", "connection_error", "rate_limit", "temporary_failure"
+    ])
+    backoff_strategy: YvBackoffStrategy = YvBackoffStrategy.EXPONENTIAL
+    timeout: float = 300.0
+    escalate_after: int = 5
+    
+    def calculate_delay(self, attempt: int) -> float:
+        """Calculate delay for a given attempt number."""
+        import random
+        
+        if self.backoff_strategy == YvBackoffStrategy.EXPONENTIAL:
+            delay = self.base_delay * (self.exponential_base ** attempt)
+        elif self.backoff_strategy == YvBackoffStrategy.LINEAR:
+            delay = self.base_delay * (attempt + 1)
+        elif self.backoff_strategy == YvBackoffStrategy.FIBONACCI:
+            fib = [1, 1]
+            for _ in range(attempt):
+                fib.append(fib[-1] + fib[-2])
+            delay = self.base_delay * fib[min(attempt, len(fib) - 1)]
+        elif self.backoff_strategy == YvBackoffStrategy.JITTERED:
+            delay = self.base_delay * (self.exponential_base ** attempt)
+            delay = delay * (0.5 + random.random())
+        else:
+            delay = self.base_delay
+        
+        if self.jitter and self.backoff_strategy != YvBackoffStrategy.JITTERED:
+            delay = delay * (0.8 + random.random() * 0.4)
+        
+        return min(delay, self.max_delay)
+    
+    def should_retry(self, error_type: str, attempt: int) -> bool:
+        """Determine if an error should be retried."""
+        if attempt >= self.max_attempts:
+            return False
+        return error_type in self.retryable_errors or error_type == "unknown"
+
+
+@dataclass
+class YvErrorPattern:
+    """Error pattern for learning and prediction.
+    
+    Captures recurring error patterns for proactive error handling
+    and preventive action suggestions.
+    
+    Attributes:
+        pattern_id: Unique identifier for the pattern.
+        error_signature: Hash/signature of the error type.
+        frequency: How often this pattern occurs.
+        affected_actions: Actions that trigger this error.
+        effective_solutions: Solutions that have worked.
+        success_rate_after_retry: Success rate after applying solutions.
+        last_occurrence: When this pattern was last seen.
+        context_patterns: Common context patterns for this error.
+    """
+    pattern_id: str
+    error_signature: str
+    frequency: int
+    affected_actions: List[str]
+    effective_solutions: List[str]
+    success_rate_after_retry: float
+    last_occurrence: float
+    context_patterns: List[Dict[str, Any]] = field(default_factory=list)
+    severity: str = "medium"
+    auto_recoverable: bool = True
+    
+    def matches(self, error_signature: str, context: Dict[str, Any]) -> float:
+        """Calculate match score for an error."""
+        if self.error_signature != error_signature:
+            return 0.0
+        
+        context_match = 0.0
+        if self.context_patterns:
+            for pattern in self.context_patterns:
+                matches = sum(1 for k, v in pattern.items() if context.get(k) == v)
+                context_match = max(context_match, matches / len(pattern))
+        
+        return 0.5 + 0.5 * context_match
+
+
+@dataclass
+class YvRecoveryContext:
+    """Context for recovery operations.
+    
+    Bundles all information needed for intelligent recovery
+    from failures during long-running execution.
+    
+    Attributes:
+        error_type: Classification of the error.
+        error_message: Detailed error message.
+        attempt_count: Number of attempts so far.
+        elapsed_time: Time spent on current operation.
+        previous_strategies: Strategies already tried.
+        suggested_delay: Recommended delay before retry.
+        recovery_options: Available recovery options.
+    """
+    error_type: str
+    error_message: str
+    attempt_count: int
+    elapsed_time: float
+    previous_strategies: List[str]
+    suggested_delay: float
+    recovery_options: List[str]
+    checkpoint_available: bool = False
+    fallback_tools: List[str] = field(default_factory=list)
+    context: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class YvToolChain:
+    """Tool chain data class."""
     tools: List[Dict[str, Any]]
-    conditions: List['RuchbahToolCondition']
+    conditions: List['YvToolCondition']
     fallback_strategies: Dict[str, List[str]]
     goal: str
 
 
 @dataclass
-class RuchbahToolCondition:
+class YvToolCondition:
+    """Tool condition data class."""
     trigger_tool: str
     condition_type: str
     condition_expression: str
@@ -1152,7 +2149,8 @@ class RuchbahToolCondition:
 
 
 @dataclass
-class RuchbahExecutionEvaluation:
+class YvExecutionEvaluation:
+    """Execution evaluation data class."""
     overall_score: float
     correctness: float
     completeness: float
@@ -1164,18 +2162,20 @@ class RuchbahExecutionEvaluation:
 
 
 @dataclass
-class RuchbahAgentExperience:
+class YvAgentExperience:
+    """Agent experience data class."""
     goal: str
     task_type: str
     execution_pattern: Dict[str, Any]
     outcome: Dict[str, Any]
     success_rate: float
     complexity: float
-    tool_usages: List['RuchbahToolUsage']
+    tool_usages: List['YvToolUsage']
 
 
 @dataclass
-class RuchbahToolUsage:
+class YvToolUsage:
+    """Tool usage data class."""
     tool_name: str
     parameter_pattern: Dict[str, Any]
     success_rate: float
@@ -1183,14 +2183,16 @@ class RuchbahToolUsage:
 
 
 @dataclass
-class RuchbahSimilarCase:
+class YvSimilarCase:
+    """Similar case data class."""
     case: Dict[str, Any]
     similarity: float
     relevance_score: float
 
 
 @dataclass
-class RuchbahToolRecommendation:
+class YvToolRecommendation:
+    """Tool recommendation data class."""
     tool_name: str
     success_probability: float
     usage_count: int

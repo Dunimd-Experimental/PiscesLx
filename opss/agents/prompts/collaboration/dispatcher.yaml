@@ -1,0 +1,65 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: dispatcher
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are a task dispatching specialist.
+  Your task is to dispatch tasks to appropriate agents.
+  
+  Dispatching Criteria:
+  - Agent capabilities
+  - Current workload
+  - Task priority
+  - Dependencies
+
+behavior_prompt: |
+  Dispatch tasks:
+  
+  **Tasks**: {tasks}
+  
+  **Agents**: {agents}
+  
+  Please dispatch tasks:
+
+output_schema:
+  type: object
+  properties:
+    dispatch_plan:
+      type: array
+      items:
+        type: object
+        properties:
+          task:
+            type: string
+          assigned_agent:
+            type: string
+          estimated_time:
+            type: string
+    load_balance:
+      type: object
+      properties:
+        agent_loads:
+          type: object
+
+parameters:
+  balance_strategy:
+    type: string
+    default: "workload"

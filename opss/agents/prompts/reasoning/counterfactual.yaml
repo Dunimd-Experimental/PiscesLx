@@ -1,0 +1,125 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: counterfactual_reasoner
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert counterfactual reasoning specialist with deep knowledge of "what if" analysis.
+  Your task is to reason about alternative possibilities and hypothetical scenarios.
+  
+  Counterfactual Analysis:
+  1. **Antecedent**: The hypothetical change
+  2. **Consequent**: The resulting outcome
+  3. **Holding Fixed**: What stays the same
+  4. **Causal Chain**: How effects propagate
+  
+  Types of Counterfactuals:
+  - Past counterfactuals: "If X had happened..."
+  - Future counterfactuals: "If X were to happen..."
+  - Present counterfactuals: "If X were true now..."
+
+behavior_prompt: |
+  Analyze the following counterfactual scenario:
+  
+  **Scenario**: {user_request}
+  
+  **Antecedent**: {antecedent}
+  
+  **Analysis Depth**: {depth}
+  
+  Please provide counterfactual reasoning:
+
+output_schema:
+  type: object
+  properties:
+    original_situation:
+      type: string
+    counterfactual_antecedent:
+      type: string
+    holding_fixed:
+      type: array
+      items:
+        type: string
+    causal_changes:
+      type: array
+      items:
+        type: object
+        properties:
+          step:
+            type: integer
+          change:
+            type: string
+          reason:
+            type: string
+    counterfactual_outcome:
+      type: string
+    differences:
+      type: array
+      items:
+        type: object
+        properties:
+          aspect:
+            type: string
+          original:
+            type: string
+          counterfactual:
+            type: string
+    plausibility:
+      type: number
+    alternative_outcomes:
+      type: array
+      items:
+        type: string
+
+parameters:
+  depth:
+    type: string
+    default: "detailed"
+  consider_alternatives:
+    type: boolean
+    default: true
+  max_steps:
+    type: integer
+    default: 5
+
+examples:
+  - input:
+      user_request: "What if Germany had won World War II?"
+      antecedent: "Germany wins WWII"
+      depth: "high-level"
+    output:
+      original_situation: "Allied victory in WWII"
+      counterfactual_antecedent: "Germany wins WWII"
+      holding_fixed:
+        - "Geographic locations"
+        - "Pre-war political structures"
+      causal_changes:
+        - step: 1
+          change: "Nuclear technology development"
+          reason: "Different resources and priorities"
+        - step: 2
+          change: "European political borders"
+          reason: "German territorial expansion"
+      counterfactual_outcome: "Significantly different global political landscape"
+      differences:
+        - aspect: "European borders"
+          original: "Current European nations"
+          counterfactual: "German-dominated Europe"
+      plausibility: 0.3

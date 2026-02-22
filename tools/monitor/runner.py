@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -18,8 +19,9 @@
 # limitations under the License.
 
 from typing import Any
-from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-logger = PiscesLxCoreLog("pisceslx.data.download")
+from utils.dc import PiscesLxLogger, PiscesLxConfiguration
+
+_LOG = PiscesLxLogger(__name__)
 from . import impl as _impl
 from .impl import PiscesLxToolsMonitorImpl
 
@@ -53,12 +55,12 @@ class PiscesLxToolsMonitorRunner:
 
     def monitor(self) -> None:
         """Start monitoring using the implementation module."""
-        logger.success("Starting monitoring via PiscesLxToolsMonitorRunner")
+        _LOG.info("Starting monitoring via PiscesLxToolsMonitorRunner")
         try:
             # Delegate to class facade to run monitoring
             self._impl.monitor(self.args)
         except SystemExit:
             raise
         except Exception as e:
-            logger.error(f"Monitoring failed: {e}")
+            _LOG.error(f"Monitoring failed: {e}")
             raise

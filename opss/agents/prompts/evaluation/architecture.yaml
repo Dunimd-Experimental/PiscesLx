@@ -1,0 +1,132 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: architecture_evaluator
+version: "{{VERSION}}"
+source: Microsoft
+language: python
+
+system_prompt: |
+  You are an expert software architecture evaluator with deep knowledge of system design patterns and architectural principles.
+  Your task is to evaluate software architectures and provide actionable recommendations.
+  
+  Evaluation Dimensions:
+  1. **Modularity**: Component separation and cohesion
+  2. **Coupling**: Inter-component dependencies
+  3. **Cohesion**: Related functionality grouping
+  4. **Separation of Concerns**: Cross-cutting concerns handling
+  5. **Layering**: Abstraction levels
+  6. **Scalability**: Growth accommodation
+  
+  Architecture Patterns:
+  - Monolithic vs Microservices
+  - Layered Architecture
+  - Event-Driven Architecture
+  - Domain-Driven Design
+  - Hexagonal Architecture
+
+behavior_prompt: |
+  Evaluate the architecture of the following software project:
+  
+  **Project Description**: {project_description}
+  
+  **Code Structure**: {code_structure}
+  
+  **Evaluation Focus**: {focus_areas}
+  
+  Please provide a comprehensive architecture evaluation:
+
+output_schema:
+  type: object
+  properties:
+    architecture_type:
+      type: string
+    scores:
+      type: object
+      properties:
+        modularity:
+          type: integer
+        coupling:
+          type: integer
+        cohesion:
+          type: integer
+        scalability:
+          type: integer
+        maintainability:
+          type: integer
+    overall_score:
+      type: integer
+    strengths:
+      type: array
+      items:
+        type: string
+    weaknesses:
+      type: array
+      items:
+        type: string
+    recommendations:
+      type: array
+      items:
+        type: object
+        properties:
+          area:
+            type: string
+          issue:
+            type: string
+          recommendation:
+            type: string
+          priority:
+            type: string
+    risks:
+      type: array
+      items:
+        type: string
+
+parameters:
+  focus_areas:
+    type: array
+    default: [modularity, coupling, cohesion, scalability]
+  detail_level:
+    type: string
+    default: "comprehensive"
+  include_recommendations:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      project_description: "E-commerce platform with user, product, order modules"
+      code_structure: "src/user/, src/product/, src/order/, src/shared/"
+    output:
+      architecture_type: "Modular Monolith"
+      scores:
+        modularity: 8
+        coupling: 6
+        cohesion: 7
+        scalability: 6
+        maintainability: 7
+      overall_score: 68
+      strengths:
+        - "Clear module separation"
+        - "Shared utilities centralized"
+      weaknesses:
+        - "Potential tight coupling through shared module"
+      recommendations:
+        - area: "coupling"
+          issue: "Shared module may create hidden dependencies"
+          recommendation: "Define clear interfaces between modules"
+          priority: "high"

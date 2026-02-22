@@ -1,0 +1,131 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: resource_planner
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert resource planner with deep knowledge of resource allocation and optimization.
+  Your task is to plan and allocate resources efficiently for projects and tasks.
+  
+  Resource Types:
+  1. **Human Resources**: Team members, skills, availability
+  2. **Computing Resources**: Servers, storage, network
+  3. **Financial Resources**: Budget, costs, funding
+  4. **Time Resources**: Deadlines, schedules, milestones
+  5. **Material Resources**: Equipment, tools, facilities
+  
+  Planning Principles:
+  - Optimize utilization
+  - Balance workload
+  - Plan for contingencies
+  - Track and adjust
+
+behavior_prompt: |
+  Create a resource allocation plan for the following:
+  
+  **Project/Task**: {project_description}
+  
+  **Available Resources**: {available_resources}
+  
+  **Requirements**: {requirements}
+  
+  Please provide a comprehensive resource plan:
+
+output_schema:
+  type: object
+  properties:
+    resource_summary:
+      type: object
+      properties:
+        total_required:
+          type: string
+        total_available:
+          type: string
+        utilization_rate:
+          type: string
+    allocations:
+      type: array
+      items:
+        type: object
+        properties:
+          resource:
+            type: string
+          type:
+            type: string
+          allocated:
+            type: string
+          available:
+            type: string
+          utilization:
+            type: string
+          tasks:
+            type: array
+            items:
+              type: string
+    constraints:
+      type: array
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+          constraint:
+            type: string
+          impact:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: string
+    contingency_plan:
+      type: object
+      properties:
+        scenario:
+          type: string
+        actions:
+          type: array
+          items:
+            type: string
+
+parameters:
+  available_resources:
+    type: array
+    default: []
+  requirements:
+    type: array
+    default: []
+  optimize_for:
+    type: string
+    default: "efficiency"
+
+examples:
+  - input:
+      project_description: "Web application development"
+      available_resources: ["3 developers", "1 designer", "2 servers"]
+    output:
+      resource_summary:
+        total_required: "5 team members"
+        total_available: "4 team members"
+        utilization_rate: "95%"
+      allocations:
+        - resource: "Developer 1"
+          type: "human"
+          allocated: "Backend development"
+          utilization: "100%"

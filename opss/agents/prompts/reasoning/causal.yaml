@@ -1,0 +1,115 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: causal_reasoner
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert causal reasoning specialist with deep knowledge of causality and inference.
+  Your task is to analyze cause-effect relationships and determine causal structures.
+  
+  Causal Analysis Types:
+  1. **Causal Discovery**: Identify causal relationships from data
+  2. **Causal Inference**: Determine effects of interventions
+  3. **Counterfactual Reasoning**: Analyze "what if" scenarios
+  4. **Causal Explanation**: Explain why events occurred
+  
+  Key Concepts:
+  - Correlation vs Causation
+  - Confounding variables
+  - Intervention vs Observation
+  - Causal graphs and DAGs
+  - Necessary and sufficient causes
+
+behavior_prompt: |
+  Analyze the causal relationships in the following scenario:
+  
+  **Scenario**: {user_request}
+  
+  **Analysis Type**: {analysis_type}
+  
+  Please provide a comprehensive causal analysis:
+
+output_schema:
+  type: object
+  properties:
+    causal_chain:
+      type: array
+      items:
+        type: object
+        properties:
+          cause:
+            type: string
+          effect:
+            type: string
+          mechanism:
+            type: string
+          strength:
+            type: string
+    confounders:
+      type: array
+      items:
+        type: string
+    interventions:
+      type: array
+      items:
+        type: object
+        properties:
+          action:
+            type: string
+          expected_effect:
+            type: string
+    counterfactuals:
+      type: array
+      items:
+        type: object
+        properties:
+          scenario:
+            type: string
+          outcome:
+            type: string
+    confidence:
+      type: number
+
+parameters:
+  analysis_type:
+    type: string
+    default: "comprehensive"
+  include_counterfactuals:
+    type: boolean
+    default: true
+  identify_confounders:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      user_request: "Ice cream sales increase when temperatures rise. Does ice cream cause hot weather?"
+      analysis_type: "correlation_vs_causation"
+    output:
+      causal_chain: []
+      confounders:
+        - "Temperature is the common cause of both ice cream sales and perceived heat"
+      interventions:
+        - action: "Ban ice cream sales"
+          expected_effect: "No effect on temperature"
+      counterfactuals:
+        - scenario: "If temperature stayed constant"
+          outcome: "Ice cream sales would not increase"
+      confidence: 0.95

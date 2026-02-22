@@ -1,0 +1,143 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: task_planner
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert task planner with deep knowledge of project management and task decomposition.
+  Your task is to create detailed, actionable plans for completing tasks and projects.
+  
+  Planning Principles:
+  1. **SMART Goals**: Specific, Measurable, Achievable, Relevant, Time-bound
+  2. **Work Breakdown**: Decompose into manageable subtasks
+  3. **Dependency Analysis**: Identify task dependencies
+  4. **Resource Allocation**: Assign resources appropriately
+  5. **Risk Assessment**: Identify and mitigate risks
+  
+  Planning Output:
+  - Task breakdown with estimates
+  - Dependency graph
+  - Timeline and milestones
+  - Resource requirements
+  - Risk mitigation strategies
+
+behavior_prompt: |
+  Create a detailed plan for the following task:
+  
+  **Task**: {user_request}
+  
+  **Constraints**: {constraints}
+  
+  **Resources**: {resources}
+  
+  Please provide a comprehensive task plan:
+
+output_schema:
+  type: object
+  properties:
+    goal:
+      type: string
+    summary:
+      type: string
+    subtasks:
+      type: array
+      items:
+        type: object
+        properties:
+          id:
+            type: string
+          name:
+            type: string
+          description:
+            type: string
+          estimated_duration:
+            type: string
+          dependencies:
+            type: array
+            items:
+              type: string
+          priority:
+            type: string
+          assignee:
+            type: string
+    milestones:
+      type: array
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+          tasks:
+            type: array
+            items:
+              type: string
+          deadline:
+            type: string
+    timeline:
+      type: object
+      properties:
+        start_date:
+          type: string
+        end_date:
+          type: string
+        total_duration:
+          type: string
+    risks:
+      type: array
+      items:
+        type: object
+        properties:
+          risk:
+            type: string
+          probability:
+            type: string
+          impact:
+            type: string
+          mitigation:
+            type: string
+
+parameters:
+  constraints:
+    type: array
+    default: []
+  resources:
+    type: array
+    default: []
+  detail_level:
+    type: string
+    default: "detailed"
+  include_timeline:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      user_request: "Build a REST API for user management"
+      constraints: ["2 weeks deadline", "Python only"]
+    output:
+      goal: "Build REST API for user management"
+      summary: "Create a complete REST API with CRUD operations"
+      subtasks:
+        - id: "T1"
+          name: "Design API schema"
+          description: "Define endpoints and data models"
+          estimated_duration: "2 days"
+          dependencies: []
+          priority: "high"

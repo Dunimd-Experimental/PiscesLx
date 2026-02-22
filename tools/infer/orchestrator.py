@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -17,304 +18,584 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Any, Optional
-from utils import PiscesLxCoreLog, PiscesLxCoreConfigManager
-from utils import PiscesLxCoreHookBus, PiscesLxCoreDeviceFacade, PiscesLxCoreEnhancedCacheManager
-from utils import PiscesLxCoreObservabilityFacade, PiscesLxCoreMetricsRegistry
-from utils import PiscesLxCoreCheckpointManager
+"""
+Inference Orchestrator
+Unified management and coordination of all inference components.
+"""
 
-try:
-    # optional watermark integration (enabled via env toggles)
-    from utils.watermark.integration import get_watermark_manager_from_env
-except Exception:
-    get_watermark_manager_from_env = lambda: None  # type: ignore
+import torch
+import torch.nn as nn
+from typing import Dict, Any, Optional, List, Callable, Union
+from pathlib import Path
+import time
+from datetime import datetime
+import json
+import yaml
+import os
 
-logger = PiscesLxCoreLog("pisceslx.tools.infer.orchestrator")
+# OPSC operator system integration
+from utils.opsc.base import PiscesLxBaseOperator
+from utils.opsc.interface import PiscesLxOperatorConfig
+from utils.opsc.registry import PiscesLxOperatorRegistrar
+from utils.dc import PiscesLxLogger
 
-# Reuse the training profiler to avoid duplication
-try:
-    from tools.train.profiler import PiscesLxToolsProfiler
-except Exception:
-    import time
-    from typing import Dict, Optional
-    
-    class PiscesLxToolsProfiler:  # fallback with basic timing
-        """Fallback profiler with basic timing functionality when training profiler is unavailable."""
-        
-        def __init__(self):
-            self._phase_timers: Dict[str, float] = {}
-            self._phase_results: Dict[str, float] = {}
-            self._active = False
-        
-        def start(self, phase_name: str = "infer", **kwargs) -> None:
-            """Start profiling for a specific phase with optional metadata."""
-            self._active = True
-            self._phase_timers[phase_name] = time.perf_counter()
-            logger.debug(f"Profiler started for phase: {phase_name}")
-        
-        def stop(self, phase_name: str = "infer", **kwargs) -> Optional[float]:
-            """Stop profiling and return elapsed time for the specified phase."""
-            if not self._active or phase_name not in self._phase_timers:
-                logger.debug(f"Profiler stop called for inactive phase: {phase_name}")
-                return None
-            
-            elapsed = time.perf_counter() - self._phase_timers[phase_name]
-            self._phase_results[phase_name] = elapsed
-            self._active = False
-            
-            logger.debug(f"Profiler stopped for phase: {phase_name}, elapsed: {elapsed:.3f}s")
-            return elapsed
+from .config import InferenceConfig
+from .core import PiscesLxInferenceEngine
+from .pipeline import InferencePipelineOperator, PromptEngineeringOperator
 
-try:
-    from .config import PiscesLxToolsInferConfig
-except Exception:
-    class PiscesLxToolsInferConfig:  # minimal facade
-        def __init__(self, data: dict):
-            self.data = data
-        @classmethod
-        def from_args(cls, args: Any) -> "PiscesLxToolsInferConfig":
-            d = {}
-            if getattr(args, 'infer_mode', None):
-                d.setdefault('infer', {})
-                d['infer']['mode'] = args.infer_mode
-            return cls(d)
-        def get(self, key: str, default: Optional[Any] = None) -> Any:
-            cur = self.data
-            for part in key.split('.'):
-                if not isinstance(cur, dict) or part not in cur:
-                    return default
-                cur = cur[part]
-            return cur
 
-class PiscesLxToolsInferOrchestrator:
-    """Orchestrates inference workflows for PiscesL1.
+_LOG = PiscesLxLogger(__name__)
 
-    Modes (phase-1):
-    - standard: native Pisces inference (behavior preserved)
-    - vllm: high-performance inference via VLLM (auto-fallback if unavailable)
-    
-    Enhanced with utils device management, caching, observability, and performance optimization.
+
+@PiscesLxOperatorRegistrar()
+class InferenceOrchestrator(PiscesLxBaseOperator):
     """
+    Inference Orchestrator.
+    Unified management of all components in the inference pipeline.
+    """
+    
+    def __init__(self, config: Optional[Union[PiscesLxOperatorConfig, InferenceConfig, str, Dict[str, Any]]] = None):
+        op_config = config if isinstance(config, PiscesLxOperatorConfig) else None
+        super().__init__(op_config)
 
-    def __init__(self, args: Any) -> None:
-        self.args = args
-        self.hooks = PiscesLxCoreHookBus()
-        self.profiler = PiscesLxToolsProfiler()
-        self.cfg = PiscesLxToolsInferConfig.from_args(args)
+        self.infer_config = self._normalize_infer_config(config)
         
-        # Initialize utils-enhanced components for inference optimization
-        self._init_utils_components()
+        # Initialize core components
+        self.inferencer = None
+        self.pipeline = None
+        self.accelerators = {}
+        self.quantizers = {}
+        
+        # Inference state
+        self.is_initialized = False
+        self.current_session = "default"
+        self.inference_sessions = {}
+        
+        _LOG.info("InferenceOrchestrator initialized")
 
-    def _init_utils_components(self):
-        """Initialize utils-enhanced components for inference optimization and monitoring."""
-        # Initialize device facade for optimal device selection
-        self.device_facade = PiscesLxCoreDeviceFacade(self.args)
-        
-        # Initialize cache manager for model and inference result caching
-        self.cache_manager = PiscesLxCoreEnhancedCacheManager.get_instance()
-        
-        # Initialize observability facade for inference performance monitoring
-        self.observability = PiscesLxCoreObservabilityFacade()
-        
-        # Initialize metrics registry for inference-specific metrics
-        self.metrics_registry = PiscesLxCoreMetricsRegistry()
-        # Initialize checkpoint manager for model loading optimization
-        self.checkpoint_manager = PiscesLxCoreCheckpointManager()
-        
-        # Initialize configuration manager for dynamic inference config
-        self.config_manager = PiscesLxCoreConfigManager()
-
-        # Initialize watermark manager (optional, controlled by env)
-        self.wm_manager = get_watermark_manager_from_env() if 'get_watermark_manager_from_env' in globals() else None
-
-        # Emit orchestrator initialization event
-        device_config = self.device_facade.setup_devices(mode="auto") if hasattr(self.device_facade, 'setup_devices') else {}
-        self.hooks.emit("infer.orchestrator.init",
-                       config=self.cfg.dump_effective() if hasattr(self.cfg, 'dump_effective') else {},
-                       device_config=device_config,
-                       cache_enabled=self.cache_manager is not None,
-                       observability_enabled=self.observability is not None,
-                       watermark_enabled=bool(self.wm_manager))
-
-    def run(self, args: Any) -> None:
-        mode = self.cfg.get('infer.mode', default=(getattr(args, 'infer_mode', None) or 'standard'))
-        logger.success(f"Inferencer mode: {mode}")
-        
-        # Emit inference start event with enhanced context
-        inference_context = {
-            "mode": mode,
-            "device_config": self.device_facade.setup_devices(mode="auto") if hasattr(self.device_facade, 'setup_devices') else {},
-            "cache_enabled": self.cache_manager is not None,
-            "observability_enabled": self.observability is not None,
-            "watermark_enabled": bool(getattr(self, 'wm_manager', None)),
-        }
-        self.hooks.emit("infer.start", **inference_context)
-        
+    def run(self, args) -> Dict[str, Any]:
+        params: Dict[str, Any] = {}
         try:
-            if mode in ('standard', 'vllm'):
-                self.run_standard_infer()
-            else:
-                logger.error(f"Unknown infer.mode: {mode}")
-                self.hooks.emit("infer.error", error=f"Unknown infer.mode: {mode}")
-                raise SystemExit(1)
-                
-            # Emit inference completion event
-            self.hooks.emit("infer.complete", mode=mode)
-            
-        except Exception as e:
-            # Emit inference failure event with detailed error context
-            error_context = {
-                "error": str(e),
-                "mode": mode,
-                "device_config": inference_context.get("device_config", {})
-            }
-            self.hooks.emit("infer.failure", **error_context)
-            logger.error(f"Inference failed in mode {mode}: {e}")
-            raise
+            if hasattr(args, "__dict__"):
+                params = dict(vars(args))
+        except Exception:
+            params = {}
 
-    def run_standard_infer(self) -> None:
-        """Run native/vLLM inference via the class-based runner.
-        
-        Enhanced with utils device optimization, model caching, and performance monitoring.
+        infer_cfg_path = params.get("infer_config")
+        if isinstance(infer_cfg_path, str) and infer_cfg_path.strip():
+            self.infer_config = self._load_config_from_file(infer_cfg_path.strip())
+        try:
+            self.infer_config.apply_cli_overrides(params)
+        except Exception:
+            pass
+
+        if params.get("dry_run"):
+            out = {"status": "dry_run", "infer_config": self.infer_config.to_dict(), "infer_mode": params.get("infer_mode", "standard")}
+            try:
+                print(json.dumps(out, ensure_ascii=False, indent=2))
+            except Exception:
+                pass
+            return out
+
+        if params.get("serve"):
+            from .server import PiscesLxInferService
+            svc = PiscesLxInferService(
+                host=str(params.get("host") or "127.0.0.1"),
+                port=int(params.get("port") or 8000),
+                ckpt=str(params.get("ckpt") or "").strip() or None,
+                model_path=str(params.get("model_path") or "").strip() or None,
+                model_size=str(params.get("model_size") or "0.5B").strip(),
+                run_id=str(params.get("run_id") or "").strip() or None,
+                run_dir=params.get("run_dir"),
+                run_name=params.get("run_name"),
+                control_interval_s=float(params.get("control_interval") or 0.5),
+                max_concurrency=int(params.get("max_concurrency") or 2),
+                request_timeout_s=float(params.get("request_timeout") or 120.0),
+            )
+            svc.serve()
+            return {"status": "stopped"}
+
+        ckpt = str(params.get("ckpt") or "").strip()
+        prompt = params.get("prompt")
+        prompt = str(prompt) if prompt is not None else "Hello, please introduce yourself"
+        model_path = params.get("model_path")
+        model_path = str(model_path).strip() if model_path is not None else ""
+
+        run_id = str(params.get("run_id") or "").strip()
+        run_ctl = None
+        if run_id:
+            try:
+                from opss.run import POPSSRunController, POPSSRunStore
+                st = POPSSRunStore(run_id, run_dir=params.get("run_dir"))
+                run_ctl = POPSSRunController(st)
+                run_ctl.init_run(
+                    {
+                        "run_id": run_id,
+                        "run_name": str(params.get("run_name") or "").strip(),
+                        "type": "infer",
+                        "infer_mode": str(params.get("infer_mode") or "standard"),
+                        "model_size": str(params.get("model_size") or "0.5B").strip(),
+                        "ckpt": ckpt,
+                        "model_path": model_path,
+                    },
+                    state={"status": "running", "phase": "infer", "pid": int(os.getpid())},
+                )
+            except Exception:
+                run_ctl = None
+
+        if not ckpt and not model_path:
+            _LOG.info("No --ckpt provided; inference not started")
+            return {"status": "ready", "reason": "no_ckpt"}
+
+        infer_mode = str(params.get("infer_mode") or "standard").strip() or "standard"
+
+        use_spec = bool(params.get("speculative") or False)
+
+        if infer_mode == "vllm":
+            candidate = model_path or ckpt
+            if os.path.isfile(candidate):
+                _LOG.warning("vllm_requires_model_dir_or_hf_id_falling_back", ckpt=candidate)
+            else:
+                self.infer_config.acceleration.use_vllm = True
+                if model_path:
+                    self.infer_config.model.model_path = model_path
+                else:
+                    self.infer_config.model.model_path = ckpt
+                engine = PiscesLxInferenceEngine(self.infer_config)
+                engine.load_model(self.infer_config.model.model_path, self.infer_config.model.tokenizer_path)
+                out = engine.generate(prompt)
+                try:
+                    print(out)
+                except Exception:
+                    pass
+                if run_ctl is not None:
+                    try:
+                        run_ctl.append_event("infer_ok", payload={"backend": "vllm", "output_preview": str(out)[:1000]})
+                        run_ctl.update_state({"status": "completed", "phase": "completed"})
+                    except Exception:
+                        pass
+                return {"status": "ok", "output": out, "backend": "vllm"}
+
+        if os.path.isfile(ckpt):
+            from opss.infer.native_ruchbah import POPSSNativeInferenceOperator
+            op = POPSSNativeInferenceOperator()
+            res = op.execute(
+                {
+                    "ckpt": ckpt,
+                    "prompt": prompt,
+                    "model_size": str(params.get("model_size") or "0.5B").strip(),
+                    "seq_len": int(params.get("seq_len") or 512),
+                    "generation": {
+                        "max_new_tokens": int(self.infer_config.generation.max_new_tokens),
+                        "temperature": float(self.infer_config.generation.temperature),
+                        "top_p": float(self.infer_config.generation.top_p),
+                        "top_k": int(self.infer_config.generation.top_k),
+                        "use_speculative": bool(use_spec),
+                        "mode": "thinking" if use_spec else "auto",
+                    },
+                }
+            )
+            if not res.is_success():
+                if run_ctl is not None:
+                    try:
+                        run_ctl.append_event("infer_failed", level="error", payload={"backend": "native_ruchbah", "error": str(res.error)})
+                        run_ctl.update_state({"status": "failed", "phase": "failed", "error": str(res.error)})
+                    except Exception:
+                        pass
+                return {"status": "error", "reason": res.error, "backend": "native_ruchbah"}
+            out_obj = res.output or {}
+            out = out_obj.get("text", "")
+            try:
+                print(out)
+            except Exception:
+                pass
+            if run_ctl is not None:
+                try:
+                    run_ctl.append_event("infer_ok", payload={"backend": out_obj.get("backend", "native_ruchbah"), "output_preview": str(out)[:1000]})
+                    run_ctl.update_state({"status": "completed", "phase": "completed"})
+                except Exception:
+                    pass
+            return {"status": "ok", "output": out, "backend": out_obj.get("backend", "native_ruchbah"), "stats": out_obj.get("stats", {})}
+
+        self.infer_config.acceleration.use_vllm = False
+        self.infer_config.model.model_path = model_path or ckpt
+        engine = PiscesLxInferenceEngine(self.infer_config)
+        engine.load_model(self.infer_config.model.model_path, self.infer_config.model.tokenizer_path)
+        out = engine.generate(prompt)
+        try:
+            print(out)
+        except Exception:
+            pass
+        if run_ctl is not None:
+            try:
+                run_ctl.append_event("infer_ok", payload={"backend": "transformers", "output_preview": str(out)[:1000]})
+                run_ctl.update_state({"status": "completed", "phase": "completed"})
+            except Exception:
+                pass
+        return {"status": "ok", "output": out, "backend": "transformers"}
+
+    def _normalize_infer_config(self, config: Optional[Union[PiscesLxOperatorConfig, InferenceConfig, str, Dict[str, Any]]]) -> InferenceConfig:
+        if isinstance(config, InferenceConfig):
+            return config
+        if isinstance(config, str):
+            return self._load_config_from_file(config)
+        if isinstance(config, dict):
+            return InferenceConfig.from_dict(config)
+        if isinstance(config, PiscesLxOperatorConfig):
+            params = getattr(config, "parameters", {}) or {}
+            cfg = params.get("inference_config", None)
+            if isinstance(cfg, InferenceConfig):
+                return cfg
+            if isinstance(cfg, str):
+                return self._load_config_from_file(cfg)
+            if isinstance(cfg, dict):
+                return InferenceConfig.from_dict(cfg)
+            cfg_path = params.get("config_path")
+            if isinstance(cfg_path, str) and cfg_path:
+                return self._load_config_from_file(cfg_path)
+        return InferenceConfig()
+    
+    def _load_config_from_file(self, config_path: str) -> InferenceConfig:
+        """Load configuration from file."""
+        config_path = Path(config_path)
+        if config_path.suffix.lower() == '.json':
+            return InferenceConfig.load_from_json(str(config_path))
+        elif config_path.suffix.lower() in ['.yaml', '.yml']:
+            return InferenceConfig.load_from_yaml(str(config_path))
+        else:
+            raise ValueError(f"Unsupported config file format: {config_path.suffix}")
+    
+    def initialize_inference(self, model_path: str,
+                           tokenizer_path: Optional[str] = None,
+                           **model_kwargs) -> 'InferenceOrchestrator':
         """
-        from .runner import PiscesLxToolsInferRunner
+        Initialize complete inference environment.
         
-        # Optimize device configuration for inference
-        device_config = self.device_facade.setup_devices(mode="auto")
-        if device_config.get('device_type') == 'cpu':
-            logger.success("Inference on CPU - performance may be limited")
+        Args:
+            model_path: Model path.
+            tokenizer_path: Tokenizer path.
+            **model_kwargs: Model initialization parameters.
+            
+        Returns:
+            Initialized orchestrator instance.
+        """
+        _LOG.info("Initializing inference environment...")
         
-        # Setup intelligent model caching
-        cache_hit = False
-        cache_ns = "infer.standard"
-        if self.cache_manager:
-            model_key = f"infer_model_{self.cfg.get('model.name', 'unknown')}_{hash(str(self.args))}"
-            try:
-                cache = self.cache_manager.get_default_cache()
-                cached_model = cache.get(cache_ns, model_key)
-            except Exception as _e:
-                cached_model = None
-                logger.debug(f"Enhanced cache get skipped: {_e}")
-            if cached_model:
-                cache_hit = True
-                logger.debug(f"Model cache hit: Using cached model configuration")
+        # Initialize core inference engine
+        self.inferencer = PiscesLxInferenceEngine(self.infer_config)
         
-        # Initialize inference performance monitoring
-        if self.observability and hasattr(self.observability, "_manager") and hasattr(self.observability._manager, "get_system_metrics"):
-            try:
-                inference_baseline = self.observability._manager.get_system_metrics()
-                self.metrics_registry.set_baseline("infer.baseline", inference_baseline)
-                logger.debug("Inference baseline established", gpu_memory_used=inference_baseline.get('gpu_memory_used', 'N/A'))
-            except Exception as _e:
-                logger.debug("Observability baseline skipped", error=str(_e))
+        # 2. Load model
+        self.inferencer.load_model(model_path, tokenizer_path)
         
-        # Validate model checkpoint before inference
-        model_path = self.cfg.get('infer.model_path') or getattr(self.args, 'model_path', None)
-        if model_path and self.checkpoint_manager:
-            checkpoint_valid = self.checkpoint_manager.validate_checkpoint(model_path)
-            if not checkpoint_valid:
-                logger.error(f"Invalid model checkpoint: {model_path}")
-                self.hooks.emit("infer.checkpoint.error", error="Invalid model checkpoint", path=model_path)
-                raise SystemExit(1)
-            logger.debug(f"Model checkpoint validated: {model_path}")
+        # 3. Initialize acceleration components
+        self._setup_acceleration()
         
-        # Emit inference standard start event with enhanced context
-        inference_context = {
-            "device_config": device_config,
-            "cache_hit": cache_hit,
-            "model_path": model_path,
-            "batch_size": self.cfg.get("infer.batch_size", 1),
-            "max_tokens": self.cfg.get("infer.max_tokens", 512)
-        }
-        self.hooks.emit("infer.standard.start", **inference_context)
+        # 4. Initialize quantization components (if enabled)
+        if self.infer_config.quantization.enable_quantization:
+            self._setup_quantization()
         
-        # Create runner with enhanced utils integration
-        runner = PiscesLxToolsInferRunner(
-            self.args, 
-            hooks=self.hooks, 
-            profiler=self.profiler, 
-            cfg=self.cfg,
-            cache_manager=self.cache_manager,
-            device_manager=self.device_facade,
-            observability=self.observability
+        # 5. Initialize watermark components (if enabled)
+        if getattr(self.infer_config, 'enable_watermark', False):
+            self._setup_watermark()
+        
+        # 6. Initialize inference pipeline
+        self.pipeline = InferencePipelineOperator(self.infer_config)
+        
+        # 7. Initialize prompt engineering
+        self.prompt_engineer = PromptEngineeringOperator()
+        
+        # 8. Setup watermark pipeline (if watermark enabled)
+        if getattr(self.infer_config, 'enable_watermark', False):
+            self._setup_watermark_pipeline()
+        
+        self.is_initialized = True
+        _LOG.info("Inference environment initialization completed")
+        return self
+    
+    def _setup_acceleration(self):
+        """Setup acceleration components."""
+        # VLLM acceleration
+        if self.infer_config.acceleration.use_vllm:
+            self.accelerators['vllm'] = VLLMAccelerationOperator(
+                tensor_parallel_size=self.infer_config.acceleration.tensor_parallel_size,
+                pipeline_parallel_size=self.infer_config.acceleration.pipeline_parallel_size,
+                gpu_memory_utilization=self.infer_config.acceleration.gpu_memory_utilization,
+                enforce_eager=self.infer_config.acceleration.enforce_eager
+            )
+        
+        # Speculative decoding
+        if self.infer_config.acceleration.use_speculative_decoding:
+            self.accelerators['speculative'] = SpeculativeDecodingOperator()
+        
+        # Attention optimization
+        self.accelerators['attention'] = AttentionOptimizationOperator()
+        
+        # KV cache
+        self.accelerators['kv_cache'] = KVCacheOperator()
+        
+        _LOG.info(f"Acceleration components setup: {list(self.accelerators.keys())}")
+    
+    def _setup_quantization(self):
+        """Setup quantization components."""
+        # Quantized inference
+        self.quantizers['main'] = QuantizationInferenceOperator(
+            quant_method=self.infer_config.quantization.quant_method,
+            bits=self.infer_config.quantization.bits,
+            group_size=self.infer_config.quantization.group_size,
+            symmetric=self.infer_config.quantization.symmetric
         )
         
-        # Execute inference with comprehensive monitoring
-        inference_success = False
-        try:
-            # Pre-inference optimization
-            if self.observability and hasattr(self.observability, "_manager") and hasattr(self.observability._manager, "get_system_metrics"):
-                try:
-                    pre_inference_metrics = self.observability._manager.get_system_metrics()
-                    self.hooks.emit("infer.pre.optimization", metrics=pre_inference_metrics)
-                except Exception as _e:
-                    logger.debug("Pre-inference observability skipped", error=str(_e))
-            
-            # Run inference
-            if getattr(self, 'wm_manager', None):
-                self.hooks.emit("infer.watermark.ready", enabled=True)
-            runner.infer()
-            inference_success = True
-            
-            # Post-inference analysis and caching
-            if self.observability and hasattr(self.observability, "_manager") and hasattr(self.observability._manager, "get_system_metrics"):
-                try:
-                    post_inference_metrics = self.observability._manager.get_system_metrics()
-                except Exception as _e:
-                    logger.debug("Post-inference observability skipped", error=str(_e))
-                    post_inference_metrics = {}
-                performance_analysis = {}
-                try:
-                    if hasattr(self.metrics_registry, "calculate_delta"):
-                        performance_analysis = self.metrics_registry.calculate_delta("infer.baseline", post_inference_metrics)
-                    elif isinstance(post_inference_metrics, dict):
-                        # Fallback: provide a minimal structure so downstream .get works
-                        performance_analysis = {"efficiency_score": 0.0}
-                except Exception as _e:
-                    logger.debug("Performance delta skipped", error=str(_e))
-                
-                # Cache model if performance is optimal
-                if self.cache_manager and not cache_hit and performance_analysis.get('efficiency_score', 0) > 0.8:
-                    model_cache_data = {
-                        "model_config": self.cfg.dump_effective() if hasattr(self.cfg, 'dump_effective') else {},
-                        "device_config": device_config,
-                        "performance_metrics": post_inference_metrics,
-                        "efficiency_score": performance_analysis.get('efficiency_score', 0),
-                        "timestamp": self.config_manager.get_current_timestamp()
-                    }
-                    try:
-                        cache = self.cache_manager.get_default_cache()
-                        cache.set(cache_ns, model_key, model_cache_data, ttl=3600)  # 1小时TTL
-                        logger.debug(f"Model configuration cached with efficiency score: {performance_analysis.get('efficiency_score', 0)}")
-                    except Exception as _e:
-                        logger.debug(f"Enhanced cache set skipped: {_e}")
-                
-                self.hooks.emit("infer.performance.analysis", analysis=performance_analysis)
-                
-        except Exception as e:
-            # Enhanced error handling for inference failures
-            error_context = {
-                "error": str(e),
-                "inference_phase": "standard_inference",
-                "cache_hit": cache_hit,
-                "device_config": device_config,
-                "model_path": model_path
-            }
-            self.hooks.emit("infer.standard.error", **error_context)
-            
-            # Attempt recovery with alternative device configuration
-            if self.device_facade and 'cuda' in str(e).lower():
-                logger.debug("Attempting CPU fallback due to CUDA error...")
-                # Implementation for device fallback would go here
-            
-            raise
+        # Mixed precision
+        self.quantizers['mixed_precision'] = MixedPrecisionInferenceOperator(
+            precision=self.infer_config.dtype
+        )
         
-        # Emit inference standard completion event with results
-        completion_context = {
-            "success": inference_success,
-            "cache_utilized": cache_hit,
-            "device_optimized": device_config.get('optimization_applied', False),
-            "performance_monitored": self.observability is not None
-        }
-        self.hooks.emit("infer.standard.complete", **completion_context)
+        _LOG.info(f"Quantization components setup: {list(self.quantizers.keys())}")
+    
+    def _setup_watermark(self):
+        """Setup watermark components."""
+        self.watermark_ops = {}
+        
+        # Inference watermark integration
+        self.watermark_ops['integration'] = InferenceWatermarkIntegrationOperator(
+            enable_content_verification=getattr(self.infer_config, 'enable_content_verification', True),
+            enable_model_verification=getattr(self.infer_config, 'enable_model_verification', True),
+            strict_mode=getattr(self.infer_config, 'watermark_strict_mode', False)
+        )
+        
+        _LOG.info(f"Watermark components setup: {list(self.watermark_ops.keys())}")
+    
+    def _setup_watermark_pipeline(self):
+        """Setup watermark pipeline."""
+        if 'integration' in self.watermark_ops:
+            self.watermark_pipeline = InferencePipelineWatermarkOperator(
+                self.watermark_ops['integration']
+            )
+            _LOG.info("Watermark pipeline setup completed")
+    
+    def add_inference_callback(self, callback: Callable[[str, Dict[str, Any]], None]):
+        """
+        Add inference callback function.
+        
+        Args:
+            callback: Callback function that receives (stage, kwargs) parameters.
+        """
+        if self.pipeline:
+            self.pipeline.add_callback(callback)
+            _LOG.info("Inference callback added")
 
+    def _execute_impl(self, inputs: Dict[str, Any], **kwargs):
+        action = inputs.get("action") or inputs.get("mode") or "generate"
+        if action in ("generate", "text", "completion"):
+            prompt = inputs.get("prompt", None)
+            prompts = inputs.get("prompts", None)
+            session_id = inputs.get("session_id", None)
+            gen_kwargs = inputs.get("generation", None) or {}
+            gen_kwargs.update(kwargs)
+            if prompt is None and prompts is None:
+                raise ValueError("Missing 'prompt' or 'prompts' for generate action")
+            if prompts is not None:
+                return {"result": self.batch_inference(prompts, **gen_kwargs)}
+            return {"result": self.generate_text(prompt, session_id=session_id, **gen_kwargs)}
+        if action in ("stats", "metrics"):
+            return {"stats": self.get_inference_stats()}
+        if action in ("clear_cache", "reset_cache"):
+            self.clear_inference_cache()
+            return {"cleared": True}
+        raise ValueError(f"Unsupported action: {action}")
+    
+    def generate_text(self, prompt: Union[str, List[str]], 
+                     session_id: Optional[str] = None,
+                     **kwargs) -> Union[str, List[str]]:
+        """
+        Generate text.
+        
+        Args:
+            prompt: Input prompt.
+            session_id: Session ID.
+            **kwargs: Generation parameters.
+            
+        Returns:
+            Generated text.
+        """
+        if not self.is_initialized:
+            raise RuntimeError("Inference environment not initialized. Call initialize_inference() first.")
+        
+        # Set session
+        if session_id:
+            self.current_session = session_id
+        
+        # Preprocess inputs
+        processed_inputs = self.pipeline.preprocess_inputs(prompt)
+        
+        # Execute inference
+        if len(processed_inputs) == 1:
+            result = self.inferencer.generate(processed_inputs[0], **kwargs)
+        else:
+            result = self.pipeline.batch_inference(processed_inputs, **kwargs)
+        
+        # Postprocess outputs
+        final_result = self.pipeline.postprocess_outputs(result, processed_inputs)
+        
+        return final_result
+    
+    def stream_generate(self, prompt: str, **kwargs):
+        """
+        Stream generate text.
+        
+        Args:
+            prompt: Input prompt.
+            **kwargs: Generation parameters.
+            
+        Yields:
+            Generated text chunks.
+        """
+        if not self.is_initialized:
+            raise RuntimeError("Inference environment not initialized")
+        
+        yield from self.pipeline.generate_stream(prompt, **kwargs)
+    
+    def batch_inference(self, prompts: List[str], 
+                       batch_size: Optional[int] = None,
+                       **kwargs) -> List[str]:
+        """
+        Batch inference.
+        
+        Args:
+            prompts: List of input prompts.
+            batch_size: Batch processing size.
+            **kwargs: Inference parameters.
+            
+        Returns:
+            List of inference results.
+        """
+        if not self.is_initialized:
+            raise RuntimeError("Inference environment not initialized")
+        
+        return self.pipeline.batch_inference(prompts, batch_size, **kwargs)
+    
+    def async_inference(self, prompts: List[str], 
+                       callback: Callable,
+                       **kwargs):
+        """
+        Asynchronous inference.
+        
+        Args:
+            prompts: List of input prompts.
+            callback: Completion callback function.
+            **kwargs: Inference parameters.
+        """
+        if not self.is_initialized:
+            raise RuntimeError("Inference environment not initialized")
+        
+        return self.pipeline.async_inference(prompts, callback, **kwargs)
+    
+    def render_prompt_template(self, template_name: str, **kwargs) -> str:
+        """
+        Render prompt template.
+        
+        Args:
+            template_name: Template name.
+            **kwargs: Template variables.
+            
+        Returns:
+            Rendered prompt text.
+        """
+        return self.prompt_engineer.render_template(template_name, **kwargs)
+    
+    def add_prompt_template(self, name: str, template: str,
+                           variables: Optional[List[str]] = None):
+        """
+        Add prompt template.
+        
+        Args:
+            name: Template name.
+            template: Template string.
+            variables: Variable list.
+        """
+        self.prompt_engineer.add_template(name, template, variables)
+    
+    def get_inference_stats(self) -> Dict[str, Any]:
+        """
+        Get inference statistics.
+        
+        Returns:
+            Inference statistics dictionary.
+        """
+        stats = {
+            'basic_stats': self.inferencer.get_inference_stats() if self.inferencer else {},
+            'session_info': {
+                'current_session': self.current_session,
+                'total_sessions': len(self.inference_sessions)
+            },
+            'components': {
+                'inferencer': self.inferencer is not None,
+                'pipeline': self.pipeline is not None,
+                'accelerators': list(self.accelerators.keys()),
+                'quantizers': list(self.quantizers.keys())
+            }
+        }
+        
+        # Add accelerator statistics
+        if 'kv_cache' in self.accelerators:
+            stats['kv_cache_stats'] = self.accelerators['kv_cache'].get_cache_stats()
+        
+        return stats
+    
+    def clear_inference_cache(self):
+        """Clear inference cache."""
+        if self.inferencer:
+            self.inferencer.clear_cache()
+        if 'kv_cache' in self.accelerators:
+            self.accelerators['kv_cache'].clear_cache()
+        _LOG.info("All inference caches cleared")
+    
+    def export_inference_model(self, export_path: str, format: str = "safetensors"):
+        """
+        Export inference model.
+        
+        Args:
+            export_path: Export path.
+            format: Export format.
+        """
+        if not self.inferencer:
+            raise RuntimeError("No inference model available")
+        
+        self.inferencer.export_model(export_path, format)
+        _LOG.info(f"Inference model exported to {export_path}")
+    
+    def save_inference_state(self, filepath: str):
+        """
+        Save inference state.
+        
+        Args:
+            filepath: State file path.
+        """
+        state = {
+            'config': self.infer_config.to_dict(),
+            'current_session': self.current_session,
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        with open(filepath, 'w', encoding='utf-8') as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+        
+        _LOG.info(f"Inference state saved to {filepath}")
+    
+    def load_inference_state(self, filepath: str):
+        """
+        Load inference state.
+        
+        Args:
+            filepath: State file path.
+        """
+        with open(filepath, 'r', encoding='utf-8') as f:
+            state = json.load(f)
+        
+        self.infer_config = InferenceConfig.from_dict(state['config'])
+        self.current_session = state.get('current_session', 'default')
+        
+        _LOG.info(f"Inference state loaded from {filepath}")
+
+
+PiscesLxToolsInferOrchestrator = InferenceOrchestrator

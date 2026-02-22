@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -17,36 +18,95 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Video encoder utilities for Ruchbah multimodal agents.
+"""Video encoder utilities for Yv multimodal agents.
 
-The module exposes :class:`RuchbahVideoEncoder`, a wrapper around the vision
-encoder that augments per-frame embeddings with temporal modeling, action
-recognition, and summarization heuristics. It mirrors the detailed docstring
-style adopted across the multimodal stack and leaves model behavior unchanged.
+This module provides comprehensive video processing components for the Yv
+model, including video frame encoding with temporal modeling, action recognition,
+and video summarization capabilities.
+
+Module Components:
+    1. YvVideoEncoder:
+       - Video frame encoding with temporal modeling
+       - Action recognition and localization
+       - Scene understanding and event detection
+       - Object tracking and summarization
+
+Key Features:
+    - Per-frame feature extraction via YvVisionEncoder
+    - Optional 3D spatio-temporal RoPE for video
+    - Temporal convolution and attention layers
+    - Action recognition head (10 action classes)
+    - Scene understanding (20 scene classes)
+    - Event detection (8 event types)
+    - Object tracking with occlusion handling
+    - Video summarization with importance/diversity scores
+
+Performance Characteristics:
+    - Per-frame encoding: O(T * N^2) where N = patches per frame
+    - Temporal processing: O(T^2 * hidden_size) with attention
+    - Action recognition: O(T * hidden_size)
+    - Total complexity: O(T * (N^2 + T * hidden_size))
+
+Usage Example:
+    >>> from model.multimodal.video import YvVideoEncoder
+    >>> 
+    >>> # Initialize encoder
+    >>> encoder = YvVideoEncoder(config)
+    >>> 
+    >>> # Encode video frames
+    >>> video_features = encoder(video_frames)  # [B, 1, hidden_size]
+    >>> 
+    >>> # With 3D RoPE
+    >>> encoder.use_3d_rope = True
+    >>> features = encoder(video_frames)  # Uses 3D positional encoding
+
+Note:
+    Video input shape: [B, T, C, H, W] where T is temporal frames.
+    Uses YvVisionEncoder for per-frame feature extraction.
+    Temporal processing varies based on 3D RoPE setting.
 """
 
 import torch
 from torch import nn
 from typing import Optional
-from .vision import RuchbahVisionEncoder
-# Use dms_core logging exclusively
-import dms_core
-PiscesLxCoreLog = dms_core.log.get_logger
+from .vision import YvVisionEncoder
+from utils.dc import PiscesLxLogger
 
-logger = PiscesLxCoreLog("Ruchbah.Core.Multimodal", file_path="logs/RuchbahCore.log")
+_LOG = PiscesLxLogger(__name__)
 
-class RuchbahVideoEncoder(nn.Module):
+class YvVideoEncoder(nn.Module):
     """Encode video frame sequences with optional 3D rotary positional modeling.
-
-    The encoder delegates per-frame feature extraction to
-    :class:`RuchbahVisionEncoder` and enriches temporal structure through
-    convolution, attention, and lightweight analytic heads.
-
+    
+    A comprehensive video encoder that delegates per-frame feature extraction
+    to YvVisionEncoder and enriches temporal structure through convolution,
+    attention, and lightweight analytic heads for action recognition, scene
+    understanding, and video summarization.
+    
+    Architecture:
+        1. Frame Encoder: YvVisionEncoder for per-frame features
+        2. Temporal Processing:
+           - With 3D RoPE: Conv1d + BatchNorm + SiLU + MultiheadAttention
+           - Without 3D RoPE: Conv1d + MultiheadAttention
+        3. Action Recognition: 10-class action head + localization
+        4. Scene Understanding: 20-class scene classification
+        5. Event Detection: 8-type event detection
+        6. Object Tracking: Correlation + occlusion estimation
+        7. Summarization: Importance + diversity scoring
+    
+    Key Features:
+        - Per-frame feature extraction via YvVisionEncoder
+        - Optional 3D spatio-temporal RoPE for video
+        - Temporal convolution and attention layers
+        - Action recognition with temporal localization
+        - Scene understanding and event detection
+        - Object tracking with occlusion handling
+        - Video summarization capabilities
+    
     Attributes:
         enabled (bool): Indicates whether the encoder is active.
         cfg: Configuration namespace providing ``hidden_size`` and ``n_head``.
         use_3d_rope (bool): Flag controlling 3D spatio-temporal RoPE handling.
-        frame_encoder (RuchbahVisionEncoder): Backbone used for per-frame features.
+        frame_encoder (YvVisionEncoder): Backbone used for per-frame features.
         temporal_processing (nn.ModuleDict): Temporal modules varying with RoPE usage.
         action_recognition (nn.ModuleDict): Heads that output coarse action logits
             and localization cues.
@@ -55,24 +115,38 @@ class RuchbahVideoEncoder(nn.Module):
         object_tracker (nn.ModuleDict): Modules estimating tracking correlation and
             occlusion likelihood.
         summarizer (nn.ModuleDict): Heads approximating importance and diversity scores.
+    
+    Example:
+        >>> encoder = YvVideoEncoder(config)
+        >>> video_features = encoder(video_frames)  # [B, 1, hidden_size]
+        >>> 
+        >>> # Access action predictions
+        >>> action_logits = encoder.action_recognition['head'](features)
+    
+    Note:
+        Video input shape: [B, T, C, H, W] where T is temporal frames.
+        Temporal processing varies based on use_3d_rope setting.
     """
 
     def __init__(self, cfg):
         """Instantiate the encoder using the supplied configuration namespace.
-
+        
         Args:
-            cfg: Configuration object providing vision backbone parameters such as
-                ``hidden_size`` and ``n_head`` as well as temporal feature toggles.
+            cfg: Configuration object providing:
+                - hidden_size: Output embedding dimension
+                - n_head: Number of attention heads
+                - use_3d_spatio_temporal_rope: Enable 3D RoPE (default: False)
+                - Vision backbone parameters for YvVisionEncoder
         """
         super().__init__()
         self.enabled = True
         self.cfg = cfg
-        logger.debug(f"VideoEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
+        _LOG.debug(f"VideoEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
 
         # Determine whether to use 3D spatio-temporal RoPE.
         self.use_3d_rope = getattr(cfg, 'use_3d_spatio_temporal_rope', False)
         # Initialize the per-frame feature extractor.
-        self.frame_encoder = RuchbahVisionEncoder(cfg)
+        self.frame_encoder = YvVisionEncoder(cfg)
 
         if self.use_3d_rope:
             # Temporal processing modules activated when 3D RoPE is enabled.
@@ -130,18 +204,31 @@ class RuchbahVideoEncoder(nn.Module):
             'diversity': nn.Sequential(nn.Linear(cfg.hidden_size, 64), nn.SiLU(), nn.Linear(64, 32))
         })
 
-        logger.debug("VideoEncoder: __init__ end")
+        _LOG.debug("VideoEncoder: __init__ end")
 
     def forward(self, video_frames: Optional[torch.Tensor]) -> torch.Tensor:
         """Encode a batch of videos into pooled feature representations.
-
+        
+        Processes video frames through the frame encoder, applies temporal
+        modeling, and produces a pooled video-level representation.
+        
         Args:
             video_frames (torch.Tensor | None): Input tensor shaped ``[B, T, C, H, W]``
                 containing batched video clips. ``None`` yields a zero tensor placeholder.
-
+                - B: Batch size
+                - T: Number of temporal frames
+                - C: Number of channels (typically 3 for RGB)
+                - H: Frame height
+                - W: Frame width
+        
         Returns:
             torch.Tensor: Encoded tensor shaped ``[B, 1, hidden_size]`` summarizing each
             video through temporal pooling and projection.
+        
+        Note:
+            Processing varies based on use_3d_rope setting:
+            - With 3D RoPE: Uses video_shape for 3D positional encoding
+            - Without 3D RoPE: Standard per-frame encoding with temporal pooling
         """
         if video_frames is None:
             return torch.zeros(1, 1, self.cfg.hidden_size, device=getattr(self.cfg, 'device', 'cpu'))

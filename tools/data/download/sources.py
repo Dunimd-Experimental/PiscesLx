@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -23,12 +24,10 @@ import urllib.error
 import sys
 import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', '..'))
-# Use dms_core logging exclusively
-import dms_core
-PiscesLxCoreLog = dms_core.log.get_logger
+from utils.dc import PiscesLxLogger
 from typing import Any, Dict, List, Optional
 
-logger = PiscesLxCoreLog("PiscesLx.Tools.DataDownload.Sources")
+_LOG = PiscesLxLogger(__name__)
 
 # Verbose switch: set PISCESLX_DOWNLOAD_VERBOSE=1 to see detailed debug logs
 _VERBOSE = (os.getenv("PISCESLX_DOWNLOAD_VERBOSE", "0") == "1")
@@ -54,7 +53,7 @@ class PiscesLxToolsDataSourceRouter:
             return True
         except Exception as e:
             if _VERBOSE:
-                logger.debug(f"HuggingFace connectivity check failed: {e}")
+                _LOG.debug(f"HuggingFace connectivity check failed: {e}")
             return False
 
     @staticmethod
@@ -63,7 +62,7 @@ class PiscesLxToolsDataSourceRouter:
         Set up HuggingFace mirror if the main site is not accessible.
         """
         # Always use mirror for now due to connectivity issues
-        logger.info("Using HuggingFace mirror: " + HF_MIRROR_URL)
+        _LOG.info("Using HuggingFace mirror: " + HF_MIRROR_URL)
         # Set environment variable for HuggingFace mirror
         os.environ['HF_ENDPOINT'] = HF_MIRROR_URL
         # Also set for datasets library compatibility
@@ -74,7 +73,7 @@ class PiscesLxToolsDataSourceRouter:
         # Check HuggingFace connectivity and set up mirror if needed
         PiscesLxToolsDataSourceRouter.setup_hf_mirror()
         if _VERBOSE:
-            logger.debug("SourceRouter initialized")
+            _LOG.debug("SourceRouter initialized")
     
     def load(self, dataset_name: str, kwargs: Dict[str, Any] = None, 
              preferred_sources: List[str] = None, **extra_kwargs) -> Optional[Any]:
@@ -110,26 +109,26 @@ class PiscesLxToolsDataSourceRouter:
                         return result
             except Exception as e:
                 if _VERBOSE:
-                    logger.debug(f"Router load error: source={source} dataset={dataset_name} kwargs={kwargs}: {e}")
+                    _LOG.debug(f"Router load error: source={source} dataset={dataset_name} kwargs={kwargs}: {e}")
                 continue
         
         # Special fallback for AI-ModelScope/TinyStories
         if dataset_name == "AI-ModelScope/TinyStories":
-            logger.info("Trying fallback datasets for TinyStories")
+            _LOG.info("Trying fallback datasets for TinyStories")
             fallback_datasets = ["tiny-stories", "tiny_stories", "tinystories"]
             for fallback_name in fallback_datasets:
                 try:
                     result = self._load_from_huggingface(fallback_name, kwargs)
                     if result is not None:
-                        logger.info(f"Successfully loaded fallback dataset: {fallback_name}")
+                        _LOG.info(f"Successfully loaded fallback dataset: {fallback_name}")
                         return result
                 except Exception as e:
                     if _VERBOSE:
-                        logger.debug(f"Fallback dataset failed: {fallback_name}: {e}")
+                        _LOG.debug(f"Fallback dataset failed: {fallback_name}: {e}")
                     continue
             
             # If all else fails, create a mock dataset for testing
-            logger.warning("All dataset loading attempts failed. Creating mock dataset for testing.")
+            _LOG.warning("All dataset loading attempts failed. Creating mock dataset for testing.")
             return self._create_mock_tinystories_dataset(kwargs)
                 
         return None
@@ -155,11 +154,11 @@ class PiscesLxToolsDataSourceRouter:
                 {"text": "They wished for endless carrots and nuts, and lived happily ever after."}
             ] * 100  # Repeat to create a larger dataset
             
-            logger.info(f"Created mock TinyStories dataset with {len(mock_data)} samples")
+            _LOG.info(f"Created mock TinyStories dataset with {len(mock_data)} samples")
             return mock_data
                 
         except Exception as e:
-            logger.error(f"Failed to create mock dataset: {e}")
+            _LOG.error(f"Failed to create mock dataset: {e}")
             return None
     
     def _load_from_modelscope(self, dataset_name: str, kwargs: Dict[str, Any]) -> Optional[Any]:
@@ -176,19 +175,19 @@ class PiscesLxToolsDataSourceRouter:
         try:
             # Import MsDataset from modelscope.msdatasets
             from modelscope.msdatasets import MsDataset  # type: ignore
-            logger.info(f"Attempting to load dataset {dataset_name} from ModelScope with kwargs={kwargs}")
+            _LOG.info(f"Attempting to load dataset {dataset_name} from ModelScope with kwargs={kwargs}")
             result = MsDataset.load(dataset_name, **kwargs)
-            logger.info(f"Successfully loaded dataset {dataset_name} from ModelScope")
+            _LOG.info(f"Successfully loaded dataset {dataset_name} from ModelScope")
             return result
         except ImportError as e:
-            logger.error(f"ModelScope import failed: {e}")
+            _LOG.error(f"ModelScope import failed: {e}")
             if _VERBOSE:
-                logger.debug(f"ModelScope import failed: {e}")
+                _LOG.debug(f"ModelScope import failed: {e}")
             return None
         except Exception as e:
-            logger.error(f"ModelScope load failed for {dataset_name} with kwargs={kwargs}: {e}")
+            _LOG.error(f"ModelScope load failed for {dataset_name} with kwargs={kwargs}: {e}")
             if _VERBOSE:
-                logger.debug(f"ModelScope load failed for {dataset_name} with kwargs={kwargs}: {e}")
+                _LOG.debug(f"ModelScope load failed for {dataset_name} with kwargs={kwargs}: {e}")
             return None
     
     def _load_from_huggingface(self, dataset_name: str, kwargs: Dict[str, Any]) -> Optional[Any]:
@@ -206,14 +205,14 @@ class PiscesLxToolsDataSourceRouter:
             # Ensure mirror is set up before loading
             PiscesLxToolsDataSourceRouter.setup_hf_mirror()
             from datasets import load_dataset
-            logger.info(f"Attempting to load dataset {dataset_name} from HuggingFace with kwargs={kwargs}")
+            _LOG.info(f"Attempting to load dataset {dataset_name} from HuggingFace with kwargs={kwargs}")
             result = load_dataset(dataset_name, **kwargs)
-            logger.info(f"Successfully loaded dataset {dataset_name} from HuggingFace")
+            _LOG.info(f"Successfully loaded dataset {dataset_name} from HuggingFace")
             return result
         except Exception as e:
-            logger.error(f"HuggingFace load failed for {dataset_name} with kwargs={kwargs}: {e}")
+            _LOG.error(f"HuggingFace load failed for {dataset_name} with kwargs={kwargs}: {e}")
             if _VERBOSE:
-                logger.debug(f"HuggingFace load failed for {dataset_name} with kwargs={kwargs}: {e}")
+                _LOG.debug(f"HuggingFace load failed for {dataset_name} with kwargs={kwargs}: {e}")
             return None
 
     @staticmethod
@@ -254,7 +253,7 @@ class PiscesLxToolsDataSourceRouter:
                 available.append(split)
             except Exception as e:
                 if _VERBOSE:
-                    logger.debug(f"Split probe failed: source={src} dataset={dataset_name} split={split}: {e}")
+                    _LOG.debug(f"Split probe failed: source={src} dataset={dataset_name} split={split}: {e}")
                 continue
 
         if not available:
@@ -270,7 +269,7 @@ class PiscesLxToolsDataSourceRouter:
             except Exception as e:
                 # No available splits or direct load
                 if _VERBOSE:
-                    logger.debug(f"Direct probe failed: source={src} dataset={dataset_name}: {e}")
+                    _LOG.debug(f"Direct probe failed: source={src} dataset={dataset_name}: {e}")
 
         return available
 
@@ -299,8 +298,8 @@ class PiscesLxToolsDataSourceRouter:
                     return ds.to_hf_dataset()  # type: ignore[attr-defined]
                 except Exception as e:
                     if _VERBOSE:
-                        logger.debug(f"to_hf_if_needed conversion failed: {e}")
+                        _LOG.debug(f"to_hf_if_needed conversion failed: {e}")
         except Exception as e:
             if _VERBOSE:
-                logger.debug(f"to_hf_if_needed conversion failed: {e}")
+                _LOG.debug(f"to_hf_if_needed conversion failed: {e}")
         return ds

@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -121,9 +122,9 @@ TEXT_FIELD_KEYS = [
     "context", "passage", "story", "document", "doc", "source", "target_text",
     "hypothesis", "premise", "answerKey", "gold", "gold_answer", "prediction",
     "question_stem", "choices_list", "choice_text", "option_text",
-    "问题", "提问", "问句", "题目", "上下文?", "背景", "段落", "文章",
-    "指令", "提示", "系统提示", "系统", "用户", "助手", "人类", "机器",
-    "内容", "文本", "对话", "消息", "历史", "角色",
-    "输入", "输出", "答案", "回应", "回复", "解释", "推理", "理由",
-    "选项", "选择", "标签", "标题", "摘要",
+    "question", "query", "ask", "problem", "context", "background", "paragraph", "article",
+    "instruction", "prompt", "system_prompt", "system", "user", "assistant", "human", "bot",
+    "content", "text", "dialogue", "message", "history", "role",
+    "input", "output", "answer", "response", "reply", "explanation", "reasoning", "rationale",
+    "options", "choices", "label", "title", "summary",
 ]

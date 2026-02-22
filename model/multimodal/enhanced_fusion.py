@@ -1,12 +1,13 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
+# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -17,6 +18,58 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Enhanced multimodal fusion components for Yv architecture.
+
+This module provides advanced multimodal fusion components for the Yv
+model, including quality-aware fusion, cross-modal attention, and modality
+alignment for comprehensive multi-modal representation learning.
+
+Module Components:
+    1. YvModalFusionConfig:
+       - Configuration dataclass for fusion parameters
+       - Modality list and attention settings
+
+    2. _IntraModalEncoder:
+       - Transformer encoder for intra-modal processing
+       - Self-attention within each modality
+
+    3. _CrossModalAligner:
+       - Cross-modal feature alignment
+       - Modality-specific projections
+       - Feature fusion and residual connections
+
+    4. _InterModalAttention:
+       - Cross-modal attention mechanism
+       - Multi-head attention across modalities
+
+Key Features:
+    - Quality-aware fusion with adaptive weighting
+    - Cross-modal attention for feature interaction
+    - Modality-specific projection layers
+    - Residual connections for gradient flow
+    - Support for 6 modalities (text, image, audio, video, document, agentic)
+
+Performance Characteristics:
+    - Intra-modal encoding: O(L^2 * hidden_size) per modality
+    - Cross-modal alignment: O(N * hidden_size^2) where N = modalities
+    - Inter-modal attention: O(N^2 * L * hidden_size)
+
+Usage Example:
+    >>> from model.multimodal.enhanced_fusion import YvModalFusionConfig
+    >>> 
+    >>> # Initialize configuration
+    >>> config = YvModalFusionConfig(
+    ...     hidden_size=2048,
+    ...     num_modalities=6,
+    ...     use_quality_aware_fusion=True
+    >>> )
+
+Note:
+    Default modalities: text, image, audio, video, document, agentic.
+    Uses GELU activation and LayerNorm for stability.
+    Supports both quality-aware and standard fusion modes.
+"""
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,7 +79,34 @@ import math
 
 
 @dataclass
-class RuchbahModalFusionConfig:
+class YvModalFusionConfig:
+    """Configuration for enhanced multimodal fusion.
+    
+    A comprehensive configuration dataclass that defines parameters for
+    the enhanced multimodal fusion system, including modality settings,
+    attention configuration, and fusion options.
+    
+    Attributes:
+        hidden_size (int): Hidden dimension for all projections. Default: 2048.
+        num_modalities (int): Number of modalities to fuse. Default: 6.
+        modalities (List[str]): List of modality names. Default:
+            ["text", "image", "audio", "video", "document", "agentic"].
+        num_heads (int): Number of attention heads. Default: 16.
+        num_layers (int): Number of fusion layers. Default: 4.
+        dropout (float): Dropout probability. Default: 0.1.
+        use_quality_aware_fusion (bool): Enable quality-aware weighting. Default: True.
+        use_modality_attention (bool): Enable cross-modal attention. Default: True.
+        use_cross_modal_alignment (bool): Enable feature alignment. Default: True.
+    
+    Example:
+        >>> config = YvModalFusionConfig(hidden_size=4096, num_modalities=4)
+        >>> print(config.modalities)
+        ['text', 'image', 'audio', 'video', 'document', 'agentic']
+    
+    Note:
+        Modality list is truncated to num_modalities during processing.
+        Quality-aware fusion adapts weights based on feature quality scores.
+    """
     hidden_size: int = 2048
     num_modalities: int = 6
     modalities: List[str] = field(default_factory=lambda: [
@@ -41,7 +121,37 @@ class RuchbahModalFusionConfig:
 
 
 class _IntraModalEncoder(nn.Module):
+    """Transformer encoder for intra-modal feature processing.
+    
+    A multi-layer transformer encoder that processes features within
+    each modality independently, applying self-attention and feed-forward
+    layers for intra-modal representation learning.
+    
+    Architecture:
+        - Multiple TransformerEncoderLayers
+        - Self-attention with 8 heads
+        - GELU activation in feed-forward
+        - Batch-first processing
+    
+    Attributes:
+        layers (nn.ModuleList): List of TransformerEncoderLayer modules.
+    
+    Example:
+        >>> encoder = _IntraModalEncoder(hidden_size=2048, num_layers=2)
+        >>> output = encoder(input_features)  # [B, L, hidden_size]
+    
+    Note:
+        Uses GELU activation for smooth gradient flow.
+        Feed-forward dimension is 4x hidden_size.
+    """
+    
     def __init__(self, hidden_size: int, num_layers: int = 2):
+        """Initialize the intra-modal encoder.
+        
+        Args:
+            hidden_size (int): Hidden dimension for features.
+            num_layers (int): Number of transformer layers. Default: 2.
+        """
         super().__init__()
         self.layers = nn.ModuleList([
             nn.TransformerEncoderLayer(
@@ -56,13 +166,60 @@ class _IntraModalEncoder(nn.Module):
         ])
     
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Process input through transformer layers.
+        
+        Args:
+            x (torch.Tensor): Input features [B, L, hidden_size].
+        
+        Returns:
+            torch.Tensor: Encoded features [B, L, hidden_size].
+        """
         for layer in self.layers:
             x = layer(x)
         return x
 
 
 class _CrossModalAligner(nn.Module):
+    """Cross-modal feature alignment and fusion module.
+    
+    Aligns features from different modalities through modality-specific
+    projections and performs fusion via concatenation and residual connections.
+    
+    Architecture:
+        1. Modality Projections:
+           - Linear projection per modality
+           - Projects all modalities to common hidden_size
+        
+        2. Feature Fusion:
+           - Concatenation of all modality features
+           - Two-layer MLP with GELU activation
+           - LayerNorm for stability
+        
+        3. Residual Connection:
+           - Adds fused features to each modality (scaled by 0.1)
+    
+    Attributes:
+        hidden_size (int): Common hidden dimension.
+        num_modalities (int): Number of modalities to align.
+        modal_fusion (nn.Sequential): Fusion network.
+        {modality}_proj (nn.Linear): Per-modality projection layers.
+    
+    Example:
+        >>> aligner = _CrossModalAligner(hidden_size=2048, num_modalities=6)
+        >>> aligned = aligner({"text": text_feat, "image": img_feat})
+    
+    Note:
+        Modality projections are created dynamically based on modality names.
+        Residual connection uses 0.1 scaling for stability.
+    """
+    
     def __init__(self, hidden_size: int, num_modalities: int):
+        """Initialize the cross-modal aligner.
+        
+        Args:
+            hidden_size (int): Common hidden dimension for all modalities.
+            num_modalities (int): Number of modalities to process.
+        """
         super().__init__()
         self.hidden_size = hidden_size
         self.num_modalities = num_modalities
@@ -78,6 +235,18 @@ class _CrossModalAligner(nn.Module):
         )
     
     def forward(self, encoded_modals: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        """Align and fuse features from multiple modalities.
+        
+        Args:
+            encoded_modals (Dict[str, torch.Tensor]): Dictionary mapping
+                modality names to feature tensors [B, L, hidden_size].
+        
+        Returns:
+            Dict[str, torch.Tensor]: Aligned features with residual fusion.
+        
+        Note:
+            Features are concatenated, fused, and added back as residuals.
+        """
         aligned = {}
         for name, feat in encoded_modals.items():
             if hasattr(self, f"{name}_proj"):
@@ -95,7 +264,35 @@ class _CrossModalAligner(nn.Module):
 
 
 class _InterModalAttention(nn.Module):
+    """Cross-modal attention mechanism for feature interaction.
+    
+    Implements multi-head attention across different modalities, enabling
+    features from one modality to attend to features from other modalities.
+    
+    Architecture:
+        - Multi-head attention with configurable heads
+        - Cross-modal query-key-value computation
+        - Attention weights for modality interaction
+    
+    Attributes:
+        hidden_size (int): Hidden dimension for features.
+    
+    Example:
+        >>> attention = _InterModalAttention(hidden_size=2048, num_modalities=6)
+        >>> attended = attention(modal_features)
+    
+    Note:
+        Enables bidirectional attention between all modality pairs.
+    """
+    
     def __init__(self, hidden_size: int, num_modalities: int, num_heads: int = 8):
+        """Initialize the inter-modal attention module.
+        
+        Args:
+            hidden_size (int): Hidden dimension for features.
+            num_modalities (int): Number of modalities to process.
+            num_heads (int): Number of attention heads. Default: 8.
+        """
         super().__init__()
         self.hidden_size = hidden_size
         self.num_modalities = num_modalities
@@ -373,11 +570,11 @@ class _QualityAwareFusion(nn.Module):
         return output
 
 
-class RuchbahEnhancedModalFusion(nn.Module):
-    def __init__(self, config: Optional[RuchbahModalFusionConfig] = None):
+class YvEnhancedModalFusion(nn.Module):
+    def __init__(self, config: Optional[YvModalFusionConfig] = None):
         super().__init__()
         if config is None:
-            config = RuchbahModalFusionConfig()
+            config = YvModalFusionConfig()
         
         self.config = config
         self.hidden_size = config.hidden_size
@@ -511,6 +708,17 @@ class RuchbahEnhancedModalFusion(nn.Module):
         if self.quality_assessor is not None:
             quality_scores = self.quality_assessor(interacted)
         
+        modality_sensitivity = {}
+        for name in interacted.keys():
+            feat = interacted[name]
+            sensitivity = torch.norm(feat, dim=-1).mean() / (feat.var(dim=-1).mean() + 1e-8)
+            modality_sensitivity[name] = sensitivity
+        
+        total_sensitivity = sum(modality_sensitivity.values())
+        for name in interacted.keys():
+            balance_factor = modality_sensitivity[name] / (total_sensitivity + 1e-8)
+            importance_weights[name] = importance_weights[name] * (0.5 + 0.5 * balance_factor)
+        
         if self.quality_fusion is not None and quality_scores is not None:
             fused_output = self.quality_fusion(
                 interacted,
@@ -538,6 +746,19 @@ class RuchbahEnhancedModalFusion(nn.Module):
             
             fused_output = self.output_norm(concat_features)
         
+        hallucination_scores = {}
+        for name, feat in interacted.items():
+            activation_norm = torch.norm(feat, dim=-1)
+            if activation_norm.numel() > 1:
+                anomaly_score = (activation_norm > activation_norm.mean() + 2 * activation_norm.std()).float().mean()
+            else:
+                anomaly_score = torch.tensor(0.0, device=feat.device)
+            hallucination_scores[name] = anomaly_score
+        
+        for name in hallucination_scores:
+            if hallucination_scores[name] > 0.3:
+                importance_weights[name] = importance_weights[name] * 0.5
+        
         output = self.output_norm(fused_output)
         
         result = {
@@ -555,7 +776,7 @@ class RuchbahEnhancedModalFusion(nn.Module):
         return result
 
 
-class RuchbahOnlineQualityAdaptation(nn.Module):
+class YvOnlineQualityAdaptation(nn.Module):
     """
     Online Quality Adaptation for modality fusion with reinforcement learning.
     
@@ -682,7 +903,7 @@ class RuchbahOnlineQualityAdaptation(nn.Module):
         return combined_quality
 
 
-class RuchbahTaskAwareModalityImportance(nn.Module):
+class YvTaskAwareModalityImportance(nn.Module):
     """
     Task-Aware Modality Importance Learner with task embedding modulation.
     
@@ -794,7 +1015,7 @@ class RuchbahTaskAwareModalityImportance(nn.Module):
         return result
 
 
-class RuchbahContrastiveCrossModalAligner(nn.Module):
+class YvContrastiveCrossModalAligner(nn.Module):
     """
     Contrastive Cross-Modal Aligner with negative sampling.
     
@@ -906,7 +1127,7 @@ class RuchbahContrastiveCrossModalAligner(nn.Module):
         }
 
 
-class RuchbahModalityBenchmark:
+class YvModalityBenchmark:
     """
     Modality Fusion Benchmark for 6-modal evaluation.
     

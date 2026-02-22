@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -18,19 +19,19 @@
 # limitations under the License.
 
 import os
-import dms_core
 import warnings
 from pathlib import Path
-from utils import PiscesLxCoreCacheManagerFacade
+from utils.paths import get_cache_dir
+from utils.dc import PiscesLxLogger
 
-PiscesLxCoreLog = dms_core.log.get_logger
+_LOG = PiscesLxLogger(__name__)
 
 class PiscesLxToolsDataDownloadCache:
     """
     Manages the download cache and configures the environment for data sources.
 
     Attributes:
-        _cache (PiscesLxCoreCacheManagerFacade): An instance of the cache manager.
+        _cache_dir (Path): Local cache directories for data download.
         _datatemp_dir (Path): Path to the temporary cache directory.
         _data_dir (Path): Path to the dataset save directory.
         _initialized (bool): A flag indicating whether the environment has been set up.
@@ -42,11 +43,8 @@ class PiscesLxToolsDataDownloadCache:
         Retrieves a cache manager instance and initializes paths for cache directories.
         Sets the initialization flag to False.
         """
-        self._cache = PiscesLxCoreCacheManagerFacade.get_instance()
-        
-        # Retrieve and initialize cache directory paths
-        self._datatemp_dir = Path(self._cache.get_cache_dir("datatmp"))
-        self._data_dir = Path(self._cache.get_cache_dir("data_cache"))
+        self._datatemp_dir = Path(get_cache_dir("datatmp"))
+        self._data_dir = Path(get_cache_dir("data_cache"))
         
         self._initialized = False
 
@@ -78,12 +76,10 @@ class PiscesLxToolsDataDownloadCache:
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         
         # Reduce the log level of third-party libraries
-        # Reduce the log level of third-party libraries
-        # Use dms_core logging to set external logger levels
-        import dms_core
-        dms_core.log.set_level("modelscope", "ERROR")
-        dms_core.log.set_level("datasets", "WARNING")
-        dms_core.log.set_level("transformers", "WARNING")
+        import logging
+        logging.getLogger("modelscope").setLevel(logging.ERROR)
+        logging.getLogger("datasets").setLevel(logging.WARNING)
+        logging.getLogger("transformers").setLevel(logging.WARNING)
         
         # Ignore user warnings from third-party libraries
         warnings.filterwarnings("ignore", category=UserWarning, module="modelscope")

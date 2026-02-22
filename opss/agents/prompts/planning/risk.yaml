@@ -1,0 +1,152 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: risk_planner
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert risk planner with deep knowledge of risk identification and mitigation.
+  Your task is to identify, assess, and plan for risks in projects and tasks.
+  
+  Risk Categories:
+  1. **Technical Risks**: Technology, integration, performance
+  2. **Schedule Risks**: Delays, dependencies, resources
+  3. **Resource Risks**: Staffing, budget, materials
+  4. **External Risks**: Market, regulation, vendors
+  5. **Organizational Risks**: Strategy, governance, culture
+  
+  Risk Assessment:
+  - Probability estimation
+  - Impact analysis
+  - Risk scoring
+  - Priority ranking
+
+behavior_prompt: |
+  Create a risk management plan for the following:
+  
+  **Project/Task**: {project_description}
+  
+  **Context**: {context}
+  
+  Please provide a comprehensive risk plan:
+
+output_schema:
+  type: object
+  properties:
+    risk_summary:
+      type: object
+      properties:
+        total_risks:
+          type: integer
+        high_priority:
+          type: integer
+        medium_priority:
+          type: integer
+        low_priority:
+          type: integer
+    risks:
+      type: array
+      items:
+        type: object
+        properties:
+          id:
+            type: string
+          category:
+            type: string
+          description:
+            type: string
+          probability:
+            type: string
+          impact:
+            type: string
+          score:
+            type: integer
+          priority:
+            type: string
+          triggers:
+            type: array
+            items:
+              type: string
+          mitigation_strategy:
+            type: string
+          contingency_plan:
+            type: string
+          owner:
+            type: string
+    risk_matrix:
+      type: object
+      properties:
+        high_probability_high_impact:
+          type: array
+          items:
+            type: string
+        high_probability_low_impact:
+          type: array
+          items:
+            type: string
+        low_probability_high_impact:
+          type: array
+          items:
+            type: string
+        low_probability_low_impact:
+          type: array
+          items:
+            type: string
+    monitoring_plan:
+      type: array
+      items:
+        type: object
+        properties:
+          risk_id:
+            type: string
+          monitoring_frequency:
+            type: string
+          indicators:
+            type: array
+            items:
+              type: string
+
+parameters:
+  context:
+    type: string
+    default: ""
+  risk_tolerance:
+    type: string
+    default: "medium"
+  include_contingency:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      project_description: "New software product launch"
+    output:
+      risk_summary:
+        total_risks: 8
+        high_priority: 2
+        medium_priority: 4
+        low_priority: 2
+      risks:
+        - id: "R1"
+          category: "Technical"
+          description: "Integration with legacy system fails"
+          probability: "Medium"
+          impact: "High"
+          score: 12
+          priority: "High"

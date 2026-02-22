@@ -1,0 +1,60 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: browser_controller
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are a browser control specialist.
+  Your task is to control web browsers for automation.
+  
+  Capabilities:
+  - Page navigation
+  - Form filling
+  - Screenshot capture
+  - Element interaction
+
+behavior_prompt: |
+  Control browser:
+  
+  **Action**: {action}
+  
+  **Target**: {target}
+  
+  **Parameters**: {parameters}
+  
+  Please execute browser action:
+
+output_schema:
+  type: object
+  properties:
+    success:
+      type: boolean
+    result:
+      type: string
+    screenshot:
+      type: string
+
+parameters:
+  headless:
+    type: boolean
+    default: true
+  timeout:
+    type: integer
+    default: 30

@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -25,11 +26,11 @@ import platform
 from datetime import datetime
 from typing import Any, Optional, Dict, Tuple, List
 
-from utils import PiscesLxCoreLog
+from utils.dc import PiscesLxLogger
 from utils import PiscesLxCoreObservabilityManager
 from utils import PiscesLxCoreHookBus
 from utils import PiscesLxCoreEnhancedCacheManager
-from utils import PiscesLxCoreTimeout, PiscesLxCoreRetry
+from opss.concurrency import TimeoutOperator
 from utils import PiscesLxCoreFS
 from utils import PiscesLxCoreDeviceManager
 
@@ -54,10 +55,10 @@ class PiscesLxToolsMonitorImpl:
         self.device_manager = self.context_manager.get_device_manager()
         self.logger = self.context_manager.get_logger()
         try:
-            self.console_logger = PiscesLxCoreLog("pisceslx.monitor.console", console=True, enable_file=False)
+            self.console_logger = PiscesLxLogger("pisceslx.monitor.console", console=True, enable_file=False)
         except TypeError:
             # Backward compatibility: older logger may not accept enable_file flag
-            self.console_logger = PiscesLxCoreLog("pisceslx.monitor.console")
+            self.console_logger = PiscesLxLogger("pisceslx.monitor.console")
         
         # Initialize modular components with shared dependencies
         self.stats_collector = PiscesLxMonitorStatsCollector(
@@ -183,13 +184,13 @@ class PiscesLxToolsMonitorImpl:
         self.MONITOR_LOG_FILE = self.fs_manager.path_join(self.MONITOR_LOG_DIR, 'monitor.log')
         
         # Use separate logger for monitor with console disabled
-        self.monitor_logger = PiscesLxCoreLog(
+        self.monitor_logger = PiscesLxLogger(
             "pisceslx.monitor.file", 
             file_path=self.MONITOR_LOG_FILE, 
             console=False, 
             enable_file=True
         )
-        self.obs_logger = PiscesLxCoreLog("pisceslx.monitor.observability")
+        self.obs_logger = PiscesLxLogger("pisceslx.monitor.observability")
     
     @PiscesLxCoreRetry(max_attempts=3, delay=1.0)
     def get_observability_metrics(self):
@@ -213,14 +214,7 @@ class PiscesLxToolsMonitorImpl:
             # Get system metrics with short timeout and safe fallback
             metrics = None
             try:
-                from utils.concurrency import PiscesLxCoreTimeout
-            except Exception:
-                PiscesLxCoreTimeout = None  # type: ignore
-            try:
-                if PiscesLxCoreTimeout is not None:
-                    with PiscesLxCoreTimeout(seconds=0.5, raise_on_timeout=True):
-                        metrics = self.observability_manager.get_system_metrics()
-                else:
+                with TimeoutOperator(seconds=0.5):
                     metrics = self.observability_manager.get_system_metrics()
             except Exception:
                 metrics = None

@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -20,9 +21,7 @@
 import os
 import json
 from .config import MODALITY_DATASETS
-# Use dms_core logging exclusively
-import dms_core
-PiscesLxCoreLog = dms_core.log.get_logger
+from utils.dc import PiscesLxLogger
 from typing import List, Dict, Any, Optional
 from .runner import PiscesLxToolsBenchmarkRunner, PiscesLxToolsBenchmark
 
@@ -34,7 +33,7 @@ class PiscesLxToolsBenchmarkOrchestrator:
 
     def __init__(self, args):
         self.args = args
-        self.logger = PiscesLxCoreLog("pisceslx.tools.benchmark.orch").bind(cmd="benchmark")
+        self.logger = PiscesLxLogger("pisceslx.tools.benchmark.orch")
 
     def _parse_generation_config(self) -> Optional[Dict[str, Any]]:
         # Allow JSON via env var PISCES_BENCHMARK_GENERATION_CONFIG
@@ -116,7 +115,7 @@ class PiscesLxToolsBenchmarkOrchestrator:
             **overrides,
         })
         print(json.dumps(result.get("summary", {}), indent=2))
-        self.logger.success("Self-tests completed", event="benchmark.selftest.done")
+        self.logger.info("Self-tests completed", event="benchmark.selftest.done")
 
     def run(self, _args=None):
         datasets = self._resolve_datasets()

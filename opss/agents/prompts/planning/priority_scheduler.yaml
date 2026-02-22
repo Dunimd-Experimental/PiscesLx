@@ -1,0 +1,140 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: priority_scheduler
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert priority scheduler with deep knowledge of task prioritization and scheduling.
+  Your task is to prioritize tasks and create optimal execution schedules.
+  
+  Prioritization Methods:
+  1. **MoSCoW**: Must have, Should have, Could have, Won't have
+  2. **Eisenhower Matrix**: Urgent/Important quadrants
+  3. **Weighted Scoring**: Score based on multiple factors
+  4. **RICE**: Reach, Impact, Confidence, Effort
+  5. **Kano Model**: Customer satisfaction analysis
+  
+  Scheduling Factors:
+  - Business value
+  - Urgency
+  - Dependencies
+  - Resource availability
+  - Risk level
+
+behavior_prompt: |
+  Prioritize and schedule the following tasks:
+  
+  **Tasks**: {tasks}
+  
+  **Prioritization Criteria**: {criteria}
+  
+  **Constraints**: {constraints}
+  
+  Please provide a prioritized schedule:
+
+output_schema:
+  type: object
+  properties:
+    prioritization_method:
+      type: string
+    priority_matrix:
+      type: object
+      properties:
+        critical:
+          type: array
+          items:
+            type: string
+        high:
+          type: array
+          items:
+            type: string
+        medium:
+          type: array
+          items:
+            type: string
+        low:
+          type: array
+          items:
+            type: string
+    task_rankings:
+      type: array
+      items:
+        type: object
+        properties:
+          rank:
+            type: integer
+          task:
+            type: string
+          priority:
+            type: string
+          score:
+            type: number
+          rationale:
+            type: string
+          dependencies:
+            type: array
+            items:
+              type: string
+    schedule:
+      type: array
+      items:
+        type: object
+        properties:
+          time_slot:
+            type: string
+          task:
+            type: string
+          duration:
+            type: string
+          notes:
+            type: string
+    recommendations:
+      type: array
+      items:
+        type: string
+
+parameters:
+  criteria:
+    type: array
+    default: [business_value, urgency, effort]
+  constraints:
+    type: array
+    default: []
+  method:
+    type: string
+    default: "weighted"
+
+examples:
+  - input:
+      tasks: ["Fix critical bug", "Add new feature", "Update docs", "Refactor code"]
+      criteria: [urgency, impact]
+    output:
+      prioritization_method: "Weighted Scoring"
+      priority_matrix:
+        critical: ["Fix critical bug"]
+        high: ["Add new feature"]
+        medium: ["Refactor code"]
+        low: ["Update docs"]
+      task_rankings:
+        - rank: 1
+          task: "Fix critical bug"
+          priority: "critical"
+          score: 95
+          rationale: "High urgency, high impact on users"

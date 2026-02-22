@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -24,7 +25,7 @@ import shutil
 from tqdm import tqdm
 import multiprocessing
 from typing import Any, Tuple
-from utils import PiscesLxCoreLog
+from utils.dc import PiscesLxLogger
 from .caches import PiscesLxToolsDataDownloadCache
 from datasets import load_from_disk, Dataset
 from typing import Optional, Set, List, Tuple
@@ -32,7 +33,7 @@ from tools.data.clean import DatasetCleaner
 from .config import PiscesLxToolsDataConfigLoader, PiscesLxToolsDataDownloadConfig, DatasetItem
 from .sources import PiscesLxToolsDataSourceRouter
 
-logger = PiscesLxCoreLog("PiscesLx.Tools.DataDownload")
+_LOG = PiscesLxLogger(__name__)
 
 class PiscesLxToolsDataDatasetDownload:
     @staticmethod
@@ -57,7 +58,7 @@ class PiscesLxToolsDataDatasetDownload:
                 from .sources import PiscesLxToolsDataSourceRouter
                 ds = PiscesLxToolsDataSourceRouter.to_hf_if_needed(ds)
             except Exception:
-                logger.debug("Dataset is already in HuggingFace format or conversion failed")
+                _LOG.debug("Dataset is already in HuggingFace format or conversion failed")
             
             # Apply max_samples limit if specified and valid
             if max_samples is not None and max_samples > 0 and len(ds) > max_samples:
@@ -98,7 +99,7 @@ class PiscesLxToolsDataDatasetDownload:
         # Set up HuggingFace mirror if needed in child process
         PiscesLxToolsDataSourceRouter.setup_hf_mirror()
         
-        logger = PiscesLxCoreLog("pisceslx.data.download")
+        logger = PiscesLxLogger("pisceslx.data.download")
         logger.info(f"Starting download: {dataset_name} -> {save_name}")
         max_retries = 3
         
@@ -159,21 +160,15 @@ class PiscesLxToolsDataDatasetDownload:
                     continue
                 return None
 
-
-
-
-
     def __init__(self) -> None:
         """
         Initialize the dataset download tool.
         Set up logging, cache context, source router, and data directories.
         """
-        # Reduce third-party log noise via our logging helper
+        # Reduce third-party log noise via standard logging
         try:
-            # Use dms_core logging exclusively
-            import dms_core
-            set_external_logger_level = dms_core.log.set_level
-            set_external_logger_level("modelscope", "ERROR")
+            import logging
+            logging.getLogger("modelscope").setLevel(logging.ERROR)
         except Exception:
             pass
 
@@ -183,7 +178,7 @@ class PiscesLxToolsDataDatasetDownload:
         self._DATA = self._cache.get_data_dir()
         self._DATATEMP = self._cache.get_temp_dir()
 
-    def download(self, config_path: str | int = "configs/dataset.json", max_samples_per_dataset: Optional[int] = None):
+    def download(self, config_path: str | int = "configs/dataset.yaml", max_samples_per_dataset: Optional[int] = None):
         """
         Download datasets based on the specified configuration.
 
@@ -276,7 +271,7 @@ class PiscesLxToolsDataDatasetDownload:
         """
         if isinstance(config_path, (int, float)) and max_samples_override is None:
             max_samples_override = int(config_path)
-            config_path = "configs/dataset.json"
+            config_path = "configs/dataset.yaml"
         loader = PiscesLxToolsDataConfigLoader(str(config_path))
         cfg = loader.load()
         if isinstance(max_samples_override, int) and max_samples_override > 0:
@@ -324,7 +319,7 @@ class PiscesLxToolsDataDatasetDownload:
             cfg (PiscesLxToolsDataDownloadConfig): Download configuration object.
         """
         # Logger for this run
-        logger = PiscesLxCoreLog("pisceslx.data.download")
+        logger = PiscesLxLogger("pisceslx.data.download")
         logger.info(f"Starting download with config: {cfg}")
         logger.info(f"Using data directory: {self._DATA}")
         logger.info(f"Using cache directory: {self._DATATEMP}")
@@ -441,7 +436,7 @@ class PiscesLxToolsDataDatasetDownload:
 
     def _cleanup_caches(self) -> None:
         """Clean temporary caches after a run."""
-        logger = PiscesLxCoreLog("pisceslx.data.download")
+        logger = PiscesLxLogger("pisceslx.data.download")
         try:
             # Delegate to cache context cleanup
             self._cache.cleanup_cache()

@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -22,9 +23,9 @@ import torch
 from datasets import load_from_disk
 from torch.utils.data import Dataset
 from typing import Optional, Dict, Any
-from model.tokenizer import get_tokenizer
-from utils import PiscesLxCoreCacheManagerFacade
-from model.multimodal import RuchbahVisionEncoder as VisionEncoder, RuchbahAudioEncoder as AudioEncoder, RuchbahDocEncoder as DocEncoder, RuchbahVideoEncoder as VideoEncoder
+from model.tokenizer import YvTokenizer
+from utils.paths import get_cache_dir
+from model.multimodal import YvVisionEncoder as VisionEncoder, YvAudioEncoder as AudioEncoder, YvDocEncoder as DocEncoder, YvVideoEncoder as VideoEncoder
 
 IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
 AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]
@@ -62,10 +63,8 @@ class Dataset:
             pass
         self.max_samples = max_samples
 
-        # Get the instance of cache manager and create data cache directory
-        cache = PiscesLxCoreCacheManagerFacade.get_instance()
-        data_cache = cache.get_cache_dir("data_cache")
-        cache_path = os.path.join(data_cache, self.subset)
+        data_cache = cache_dir or get_cache_dir("data_cache")
+        cache_path = os.path.join(str(data_cache), self.subset)
 
         # Check if the dataset cache path exists
         if not os.path.exists(cache_path):
@@ -82,7 +81,7 @@ class Dataset:
             self.ds = self.ds.select(range(self.max_samples))
 
         # Initialize the tokenizer and modality encoders
-        self.tokenizer = get_tokenizer()
+        self.tokenizer = YvTokenizer()
         self.vision_encoder = VisionEncoder(self.config) if self.config else None
         self.audio_encoder = AudioEncoder(self.config) if self.config else None
         self.doc_encoder = DocEncoder(self.config) if self.config else None

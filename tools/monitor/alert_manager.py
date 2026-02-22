@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -19,14 +20,30 @@
 
 import time
 from typing import List, Dict, Any, Optional
-from utils.concurrency import PiscesLxCoreTimeout
+from opss.concurrency import TimeoutOperator
 try:
-    # Use dms_core cache if available
-    import dms_core
-    PiscesLxCoreEnhancedCacheManager = dms_core.cache.CacheManager
-except (ImportError, AttributeError):
-    # Fallback to simple implementation if dms_core is not available
-    PiscesLxCoreEnhancedCacheManager = type('PiscesLxCoreEnhancedCacheManager', (), {})
+    from utils.dc import PiscesLxConfiguration
+    _CONFIG_AVAILABLE = True
+except ImportError:
+    _CONFIG_AVAILABLE = False
+
+class _SimpleCacheManager:
+    """Simple cache manager fallback when utils.dc is not available."""
+    def __init__(self):
+        self._cache: Dict[str, Any] = {}
+    
+    def set(self, key: str, value: Any, ttl: float = 300.0) -> None:
+        self._cache[key] = {"value": value, "expires": time.time() + ttl}
+    
+    def get(self, key: str) -> Optional[Any]:
+        if key in self._cache:
+            entry = self._cache[key]
+            if time.time() < entry["expires"]:
+                return entry["value"]
+            del self._cache[key]
+        return None
+
+PiscesLxCoreEnhancedCacheManager = _SimpleCacheManager
 
 class PiscesLxMonitorAlertManager:
     """Alert manager for system monitoring with caching and timeout protection."""
@@ -44,7 +61,6 @@ class PiscesLxMonitorAlertManager:
             'error_rate': 0.01  # 1%
         }
     
-    @PiscesLxCoreTimeout(seconds=10)
     def check_alerts(self, stats: Dict[str, Any], observability_metrics: Optional[Dict[str, Any]] = None) -> List[str]:
         """Check for system alerts and log them."""
         try:

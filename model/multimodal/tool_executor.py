@@ -1,12 +1,13 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
+# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -30,7 +31,7 @@ from enum import Enum
 from urllib.parse import urlparse
 import time
 
-class RuchbahToolType(Enum):
+class YvToolType(Enum):
     SEARCH = "search"
     FETCH = "fetch"
     CODE_EXEC = "code_exec"
@@ -43,7 +44,7 @@ class RuchbahToolType(Enum):
 
 
 @dataclass
-class RuchbahToolResult:
+class YvToolResult:
     success: bool
     output: Any
     execution_time: float
@@ -52,62 +53,120 @@ class RuchbahToolResult:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-class RuchbahSearchTool:
+class YvSearchTool:
+    """Web search tool using DuckDuckGo API.
+    
+    Performs real web searches, not mock results.
+    """
     
     def __init__(self, max_results: int = 10):
         self.max_results = max_results
-        self._mock_results = {
-            "python": "Python is a high-level programming language known for its simplicity and readability.",
-            "machine learning": "Machine learning is a subset of AI that enables systems to learn from data.",
-            "transformer": "Transformer is a neural network architecture introduced in 2017.",
-            "attention": "Attention mechanisms allow neural networks to focus on relevant parts of input.",
-        }
+        self._session = None
     
-    async def execute(self, query: str, **kwargs) -> RuchbahToolResult:
+    async def execute(self, query: str, **kwargs) -> YvToolResult:
         start_time = time.time()
         try:
-            query_lower = query.lower()
-            results = []
-            for key, value in self._mock_results.items():
-                if key in query_lower:
-                    results.append({
-                        "title": key.title(),
-                        "snippet": value,
-                        "relevance": 0.9 if key in query_lower else 0.5
-                    })
+            # Use DuckDuckGo HTML search (no API key required)
+            search_url = "https://html.duckduckgo.com/html/"
+            params = {"q": query}
             
-            if not results:
+            req = urllib.request.Request(
+                f"{search_url}?{urllib.parse.urlencode(params)}",
+                headers={
+                    'User-Agent': 'YvAgent/1.0 (Compatible; Search Bot)',
+                    'Accept': 'text/html',
+                }
+            )
+            
+            results = []
+            try:
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    html_content = response.read().decode('utf-8', errors='ignore')
+                    
+                    # Parse results from HTML
+                    results = self._parse_duckduckgo_html(html_content, query)
+            except urllib.error.URLError:
+                # Fallback: return structured response indicating search unavailable
                 results = [{
-                    "title": "Web Search Result",
-                    "snippet": f"Information about: {query}",
-                    "relevance": 0.7
+                    "title": "Search Unavailable",
+                    "snippet": f"Web search for '{query}' is currently unavailable. Please try again later.",
+                    "url": "",
+                    "relevance": 0.5
                 }]
             
             execution_time = time.time() - start_time
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=True,
                 output=json.dumps({"results": results[:self.max_results], "query": query}),
                 execution_time=execution_time,
                 metadata={"result_count": len(results)}
             )
         except Exception as e:
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=False,
                 output=None,
                 execution_time=time.time() - start_time,
                 error_type="search_error",
                 error_message=str(e)
             )
+    
+    def _parse_duckduckgo_html(self, html: str, query: str) -> List[Dict[str, Any]]:
+        """Parse DuckDuckGo HTML search results."""
+        results = []
+        
+        # Simple regex-based parsing for result blocks
+        import re
+        
+        # Find result links and snippets
+        result_pattern = re.compile(
+            r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([^<]+)</a>.*?'
+            r'<a[^>]*class="result__snippet"[^>]*>([^<]+)</a>',
+            re.DOTALL | re.IGNORECASE
+        )
+        
+        matches = result_pattern.findall(html)
+        
+        for url, title, snippet in matches[:self.max_results]:
+            # Decode HTML entities
+            title = title.strip()
+            snippet = snippet.strip()
+            
+            # Calculate relevance based on query match
+            query_words = set(query.lower().split())
+            title_words = set(title.lower().split())
+            snippet_words = set(snippet.lower().split())
+            
+            title_overlap = len(query_words & title_words) / max(len(query_words), 1)
+            snippet_overlap = len(query_words & snippet_words) / max(len(query_words), 1)
+            relevance = min(1.0, title_overlap * 0.4 + snippet_overlap * 0.6 + 0.3)
+            
+            results.append({
+                "title": title,
+                "snippet": snippet,
+                "url": url,
+                "relevance": round(relevance, 3)
+            })
+        
+        # If no results from parsing, create a fallback
+        if not results:
+            results.append({
+                "title": f"Search results for: {query}",
+                "snippet": "Search completed but no results could be parsed.",
+                "url": f"https://duckduckgo.com/?q={urllib.parse.quote(query)}",
+                "relevance": 0.5
+            })
+        
+        return results
 
 
-class RuchbahFetchTool:
+class YvFetchTool:
     
     def __init__(self, timeout: float = 30.0, max_content_size: int = 1048576):
         self.timeout = timeout
         self.max_content_size = max_content_size
         self._content_cache = {}
     
-    async def execute(self, url: str, **kwargs) -> RuchbahToolResult:
+    async def execute(self, url: str, **kwargs) -> YvToolResult:
         start_time = time.time()
         try:
             parsed_url = urlparse(url)
@@ -117,7 +176,7 @@ class RuchbahFetchTool:
             if url in self._content_cache:
                 content = self._content_cache[url]
                 execution_time = time.time() - start_time
-                return RuchbahToolResult(
+                return YvToolResult(
                     success=True,
                     output=json.dumps({"url": url, "content": content[:1000], "cached": True}),
                     execution_time=execution_time,
@@ -126,21 +185,21 @@ class RuchbahFetchTool:
             
             req = urllib.request.Request(
                 url,
-                headers={'User-Agent': 'RuchbahAgent/1.0'}
+                headers={'User-Agent': 'YvAgent/1.0'}
             )
             with urllib.request.urlopen(req, timeout=self.timeout) as response:
                 content = response.read().decode('utf-8')[:self.max_content_size]
             
             self._content_cache[url] = content
             execution_time = time.time() - start_time
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=True,
                 output=json.dumps({"url": url, "content": content[:1000], "cached": False}),
                 execution_time=execution_time,
                 metadata={"content_length": len(content), "cached": False}
             )
         except urllib.error.HTTPError as e:
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=False,
                 output=None,
                 execution_time=time.time() - start_time,
@@ -148,7 +207,7 @@ class RuchbahFetchTool:
                 error_message=f"HTTP {e.code}: {e.reason}"
             )
         except Exception as e:
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=False,
                 output=None,
                 execution_time=time.time() - start_time,
@@ -157,19 +216,19 @@ class RuchbahFetchTool:
             )
 
 
-class RuchbahCodeExecTool:
+class YvCodeExecTool:
     
     def __init__(self, timeout: float = 30.0, max_output_size: int = 10000):
         self.timeout = timeout
         self.max_output_size = max_output_size
         self._python_available = sys.executable is not None
     
-    async def execute(self, code: str, language: str = "python", **kwargs) -> RuchbahToolResult:
+    async def execute(self, code: str, language: str = "python", **kwargs) -> YvToolResult:
         start_time = time.time()
         try:
             if language.lower() == "python":
                 if not self._python_available:
-                    return RuchbahToolResult(
+                    return YvToolResult(
                         success=False,
                         output=None,
                         execution_time=time.time() - start_time,
@@ -199,7 +258,7 @@ class RuchbahCodeExecTool:
                 execution_time = time.time() - start_time
                 output_text = "\n".join(local_output) if local_output else "Code executed successfully"
                 
-                return RuchbahToolResult(
+                return YvToolResult(
                     success=True,
                     output=output_text[:self.max_output_size],
                     execution_time=execution_time,
@@ -207,23 +266,49 @@ class RuchbahCodeExecTool:
                 )
             
             elif language.lower() in ["javascript", "js"]:
-                return RuchbahToolResult(
-                    success=True,
-                    output=f"[JavaScript Execution] {code[:100]}...",
-                    execution_time=time.time() - start_time,
-                    metadata={"language": language}
-                )
+                # JavaScript execution via Node.js if available
+                try:
+                    result = subprocess.run(
+                        ["node", "-e", code],
+                        capture_output=True,
+                        text=True,
+                        timeout=self.timeout
+                    )
+                    if result.returncode == 0:
+                        return YvToolResult(
+                            success=True,
+                            output=result.stdout[:self.max_output_size] or "Code executed successfully",
+                            execution_time=time.time() - start_time,
+                            metadata={"language": language}
+                        )
+                    else:
+                        return YvToolResult(
+                            success=False,
+                            output=None,
+                            execution_time=time.time() - start_time,
+                            error_type="execution_error",
+                            error_message=result.stderr[:500]
+                        )
+                except FileNotFoundError:
+                    return YvToolResult(
+                        success=False,
+                        output=None,
+                        execution_time=time.time() - start_time,
+                        error_type="runtime_error",
+                        error_message="Node.js not installed. Install Node.js to execute JavaScript."
+                    )
             
             else:
-                return RuchbahToolResult(
-                    success=True,
-                    output=f"[{language.upper()}] Code execution placeholder: {code[:100]}...",
+                return YvToolResult(
+                    success=False,
+                    output=None,
                     execution_time=time.time() - start_time,
-                    metadata={"language": language}
+                    error_type="unsupported_language",
+                    error_message=f"Language '{language}' is not supported. Supported: python, javascript"
                 )
         
         except SyntaxError as e:
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=False,
                 output=None,
                 execution_time=time.time() - start_time,
@@ -231,7 +316,7 @@ class RuchbahCodeExecTool:
                 error_message=f"Syntax error at line {e.lineno}: {e.msg}"
             )
         except Exception as e:
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=False,
                 output=None,
                 execution_time=time.time() - start_time,
@@ -240,21 +325,21 @@ class RuchbahCodeExecTool:
             )
 
 
-class RuchbahFileTool:
+class YvFileTool:
     
     def __init__(self, base_path: str = ".", max_file_size: int = 1048576):
         self.base_path = base_path
         self.max_file_size = max_file_size
         self._read_cache = {}
     
-    async def read(self, filepath: str, **kwargs) -> RuchbahToolResult:
+    async def read(self, filepath: str, **kwargs) -> YvToolResult:
         start_time = time.time()
         try:
             import os
             full_path = os.path.join(self.base_path, filepath)
             
             if not os.path.exists(full_path):
-                return RuchbahToolResult(
+                return YvToolResult(
                     success=False,
                     output=None,
                     execution_time=time.time() - start_time,
@@ -263,7 +348,7 @@ class RuchbahFileTool:
                 )
             
             if os.path.getsize(full_path) > self.max_file_size:
-                return RuchbahToolResult(
+                return YvToolResult(
                     success=False,
                     output=None,
                     execution_time=time.time() - start_time,
@@ -276,14 +361,14 @@ class RuchbahFileTool:
             
             self._read_cache[filepath] = content
             execution_time = time.time() - start_time
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=True,
                 output=content[:self.max_file_size],
                 execution_time=execution_time,
                 metadata={"filepath": filepath, "size": len(content)}
             )
         except Exception as e:
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=False,
                 output=None,
                 execution_time=time.time() - start_time,
@@ -291,7 +376,7 @@ class RuchbahFileTool:
                 error_message=str(e)
             )
     
-    async def write(self, filepath: str, content: str, **kwargs) -> RuchbahToolResult:
+    async def write(self, filepath: str, content: str, **kwargs) -> YvToolResult:
         start_time = time.time()
         try:
             import os
@@ -299,7 +384,7 @@ class RuchbahFileTool:
             os.makedirs(os.path.dirname(full_path) or '.', exist_ok=True)
             
             if len(content) > self.max_file_size:
-                return RuchbahToolResult(
+                return YvToolResult(
                     success=False,
                     output=None,
                     execution_time=time.time() - start_time,
@@ -312,14 +397,14 @@ class RuchbahFileTool:
             
             self._read_cache[filepath] = content
             execution_time = time.time() - start_time
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=True,
                 output=f"File written successfully: {filepath}",
                 execution_time=execution_time,
                 metadata={"filepath": filepath, "size": len(content)}
             )
         except Exception as e:
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=False,
                 output=None,
                 execution_time=time.time() - start_time,
@@ -328,17 +413,17 @@ class RuchbahFileTool:
             )
 
 
-class RuchbahCalculateTool:
+class YvCalculateTool:
     
     def __init__(self, precision: int = 10):
         self.precision = precision
     
-    async def execute(self, expression: str, **kwargs) -> RuchbahToolResult:
+    async def execute(self, expression: str, **kwargs) -> YvToolResult:
         start_time = time.time()
         try:
             safe_chars = set("0123456789+-*/().eE ")
             if not all(c in safe_chars for c in expression):
-                return RuchbahToolResult(
+                return YvToolResult(
                     success=False,
                     output=None,
                     execution_time=time.time() - start_time,
@@ -351,14 +436,14 @@ class RuchbahCalculateTool:
                 result = round(result, self.precision)
             
             execution_time = time.time() - start_time
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=True,
                 output=str(result),
                 execution_time=execution_time,
                 metadata={"expression": expression}
             )
         except Exception as e:
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=False,
                 output=None,
                 execution_time=time.time() - start_time,
@@ -367,12 +452,12 @@ class RuchbahCalculateTool:
             )
 
 
-class RuchbahHTTPTool:
+class YvHTTPTool:
     
     def __init__(self, timeout: float = 30.0, default_headers: Dict[str, str] = None):
         self.timeout = timeout
         self.default_headers = default_headers or {
-            "User-Agent": "RuchbahAgent/1.0",
+            "User-Agent": "YvAgent/1.0",
             "Accept": "application/json"
         }
     
@@ -383,7 +468,7 @@ class RuchbahHTTPTool:
         headers: Dict[str, str] = None,
         body: str = None,
         **kwargs
-    ) -> RuchbahToolResult:
+    ) -> YvToolResult:
         start_time = time.time()
         try:
             req_headers = {**self.default_headers, **(headers or {})}
@@ -398,7 +483,7 @@ class RuchbahHTTPTool:
                 response_headers = dict(response.headers)
             
             execution_time = time.time() - start_time
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=True,
                 output=json.dumps({
                     "status": response.status,
@@ -409,7 +494,7 @@ class RuchbahHTTPTool:
                 metadata={"url": url, "method": method, "status_code": response.status}
             )
         except urllib.error.HTTPError as e:
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=False,
                 output=None,
                 execution_time=time.time() - start_time,
@@ -417,7 +502,7 @@ class RuchbahHTTPTool:
                 error_message=f"HTTP {e.code}: {e.reason}"
             )
         except Exception as e:
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=False,
                 output=None,
                 execution_time=time.time() - start_time,
@@ -426,7 +511,7 @@ class RuchbahHTTPTool:
             )
 
 
-class RuchbahToolExecutor:
+class YvToolExecutor:
     
     def __init__(self, base_path: str = ".", enable_caching: bool = True):
         self.base_path = base_path
@@ -442,50 +527,50 @@ class RuchbahToolExecutor:
         self._register_tool(
             "search",
             "Search for information on a given topic",
-            RuchbahSearchTool(),
-            {"type": RuchbahToolType.SEARCH, "parameters": {"query": "string"}}
+            YvSearchTool(),
+            {"type": YvToolType.SEARCH, "parameters": {"query": "string"}}
         )
         
         self._register_tool(
             "fetch",
             "Fetch content from a URL",
-            RuchbahFetchTool(),
-            {"type": RuchbahToolType.FETCH, "parameters": {"url": "string"}}
+            YvFetchTool(),
+            {"type": YvToolType.FETCH, "parameters": {"url": "string"}}
         )
         
         self._register_tool(
             "execute",
             "Execute code in a specified language",
-            RuchbahCodeExecTool(),
-            {"type": RuchbahToolType.CODE_EXEC, "parameters": {"code": "string", "language": "string"}}
+            YvCodeExecTool(),
+            {"type": YvToolType.CODE_EXEC, "parameters": {"code": "string", "language": "string"}}
         )
         
         self._register_tool(
             "read_file",
             "Read content from a file",
-            RuchbahFileTool(self.base_path),
-            {"type": RuchbahToolType.FILE_READ, "parameters": {"filepath": "string"}}
+            YvFileTool(self.base_path),
+            {"type": YvToolType.FILE_READ, "parameters": {"filepath": "string"}}
         )
         
         self._register_tool(
             "write_file",
             "Write content to a file",
-            RuchbahFileTool(self.base_path),
-            {"type": RuchbahToolType.FILE_WRITE, "parameters": {"filepath": "string", "content": "string"}}
+            YvFileTool(self.base_path),
+            {"type": YvToolType.FILE_WRITE, "parameters": {"filepath": "string", "content": "string"}}
         )
         
         self._register_tool(
             "calculate",
             "Evaluate a mathematical expression",
-            RuchbahCalculateTool(),
-            {"type": RuchbahToolType.CALCULATE, "parameters": {"expression": "string"}}
+            YvCalculateTool(),
+            {"type": YvToolType.CALCULATE, "parameters": {"expression": "string"}}
         )
         
         self._register_tool(
             "http_request",
             "Make an HTTP request",
-            RuchbahHTTPTool(),
-            {"type": RuchbahToolType.HTTP_REQUEST, "parameters": {"method": "string", "url": "string"}}
+            YvHTTPTool(),
+            {"type": YvToolType.HTTP_REQUEST, "parameters": {"method": "string", "url": "string"}}
         )
     
     def _register_tool(
@@ -505,9 +590,9 @@ class RuchbahToolExecutor:
             "last_called": None
         }
     
-    async def execute(self, tool_name: str, **kwargs) -> RuchbahToolResult:
+    async def execute(self, tool_name: str, **kwargs) -> YvToolResult:
         if tool_name not in self._tools:
-            return RuchbahToolResult(
+            return YvToolResult(
                 success=False,
                 output=None,
                 execution_time=0.0,
@@ -524,7 +609,7 @@ class RuchbahToolExecutor:
             else:
                 result = await handler(**kwargs)
         except Exception as e:
-            result = RuchbahToolResult(
+            result = YvToolResult(
                 success=False,
                 output=None,
                 execution_time=time.time() - start_time,

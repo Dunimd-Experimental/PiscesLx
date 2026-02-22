@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -18,7 +19,7 @@
 # limitations under the License.
 
 import os
-from utils import PiscesLxCoreCacheManagerFacade
+from utils.paths import get_cache_dir
 from datasets import load_from_disk, DatasetDict
 
 class PiscesLxToolsDataPreprocessor:
@@ -36,8 +37,7 @@ class PiscesLxToolsDataPreprocessor:
         Returns:
             list: A list of dataset subset names. Returns an empty list if the file does not exist.
         """
-        cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
-        data_cache_dir = cache_manager.get_cache_dir("data_cache")
+        data_cache_dir = get_cache_dir("data_cache")
         model_txt_path = os.path.join(data_cache_dir, "model.txt")
         
         if not os.path.exists(model_txt_path):
@@ -62,8 +62,7 @@ class PiscesLxToolsDataPreprocessor:
         Returns:
             None: Returns None if the dataset subset does not exist.
         """
-        cache_manager = PiscesLxCoreCacheManagerFacade.get_instance()
-        subset_path = os.path.join(cache_manager.get_cache_dir("data_cache"), subset)
+        subset_path = os.path.join(get_cache_dir("data_cache"), subset)
         
         if not os.path.exists(subset_path):
             return

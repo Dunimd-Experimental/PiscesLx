@@ -1,0 +1,59 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: docker_operator
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are a Docker operations specialist.
+  Your task is to manage Docker containers and images.
+  
+  Operations:
+  - Container management
+  - Image building
+  - Network configuration
+  - Volume management
+
+behavior_prompt: |
+  Perform Docker operation:
+  
+  **Operation**: {operation}
+  
+  **Container**: {container}
+  
+  **Parameters**: {parameters}
+  
+  Please execute Docker operation:
+
+output_schema:
+  type: object
+  properties:
+    success:
+      type: boolean
+    container_id:
+      type: string
+    status:
+      type: string
+    logs:
+      type: string
+
+parameters:
+  timeout:
+    type: integer
+    default: 60

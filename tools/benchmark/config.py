@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -22,13 +23,63 @@ from dataclasses import asdict  # re-export convenience
 from pathlib import Path
 from typing import Dict, List, Optional, Any
 
-# Five-modality dataset presets (adjust according to your EvalScope backend support)
+# Comprehensive benchmark presets aligned with flagship models (DeepSeek-V3.2, Llama 4, Qwen3.5, etc.)
 MODALITY_DATASETS: Dict[str, List[str]] = {
-    "text": ["mmlu", "ceval", "gsm8k", "arc", "hellaswag", "truthfulqa", "math", "humaneval"],
-    "image": ["mmbench", "textvqa"],
-    "audio": ["librispeech_asr"],
-    "video": ["mvbench"],
-    "doc": ["docvqa"],
+    "text": [
+        # Knowledge & Reasoning
+        "mmlu", "mmlu_pro", "ceval", "cmmlu", "agieval", "arc", "hellaswag",
+        "gpqa", "musr", "bbh", "drop", "winogrande",
+        # Math & Logic
+        "gsm8k", "math", "aime", "amc", "olympiadbench",
+        # Code
+        "humaneval", "mbpp", "humaneval_plus", "multipl_e", "ds1000",
+        # Commonsense & Social
+        "piqa", "siqa", "openbookqa", "commonsenseqa", "strategyqa",
+        # Truthfulness & Safety
+        "truthfulqa", "toxigen", "bbq",
+        # Instruction Following
+        "ifeval", "mt_bench", "alpaca_eval", "arena_hard",
+    ],
+    "image": [
+        # General VQA
+        "mmbench", "vqav2", "gqa", "ok_vqa", "textvqa",
+        # Chart & Document
+        "chartqa", "docvqa", "infographicvqa",
+        # Science & Knowledge
+        "ai2d", "scienceqa", "mmmu", "ocrbench",
+        # Fine-grained
+        "refcoco", "refcoco_plus", "refcocog",
+    ],
+    "audio": [
+        "librispeech_asr", "common_voice", "fleurs", "gigaspeech",
+        "librispeech_asr_clean", "librispeech_asr_other",
+    ],
+    "video": [
+        "mvbench", "activitynet_qa", "videoqa", "msrvtt_qa", "msvd_qa",
+    ],
+    "doc": [
+        "docvqa", "infographicvqa", "chartqa", "deepform", "kleister_nda",
+    ],
+    "code": [
+        "humaneval", "mbpp", "humaneval_plus", "multipl_e", "ds1000",
+        "livecodebench", "codecontests", "apps",
+    ],
+    "math": [
+        "gsm8k", "math", "aime", "amc", "olympiadbench",
+        "minif2f", "proofnet", "lean_dojo",
+    ],
+    "safety": [
+        "truthfulqa", "toxigen", "bbq", "realtoxicityprompts",
+        "adv_glue", "anli", "halueval",
+    ],
+    "agent": [
+        "agentbench", "webshop", "webarena", "osworld", "swebench",
+        "toolbench", "apibench", "gsm8k_tool",
+    ],
+    "long_context": [
+        "longbench", "l_eval", "needle_in_haystack", "passkey_retrieval",
+        "kv_retrieval", "longbook_summarization", "longbook_qa",
+    ],
 }
 
 

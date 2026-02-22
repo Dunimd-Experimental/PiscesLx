@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -18,10 +19,11 @@
 # limitations under the License.
 
 import json
+import yaml
 from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Optional
-from configs.version import PVERSION
+from configs.version import VERSION
 
 @dataclass
 class DatasetItem:
@@ -99,15 +101,15 @@ class PiscesLxToolsDataDownloadConfig:
 
 class PiscesLxToolsDataConfigLoader:
     """
-    Loads and validates the dataset download configuration from a JSON file.
+    Loads and validates the dataset download configuration from a YAML/JSON file.
     """
     
-    def __init__(self, path: str = "configs/dataset.json") -> None:
+    def __init__(self, path: str = "configs/dataset.yaml") -> None:
         """
         Initialize the configuration loader.
 
         Args:
-            path (str, optional): Path to the configuration JSON file. Defaults to "configs/dataset.json".
+            path (str, optional): Path to the configuration YAML/JSON file. Defaults to "configs/dataset.yaml".
 
         Raises:
             FileNotFoundError: If the specified configuration file does not exist.
@@ -118,7 +120,7 @@ class PiscesLxToolsDataConfigLoader:
 
     def load(self) -> PiscesLxToolsDataDownloadConfig:
         """
-        Load and validate the download configuration from the JSON file.
+        Load and validate the download configuration from the YAML/JSON file.
 
         Args:
             No additional arguments.
@@ -127,14 +129,19 @@ class PiscesLxToolsDataConfigLoader:
             DownloadConfig: A configured DownloadConfig object.
 
         Raises:
-            ValueError: If the JSON content in the configuration file is invalid.
+            ValueError: If the content in the configuration file is invalid.
             RuntimeError: If there is an error loading the configuration file.
         """
         try:
             with open(self.path, "r", encoding="utf-8") as f:
-                raw = json.load(f)
+                if self.path.suffix.lower() in (".yaml", ".yml"):
+                    raw = yaml.safe_load(f) or {}
+                else:
+                    raw = json.load(f)
         except json.JSONDecodeError as e:
             raise ValueError(f"Invalid JSON in configuration file {self.path}: {e}")
+        except yaml.YAMLError as e:
+            raise ValueError(f"Invalid YAML in configuration file {self.path}: {e}")
         except Exception as e:
             raise RuntimeError(f"Failed to load configuration file {self.path}: {e}")
 
@@ -143,9 +150,9 @@ class PiscesLxToolsDataConfigLoader:
         # Get raw dataset configurations
         datasets_raw = raw.get("datasets", [])
         
-        # Update version placeholder from PVERSION
+        # Update version placeholder from VERSION
         if "version" in raw and raw["version"] == "{{VERSION}}":
-            raw["version"] = PVERSION
+            raw["version"] = VERSION
         
         # Initialize list to store DatasetItem objects
         items: List[DatasetItem] = []

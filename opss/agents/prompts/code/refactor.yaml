@@ -1,0 +1,120 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: code_refactor
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert code refactorer with deep knowledge of software design patterns and clean code principles.
+  Your task is to restructure existing code to improve its internal structure while preserving its external behavior.
+  
+  Refactoring Goals:
+  1. **Readability**: Make code easier to understand
+  2. **Maintainability**: Reduce technical debt
+  3. **Extensibility**: Enable future enhancements
+  4. **Testability**: Improve code testability
+  5. **Performance**: Optimize where beneficial
+  
+  Common Refactoring Techniques:
+  - Extract Method/Function
+  - Extract Class/Module
+  - Rename Variable/Method
+  - Replace Magic Numbers with Constants
+  - Simplify Conditional Logic
+  - Remove Duplication (DRY)
+  - Introduce Parameter Object
+
+behavior_prompt: |
+  Refactor the following code to improve its structure:
+  
+  **Code**:
+  ```
+  {code}
+  ```
+  
+  **Refactoring Goals**: {refactoring_goals}
+  
+  **Constraints**: {constraints}
+  
+  Please provide the refactored code:
+
+output_schema:
+  type: object
+  properties:
+    refactored_code:
+      type: string
+    changes:
+      type: array
+      items:
+        type: object
+        properties:
+          type:
+            type: string
+          description:
+            type: string
+          location:
+            type: string
+    improvements:
+      type: array
+      items:
+        type: string
+    design_patterns_applied:
+      type: array
+      items:
+        type: string
+
+parameters:
+  refactoring_goals:
+    type: array
+    default: [readability, maintainability]
+  constraints:
+    type: array
+    default: []
+  preserve_behavior:
+    type: boolean
+    default: true
+  apply_patterns:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      code: |
+        def process_data(data):
+            result = []
+            for item in data:
+                if item > 0:
+                    result.append(item * 2)
+                else:
+                    result.append(0)
+            return result
+      refactoring_goals: [readability]
+    output:
+      refactored_code: |
+        def process_data(data):
+            return [_process_item(item) for item in data]
+        
+        def _process_item(item):
+            return item * 2 if item > 0 else 0
+      changes:
+        - type: "extract_method"
+          description: "Extracted item processing logic"
+      improvements:
+        - "Improved readability with list comprehension"
+        - "Separated concerns with helper function"

@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -22,14 +23,12 @@ import json
 import argparse
 from pathlib import Path
 
-# Use dms_core logging exclusively
-import dms_core
-PiscesLxCoreLog = dms_core.log.get_logger
+from utils.dc import PiscesLxLogger
 
 from .config import MODALITY_DATASETS
 from .runner import PiscesLxToolsBenchmarkRunner, PiscesLxToolsBenchmarkComparer
 
-_logger = PiscesLxCoreLog("pisceslx.tools.benchmark")
+_LOG = PiscesLxLogger(__name__)
 
 
 def main():
@@ -88,14 +87,14 @@ Examples:
     args = parser.parse_args()
 
     if args.debug:
-        _logger.set_level("DEBUG")
+        __LOG.set_level("DEBUG")
 
     parsed_generation_config = None
     if args.generation_config:
         try:
             parsed_generation_config = json.loads(args.generation_config)
         except Exception as e:
-            _logger.error("Invalid --generation-config JSON", event="benchmark.arg_error", error=str(e))
+            __LOG.error("Invalid --generation-config JSON", event="benchmark.arg_error", error=str(e))
             sys.exit(2)
 
     try:
@@ -152,7 +151,7 @@ Examples:
             )
             print(json.dumps(results["summary"], indent=2))
     except Exception as e:
-        _logger.error(
+        __LOG.error(
             "Benchmark execution failed",
             event="benchmark.execution.failed",
             error=str(e),

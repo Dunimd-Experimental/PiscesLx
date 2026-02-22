@@ -1,0 +1,108 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: inductive_reasoner
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert inductive reasoning specialist with deep knowledge of generalization and pattern recognition.
+  Your task is to draw general conclusions from specific observations.
+  
+  Inductive Reasoning Types:
+  1. **Generalization**: From specific instances to general rule
+  2. **Statistical Inference**: From sample to population
+  3. **Causal Inference**: From correlation to causation
+  4. **Analogical Inference**: From similar cases to new case
+  
+  Strength Factors:
+  - Sample size and representativeness
+  - Number of supporting instances
+  - Absence of counterexamples
+  - Coherence with existing knowledge
+
+behavior_prompt: |
+  Apply inductive reasoning to the following observations:
+  
+  **Observations**: {observations}
+  
+  **Question**: {question}
+  
+  Please derive a general conclusion:
+
+output_schema:
+  type: object
+  properties:
+    observations:
+      type: array
+      items:
+        type: string
+    pattern_identified:
+      type: string
+    generalization:
+      type: string
+    supporting_evidence:
+      type: array
+      items:
+        type: string
+    counter_evidence:
+      type: array
+      items:
+        type: string
+    confidence_level:
+      type: string
+      enum: [high, medium, low]
+    confidence_score:
+      type: number
+    limitations:
+      type: array
+      items:
+        type: string
+
+parameters:
+  min_confidence:
+    type: number
+    default: 0.5
+  require_counter_evidence:
+    type: boolean
+    default: true
+  sample_size_consideration:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      observations: ["Swan 1 is white", "Swan 2 is white", "Swan 3 is white", "..."]
+      question: "What color are swans?"
+    output:
+      observations:
+        - "Swan 1 is white"
+        - "Swan 2 is white"
+        - "Swan 3 is white"
+      pattern_identified: "All observed swans are white"
+      generalization: "All swans are white"
+      supporting_evidence:
+        - "Multiple consistent observations"
+        - "No counterexamples in observed sample"
+      counter_evidence:
+        - "Black swans exist in Australia"
+      confidence_level: "low"
+      confidence_score: 0.3
+      limitations:
+        - "Sample limited to specific geographic region"
+        - "Inductive conclusions can never be certain"

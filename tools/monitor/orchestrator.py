@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -17,19 +18,19 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Use dms_core logging exclusively
-import dms_core
-PiscesLxCoreLog = dms_core.log.get_logger
-PiscesLxCoreConfigManager = dms_core.config.ConfigManager
+from utils.dc import PiscesLxLogger, PiscesLxConfiguration, PiscesLxSystemMonitor
 import time
 from typing import Any, Optional
 
-logger = PiscesLxCoreLog("pisceslx.data.download")
+_LOG = PiscesLxLogger(__name__)
 from utils import PiscesLxCoreHookBus
 from utils import PiscesLxCoreEnhancedCacheManager
-from utils import PiscesLxCoreTimeout, PiscesLxCoreRetry
+from opss.concurrency import RetryOperator
 from utils import PiscesLxCoreDeviceManager
 from utils import PiscesLxCoreFS
+
+PiscesLxCoreLog = PiscesLxLogger
+PiscesLxCoreConfigManager = PiscesLxConfiguration
 
 # Reuse the training profiler to avoid duplication
 try:
@@ -50,7 +51,7 @@ except Exception:
             """Start profiling for a specific phase with optional metadata."""
             self._active = True
             self._phase_timers[phase_name] = time.perf_counter()
-            logger.debug(f"Profiler started for phase: {phase_name}")
+            _LOG.debug(f"Profiler started for phase: {phase_name}")
         
         def stop(self, phase_name: str = "monitor", **kwargs) -> Optional[float]:
             """Stop profiling and return elapsed time for the specified phase."""
@@ -118,7 +119,7 @@ class PiscesLxToolsMonitorOrchestrator:
         self._error_count = 0
         
         # Initialize logger
-        self.logger = PiscesLxCoreLog(__name__)
+        self.logger = PiscesLxLogger(__name__)
 
     def run(self, mode: str = "standard") -> None:
         """Main entry point to run monitoring with enhanced utils integration and intelligent adaptation."""
@@ -176,7 +177,7 @@ class PiscesLxToolsMonitorOrchestrator:
                     "metrics": self._metrics_registry is not None
                 }
             }
-            self._cache_manager.set(f"session_{session_id}", session_cache, ttl=7200.0)  # 2小时TTL
+            self._cache_manager.set(f"session_{session_id}", session_cache, ttl=7200.0)  # 2-hour TTL
             
             # Emit enhanced start event
             self.hooks.trigger("monitor.start", {
@@ -236,7 +237,7 @@ class PiscesLxToolsMonitorOrchestrator:
             session_cache["status"] = "completed"
             session_cache["system_health"] = completion_metrics["system_health"]
             session_cache["recovery_attempts"] = completion_metrics["recovery_attempts"]
-            self._cache_manager.set(f"session_{session_id}", session_cache, ttl=7200.0)  # 2小时TTL
+            self._cache_manager.set(f"session_{session_id}", session_cache, ttl=7200.0)  # 2-hour TTL
             
             logger.debug(f"Monitoring completed successfully in {session_cache['duration']:.2f}s")
             

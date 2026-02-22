@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
+#!/usr/bin/env/python3
+# -*- coding: utf-8 -*-
 
-# Copyright © 2025 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -17,12 +18,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Type definitions shared across Ruchbah multimodal subsystems.
+"""Type definitions shared across Yv multimodal subsystems.
 
-The module enumerates agent lifecycle states, MCP message classifications, and
-dataclass representations for generation inputs, message envelopes, and memory
-buffers. Structures here are imported by managers such as memory and server
-components to maintain consistent typing semantics.
+This module provides comprehensive type definitions for the Yv multimodal
+architecture, including enumerations, dataclasses, and type aliases used
+throughout the agent lifecycle, MCP communication, and memory management.
+
+Module Components:
+    1. Enumerations:
+       - YvMCPMessageType: MCP message categories for agent communication
+    
+    2. Dataclasses:
+       - YvGenerationCondition: Conditioning signals for generation
+       - YvMCPMessage: MCP transport envelope for agent messages
+       - YvAgenticAction: Agent action selection with metadata
+       - YvAgenticObservation: External observations for agents
+       - YvAgenticMemory: Persisted agent memories
+
+Key Features:
+    - Type-safe agent lifecycle states
+    - MCP message classification
+    - Generation conditioning with emotion/style support
+    - Structured action/observation representation
+    - Memory persistence for retrieval and reflection
+
+Usage Example:
+    >>> from model.multimodal.types import (
+    ...     YvMCPMessageType,
+    ...     YvGenerationCondition,
+    ...     YvAgenticAction
+    ... )
+    >>> 
+    >>> # Create generation condition
+    >>> condition = YvGenerationCondition(
+    ...     text_prompt="Generate a summary",
+    ...     style_params={"formality": 0.8}
+    ... )
+    >>> 
+    >>> # Create agent action
+    >>> action = YvAgenticAction(
+    ...     action_type="search",
+    ...     parameters={"query": "example"},
+    ...     confidence=0.95
+    ... )
+
+Note:
+    All types use dataclass for immutability and serialization.
+    MCP messages require correlation_id for request/response matching.
 """
 
 import uuid
@@ -31,18 +73,44 @@ from enum import Enum
 from dataclasses import dataclass, asdict
 from typing import Any, Dict, List, Optional
 
-class RuchbahAgenticState(Enum):
-    """Enumerate agent execution phases for Ruchbah workflows."""
+from .state_machine import YvAgenticState
 
-    IDLE = "idle"
-    THINKING = "thinking"
-    ACTING = "acting"
-    REFLECTING = "reflecting"
-    COMPLETED = "completed"
-    ERROR = "error"
-
-class RuchbahMCPMessageType(Enum):
-    """Enumerate MCP message categories exchanged with orchestrators."""
+class YvMCPMessageType(Enum):
+    """Enumerate MCP message categories exchanged with orchestrators.
+    
+    Defines the message types used in Model Context Protocol (MCP) 
+    communication between agents and orchestration systems. Each type
+    represents a distinct communication pattern in the agent lifecycle.
+    
+    Message Types:
+        OBSERVATION: External observation consumed by the agent.
+            Used to pass perceptual data from the environment.
+        ACTION: Agent action selection for execution.
+            Contains action type and parameters for tool invocation.
+        TOOL_CALL: Request to invoke a specific tool.
+            Structured tool invocation with parameters.
+        TOOL_RESULT: Result returned from tool execution.
+            Contains execution status and output data.
+        STATE_UPDATE: Agent state transition notification.
+            Signals changes in agent lifecycle state.
+        CAPABILITY_REGISTER: Agent capability registration.
+            Used during agent initialization to declare available tools.
+        HEARTBEAT: Keep-alive signal for connection management.
+            Periodic ping to maintain connection health.
+        SYNC_REQUEST: Request for state synchronization.
+            Triggers full state sync between components.
+        SYNC_RESPONSE: Response to synchronization request.
+            Contains current agent state snapshot.
+    
+    Example:
+        >>> msg_type = YvMCPMessageType.ACTION
+        >>> if msg_type == YvMCPMessageType.TOOL_CALL:
+        ...     execute_tool(message.payload)
+    
+    Note:
+        Message types are used in YvMCPMessage for routing.
+        OBSERVATION and ACTION form the primary agent loop.
+    """
 
     OBSERVATION = "observation"
     ACTION = "action"
@@ -55,17 +123,37 @@ class RuchbahMCPMessageType(Enum):
     SYNC_RESPONSE = "sync_response"
 
 @dataclass
-class RuchbahGenerationCondition:
+class YvGenerationCondition:
     """Capture conditioning signals that steer multimodal generation.
-
+    
+    Provides a unified interface for specifying generation parameters across
+    different modalities. Supports text prompts, emotion vectors, style
+    parameters, and arbitrary generation configurations.
+    
     Attributes:
         text_prompt (str): Natural language prompt provided by the caller.
+            Primary conditioning signal for text-based generation.
+            Default: "" (empty string).
         emotion_vector (torch.Tensor | None): Learned emotion embedding used when
-            no explicit prompt is supplied.
+            no explicit prompt is supplied. Typically a dense vector from an
+            emotion encoder. Shape: [embedding_dim]. Default: None.
         style_params (Dict[str, float] | None): Style knobs forwarded to modality
-            specific decoders.
+            specific decoders. Examples: {"formality": 0.8, "creativity": 0.5}.
+            Default: None.
         generation_params (Dict[str, Any] | None): Arbitrary generator keyword
-            arguments such as sampling temperature or seed.
+            arguments such as sampling temperature, top_k, top_p, or seed.
+            Default: None.
+    
+    Example:
+        >>> condition = YvGenerationCondition(
+        ...     text_prompt="Write a formal email",
+        ...     style_params={"formality": 0.9, "conciseness": 0.7},
+        ...     generation_params={"temperature": 0.7, "max_tokens": 500}
+        ... )
+    
+    Note:
+        emotion_vector takes precedence over text_prompt when both are provided.
+        style_params are modality-specific and may be ignored by some generators.
     """
 
     text_prompt: str = ""
@@ -74,16 +162,40 @@ class RuchbahGenerationCondition:
     generation_params: Optional[Dict[str, Any]] = None
 
 @dataclass
-class RuchbahMCPMessage:
+class YvMCPMessage:
     """Represent an MCP transport envelope carrying agent messages.
-
+    
+    Provides a standardized message format for communication between agents
+    and orchestration systems following the Model Context Protocol (MCP).
+    Supports request/response correlation, priority scheduling, and
+    timestamp tracking.
+    
     Attributes:
-        message_type (str): One of :class:`RuchbahMCPMessageType` describing intent.
+        message_type (str): One of :class:`YvMCPMessageType` describing intent.
+            Determines how the message is routed and processed.
         agentic_id (str): Identifier linking the payload to a specific agent run.
+            Used for session management and state tracking.
         payload (Dict[str, Any]): Arbitrary serialized data associated with the message.
+            Structure depends on message_type.
         timestamp (str): ISO formatted timestamp supplied by the caller.
+            Format: "YYYY-MM-DDTHH:MM:SS.ffffff".
         correlation_id (str): Optional identifier used for request/response matching.
+            Empty string if not part of a correlated exchange. Default: "".
         priority (str): Scheduling hint such as ``"normal"`` or ``"high"``.
+            Affects message queue ordering. Default: "normal".
+    
+    Example:
+        >>> message = YvMCPMessage(
+        ...     message_type=YvMCPMessageType.ACTION.value,
+        ...     agentic_id="agent-001",
+        ...     payload={"action": "search", "query": "example"},
+        ...     timestamp=datetime.now().isoformat(),
+        ...     correlation_id="req-123"
+        ... )
+    
+    Note:
+        correlation_id is essential for async request/response patterns.
+        priority should be one of: "low", "normal", "high", "critical".
     """
 
     message_type: str
@@ -94,14 +206,34 @@ class RuchbahMCPMessage:
     priority: str = "normal"
 
 @dataclass
-class RuchbahAgenticAction:
+class YvAgenticAction:
     """Describe an agent action selection with supporting metadata.
-
+    
+    Represents a single action chosen by the agent policy, including
+    the action type, parameters, confidence score, and reasoning.
+    Used in the agent action-observation loop for tool execution.
+    
     Attributes:
         action_type (str): Action label emitted by the policy.
+            Examples: "search", "generate", "analyze", "tool_call".
         parameters (Dict[str, Any]): Arguments passed to downstream tools.
+            Structure depends on action_type. May contain nested dicts.
         confidence (float): Confidence score between 0 and 1.
+            Indicates policy certainty in the action selection. Default: 1.0.
         reasoning (str): Optional natural language rationale.
+            Provides explainability for the action choice. Default: "".
+    
+    Example:
+        >>> action = YvAgenticAction(
+        ...     action_type="search",
+        ...     parameters={"query": "machine learning", "limit": 10},
+        ...     confidence=0.92,
+        ...     reasoning="User requested information about ML topics"
+        ... )
+    
+    Note:
+        confidence should be calibrated across the action space.
+        reasoning is optional but recommended for transparency.
     """
 
     action_type: str
@@ -110,211 +242,67 @@ class RuchbahAgenticAction:
     reasoning: str = ""
 
 @dataclass
-class RuchbahAgenticObservation:
+class YvAgenticObservation:
     """Capture external observations consumed by the agent.
-
+    
+    Represents a single observation from the environment or external systems,
+    including the modality, content, and associated metadata. Used as input
+    to the agent's perception and reasoning pipeline.
+    
     Attributes:
         modality (str): Modality identifier such as ``"text"`` or ``"image"``.
+            Supported values: "text", "image", "audio", "video", "document".
         content (Any): Observation payload—may be text, tensors, or tool outputs.
+            Type varies based on modality and observation source.
         metadata (Dict[str, Any]): Auxiliary properties like timestamps or source tags.
+            May include: "timestamp", "source", "confidence", "language".
+    
+    Example:
+        >>> observation = YvAgenticObservation(
+        ...     modality="text",
+        ...     content="The user asked about machine learning",
+        ...     metadata={"source": "user_input", "timestamp": "2024-01-15T10:30:00"}
+        ... )
+    
+    Note:
+        content should be serializable for memory persistence.
+        metadata is extensible for domain-specific information.
     """
 
     modality: str
     content: Any
     metadata: Dict[str, Any]
 
+
 @dataclass
-class RuchbahAgenticMemory:
-    """In-memory buffer mirroring the functionality of :class:`RuchbahMemoryManager`.
-
+class YvAgenticMemory:
+    """Persisted agent memories used for retrieval and reflection.
+    
+    Stores the complete memory state of an agent, including observations,
+    actions, and reflections. Used for long-term memory persistence,
+    experience replay, and agent state serialization.
+    
     Attributes:
-        observations (List[RuchbahAgenticObservation]): Stored observation entries.
-        actions (List[RuchbahAgenticAction]): Recorded action decisions.
-        reflections (List[str]): Reflective notes captured during execution.
-
-    Notes:
-        The dataclass maintains embeddings and importance scores in parallel lists
-        to power semantic retrieval utilities. It is primarily used in contexts
-        where a lightweight, dataclass-based container is preferable to the full
-        manager implementation.
+        observations (List[YvAgenticObservation]): Sequence of observations
+            received by the agent. Ordered chronologically.
+        actions (List[YvAgenticAction]): Sequence of actions taken by the
+            agent. Ordered chronologically, paired with observations.
+        reflections (List[str]): Natural language reflections on agent behavior.
+            Generated during reflection phases for self-improvement.
+    
+    Example:
+        >>> memory = YvAgenticMemory(
+        ...     observations=[observation1, observation2],
+        ...     actions=[action1, action2],
+        ...     reflections=["Should explore more before committing to action"]
+        ... )
+    
+    Note:
+        Observations and actions should maintain temporal alignment.
+        Reflections are optional but enhance agent learning.
+        Used by YvMemory for persistent storage.
     """
 
-    observations: List[RuchbahAgenticObservation]
-    actions: List[RuchbahAgenticAction]
+    observations: List[YvAgenticObservation]
+    actions: List[YvAgenticAction]
     reflections: List[str]
-
-    def __post_init__(self) -> None:
-        """Initialize retrieval metadata buffers after dataclass construction."""
-
-        self.embeddings: List[torch.Tensor] = []
-        self.importance_scores: List[float] = []
-        self.max_memory_size = 1000
-        self.compression_threshold = 0.7
-
-    def add_observation(self, observation: RuchbahAgenticObservation) -> None:
-        """Append an observation and generate embedding/importance metadata.
-
-        Args:
-            observation (RuchbahAgenticObservation): Observation record to persist.
-        """
-
-        self.observations.append(observation)
-        try:
-            from sentence_transformers import SentenceTransformer
-
-            model = SentenceTransformer('all-MiniLM-L6-v2')
-            embedding = model.encode(str(observation.content), convert_to_tensor=True)
-
-            content_str = str(observation.content)
-            length_factor = min(len(content_str) / 100.0, 1.0)
-            unique_words = len(set(content_str.lower().split()))
-            total_words = max(len(content_str.split()), 1)
-            complexity_factor = unique_words / total_words
-            keyword_factor = sum(
-                1 for word in content_str.lower().split()
-                if word in ['important', 'critical', 'urgent', 'key', 'essential']
-            ) * 0.1
-
-            importance = min(1.0, (length_factor * 0.3 + complexity_factor * 0.5 + keyword_factor * 0.2))
-        except Exception:
-            import hashlib
-
-            content_hash = int(hashlib.md5(str(observation.content).encode()).hexdigest(), 16)
-            torch.manual_seed(content_hash % 2147483647)
-            embedding = torch.randn(768)
-            importance = min(1.0, len(str(observation.content)) / 100.0)
-
-        self.embeddings.append(embedding)
-        self.importance_scores.append(importance)
-        if len(self.observations) > self.max_memory_size:
-            self.compress_memory()
-
-    def add_action(self, action: RuchbahAgenticAction) -> None:
-        """Append an action and seed synthetic retrieval metadata."""
-
-        self.actions.append(action)
-        embedding = torch.randn(768)
-        self.embeddings.append(embedding)
-        self.importance_scores.append(action.confidence)
-
-    def add_reflection(self, reflection: str) -> None:
-        """Append a reflection entry with seeded importance."""
-
-        self.reflections.append(reflection)
-        embedding = torch.randn(768)
-        self.embeddings.append(embedding)
-        importance = min(1.0, len(reflection) / 200.0)
-        self.importance_scores.append(importance)
-
-    def semantic_search(self, query: str, k: int = 5) -> List[Dict[str, Any]]:
-        """Return top-k memories using cosine similarity and heuristic boosts."""
-
-        if not self.embeddings:
-            return []
-        try:
-            from sentence_transformers import SentenceTransformer
-
-            model = SentenceTransformer('all-MiniLM-L6-v2')
-            query_embedding = model.encode(query, convert_to_tensor=True)
-        except Exception:
-            import hashlib
-
-            query_hash = int(hashlib.md5(query.encode()).hexdigest(), 16)
-            torch.manual_seed(query_hash % 2147483647)
-            query_embedding = torch.randn(768)
-
-        similarities = []
-        for i, embedding in enumerate(self.embeddings):
-            semantic_similarity = torch.cosine_similarity(query_embedding.unsqueeze(0), embedding.unsqueeze(0)).item()
-            importance_boost = self.importance_scores[i] * 0.2
-            time_decay = 1.0 - (i / max(len(self.embeddings), 1)) * 0.1
-            final_score = semantic_similarity + importance_boost + time_decay
-            similarities.append((i, final_score))
-
-        similarities.sort(key=lambda x: x[1], reverse=True)
-        results: List[Dict[str, Any]] = []
-        for idx, similarity in similarities[:k]:
-            if idx < len(self.observations):
-                results.append(
-                    {
-                        "type": "observation",
-                        "content": self.observations[idx],
-                        "similarity": similarity,
-                        "index": idx,
-                        "importance": self.importance_scores[idx],
-                    }
-                )
-            elif idx < len(self.observations) + len(self.actions):
-                action_idx = idx - len(self.observations)
-                results.append(
-                    {
-                        "type": "action",
-                        "content": self.actions[action_idx],
-                        "similarity": similarity,
-                        "index": idx,
-                        "importance": self.importance_scores[idx],
-                    }
-                )
-            else:
-                reflection_idx = idx - len(self.observations) - len(self.actions)
-                results.append(
-                    {
-                        "type": "reflection",
-                        "content": self.reflections[reflection_idx],
-                        "similarity": similarity,
-                        "index": idx,
-                        "importance": self.importance_scores[idx],
-                    }
-                )
-
-        return results
-
-    def compress_memory(self) -> None:
-        """Prune low-importance memories using the configured percentile threshold."""
-
-        if not self.importance_scores:
-            return
-
-        threshold = sorted(self.importance_scores)[int(len(self.importance_scores) * self.compression_threshold)]
-        keep_indices = [i for i, score in enumerate(self.importance_scores) if score >= threshold]
-
-        self.observations = [self.observations[i] for i in keep_indices if i < len(self.observations)]
-        self.actions = [
-            self.actions[i]
-            for i in keep_indices
-            if len(self.observations) <= i < len(self.observations) + len(self.actions)
-        ]
-        self.reflections = [
-            self.reflections[i]
-            for i in keep_indices
-            if i >= len(self.observations) + len(self.actions)
-        ]
-        self.embeddings = [self.embeddings[i] for i in keep_indices]
-        self.importance_scores = [self.importance_scores[i] for i in keep_indices]
-
-    def get_context_with_retrieval(self, query: Optional[str] = None, k: int = 5) -> Dict[str, Any]:
-        """Return semantically relevant memories when query is provided, else recency snapshot."""
-
-        if query:
-            relevant_memories = self.semantic_search(query, k)
-            return {
-                "relevant_memories": relevant_memories,
-                "total_count": len(self.observations) + len(self.actions) + len(self.reflections),
-            }
-
-        return self.get_recent_context(k)
-
-    def get_recent_context(self, k: int = 5) -> Dict[str, List[Any]]:
-        """Return the most recent observations, actions, and reflections with summary counts."""
-
-        return {
-            "recent_observations": self.observations[-k:],
-            "recent_actions": self.actions[-k:],
-            "recent_reflections": self.reflections[-k:],
-            "total_count": len(self.observations) + len(self.actions) + len(self.reflections),
-            "memory_summary": {
-                "observations": len(self.observations),
-                "actions": len(self.actions),
-                "reflections": len(self.reflections),
-            },
-        }

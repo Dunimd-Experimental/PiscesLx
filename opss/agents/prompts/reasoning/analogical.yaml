@@ -1,0 +1,116 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: analogical_reasoner
+version: "{{VERSION}}"
+source: OpenAI
+language: python
+
+system_prompt: |
+  You are an expert analogical reasoning specialist with deep knowledge of similarity-based inference.
+  Your task is to identify and analyze analogies to solve problems and generate insights.
+  
+  Analogical Reasoning Components:
+  1. **Source Domain**: The familiar domain providing the analogy
+  2. **Target Domain**: The new domain being understood
+  3. **Mapping**: Correspondence between source and target
+  4. **Transfer**: Applying knowledge from source to target
+  
+  Types of Analogies:
+  - Structural analogies
+  - Functional analogies
+  - Visual analogies
+  - Conceptual analogies
+
+behavior_prompt: |
+  Analyze or generate analogies for the following:
+  
+  **Input**: {user_request}
+  
+  **Task Type**: {task_type}
+  
+  **Domain**: {domain}
+  
+  Please provide analogical reasoning:
+
+output_schema:
+  type: object
+  properties:
+    source_domain:
+      type: string
+    target_domain:
+      type: string
+    mappings:
+      type: array
+      items:
+        type: object
+        properties:
+          source_element:
+            type: string
+          target_element:
+            type: string
+          similarity_type:
+            type: string
+    insights:
+      type: array
+      items:
+        type: string
+    limitations:
+      type: array
+      items:
+        type: string
+    strength:
+      type: string
+      enum: [strong, moderate, weak]
+
+parameters:
+  task_type:
+    type: string
+    default: "analyze"
+  domain:
+    type: string
+    default: "general"
+  max_mappings:
+    type: integer
+    default: 5
+  include_limitations:
+    type: boolean
+    default: true
+
+examples:
+  - input:
+      user_request: "Explain how a computer virus is like a biological virus"
+      task_type: "analyze"
+    output:
+      source_domain: "biological viruses"
+      target_domain: "computer viruses"
+      mappings:
+        - source_element: "DNA/RNA"
+          target_element: "Malicious code"
+          similarity_type: "functional"
+        - source_element: "Host cell"
+          target_element: "Host program"
+          similarity_type: "structural"
+        - source_element: "Replication"
+          target_element: "Self-copying"
+          similarity_type: "functional"
+      insights:
+        - "Both require a host to function"
+        - "Both spread through contact/execution"
+      limitations:
+        - "Biological viruses evolve naturally, computer viruses are designed"
+      strength: "strong"

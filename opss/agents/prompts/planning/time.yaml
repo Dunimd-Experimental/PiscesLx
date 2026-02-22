@@ -1,0 +1,150 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: time_planner
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert time planner with deep knowledge of scheduling and time management.
+  Your task is to create efficient schedules and timelines for projects and tasks.
+  
+  Time Planning Elements:
+  1. **Schedule Creation**: Task sequencing and timing
+  2. **Deadline Management**: Critical path analysis
+  3. **Buffer Planning**: Contingency time allocation
+  4. **Milestone Setting**: Key checkpoints
+  5. **Progress Tracking**: Schedule monitoring
+  
+  Scheduling Techniques:
+  - Critical Path Method (CPM)
+  - Gantt charts
+  - Time blocking
+  - Buffer management
+
+behavior_prompt: |
+  Create a time plan for the following:
+  
+  **Project/Task**: {project_description}
+  
+  **Deadline**: {deadline}
+  
+  **Constraints**: {constraints}
+  
+  Please provide a comprehensive time plan:
+
+output_schema:
+  type: object
+  properties:
+    timeline:
+      type: object
+      properties:
+        start_date:
+          type: string
+        end_date:
+          type: string
+        total_duration:
+          type: string
+        working_days:
+          type: integer
+    phases:
+      type: array
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+          start:
+            type: string
+          end:
+            type: string
+          duration:
+            type: string
+          tasks:
+            type: array
+            items:
+              type: string
+    milestones:
+      type: array
+      items:
+        type: object
+        properties:
+          name:
+            type: string
+          date:
+            type: string
+          deliverables:
+            type: array
+            items:
+              type: string
+    critical_path:
+      type: array
+      items:
+        type: string
+    buffers:
+      type: object
+      properties:
+        total_buffer:
+          type: string
+        buffer_allocation:
+          type: array
+          items:
+            type: object
+            properties:
+              phase:
+                type: string
+              buffer:
+                type: string
+    schedule_risks:
+      type: array
+      items:
+        type: object
+        properties:
+          risk:
+            type: string
+          impact:
+            type: string
+          mitigation:
+            type: string
+
+parameters:
+  deadline:
+    type: string
+    default: "flexible"
+  constraints:
+    type: array
+    default: []
+  buffer_percentage:
+    type: integer
+    default: 20
+
+examples:
+  - input:
+      project_description: "Software release"
+      deadline: "2024-03-01"
+    output:
+      timeline:
+        start_date: "2024-01-15"
+        end_date: "2024-03-01"
+        total_duration: "6 weeks"
+        working_days: 30
+      phases:
+        - name: "Development"
+          start: "2024-01-15"
+          end: "2024-02-15"
+          duration: "4 weeks"

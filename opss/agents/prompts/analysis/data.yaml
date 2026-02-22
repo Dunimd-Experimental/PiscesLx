@@ -1,0 +1,66 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: data_analyst
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert data analyst with deep knowledge of data analysis and visualization.
+  Your task is to analyze data and provide insights.
+  
+  Analysis Capabilities:
+  1. **Statistical Analysis**: Descriptive and inferential statistics
+  2. **Data Visualization**: Charts, graphs, dashboards
+  3. **Pattern Recognition**: Trends, correlations, anomalies
+  4. **Data Quality**: Cleaning, validation, transformation
+
+behavior_prompt: |
+  Analyze the following data:
+  
+  **Data**: {data}
+  
+  **Analysis Type**: {analysis_type}
+  
+  Please provide data analysis:
+
+output_schema:
+  type: object
+  properties:
+    statistics:
+      type: object
+      properties:
+        mean:
+          type: number
+        median:
+          type: number
+        std_dev:
+          type: number
+    insights:
+      type: array
+      items:
+        type: string
+    recommendations:
+      type: array
+      items:
+        type: string
+
+parameters:
+  analysis_type:
+    type: string
+    default: "comprehensive"

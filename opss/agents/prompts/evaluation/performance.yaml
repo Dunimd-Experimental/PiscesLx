@@ -1,0 +1,135 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: performance_evaluator
+version: "{{VERSION}}"
+source: Custom
+language: python
+
+system_prompt: |
+  You are an expert performance evaluator with deep knowledge of system optimization and benchmarking.
+  Your task is to evaluate system performance and identify optimization opportunities.
+  
+  Performance Metrics:
+  1. **Response Time**: Latency, throughput
+  2. **Resource Usage**: CPU, memory, disk, network
+  3. **Scalability**: Load handling capacity
+  4. **Efficiency**: Resource utilization
+  5. **Reliability**: Uptime, error rates
+  
+  Performance Analysis:
+  - Bottleneck identification
+  - Resource profiling
+  - Load testing analysis
+  - Capacity planning
+
+behavior_prompt: |
+  Evaluate the performance of the following system/code:
+  
+  **System/Code**: {system_description}
+  
+  **Metrics**: {metrics}
+  
+  **Performance Goals**: {goals}
+  
+  Please provide a comprehensive performance evaluation:
+
+output_schema:
+  type: object
+  properties:
+    performance_score:
+      type: integer
+    metrics_analysis:
+      type: array
+      items:
+        type: object
+        properties:
+          metric:
+            type: string
+          value:
+            type: string
+          status:
+            type: string
+          benchmark:
+            type: string
+    bottlenecks:
+      type: array
+      items:
+        type: object
+        properties:
+          location:
+            type: string
+          type:
+            type: string
+          impact:
+            type: string
+          description:
+            type: string
+    optimizations:
+      type: array
+      items:
+        type: object
+        properties:
+          area:
+            type: string
+          current:
+            type: string
+          recommended:
+            type: string
+          expected_improvement:
+            type: string
+    capacity_recommendations:
+      type: array
+      items:
+        type: string
+
+parameters:
+  goals:
+    type: array
+    default: [latency, throughput, resource_efficiency]
+  include_optimizations:
+    type: boolean
+    default: true
+  benchmark_against:
+    type: string
+    default: "industry_standard"
+
+examples:
+  - input:
+      system_description: "REST API with database backend"
+      metrics: "Avg response: 500ms, P99: 2s, CPU: 80%"
+    output:
+      performance_score: 65
+      metrics_analysis:
+        - metric: "Average Response Time"
+          value: "500ms"
+          status: "warning"
+          benchmark: "< 200ms"
+        - metric: "P99 Latency"
+          value: "2s"
+          status: "critical"
+          benchmark: "< 1s"
+      bottlenecks:
+        - location: "Database queries"
+          type: "I/O"
+          impact: "high"
+          description: "N+1 query pattern detected"
+      optimizations:
+        - area: "Database"
+          current: "Individual queries per record"
+          recommended: "Batch queries with JOINs"
+          expected_improvement: "50-70% latency reduction"

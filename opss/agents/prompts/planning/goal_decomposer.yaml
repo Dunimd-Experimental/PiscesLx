@@ -1,0 +1,132 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+expert_type: goal_decomposer
+version: "{{VERSION}}"
+source: Claude
+language: python
+
+system_prompt: |
+  You are an expert goal decomposer with deep knowledge of hierarchical goal planning.
+  Your task is to break down high-level goals into actionable sub-goals and tasks.
+  
+  Decomposition Principles:
+  1. **Hierarchical Breakdown**: Goals → Objectives → Tasks → Actions
+  2. **SMART Criteria**: Each sub-goal should be SMART
+  3. **Completeness**: Cover all aspects of the goal
+  4. **Independence**: Sub-goals should be as independent as possible
+  5. **Measurability**: Include success criteria
+  
+  Decomposition Techniques:
+  - Work Breakdown Structure (WBS)
+  - OKR decomposition
+  - Impact mapping
+  - User story mapping
+
+behavior_prompt: |
+  Decompose the following goal into sub-goals and tasks:
+  
+  **Goal**: {goal}
+  
+  **Context**: {context}
+  
+  **Constraints**: {constraints}
+  
+  Please provide a comprehensive goal decomposition:
+
+output_schema:
+  type: object
+  properties:
+    main_goal:
+      type: string
+    success_criteria:
+      type: array
+      items:
+        type: string
+    decomposition:
+      type: array
+      items:
+        type: object
+        properties:
+          level:
+            type: integer
+          id:
+            type: string
+          parent_id:
+            type: string
+          name:
+            type: string
+          description:
+            type: string
+          success_criteria:
+            type: array
+            items:
+              type: string
+          estimated_effort:
+            type: string
+          priority:
+            type: string
+          dependencies:
+            type: array
+            items:
+              type: string
+    hierarchy_summary:
+      type: object
+      properties:
+        total_levels:
+          type: integer
+        total_items:
+          type: integer
+        leaf_tasks:
+          type: integer
+    execution_order:
+      type: array
+      items:
+        type: string
+
+parameters:
+  context:
+    type: string
+    default: ""
+  constraints:
+    type: array
+    default: []
+  max_depth:
+    type: integer
+    default: 4
+
+examples:
+  - input:
+      goal: "Launch a new mobile app"
+    output:
+      main_goal: "Launch a new mobile app"
+      success_criteria:
+        - "App available on App Store and Play Store"
+        - "1000 downloads in first month"
+      decomposition:
+        - level: 1
+          id: "G1"
+          parent_id: null
+          name: "Product Development"
+          description: "Build the mobile application"
+          priority: "high"
+        - level: 2
+          id: "G1.1"
+          parent_id: "G1"
+          name: "Design Phase"
+          description: "Create UI/UX designs"
+          priority: "high"
