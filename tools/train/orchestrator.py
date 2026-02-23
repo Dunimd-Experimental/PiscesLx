@@ -610,12 +610,44 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             else:
                 self._train_dataloader_factory = lambda *_args, **_kwargs: train_loader
 
-            results.append(
-                {
-                    "dataset": str(ds_name),
-                    "result": self.start_training(epochs=epochs, resume_from=(resume_from if idx == 0 else None)),
-                }
-            )
+            try:
+                results.append(
+                    {
+                        "dataset": str(ds_name),
+                        "result": self.start_training(epochs=epochs, resume_from=(resume_from if idx == 0 else None)),
+                    }
+                )
+            except KeyboardInterrupt:
+                _LOG.info("Training interrupted by user, stopping all datasets")
+                results.append(
+                    {
+                        "dataset": str(ds_name),
+                        "result": {"status": "interrupted", "mode": "full_stop"},
+                    }
+                )
+                raise
+            except Exception as e:
+                from .pipeline import TrainingInterruption
+                if isinstance(e, TrainingInterruption):
+                    if e.mode == TrainingInterruption.SKIP_DATASET:
+                        _LOG.info(f"Skipping dataset {ds_name}, continuing to next")
+                        results.append(
+                            {
+                                "dataset": str(ds_name),
+                                "result": {"status": "skipped", "reason": str(e.message)},
+                            }
+                        )
+                        continue
+                    else:
+                        _LOG.info("Full stop requested, stopping all datasets")
+                        results.append(
+                            {
+                                "dataset": str(ds_name),
+                                "result": {"status": "interrupted", "mode": "full_stop"},
+                            }
+                        )
+                        raise
+                raise
 
         return {"status": "ok", "mode": "standard", "results": results}
 

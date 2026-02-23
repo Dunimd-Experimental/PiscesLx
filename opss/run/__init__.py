@@ -31,6 +31,14 @@ from .monitor import (
     POPSSRunManager,
     POPSSRunCleaner,
 )
+from .state_guard import (
+    POPSSStateGuard,
+    POPSSStateReader,
+    POPSSUnauthorizedWriteError,
+    POPSSStateFileCorruptedError,
+    write_authorized,
+    readonly_access,
+)
 
 __all__ = [
     "POPSSRunStore",
@@ -44,4 +52,10 @@ __all__ = [
     "POPSSHeartbeatMonitor",
     "POPSSRunManager",
     "POPSSRunCleaner",
+    "POPSSStateGuard",
+    "POPSSStateReader",
+    "POPSSUnauthorizedWriteError",
+    "POPSSStateFileCorruptedError",
+    "write_authorized",
+    "readonly_access",
 ]

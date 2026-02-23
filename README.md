@@ -253,7 +253,7 @@ python manage.py train --model_size 7B --dataset Chinese2 --rlhf --rlhf_dataset 
 # Backend service
 python manage.py serve --model_size 7B --port 8000
 python manage.py serve --model_size 14B --host 0.0.0.0 --port 8080 --workers 4
-python manage.py serve --model_size 72B --enable_opss --enable_agent_intercept
+python manage.py serve --model_size 72B
 
 # Benchmark examples
 python manage.py benchmark --list

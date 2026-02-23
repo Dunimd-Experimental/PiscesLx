@@ -76,11 +76,11 @@ import torch
 from typing import Dict, Any, Callable, Optional, List, Union
 from pathlib import Path
 import time
+import signal
 from datetime import datetime
 import json
 import yaml
 
-# OPSC operator system integration
 from utils.opsc.base import PiscesLxTransformOperator
 from utils.opsc.interface import PiscesLxOperatorConfig
 from utils.opsc.registry import PiscesLxOperatorRegistrar
@@ -93,6 +93,65 @@ from configs.version import VERSION
 
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=get_log_file("PiscesLx.Tools.Train"), enable_file=True)
+
+
+class TrainingInterruption(Exception):
+    """
+    Training interruption exception for graceful handling.
+    
+    Modes:
+        - 'skip_dataset': Skip current dataset, continue to next (double Ctrl+C within 1s)
+        - 'full_stop': Stop all training immediately (single Ctrl+C)
+    """
+    
+    SKIP_DATASET = 'skip_dataset'
+    FULL_STOP = 'full_stop'
+    
+    def __init__(self, mode: str = 'full_stop', message: str = ""):
+        self.mode = mode
+        self.message = message
+        super().__init__(message or f"Training interrupted: {mode}")
+    
+    @classmethod
+    def skip_current_dataset(cls, reason: str = "") -> "TrainingInterruption":
+        """Create exception to skip current dataset."""
+        return cls(mode=cls.SKIP_DATASET, message=reason)
+    
+    @classmethod
+    def stop_all(cls, reason: str = "") -> "TrainingInterruption":
+        """Create exception to stop all training."""
+        return cls(mode=cls.FULL_STOP, message=reason)
+
+
+_interrupt_state = {
+    'last_interrupt_time': 0.0,
+    'interrupt_count': 0,
+    'double_press_window': 1.0,
+}
+
+
+def _signal_handler(signum, frame):
+    """Handle Ctrl+C signal for training interruption."""
+    global _interrupt_state
+    
+    current_time = time.time()
+    time_since_last = current_time - _interrupt_state['last_interrupt_time']
+    
+    if time_since_last < _interrupt_state['double_press_window']:
+        _interrupt_state['interrupt_count'] += 1
+        _LOG.warning("Double Ctrl+C detected - will skip current dataset")
+        raise TrainingInterruption.skip_current_dataset("User requested skip current dataset")
+    else:
+        _interrupt_state['interrupt_count'] = 1
+        _LOG.warning("Single Ctrl+C detected - press again within 1s to skip dataset, or wait for full stop")
+    
+    _interrupt_state['last_interrupt_time'] = current_time
+    
+    if _interrupt_state['interrupt_count'] >= 1:
+        time.sleep(1.0)
+        if _interrupt_state['interrupt_count'] == 1:
+            _LOG.warning("Full stop requested - stopping all training")
+            raise TrainingInterruption.stop_all("User requested full stop")
 
 
 @PiscesLxOperatorRegistrar()
@@ -363,6 +422,15 @@ class TrainingPipelineOperator(PiscesLxTransformOperator):
         Returns:
             Training history
         """
+        global _interrupt_state
+        _interrupt_state = {
+            'last_interrupt_time': 0.0,
+            'interrupt_count': 0,
+            'double_press_window': 1.0,
+        }
+        
+        original_handler = signal.signal(signal.SIGINT, _signal_handler)
+        
         if resume_from:
             self.trainer.load_checkpoint(resume_from)
             _LOG.info(f"Resumed training from {resume_from}")
@@ -375,6 +443,7 @@ class TrainingPipelineOperator(PiscesLxTransformOperator):
         }
         
         _LOG.info("Starting training pipeline...")
+        _LOG.info("Press Ctrl+C once to stop all training, or twice within 1s to skip current dataset")
         self.execute_callbacks('training_start', 
                              total_epochs=epochs,
                              max_steps=self.train_config.max_steps)
@@ -406,15 +475,26 @@ class TrainingPipelineOperator(PiscesLxTransformOperator):
                     _LOG.info(f"Reached maximum steps ({self.train_config.max_steps}), stopping training")
                     break
                     
-        except PiscesLxRunCancelled:
+        except PiscesLxRunCancelled as e:
             training_history['cancelled'] = True
-            _LOG.info("Training cancelled")
+            training_history['cancellation_reason'] = getattr(e, 'reason', 'unknown')
+            _LOG.info(f"Training cancelled: {getattr(e, 'reason', 'unknown')}")
+        except TrainingInterruption as e:
+            training_history['interrupted'] = True
+            training_history['interruption_type'] = e.mode
+            _LOG.info(f"Training interrupted: {e.mode} - {str(e)}")
+            raise
         except KeyboardInterrupt:
-            _LOG.info("Training interrupted by user")
+            training_history['interrupted'] = True
+            training_history['interruption_type'] = 'keyboard'
+            _LOG.info("Training interrupted by user (KeyboardInterrupt)")
+            raise
         except Exception as e:
             _LOG.error(f"Training failed with error: {e}")
             raise
         finally:
+            signal.signal(signal.SIGINT, original_handler)
+            
             final_path = Path(self.train_config.output_dir) / "final_model.pt"
             self.trainer.save_checkpoint(str(final_path), 
                                        metadata={'is_final': True})

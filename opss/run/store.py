@@ -18,6 +18,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""
+Run Store - State File Management for Action System.
+
+This module provides the core storage layer for action system state files.
+All state files are protected by POPSSStateGuard to ensure only authorized
+action system components can modify them.
+
+State Files:
+    - spec.json: Run specification
+    - state.json: Run state (status, phase, pid, etc.)
+    - events.jsonl: Event log
+    - metrics.jsonl: Metrics log
+    - control.jsonl: Control commands
+    - stdout.log: Standard output log
+    - artifacts.json: Artifact records
+
+Note:
+    External modules should use POPSSStateReader for read-only access.
+    Direct write access is restricted to action system components only.
+"""
+
 import json
 import os
 import shutil
@@ -29,7 +50,35 @@ from .lock import POPSSFileLock
 
 
 class POPSSRunStore:
+    """
+    Run Store - State File Management for Action System.
+    
+    This class manages all state files for a single run. All write operations
+    are protected by the action system authorization mechanism.
+    
+    Attributes:
+        _run_id: Unique run identifier.
+        _run_dir: Directory containing run state files.
+        _paths: Dictionary mapping file keys to paths.
+    
+    Example:
+        >>> store = POPSSRunStore("train_001")
+        >>> store.write_state({"status": "running", "pid": 12345})
+        >>> state = store.read_state()
+        {'status': 'running', 'pid': 12345}
+    """
+    
     def __init__(self, run_id: str, run_dir: Optional[str] = None):
+        """
+        Initialize the run store.
+        
+        Args:
+            run_id: Unique run identifier.
+            run_dir: Optional custom run directory.
+            
+        Raises:
+            ValueError: If run_id is empty.
+        """
         self._run_id = str(run_id).strip()
         if not self._run_id:
             raise ValueError("run_id_required")

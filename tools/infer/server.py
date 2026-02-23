@@ -1157,8 +1157,8 @@ class PiscesLxBackendServer:
         self.api_key = getattr(args, 'api_key', None)
         self.cors_origins = getattr(args, 'cors_origins', '*')
         self.log_level = getattr(args, 'log_level', 'INFO')
-        self.enable_opss = getattr(args, 'enable_opss', False)
-        self.enable_agent_intercept = getattr(args, 'enable_agent_intercept', False)
+        self.enable_opss = not getattr(args, 'disable_opss', False)
+        self.enable_agent_intercept = not getattr(args, 'disable_agent_intercept', False)
         self.serve_config = getattr(args, 'serve_config', None)
         self.model_path = getattr(args, 'model_path', None)
         

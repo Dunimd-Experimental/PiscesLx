@@ -1040,20 +1040,20 @@ def main():
     # -------------------------------------------------------------------------
     # OPSS INTEGRATION ARGUMENTS
     # -------------------------------------------------------------------------
-    # --enable_opss: Flag to enable OPSS integration
-    # Enables MCP Plaza, Swarm, and Orchestrator features
+    # --disable_opss: Flag to disable OPSS integration
+    # By default, OPSS (MCP Plaza, Swarm, Orchestrator) is enabled
     parser.add_argument(
-        '--enable_opss', 
+        '--disable_opss', 
         action='store_true',  # Boolean flag
-        help='Enable OPSS integration (MCP Plaza, Swarm, Orchestrator)'
+        help='Disable OPSS integration (MCP Plaza, Swarm, Orchestrator) - enabled by default'
     )
     
-    # --enable_agent_intercept: Flag to enable agent XML interception
-    # Intercepts <ag>, <swarm>, <orchestrate>, <tool> tags in responses
+    # --disable_agent_intercept: Flag to disable agent XML interception
+    # By default, agent XML pattern interception is enabled
     parser.add_argument(
-        '--enable_agent_intercept', 
+        '--disable_agent_intercept', 
         action='store_true',  # Boolean flag
-        help='Enable agent XML pattern interception'
+        help='Disable agent XML pattern interception - enabled by default'
     )
     
     # -------------------------------------------------------------------------
