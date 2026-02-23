@@ -258,7 +258,13 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         
         if "loss_type" in model_train_cfg:
             self.train_config.loss_type = model_train_cfg["loss_type"]
-        
+
+        if "moe" in model_train_cfg and isinstance(model_train_cfg["moe"], dict):
+            try:
+                self.train_config.moe.update(model_train_cfg["moe"])
+            except Exception:
+                pass
+
         if "response_only_loss" in model_train_cfg:
             self.train_config.response_only_loss = model_train_cfg["response_only_loss"]
         
@@ -292,6 +298,49 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             self.train_config.multitask = model_train_cfg["multitask"]
         
         _LOG.info("Applied training config from model config file")
+
+    def _apply_training_moe_overrides_to_model_config(self, model_cfg: Any) -> Any:
+        moe_cfg = getattr(self.train_config, "moe", None)
+        if not isinstance(moe_cfg, dict) or not moe_cfg:
+            return model_cfg
+
+        mapping = {
+            "routing_temperature": "moe_routing_temperature",
+            "temperature_min": "moe_temperature_min",
+            "temperature_max": "moe_temperature_max",
+            "expert_temperature_max": "expert_temperature_max",
+            "expert_load_balance_threshold": "expert_load_balance_threshold",
+        }
+        for src_key, dst_key in mapping.items():
+            if src_key in moe_cfg and moe_cfg[src_key] is not None:
+                try:
+                    setattr(model_cfg, dst_key, moe_cfg[src_key])
+                except Exception:
+                    pass
+
+        return model_cfg
+
+    def _seed_training_moe_defaults_from_model_config(self, model_cfg: Any) -> None:
+        moe_cfg = getattr(self.train_config, "moe", None)
+        if not isinstance(moe_cfg, dict):
+            return
+
+        mapping = {
+            "moe_routing_temperature": "routing_temperature",
+            "moe_temperature_min": "temperature_min",
+            "moe_temperature_max": "temperature_max",
+            "expert_temperature_max": "expert_temperature_max",
+            "expert_load_balance_threshold": "expert_load_balance_threshold",
+        }
+
+        for src_key, dst_key in mapping.items():
+            if hasattr(model_cfg, src_key):
+                try:
+                    val = getattr(model_cfg, src_key)
+                    if val is not None:
+                        moe_cfg[dst_key] = val
+                except Exception:
+                    pass
 
     def switch_stage(self, new_stage, **stage_config) -> 'PiscesLxTrainOrchestrator':
         """
@@ -441,7 +490,9 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             raise FileNotFoundError(f"Model config not found for model_size='{model_size}'")
 
         model_cfg = YvConfig.from_yaml(str(model_cfg_path))
-        
+
+        self._seed_training_moe_defaults_from_model_config(model_cfg)
+
         if hasattr(model_cfg, 'training_config') and model_cfg.training_config:
             self._apply_model_training_config(model_cfg.training_config)
         
@@ -449,12 +500,14 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             self.train_config.load_stage_config(self.stage)
             from .config import TrainingStage
             if self.stage in [TrainingStage.ALIGNMENT_DPO, TrainingStage.ALIGNMENT_PPO, TrainingStage.ALIGNMENT_ORPO]:
-                self.train_config.output_dir = f".pisceslx/checkpoints/{self.stage.value}"
+                self.train_config.output_dir = f".pisceslx/ckpt"
         
         try:
             self.train_config.apply_cli_overrides(params)
         except Exception:
             pass
+
+        model_cfg = self._apply_training_moe_overrides_to_model_config(model_cfg)
         
         seq_len = int(getattr(self.train_config.data, "sequence_length", 2048))
         if params.get("seq_len") is not None:
@@ -502,6 +555,8 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             dl_kwargs["prefetch_factor"] = int(getattr(self.train_config.data, "prefetch_factor", 2))
 
         model_cfg = YvConfig.from_yaml(str(model_cfg_path))
+        self._seed_training_moe_defaults_from_model_config(model_cfg)
+        model_cfg = self._apply_training_moe_overrides_to_model_config(model_cfg)
 
         resume_from = str(params.get("resume_ckpt") or "").strip() or None
         epochs = 1
@@ -593,6 +648,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         from opss.train.pref_align import PPOConfig, POPSSPreferenceAlignmentOperator
 
         cfg = YvConfig.from_yaml(str(model_cfg_path))
+        cfg = self._apply_training_moe_overrides_to_model_config(cfg)
         model = YvModel(cfg)
         try:
             raw = torch.load(ckpt_path, map_location="cpu")
@@ -681,7 +737,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if not res.is_success():
             return {"status": "error", "reason": f"preference_align_failed:{res.error}"}
 
-        out_dir = str(self.train_config.output_dir or ".pisceslx/checkpoints")
+        out_dir = str(self.train_config.output_dir or ".pisceslx/ckpt")
         os.makedirs(out_dir, exist_ok=True)
         save_path = os.path.join(out_dir, "preference_ppo.pt")
         try:
@@ -727,6 +783,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         from model import YvConfig, YvModel
         cfg = YvConfig.from_yaml(str(model_cfg_path))
+        cfg = self._apply_training_moe_overrides_to_model_config(cfg)
         model = YvModel(cfg)
 
         try:
@@ -828,7 +885,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             self._setup_watermark()
         
         # 7. Initialize training pipeline
-        self.pipeline = TrainingPipelineOperator(self.train_config)
+        self.pipeline = TrainingPipelineOperator(self.train_config, trainer=self.trainer)
         
         # 8. Setup curriculum learning (if configured)
         if hasattr(self.train_config, 'curriculum') and self.train_config.curriculum:
@@ -980,6 +1037,10 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 return self._val_dataloader_factory(self.train_config)
             except TypeError:
                 return self._val_dataloader_factory()
+        samples = self._load_text_samples(split="val")
+        if not samples:
+            _LOG.warning("No validation dataset found, skipping validation")
+            return None
         return self._build_default_dataloader(split="val")
 
     def _build_default_dataloader(self, split: str):

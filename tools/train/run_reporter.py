@@ -191,13 +191,13 @@ class PiscesLxTrainingRunReporter:
             self._emit_event("training_resume_requested", payload={"seq": seq})
             self._snapshot({"status": "running", "phase": "training"})
             return
-        if action == "cancel":
+        if action in ("cancel", "stop"):
             self._cancel_requested = True
-            self._emit_event("control_applied", payload={"action": "cancel", "seq": seq})
+            self._emit_event("control_applied", payload={"action": action, "seq": seq})
             self._emit_event("training_cancel_requested", payload={"seq": seq})
             self._snapshot({"status": "cancelled", "phase": "cancelling"})
             try:
-                self._save_checkpoint_now(reason="cancel")
+                self._save_checkpoint_now(reason=action)
             except Exception:
                 pass
             return
@@ -205,6 +205,35 @@ class PiscesLxTrainingRunReporter:
             self._emit_event("control_applied", payload={"action": "save_ckpt_now", "seq": seq})
             self._emit_event("training_save_ckpt_now", payload={"seq": seq})
             self._save_checkpoint_now(reason="manual")
+            return
+        if action == "eval_now":
+            self._emit_event("control_applied", payload={"action": "eval_now", "seq": seq})
+            self._emit_event("training_eval_requested", payload={"seq": seq})
+            self._request_eval = True
+            return
+        if action == "adjust_lr":
+            lr_factor = payload.get("factor", 1.0)
+            self._emit_event("control_applied", payload={"action": "adjust_lr", "seq": seq, "factor": lr_factor})
+            self._emit_event("training_lr_adjust_requested", payload={"seq": seq, "factor": lr_factor})
+            self._pending_lr_factor = lr_factor
+            return
+        if action == "scale_batch":
+            batch_factor = payload.get("factor", 1.0)
+            self._emit_event("control_applied", payload={"action": "scale_batch", "seq": seq, "factor": batch_factor})
+            self._emit_event("training_batch_scale_requested", payload={"seq": seq, "factor": batch_factor})
+            self._pending_batch_factor = batch_factor
+            return
+        if action == "export_model":
+            export_path = payload.get("path", None)
+            self._emit_event("control_applied", payload={"action": "export_model", "seq": seq, "path": export_path})
+            self._emit_event("training_export_requested", payload={"seq": seq, "path": export_path})
+            self._pending_export_path = export_path
+            return
+        if action == "update_status":
+            status_data = payload.get("status", {})
+            self._emit_event("control_applied", payload={"action": "update_status", "seq": seq})
+            if status_data:
+                self._snapshot(status_data)
             return
         if action:
             self._emit_event("control_ignored", payload={"action": action, "seq": seq})
@@ -225,7 +254,7 @@ class PiscesLxTrainingRunReporter:
     def _save_checkpoint_now(self, reason: str = "manual") -> Optional[str]:
         if self._trainer is None or self._train_config is None:
             return None
-        out_dir = getattr(self._train_config, "output_dir", None) or ".pisceslx/checkpoints"
+        out_dir = getattr(self._train_config, "output_dir", None) or ".pisceslx/ckpt"
         os.makedirs(str(out_dir), exist_ok=True)
         step = getattr(self._trainer, "global_step", None)
         step_i = self._safe_int(step) or 0

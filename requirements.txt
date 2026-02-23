@@ -35,20 +35,19 @@ addict>=2.4.0
 dmsc==0.1.8-beta.3
 
 # =============================================================================
-# SECTION 2: PyTorch Core (MUST install first and together)
+# SECTION 2: PyTorch Core (MUST install first)
 # =============================================================================
-# pip will automatically select the correct CUDA version based on your system
-torch>=2.5.0
-torchvision>=0.20.0
-torchaudio>=2.5.0
+# Let pip decide the best version for your system
+torch
+torchvision
+torchaudio
 torch-directml==0.2.1; platform_system=="Windows"
 
 # =============================================================================
-# SECTION 3: PyTorch Ecosystem (Depends on specific torch version)
+# SECTION 3: PyTorch Ecosystem
 # =============================================================================
-# xformers needs matching torch version, let pip auto-select
-xformers>=0.0.28
-bitsandbytes>=0.45.0
+xformers
+bitsandbytes
 
 # These have flexible versions but need torch-compatible builds
 accelerate==1.3.0
@@ -155,10 +154,6 @@ evalscope>=0.8.0
 pywin32>=308; platform_system=="Windows"
 
 # =============================================================================
-# Recommended install command (Linux/macOS):
-# pip install -r requirements.txt --no-cache-dir
-#
-# Windows (with GPU):
-# pip install torch==2.5.1 torchvision==0.20.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu124
-# pip install -r requirements.txt --no-cache-dir
+# Recommended install command:
+# pip install -r requirements.txt
 # =============================================================================

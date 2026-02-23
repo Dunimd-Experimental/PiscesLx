@@ -27,7 +27,7 @@ from datetime import datetime
 from typing import Any, Optional, Dict, Tuple, List
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import get_cache_dir
 
 # Import new modular components
 from .context_utils import PiscesLxMonitorContextManager
@@ -182,7 +182,7 @@ class PiscesLxToolsMonitorImpl:
     def _init_logging(self):
         """Initialize logging configuration."""
         import os
-        self.MONITOR_LOG_DIR = os.path.join(os.getcwd(), '.pisceslx', 'logs')
+        self.MONITOR_LOG_DIR = get_cache_dir("logs/monitor")
         os.makedirs(self.MONITOR_LOG_DIR, exist_ok=True)
         self.MONITOR_LOG_FILE = os.path.join(self.MONITOR_LOG_DIR, 'monitor.log')
         

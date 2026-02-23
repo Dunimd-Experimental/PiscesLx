@@ -63,6 +63,8 @@ import time
 import struct
 
 from configs.version import VERSION
+from utils.dc import PiscesLxLogger
+from utils.paths import get_work_dir
 from utils.opsc.interface import (
     PiscesLxOperatorInterface,
     PiscesLxOperatorResult,
@@ -120,8 +122,8 @@ class POPSSFP4Config(PiscesLxOperatorConfig):
     compute_dtype: str = "bf16"
     enable_gradient_checkpointing: bool = True
     
-    model_path: str = "./checkpoints/model"
-    output_dir: str = "./checkpoints/fp4_output"
+    model_path: str = ".pisceslx/ckpt"
+    output_dir: str = ".pisceslx/ckpt"
     train_data: str = "./data/train.jsonl"
     batch_size: int = 32
     micro_batch_size: int = 1
@@ -133,7 +135,7 @@ class POPSSFP4Config(PiscesLxOperatorConfig):
     weight_decay: float = 0.1
     
     checkpoint_interval: int = 5000
-    checkpoint_dir: str = "./checkpoints/fp4_checkpoints"
+    checkpoint_dir: str = ".pisceslx/ckpt"
     save_optimizer_state: bool = True
     
     def __post_init__(self):

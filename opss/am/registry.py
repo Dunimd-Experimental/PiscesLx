@@ -87,6 +87,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
 
 class POPSSToolType(Enum):

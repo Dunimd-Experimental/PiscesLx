@@ -51,7 +51,7 @@ import transformer_engine.pytorch as te
 from transformer_engine.common.recipe import Format, DelayedScaling, _Format
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import get_log_file, get_work_dir
 
 from configs.version import VERSION
 
@@ -109,8 +109,8 @@ class FP8TrainingConfig:
     fp8_amax_compute_algo: str = "max"
     fp8_stochastic_rounding: bool = True
     
-    model_path: str = "./checkpoints/ruchbah"
-    output_dir: str = "./checkpoints/fp8_output"
+    model_path: str = ".pisceslx/ckpt"
+    output_dir: str = ".pisceslx/ckpt"
     train_data: str = "./data/train.jsonl"
     batch_size: int = 32
     micro_batch_size: int = 1
@@ -128,7 +128,7 @@ class FP8TrainingConfig:
     fp32_master_weights: bool = True
     
     checkpoint_interval: int = 5000
-    checkpoint_dir: str = "./checkpoints/fp8_checkpoints"
+    checkpoint_dir: str = ".pisceslx/ckpt"
     save_optimizer_state: bool = True
     load_optimizer_state: bool = False
     resume_from: Optional[str] = None

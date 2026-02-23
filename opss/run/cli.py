@@ -24,12 +24,75 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 from .attacher import POPSSRunAttacher
 from .controller import POPSSRunController
 from .id_factory import POPSSRunIdFactory
 from .store import POPSSRunStore
+
+
+def _format_time(ts: str) -> str:
+    if not ts:
+        return "-"
+    try:
+        if "T" in ts:
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            return dt.strftime("%m-%d %H:%M")
+        return ts[:16] if len(ts) >= 16 else ts
+    except Exception:
+        return ts[:16] if len(ts) >= 16 else ts
+
+
+def _status_icon(status: str) -> str:
+    icons = {
+        "running": "*",
+        "pending": "o",
+        "paused": "~",
+        "completed": "+",
+        "failed": "x",
+        "cancelled": "-",
+        "dead": "!",
+    }
+    return icons.get(status, ".")
+
+
+def _status_color(status: str) -> str:
+    colors = {
+        "running": "\033[92m",
+        "pending": "\033[93m",
+        "paused": "\033[94m",
+        "completed": "\033[90m",
+        "failed": "\033[91m",
+        "cancelled": "\033[90m",
+        "dead": "\033[91m",
+    }
+    return colors.get(status, "")
+
+
+def _reset_color() -> str:
+    return "\033[0m"
+
+
+def _print_success(msg: str):
+    print(f"\033[92m+\033[0m {msg}")
+
+
+def _print_error(msg: str):
+    print(f"\033[91mx\033[0m {msg}")
+
+
+def _print_warning(msg: str):
+    print(f"\033[93m!\033[0m {msg}")
+
+
+def _print_info(msg: str):
+    print(f"  {msg}")
+
+
+def _print_hint(msg: str):
+    print(f"\033[90mHint: {msg}\033[0m")
 
 
 class POPSSRunCLI:
@@ -43,6 +106,7 @@ class POPSSRunCLI:
         submit = sub.add_parser("submit")
         submit.add_argument("kind", choices=["train", "dataset"], help="Run kind")
         submit.add_argument("--daemon", action="store_true")
+        submit.add_argument("--foreground", action="store_true", help="Run in foreground mode (non-daemon)")
         submit.add_argument("--run_id", default=None)
         submit.add_argument("--run_name", default=None)
         submit.add_argument("--run_dir", default=None)
@@ -50,19 +114,29 @@ class POPSSRunCLI:
         submit.add_argument("--output", default=None)
         submit.add_argument("--format", default="auto")
         submit.add_argument("--sleep", type=float, default=0.0)
+        submit.add_argument("--gpu_count", type=int, default=1, help="Number of GPUs to allocate")
+        submit.add_argument("--gpu_memory", type=int, default=0, help="Minimum GPU memory in MB (0=auto)")
+        submit.add_argument("--priority", choices=["high", "normal", "low"], default="normal", help="Task priority")
 
         serve = sub.add_parser("serve")
         serve.add_argument("kind", choices=["infer"], help="Service kind")
         serve.add_argument("--daemon", action="store_true")
+        serve.add_argument("--foreground", action="store_true", help="Run in foreground mode (non-daemon)")
         serve.add_argument("--host", default="127.0.0.1")
         serve.add_argument("--port", type=int, default=8000)
         serve.add_argument("--run_id", default=None)
         serve.add_argument("--run_name", default=None)
         serve.add_argument("--run_dir", default=None)
+        serve.add_argument("--gpu_count", type=int, default=1, help="Number of GPUs to allocate")
 
         status = sub.add_parser("status")
         status.add_argument("run_id")
         status.add_argument("--run_dir", default=None)
+
+        list_parser = sub.add_parser("list")
+        list_parser.add_argument("--all", action="store_true", help="Show all tasks including completed")
+        list_parser.add_argument("--running", action="store_true", help="Show only running tasks")
+        list_parser.add_argument("--run_dir", default=None)
 
         attach = sub.add_parser("attach")
         attach.add_argument("run_id")
@@ -90,6 +164,23 @@ class POPSSRunCLI:
         worker.add_argument("--format", default="auto")
         worker.add_argument("--sleep", type=float, default=0.0)
 
+        gpu = sub.add_parser("gpu")
+        gpu.add_argument("gpu_action", choices=["list", "status", "release"], help="GPU action")
+        gpu.add_argument("--gpu_id", type=int, default=None)
+        gpu.add_argument("--task_id", default=None)
+
+        queue = sub.add_parser("queue")
+        queue.add_argument("queue_action", choices=["list", "clear", "stats"], help="Queue action")
+        queue.add_argument("--priority", choices=["high", "normal", "low"], default=None)
+
+        resources = sub.add_parser("resources")
+        resources.add_argument("resources_action", choices=["status", "utilization"], help="Resources action")
+
+        recover = sub.add_parser("recover")
+        recover.add_argument("run_id")
+        recover.add_argument("--checkpoint", default=None)
+        recover.add_argument("--max_restarts", type=int, default=3)
+
         ns, extra = parser.parse_known_args(argv)
         action = ns.action
 
@@ -101,12 +192,22 @@ class POPSSRunCLI:
             return self._handle_serve(base_args, ns, extra)
         if action == "status":
             return self._handle_status(ns)
+        if action == "list":
+            return self._handle_list(ns)
         if action == "attach":
             return self._handle_attach(ns)
         if action == "logs":
             return self._handle_logs(ns)
         if action == "control":
             return self._handle_control(ns)
+        if action == "gpu":
+            return self._handle_gpu(ns)
+        if action == "queue":
+            return self._handle_queue(ns)
+        if action == "resources":
+            return self._handle_resources(ns)
+        if action == "recover":
+            return self._handle_recover(ns)
         return 1
 
     def _select_run_id(self, base_args: Any, override: Optional[str], prefix: str) -> str:
@@ -212,10 +313,6 @@ class POPSSRunCLI:
             controller.update_state({"status": "pending", "phase": "queued"})
         else:
             controller.init_run(spec, state={"status": "pending", "phase": "queued"})
-        try:
-            print(json.dumps({"run_id": run_id, "run_dir": store.run_dir, "kind": ns.kind}, ensure_ascii=False))
-        except Exception:
-            pass
 
         if ns.kind == "train":
             cmd = [sys.executable, "manage.py", "train", "--run_id", run_id]
@@ -224,7 +321,14 @@ class POPSSRunCLI:
                 cmd.extend(["--run_dir", str(rd)])
             cmd.extend(self._build_train_forward_args(base_args))
             cmd.extend(extra)
-            return self._spawn_and_maybe_attach(controller, cmd, daemon=bool(ns.daemon or getattr(base_args, "daemon", False)))
+            use_daemon = not ns.foreground and (ns.daemon or getattr(base_args, "daemon", True))
+            gpu_count = getattr(ns, "gpu_count", 1) or 1
+            gpu_memory_mb = getattr(ns, "gpu_memory", 0) or 0
+            priority = getattr(ns, "priority", "normal") or "normal"
+            return self._spawn_and_maybe_attach(
+                controller, cmd, daemon=use_daemon, kind="train",
+                gpu_count=gpu_count, gpu_memory_mb=gpu_memory_mb, priority=priority
+            )
 
         if ns.kind == "dataset":
             cmd = [
@@ -256,7 +360,7 @@ class POPSSRunCLI:
             if sleep_s > 0:
                 cmd.extend(["--sleep", str(sleep_s)])
             cmd.extend(extra)
-            return self._spawn_and_maybe_attach(controller, cmd, daemon=bool(ns.daemon or getattr(base_args, "daemon", False)))
+            return self._spawn_and_maybe_attach(controller, cmd, daemon=bool(ns.daemon or getattr(base_args, "daemon", False)), kind="dataset")
 
         controller.append_event("submit_unsupported", level="error", payload={"kind": ns.kind})
         controller.update_state({"status": "failed", "phase": "invalid_kind"})
@@ -287,10 +391,6 @@ class POPSSRunCLI:
             controller.update_state({"status": "pending", "phase": "queued"})
         else:
             controller.init_run(spec, state={"status": "pending", "phase": "queued"})
-        try:
-            print(json.dumps({"run_id": run_id, "run_dir": store.run_dir, "kind": f"serve_{ns.kind}", "host": ns.host, "port": int(ns.port)}, ensure_ascii=False))
-        except Exception:
-            pass
 
         if ns.kind == "infer":
             cmd = [sys.executable, "manage.py", "infer", "--run_id", run_id, "--serve"]
@@ -300,23 +400,67 @@ class POPSSRunCLI:
             cmd.extend(self._build_infer_forward_args(base_args))
             cmd.extend(["--host", str(ns.host), "--port", str(int(ns.port))])
             cmd.extend(extra)
-            return self._spawn_and_maybe_attach(controller, cmd, daemon=bool(ns.daemon or getattr(base_args, "daemon", False)))
+            use_daemon = not ns.foreground and (ns.daemon or getattr(base_args, "daemon", True))
+            gpu_count = getattr(ns, "gpu_count", 1) or 1
+            return self._spawn_and_maybe_attach(
+                controller, cmd, daemon=use_daemon, kind="serve",
+                host=ns.host, port=int(ns.port), gpu_count=gpu_count
+            )
 
         controller.append_event("serve_unsupported", level="error", payload={"kind": ns.kind})
         controller.update_state({"status": "failed", "phase": "invalid_kind"})
         return 2
 
-    def _spawn_and_maybe_attach(self, controller: POPSSRunController, cmd: List[str], daemon: bool) -> int:
+    def _spawn_and_maybe_attach(self, controller: POPSSRunController, cmd: List[str], daemon: bool, kind: str = "task", host: str = None, port: int = None, gpu_count: int = 1, gpu_memory_mb: int = 0, priority: str = "normal") -> int:
         store = controller.store
         store.ensure()
         stdout_path = store.path("stdout")
+        
+        allocated_gpus = []
+        try:
+            allocated_gpus = controller.allocate_gpus(
+                gpu_count=gpu_count,
+                min_memory_mb=gpu_memory_mb,
+                priority=priority,
+            )
+        except Exception as e:
+            print()
+            _print_error(f"Failed to allocate GPUs: {e}")
+            print()
+            return 2
+        
+        cuda_visible_devices = ",".join(str(g) for g in allocated_gpus) if allocated_gpus else ""
+        
+        env = os.environ.copy()
+        if cuda_visible_devices:
+            env["CUDA_VISIBLE_DEVICES"] = cuda_visible_devices
+            env["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID"
+        
+        controller.update_state({
+            "allocated_gpus": allocated_gpus,
+            "cuda_visible_devices": cuda_visible_devices,
+        })
 
         if daemon:
-            controller.spawn(cmd, daemon=True)
-            print(json.dumps({"run_id": store.run_id, "status": "running", "daemon": True, "stdout": stdout_path}, ensure_ascii=False))
+            pid = controller.spawn(cmd, daemon=True, env=env)
+            print()
+            _print_success("Task submitted (background)")
+            print()
+            _print_info(f"Run ID: {store.run_id}")
+            _print_info(f"PID:    {pid}")
+            if allocated_gpus:
+                _print_info(f"GPUs:   {cuda_visible_devices}")
+            if host and port:
+                _print_info(f"URL:    http://{host}:{port}")
+            _print_info(f"Log:    {stdout_path}")
+            print()
+            _print_hint(f"python manage.py action status {store.run_id}")
+            _print_hint(f"python manage.py action logs {store.run_id}")
+            _print_hint(f"python manage.py action control {store.run_id} stop")
+            print()
             return 0
 
-        controller.append_event("foreground_spawn", payload={"cmd": cmd})
+        controller.append_event("foreground_spawn", payload={"cmd": cmd, "gpus": allocated_gpus})
         controller.update_state({"status": "running", "phase": "foreground"})
 
         p = subprocess.Popen(
@@ -326,9 +470,21 @@ class POPSSRunCLI:
             cwd=os.getcwd(),
             text=True,
             bufsize=1,
+            env=env,
         )
         controller.update_state({"pid": int(p.pid)})
-        controller.append_event("process_spawned", payload={"pid": int(p.pid), "daemon": False})
+        controller.append_event("process_spawned", payload={"pid": int(p.pid), "daemon": False, "gpus": allocated_gpus})
+
+        print()
+        _print_success("Task started (foreground)")
+        print()
+        _print_info(f"Run ID: {store.run_id}")
+        _print_info(f"PID:    {p.pid}")
+        if allocated_gpus:
+            _print_info(f"GPUs:   {cuda_visible_devices}")
+        print()
+        _print_warning("Press Ctrl+C to stop")
+        print()
 
         with open(stdout_path, "a", encoding="utf-8") as log:
             while True:
@@ -346,21 +502,129 @@ class POPSSRunCLI:
                     pass
 
         rc = int(p.wait())
+        controller.release_gpus()
+        print()
         if rc == 0:
+            _print_success("Task completed")
             controller.update_state({"status": "completed", "phase": "finished", "exit_code": rc})
             controller.append_event("process_exit", payload={"exit_code": rc})
         else:
+            _print_error(f"Task failed (exit code: {rc})")
             controller.update_state({"status": "failed", "phase": "finished", "exit_code": rc})
             controller.append_event("process_exit", level="error", payload={"exit_code": rc})
+        print()
         return rc
 
     def _handle_status(self, ns: Any) -> int:
         store = POPSSRunStore(ns.run_id, run_dir=ns.run_dir)
         state = store.read_state()
         if not state:
-            print(json.dumps({"success": False, "message": "run_not_found", "run_id": ns.run_id}, ensure_ascii=False))
+            print()
+            _print_error(f"Task not found: {ns.run_id}")
+            print()
             return 2
-        print(json.dumps({"success": True, "state": state}, ensure_ascii=False, indent=2))
+        
+        pid = state.get("pid")
+        status = state.get("status", "")
+        if pid and status == "running":
+            try:
+                os.kill(int(pid), 0)
+            except Exception:
+                state["status"] = "dead"
+                state["phase"] = "process_lost"
+                controller = POPSSRunController(store)
+                controller.update_state({"status": "dead", "phase": "process_lost"})
+                controller.append_event("process_lost", level="warning", payload={"pid": pid})
+        
+        status_val = state.get("status", "-")
+        icon = _status_icon(status_val)
+        color = _status_color(status_val)
+        reset = _reset_color()
+        
+        print()
+        print(f"Task: {ns.run_id}")
+        print("+- " + f"Status: {color}{icon} {status_val}{reset}")
+        print("+- " + f"Phase:  {state.get('phase', '-')}")
+        print("+- " + f"PID:    {state.get('pid', '-')}")
+        print("+- " + f"Created: {_format_time(state.get('created_at', ''))}")
+        print("`- " + f"Updated: {_format_time(state.get('updated_at', ''))}")
+        print()
+        return 0
+
+    def _handle_list(self, ns: Any) -> int:
+        run_dir = ns.run_dir or ".pisceslx/runs"
+        if not os.path.exists(run_dir):
+            print()
+            _print_info("No tasks found")
+            print()
+            return 0
+        
+        tasks = []
+        for name in os.listdir(run_dir):
+            task_dir = os.path.join(run_dir, name)
+            if not os.path.isdir(task_dir):
+                continue
+            state_file = os.path.join(task_dir, "state.json")
+            if not os.path.exists(state_file):
+                continue
+            try:
+                with open(state_file, "r", encoding="utf-8") as f:
+                    state = json.load(f)
+                status_val = state.get("status", "unknown")
+                if ns.running and status_val != "running":
+                    continue
+                if not ns.all and status_val in ("completed", "failed", "cancelled"):
+                    continue
+                tasks.append({
+                    "run_id": state.get("run_id", name),
+                    "status": status_val,
+                    "phase": state.get("phase", "-"),
+                    "pid": state.get("pid", "-"),
+                    "created_at": state.get("created_at", ""),
+                })
+            except Exception:
+                continue
+        
+        if not tasks:
+            print()
+            if ns.running:
+                _print_info("No running tasks")
+            elif ns.all:
+                _print_info("No tasks found")
+            else:
+                _print_info("No active tasks (use --all to see all)")
+            print()
+            return 0
+        
+        tasks.sort(key=lambda x: x.get("created_at", ""), reverse=True)
+        
+        print()
+        print(f"Task List ({len(tasks)} total)")
+        print()
+        print(f"{'ID':<36} {'Status':<10} {'Phase':<12} {'PID':<8} {'Created'}")
+        print("-" * 80)
+        
+        for task in tasks:
+            run_id = task["run_id"]
+            status_val = task["status"]
+            phase = task["phase"] or "-"
+            pid = str(task["pid"]) if task["pid"] else "-"
+            created = _format_time(task["created_at"])
+            
+            icon = _status_icon(status_val)
+            color = _status_color(status_val)
+            reset = _reset_color()
+            
+            status_display = f"{color}{icon} {status_val}{reset}"
+            
+            if len(run_id) > 34:
+                run_id_display = run_id[:34] + ".."
+            else:
+                run_id_display = run_id
+            
+            print(f"{run_id_display:<36} {status_display:<19} {phase:<12} {pid:<8} {created}")
+        
+        print()
         return 0
 
     def _handle_attach(self, ns: Any) -> int:
@@ -372,36 +636,314 @@ class POPSSRunCLI:
         store = POPSSRunStore(ns.run_id, run_dir=ns.run_dir)
         p = store.path("stdout")
         if not os.path.exists(p):
-            print("")
+            print()
+            _print_info("No logs available")
+            print()
             return 0
         with open(p, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
         tail = int(ns.tail)
+        
+        print()
+        print("=" * 70)
+        print(f"Task Log: {ns.run_id} (last {tail} lines)")
+        print("=" * 70)
         print("".join(lines[-tail:]))
+        print("=" * 70)
+        print()
         return 0
 
     def _handle_control(self, ns: Any) -> int:
         store = POPSSRunStore(ns.run_id, run_dir=ns.run_dir)
         controller = POPSSRunController(store)
         action = str(getattr(ns, "control_action", "")).strip()
+        state = store.read_state()
+        pid = int((state or {}).get("pid") or 0)
+        
         if action == "kill":
-            state = store.read_state()
-            pid = int((state or {}).get("pid") or 0)
+            print()
+            _print_warning(f"Force killing process {pid} (task: {ns.run_id})")
             ok = controller.kill_pid(pid, force=True)
             controller.append_event("control_kill", payload={"pid": pid, "ok": bool(ok)})
             if ok:
                 controller.update_state({"status": "cancelled", "phase": "killed"})
-            print(json.dumps({"success": bool(ok), "pid": pid}, ensure_ascii=False))
+                _print_success("Process terminated")
+                _print_warning("Unsaved progress will be lost")
+            else:
+                _print_error("Failed to terminate process")
+            print()
             return 0 if ok else 2
 
-        if action in ("stop", "reload"):
+        if action == "stop":
             controller.enqueue_control(action, payload={})
-            print(json.dumps({"success": True, "run_id": ns.run_id, "action": action}, ensure_ascii=False))
+            print()
+            _print_success(f"Sent stop signal to task {ns.run_id}")
+            if pid:
+                _print_info(f"PID: {pid}")
+            _print_info("Task will save checkpoint and exit gracefully")
+            print()
+            return 0
+
+        if action == "pause":
+            controller.enqueue_control(action, payload={})
+            print()
+            _print_success(f"Sent pause signal to task {ns.run_id}")
+            _print_hint("Use resume to continue the task")
+            print()
+            return 0
+
+        if action == "resume":
+            controller.enqueue_control(action, payload={})
+            print()
+            _print_success(f"Sent resume signal to task {ns.run_id}")
+            print()
+            return 0
+
+        if action == "save_ckpt_now":
+            controller.enqueue_control(action, payload={})
+            print()
+            _print_success(f"Sent save_ckpt_now signal to task {ns.run_id}")
+            print()
             return 0
 
         controller.enqueue_control(action, payload={})
-        print(json.dumps({"success": True, "run_id": ns.run_id, "action": action}, ensure_ascii=False))
+        print()
+        _print_success(f"Sent {action} signal to task {ns.run_id}")
+        print()
         return 0
+
+    def _handle_gpu(self, ns: Any) -> int:
+        from .gpu_scheduler import POPSSGPUScheduler
+        
+        scheduler = POPSSGPUScheduler()
+        action = ns.gpu_action
+        
+        if action == "list":
+            gpu_info = scheduler.get_gpu_info()
+            util = scheduler.get_utilization()
+            
+            print()
+            print(f"GPU Status ({util['total_gpus']} total, {util['available_gpus']} available)")
+            print()
+            
+            if not gpu_info:
+                _print_info("No GPUs detected")
+                print()
+                return 0
+            
+            print(f"{'ID':<4} {'Name':<30} {'Memory':<15} {'Util':<8} {'Status'}")
+            print("-" * 75)
+            
+            for gpu_id, info in sorted(gpu_info.items()):
+                mem = f"{info.free_memory_mb}/{info.total_memory_mb}MB"
+                util_pct = f"{info.utilization_percent}%"
+                status = "free" if info.is_available else f"used by {info.allocated_to}"
+                
+                print(f"{gpu_id:<4} {info.name[:28]:<30} {mem:<15} {util_pct:<8} {status}")
+            
+            print()
+            return 0
+        
+        if action == "status":
+            gpu_id = ns.gpu_id
+            if gpu_id is not None:
+                gpu_info = scheduler.get_gpu_info(gpu_id)
+                if not gpu_info:
+                    print()
+                    _print_error(f"GPU {gpu_id} not found")
+                    print()
+                    return 2
+                
+                info = gpu_info[gpu_id]
+                print()
+                print(f"GPU {gpu_id}: {info.name}")
+                print("+- " + f"Memory: {info.free_memory_mb}/{info.total_memory_mb}MB free")
+                print("+- " + f"Utilization: {info.utilization_percent}%")
+                print("+- " + f"Temperature: {info.temperature_c}C")
+                print("+- " + f"Power: {info.power_usage_w}/{info.power_limit_w}W")
+                print("`- " + f"Status: {'available' if info.is_available else 'allocated to ' + str(info.allocated_to)}")
+                print()
+                return 0
+            
+            util = scheduler.get_utilization()
+            print()
+            print("GPU Utilization Summary")
+            print("+- " + f"Total GPUs: {util['total_gpus']}")
+            print("+- " + f"Available: {util['available_gpus']}")
+            print("+- " + f"Allocated: {util['allocated_gpus']}")
+            print("+- " + f"Memory: {util['used_memory_mb']}/{util['total_memory_mb']}MB ({util['memory_utilization_percent']:.1f}%)")
+            print("`- " + f"Active tasks: {util['allocations']}")
+            print()
+            return 0
+        
+        if action == "release":
+            task_id = ns.task_id
+            if not task_id:
+                print()
+                _print_error("Task ID required for release")
+                print()
+                return 2
+            
+            released = scheduler.release(task_id)
+            if released:
+                print()
+                _print_success(f"Released GPUs {released} from task {task_id}")
+                print()
+                return 0
+            else:
+                print()
+                _print_error(f"No GPUs allocated to task {task_id}")
+                print()
+                return 2
+        
+        return 1
+
+    def _handle_queue(self, ns: Any) -> int:
+        from .queue import POPSSTaskQueue
+        
+        queue = POPSSTaskQueue()
+        action = ns.queue_action
+        
+        if action == "list":
+            tasks = queue.get_all_tasks()
+            stats = queue.get_stats()
+            
+            print()
+            print(f"Task Queue ({stats['total_queued']} pending, {stats['running']} running)")
+            print()
+            
+            if not tasks:
+                _print_info("Queue is empty")
+                print()
+                return 0
+            
+            print(f"{'ID':<36} {'Type':<10} {'Priority':<10} {'Created'}")
+            print("-" * 75)
+            
+            for task in tasks:
+                created = _format_time(task.created_at)
+                print(f"{task.task_id:<36} {task.task_type:<10} {task.priority:<10} {created}")
+            
+            print()
+            return 0
+        
+        if action == "clear":
+            priority = ns.priority
+            count = queue.clear(priority)
+            print()
+            _print_success(f"Cleared {count} tasks from queue")
+            print()
+            return 0
+        
+        if action == "stats":
+            stats = queue.get_stats()
+            print()
+            print("Queue Statistics")
+            print("+- " + f"High priority: {stats['high_priority']}")
+            print("+- " + f"Normal priority: {stats['normal_priority']}")
+            print("+- " + f"Low priority: {stats['low_priority']}")
+            print("+- " + f"Running: {stats['running']}")
+            print("`- " + f"Completed: {stats['completed']}")
+            print()
+            return 0
+        
+        return 1
+
+    def _handle_resources(self, ns: Any) -> int:
+        from .resources import POPSSResourceLimits
+        
+        limits = POPSSResourceLimits()
+        action = ns.resources_action
+        
+        if action == "status":
+            system_info = limits.get_system_info()
+            
+            print()
+            print("System Resources")
+            print("+- " + f"CPU Cores: {system_info['cpu_count']}")
+            print("+- " + f"CPU Usage: {system_info['cpu_percent']:.1f}%")
+            print("+- " + f"Memory: {system_info['memory_available_mb']}/{system_info['memory_total_mb']}MB available")
+            print("+- " + f"Memory Usage: {system_info['memory_percent']:.1f}%")
+            print("+- " + f"Storage: {system_info['storage_available_mb']}/{system_info['storage_total_mb']}MB available")
+            print("`- " + f"Storage Usage: {system_info['storage_percent']:.1f}%")
+            print()
+            return 0
+        
+        if action == "utilization":
+            util = limits.get_utilization()
+            system = util['system']
+            allocated = util['allocated']
+            available = util['available']
+            
+            print()
+            print("Resource Utilization")
+            print()
+            print("System:")
+            print("  " + f"CPU: {system['cpu_count']} cores ({system['cpu_percent']:.1f}% used)")
+            print("  " + f"Memory: {system['memory_total_mb']}MB total ({system['memory_percent']:.1f}% used)")
+            print("  " + f"Storage: {system['storage_total_mb']}MB total ({system['storage_percent']:.1f}% used)")
+            print()
+            print("Allocated:")
+            print("  " + f"Tasks: {allocated['tasks']}")
+            print("  " + f"CPU Cores: {allocated['cpu_cores']}")
+            print("  " + f"Memory: {allocated['memory_mb']}MB")
+            print()
+            print("Available:")
+            print("  " + f"CPU Cores: {available['cpu_cores']}")
+            print("  " + f"Memory: {available['memory_mb']}MB")
+            print()
+            return 0
+        
+        return 1
+
+    def _handle_recover(self, ns: Any) -> int:
+        from .recovery import POPSSTaskRecovery
+        from .controller import POPSSRunController
+        
+        store = POPSSRunStore(ns.run_id, run_dir=ns.run_dir)
+        controller = POPSSRunController(store)
+        recovery = POPSSTaskRecovery(controller)
+        
+        recovery.register_task(ns.run_id, ns.run_id, max_restarts=ns.max_restarts)
+        
+        if not recovery.check_crashed(ns.run_id, store):
+            print()
+            _print_info(f"Task {ns.run_id} is not crashed")
+            print()
+            return 0
+        
+        checkpoint_path = ns.checkpoint
+        if checkpoint_path:
+            from .recovery import POPSSCheckpointInfo
+            checkpoint = POPSSCheckpointInfo(
+                checkpoint_path=checkpoint_path,
+                step=0,
+                epoch=0,
+                loss=0.0,
+                created_at="",
+                size_mb=0,
+            )
+        else:
+            checkpoint = recovery.find_latest_checkpoint(ns.run_id)
+        
+        if checkpoint is None:
+            print()
+            _print_error(f"No checkpoint found for task {ns.run_id}")
+            print()
+            return 2
+        
+        success, message = recovery.restart_task(ns.run_id, checkpoint, store)
+        
+        print()
+        if success:
+            _print_success(message)
+            _print_info(f"Checkpoint: {checkpoint.checkpoint_path}")
+            _print_info(f"Step: {checkpoint.step}")
+        else:
+            _print_error(message)
+        print()
+        
+        return 0 if success else 2
 
     def _handle_worker_dataset(self, ns: Any) -> int:
         run_id = str(ns.run_id).strip()
@@ -546,4 +1088,3 @@ class POPSSRunCLI:
                     out_fh.close()
             except Exception:
                 pass
-

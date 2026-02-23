@@ -48,7 +48,7 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import get_log_file, get_work_dir
 
 _LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
 
@@ -57,8 +57,8 @@ _LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("Pisces
 class PiscesL1BenchmarkConfig:
     """Benchmark configuration."""
     
-    model_path: str = "./checkpoints/ruchbah"
-    output_dir: str = "./benchmark_results"
+    model_path: str = ".pisceslx/ckpt"
+    output_dir: str = ".pisceslx/benchmark"
     
     batch_size: int = 4
     max_seq_length: int = 4096
@@ -1645,8 +1645,8 @@ if __name__ == "__main__":
     
     parser = argparse.ArgumentParser(description="Benchmark evaluation for PiscesL1")
     
-    parser.add_argument("--model_path", type=str, default="./checkpoints/ruchbah")
-    parser.add_argument("--output_dir", type=str, default="./benchmark_results")
+    parser.add_argument("--model_path", type=str, default=".pisceslx/ckpt")
+    parser.add_argument("--output_dir", type=str, default=".pisceslx/benchmark")
     parser.add_argument("--batch_size", type=int, default=4)
     parser.add_argument("--benchmarks", type=str, default="mmlu,humaneval,gsm8k")
     parser.add_argument("--device", type=str, default="cuda")

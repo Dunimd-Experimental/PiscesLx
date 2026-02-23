@@ -83,7 +83,7 @@ Note:
 
 import math
 import torch
-from torch import nn
+import torch.nn as nn
 import torch.nn.functional as F
 from collections import OrderedDict
 from typing import Any, Optional, Tuple
@@ -200,7 +200,7 @@ class YvMoEGate(nn.Module):
         self.top_k = top_k
         self.num_experts = num_experts
         self.load_balance_alpha = load_balance_alpha
-        self.noise_std = noise_std
+        self.noise_std = max(noise_std, 0.2)  # Increase minimum noise for better exploration
         self.enable_cognitive_density = enable_cognitive_density
         self.cognitive_enhancement_scale = 0.1
         
@@ -211,7 +211,7 @@ class YvMoEGate(nn.Module):
         
         self.expert_grad_clip = getattr(cfg, 'moe_expert_grad_clip', 0.1) if cfg is not None else 0.1
         self.z_loss_alpha = getattr(cfg, 'moe_z_loss_alpha', 1e-4) if cfg is not None else 1e-4
-        self.random_to_gradient_steps = getattr(cfg, 'moe_random_to_gradient_steps', 500) if cfg is not None else 500
+        self.random_to_gradient_steps = getattr(cfg, 'moe_random_to_gradient_steps', 2000) if cfg is not None else 2000  # Increase random routing period
         self.gate_warmup_alpha = getattr(cfg, 'moe_gate_warmup_alpha', 0.05) if cfg is not None else 0.05
         self.attention_mamba_temp = getattr(cfg, 'moe_attention_mamba_temp', 0.3) if cfg is not None else 0.3
         self.l2_smooth_8k = getattr(cfg, 'moe_l2_smooth_8k', 0.01) if cfg is not None else 0.01
@@ -219,11 +219,20 @@ class YvMoEGate(nn.Module):
         self.use_random_routing = True
         self.current_step = 0
         
+        initial_temp = getattr(cfg, 'moe_routing_temperature', 3.0) if cfg is not None else 3.0
+        min_temp = getattr(cfg, 'moe_temperature_min', 1.5) if cfg is not None else 1.5
+        max_temp = getattr(cfg, 'moe_temperature_max', 5.0) if cfg is not None else 5.0
+        
         self.register_buffer('expert_usage_count', torch.zeros(num_experts))
-        self.register_buffer('temperature', torch.tensor(1.0))
-        self.min_temperature = 0.1
+        self.register_buffer('temperature', torch.tensor(initial_temp))
+        self.min_temperature = min_temp
         self.register_buffer('total_routing_count', torch.tensor(0.0))
-        self.register_buffer('expert_temperature_max', torch.tensor(5.0))
+        self.register_buffer('expert_temperature_max', torch.tensor(max_temp))
+        
+        self.register_buffer('expert_bias', torch.zeros(num_experts))
+        self.bias_update_rate = 0.05
+        self.bias_update_freq = 10
+        self.register_buffer('bias_update_counter', torch.tensor(0))
         
     def forward(self, x):
         """Forward pass of the MoE gate with enhanced load balancing.
@@ -294,6 +303,9 @@ class YvMoEGate(nn.Module):
         # Compute routing logits
         logits = self.gate(x_flat)
         
+        # Apply DeepSeek-style dynamic bias for auxiliary-loss-free load balancing
+        logits = logits + self.expert_bias
+        
         # Apply gate warmup for cold start
         if self.training and self.current_step < 100:  # First 100 steps warmup
             warmup_scale = min(1.0, self.current_step / 100.0)
@@ -312,11 +324,13 @@ class YvMoEGate(nn.Module):
         if seq_len >= 8192:  # 8k sequence length threshold
             effective_temp = self.temperature * self.attention_mamba_temp
             # Apply stability bounds for 8k sequences
-            effective_temp = max(0.1, min(2.0, effective_temp))
+            max_temp = float(getattr(self, 'expert_temperature_max', torch.tensor(2.0)).item())
+            effective_temp = max(0.1, min(max_temp, effective_temp))
             logits = logits / effective_temp
         else:
             # Apply stability bounds for normal sequences
-            temp_bounded = max(0.1, min(2.0, self.temperature))
+            max_temp = float(getattr(self, 'expert_temperature_max', torch.tensor(2.0)).item())
+            temp_bounded = max(0.1, min(max_temp, float(self.temperature.item())))
             logits = logits / temp_bounded
         
         # Compute routing scores
@@ -325,27 +339,25 @@ class YvMoEGate(nn.Module):
         # Apply expert capacity limitation
         scores = self._apply_capacity_limitation(scores)
         
-        # Select top-k experts with dynamic adjustment
         if self.training and self.use_random_routing and self.current_step <= self.random_to_gradient_steps:
-            # Random routing for cold start
             random_scores = torch.rand_like(scores)
             top_scores, top_idx = torch.topk(random_scores, current_top_k, dim=-1)
-            # Use uniform scores for random routing
             top_scores = torch.ones_like(top_scores) / current_top_k
         else:
-            # Gradient-based routing after cold start
             top_scores, top_idx = torch.topk(scores, current_top_k, dim=-1)
-            # Normalize top-k scores
             top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
+            
+            if self.training and self.total_routing_count > 100:
+                top_idx = self._enforce_balance_routing(top_idx, scores, current_top_k)
         
-        # Update expert usage count and temperature
         if self.training:
-            self._update_expert_usage(top_idx)
-            self._adjust_temperature()
+            if not self.use_random_routing:
+                self._update_expert_usage(top_idx, current_top_k)
+                self._adjust_temperature()
             self.total_routing_count += x_flat.size(0)
         
         # Compute load balance loss
-        load_balance_loss = self._compute_load_balance_loss(scores)
+        load_balance_loss = self._compute_load_balance_loss(scores, top_idx, current_top_k)
         
         # Add z-loss for routing stability
         z_loss = self._compute_z_loss(logits)
@@ -414,7 +426,7 @@ class YvMoEGate(nn.Module):
         else:
             return scores
     
-    def _compute_load_balance_loss(self, scores):
+    def _compute_load_balance_loss(self, scores, top_idx=None, current_top_k=None):
         """Compute enhanced load balance loss with capacity awareness.
         
         Calculates a loss term that penalizes uneven expert utilization.
@@ -423,6 +435,8 @@ class YvMoEGate(nn.Module):
         
         Args:
             scores (torch.Tensor): Routing scores [num_tokens, num_experts].
+            top_idx (torch.Tensor, optional): Selected expert indices for actual usage.
+            current_top_k (int, optional): Dynamic top_k value.
             
         Returns:
             torch.Tensor: Combined load balance loss scalar.
@@ -431,6 +445,21 @@ class YvMoEGate(nn.Module):
         ideal_load = torch.ones_like(expert_load) / self.num_experts
         
         basic_loss = self.load_balance_alpha * torch.sum((expert_load - ideal_load) ** 2)
+        
+        if top_idx is not None and self.training:
+            effective_top_k = current_top_k if current_top_k is not None else self.top_k
+            actual_counts = torch.zeros(self.num_experts, device=scores.device)
+            for k in range(effective_top_k):
+                expert_ids = top_idx[:, k]
+                actual_counts.scatter_add_(
+                    0,
+                    expert_ids,
+                    torch.ones_like(expert_ids, dtype=torch.float32)
+                )
+            
+            actual_distribution = actual_counts / (top_idx.shape[0] * effective_top_k + 1e-8)
+            actual_loss = self.load_balance_alpha * torch.sum((actual_distribution - ideal_load) ** 2)
+            basic_loss = 0.5 * basic_loss + 0.5 * actual_loss
         
         if self.total_routing_count > 0:
             usage_rate = self.expert_usage_count / self.total_routing_count
@@ -457,6 +486,209 @@ class YvMoEGate(nn.Module):
         logit_squared = torch.square(logits)
         z_loss = self.z_loss_alpha * torch.mean(logit_squared)
         return z_loss
+    
+    def _update_expert_usage(self, top_idx, current_top_k=None):
+        """Update expert usage statistics for load balancing.
+        
+        Tracks how many times each expert is selected during routing.
+        This information is used for temperature adjustment and load
+        balancing decisions.
+        
+        Args:
+            top_idx (torch.Tensor): Selected expert indices [batch*seq, top_k].
+            current_top_k (int, optional): Dynamic top_k value. If None, uses self.top_k.
+        """
+        if not self.training:
+            return
+        
+        effective_top_k = current_top_k if current_top_k is not None else self.top_k
+        
+        for k in range(effective_top_k):
+            expert_ids = top_idx[:, k]
+            self.expert_usage_count.scatter_add_(
+                0, 
+                expert_ids, 
+                torch.ones_like(expert_ids, dtype=torch.float32)
+            )
+    
+    def _adjust_temperature(self):
+        """Dynamically adjust routing temperature based on load balance.
+        
+        Automatically increases temperature when expert load is imbalanced
+        to encourage more uniform distribution. Uses variance and max/min
+        ratio to detect imbalance and adjust temperature accordingly.
+        
+        Temperature adjustment strategy:
+            - High imbalance (ratio > 10): Increase temperature significantly
+            - Medium imbalance: Gradual temperature increase
+            - Good balance: Slowly decrease temperature toward baseline
+        """
+        if not self.training:
+            return
+        
+        min_samples_for_adjustment = 10
+        if self.total_routing_count < min_samples_for_adjustment:
+            return
+        
+        usage_distribution = self.expert_usage_count / (self.total_routing_count + 1e-8)
+        
+        nonzero_mask = usage_distribution > 1e-8
+        if nonzero_mask.sum() < 2:
+            return
+        
+        nonzero_usage = usage_distribution[nonzero_mask]
+        load_variance = torch.var(usage_distribution).item()
+        max_usage = torch.max(nonzero_usage).item()
+        min_usage = torch.min(nonzero_usage).item()
+        load_ratio = max_usage / (min_usage + 1e-8)
+        
+        max_temp = float(self.expert_temperature_max.item())
+        ratio_signal = math.log(load_ratio + 1e-8)
+        
+        if load_ratio > 50.0:
+            target_temp = min(max_temp, 2.0 + ratio_signal * 0.3)
+        elif load_ratio > 10.0:
+            target_temp = min(max_temp, max(1.5 + load_variance * 15, 1.0 + ratio_signal * 0.2))
+        elif load_variance > 0.1:
+            target_temp = min(max_temp, max(1.0 + load_variance * 10, 1.0 + ratio_signal * 0.1))
+        elif load_variance > 0.05:
+            target_temp = max(1.0, 1.0 + load_variance * 5)
+        else:
+            target_temp = max(self.min_temperature, 1.0 - load_variance * 2)
+        
+        adjustment_rate = 0.2
+        current_temp = self.temperature.item()
+        new_temp = current_temp * (1 - adjustment_rate) + target_temp * adjustment_rate
+        
+        new_temp = max(self.min_temperature, min(max_temp, new_temp))
+        
+        self.temperature.fill_(new_temp)
+        
+        self._update_expert_bias()
+    
+    def _update_expert_bias(self):
+        """Update expert bias for auxiliary-loss-free load balancing.
+        
+        DeepSeek-V3 style: dynamically adjust per-expert bias based on load.
+        - If expert is overloaded: decrease bias (make it less likely to be selected)
+        - If expert is underutilized: increase bias (make it more likely to be selected)
+        
+        This achieves automatic load balancing without auxiliary loss functions.
+        """
+        if not self.training:
+            return
+        
+        self.bias_update_counter.add_(1)
+        if self.bias_update_counter.item() % self.bias_update_freq != 0:
+            return
+        
+        usage_distribution = self.expert_usage_count / (self.total_routing_count + 1e-8)
+        
+        target_load = 1.0 / self.num_experts
+        
+        load_deviation = target_load - usage_distribution
+        
+        nonzero_mask = usage_distribution > 1e-8
+        if nonzero_mask.sum() >= 2:
+            nonzero_usage = usage_distribution[nonzero_mask]
+            max_usage = torch.max(nonzero_usage).item()
+            min_usage = torch.min(nonzero_usage).item()
+            load_ratio = max_usage / (min_usage + 1e-8)
+            
+            if load_ratio > 20.0:
+                dynamic_rate = self.bias_update_rate * 3.0
+            elif load_ratio > 10.0:
+                dynamic_rate = self.bias_update_rate * 2.0
+            elif load_ratio > 5.0:
+                dynamic_rate = self.bias_update_rate * 1.5
+            else:
+                dynamic_rate = self.bias_update_rate
+        else:
+            dynamic_rate = self.bias_update_rate
+        
+        bias_update = load_deviation * dynamic_rate
+        
+        new_bias = self.expert_bias + bias_update
+        new_bias = torch.clamp(new_bias, min=-2.0, max=2.0)
+        
+        self.expert_bias.copy_(new_bias)
+    
+    def _enforce_balance_routing(self, top_idx, scores, current_top_k):
+        """Enforce balanced routing when load is severely imbalanced.
+        
+        When expert load ratio exceeds critical threshold, this method
+        redistributes some token assignments from overloaded experts
+        to underutilized experts to prevent routing collapse.
+        
+        Args:
+            top_idx (torch.Tensor): Selected expert indices [batch*seq, top_k].
+            scores (torch.Tensor): Full routing scores [batch*seq, num_experts].
+            current_top_k (int): Current top_k value.
+            
+        Returns:
+            torch.Tensor: Potentially modified expert indices.
+        """
+        if self.total_routing_count < 100:
+            return top_idx
+        
+        usage_distribution = self.expert_usage_count / (self.total_routing_count + 1e-8)
+        
+        nonzero_mask = usage_distribution > 1e-8
+        if nonzero_mask.sum() < 2:
+            return top_idx
+        
+        nonzero_usage = usage_distribution[nonzero_mask]
+        max_usage = torch.max(nonzero_usage).item()
+        min_usage = torch.min(nonzero_usage).item()
+        load_ratio = max_usage / (min_usage + 1e-8)
+        
+        if load_ratio < 10.0:
+            return top_idx
+        
+        target_load = 1.0 / self.num_experts
+        overloaded_experts = (usage_distribution > target_load * 2.0).nonzero().squeeze(-1)
+        underloaded_experts = (usage_distribution < target_load * 0.5).nonzero().squeeze(-1)
+        
+        if overloaded_experts.numel() == 0 or underloaded_experts.numel() == 0:
+            return top_idx
+        
+        if overloaded_experts.dim() == 0:
+            overloaded_experts = overloaded_experts.unsqueeze(0)
+        if underloaded_experts.dim() == 0:
+            underloaded_experts = underloaded_experts.unsqueeze(0)
+        
+        new_top_idx = top_idx.clone()
+        num_tokens = top_idx.shape[0]
+        redistribution_rate = min(0.3, (load_ratio - 10.0) / 100.0)
+        
+        for k in range(current_top_k):
+            for overloaded_id in overloaded_experts:
+                overloaded_id = overloaded_id.item()
+                mask = (new_top_idx[:, k] == overloaded_id)
+                num_to_redistribute = int(mask.sum().item() * redistribution_rate)
+                
+                if num_to_redistribute == 0:
+                    continue
+                
+                redistribute_indices = mask.nonzero().squeeze(-1)
+                if redistribute_indices.numel() == 0:
+                    continue
+                
+                if redistribute_indices.dim() == 0:
+                    redistribute_indices = redistribute_indices.unsqueeze(0)
+                
+                perm = torch.randperm(redistribute_indices.numel(), device=top_idx.device)
+                selected_indices = redistribute_indices[perm[:num_to_redistribute]]
+                
+                for idx in selected_indices:
+                    token_idx = idx.item()
+                    for underloaded_id in underloaded_experts:
+                        underloaded_id = underloaded_id.item()
+                        if underloaded_id not in new_top_idx[token_idx]:
+                            new_top_idx[token_idx, k] = underloaded_id
+                            break
+        
+        return new_top_idx
 
 class YvStableMoEGate(nn.Module):
     """Stable MoE routing gate with load prediction and dynamic capacity.
@@ -630,6 +862,13 @@ class YvStableMoEGate(nn.Module):
         # Pointer for expert load buffer
         self.register_buffer('load_buffer_ptr', torch.tensor(0))
         
+        # DeepSeek-style dynamic bias for auxiliary-loss-free load balancing
+        self.register_buffer('expert_bias', torch.zeros(num_experts))
+        self.bias_update_rate = 0.05  # Faster update rate for stable gate
+        self.bias_update_freq = 50    # Update bias every N steps
+        self.register_buffer('bias_update_counter', torch.tensor(0))
+        self.register_buffer('total_routing_count', torch.tensor(0.0))
+        
     def _predict_future_load(self):
         """Predict future expert load using LSTM.
         
@@ -658,6 +897,43 @@ class YvStableMoEGate(nn.Module):
         future_load = torch.softmax(future_load, dim=0)
         
         return future_load
+    
+    def _update_expert_bias_stable(self, top_idx):
+        """Update expert bias for auxiliary-loss-free load balancing (DeepSeek-style).
+        
+        Dynamically adjust per-expert bias based on actual routing distribution.
+        This is the key innovation from DeepSeek-V3 for automatic load balancing.
+        
+        Args:
+            top_idx (torch.Tensor): Selected expert indices [batch*seq, top_k].
+        """
+        if not self.training:
+            return
+        
+        self.total_routing_count.add_(top_idx.numel())
+        self.bias_update_counter.add_(1)
+        
+        if self.bias_update_counter.item() % self.bias_update_freq != 0:
+            return
+        
+        # Count actual expert usage
+        expert_counts = torch.bincount(top_idx.flatten(), minlength=self.num_experts)
+        usage_distribution = expert_counts.float() / (self.total_routing_count + 1e-8)
+        
+        # Target: uniform distribution
+        target_load = 1.0 / self.num_experts
+        
+        # Calculate bias adjustment: underloaded experts get positive bias
+        load_deviation = target_load - usage_distribution
+        
+        # Apply bias update with rate limiting
+        bias_update = load_deviation * self.bias_update_rate
+        
+        # Clamp bias to prevent extreme values
+        new_bias = self.expert_bias + bias_update
+        new_bias = torch.clamp(new_bias, min=-2.0, max=2.0)
+        
+        self.expert_bias.copy_(new_bias)
     
     def _calculate_dynamic_capacity(self, x):
         """Calculate dynamic capacity based on input complexity.
@@ -712,11 +988,16 @@ class YvStableMoEGate(nn.Module):
         # Use simple Top-K routing in fixed shape mode
         if self.fixed_shape_mode:
             logits = self.gate(x_flat)
+            logits = logits + self.expert_bias  # Apply DeepSeek-style dynamic bias
             scores = F.softmax(logits, dim=-1)
             top_scores, top_idx = torch.topk(scores, self.top_k, dim=-1)
             
             # Normalize top-k scores
             top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
+            
+            # Update bias for load balancing
+            if self.training:
+                self._update_expert_bias_stable(top_idx)
             
             return top_scores, top_idx, torch.tensor(0.0, device=x.device)
         
@@ -788,6 +1069,10 @@ class YvStableMoEGate(nn.Module):
             uniform_expert = torch.randint(0, self.num_experts, (x_flat.size(0),), device=x.device)
             final_scores = [torch.ones(x_flat.size(0), device=x.device) / self.top_k]
             final_indices = [uniform_expert]
+        
+        # Update bias for load balancing
+        if self.training:
+            self._update_expert_bias_stable(top_idx)
         
         return torch.cat(final_scores), torch.cat(final_indices), torch.tensor(0.0, device=x.device)
 
@@ -1117,47 +1402,15 @@ class YvMoELayer(nn.Module):
         Args:
             expert_indices (torch.Tensor): Indices of experts assigned
                 to each input token.
-        
-        Note:
-            Logs warnings for critical imbalance (ratio > 10x).
-            Logs suggestions for improving load distribution.
         """
-        # Ensure expert_indices is of integer type for bincount
         if expert_indices.dtype != torch.long:
             expert_indices = expert_indices.long()
         
-        # Calculate the usage frequency of each expert
         expert_counts = torch.bincount(expert_indices.flatten(), minlength=self.num_experts)
-        expert_load = expert_counts.float() / expert_indices.numel()
+        expert_load = expert_counts.float() / (expert_indices.numel() + 1e-8)
         
-        # Record expert load history
         self.expert_load_history[self.load_history_ptr] = expert_load
         self.load_history_ptr = (self.load_history_ptr + 1) % 50
-        
-        # Calculate load imbalance and provide detailed monitoring
-        if self.load_history_ptr > 10:
-            recent_load = self.expert_load_history[:self.load_history_ptr].mean(0)
-            load_variance = torch.var(recent_load)
-            
-            # Compute detailed statistics
-            max_load_idx = torch.argmax(recent_load)
-            min_load_idx = torch.argmin(recent_load)
-            load_ratio = recent_load[max_load_idx] / (recent_load[min_load_idx] + 1e-8)
-            
-            # Issue warnings for severe imbalance
-            balance_threshold = getattr(self, 'expert_load_balance_threshold', 0.15)
-            if load_variance > balance_threshold or load_ratio > 8.0:
-                if load_ratio > 10.0:  # Critical imbalance
-                    _LOG.error(f"CRITICAL: Expert load severely imbalanced - max/min ratio: {load_ratio:.2f}, variance: {load_variance:.4f}")
-                elif load_variance > balance_threshold * 1.33:  # High variance
-                    _LOG.warning(f"WARNING: Expert load distribution showing high variance - ratio: {load_ratio:.2f}, variance: {load_variance:.4f}")
-            
-            # Provide adaptive load balancing suggestions
-            suggestion_threshold = balance_threshold * 0.67
-            if load_variance > suggestion_threshold or load_ratio > 5.0:
-                suggested_temp = min(2.0, 1.0 + load_variance * 10)
-                mode = "Training" if self.training else "Inference"
-                _LOG.info(f"SUGGESTION ({mode}): Consider increasing routing temperature to {suggested_temp:.2f} for better load distribution")
 
     def forward(self, x):
         """Forward pass of the MoE layer with load balancing.

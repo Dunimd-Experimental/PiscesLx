@@ -57,7 +57,7 @@ Usage:
 
     config = CheckpointConfig(
         type=CheckpointType.FULL,
-        save_dir="./checkpoints",
+        save_dir=".pisceslx/ckpt",
         interval=1000,
         max_to_keep=5
     )
@@ -96,7 +96,7 @@ from torch.optim.lr_scheduler import _LRScheduler
 from torch.cuda.amp import GradScaler
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import get_log_file, get_work_dir
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
 from configs.version import VERSION
@@ -142,7 +142,7 @@ class CheckpointConfig:
         safe_saving: Use atomic save operations
     """
     type: CheckpointType = CheckpointType.FULL
-    save_dir: str = "./checkpoints"
+    save_dir: str = ".pisceslx/ckpt"
     prefix: str = "checkpoint"
     interval: int = 5000
     max_to_keep: int = 3

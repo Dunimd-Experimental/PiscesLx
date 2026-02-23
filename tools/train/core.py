@@ -273,6 +273,18 @@ class PiscesLxTrainingOperator(object):
             local_rank=getattr(config, 'local_rank', -1),
             device_pref=config.device
         )
+        
+        # Initialize CUDA context if using GPU
+        if self.device.type == 'cuda':
+            try:
+                # Force CUDA initialization by creating a small tensor
+                torch.cuda.synchronize(self.device)
+                _ = torch.zeros(1, device=self.device)
+                torch.cuda.synchronize(self.device)
+                _LOG.info(f"CUDA context initialized on {self.device}")
+            except Exception as e:
+                _LOG.warning(f"CUDA initialization check failed: {e}")
+        
         self._setup_mixed_precision()
 
         self._modality_scheduler = None
@@ -310,14 +322,28 @@ class PiscesLxTrainingOperator(object):
             Loss values are scaled up before backward pass to prevent gradient
             underflow in FP16. Gradients are unscaled before optimizer step.
         """
-        if self.config.mixed_precision == "fp16":
-            # FP16 requires gradient scaling to prevent underflow
+        effective_mixed_precision = self.config.mixed_precision
+
+        if self.config.mixed_precision == "bf16" and self.device.type == "cuda":
+            bf16_supported = False
+            try:
+                bf16_supported = bool(torch.cuda.is_bf16_supported())
+            except Exception:
+                bf16_supported = False
+
+            if not bf16_supported:
+                _LOG.warning(
+                    "mixed_precision='bf16' requested but bf16 is not supported on this CUDA device; "
+                    "falling back to fp16."
+                )
+                effective_mixed_precision = "fp16"
+
+        if effective_mixed_precision == "fp16" and self.device.type == "cuda":
             self.scaler = torch.cuda.amp.GradScaler()
-        elif self.config.mixed_precision == "bf16":
-            # BF16 automatic mixed precision is built into PyTorch
-            # No gradient scaling needed due to wider exponent range
-            pass
-        _LOG.info(f"Mixed precision set to {self.config.mixed_precision}")
+        else:
+            self.scaler = None
+
+        _LOG.info(f"Mixed precision set to {self.config.mixed_precision} (effective={effective_mixed_precision})")
     
     def _setup_advanced_operators(self):
         """Setup advanced training operators for modality-aware scheduling, MoE gradients, K-FAC, and multi-task learning."""
@@ -430,6 +456,11 @@ class PiscesLxTrainingOperator(object):
         
         # Move model to target device (GPU/CPU)
         self.model = self.model.to(self.device)
+        
+        # Ensure CUDA is fully initialized after model transfer
+        if self.device.type == 'cuda':
+            torch.cuda.synchronize(self.device)
+            _LOG.info(f"Model moved to {self.device} and CUDA synchronized")
         
         if getattr(getattr(self.config, "lora", None), "enabled", False):
             self._apply_lora()
@@ -672,14 +703,29 @@ class PiscesLxTrainingOperator(object):
         """
         batch = {k: v.to(self.device) for k, v in batch.items()}
         
-        if self.config.mixed_precision == "fp16":
-            with torch.cuda.amp.autocast(dtype=torch.float16):
+        if self.config.mixed_precision in {"fp16", "bf16"} and self.device.type == "cuda":
+            if self.config.mixed_precision == "bf16":
+                bf16_supported = False
+                try:
+                    bf16_supported = bool(torch.cuda.is_bf16_supported())
+                except Exception:
+                    bf16_supported = False
+
+                if not bf16_supported:
+                    _LOG.warning(
+                        "mixed_precision='bf16' requested but bf16 is not supported on this CUDA device; "
+                        "falling back to fp16."
+                    )
+                    autocast_dtype = torch.float16
+                else:
+                    autocast_dtype = torch.bfloat16
+            else:
+                autocast_dtype = torch.float16
+
+            with torch.amp.autocast(device_type="cuda", dtype=autocast_dtype):
                 return self._stage_forward(batch)
-        elif self.config.mixed_precision == "bf16":
-            with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-                return self._stage_forward(batch)
-        else:
-            return self._stage_forward(batch)
+
+        return self._stage_forward(batch)
     
     def _stage_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """
@@ -1141,6 +1187,9 @@ class PiscesLxTrainingOperator(object):
             filepath: Checkpoint file path.
             metadata: Additional metadata.
         """
+        import os
+        os.makedirs(os.path.dirname(filepath), exist_ok=True)
+        
         checkpoint = {
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict() if self.optimizer else None,
@@ -1304,7 +1353,7 @@ class PiscesLxTrainingOperator(object):
         save_steps = int(getattr(self.config, "save_steps", 0) or 0)
         eval_steps = int(getattr(self.config, "eval_steps", 0) or 0)
 
-        output_dir = str(getattr(self.config, "output_dir", ".pisceslx/checkpoints") or ".pisceslx/checkpoints")
+        output_dir = str(getattr(self.config, "output_dir", ".pisceslx/ckpt") or ".pisceslx/ckpt")
         try:
             import os
             os.makedirs(output_dir, exist_ok=True)

@@ -39,7 +39,7 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader, ConcatDataset
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import get_log_file, get_work_dir
 from configs.version import VERSION
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
@@ -59,8 +59,8 @@ class MultitaskTrainingConfig:
     max_samples_per_task: Optional[int] = None
     
     # Training settings
-    model_path: str = "./checkpoints/ruchbah"
-    output_dir: str = "./checkpoints/multitask_output"
+    model_path: str = ".pisceslx/ckpt"
+    output_dir: str = ".pisceslx/ckpt"
     
     learning_rate: float = 1e-5
     warmup_steps: int = 500

@@ -43,7 +43,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda.amp import GradScaler, autocast
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import get_log_file, get_work_dir
 from configs.version import VERSION
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
@@ -53,8 +53,8 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 class POPSSSFTTrainingConfig:
     """SFT training configuration."""
     
-    model_path: str = "./checkpoints/ruchbah"
-    output_dir: str = "./checkpoints/sft_output"
+    model_path: str = ".pisceslx/ckpt"
+    output_dir: str = ".pisceslx/ckpt"
     
     train_data: str = "./data/train.jsonl"
     val_data: str = "./data/val.jsonl"
@@ -278,7 +278,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 config = POPSSSFTTrainingConfig(
                     train_data=train_data_path,
                     val_data=val_data_path or "",
-                    output_dir=f"./checkpoints/sft_{int(time.time())}"
+                    output_dir=get_work_dir("ckpt")
                 )
             
             self._LOG.info(f"Starting SFT training with config: {config}")

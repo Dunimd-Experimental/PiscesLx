@@ -52,8 +52,8 @@ Usage:
     from ops.train.dpo import DPOTrainingConfig, DPOTrainingOperator
     
     config = DPOTrainingConfig(
-        model_path="./checkpoints/sft_model",
-        ref_model_path="./checkpoints/base_model",
+        model_path=".pisceslx/ckpt",
+        ref_model_path=".pisceslx/ckpt",
         beta=0.1,
         learning_rate=5e-7
     )
@@ -86,7 +86,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda.amp import GradScaler, autocast
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import get_log_file, get_work_dir
 
 from configs.version import VERSION
 
@@ -137,9 +137,9 @@ class POPSSDPOTrainingConfig:
         max_response_length: Maximum length of responses
     """
     
-    model_path: str = "./checkpoints/sft_model"
-    ref_model_path: str = "./checkpoints/ruchbah"
-    output_dir: str = "./checkpoints/dpo_output"
+    model_path: str = ".pisceslx/ckpt"
+    ref_model_path: str = ".pisceslx/ckpt"
+    output_dir: str = ".pisceslx/ckpt"
     
     train_data: str = "./data/preferences.jsonl"
     val_data: str = "./data/val_preferences.jsonl"

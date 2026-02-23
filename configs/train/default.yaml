@@ -55,6 +55,13 @@ training:
   flash_attention: true
   packing: false
 
+moe:
+  routing_temperature: 1.30
+  temperature_min: 0.80
+  temperature_max: 3.00
+  expert_temperature_max: 5.00
+  expert_load_balance_threshold: 0.15
+
 loss:
   loss_type: lm
   response_only_loss: false

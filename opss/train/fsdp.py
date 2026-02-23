@@ -48,7 +48,7 @@ from torch.distributed.fsdp import (
 )
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import get_log_file, get_work_dir
 
 from configs.version import VERSION
 
@@ -60,8 +60,8 @@ class FSDPTrainingConfig:
     """FSDP training configuration."""
     
     # Model and data settings
-    model_path: str = "./checkpoints/ruchbah"
-    output_dir: str = "./checkpoints/fsdp_output"
+    model_path: str = ".pisceslx/ckpt"
+    output_dir: str = ".pisceslx/ckpt"
     train_data: str = "./data/train.jsonl"
     val_data: str = "./data/val.jsonl"
     

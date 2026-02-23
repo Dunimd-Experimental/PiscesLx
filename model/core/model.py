@@ -1467,90 +1467,94 @@ class YvModel(nn.Module):
             cache_dtype = torch.float32
             cache_quant_bits = 16
 
-        autocast_ctx = torch.amp.autocast("cuda", dtype=cache_dtype)
-        with autocast_ctx:
-            next_cache = [] if use_cache else None
+        # Ensure CUDA is initialized before any operations
+        if x.device.type == 'cuda':
+            torch.cuda.synchronize(x.device)
+        
+        next_cache = [] if use_cache else None
 
-            for i in range(0, x.shape[1], chunk_size):
-                x_chunk = x[:, i:i+chunk_size, ...]
-                mask_chunk = mask[i:i+chunk_size, i:i+chunk_size]
+        for i in range(0, x.shape[1], chunk_size):
+            x_chunk = x[:, i:i+chunk_size, ...]
+            mask_chunk = mask[i:i+chunk_size, i:i+chunk_size]
 
-                def block_fn(xc, msk, layer_past_key_values=None):
-                    h = xc
-                    aux = 0.0
-                    new_caches = []
-                    seq_len = xc.shape[1]
+            def block_fn(xc, msk, layer_past_key_values=None):
+                h = xc
+                aux = 0.0
+                new_caches = []
+                seq_len = xc.shape[1]
 
-                    for layer_idx, layer in enumerate(self.layers):
-                        use_mamba3_for_layer = False
-                        if getattr(self.cfg, 'use_mamba3', False):
-                            threshold = getattr(self.cfg, 'mamba3_sequence_threshold', 8192)
-                            mamba3_layers = getattr(self.cfg, 'mamba3_layers', [])
+                for layer_idx, layer in enumerate(self.layers):
+                    use_mamba3_for_layer = False
+                    if getattr(self.cfg, 'use_mamba3', False):
+                        threshold = getattr(self.cfg, 'mamba3_sequence_threshold', 8192)
+                        mamba3_layers = getattr(self.cfg, 'mamba3_layers', [])
 
-                            if (not mamba3_layers or layer_idx in mamba3_layers) and seq_len >= threshold:
-                                use_mamba3_for_layer = True
+                        if (not mamba3_layers or layer_idx in mamba3_layers) and seq_len >= threshold:
+                            use_mamba3_for_layer = True
 
-                        past_kv = self.cache_manager.get_kv_cache(
-                            layer_idx,
-                            layer_past_key_values[layer_idx] if layer_past_key_values is not None else None
-                        )
-
-                        if past_kv is not None and cache_quant_bits < 16:
-                            past_kv = tuple(
-                                tensor.to(cache_dtype) if tensor is not None else None
-                                for tensor in past_kv
-                            )
-
-                        if use_cache:
-                            if hasattr(layer, 'set_sequence_length'):
-                                layer.set_sequence_length(seq_len)
-
-                            h, aux_loss, cache = layer(h, msk, past_key_values=past_kv, use_cache=True)
-
-                            if cache is not None:
-                                key_states, value_states = cache
-                                updated = self.cache_manager.update_kv_cache(
-                                    layer_idx,
-                                    key_states,
-                                    value_states,
-                                    i + xc.shape[1],
-                                    use_h2o=getattr(self.cfg, 'use_h2o_attention', False)
-                                )
-                                cache = updated
-
-                                if cache_quant_bits < 16:
-                                    cache = tuple(
-                                        tensor.to(torch.float16) if tensor is not None else None
-                                        for tensor in cache
-                                    )
-                            new_caches.append(cache)
-                        else:
-                            if hasattr(layer, 'set_sequence_length'):
-                                layer.set_sequence_length(seq_len)
-
-                            h, aux_loss = layer(h, msk, past_key_values=past_kv, use_cache=False)
-
-                        aux = aux + (aux_loss if aux_loss is not None else 0.0)
-
-                    if use_cache:
-                        return h, aux, new_caches
-                    return h, aux, None
-
-                if use_cache:
-                    h_chunk, aux_chunk, cache_chunk = block_fn(x_chunk, mask_chunk, past_key_values)
-                    if next_cache is not None and cache_chunk is not None:
-                        next_cache.extend(cache_chunk)
-                else:
-                    h_chunk, aux_chunk, _ = cp.checkpoint(
-                        block_fn,
-                        x_chunk,
-                        mask_chunk,
-                        None,
-                        use_reentrant=False
+                    past_kv = self.cache_manager.get_kv_cache(
+                        layer_idx,
+                        layer_past_key_values[layer_idx] if layer_past_key_values is not None else None
                     )
 
-                outputs.append(h_chunk)
-                total_aux_loss = total_aux_loss + aux_chunk
+                    if past_kv is not None and cache_quant_bits < 16:
+                        past_kv = tuple(
+                            tensor.to(cache_dtype) if tensor is not None else None
+                            for tensor in past_kv
+                        )
+
+                    if use_cache:
+                        if hasattr(layer, 'set_sequence_length'):
+                            layer.set_sequence_length(seq_len)
+
+                        h, aux_loss, cache = layer(h, msk, past_key_values=past_kv, use_cache=True)
+
+                        if cache is not None:
+                            key_states, value_states = cache
+                            updated = self.cache_manager.update_kv_cache(
+                                layer_idx,
+                                key_states,
+                                value_states,
+                                i + xc.shape[1],
+                                use_h2o=getattr(self.cfg, 'use_h2o_attention', False)
+                            )
+                            cache = updated
+
+                            if cache_quant_bits < 16:
+                                cache = tuple(
+                                    tensor.to(torch.float16) if tensor is not None else None
+                                    for tensor in cache
+                                )
+                        new_caches.append(cache)
+                    else:
+                        if hasattr(layer, 'set_sequence_length'):
+                            layer.set_sequence_length(seq_len)
+
+                        h, aux_loss = layer(h, msk, past_key_values=past_kv, use_cache=False)
+
+                    aux = aux + (aux_loss if aux_loss is not None else 0.0)
+
+                if use_cache:
+                    return h, aux, new_caches
+                return h, aux, None
+
+            if use_cache:
+                with torch.amp.autocast("cuda", dtype=cache_dtype, enabled=(x.device.type == 'cuda')):
+                    h_chunk, aux_chunk, cache_chunk = block_fn(x_chunk, mask_chunk, past_key_values)
+                if next_cache is not None and cache_chunk is not None:
+                    next_cache.extend(cache_chunk)
+            else:
+                # Use checkpoint without autocast to avoid CUDA context issues
+                h_chunk, aux_chunk, _ = cp.checkpoint(
+                    block_fn,
+                    x_chunk,
+                    mask_chunk,
+                    None,
+                    use_reentrant=False
+                )
+
+            outputs.append(h_chunk)
+            total_aux_loss = total_aux_loss + aux_chunk
 
             if outputs:
                 x = torch.cat(outputs, dim=1)

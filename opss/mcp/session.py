@@ -64,7 +64,7 @@ from typing import Dict, List, Any, Optional, Set, Callable
 from collections import defaultdict
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_filer
+from utils.paths import get_log_file
 
 from .types import (
     POPSSMCPSessionMemory,

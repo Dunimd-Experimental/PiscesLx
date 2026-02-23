@@ -26,11 +26,15 @@ n_kv_head: 12
 moe_num_experts: 16
 moe_top_k: 4
 moe_capacity_factor: 2.0
-moe_load_balance_alpha: 0.002
-moe_noise_std: 0.02
+moe_load_balance_alpha: 0.03
+moe_noise_std: 0.25
 moe_use_stable_gate: true
 moe_min_capacity: 4
 moe_prediction_horizon: 16
+moe_routing_temperature: 2.2
+moe_temperature_min: 0.8
+moe_temperature_max: 2.2
+moe_random_to_gradient_steps: 1000
 
 enable_dynamic_fusion: true
 fusion_quality_threshold: 0.14

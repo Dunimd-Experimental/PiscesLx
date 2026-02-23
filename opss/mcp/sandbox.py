@@ -34,7 +34,7 @@ import hashlib
 import resource
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import get_log_file, get_work_dir
 
 _LOG = PiscesLxLogger("PiscesLx.Opss.MCP",file_path=get_log_file("PiscesLx.Opss.MCP"), enable_file=True)
 
@@ -123,7 +123,7 @@ class POPSSToolSandbox:
         self._failed_count = 0
         self._total_time = 0.0
         
-        self._workspace_dir = Path("./workspace")
+        self._workspace_dir = Path(get_work_dir("workspace"))
         self._workspace_dir.mkdir(parents=True, exist_ok=True)
         
         _LOG.info("POPSSToolSandbox initialized")

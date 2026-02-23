@@ -107,6 +107,8 @@ class POPSSRunController:
             store: POPSSRunStore instance for persistent storage.
         """
         self._store = store
+        self._gpu_scheduler = None
+        self._resource_limits = None
 
     @property
     def store(self) -> POPSSRunStore:
@@ -117,6 +119,65 @@ class POPSSRunController:
             POPSSRunStore: The store instance.
         """
         return self._store
+
+    def _get_gpu_scheduler(self):
+        """Get or create GPU scheduler instance."""
+        if self._gpu_scheduler is None:
+            from .gpu_scheduler import POPSSGPUScheduler
+            self._gpu_scheduler = POPSSGPUScheduler()
+        return self._gpu_scheduler
+
+    def _get_resource_limits(self):
+        """Get or create resource limits instance."""
+        if self._resource_limits is None:
+            from .resources import POPSSResourceLimits
+            self._resource_limits = POPSSResourceLimits()
+        return self._resource_limits
+
+    def allocate_gpus(
+        self,
+        gpu_count: int = 1,
+        min_memory_mb: int = 0,
+        priority: str = "normal",
+    ) -> List[int]:
+        """
+        Allocate GPUs for this run.
+        
+        Args:
+            gpu_count: Number of GPUs to allocate.
+            min_memory_mb: Minimum memory per GPU.
+            priority: Allocation priority.
+            
+        Returns:
+            List of allocated GPU IDs.
+        """
+        scheduler = self._get_gpu_scheduler()
+        return scheduler.allocate(
+            self._store.run_id,
+            count=gpu_count,
+            min_memory_mb=min_memory_mb,
+            priority=priority,
+        )
+
+    def release_gpus(self) -> List[int]:
+        """
+        Release GPUs allocated to this run.
+        
+        Returns:
+            List of released GPU IDs.
+        """
+        scheduler = self._get_gpu_scheduler()
+        return scheduler.release(self._store.run_id)
+
+    def get_allocated_gpus(self) -> List[int]:
+        """
+        Get GPUs allocated to this run.
+        
+        Returns:
+            List of allocated GPU IDs.
+        """
+        scheduler = self._get_gpu_scheduler()
+        return scheduler.get_task_gpus(self._store.run_id)
 
     @staticmethod
     def now_iso() -> str:
@@ -362,21 +423,44 @@ class POPSSRunController:
             if pid <= 0:
                 return False
             if sys.platform == "win32":
-                # Windows: use taskkill
-                args = ["taskkill", "/PID", str(pid)]
-                if force:
-                    args.insert(1, "/F")
-                subprocess.run(args, capture_output=True)
+                import ctypes
+                try:
+                    kernel32 = ctypes.windll.kernel32
+                    PROCESS_TERMINATE = 0x0001
+                    handle = kernel32.OpenProcess(PROCESS_TERMINATE, False, pid)
+                    if handle:
+                        result = kernel32.TerminateProcess(handle, 1)
+                        kernel32.CloseHandle(handle)
+                        return bool(result)
+                except Exception:
+                    pass
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(pid), "/F"],
+                        capture_output=True,
+                        creationflags=subprocess.CREATE_NO_WINDOW if hasattr(subprocess, 'CREATE_NO_WINDOW') else 0
+                    )
+                except Exception:
+                    pass
                 return True
-            # Unix: send SIGTERM first, then SIGKILL if needed
-            os.kill(pid, signal.SIGTERM)
+            try:
+                os.kill(pid, signal.SIGTERM)
+            except ProcessLookupError:
+                return True
+            except PermissionError:
+                pass
             if not force:
                 return True
             for _ in range(10):
                 if not self.pid_exists(pid):
                     return True
                 time.sleep(0.2)
-            os.kill(pid, signal.SIGKILL)
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except ProcessLookupError:
+                return True
+            except PermissionError:
+                pass
             return True
         except Exception:
             return False

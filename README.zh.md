@@ -156,7 +156,7 @@ python manage.py train --model_size 1.5B --dataset Chinese2 --force_quant --quan
 
 <h2 align="center">🛠️ 安装与环境</h2>
 
-- Python：推荐 3.11
+- Python：推荐 3.11+
 - CUDA：11.8+（GPU 训练与推理）
 - 依赖：详见 `requirements.txt`
 
@@ -277,9 +277,34 @@ python manage.py watermark --weights-verify --ckpt model.pt
 
 # 后台进程管理
 python manage.py action submit train configs/train.json
+python manage.py action submit train configs/train.json --gpu_count 2 --priority high
 python manage.py action submit serve configs/serve.json
 python manage.py action status
 python manage.py action logs <run_id>
+python manage.py action control <run_id> pause
+python manage.py action control <run_id> resume
+python manage.py action control <run_id> stop
+python manage.py action list
+python manage.py action list --running
+
+# GPU 资源管理
+python manage.py action gpu list
+python manage.py action gpu status
+python manage.py action gpu status --gpu_id 0
+python manage.py action gpu release --task_id <run_id>
+
+# 任务队列管理
+python manage.py action queue list
+python manage.py action queue stats
+python manage.py action queue clear --priority low
+
+# 系统资源
+python manage.py action resources status
+python manage.py action resources utilization
+
+# 任务恢复
+python manage.py action recover <run_id>
+python manage.py action recover <run_id> --checkpoint runs/<run_id>/ckpt.pt
 ```
 
 ---

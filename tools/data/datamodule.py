@@ -71,7 +71,7 @@ class PiscesL1DataConfig:
     drop_last: bool = True
     
     max_seq_length: int = 4096
-    tokenizer_path: str = "./checkpoints/ruchbah"
+    tokenizer_path: str = ".pisceslx/ckpt"
     
     shuffle_buffer_size: int = 10000
     streaming_buffer_size: int = 1000
@@ -762,7 +762,7 @@ def datamodule_main(args):
     config.add_text_data("./data/text_train.jsonl", split="train", weight=1.0)
     config.add_conversation_data("./data/conversation_train.jsonl", split="train", weight=0.5)
     
-    tokenizer = AutoTokenizer.from_pretrained("./checkpoints/ruchbah")
+    tokenizer = AutoTokenizer.from_pretrained(".pisceslx/ckpt")
     
     datamodule = create_datamodule(config, tokenizer)
     

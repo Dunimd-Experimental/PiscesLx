@@ -561,7 +561,7 @@ class TrainingConfig:
         enable_multitask: Enable multi-task training
     """
     model_name: str = "pisceslx-base"
-    output_dir: str = ".pisceslx/checkpoints"
+    output_dir: str = ".pisceslx/ckpt"
     max_steps: int = 100000
     save_steps: int = 1000
     eval_steps: int = 500
@@ -595,6 +595,13 @@ class TrainingConfig:
     packing: bool = False
     
     moe_gradient: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
+    moe: Dict[str, Any] = field(default_factory=lambda: {
+        "routing_temperature": 1.30,
+        "temperature_min": 0.80,
+        "temperature_max": 3.00,
+        "expert_temperature_max": 5.00,
+        "expert_load_balance_threshold": 0.15,
+    })
     kfac: Dict[str, Any] = field(default_factory=lambda: {"enabled": False})
     multitask: Dict[str, Any] = field(default_factory=lambda: {"enabled": False})
     watermark: Dict[str, Any] = field(default_factory=lambda: {"enabled": False})
@@ -698,6 +705,11 @@ class TrainingConfig:
                 self.flash_attention = train["flash_attention"]
             if "packing" in train:
                 self.packing = train["packing"]
+
+        if "moe" in config:
+            moe_cfg = config["moe"]
+            if isinstance(moe_cfg, dict):
+                self.moe.update(moe_cfg)
         
         if "loss" in config:
             loss = config["loss"]
@@ -866,6 +878,7 @@ class TrainingConfig:
             },
             "advanced_operators": {
                 "moe_gradient": self.moe_gradient,
+                "moe": self.moe,
                 "kfac": self.kfac,
                 "multitask": self.multitask,
                 "watermark": self.watermark,
@@ -993,6 +1006,7 @@ class TrainingConfig:
         if "advanced_operators" in config_dict:
             adv_dict = config_dict["advanced_operators"]
             config.moe_gradient = adv_dict.get("moe_gradient", config.moe_gradient)
+            config.moe = adv_dict.get("moe", config.moe)
             config.kfac = adv_dict.get("kfac", config.kfac)
             config.multitask = adv_dict.get("multitask", config.multitask)
             config.watermark = adv_dict.get("watermark", config.watermark)

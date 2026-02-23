@@ -22,6 +22,7 @@ from dataclasses import dataclass
 from dataclasses import asdict  # re-export convenience
 from pathlib import Path
 from typing import Dict, List, Optional, Any
+from utils.paths import get_work_dir
 
 # Comprehensive benchmark presets aligned with flagship models (DeepSeek-V3.2, Llama 4, Qwen3.5, etc.)
 MODALITY_DATASETS: Dict[str, List[str]] = {
@@ -95,7 +96,7 @@ class PiscesLxToolsBenchmarkConfig:
     temperature: float = 0.7
     top_p: float = 0.9
     device: str = "auto"
-    output_dir: str = "benchmark_results"
+    output_dir: str = ".pisceslx/benchmark"
     use_cache: bool = True
     save_predictions: bool = True
     debug: bool = False

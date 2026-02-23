@@ -44,7 +44,7 @@ from vllm.outputs import RequestOutput
 from vllm.lora.request import LoRARequest
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import get_log_file, get_work_dir
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
 from configs.version import VERSION
@@ -54,7 +54,7 @@ from configs.version import VERSION
 class POPSSVLLMConfig:
     """vLLM inference configuration."""
     
-    model_path: str = "./checkpoints/ruchbah"
+    model_path: str = ".pisceslx/ckpt"
     tokenizer_path: Optional[str] = None
     
     tensor_parallel_size: int = 1

@@ -121,17 +121,18 @@ class TrainingPipelineOperator(PiscesLxTransformOperator):
         >>> pipeline.train(epochs=3)
     """
     
-    def __init__(self, config: Optional[Union[PiscesLxOperatorConfig, TrainingConfig, str, Dict[str, Any]]] = None):
+    def __init__(self, config: Optional[Union[PiscesLxOperatorConfig, TrainingConfig, str, Dict[str, Any]]] = None, trainer: Optional[Any] = None):
         """
         Initialize training pipeline.
         
         Args:
             config: TrainingConfig with all training parameters
+            trainer: Optional pre-initialized trainer instance
         """
         op_config = config if isinstance(config, PiscesLxOperatorConfig) else None
         super().__init__(op_config)
         self.train_config = self._normalize_train_config(config)
-        self.trainer = PiscesLxTrainingOperator(self.train_config)
+        self.trainer = trainer if trainer is not None else PiscesLxTrainingOperator(self.train_config)
         self.callbacks = []
         self.metrics = {}
         self.stage = getattr(self.train_config, 'stage', None)

@@ -80,6 +80,7 @@ from collections import defaultdict
 
 from utils.opsc.base import PiscesLxBaseOperator
 from utils.opsc.interface import PiscesLxOperatorResult, PiscesLxOperatorStatus
+from utils.paths import get_work_dir
 from configs.version import VERSION
 from .config import POPSSWatermarkConfig, POPSSWatermarkAuditRecord
 
@@ -132,7 +133,7 @@ class POPSSAuditOperator(PiscesLxBaseOperator):
         self.config = config or POPSSWatermarkConfig()
         self.records: List[PiscesLxAuditRecord] = []
         self.chain_hash: Optional[str] = None
-        self.storage_path = Path("artifacts/watermark/audit")
+        self.storage_path = Path(get_work_dir("artifacts/watermark/audit"))
         self.storage_path.mkdir(parents=True, exist_ok=True)
     
     @property

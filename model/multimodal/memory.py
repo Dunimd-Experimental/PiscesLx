@@ -96,7 +96,7 @@ from utils.dc import PiscesLxLogger
 
 from .types import YvAgenticObservation, YvAgenticAction
 
-from utils.paths import get_log_file
+from utils.paths import get_log_file, get_work_dir
 _LOG = PiscesLxLogger("Yv.Multimodal", file_path=get_log_file("Yv.Multimodal"), enable_file=True)
 
 
@@ -125,7 +125,7 @@ class YvMemoryConfig:
         faiss_nlist: Number of clusters for IVF index.
         faiss_nprobe: Number of clusters to search.
     """
-    storage_dir: str = "./memory"
+    storage_dir: str = ".pisceslx/memory"
     embedding_dim: int = 384
     embedding_model: str = "all-MiniLM-L6-v2"
     vector_backend: str = "faiss"

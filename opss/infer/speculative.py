@@ -37,7 +37,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import get_log_file, get_work_dir
 
 from configs.version import VERSION
 
@@ -49,8 +49,8 @@ class POPSSSpeculativeConfig:
     """Speculative decoding configuration."""
     
     # Model settings
-    draft_model_path: str = "./checkpoints/draft_model"
-    target_model_path: str = "./checkpoints/target_model"
+    draft_model_path: str = ".pisceslx/ckpt"
+    target_model_path: str = ".pisceslx/ckpt"
     
     # Speculative parameters
     gamma: int = 5  # Number of tokens to speculate
