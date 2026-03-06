@@ -14,6 +14,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# DISCLAIMER: Users must comply with applicable AI regulations.
+# Non-compliance may result in service termination or legal liability.
 
 # =============================================================================
 # PiscesL1 Installation Order (Optimized for pip - No Redownload)
@@ -24,6 +27,16 @@
 # 3. Then everything else
 # 4. Use --no-deps for packages with known good transitive dependencies
 # =============================================================================
+
+# Use Tsinghua mirror for China (syncs pre-release versions)
+# Alternative mirrors:
+#   - https://pypi.tuna.tsinghua.edu.cn/simple (Tsinghua)
+#   - https://mirrors.aliyun.com/pypi/simple (Aliyun)
+#   - https://pypi.mirrors.ustc.edu.cn/simple (USTC)
+--index-url https://pypi.tuna.tsinghua.edu.cn/simple
+
+# Enable pre-release versions
+--pre
 
 # =============================================================================
 # SECTION 1: Core System Dependencies (No PyTorch deps)
@@ -86,7 +99,7 @@ ijson>=3.2.0
 # =============================================================================
 # SECTION 7: Modelscope (Separate from transformers ecosystem)
 # =============================================================================
-modelscope>=1.18.0
+modelscope>=1.19.0
 
 # =============================================================================
 # SECTION 8: Computer Vision & Multimedia
@@ -146,7 +159,7 @@ openai>=1.50.0
 # =============================================================================
 # SECTION 16: Evaluation & Benchmarking
 # =============================================================================
-evalscope>=0.8.0
+evalscope>=0.16.0
 
 # =============================================================================
 # SECTION 17: Platform-specific Dependencies

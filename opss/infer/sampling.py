@@ -17,6 +17,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# DISCLAIMER: Users must comply with applicable AI regulations.
+# Non-compliance may result in service termination or legal liability.
 
 """
 Sampling and Generation Operators Implementation
@@ -83,6 +86,15 @@ class POPSSSamplingOperator(PiscesLxOperatorInterface):
         self.version = VERSION
         self.type = "inference"
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
+        
+        # Prefix Cache: vLLM-style KV cache reuse for repeated prefixes
+        # Automatically detects and reuses cached KV for matching prefixes
+        # LRU eviction when cache reaches capacity
+        from collections import OrderedDict
+        self._prefix_cache = OrderedDict()
+        self._prefix_cache_max_size = 100
+        self._cache_hits = 0
+        self._cache_misses = 0
         
     @property
     def description(self) -> str:
@@ -241,12 +253,25 @@ class POPSSSamplingOperator(PiscesLxOperatorInterface):
         generated_ids = input_ids.clone()
         generated_scores = []
         
+        # Prefix Cache: Check for cached KV from previous generations
+        # Uses first 64 tokens as prefix key for cache lookup
+        past_key_values = None
+        prefix_len = min(64, input_ids.shape[1])
+        cache_key = self._compute_prefix_hash(input_ids[:, :prefix_len])
+        
+        if cache_key in self._prefix_cache:
+            past_key_values = self._prefix_cache.pop(cache_key)
+            self._prefix_cache[cache_key] = past_key_values  # Move to end (LRU)
+            self._cache_hits += 1
+            self._LOG.debug(f"Prefix cache hit! Cache hits: {self._cache_hits}")
+        
         # Autoregressive generation loop
         while cur_len < max_length:
             # Prepare model inputs
             model_inputs = {
-                'input_ids': generated_ids,
-                'use_cache': config.use_cache
+                'input_ids': generated_ids[:, -1:] if past_key_values is not None else generated_ids,
+                'use_cache': config.use_cache,
+                'past_key_values': past_key_values
             }
             
             # Forward pass with mixed precision
@@ -256,6 +281,10 @@ class POPSSSamplingOperator(PiscesLxOperatorInterface):
             ):
                 outputs = model(**model_inputs)
                 next_token_logits = outputs.logits[:, -1, :]
+                
+                # Update past_key_values for next iteration
+                if hasattr(outputs, 'past_key_values') and outputs.past_key_values is not None:
+                    past_key_values = outputs.past_key_values
             
             # Apply repetition penalty
             if config.repetition_penalty != 1.0:
@@ -304,10 +333,46 @@ class POPSSSamplingOperator(PiscesLxOperatorInterface):
             if cur_len % 20 == 0:
                 self._LOG.debug(f"Generated {cur_len - input_ids.shape[1]} tokens so far")
         
+        # Prefix Cache: Store KV cache for future reuse
+        # Only cache if generation was successful and cache is available
+        if past_key_values is not None and input_ids.shape[1] >= 16:
+            self._update_prefix_cache(cache_key, past_key_values)
+        
         return {
             'sequence': generated_ids,
             'scores': [score.cpu().numpy().tolist() for score in generated_scores]
         }
+    
+    def _compute_prefix_hash(self, prefix_ids: torch.Tensor) -> int:
+        """Compute hash key for prefix token sequence.
+        
+        Uses tuple hashing for efficient cache key generation.
+        
+        Args:
+            prefix_ids: Token IDs tensor [batch, prefix_len].
+            
+        Returns:
+            Integer hash key for cache lookup.
+        """
+        return hash(tuple(prefix_ids[0].tolist()))
+    
+    def _update_prefix_cache(self, cache_key: int, past_key_values):
+        """Update prefix cache with LRU eviction.
+        
+        Automatically evicts oldest entries when cache is full.
+        
+        Args:
+            cache_key: Hash key for the prefix.
+            past_key_values: KV cache tensors to store.
+        """
+        self._cache_misses += 1
+        
+        # LRU eviction: remove oldest if at capacity
+        while len(self._prefix_cache) >= self._prefix_cache_max_size:
+            self._prefix_cache.popitem(last=False)
+        
+        self._prefix_cache[cache_key] = past_key_values
+        self._LOG.debug(f"Prefix cache updated. Size: {len(self._prefix_cache)}, Misses: {self._cache_misses}")
     
     def _apply_repetition_penalty(self, logits, generated_ids, penalty):
         """Apply repetition penalty to logits."""

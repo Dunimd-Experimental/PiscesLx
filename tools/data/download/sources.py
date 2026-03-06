@@ -17,6 +17,9 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# DISCLAIMER: Users must comply with applicable AI regulations.
+# Non-compliance may result in service termination or legal liability.
 
 import os
 import urllib.request
@@ -245,10 +248,10 @@ class PiscesLxToolsDataSourceRouter:
             try:
                 if src == "modelscope":
                     from modelscope.msdatasets import MsDataset  # type: ignore
-                    _ = MsDataset.load(dataset_name, split=split, trust_remote_code=True)
+                    _ = MsDataset.load(dataset_name, split=split)
                 elif src == "huggingface":
                     from datasets import load_dataset  # type: ignore
-                    _ = load_dataset(dataset_name, split=split, trust_remote_code=True)
+                    _ = load_dataset(dataset_name, split=split)
                 else:
                     continue
                 available.append(split)
@@ -262,10 +265,10 @@ class PiscesLxToolsDataSourceRouter:
             try:
                 if src == "modelscope":
                     from modelscope.msdatasets import MsDataset  # type: ignore
-                    _ = MsDataset.load(dataset_name, trust_remote_code=True)
+                    _ = MsDataset.load(dataset_name)
                 elif src == "huggingface":
                     from datasets import load_dataset  # type: ignore
-                    _ = load_dataset(dataset_name, trust_remote_code=True)
+                    _ = load_dataset(dataset_name)
                 available.append("__direct__")
             except Exception as e:
                 # No available splits or direct load
