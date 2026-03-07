@@ -302,6 +302,7 @@ class PiscesLxTrainingOperator(object):
         self._watermark_config = None
 
         self._setup_advanced_operators()
+        self._setup_parallel_3d_operator()
         self._setup_watermark_operator()
         
         if self.stage:
@@ -667,7 +668,60 @@ class PiscesLxTrainingOperator(object):
         return self.optimizer
     
     def _initialize_scheduler(self):
-        """Initialize learning rate scheduler."""
+        """Initialize learning rate scheduler with warmup support."""
+        try:
+            from opss.train.lr_scheduler import (
+                POPSSLRSchedulerOperator,
+                POPSSLRSchedulerConfig,
+                POPSSSchedulerType
+            )
+            
+            warmup_steps = self.config.scheduler.warmup_steps
+            if warmup_steps == 0 and self.config.scheduler.warmup_ratio > 0:
+                warmup_steps = int(self.config.scheduler.warmup_ratio * self.config.max_steps)
+            
+            scheduler_type_map = {
+                'cosine': POPSSSchedulerType.COSINE,
+                'linear': POPSSSchedulerType.LINEAR,
+                'polynomial': POPSSSchedulerType.POLYNOMIAL,
+                'inverse_square': POPSSSchedulerType.INVERSE_SQUARE,
+                'step': POPSSSchedulerType.STEP,
+                'exponential': POPSSSchedulerType.EXPONENTIAL,
+            }
+            
+            scheduler_type = scheduler_type_map.get(
+                self.config.scheduler.name.lower(), 
+                POPSSSchedulerType.COSINE
+            )
+            
+            lr_config = POPSSLRSchedulerConfig(
+                type=scheduler_type,
+                initial_lr=self.config.optimizer.learning_rate,
+                min_lr=self.config.optimizer.learning_rate * self.config.scheduler.min_lr_ratio,
+                max_lr=self.config.optimizer.learning_rate,
+                warmup_steps=warmup_steps,
+                warmup_type="linear",
+                total_steps=self.config.max_steps
+            )
+            
+            self._lr_scheduler_operator = POPSSLRSchedulerOperator(lr_config)
+            self.scheduler = self._lr_scheduler_operator
+            
+            _LOG.info(
+                f"Learning rate scheduler {self.config.scheduler.name} initialized "
+                f"with warmup_steps={warmup_steps}, "
+                f"min_lr_ratio={self.config.scheduler.min_lr_ratio}"
+            )
+            
+        except ImportError:
+            _LOG.warning("LRSchedulerOperator not available, falling back to PyTorch schedulers")
+            self._initialize_scheduler_fallback()
+        except Exception as e:
+            _LOG.error(f"Scheduler initialization failed: {e}")
+            self.scheduler = None
+    
+    def _initialize_scheduler_fallback(self):
+        """Fallback to PyTorch built-in schedulers (no warmup support)."""
         try:
             if self.config.scheduler.name.lower() == 'cosine':
                 from torch.optim.lr_scheduler import CosineAnnealingLR
@@ -688,11 +742,12 @@ class PiscesLxTrainingOperator(object):
                     end_factor=self.config.scheduler.min_lr_ratio,
                     total_iters=self.config.max_steps
                 )
-                
-            _LOG.info(f"Learning rate scheduler {self.config.scheduler.name} initialized")
+            
+            _LOG.info(f"Fallback scheduler {self.config.scheduler.name} initialized (no warmup)")
             
         except Exception as e:
-            _LOG.error(f"Scheduler initialization failed: {e}")
+            _LOG.error(f"Fallback scheduler initialization failed: {e}")
+            self.scheduler = None
     
     def forward_pass(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """
@@ -1012,6 +1067,17 @@ class PiscesLxTrainingOperator(object):
         
         torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
         
+        # Apply GaLore gradient projection if enabled
+        if hasattr(self, '_galore_adapter') and self._galore_adapter is not None:
+            try:
+                gradients = {name: param.grad for name, param in self.model.named_parameters() 
+                           if param.grad is not None}
+                if gradients:
+                    self.model, galore_stats = self._galore_adapter.step(self.model, gradients)
+                    _LOG.debug(f"GaLore step: {galore_stats.get('active_projections', 0)} projections active")
+            except Exception as e:
+                _LOG.warning(f"GaLore gradient projection failed: {e}")
+        
         if self._moe_gradient_optimizer is not None:
             try:
                 moe_result = self._moe_gradient_optimizer.execute({
@@ -1100,7 +1166,7 @@ class PiscesLxTrainingOperator(object):
         return stats
     
     def optimizer_step(self):
-        """Execute optimizer step."""
+        """Execute optimizer step with proper scheduler update."""
         if self.scaler is not None:
             self.scaler.step(self.optimizer)
             self.scaler.update()
@@ -1112,7 +1178,17 @@ class PiscesLxTrainingOperator(object):
         
         # Update learning rate
         if self.scheduler is not None:
-            self.scheduler.step()
+            if hasattr(self.scheduler, 'execute'):
+                # LRSchedulerOperator from opss.train.lr_scheduler
+                result = self.scheduler.execute({
+                    'step': self.global_step,
+                    'optimizer': self.optimizer
+                })
+                if not result.is_success():
+                    _LOG.warning(f"Scheduler step failed: {result.error}")
+            else:
+                # PyTorch built-in scheduler
+                self.scheduler.step()
         
         self.global_step += 1
     
@@ -1137,15 +1213,54 @@ class PiscesLxTrainingOperator(object):
         """
         start_time = time.time()
         
-        # Forward pass
-        outputs = self.forward_pass(batch)
-        loss = outputs['loss']
+        # Forward pass (with 3D parallelism if enabled)
+        if self._parallel_3d_operator is not None:
+            try:
+                result = self._parallel_3d_operator.execute({
+                    'batch': batch,
+                    'forward_fn': lambda b: self.forward_pass(b),
+                    'backward_fn': lambda l: self.backward_pass(l)
+                })
+                if result.is_success():
+                    outputs = result.output.get('outputs', {})
+                    loss = outputs.get('loss', result.output.get('loss'))
+                    grad_norm = result.output.get('grad_norm', 0.0)
+                else:
+                    outputs = self.forward_pass(batch)
+                    loss = outputs['loss']
+                    grad_norm = self.backward_pass(loss)
+            except Exception as e:
+                _LOG.warning(f"3D parallelism failed, falling back: {e}")
+                outputs = self.forward_pass(batch)
+                loss = outputs['loss']
+                grad_norm = self.backward_pass(loss)
+        else:
+            outputs = self.forward_pass(batch)
+            loss = outputs['loss']
+            grad_norm = self.backward_pass(loss)
         
-        # Backward pass
-        grad_norm = self.backward_pass(loss)
+        # Apply multitask operator if enabled
+        if self._multitask_operator is not None:
+            try:
+                mt_result = self._multitask_operator.execute({
+                    'model': self.model,
+                    'batch': batch,
+                    'loss': loss,
+                    'step': self.global_step
+                })
+                if mt_result.is_success() and mt_result.output:
+                    aux_loss = mt_result.output.get('auxiliary_loss', 0.0)
+                    if aux_loss > 0:
+                        loss = loss + aux_loss
+                        _LOG.debug(f"Multitask auxiliary loss: {aux_loss:.6f}")
+            except Exception as e:
+                _LOG.warning(f"Multitask operator failed: {e}")
         
         # Optimizer step
         self.optimizer_step()
+        
+        # Step modality scheduler
+        self._step_modality_scheduler()
         
         # Calculate throughput
         step_time = time.time() - start_time

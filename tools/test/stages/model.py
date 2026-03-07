@@ -93,7 +93,7 @@ class PiscesLxModelChecker:
         start = time.time()
         
         try:
-            from model.core.config import YvConfig
+            from model.config import YvConfig
             
             config = YvConfig()
             self._add_result("YvConfig", "PASS", "Created successfully", time.time() - start)
@@ -108,7 +108,7 @@ class PiscesLxModelChecker:
         start = time.time()
         
         try:
-            from model.core.config import YvConfig
+            from model.config import YvConfig
             from model.core.model import YvModel
             
             config = YvConfig()

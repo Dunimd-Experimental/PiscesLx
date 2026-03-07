@@ -64,15 +64,30 @@ class PiscesLxConfigChecker:
         >>> results = checker.run()
     """
     
-    REQUIRED_CONFIG_FIELDS = [
+    REQUIRED_FIELDS = [
         "hidden_size",
-        "num_attention_heads",
-        "num_hidden_layers",
+        "n_layer",
+        "n_head",
         "vocab_size",
+        "intermediate_size",
         "max_position_embeddings",
     ]
     
-    VALID_MODEL_SIZES = ["0.5B", "1B", "7B", "14B", "32B", "72B", "671B", "1T"]
+    OPTIONAL_FIELDS = [
+        "n_kv_head",
+        "rope_theta",
+        "dropout",
+        "moe_num_experts",
+        "moe_top_k",
+    ]
+    
+    FIELD_ALIASES = {
+        "num_hidden_layers": "n_layer",
+        "num_attention_heads": "n_head",
+        "num_key_value_heads": "n_kv_head",
+    }
+    
+    VALID_MODEL_SIZES = ["0.5B", "1B", "1.5B", "7B", "32B", "64B", "70B", "128B", "314B", "671B", "1T"]
     
     def __init__(self, root_path: str = None, config_name: str = None, verbose: bool = False):
         """
@@ -112,6 +127,50 @@ class PiscesLxConfigChecker:
         """Add a check result."""
         self.results.append((name, status, message, duration))
     
+    def _normalize_field_name(self, field: str, config: Dict) -> bool:
+        """
+        Check if a field exists (considering aliases).
+        
+        Args:
+            field: Field name to check
+            config: Configuration dictionary
+        
+        Returns:
+            True if field or its alias exists
+        """
+        if field in config:
+            return True
+        if field in self.FIELD_ALIASES:
+            alias = self.FIELD_ALIASES[field]
+            return alias in config
+        for std, alias in self.FIELD_ALIASES.items():
+            if alias == field and std in config:
+                return True
+        return False
+    
+    def _get_field_value(self, field: str, config: Dict, default: Any = None) -> Any:
+        """
+        Get field value (considering aliases).
+        
+        Args:
+            field: Field name to get
+            config: Configuration dictionary
+            default: Default value if not found
+        
+        Returns:
+            Field value or default
+        """
+        if field in config:
+            return config[field]
+        if field in self.FIELD_ALIASES:
+            alias = self.FIELD_ALIASES[field]
+            if alias in config:
+                return config[alias]
+        for std, alias in self.FIELD_ALIASES.items():
+            if alias == field and std in config:
+                return config[std]
+        return default
+    
     def _check_single_config(self, config_name: str) -> None:
         """
         Check a single configuration file.
@@ -147,13 +206,23 @@ class PiscesLxConfigChecker:
                 self._add_result(f"{config_name} config", "FAIL", "Empty config", time.time() - start)
                 return
             
-            missing = [f for f in self.REQUIRED_CONFIG_FIELDS if f not in config]
+            missing = []
+            for field in self.REQUIRED_FIELDS:
+                if not self._normalize_field_name(field, config):
+                    missing.append(field)
             
             if missing:
                 self._add_result(f"{config_name} config", "WARN", f"Missing: {missing[:3]}", time.time() - start)
             else:
-                hidden = config.get("hidden_size", 0)
-                self._add_result(f"{config_name} config", "PASS", f"hidden_size={hidden}", time.time() - start)
+                hidden = self._get_field_value("hidden_size", config, "?")
+                n_layer = self._get_field_value("n_layer", config, "?")
+                n_head = self._get_field_value("n_head", config, "?")
+                vocab = self._get_field_value("vocab_size", config, "?")
+                intermediate = self._get_field_value("intermediate_size", config, "?")
+                max_pos = self._get_field_value("max_position_embeddings", config, "?")
+                
+                info = f"h={hidden}, L={n_layer}, H={n_head}, V={vocab}"
+                self._add_result(f"{config_name} config", "PASS", info, time.time() - start)
                 
         except yaml.YAMLError as e:
             self._add_result(f"{config_name} config", "FAIL", f"YAML error: {str(e)[:30]}", time.time() - start)
@@ -176,13 +245,17 @@ class PiscesLxConfigChecker:
         
         success = 0
         for yaml_file in yaml_files:
-            config_name = yaml_file.stem
             try:
                 with open(yaml_file, 'r', encoding='utf-8') as f:
                     config = yaml.safe_load(f)
                 
-                if config and all(f in config for f in self.REQUIRED_CONFIG_FIELDS[:3]):
-                    success += 1
+                if config and "hidden_size" in config:
+                    has_required = all(
+                        self._normalize_field_name(f, config) 
+                        for f in ["hidden_size", "n_layer", "n_head"]
+                    )
+                    if has_required:
+                        success += 1
             except Exception:
                 pass
         

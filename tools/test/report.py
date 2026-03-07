@@ -90,6 +90,7 @@ class PiscesLxTestReport:
         "Stage 6": "Forward Pass Check",
         "Stage 7": "Generation Check",
         "Stage 8": "Optimization Check",
+        "Stage 9": "Memory Optimization Check",
     }
     
     STATUS_SYMBOLS = {

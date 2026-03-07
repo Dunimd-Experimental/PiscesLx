@@ -75,7 +75,7 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 from configs.version import VERSION
 
 
-class SchedulerType(Enum):
+class POPSSSchedulerType(Enum):
     """Learning rate scheduler types."""
     LINEAR = "linear"
     COSINE = "cosine"
@@ -88,7 +88,7 @@ class SchedulerType(Enum):
 
 
 @dataclass
-class LRSchedulerConfig:
+class POPSSLRSchedulerConfig:
     """
     Configuration for learning rate scheduler.
     
@@ -114,7 +114,7 @@ class LRSchedulerConfig:
         apply_at_step: Step to start applying scheduler
         last_step: Last step index (for resuming)
     """
-    type: SchedulerType = SchedulerType.COSINE
+    type: POPSSSchedulerType = POPSSSchedulerType.COSINE
     initial_lr: float = 1e-4
     min_lr: float = 1e-6
     max_lr: float = 1e-3
@@ -140,7 +140,7 @@ class LRSchedulerConfig:
             self.warmup_steps = int(self.warmup_ratio * self.total_steps)
 
 
-class LRSchedulerOperator(PiscesLxOperatorInterface):
+class POPSSLRSchedulerOperator(PiscesLxOperatorInterface):
     """
     Learning Rate Scheduler Operator.
     
@@ -156,18 +156,18 @@ class LRSchedulerOperator(PiscesLxOperatorInterface):
         - Resume capability
     
     Attributes:
-        config: LRSchedulerConfig instance
+        config: POPSSLRSchedulerConfig instance
         history: List of LR values over steps
         _current_step: Current training step
         _cycle_start: Start step of current cycle
     """
     
-    def __init__(self, config: Optional[LRSchedulerConfig] = None):
+    def __init__(self, config: Optional[POPSSLRSchedulerConfig] = None):
         """Initialize LR scheduler operator."""
         super().__init__()
         self.name = "lr.scheduler"
         self.version = VERSION
-        self.config = config or LRSchedulerConfig()
+        self.config = config or POPSSLRSchedulerConfig()
         self.history: List[float] = []
         self._current_step = self.config.last_step
         self._cycle_start = 0
@@ -298,21 +298,21 @@ class LRSchedulerOperator(PiscesLxOperatorInterface):
         """Compute learning rate during decay phase."""
         total_decay_steps = self._get_total_decay_steps()
         
-        if self.config.type == SchedulerType.LINEAR:
+        if self.config.type == POPSSSchedulerType.LINEAR:
             return self._linear_decay(step, total_decay_steps)
-        elif self.config.type == SchedulerType.COSINE:
+        elif self.config.type == POPSSSchedulerType.COSINE:
             return self._cosine_decay(step, total_decay_steps)
-        elif self.config.type == SchedulerType.COSINE_WITH_RESTARTS:
+        elif self.config.type == POPSSSchedulerType.COSINE_WITH_RESTARTS:
             return self._cosine_with_restarts_decay(step)
-        elif self.config.type == SchedulerType.POLYNOMIAL:
+        elif self.config.type == POPSSSchedulerType.POLYNOMIAL:
             return self._polynomial_decay(step, total_decay_steps)
-        elif self.config.type == SchedulerType.INVERSE_SQUARE:
+        elif self.config.type == POPSSSchedulerType.INVERSE_SQUARE:
             return self._inverse_square_decay(step)
-        elif self.config.type == SchedulerType.STEP:
+        elif self.config.type == POPSSSchedulerType.STEP:
             return self._step_decay(step)
-        elif self.config.type == SchedulerType.EXPONENTIAL:
+        elif self.config.type == POPSSSchedulerType.EXPONENTIAL:
             return self._exponential_decay(step)
-        elif self.config.type == SchedulerType.WARMUP_DECAY:
+        elif self.config.type == POPSSSchedulerType.WARMUP_DECAY:
             return self._warmup_decay(step, total_decay_steps)
         else:
             return self._cosine_decay(step, total_decay_steps)
@@ -438,11 +438,11 @@ class LRSchedulerOperator(PiscesLxOperatorInterface):
 
 def create_scheduler(
     optimizer: Optimizer,
-    scheduler_type: Union[SchedulerType, str],
+    scheduler_type: Union[POPSSSchedulerType, str],
     num_warmup_steps: int,
     num_training_steps: int,
     **kwargs
-) -> LRSchedulerOperator:
+) -> POPSSLRSchedulerOperator:
     """
     Factory function to create scheduler operator.
     
@@ -454,22 +454,22 @@ def create_scheduler(
         **kwargs: Additional configuration
         
     Returns:
-        LRSchedulerOperator instance
+        POPSSLRSchedulerOperator instance
     """
     if isinstance(scheduler_type, str):
-        scheduler_type = SchedulerType(scheduler_type)
+        scheduler_type = POPSSSchedulerType(scheduler_type)
     
-    config = LRSchedulerConfig(
+    config = POPSSLRSchedulerConfig(
         type=scheduler_type,
         warmup_steps=num_warmup_steps,
         total_steps=num_training_steps,
         **kwargs
     )
     
-    return LRSchedulerOperator(config)
+    return POPSSLRSchedulerOperator(config)
 
 
-class CosineWarmupScheduler(LRSchedulerOperator):
+class POPSSCosineWarmupScheduler(POPSSLRSchedulerOperator):
     """Convenience class for cosine scheduler with warmup."""
     
     def __init__(
@@ -480,8 +480,8 @@ class CosineWarmupScheduler(LRSchedulerOperator):
         initial_lr: float = 1e-4,
         min_lr: float = 1e-6
     ):
-        config = LRSchedulerConfig(
-            type=SchedulerType.COSINE,
+        config = POPSSLRSchedulerConfig(
+            type=POPSSSchedulerType.COSINE,
             initial_lr=initial_lr,
             min_lr=min_lr,
             warmup_steps=num_warmup_steps,
@@ -490,7 +490,7 @@ class CosineWarmupScheduler(LRSchedulerOperator):
         super().__init__(config)
 
 
-class LinearWarmupScheduler(LRSchedulerOperator):
+class POPSSLinearWarmupScheduler(POPSSLRSchedulerOperator):
     """Convenience class for linear scheduler with warmup."""
     
     def __init__(
@@ -501,8 +501,8 @@ class LinearWarmupScheduler(LRSchedulerOperator):
         initial_lr: float = 1e-4,
         min_lr: float = 1e-6
     ):
-        config = LRSchedulerConfig(
-            type=SchedulerType.LINEAR,
+        config = POPSSLRSchedulerConfig(
+            type=POPSSSchedulerType.LINEAR,
             initial_lr=initial_lr,
             min_lr=min_lr,
             warmup_steps=num_warmup_steps,
@@ -511,7 +511,7 @@ class LinearWarmupScheduler(LRSchedulerOperator):
         super().__init__(config)
 
 
-class InverseSquareRootScheduler(LRSchedulerOperator):
+class POPSSInverseSquareRootScheduler(POPSSLRSchedulerOperator):
     """Convenience class for inverse square root scheduler (BERT style)."""
     
     def __init__(
@@ -521,8 +521,8 @@ class InverseSquareRootScheduler(LRSchedulerOperator):
         initial_lr: float = 1e-4,
         min_lr: float = 1e-6
     ):
-        config = LRSchedulerConfig(
-            type=SchedulerType.INVERSE_SQUARE,
+        config = POPSSLRSchedulerConfig(
+            type=POPSSSchedulerType.INVERSE_SQUARE,
             initial_lr=initial_lr,
             min_lr=min_lr,
             warmup_steps=num_warmup_steps

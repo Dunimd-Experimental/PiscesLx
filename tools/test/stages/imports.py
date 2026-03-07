@@ -61,9 +61,11 @@ class PiscesLxImportChecker:
         "model.core": [
             "model.core",
             "model.core.model",
-            "model.core.config",
             "model.core.attention",
             "model.core.cache",
+        ],
+        "model.config": [
+            "model.config",
         ],
         "model.moe": [
             "model.moe",

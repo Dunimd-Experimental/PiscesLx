@@ -143,6 +143,15 @@ from .rlvr import (
     POPSSRLVRVerifierType,
 )
 
+from .lr_scheduler import (
+    POPSSSchedulerType,
+    POPSSLRSchedulerConfig,
+    POPSSLRSchedulerOperator,
+    POPSSCosineWarmupScheduler,
+    POPSSLinearWarmupScheduler,
+    POPSSInverseSquareRootScheduler,
+)
+
 __version__ = VERSION
 __author__ = AUTHOR
 
@@ -187,4 +196,10 @@ __all__ = [
     "POPSSRLVRDataset",
     "POPSSRLVRTrainer",
     "POPSSRLVRVerifierType",
+    "POPSSSchedulerType",
+    "POPSSLRSchedulerConfig",
+    "POPSSLRSchedulerOperator",
+    "POPSSCosineWarmupScheduler",
+    "POPSSLinearWarmupScheduler",
+    "POPSSInverseSquareRootScheduler",
 ]

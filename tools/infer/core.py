@@ -252,10 +252,8 @@ class PiscesLxInferenceEngine(object):
         
         self._moe_operator = None
         self._speculative_operator = None
-        self._vllm_operator = None
         
         self._content_watermark_operator = None
-        self._watermark_orchestrator = None
         self._compliance_operator = None
         self._audit_operator = None
         self._watermark_config = None
@@ -689,6 +687,22 @@ class PiscesLxInferenceEngine(object):
         if is_single:
             prompts = [prompts]
         
+        # Compliance validation before generation
+        if self._compliance_operator is not None:
+            try:
+                compliance_result = self._compliance_operator._validate({
+                    "content_type": "prompt",
+                    "content": prompts[0] if prompts else "",
+                    "jurisdiction": self._watermark_config.jurisdiction.code if self._watermark_config else "CN",
+                    "config": self._watermark_config
+                })
+                if compliance_result.is_success():
+                    validation = compliance_result.output
+                    if not validation.get('valid', True):
+                        _LOG.warning(f"Compliance validation failed: {validation.get('message', 'Unknown')}")
+            except Exception as e:
+                _LOG.warning(f"Compliance validation error: {e}")
+        
         try:
             if self.engine:  # VLLM backend
                 results = self._generate_with_vllm(prompts, **kwargs)
@@ -698,6 +712,22 @@ class PiscesLxInferenceEngine(object):
             # Update statistics
             self._update_inference_stats(start_time, len(prompts), results)
             
+            # Audit logging after generation
+            if self._audit_operator is not None:
+                try:
+                    self._audit_operator.log_operation(
+                        operation="generate",
+                        content_type="text",
+                        result="success",
+                        metadata={
+                            "num_prompts": len(prompts),
+                            "generation_time": time.time() - start_time,
+                            "model_id": self._watermark_config.model_id if self._watermark_config else "unknown"
+                        }
+                    )
+                except Exception as e:
+                    _LOG.warning(f"Audit logging failed: {e}")
+            
             # Return result
             if is_single:
                 return results[0] if results else ""
@@ -706,6 +736,22 @@ class PiscesLxInferenceEngine(object):
         except Exception as e:
             self.inference_stats['failed_requests'] += len(prompts)
             _LOG.error(f"Generation failed: {e}")
+            
+            # Audit logging for failure
+            if self._audit_operator is not None:
+                try:
+                    self._audit_operator.log_operation(
+                        operation="generate",
+                        content_type="text",
+                        result="failed",
+                        metadata={
+                            "error": str(e),
+                            "num_prompts": len(prompts)
+                        }
+                    )
+                except Exception:
+                    pass
+            
             raise
     
     def _generate_with_vllm(self, prompts: List[str], **kwargs) -> List[str]:

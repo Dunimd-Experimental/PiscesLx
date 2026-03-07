@@ -300,6 +300,14 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if "multitask" in model_train_cfg:
             self.train_config.multitask = model_train_cfg["multitask"]
         
+        # Apply GaLore configuration from model config
+        if "galore_enabled" in model_train_cfg:
+            self.train_config.optimizer.use_galore = model_train_cfg["galore_enabled"]
+        if "galore_rank" in model_train_cfg:
+            self.train_config.optimizer.galore_rank = model_train_cfg["galore_rank"]
+        if "galore_update_interval" in model_train_cfg:
+            self.train_config.optimizer.galore_update_proj_gap = model_train_cfg["galore_update_interval"]
+        
         _LOG.info("Applied training config from model config file")
 
     def _apply_training_moe_overrides_to_model_config(self, model_cfg: Any) -> Any:

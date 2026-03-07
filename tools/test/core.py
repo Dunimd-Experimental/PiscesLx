@@ -51,6 +51,7 @@ from .stages import (
     PiscesLxForwardChecker,
     PiscesLxGenerationChecker,
     PiscesLxOptimizationChecker,
+    PiscesLxMemoryOptChecker,
 )
 
 
@@ -82,6 +83,7 @@ class PiscesLxTestRunner:
         6: "Stage 6",
         7: "Stage 7",
         8: "Stage 8",
+        9: "Stage 9",
     }
     
     QUICK_STAGES = {1, 2, 3, 4, 5}
@@ -95,6 +97,7 @@ class PiscesLxTestRunner:
         6: 3,
         7: 3,
         8: 4,
+        9: 6,
     }
     
     def __init__(
@@ -120,12 +123,12 @@ class PiscesLxTestRunner:
     
     def run_full_check(self) -> PiscesLxTestReport:
         """
-        Run all 8 stages of the health check.
+        Run all 9 stages of the health check.
         
         Returns:
             PiscesLxTestReport containing all results
         """
-        return self._run_stages(stages={1, 2, 3, 4, 5, 6, 7, 8})
+        return self._run_stages(stages={1, 2, 3, 4, 5, 6, 7, 8, 9})
     
     def run_quick_check(self) -> PiscesLxTestReport:
         """
@@ -177,6 +180,9 @@ class PiscesLxTestRunner:
         
         if 8 in stages:
             self._run_stage_8(report)
+        
+        if 9 in stages:
+            self._run_stage_9(report)
         
         report.finish()
         return report
@@ -240,3 +246,14 @@ class PiscesLxTestRunner:
         results = checker.run()
         for name, status, message, duration in results:
             report.add_result("Stage 8", name, status, message, duration)
+    
+    def _run_stage_9(self, report: PiscesLxTestReport) -> None:
+        """Run Stage 9: Memory Optimization Check."""
+        checker = PiscesLxMemoryOptChecker(
+            root_path=str(self.root_path),
+            config_name=self.config_name,
+            verbose=self.verbose
+        )
+        results = checker.run()
+        for name, status, message, duration in results:
+            report.add_result("Stage 9", name, status, message, duration)
