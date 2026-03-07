@@ -14,6 +14,8 @@ Under applicable laws and regulations (including but not limited to China's "Int
 
 English | [简体中文](README.zh.md)
 
+[Security](SECURITY.md) | [Contributing](CONTRIBUTING.md) | [Code of Conduct](CODE_OF_CONDUCT.md)
+
 <a href="https://space.bilibili.com/3493284091529457" target="_blank">
     <img alt="BiliBili" src="https://img.shields.io/badge/BiliBili-Dunimd-00A1D6?style=flat-square&logo=bilibili"/>
 </a>
@@ -49,9 +51,9 @@ YvUnifiedReasoner implements an intelligent routing framework that dynamically s
 - **Intelligent Routing**: Automatic selection of optimal reasoning path based on problem complexity and sequence length
 - **Control Tokens**: `<|start_hypothesis|>`, `<|start_evidence|>`, `<|start_conclusion|>`, `<|hypothesis_split|>`, `<|hypothesis_merge|>` enable external tools to precisely track the model's thinking path
 
-### 🔧 Yv MoE Scaling - DeepSeek-V3 Style MoE
+### 🔧 Yv MoE Scaling - Mixture-of-Experts
 
-Complete DeepSeek-V3 style Mixture-of-Experts implementation:
+Mixture-of-Experts implementation:
 
 - **YvStableMoEGate**: Stable gating with LSTM load predictor, supporting Top-K routing for 6-64 experts
 - **Fine-grained Expert Segmentation**: Each "expert" is a combination of multiple sub-experts for more flexible routing
@@ -109,7 +111,7 @@ Industry-frontier hybrid architecture implementation:
 Complete attention mechanism implementations:
 
 - **Flash Attention 2/3**: GPU-optimized efficient attention supporting Ampere+ and Hopper+ architectures
-- **Multi-Head Latent Attention (MLA)**: DeepSeek-style KV compression for significantly reduced KV cache
+- **Multi-Head Latent Attention (MLA)**: Low-rank KV compression for significantly reduced KV cache
 - **Grouped Query Attention (GQA)**: Grouped query attention balancing quality and efficiency
 - **ALiBi Position Encoding**: Attention with Linear Biases position encoding without position embeddings
 - **QK Normalization**: Query-Key normalization for improved large model training stability

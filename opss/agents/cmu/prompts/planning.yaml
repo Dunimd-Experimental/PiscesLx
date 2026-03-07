@@ -1,0 +1,122 @@
+planning:
+  goal_analysis:
+    description: |
+      Analyze the user's goal to understand what needs to be accomplished.
+      Break down complex goals into smaller, manageable sub-tasks.
+
+    steps:
+      - Identify the main objective
+      - Determine required actions
+      - Identify dependencies between actions
+      - Estimate time and resources needed
+      - Assess potential risks
+
+  task_decomposition:
+    description: |
+      Decompose the goal into a sequence of executable actions.
+      Each action should be atomic and verifiable.
+
+    principles:
+      - Each action should have a clear objective
+      - Actions should be ordered by dependencies
+      - Include verification steps between actions
+      - Plan for alternative paths on failure
+
+  action_types:
+    click:
+      description: "Click on a UI element at specified coordinates"
+      parameters:
+        - target: "Element description or coordinates"
+        - button: "left, right, or middle"
+        - clicks: "Number of clicks"
+
+    type:
+      description: "Type text at current cursor position"
+      parameters:
+        - text: "Text to type"
+        - speed: "Typing speed (characters per second)"
+
+    scroll:
+      description: "Scroll the screen in a direction"
+      parameters:
+        - direction: "up, down, left, right"
+        - amount: "Number of scroll steps"
+
+    drag:
+      description: "Drag from one position to another"
+      parameters:
+        - start: "Starting coordinates"
+        - end: "Ending coordinates"
+        - duration: "Drag duration in seconds"
+
+    swipe:
+      description: "Perform a swipe gesture (touch devices)"
+      parameters:
+        - direction: "up, down, left, right"
+        - distance: "Swipe distance as fraction of screen"
+
+    hotkey:
+      description: "Press a keyboard shortcut"
+      parameters:
+        - keys: "List of keys to press together"
+
+  risk_assessment:
+    levels:
+      safe:
+        description: "No risk of data loss or system damage"
+        examples:
+          - "Click on a button"
+          - "Scroll the page"
+          - "Type in a text field"
+
+      moderate:
+        description: "Minor risk, may require attention"
+        examples:
+          - "Drag and drop files"
+          - "Switch between applications"
+          - "Open a new browser tab"
+
+      dangerous:
+        description: "High risk, requires user confirmation"
+        examples:
+          - "Delete files"
+          - "Close applications"
+          - "Execute system commands"
+
+      restricted:
+        description: "Blocked by safety policy"
+        examples:
+          - "Access password fields"
+          - "Modify system settings"
+          - "Execute shell commands"
+
+  templates:
+    open_application:
+      description: "Open an application by name"
+      actions:
+        - type: "hotkey"
+          keys: ["win"]
+        - type: "wait"
+          duration: 0.5
+        - type: "type"
+          text: "{app_name}"
+        - type: "key_press"
+          key: "enter"
+
+    search_web:
+      description: "Search for information on the web"
+      actions:
+        - type: "hotkey"
+          keys: ["ctrl", "l"]
+        - type: "type"
+          text: "{query}"
+        - type: "key_press"
+          key: "enter"
+
+    fill_form:
+      description: "Fill out a form field"
+      actions:
+        - type: "click"
+          target: "{field_description}"
+        - type: "type"
+          text: "{value}"

@@ -1,0 +1,224 @@
+safety:
+  overview:
+    description: |
+      The Computer Use Agent implements a three-layer security model
+      to ensure safe and controlled device operation.
+
+  layers:
+    layer_1_intent_verification:
+      description: "Verify user intent before executing potentially harmful actions"
+      components:
+        - "Natural language intent analysis"
+        - "Risk level classification"
+        - "User confirmation for dangerous operations"
+
+      risk_levels:
+        minimal:
+          description: "No significant risk"
+          auto_approve: true
+          examples:
+            - "View screen content"
+            - "Scroll page"
+            - "Move cursor"
+
+        low:
+          description: "Minor risk, easily reversible"
+          auto_approve: true
+          examples:
+            - "Click on buttons"
+            - "Type in text fields"
+            - "Navigate between pages"
+
+        medium:
+          description: "Moderate risk, may require attention"
+          auto_approve: false
+          confirmation_message: "This action may have moderate impact. Continue?"
+          examples:
+            - "Open applications"
+            - "Switch windows"
+            - "Copy/paste content"
+
+        high:
+          description: "Significant risk, requires explicit confirmation"
+          auto_approve: false
+          confirmation_message: "This action could have significant effects. Are you sure?"
+          examples:
+            - "Close applications"
+            - "Delete content"
+            - "Execute commands"
+
+        critical:
+          description: "High risk, always requires confirmation and logging"
+          auto_approve: false
+          confirmation_message: "WARNING: This action is potentially dangerous. Confirm?"
+          examples:
+            - "System modifications"
+            - "File operations"
+            - "Network operations"
+
+    layer_2_sandbox_isolation:
+      description: "Execute actions in isolated environment with rollback capability"
+      components:
+        - "State snapshots before actions"
+        - "Virtual environment execution"
+        - "Resource limitation"
+        - "Rollback on failure"
+
+      features:
+        state_snapshots:
+          description: "Capture system state before critical actions"
+          includes:
+            - "Screen state"
+            - "Window positions"
+            - "Application states"
+
+        resource_limits:
+          description: "Limit resource usage during execution"
+          limits:
+            - "Maximum execution time"
+            - "Maximum memory usage"
+            - "Maximum action count"
+
+        rollback:
+          description: "Restore previous state on failure"
+          capabilities:
+            - "Undo file operations"
+            - "Restore window positions"
+            - "Revert application states"
+
+    layer_3_realtime_monitoring:
+      description: "Monitor execution for anomalies and enable emergency stop"
+      components:
+        - "Behavior analysis"
+        - "Anomaly detection"
+        - "Emergency stop mechanism"
+        - "Audit logging"
+
+      monitoring:
+        behavior_analysis:
+          description: "Analyze action patterns for suspicious behavior"
+          checks:
+            - "Rapid repeated actions"
+            - "Unusual action sequences"
+            - "Access to sensitive areas"
+
+        anomaly_detection:
+          description: "Detect unexpected system behavior"
+          triggers:
+            - "Unexpected dialogs"
+            - "Error messages"
+            - "System slowdowns"
+
+      emergency_stop:
+        description: "Immediately halt all operations"
+        triggers:
+          - "User request"
+          - "Critical error"
+          - "Safety violation"
+          - "Anomaly detection"
+
+        actions:
+          - "Stop all pending actions"
+          - "Release all held keys/buttons"
+          - "Log current state"
+          - "Notify user"
+
+  audit:
+    description: "Comprehensive logging of all actions"
+    events:
+      - "Action started"
+      - "Action completed"
+      - "Action failed"
+      - "Action blocked"
+      - "User confirmation requested"
+      - "User confirmation granted/denied"
+      - "Emergency stop triggered"
+      - "Snapshot created"
+      - "Rollback executed"
+
+    log_format:
+      timestamp: "ISO 8601 format"
+      event_type: "Event category"
+      action_id: "Unique action identifier"
+      user_id: "User identifier"
+      platform: "Target platform"
+      details: "Event-specific details"
+      risk_level: "Assessed risk level"
+
+  permissions:
+    description: "Permission-based access control"
+    permission_types:
+      safe_actions:
+        description: "Basic safe operations"
+        includes:
+          - "click"
+          - "type"
+          - "scroll"
+          - "screenshot"
+
+      moderate_actions:
+        description: "Operations requiring session permission"
+        includes:
+          - "drag"
+          - "hotkey"
+          - "app_launch"
+
+      dangerous_actions:
+        description: "Operations requiring explicit permission"
+        includes:
+          - "app_close"
+          - "clipboard_access"
+          - "file_operations"
+
+  restricted_areas:
+    description: "Screen areas that are protected from interaction"
+    examples:
+      - "Password input fields"
+      - "Security dialogs"
+      - "System settings"
+      - "Admin panels"
+
+  blocked_applications:
+    description: "Applications that cannot be controlled"
+    examples:
+      - "Password managers"
+      - "Security software"
+      - "System configuration tools"
+
+  user_confirmation:
+    templates:
+      standard: |
+        The Computer Use Agent wants to:
+        {action_description}
+        
+        Risk level: {risk_level}
+        
+        Do you want to allow this action?
+
+      dangerous: |
+        ⚠️ WARNING: Potentially Dangerous Action ⚠️
+        
+        The Computer Use Agent wants to:
+        {action_description}
+        
+        Risk level: {risk_level}
+        Reason: {risk_reason}
+        
+        This action could:
+        {potential_impacts}
+        
+        Are you sure you want to proceed?
+
+      critical: |
+        🚨 CRITICAL ACTION REQUESTED 🚨
+        
+        The Computer Use Agent wants to:
+        {action_description}
+        
+        Risk level: CRITICAL
+        Reason: {risk_reason}
+        
+        This action could cause:
+        {potential_impacts}
+        
+        Type "CONFIRM" to proceed or "CANCEL" to abort.

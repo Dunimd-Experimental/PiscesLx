@@ -1,0 +1,112 @@
+action:
+  execution:
+    description: |
+      Execute actions with proper validation and verification.
+      Each action should be executed safely with appropriate error handling.
+
+  click:
+    pre_conditions:
+      - "Target element must be visible on screen"
+      - "Target coordinates must be within screen bounds"
+      - "No modal dialogs blocking the target"
+
+    execution_steps:
+      - "Move cursor to target position"
+      - "Wait for cursor movement to complete"
+      - "Perform click action"
+      - "Wait for UI response"
+
+    post_conditions:
+      - "Verify expected UI change occurred"
+      - "Check for error messages"
+      - "Confirm action completed successfully"
+
+  type:
+    pre_conditions:
+      - "Text input field must be focused"
+      - "Text field must not be disabled"
+      - "Text length must not exceed field limit"
+
+    execution_steps:
+      - "Ensure target field is focused"
+      - "Type text character by character"
+      - "Handle special characters appropriately"
+
+    post_conditions:
+      - "Verify text appears in field"
+      - "Check for validation errors"
+      - "Confirm cursor position"
+
+  scroll:
+    pre_conditions:
+      - "Content must be scrollable"
+      - "Scroll direction must be valid"
+
+    execution_steps:
+      - "Position cursor over scrollable area"
+      - "Perform scroll action"
+      - "Wait for scroll animation"
+
+    post_conditions:
+      - "Verify content position changed"
+      - "Check if target content is now visible"
+
+  drag:
+    pre_conditions:
+      - "Source element must be draggable"
+      - "Target location must be valid drop zone"
+      - "No obstacles in drag path"
+
+    execution_steps:
+      - "Move to source position"
+      - "Press and hold mouse button"
+      - "Drag to target position"
+      - "Release mouse button"
+
+    post_conditions:
+      - "Verify element moved to target"
+      - "Check for drop feedback"
+
+  error_handling:
+    timeout:
+      description: "Action took too long to complete"
+      recovery:
+        - "Retry action with increased timeout"
+        - "Check for blocking dialogs"
+        - "Report to user for intervention"
+
+    element_not_found:
+      description: "Target element could not be located"
+      recovery:
+        - "Capture new screenshot"
+        - "Search for alternative elements"
+        - "Request clarification from user"
+
+    action_blocked:
+      description: "Action was blocked by safety policy"
+      recovery:
+        - "Explain restriction to user"
+        - "Request permission override"
+        - "Offer alternative approach"
+
+  verification:
+    visual:
+      description: "Verify action through visual comparison"
+      methods:
+        - "Compare before/after screenshots"
+        - "Check for expected UI elements"
+        - "Detect visual feedback indicators"
+
+    state:
+      description: "Verify action through state changes"
+      methods:
+        - "Check application state"
+        - "Verify data modifications"
+        - "Confirm navigation occurred"
+
+    feedback:
+      description: "Verify action through system feedback"
+      methods:
+        - "Check for success messages"
+        - "Listen for audio cues"
+        - "Monitor system notifications"
