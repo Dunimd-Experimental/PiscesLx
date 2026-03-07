@@ -209,7 +209,7 @@ python manage.py help
 | setup      | 环境设置与依赖安装                                               |
 | train      | 训练模型（支持量化 / LoRA / RLHF / GaLore）                      |
 | serve      | 启动 OpenAI 兼容后端推理服务                                     |
-| check      | 检查 GPU 与依赖项                                                |
+| test       | 项目健康检查（8阶段验证）                                        |
 | monitor    | 系统监控（GPU/CPU/内存）                                         |
 | download   | 下载数据集                                                       |
 | benchmark  | 模型评测与基准测试                                               |

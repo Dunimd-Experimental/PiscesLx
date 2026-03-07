@@ -73,7 +73,7 @@ Command Categories:
         - benchmark: Model evaluation and performance testing
     
     **Monitor Commands:**
-        - check: GPU and dependency validation
+        - test: Project health check (8-stage validation)
         - monitor: Real-time system monitoring
     
     **MCP Commands:**
@@ -379,8 +379,13 @@ def help():
     print("  python manage.py benchmark --benchmark mmlu --config configs/0.5B.yaml --model ckpt/model.pt")
     print("  python manage.py benchmark --perf --config configs/0.5B.yaml --selftest")
     print("")
+    print("  # Test")
+    print("  python manage.py test")
+    print("  python manage.py test --quick")
+    print("  python manage.py test --config 7B")
+    print("  python manage.py test --stage 1,2,3")
+    print("")
     print("  # Monitor")
-    print("  python manage.py check")
     print("  python manage.py monitor --monitor_mode standard --update_interval 1.0")
     print("")
     print("  # MCP")

@@ -209,7 +209,7 @@ python manage.py help
 | setup     | Environment setup and dependency installation                      |
 | train     | Train model (support quantization / LoRA / RLHF / GaLore)          |
 | serve     | Start OpenAI-compatible backend inference service                  |
-| check     | Check GPU and dependencies                                         |
+| test      | Project health check (8-stage validation)                          |
 | monitor   | System monitoring (GPU/CPU/memory)                                 |
 | download  | Download dataset                                                  |
 | benchmark | Model evaluation and benchmarking                                  |

@@ -284,7 +284,7 @@ COMMANDS = [
     'setup',      # Initialize environment and install dependencies
     'train',      # Train models with various configurations
     'serve',      # Start OpenAI-compatible backend inference service
-    'check',      # Validate GPU and system dependencies
+    'test',       # Project health check (8-stage validation)
     'monitor',    # Real-time system monitoring dashboard
     'download',   # Download and prepare training datasets
     'benchmark',  # Evaluate model performance on benchmarks
@@ -1081,6 +1081,26 @@ def main():
     )
     
     # -------------------------------------------------------------------------
+    # TEST COMMAND ARGUMENTS
+    # -------------------------------------------------------------------------
+    # --quick: Flag to run quick check (stages 1-5 only)
+    # Skips forward pass, generation, and optimization checks
+    parser.add_argument(
+        '--quick', 
+        action='store_true',  # Boolean flag
+        help='Run quick check (stages 1-5 only) (for test command)'
+    )
+    
+    # --stage: Comma-separated list of stages to run
+    # Allows running specific stages instead of all
+    parser.add_argument(
+        '--stage', 
+        type=str,  # Stage numbers as string
+        default=None,  # None means run all stages
+        help='Comma-separated stages to run (e.g., "1,2,3") (for test command)'
+    )
+    
+    # -------------------------------------------------------------------------
     # LOGGING ARGUMENTS
     # -------------------------------------------------------------------------
     # --log_level: Logging verbosity level
@@ -1202,16 +1222,16 @@ def main():
         sys.exit(int(cli.run(args, argv)))
     
     # -------------------------------------------------------------------------
-    # CHECK COMMAND
+    # TEST COMMAND
     # -------------------------------------------------------------------------
-    # Validate GPU and system dependencies
-    # Checks CUDA, cuDNN, and other required components
-    elif args.command == 'check':
-        # Import the check function
-        from tools.check import check
+    # Validate project health with 8-stage comprehensive check
+    # Checks environment, structure, imports, config, model, forward, generation, optimization
+    elif args.command == 'test':
+        # Import the test function
+        from tools.test import test
         
-        # Run system validation
-        check(args)
+        # Run project health check
+        test(args)
     
     # -------------------------------------------------------------------------
     # MONITOR COMMAND

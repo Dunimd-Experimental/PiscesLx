@@ -139,7 +139,7 @@ pip install -r requirements.txt
 #### Verify Installation
 
 ```bash
-python manage.py check --gpu --dependencies
+python manage.py test --quick
 ```
 
 ### Running the Project
@@ -165,7 +165,7 @@ python manage.py benchmark --benchmark mmlu --model checkpoint.pt
 #### Check System Status
 
 ```bash
-python manage.py check --gpu
+python manage.py test --quick
 python manage.py monitor
 ```
 
