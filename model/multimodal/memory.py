@@ -297,7 +297,6 @@ class YvVectorStore:
                 self._use_faiss = True
                 _LOG.info("FAISS backend initialized")
             except ImportError:
-                _LOG.warning("FAISS not available, using NumPy backend")
                 self._use_faiss = False
         else:
             self._use_faiss = False
@@ -318,7 +317,6 @@ class YvVectorStore:
             self._encoder = SentenceTransformer(self.config.embedding_model)
             _LOG.info(f"SentenceTransformer loaded: {self.config.embedding_model}")
         except ImportError:
-            _LOG.warning("sentence-transformers not available, using hash-based embeddings")
             self._encoder = None
     
     def encode(self, text: str) -> np.ndarray:

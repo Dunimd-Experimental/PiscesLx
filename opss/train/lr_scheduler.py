@@ -165,8 +165,8 @@ class POPSSLRSchedulerOperator(PiscesLxOperatorInterface):
     def __init__(self, config: Optional[POPSSLRSchedulerConfig] = None):
         """Initialize LR scheduler operator."""
         super().__init__()
-        self.name = "lr.scheduler"
-        self.version = VERSION
+        self._name = "lr.scheduler"
+        self._version = VERSION
         self.config = config or POPSSLRSchedulerConfig()
         self.history: List[float] = []
         self._current_step = self.config.last_step
@@ -175,6 +175,14 @@ class POPSSLRSchedulerOperator(PiscesLxOperatorInterface):
         
         if self.config.warmup_type not in ["linear", "cubic", "exponential"]:
             self.config.warmup_type = "linear"
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def version(self) -> str:
+        return self._version
     
     @property
     def description(self) -> str:
@@ -276,21 +284,40 @@ class POPSSLRSchedulerOperator(PiscesLxOperatorInterface):
             return self._compute_decay_lr(step - self.config.warmup_steps)
     
     def _compute_warmup_lr(self, step: int) -> float:
-        """Compute learning rate during warmup phase."""
+        """Compute learning rate during warmup phase.
+        
+        Warmup starts from a small fraction of max_lr (typically 1% or min_lr if specified)
+        and linearly increases to max_lr by the end of warmup.
+        This ensures smooth gradient updates at the start of training.
+        """
         warmup_fn = self._get_warmup_function()
         warmup_ratio = warmup_fn(step / self.config.warmup_steps)
         
-        lr = self.config.min_lr + (self.config.max_lr - self.config.min_lr) * warmup_ratio
+        # Start from near-zero (1% of max_lr) instead of min_lr
+        # min_lr is the decay floor, not the warmup start
+        warmup_start_lr = self.config.max_lr * 0.01
+        lr = warmup_start_lr + (self.config.max_lr - warmup_start_lr) * warmup_ratio
         return lr
     
     def _get_warmup_function(self) -> Callable[[float], float]:
-        """Get warmup function."""
+        """Get warmup function.
+        
+        Returns a function that maps progress ratio [0, 1] to warmup ratio [0, 1].
+        Different warmup types provide different curves:
+        - linear: Steady increase, good for most cases
+        - cubic: Slow start, fast end (S-shaped curve)
+        - exponential: Fast start, smooth transition to target LR
+        """
         if self.config.warmup_type == "linear":
             return lambda x: x
         elif self.config.warmup_type == "cubic":
+            # Cubic: slow start, fast end - good for stability
             return lambda x: x ** 3
         elif self.config.warmup_type == "exponential":
-            return lambda x: 1 - math.exp(-3 * x)
+            # Exponential: fast approach to target
+            # Uses exp(-2 * (1-x)) which gives ~0.86 at x=0.5 and ~0.98 at x=1
+            # This provides a smoother transition than linear warmup
+            return lambda x: 1 - math.exp(-2 * (1 - x))
         else:
             return lambda x: x
     

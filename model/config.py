@@ -392,6 +392,12 @@ class YvConfig:
     galore_sequence_threshold: int = 4096
     galore_gradient_accumulation_sync: bool = True
 
+    # FP4 Training Configuration (75% memory savings vs BF16)
+    use_fp4: bool = False
+    fp4_block_size: int = 16
+    fp4_stochastic_rounding: bool = True
+    fp4_master_weights_dtype: str = "fp32"
+
     chinchilla_optimal: bool = False
     chinchilla_c_budget: float = 0.0
     chinchilla_d_ratio: float = 1.0

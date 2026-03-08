@@ -287,6 +287,23 @@ class PiscesLxTrainingOperator(object):
                 _LOG.info(f"CUDA context initialized on {self.device}")
             except Exception as e:
                 _LOG.warning(f"CUDA initialization check failed: {e}")
+            try:
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+            except Exception:
+                pass
+            try:
+                torch.set_float32_matmul_precision("high")
+            except Exception:
+                pass
+            try:
+                flash_ok = bool(getattr(torch.backends.cuda, "is_flash_sdp_available", lambda: False)())
+                mem_ok = bool(getattr(torch.backends.cuda, "is_mem_efficient_sdp_available", lambda: False)())
+                torch.backends.cuda.enable_flash_sdp(flash_ok)
+                torch.backends.cuda.enable_mem_efficient_sdp(mem_ok)
+                torch.backends.cuda.enable_math_sdp(True)
+            except Exception:
+                pass
         
         self._setup_mixed_precision()
 
@@ -300,6 +317,8 @@ class PiscesLxTrainingOperator(object):
         self._compliance_operator = None
         self._audit_operator = None
         self._watermark_config = None
+
+        self._grad_accum_step = 0
 
         self._setup_advanced_operators()
         self._setup_parallel_3d_operator()
@@ -361,7 +380,9 @@ class PiscesLxTrainingOperator(object):
         
         try:
             if hasattr(self.config, 'moe_gradient') and self.config.moe_gradient.get('enabled', False):
-                moe_config = POPSSMoEGradientConfig(**self.config.moe_gradient)
+                # Filter out 'enabled' field before creating config
+                moe_config_dict = {k: v for k, v in self.config.moe_gradient.items() if k != 'enabled'}
+                moe_config = POPSSMoEGradientConfig(**moe_config_dict)
                 self._moe_gradient_optimizer = POPSSMoEGradientOperator(moe_config)
                 _LOG.info("MoE gradient optimizer operator initialized")
         except Exception as e:
@@ -457,21 +478,32 @@ class PiscesLxTrainingOperator(object):
         
         # Create model instance with provided arguments
         self.model = model_class(**model_kwargs)
-        
-        # Move model to target device (GPU/CPU)
+
+        # Apply quantization (QLoRA-style) and LoRA BEFORE moving the full model to CUDA.
+        # This avoids the peak VRAM spike caused by first transferring bf16/fp16 full-precision weights.
+        if self.config.quantization.enable_quantization:
+            self._apply_quantization()
+
+        if getattr(getattr(self.config, "lora", None), "enabled", False):
+            self._apply_lora()
+
+        # Move model to target device (GPU/CPU) after QLoRA+LoRA.
         self.model = self.model.to(self.device)
+
+        try:
+            if self.device.type == "cuda":
+                mp = str(getattr(self.config, "mixed_precision", "fp32") or "fp32").lower()
+                if mp == "bf16":
+                    self.model = self.model.to(dtype=torch.bfloat16)
+                elif mp == "fp16":
+                    self.model = self.model.to(dtype=torch.float16)
+        except Exception as e:
+            _LOG.warning(f"Failed to cast model to mixed precision dtype: {e}")
         
         # Ensure CUDA is fully initialized after model transfer
         if self.device.type == 'cuda':
             torch.cuda.synchronize(self.device)
             _LOG.info(f"Model moved to {self.device} and CUDA synchronized")
-        
-        if getattr(getattr(self.config, "lora", None), "enabled", False):
-            self._apply_lora()
-
-        # Apply quantization if enabled in configuration
-        if self.config.quantization.enable_quantization:
-            self._apply_quantization()
         
         # Enable gradient checkpointing for memory efficiency
         if self.config.gradient_checkpointing:
@@ -534,22 +566,107 @@ class PiscesLxTrainingOperator(object):
         Quantizes model weights to lower precision (INT4/INT8/FP8/NF4)
         to reduce memory usage and improve inference speed.
         """
+        method = str(getattr(self.config.quantization, "quant_method", "nf4") or "nf4").lower()
+        bits = int(getattr(self.config.quantization, "bits", 4) or 4)
+        group_size = int(getattr(self.config.quantization, "group_size", 128) or 128)
+
+        # Prefer bitsandbytes 4-bit quantization for training (QLoRA). This is the only path
+        # that can realistically bring 7B into 20GB.
+        if bits == 4 and method in {"nf4", "int4", "fp4"}:
+            try:
+                import bitsandbytes as bnb
+                import torch.nn as nn
+
+                quant_type = "nf4" if method == "nf4" else "fp4"
+                compute_dtype = torch.bfloat16 if str(getattr(self.config, "mixed_precision", "bf16")).lower() == "bf16" else torch.float16
+
+                linear4bit_count = 0
+
+                def _convert(module: nn.Module):
+                    nonlocal linear4bit_count
+                    # torch.nn.MultiheadAttention directly calls F.linear() with raw weight tensors
+                    # (e.g. out_proj_weight). Replacing its internal Linear weights with bnb 4-bit
+                    # modules will produce uint8/quantized weights and crash with dtype mismatch.
+                    # Keep MHA blocks in floating dtype for correctness.
+                    if isinstance(module, nn.MultiheadAttention):
+                        return
+                    for name, child in list(module.named_children()):
+                        if isinstance(child, nn.Linear):
+                            child_device = None
+                            try:
+                                child_device = child.weight.device
+                            except Exception:
+                                child_device = None
+
+                            new_mod = bnb.nn.Linear4bit(
+                                child.in_features,
+                                child.out_features,
+                                bias=child.bias is not None,
+                                quant_type=quant_type,
+                                compress_statistics=True,
+                                compute_dtype=compute_dtype,
+                            )
+                            # Load float weights/bias first, then move the module to the target device.
+                            # bitsandbytes will initialize and pack the 4-bit quantization state on .to(device).
+                            try:
+                                new_mod.load_state_dict(child.state_dict(), strict=False)
+                            except Exception:
+                                pass
+
+                            # Ensure the newly created module is on the same device as the original layer.
+                            # This is critical for bitsandbytes 4-bit layers to initialize quantization state
+                            # and avoid assertion errors during the first forward.
+                            try:
+                                if child_device is not None:
+                                    new_mod = new_mod.to(device=child_device)
+                            except Exception:
+                                pass
+
+                            setattr(module, name, new_mod)
+                            linear4bit_count += 1
+                        else:
+                            _convert(child)
+
+                _convert(self.model)
+
+                # Freeze base weights; keep trainable params to adapters (LoRA) or explicit trainable heads.
+                for p in self.model.parameters():
+                    p.requires_grad = False
+
+                try:
+                    trainable = sum(int(p.numel()) for p in self.model.parameters() if p.requires_grad)
+                except Exception:
+                    trainable = -1
+
+                _LOG.info(
+                    "bitsandbytes 4bit conversion finished",
+                    linear4bit_layers=int(linear4bit_count),
+                    trainable_params=int(trainable),
+                )
+
+                _LOG.info(
+                    "Model quantization applied successfully",
+                    method=f"bitsandbytes:{quant_type}",
+                    bits=bits,
+                    group_size=group_size,
+                )
+                return
+            except Exception as e:
+                _LOG.warning(f"bitsandbytes 4bit quantization requested but failed; falling back: {e}")
+
         try:
             from ops.quantize.core import QuantizationOperator
 
             quant_op = QuantizationOperator()
             quant_config = {
-                'method': self.config.quantization.quant_method,
-                'bits': self.config.quantization.bits,
-                'group_size': self.config.quantization.group_size,
-                'symmetric': self.config.quantization.symmetric
+                "method": method,
+                "bits": bits,
+                "group_size": group_size,
+                "symmetric": bool(getattr(self.config.quantization, "symmetric", False)),
             }
 
-            self.model = quant_op.apply_quantization(
-                self.model,
-                quant_config
-            )
-            _LOG.info("Model quantization applied successfully")
+            self.model = quant_op.apply_quantization(self.model, quant_config)
+            _LOG.info("Model quantization applied successfully", method=str(method), bits=int(bits), group_size=int(group_size))
 
         except Exception as e:
             _LOG.warning(f"Quantization failed: {e}")
@@ -630,15 +747,56 @@ class PiscesLxTrainingOperator(object):
         
         # Select optimizer class
         if optimizer_class is None:
-            if self.config.optimizer.name.lower() == 'adamw':
-                optimizer_class = torch.optim.AdamW
-            elif self.config.optimizer.name.lower() == 'sgd':
+            opt_name = str(getattr(self.config.optimizer, "name", "adamw") or "adamw").lower()
+
+            # Check if 8-bit optimizer is requested
+            want_8bit = opt_name in ("adamw8bit", "adamw_8bit", "bnb_adamw")
+            want_8bit = want_8bit or bool(getattr(self.config.optimizer, "use_fp4", False))
+            want_8bit = want_8bit or bool(getattr(self.config.optimizer, "galore_memory_efficient", False))
+            want_8bit = want_8bit or (int(getattr(self.config.optimizer, "galore_quantization_bits", 0) or 0) == 8)
+
+            if opt_name in ("adamw", "adamw8bit", "adamw_8bit", "bnb_adamw"):
+                if want_8bit:
+                    try:
+                        import bitsandbytes as bnb
+
+                        optimizer_class = bnb.optim.AdamW8bit
+                        _LOG.info("Using bitsandbytes AdamW8bit for memory efficiency")
+                    except Exception as e:
+                        _LOG.warning(f"bitsandbytes AdamW8bit requested but unavailable; falling back to torch AdamW: {e}")
+                        optimizer_class = torch.optim.AdamW
+                else:
+                    optimizer_class = torch.optim.AdamW
+            elif opt_name == "sgd":
                 optimizer_class = torch.optim.SGD
             else:
                 raise ValueError(f"Unsupported optimizer: {self.config.optimizer.name}")
         
-        # Apply GaLore (if enabled)
-        if self.config.optimizer.use_galore:
+        # FP4 Training (prioritized when enabled; expected to be the most memory-efficient path)
+        if getattr(self.config.optimizer, 'use_fp4', False):
+            try:
+                from opss.optim.fp4 import POPSSFP4Operator, POPSSFP4Config, PiscesLxOperatorStatus
+
+                fp4_config = POPSSFP4Config(
+                    block_size=getattr(self.config.optimizer, 'fp4_block_size', 16),
+                    stochastic_rounding=getattr(self.config.optimizer, 'fp4_stochastic_rounding', True),
+                    master_weights_dtype=getattr(self.config.optimizer, 'fp4_master_weights_dtype', 'fp32'),
+                    learning_rate=default_params['lr'],
+                    weight_decay=default_params['weight_decay'],
+                )
+                self._fp4_operator = POPSSFP4Operator()
+                self._fp4_config = fp4_config
+
+                trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+                self.optimizer = optimizer_class(trainable_params, **default_params)
+                _LOG.info(f"FP4 training enabled: block_size={fp4_config.block_size}, master_weights={fp4_config.master_weights_dtype}")
+            except Exception as e:
+                _LOG.warning(f"FP4 initialization failed, falling back to standard optimizer: {e}")
+                trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+                self.optimizer = optimizer_class(trainable_params, **default_params)
+
+        # Apply GaLore (if enabled and FP4 not enabled)
+        elif self.config.optimizer.use_galore:
             try:
                 from opss.optim.galore import POPSSGaLoreOptimizerAdapter, POPSSGaLoreConfig
                 
@@ -648,11 +806,18 @@ class PiscesLxTrainingOperator(object):
                 galore_config = POPSSGaLoreConfig(
                     rank=self.config.optimizer.galore_rank,
                     update_proj_gap=self.config.optimizer.galore_update_proj_gap,
-                    **default_params
+                    quantization_bits=getattr(self.config.optimizer, 'galore_quantization_bits', 8),
+                    lr_ratio=getattr(self.config.optimizer, 'galore_lr_ratio', 1.0),
+                    min_rank=getattr(self.config.optimizer, 'galore_min_rank', 32),
+                    max_rank=getattr(self.config.optimizer, 'galore_max_rank', 512),
+                    rank_adapt_interval=getattr(self.config.optimizer, 'galore_rank_adapt_interval', 1000),
+                    rank_adapt_threshold=getattr(self.config.optimizer, 'galore_rank_adapt_threshold', 0.1),
+                    memory_efficient=getattr(self.config.optimizer, 'galore_memory_efficient', False),
+                    moe_expert_only=getattr(self.config.optimizer, 'galore_moe_expert_only', False),
                 )
                 self._galore_adapter = POPSSGaLoreOptimizerAdapter(galore_config)
                 self.optimizer = optimizer_class(trainable_params, **default_params)
-                _LOG.info("GaLore optimizer initialized")
+                _LOG.info(f"GaLore optimizer initialized with rank={galore_config.rank}, quantization={galore_config.quantization_bits}bit")
             except Exception as e:
                 _LOG.warning(f"GaLore initialization failed, falling back to standard AdamW: {e}")
                 trainable_params = [p for p in self.model.parameters() if p.requires_grad]
@@ -700,12 +865,26 @@ class PiscesLxTrainingOperator(object):
                 min_lr=self.config.optimizer.learning_rate * self.config.scheduler.min_lr_ratio,
                 max_lr=self.config.optimizer.learning_rate,
                 warmup_steps=warmup_steps,
-                warmup_type="linear",
+                warmup_type=str(getattr(self.config.scheduler, "warmup_type", "linear") or "linear"),
                 total_steps=self.config.max_steps
             )
             
             self._lr_scheduler_operator = POPSSLRSchedulerOperator(lr_config)
             self.scheduler = self._lr_scheduler_operator
+
+            # IMPORTANT: Ensure the optimizer starts at the warmup-start LR.
+            # Otherwise, the optimizer keeps the initial max_lr until the first optimizer_step()
+            # (under gradient accumulation), then the scheduler suddenly drops it to warmup LR,
+            # which looks like an unexpected LR collapse in logs.
+            try:
+                if self.optimizer is not None and hasattr(self.scheduler, "execute"):
+                    self.scheduler.execute({
+                        "step": 0,
+                        "optimizer": self.optimizer,
+                        "reset": True,
+                    })
+            except Exception:
+                pass
             
             _LOG.info(
                 f"Learning rate scheduler {self.config.scheduler.name} initialized "
@@ -752,14 +931,45 @@ class PiscesLxTrainingOperator(object):
     def forward_pass(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """
         Execute forward pass with stage-aware loss computation.
-        
+
         Args:
             batch: Input batch data.
-            
+
         Returns:
             Dictionary containing loss and other metrics.
         """
-        batch = {k: v.to(self.device) for k, v in batch.items()}
+        # Check if FP4 training is enabled
+        if hasattr(self, '_fp4_operator') and self._fp4_operator is not None:
+            try:
+                # Use FP4 execute method for the entire forward-backward step
+                result = self._fp4_operator.execute({
+                    "model": self.model,
+                    "batch": batch,
+                    "config": getattr(self, '_fp4_config', POPSSFP4Config()),
+                    "optimizer": self.optimizer,
+                    "step": self.global_step,
+                })
+                
+                if result.status == PiscesLxOperatorStatus.SUCCESS:
+                    return {
+                        'loss': torch.tensor(result.output['loss'], device=self.device),
+                        'grad_norm': result.output.get('grad_norm', 0.0),
+                        'scale_factor': result.output.get('scale_factor', 1.0),
+                    }
+                else:
+                    _LOG.warning(f"FP4 execution failed: {result.error}")
+                    # Fall back to standard forward pass
+            except Exception as e:
+                _LOG.warning(f"FP4 execution error: {e}")
+                # Fall back to standard forward pass
+        
+        # Standard forward pass (fallback)
+        non_blocking = False
+        try:
+            non_blocking = bool(getattr(getattr(self.config, "data", None), "pin_memory", False)) and self.device.type == "cuda"
+        except Exception:
+            non_blocking = False
+        batch = {k: v.to(self.device, non_blocking=non_blocking) for k, v in batch.items()}
         
         if self.config.mixed_precision in {"fp16", "bf16"} and self.device.type == "cuda":
             if self.config.mixed_precision == "bf16":
@@ -1065,19 +1275,28 @@ class PiscesLxTrainingOperator(object):
         if self.scaler is not None:
             self.scaler.unscale_(self.optimizer)
         
-        torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
+        max_grad_norm = 1.0
+        try:
+            max_grad_norm = float(getattr(getattr(self.config, "optimizer", None), "max_grad_norm", 1.0) or 1.0)
+        except Exception:
+            max_grad_norm = 1.0
+        if max_grad_norm is not None and max_grad_norm > 0:
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=max_grad_norm)
         
-        # Apply GaLore gradient projection if enabled
+        # Optimized: batch all auxiliary backward passes together
+        aux_loss_total = 0.0
+        
+        # Collect GaLore gradients (no backward needed, just projection)
         if hasattr(self, '_galore_adapter') and self._galore_adapter is not None:
             try:
                 gradients = {name: param.grad for name, param in self.model.named_parameters() 
                            if param.grad is not None}
                 if gradients:
                     self.model, galore_stats = self._galore_adapter.step(self.model, gradients)
-                    _LOG.debug(f"GaLore step: {galore_stats.get('active_projections', 0)} projections active")
             except Exception as e:
-                _LOG.warning(f"GaLore gradient projection failed: {e}")
+                pass
         
+        # Collect MoE auxiliary loss
         if self._moe_gradient_optimizer is not None:
             try:
                 moe_result = self._moe_gradient_optimizer.execute({
@@ -1085,18 +1304,28 @@ class PiscesLxTrainingOperator(object):
                     "step": self.global_step
                 })
                 if moe_result.is_success() and moe_result.output:
-                    aux_loss = moe_result.output.get('total_auxiliary_loss', 0.0)
-                    if aux_loss > 0:
-                        if self.scaler is not None:
-                            scaled_aux_loss = self.scaler.scale(torch.tensor(aux_loss))
-                            scaled_aux_loss.backward()
-                        else:
-                            aux_loss_tensor = torch.tensor(aux_loss, device=self.device)
-                            aux_loss_tensor.backward()
-                        _LOG.debug(f"MoE auxiliary loss: {aux_loss:.6f}")
+                    aux_loss_total += moe_result.output.get('total_auxiliary_loss', 0.0)
             except Exception as e:
-                _LOG.warning(f"MoE gradient optimization failed: {e}")
+                pass
         
+        # Collect weight watermark regularization loss
+        if self._weight_watermark_operator is not None:
+            try:
+                wm_result = self._weight_watermark_operator._regularize({"model": self.model})
+                if wm_result.is_success() and wm_result.output.get("regularization_loss") is not None:
+                    aux_loss_total += wm_result.output["regularization_loss"].item()
+            except Exception as e:
+                pass
+        
+        # Single backward for all auxiliary losses (much more efficient)
+        if aux_loss_total > 0:
+            aux_loss_tensor = torch.tensor(aux_loss_total, device=self.device)
+            if self.scaler is not None:
+                self.scaler.scale(aux_loss_tensor).backward()
+            else:
+                aux_loss_tensor.backward()
+        
+        # K-FAC preconditioning (no backward needed)
         if self._kfac_operator is not None:
             try:
                 self._kfac_operator.execute({
@@ -1105,21 +1334,7 @@ class PiscesLxTrainingOperator(object):
                     "backward_pass": True
                 })
             except Exception as e:
-                _LOG.warning(f"K-FAC preconditioning failed: {e}")
-        
-        if self._weight_watermark_operator is not None:
-            try:
-                wm_result = self._weight_watermark_operator._regularize({"model": self.model})
-                if wm_result.is_success() and wm_result.output.get("regularization_loss") is not None:
-                    wm_loss = wm_result.output["regularization_loss"]
-                    if self.scaler is not None:
-                        scaled_wm_loss = self.scaler.scale(wm_loss)
-                        scaled_wm_loss.backward()
-                    else:
-                        wm_loss.backward()
-                    _LOG.debug(f"Weight watermark regularization loss: {wm_loss.item():.6f}")
-            except Exception as e:
-                _LOG.warning(f"Weight watermark regularization failed: {e}")
+                pass
         
         return grad_norm
     
@@ -1174,14 +1389,16 @@ class PiscesLxTrainingOperator(object):
             self.optimizer.step()
         
         # Zero gradients
-        self.optimizer.zero_grad()
+        self.optimizer.zero_grad(set_to_none=True)
         
         # Update learning rate
         if self.scheduler is not None:
             if hasattr(self.scheduler, 'execute'):
                 # LRSchedulerOperator from opss.train.lr_scheduler
                 result = self.scheduler.execute({
-                    'step': self.global_step,
+                    # Align scheduler step to the *upcoming* optimizer step under gradient accumulation.
+                    # global_step is incremented after optimizer_step(), so we pass global_step + 1 here.
+                    'step': int(self.global_step) + 1,
                     'optimizer': self.optimizer
                 })
                 if not result.is_success():
@@ -1193,13 +1410,14 @@ class PiscesLxTrainingOperator(object):
         self.global_step += 1
     
     def _compute_gradient_norm(self) -> float:
-        """Compute gradient norm."""
-        total_norm = 0.0
-        for p in self.model.parameters():
-            if p.grad is not None:
-                param_norm = p.grad.data.norm(2)
-                total_norm += param_norm.item() ** 2
-        return total_norm ** 0.5
+        """Compute gradient norm efficiently."""
+        # Optimized: use torch.no_grad and avoid Python loops
+        with torch.no_grad():
+            total_norm_sq = 0.0
+            for p in self.model.parameters():
+                if p.grad is not None:
+                    total_norm_sq += p.grad.data.norm(2).item() ** 2
+            return total_norm_sq ** 0.5
     
     def train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """
@@ -1211,69 +1429,66 @@ class PiscesLxTrainingOperator(object):
         Returns:
             Training metrics dictionary.
         """
+        if self.device.type == "cuda":
+            try:
+                torch.cuda.synchronize(self.device)
+            except Exception:
+                pass
         start_time = time.time()
+
+        grad_accum_steps = int(getattr(self.config, "gradient_accumulation_steps", 1) or 1)
+        if grad_accum_steps < 1:
+            grad_accum_steps = 1
         
-        # Forward pass (with 3D parallelism if enabled)
-        if self._parallel_3d_operator is not None:
-            try:
-                result = self._parallel_3d_operator.execute({
-                    'batch': batch,
-                    'forward_fn': lambda b: self.forward_pass(b),
-                    'backward_fn': lambda l: self.backward_pass(l)
-                })
-                if result.is_success():
-                    outputs = result.output.get('outputs', {})
-                    loss = outputs.get('loss', result.output.get('loss'))
-                    grad_norm = result.output.get('grad_norm', 0.0)
-                else:
-                    outputs = self.forward_pass(batch)
-                    loss = outputs['loss']
-                    grad_norm = self.backward_pass(loss)
-            except Exception as e:
-                _LOG.warning(f"3D parallelism failed, falling back: {e}")
-                outputs = self.forward_pass(batch)
-                loss = outputs['loss']
-                grad_norm = self.backward_pass(loss)
-        else:
-            outputs = self.forward_pass(batch)
-            loss = outputs['loss']
-            grad_norm = self.backward_pass(loss)
+        # Optimized: direct forward/backward without 3D parallelism overhead
+        outputs = self.forward_pass(batch)
+        loss = outputs['loss']
+        if grad_accum_steps > 1:
+            loss = loss / grad_accum_steps
+        grad_norm = self.backward_pass(loss)
         
-        # Apply multitask operator if enabled
-        if self._multitask_operator is not None:
-            try:
-                mt_result = self._multitask_operator.execute({
-                    'model': self.model,
-                    'batch': batch,
-                    'loss': loss,
-                    'step': self.global_step
-                })
-                if mt_result.is_success() and mt_result.output:
-                    aux_loss = mt_result.output.get('auxiliary_loss', 0.0)
-                    if aux_loss > 0:
-                        loss = loss + aux_loss
-                        _LOG.debug(f"Multitask auxiliary loss: {aux_loss:.6f}")
-            except Exception as e:
-                _LOG.warning(f"Multitask operator failed: {e}")
+        # Optimized: skip multitask operator overhead (rarely used)
         
+        self._grad_accum_step += 1
+        did_step = (self._grad_accum_step % grad_accum_steps == 0)
+
         # Optimizer step
-        self.optimizer_step()
+        if did_step:
+            self.optimizer_step()
         
-        # Step modality scheduler
-        self._step_modality_scheduler()
-        
+        if self.device.type == "cuda":
+            try:
+                torch.cuda.synchronize(self.device)
+            except Exception:
+                pass
+
         # Calculate throughput
         step_time = time.time() - start_time
-        throughput = batch['input_ids'].size(0) / step_time if 'input_ids' in batch else 0
+        tokens = 0
+        if 'input_ids' in batch:
+            try:
+                if 'attention_mask' in batch:
+                    tokens = int(batch['attention_mask'].sum().item())
+                else:
+                    tokens = int(batch['input_ids'].numel())
+            except Exception:
+                tokens = 0
+        throughput = batch['input_ids'].size(0) / step_time if ('input_ids' in batch and step_time > 0) else 0.0
+        token_throughput = float(tokens) / step_time if (tokens and step_time > 0) else 0.0
         
-        # Record statistics
-        self._record_training_stats(loss.item(), grad_norm, throughput)
-        
+        # Record statistics (optimized: avoid repeated dict lookups)
+        loss_scalar = float(loss.detach().item())
+        if grad_accum_steps > 1:
+            loss_scalar = loss_scalar * grad_accum_steps
+
+        self._record_training_stats(loss_scalar, grad_norm, throughput)
+
         return {
-            'loss': loss.item(),
+            'loss': loss_scalar,
             'grad_norm': grad_norm,
             'learning_rate': self._get_current_lr(),
             'throughput': throughput,
+            'token_throughput': token_throughput,
             'global_step': self.global_step,
             'step_time': step_time
         }

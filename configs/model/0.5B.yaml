@@ -26,7 +26,7 @@ n_layer: 16
 n_head: 10
 n_kv_head: 5
 
-moe_num_experts: 6
+moe_num_experts: 4
 moe_top_k: 2
 moe_capacity_factor: 1.2
 moe_load_balance_alpha: 0.05
@@ -61,28 +61,52 @@ audio_tokens: 32
 task_classes: 256
 eval_dims: 7
 residual_dropout_p: 0.1
-use_gradient_checkpointing: false
+use_gradient_checkpointing: true
 use_pre_norm: true
 attention_dropout: 0.0
 
 training_config:
   learning_rate: 3.0e-5
   weight_decay: 0.01
-  batch_size: 2
-  sequence_length: 128
-  gradient_accumulation_steps: 4
+  batch_size: 1
+  sequence_length: 512
+  gradient_accumulation_steps: 8
   max_steps: 100000
   warmup_ratio: 0.1
+  warmup_steps: 100
+  scheduler_name: cosine
   min_lr_ratio: 0.1
+  scheduler:
+    warmup_type: exponential
   gradient_checkpointing: true
   mixed_precision: bf16
   flash_attention: true
   loss_type: lm
   response_only_loss: false
-  num_workers: 2
+  num_workers: 4
   pin_memory: true
-  prefetch_factor: 2
+  prefetch_factor: 4
+  packing: true
   max_grad_norm: 1.0
+  quantization:
+    enabled: true
+    method: nf4
+    bits: 4
+    group_size: 128
+    symmetric: false
+  lora:
+    enabled: true
+    r: 8
+    lora_alpha: 32
+    target_modules:
+      - q_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    lora_dropout: 0.05
+    bias: none
   moe_gradient:
     enabled: true
   kfac:
@@ -132,7 +156,7 @@ cache_quantization: true
 kv_cache_block_size: 256
 sdpa_prefer_flash: true
 
-enable_speculative_decoding: true
+enable_speculative_decoding: false
 speculative_candidates: 4
 speculative_draft_length: 4
 speculative_acceptance_threshold: 0.8
@@ -165,6 +189,13 @@ galore_multimodal_modules:
   - multimodal_fusion
 galore_sequence_threshold: 1024
 galore_gradient_accumulation_sync: true
+
+# FP4 Training Configuration (75% memory savings vs BF16)
+# Enable for extreme memory efficiency: ~3GB for 0.5B model
+use_fp4: true
+fp4_block_size: 16
+fp4_stochastic_rounding: true
+fp4_master_weights_dtype: "fp32"
 
 chinchilla_optimal: false
 chinchilla_c_budget: 0

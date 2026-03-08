@@ -166,6 +166,10 @@ class YvExpertChoiceRouter(nn.Module):
         self.capacity_factor = capacity_factor
         self.num_experts = num_experts
         self.top_k = top_k
+
+        # Gradient checkpointing compatibility flag
+        # When True, disables any stateful mutation inside forward.
+        self._is_checkpointing = False
     
     def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass of the expert-choice router.
@@ -274,6 +278,10 @@ class YvFineGrainedRouter(nn.Module):
         self.top_k = top_k
         self.capacity_factor = capacity_factor
         self.use_aux_loss_free = use_aux_loss_free
+
+        # Gradient checkpointing compatibility flag
+        # When True, disables any stateful mutation inside forward.
+        self._is_checkpointing = False
         
         self.gate = nn.Linear(hidden_size, self.total_experts, bias=False)
         
@@ -321,7 +329,7 @@ class YvFineGrainedRouter(nn.Module):
         
         top_k_weights = top_k_weights / (top_k_weights.sum(dim=-1, keepdim=True) + 1e-8)
         
-        if self.use_aux_loss_free and self.training:
+        if self.use_aux_loss_free and self.training and (not self._is_checkpointing):
             with torch.no_grad():
                 for idx in top_k_indices.flatten():
                     self.expert_counts[idx] += 1
@@ -638,13 +646,24 @@ class YvDynamicMoELayer(nn.Module):
             
             outputs = torch.zeros_like(x_flat)
             
-            for token_idx in range(x_flat.shape[0]):
-                for k in range(self.top_k):
-                    expert_id = expert_indices[token_idx, k].item()
-                    weight = routing_weights[token_idx, k]
+            # Batched processing: group tokens by expert for efficient computation
+            for expert_id in range(self.num_experts):
+                # Find all tokens assigned to this expert across all top-k positions
+                expert_mask = (expert_indices == expert_id).any(dim=-1)
+                if expert_mask.any():
+                    # Get tokens and weights for this expert
+                    selected_tokens = expert_mask.nonzero().squeeze(-1)
+                    h_batch = x_flat[selected_tokens]
                     
-                    expert_out = self.experts[expert_id](x_flat[token_idx:token_idx+1])
-                    outputs[token_idx] = outputs[token_idx] + weight * expert_out.squeeze(0)
+                    # Get corresponding weights (need to find which top-k position)
+                    weights = torch.zeros(selected_tokens.shape[0], device=x.device, dtype=x.dtype)
+                    for k in range(self.top_k):
+                        k_mask = (expert_indices[selected_tokens, k] == expert_id)
+                        weights[k_mask] = routing_weights[selected_tokens[k_mask], k]
+                    
+                    # Batched expert computation
+                    expert_out = self.experts[expert_id](h_batch)
+                    outputs[selected_tokens] += weights.unsqueeze(1) * expert_out
         else:
             expert_indices, dispatch_mask, load_balancing_loss = self.router(x_flat)
             

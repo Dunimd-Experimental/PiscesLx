@@ -210,6 +210,21 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         """
         if not model_train_cfg:
             return
+
+        # YvConfig may expose training_config as a plain dict or as a simple
+        # attribute container. Normalize to a dict to make all keys apply.
+        if not isinstance(model_train_cfg, dict):
+            try:
+                model_train_cfg = dict(vars(model_train_cfg))
+            except Exception:
+                try:
+                    model_train_cfg = {
+                        k: getattr(model_train_cfg, k)
+                        for k in dir(model_train_cfg)
+                        if (not k.startswith("_")) and (not callable(getattr(model_train_cfg, k, None)))
+                    }
+                except Exception:
+                    return
         
         if "lr" in model_train_cfg:
             self.train_config.optimizer.learning_rate = model_train_cfg["lr"]
@@ -243,12 +258,50 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 self.train_config.optimizer.max_grad_norm = gc["initial_max_norm"]
             if "max_grad_norm" in gc:
                 self.train_config.optimizer.max_grad_norm = gc["max_grad_norm"]
+
+        if "max_grad_norm" in model_train_cfg:
+            self.train_config.optimizer.max_grad_norm = model_train_cfg["max_grad_norm"]
         
         if "warmup_ratio" in model_train_cfg:
             self.train_config.scheduler.warmup_ratio = model_train_cfg["warmup_ratio"]
-        
+
         if "min_lr_ratio" in model_train_cfg:
             self.train_config.scheduler.min_lr_ratio = model_train_cfg["min_lr_ratio"]
+
+        if "warmup_steps" in model_train_cfg:
+            try:
+                self.train_config.scheduler.warmup_steps = int(model_train_cfg["warmup_steps"])
+            except Exception:
+                pass
+
+        if "scheduler_name" in model_train_cfg:
+            try:
+                self.train_config.scheduler.name = str(model_train_cfg["scheduler_name"])
+            except Exception:
+                pass
+
+        if "scheduler" in model_train_cfg and getattr(self.train_config, "scheduler", None) is not None:
+            s = model_train_cfg["scheduler"]
+            if not isinstance(s, dict):
+                try:
+                    s = dict(vars(s))
+                except Exception:
+                    s = {}
+            try:
+                if "name" in s:
+                    self.train_config.scheduler.name = str(s["name"])
+                if "warmup_steps" in s:
+                    self.train_config.scheduler.warmup_steps = int(s["warmup_steps"])
+                if "warmup_type" in s:
+                    self.train_config.scheduler.warmup_type = str(s["warmup_type"])
+                if "warmup_ratio" in s:
+                    self.train_config.scheduler.warmup_ratio = float(s["warmup_ratio"])
+                if "min_lr_ratio" in s:
+                    self.train_config.scheduler.min_lr_ratio = float(s["min_lr_ratio"])
+                if "decay_steps" in s:
+                    self.train_config.scheduler.decay_steps = int(s["decay_steps"])
+            except Exception:
+                pass
         
         if "gradient_checkpointing" in model_train_cfg:
             self.train_config.gradient_checkpointing = model_train_cfg["gradient_checkpointing"]
@@ -258,6 +311,9 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         
         if "flash_attention" in model_train_cfg:
             self.train_config.flash_attention = model_train_cfg["flash_attention"]
+
+        if "packing" in model_train_cfg:
+            self.train_config.packing = bool(model_train_cfg["packing"])
         
         if "loss_type" in model_train_cfg:
             self.train_config.loss_type = model_train_cfg["loss_type"]
@@ -280,6 +336,68 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if "prefetch_factor" in model_train_cfg:
             self.train_config.data.prefetch_factor = model_train_cfg["prefetch_factor"]
         
+        if "distributed" in model_train_cfg:
+            dist = model_train_cfg["distributed"]
+            if "enabled" in dist:
+                self.train_config.distributed = dist["enabled"]
+            if "world_size" in dist:
+                self.train_config.world_size = dist["world_size"]
+            if "parallel_3d" in dist:
+                self.train_config.parallel_3d = dist["parallel_3d"]
+
+        # Nested configs for extreme memory control (QLoRA + LoRA)
+        if "quantization" in model_train_cfg and getattr(self.train_config, "quantization", None) is not None:
+            q = model_train_cfg["quantization"]
+            if not isinstance(q, dict):
+                try:
+                    q = dict(vars(q))
+                except Exception:
+                    q = {}
+            try:
+                if "enabled" in q:
+                    self.train_config.quantization.enable_quantization = bool(q["enabled"])
+                if "enable_quantization" in q:
+                    self.train_config.quantization.enable_quantization = bool(q["enable_quantization"])
+                if "method" in q:
+                    self.train_config.quantization.quant_method = str(q["method"])
+                if "quant_method" in q:
+                    self.train_config.quantization.quant_method = str(q["quant_method"])
+                if "bits" in q:
+                    self.train_config.quantization.bits = int(q["bits"])
+                if "group_size" in q:
+                    self.train_config.quantization.group_size = int(q["group_size"])
+                if "symmetric" in q:
+                    self.train_config.quantization.symmetric = bool(q["symmetric"])
+                if "enable_fp8_linear" in q:
+                    self.train_config.quantization.enable_fp8_linear = bool(q["enable_fp8_linear"])
+            except Exception:
+                pass
+
+        if "lora" in model_train_cfg and getattr(self.train_config, "lora", None) is not None:
+            l = model_train_cfg["lora"]
+            if not isinstance(l, dict):
+                try:
+                    l = dict(vars(l))
+                except Exception:
+                    l = {}
+            try:
+                if "enabled" in l:
+                    self.train_config.lora.enabled = bool(l["enabled"])
+                if "r" in l:
+                    self.train_config.lora.r = int(l["r"])
+                if "lora_alpha" in l:
+                    self.train_config.lora.lora_alpha = int(l["lora_alpha"])
+                if "lora_dropout" in l:
+                    self.train_config.lora.lora_dropout = float(l["lora_dropout"])
+                if "target_modules" in l:
+                    self.train_config.lora.target_modules = list(l["target_modules"]) if l["target_modules"] else None
+                if "bias" in l:
+                    self.train_config.lora.bias = str(l["bias"])
+                if "task_type" in l:
+                    self.train_config.lora.task_type = str(l["task_type"])
+            except Exception:
+                pass
+
         if "advanced_operators" in model_train_cfg:
             adv = model_train_cfg["advanced_operators"]
             if "moe_gradient" in adv:
@@ -292,23 +410,188 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 self.train_config.watermark = adv["watermark"]
             if "modality_scheduler" in adv:
                 self.train_config.modality_scheduler = adv["modality_scheduler"]
-        
+
         if "moe_gradient" in model_train_cfg:
             self.train_config.moe_gradient = model_train_cfg["moe_gradient"]
         if "kfac" in model_train_cfg:
             self.train_config.kfac = model_train_cfg["kfac"]
         if "multitask" in model_train_cfg:
             self.train_config.multitask = model_train_cfg["multitask"]
+        if "watermark" in model_train_cfg:
+            self.train_config.watermark = model_train_cfg["watermark"]
+        if "modality_scheduler" in model_train_cfg:
+            self.train_config.modality_scheduler = model_train_cfg["modality_scheduler"]
+
+    def _apply_flagship_memory_and_convergence_policy(self, model_cfg: Any, params: Dict[str, Any]) -> None:
+        if model_cfg is None:
+            return
+
+        q = getattr(self.train_config, "quantization", None)
+        l = getattr(self.train_config, "lora", None)
+        opt = getattr(self.train_config, "optimizer", None)
+        sch = getattr(self.train_config, "scheduler", None)
+
+        if q is not None:
+            q.enable_quantization = True
+            q.quant_method = "nf4"
+            q.bits = 4
+            if getattr(q, "group_size", None) is None:
+                q.group_size = 128
+
+        if l is not None:
+            l.enabled = True
+
+            hidden = int(getattr(model_cfg, "hidden_size", 0) or 0)
+            n_layer = int(getattr(model_cfg, "n_layer", 0) or 0)
+            scale = max(hidden, n_layer * 128)
+            if scale <= 1024:
+                r, alpha = 32, 64
+            elif scale <= 2048:
+                r, alpha = 64, 128
+            else:
+                r, alpha = 128, 256
+
+            l.r = int(getattr(l, "r", r) or r)
+            if int(l.r) < r:
+                l.r = int(r)
+            l.lora_alpha = int(getattr(l, "lora_alpha", alpha) or alpha)
+            if int(l.lora_alpha) < alpha:
+                l.lora_alpha = int(alpha)
+
+            targets = list(getattr(l, "target_modules", None) or [])
+            if not targets:
+                targets = [
+                    "q_proj",
+                    "k_proj",
+                    "v_proj",
+                    "o_proj",
+                    "gate_proj",
+                    "up_proj",
+                    "down_proj",
+                ]
+            else:
+                if "k_proj" not in targets:
+                    targets.append("k_proj")
+            l.target_modules = targets
+
+        if opt is not None:
+            opt.name = "adamw8bit"
+            if getattr(opt, "use_fp4", False):
+                opt.use_fp4 = False
+            if getattr(opt, "use_galore", False):
+                opt.use_galore = False
+
+        if sch is not None:
+            if str(getattr(sch, "name", "cosine") or "cosine").lower() not in {"cosine", "linear"}:
+                sch.name = "cosine"
+            if int(getattr(sch, "warmup_steps", 0) or 0) <= 0:
+                sch.warmup_steps = 100
+            sch.warmup_type = str(getattr(sch, "warmup_type", "exponential") or "exponential")
+            if float(getattr(sch, "min_lr_ratio", 0.0) or 0.0) <= 0.0:
+                sch.min_lr_ratio = 0.1
+
+        self.train_config.gradient_checkpointing = bool(getattr(self.train_config, "gradient_checkpointing", True))
+        self.train_config.mixed_precision = str(getattr(self.train_config, "mixed_precision", "bf16") or "bf16")
+        self.train_config.flash_attention = bool(getattr(self.train_config, "flash_attention", True))
+
+        save_steps = int(getattr(self.train_config, "save_steps", 1000) or 1000)
+        eval_steps = int(getattr(self.train_config, "eval_steps", 500) or 500)
+        if save_steps < 500:
+            self.train_config.save_steps = 2000
+        if eval_steps < 200:
+            self.train_config.eval_steps = 1000
+
+        if int(getattr(self.train_config, "log_steps", 0) or 0) <= 0:
+            self.train_config.log_steps = 10
+
+        try:
+            _LOG.info(
+                "Flagship policy applied",
+                quant_bits=int(getattr(self.train_config.quantization, "bits", 4) or 4),
+                quant_method=str(getattr(self.train_config.quantization, "quant_method", "nf4") or "nf4"),
+                lora_enabled=bool(getattr(self.train_config.lora, "enabled", False)),
+                lora_r=int(getattr(self.train_config.lora, "r", 0) or 0),
+                lora_alpha=int(getattr(self.train_config.lora, "lora_alpha", 0) or 0),
+                optimizer=str(getattr(self.train_config.optimizer, "name", "") or ""),
+                scheduler=str(getattr(self.train_config.scheduler, "name", "") or ""),
+                warmup_steps=int(getattr(self.train_config.scheduler, "warmup_steps", 0) or 0),
+                warmup_type=str(getattr(self.train_config.scheduler, "warmup_type", "") or ""),
+                min_lr_ratio=float(getattr(self.train_config.scheduler, "min_lr_ratio", 0.0) or 0.0),
+                grad_checkpointing=bool(getattr(self.train_config, "gradient_checkpointing", False)),
+                mixed_precision=str(getattr(self.train_config, "mixed_precision", "") or ""),
+                save_steps=int(getattr(self.train_config, "save_steps", 0) or 0),
+                eval_steps=int(getattr(self.train_config, "eval_steps", 0) or 0),
+            )
+        except Exception:
+            pass
+
+    def _apply_top_level_config(self, model_cfg: Any):
+        """
+        Apply top-level configuration from model config file.
         
-        # Apply GaLore configuration from model config
-        if "galore_enabled" in model_train_cfg:
-            self.train_config.optimizer.use_galore = model_train_cfg["galore_enabled"]
-        if "galore_rank" in model_train_cfg:
-            self.train_config.optimizer.galore_rank = model_train_cfg["galore_rank"]
-        if "galore_update_interval" in model_train_cfg:
-            self.train_config.optimizer.galore_update_proj_gap = model_train_cfg["galore_update_interval"]
+        Top-level configs like galore_enabled, use_h2o_attention, use_mla are
+        at the root level of the YAML file, not inside training_config.
         
-        _LOG.info("Applied training config from model config file")
+        Args:
+            model_cfg: YvConfig instance with all model parameters
+        """
+        if model_cfg is None:
+            return
+        
+        # Apply GaLore configuration from top-level
+        if hasattr(model_cfg, 'galore_enabled') and model_cfg.galore_enabled:
+            self.train_config.optimizer.use_galore = True
+            _LOG.info(f"GaLore enabled from top-level config: rank={getattr(model_cfg, 'galore_rank', 128)}")
+        
+        if hasattr(model_cfg, 'galore_rank'):
+            self.train_config.optimizer.galore_rank = model_cfg.galore_rank
+        if hasattr(model_cfg, 'galore_update_interval'):
+            self.train_config.optimizer.galore_update_proj_gap = model_cfg.galore_update_interval
+        if hasattr(model_cfg, 'galore_quantization_bits'):
+            self.train_config.optimizer.galore_quantization_bits = model_cfg.galore_quantization_bits
+        if hasattr(model_cfg, 'galore_lr_ratio'):
+            self.train_config.optimizer.galore_lr_ratio = model_cfg.galore_lr_ratio
+        if hasattr(model_cfg, 'galore_min_rank'):
+            self.train_config.optimizer.galore_min_rank = model_cfg.galore_min_rank
+        if hasattr(model_cfg, 'galore_max_rank'):
+            self.train_config.optimizer.galore_max_rank = model_cfg.galore_max_rank
+        if hasattr(model_cfg, 'galore_rank_adapt_interval'):
+            self.train_config.optimizer.galore_rank_adapt_interval = model_cfg.galore_rank_adapt_interval
+        if hasattr(model_cfg, 'galore_rank_adapt_threshold'):
+            self.train_config.optimizer.galore_rank_adapt_threshold = model_cfg.galore_rank_adapt_threshold
+        if hasattr(model_cfg, 'galore_memory_efficient'):
+            self.train_config.optimizer.galore_memory_efficient = model_cfg.galore_memory_efficient
+        if hasattr(model_cfg, 'galore_moe_expert_only'):
+            self.train_config.optimizer.galore_moe_expert_only = model_cfg.galore_moe_expert_only
+        
+        # Apply FP4 training configuration from top-level
+        if hasattr(model_cfg, 'use_fp4') and model_cfg.use_fp4:
+            self.train_config.optimizer.use_fp4 = True
+            _LOG.info(f"FP4 training enabled from top-level config: block_size={getattr(model_cfg, 'fp4_block_size', 16)}")
+        
+        if hasattr(model_cfg, 'fp4_block_size'):
+            self.train_config.optimizer.fp4_block_size = model_cfg.fp4_block_size
+        if hasattr(model_cfg, 'fp4_stochastic_rounding'):
+            self.train_config.optimizer.fp4_stochastic_rounding = model_cfg.fp4_stochastic_rounding
+        if hasattr(model_cfg, 'fp4_master_weights_dtype'):
+            self.train_config.optimizer.fp4_master_weights_dtype = model_cfg.fp4_master_weights_dtype
+        
+        # Apply gradient checkpointing from top-level
+        if hasattr(model_cfg, 'use_gradient_checkpointing'):
+            self.train_config.gradient_checkpointing = model_cfg.use_gradient_checkpointing
+        
+        # Apply mixed precision from top-level (if not set in training_config)
+        if hasattr(model_cfg, 'mixed_precision') and not hasattr(self.train_config, 'mixed_precision'):
+            self.train_config.mixed_precision = model_cfg.mixed_precision
+        
+        # Log H2O and MLA status (these are used by model, not training engine)
+        if hasattr(model_cfg, 'use_h2o_attention') and model_cfg.use_h2o_attention:
+            _LOG.info("H2O Attention enabled in model config - will reduce KV cache memory")
+        
+        if hasattr(model_cfg, 'use_mla') and model_cfg.use_mla:
+            _LOG.info(f"MLA enabled in model config - KV compression rank={getattr(model_cfg, 'kv_lora_rank', 512)}")
+        
+        _LOG.info("Applied top-level config from model config file")
 
     def _apply_training_moe_overrides_to_model_config(self, model_cfg: Any) -> Any:
         moe_cfg = getattr(self.train_config, "moe", None)
@@ -500,12 +783,29 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if model_cfg_path is None:
             raise FileNotFoundError(f"Model config not found for model_size='{model_size}'")
 
+        raw_model_cfg: Dict[str, Any] = {}
+        try:
+            with open(model_cfg_path, "r", encoding="utf-8") as f:
+                raw_model_cfg = yaml.safe_load(f) or {}
+        except Exception:
+            raw_model_cfg = {}
+
         model_cfg = YvConfig.from_yaml(str(model_cfg_path))
 
         self._seed_training_moe_defaults_from_model_config(model_cfg)
 
-        if hasattr(model_cfg, 'training_config') and model_cfg.training_config:
-            self._apply_model_training_config(model_cfg.training_config)
+        # Apply top-level config (galore_enabled, use_h2o_attention, etc.)
+        self._apply_top_level_config(model_cfg)
+
+        # Apply training_config from raw YAML. Do not rely on YvConfig having a training_config field,
+        # because YvConfig.from_yaml filters unknown keys.
+        try:
+            if isinstance(raw_model_cfg, dict) and raw_model_cfg.get("training_config"):
+                self._apply_model_training_config(raw_model_cfg.get("training_config"))
+            elif hasattr(model_cfg, "training_config") and getattr(model_cfg, "training_config"):
+                self._apply_model_training_config(getattr(model_cfg, "training_config"))
+        except Exception:
+            pass
         
         if self.stage is not None:
             self.train_config.load_stage_config(self.stage)
@@ -517,6 +817,8 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             self.train_config.apply_cli_overrides(params)
         except Exception:
             pass
+
+        self._apply_flagship_memory_and_convergence_policy(model_cfg, params)
 
         model_cfg = self._apply_training_moe_overrides_to_model_config(model_cfg)
         
@@ -565,9 +867,8 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if dl_kwargs["num_workers"] > 0:
             dl_kwargs["prefetch_factor"] = int(getattr(self.train_config.data, "prefetch_factor", 2))
 
-        model_cfg = YvConfig.from_yaml(str(model_cfg_path))
-        self._seed_training_moe_defaults_from_model_config(model_cfg)
-        model_cfg = self._apply_training_moe_overrides_to_model_config(model_cfg)
+        # Do not reload model_cfg here; keep the same instance to avoid
+        # desynchronizing applied training_config and model-level overrides.
 
         resume_from = str(params.get("resume_ckpt") or "").strip() or None
         epochs = 1
@@ -691,6 +992,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         from opss.train.pref_align import PPOConfig, POPSSPreferenceAlignmentOperator
 
         cfg = YvConfig.from_yaml(str(model_cfg_path))
+        self._apply_top_level_config(cfg)
         cfg = self._apply_training_moe_overrides_to_model_config(cfg)
         model = YvModel(cfg)
         try:
@@ -826,6 +1128,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         from model import YvConfig, YvModel
         cfg = YvConfig.from_yaml(str(model_cfg_path))
+        self._apply_top_level_config(cfg)
         cfg = self._apply_training_moe_overrides_to_model_config(cfg)
         model = YvModel(cfg)
 
@@ -1090,42 +1393,79 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         from torch.utils.data import Dataset, DataLoader
 
         class PiscesLxJsonlTextDataset(Dataset):
-            def __init__(self, samples: List[str], seq_len: int, tokenizer: Optional[Any] = None):
+            def __init__(self, samples: List[str], seq_len: int, tokenizer: Optional[Any] = None, packing: bool = False):
                 self.samples = samples
                 self.seq_len = seq_len
                 self.tokenizer = tokenizer
+                self.packing = bool(packing and self.tokenizer is not None and self.seq_len > 0)
+                self.pad_id = int(getattr(self.tokenizer, "pad_token_id", 0) or 0) if self.tokenizer is not None else 0
+                self._packed = None
+                if self.packing:
+                    self._packed = self._build_packed()
+
+            def _encode_text(self, text: str) -> List[int]:
+                enc = self.tokenizer(
+                    text,
+                    add_special_tokens=False,
+                    return_attention_mask=False,
+                    return_tensors=None
+                )
+                ids = enc.get("input_ids", [])
+                if isinstance(ids, list) and ids and isinstance(ids[0], list):
+                    ids = ids[0]
+                return list(ids) if ids is not None else []
+
+            def _build_packed(self) -> List[List[int]]:
+                eos_id = getattr(self.tokenizer, "eos_token_id", None)
+                if eos_id is None:
+                    eos_id = getattr(self.tokenizer, "sep_token_id", None)
+                packed = []
+                buffer: List[int] = []
+                for text in self.samples:
+                    ids = self._encode_text(text)
+                    if eos_id is not None:
+                        ids = ids + [int(eos_id)]
+                    if not ids:
+                        continue
+                    buffer.extend(ids)
+                    while len(buffer) >= self.seq_len:
+                        packed.append(buffer[: self.seq_len])
+                        buffer = buffer[self.seq_len :]
+                if buffer:
+                    pad_len = self.seq_len - len(buffer)
+                    packed.append(buffer + [self.pad_id] * pad_len)
+                return packed
 
             def __len__(self):
+                if self.packing and self._packed is not None:
+                    return len(self._packed)
                 return len(self.samples)
 
             def __getitem__(self, idx: int):
+                if self.packing and self._packed is not None:
+                    ids = self._packed[idx]
+                    input_ids = torch.tensor(ids, dtype=torch.long)
+                    attention_mask = (input_ids != self.pad_id).to(torch.long)
+                    labels = input_ids.clone()
+                    labels[labels == self.pad_id] = -100
+                    return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
+
                 text = self.samples[idx]
                 if self.tokenizer is not None:
-                    enc = self.tokenizer(
-                        text,
-                        max_length=self.seq_len,
-                        padding="max_length",
-                        truncation=True,
-                        return_tensors="pt",
-                    )
-                    input_ids = enc["input_ids"].squeeze(0)
-                    attention_mask = enc["attention_mask"].squeeze(0)
-                    pad_id = getattr(self.tokenizer, "pad_token_id", 0) or 0
-                else:
-                    tokens = text.strip().split()
-                    import hashlib
-                    ids = []
-                    for t in tokens[: self.seq_len]:
-                        h = hashlib.md5(t.encode("utf-8")).digest()
-                        ids.append(int.from_bytes(h[:4], "little") % 32000 + 1)
-                    pad_id = 0
-                    if len(ids) < self.seq_len:
-                        ids = ids + [pad_id] * (self.seq_len - len(ids))
-                    input_ids = torch.tensor(ids, dtype=torch.long)
-                    attention_mask = (input_ids != pad_id).to(torch.long)
+                    return {"text": text}
 
+                tokens = text.strip().split()
+                import hashlib
+                ids = []
+                for t in tokens[: self.seq_len]:
+                    h = hashlib.md5(t.encode("utf-8")).digest()
+                    ids.append(int.from_bytes(h[:4], "little") % 32000 + 1)
+                if len(ids) < self.seq_len:
+                    ids = ids + [self.pad_id] * (self.seq_len - len(ids))
+                input_ids = torch.tensor(ids, dtype=torch.long)
+                attention_mask = (input_ids != self.pad_id).to(torch.long)
                 labels = input_ids.clone()
-                labels[labels == pad_id] = -100
+                labels[labels == self.pad_id] = -100
                 return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
 
         samples = self._load_text_samples(split=split)
@@ -1133,16 +1473,51 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             raise ValueError(f"No dataset samples available for split='{split}'. Configure TrainingConfig.data.datasets or pass dataloader factories.")
 
         tokenizer = getattr(self.trainer, "tokenizer", None) if self.trainer is not None else None
-        dataset = PiscesLxJsonlTextDataset(samples, seq_len=self.train_config.data.sequence_length, tokenizer=tokenizer)
+        dataset = PiscesLxJsonlTextDataset(
+            samples,
+            seq_len=self.train_config.data.sequence_length,
+            tokenizer=tokenizer,
+            packing=bool(getattr(self.train_config, "packing", False))
+        )
+
+        def _collate_fn(batch_items: List[Dict[str, Any]]):
+            if not batch_items:
+                return {}
+            if "input_ids" in batch_items[0]:
+                input_ids = torch.stack([b["input_ids"] for b in batch_items], dim=0)
+                attention_mask = torch.stack([b["attention_mask"] for b in batch_items], dim=0)
+                labels = torch.stack([b["labels"] for b in batch_items], dim=0)
+                return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
+
+            if tokenizer is not None and "text" in batch_items[0]:
+                texts = [b.get("text", "") for b in batch_items]
+                enc = tokenizer(
+                    texts,
+                    max_length=self.train_config.data.sequence_length,
+                    padding="max_length",
+                    truncation=True,
+                    return_tensors="pt",
+                )
+                input_ids = enc["input_ids"]
+                attention_mask = enc["attention_mask"]
+                pad_id = int(getattr(tokenizer, "pad_token_id", 0) or 0)
+                labels = input_ids.clone()
+                labels[labels == pad_id] = -100
+                return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
+
+            return {}
+
         dl_kwargs = {
             "batch_size": self.train_config.data.batch_size,
             "shuffle": (split == "train"),
             "num_workers": self.train_config.data.num_workers,
             "pin_memory": self.train_config.data.pin_memory,
             "drop_last": (split == "train"),
+            "collate_fn": _collate_fn,
         }
         if self.train_config.data.num_workers > 0:
             dl_kwargs["prefetch_factor"] = self.train_config.data.prefetch_factor
+            dl_kwargs["persistent_workers"] = True
         return DataLoader(dataset, **dl_kwargs)
 
     def _load_text_samples(self, split: str) -> List[str]:

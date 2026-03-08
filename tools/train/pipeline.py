@@ -300,6 +300,9 @@ class TrainingPipelineOperator(PiscesLxTransformOperator):
         
         _LOG.info(f"Starting epoch {epoch}")
         self.execute_callbacks('epoch_start', epoch=epoch)
+
+        last_saved_step = -1
+        last_eval_step = -1
         
         for batch_idx, batch in enumerate(dataloader):
             step_result = self.trainer.train_step(batch)
@@ -314,16 +317,24 @@ class TrainingPipelineOperator(PiscesLxTransformOperator):
                                  step_result=step_result)
             
             if batch_idx % self.train_config.log_steps == 0:
+                token_tp = step_result.get('token_throughput', None)
                 _LOG.info(
                     f"Epoch {epoch}, Batch {batch_idx}: "
                     f"Loss={step_result['loss']:.4f}, "
                     f"LR={step_result['learning_rate']:.2e}, "
                     f"Throughput={step_result['throughput']:.2f} samples/sec"
+                    + (f", Tokens/s={float(token_tp):.0f}" if token_tp is not None else "")
                 )
             
-            if self.trainer.global_step % self.train_config.save_steps == 0:
+            if (
+                self.trainer.global_step > 0
+                and self.train_config.save_steps > 0
+                and (self.trainer.global_step % self.train_config.save_steps == 0)
+                and (self.trainer.global_step != last_saved_step)
+            ):
                 checkpoint_path = Path(self.train_config.output_dir) / f"checkpoint_step_{self.trainer.global_step}.pt"
                 self.trainer.save_checkpoint(str(checkpoint_path))
+                last_saved_step = int(self.trainer.global_step)
                 _LOG.info(f"Checkpoint saved at step {self.trainer.global_step}")
                 self.execute_callbacks(
                     'checkpoint_saved',
@@ -331,7 +342,13 @@ class TrainingPipelineOperator(PiscesLxTransformOperator):
                     global_step=self.trainer.global_step,
                 )
             
-            if self.trainer.global_step % self.train_config.eval_steps == 0:
+            if (
+                self.trainer.global_step > 0
+                and self.train_config.eval_steps > 0
+                and (self.trainer.global_step % self.train_config.eval_steps == 0)
+                and (self.trainer.global_step != last_eval_step)
+            ):
+                last_eval_step = int(self.trainer.global_step)
                 self.execute_callbacks('evaluation_start', global_step=self.trainer.global_step)
         
         if epoch_stats['batch_count'] > 0:

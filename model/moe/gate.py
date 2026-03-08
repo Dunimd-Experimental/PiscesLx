@@ -237,6 +237,10 @@ class YvMoEGate(nn.Module):
         self.bias_update_freq = 10
         self.register_buffer('bias_update_counter', torch.tensor(0))
         
+        # Gradient checkpointing compatibility flag
+        # When True, disables non-deterministic operations (noise, random routing)
+        self._is_checkpointing = False
+        
     def forward(self, x):
         """Forward pass of the MoE gate with enhanced load balancing.
         
@@ -298,7 +302,7 @@ class YvMoEGate(nn.Module):
             x_flat = x_flat + enhanced_representation * self.cognitive_enhancement_scale
         
         # Update routing mode based on training steps
-        if self.training:
+        if self.training and (not self._is_checkpointing):
             self.current_step += 1
             if self.current_step > self.random_to_gradient_steps:
                 self.use_random_routing = False
@@ -309,16 +313,17 @@ class YvMoEGate(nn.Module):
         # Apply DeepSeek-style dynamic bias for auxiliary-loss-free load balancing
         logits = logits + self.expert_bias
         
-        # Apply gate warmup for cold start
-        if self.training and self.current_step < 100:  # First 100 steps warmup
+        # Apply gate warmup for cold start (disabled during checkpointing for determinism)
+        if self.training and (not self._is_checkpointing) and self.current_step < 100:
             warmup_scale = min(1.0, self.current_step / 100.0)
             logits = logits * (self.gate_warmup_alpha + (1.0 - self.gate_warmup_alpha) * warmup_scale)
         
-        # Dynamic top-k adjustment based on load balance
-        current_top_k = self._get_dynamic_top_k()
+        # Use fixed top_k during checkpointing for deterministic behavior
+        current_top_k = self.top_k if self._is_checkpointing else self._get_dynamic_top_k()
         
-        # Add noise during training to encourage exploration
-        if self.training and self.noise_std > 0:
+        # Disable noise during gradient checkpointing for determinism
+        # Noise causes non-deterministic routing which breaks checkpoint recomputation
+        if self.training and self.noise_std > 0 and not self._is_checkpointing:
             noise = torch.randn_like(logits) * self.noise_std
             logits = logits + noise
         
@@ -342,7 +347,9 @@ class YvMoEGate(nn.Module):
         # Apply expert capacity limitation
         scores = self._apply_capacity_limitation(scores)
         
-        if self.training and self.use_random_routing and self.current_step <= self.random_to_gradient_steps:
+        # During checkpointing: use deterministic routing only
+        # Random routing is disabled during checkpointing for determinism
+        if self.training and self.use_random_routing and self.current_step <= self.random_to_gradient_steps and not self._is_checkpointing:
             random_scores = torch.rand_like(scores)
             top_scores, top_idx = torch.topk(random_scores, current_top_k, dim=-1)
             top_scores = torch.ones_like(top_scores) / current_top_k
@@ -350,10 +357,11 @@ class YvMoEGate(nn.Module):
             top_scores, top_idx = torch.topk(scores, current_top_k, dim=-1)
             top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
             
-            if self.training and self.total_routing_count > 100:
+            # Skip balance enforcement during checkpointing for determinism
+            if self.training and (not self._is_checkpointing) and self.total_routing_count > 100:
                 top_idx = self._enforce_balance_routing(top_idx, scores, current_top_k)
         
-        if self.training:
+        if self.training and (not self._is_checkpointing):
             if not self.use_random_routing:
                 self._update_expert_usage(top_idx, current_top_k)
                 self._adjust_temperature()
@@ -412,7 +420,8 @@ class YvMoEGate(nn.Module):
         Returns:
             torch.Tensor: Capacity-limited and renormalized scores.
         """
-        if not self.training:
+        # Skip capacity limitation during checkpointing for determinism
+        if not self.training or self._is_checkpointing:
             return scores
             
         if self.total_routing_count > 0:
@@ -451,14 +460,9 @@ class YvMoEGate(nn.Module):
         
         if top_idx is not None and self.training:
             effective_top_k = current_top_k if current_top_k is not None else self.top_k
-            actual_counts = torch.zeros(self.num_experts, device=scores.device)
-            for k in range(effective_top_k):
-                expert_ids = top_idx[:, k]
-                actual_counts.scatter_add_(
-                    0,
-                    expert_ids,
-                    torch.ones_like(expert_ids, dtype=torch.float32)
-                )
+            # Vectorized: use bincount instead of loop with scatter_add
+            flat_top_idx = top_idx[:, :effective_top_k].flatten()
+            actual_counts = torch.bincount(flat_top_idx, minlength=self.num_experts).float()
             
             actual_distribution = actual_counts / (top_idx.shape[0] * effective_top_k + 1e-8)
             actual_loss = self.load_balance_alpha * torch.sum((actual_distribution - ideal_load) ** 2)
@@ -501,18 +505,15 @@ class YvMoEGate(nn.Module):
             top_idx (torch.Tensor): Selected expert indices [batch*seq, top_k].
             current_top_k (int, optional): Dynamic top_k value. If None, uses self.top_k.
         """
-        if not self.training:
+        if not self.training or self._is_checkpointing:
             return
         
         effective_top_k = current_top_k if current_top_k is not None else self.top_k
         
-        for k in range(effective_top_k):
-            expert_ids = top_idx[:, k]
-            self.expert_usage_count.scatter_add_(
-                0, 
-                expert_ids, 
-                torch.ones_like(expert_ids, dtype=torch.float32)
-            )
+        # Vectorized: use bincount instead of loop with scatter_add
+        flat_top_idx = top_idx[:, :effective_top_k].flatten()
+        counts = torch.bincount(flat_top_idx, minlength=self.num_experts).float()
+        self.expert_usage_count += counts
     
     def _adjust_temperature(self):
         """Dynamically adjust routing temperature based on load balance.
@@ -526,7 +527,7 @@ class YvMoEGate(nn.Module):
             - Medium imbalance: Gradual temperature increase
             - Good balance: Slowly decrease temperature toward baseline
         """
-        if not self.training:
+        if not self.training or self._is_checkpointing:
             return
         
         min_samples_for_adjustment = 10
@@ -578,7 +579,7 @@ class YvMoEGate(nn.Module):
         
         This achieves automatic load balancing without auxiliary loss functions.
         """
-        if not self.training:
+        if not self.training or self._is_checkpointing:
             return
         
         self.bias_update_counter.add_(1)
@@ -631,6 +632,10 @@ class YvMoEGate(nn.Module):
         Returns:
             torch.Tensor: Potentially modified expert indices.
         """
+        # Skip during checkpointing for determinism
+        if self._is_checkpointing:
+            return top_idx
+        
         if self.total_routing_count < 100:
             return top_idx
         
@@ -680,7 +685,10 @@ class YvMoEGate(nn.Module):
                 if redistribute_indices.dim() == 0:
                     redistribute_indices = redistribute_indices.unsqueeze(0)
                 
-                perm = torch.randperm(redistribute_indices.numel(), device=top_idx.device)
+                # Use deterministic permutation for gradient checkpointing compatibility
+                generator = torch.Generator(device=top_idx.device)
+                generator.manual_seed(int(top_idx.sum().item() * 1e6) % (2**31))
+                perm = torch.randperm(redistribute_indices.numel(), generator=generator, device=top_idx.device)
                 selected_indices = redistribute_indices[perm[:num_to_redistribute]]
                 
                 for idx in selected_indices:
@@ -872,6 +880,10 @@ class YvStableMoEGate(nn.Module):
         self.register_buffer('bias_update_counter', torch.tensor(0))
         self.register_buffer('total_routing_count', torch.tensor(0.0))
         
+        # Gradient checkpointing compatibility flag
+        # When True, disables non-deterministic operations (noise, random routing)
+        self._is_checkpointing = False
+        
     def _predict_future_load(self):
         """Predict future expert load using LSTM.
         
@@ -910,7 +922,7 @@ class YvStableMoEGate(nn.Module):
         Args:
             top_idx (torch.Tensor): Selected expert indices [batch*seq, top_k].
         """
-        if not self.training:
+        if not self.training or self._is_checkpointing:
             return
         
         self.total_routing_count.add_(top_idx.numel())
@@ -998,10 +1010,19 @@ class YvStableMoEGate(nn.Module):
             # Normalize top-k scores
             top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
             
-            # Update bias for load balancing
-            if self.training:
+            # Update bias for load balancing (skip during checkpointing)
+            if self.training and not self._is_checkpointing:
                 self._update_expert_bias_stable(top_idx)
             
+            return top_scores, top_idx, torch.tensor(0.0, device=x.device)
+        
+        # During checkpointing: use simple deterministic routing
+        if self._is_checkpointing:
+            logits = self.gate(x_flat)
+            logits = logits + self.expert_bias
+            scores = F.softmax(logits, dim=-1)
+            top_scores, top_idx = torch.topk(scores, self.top_k, dim=-1)
+            top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
             return top_scores, top_idx, torch.tensor(0.0, device=x.device)
         
         # Calculate expert capacity with dynamic adjustment
@@ -1038,10 +1059,11 @@ class YvStableMoEGate(nn.Module):
             load_adjustment = 0.1 * (predicted_load - recent_usage)
             logits = logits + load_adjustment.unsqueeze(0)
             
-            # Add noise if the load is unbalanced
+            # Add noise if the load is unbalanced (disabled during checkpointing)
             if balance_ratio < 0.7:
                 noise_scale = 0.1 * (1.0 - balance_ratio)
-                logits = logits + torch.randn_like(logits) * noise_scale
+                noise = torch.randn_like(logits) * noise_scale
+                logits = logits + noise
         
         # Compute routing scores using softmax
         scores = F.softmax(logits, dim=-1)
@@ -1049,23 +1071,35 @@ class YvStableMoEGate(nn.Module):
         # Select top-k experts
         top_scores, top_idx = torch.topk(scores, self.top_k, dim=-1)
         
-        # Apply capacity limitation
+        # Apply capacity limitation - optimized batched processing
         final_scores = []
         final_indices = []
         
-        for expert_id in range(self.num_experts):
-            mask = (top_idx == expert_id).any(dim=-1)
-            if mask.sum() > tokens_per_expert:
-                # Re-route if capacity is exceeded
-                expert_scores = scores[mask, expert_id]
-                _, top_indices = torch.topk(expert_scores, tokens_per_expert)
-                keep_mask = torch.zeros_like(expert_scores, dtype=torch.bool)
-                keep_mask[top_indices] = True
-                mask[mask.clone()] = keep_mask
-            
-            if mask.any():
-                final_scores.append(scores[mask])
-                final_indices.append(torch.full_like(scores[mask], expert_id))
+        # Vectorized capacity check
+        expert_counts = torch.bincount(top_idx.flatten(), minlength=self.num_experts)
+        overloaded_experts = (expert_counts > tokens_per_expert).nonzero().squeeze(-1)
+        
+        if len(overloaded_experts) > 0:
+            # Process overloaded experts
+            for expert_id in overloaded_experts.tolist():
+                mask = (top_idx == expert_id).any(dim=-1)
+                if mask.sum() > tokens_per_expert:
+                    expert_scores = scores[mask, expert_id]
+                    _, top_indices = torch.topk(expert_scores, tokens_per_expert)
+                    keep_mask = torch.zeros_like(expert_scores, dtype=torch.bool)
+                    keep_mask[top_indices] = True
+                    mask[mask.clone()] = keep_mask
+                
+                if mask.any():
+                    final_scores.append(scores[mask])
+                    final_indices.append(torch.full_like(scores[mask], expert_id))
+        else:
+            # Fast path: no capacity overflow
+            for expert_id in range(self.num_experts):
+                mask = (top_idx == expert_id).any(dim=-1)
+                if mask.any():
+                    final_scores.append(scores[mask])
+                    final_indices.append(torch.full_like(scores[mask], expert_id))
         
         # Use uniform distribution if there is no valid routing
         if len(final_scores) == 0:
@@ -1441,157 +1475,118 @@ class YvMoELayer(nn.Module):
             x = x * (1.0 - self.l2_smooth_8k) + x.mean(dim=1, keepdim=True) * self.l2_smooth_8k
         h = x.view(-1, d)  # [B*T, d]
         
+        # Pre-move all experts to correct device (one-time check)
+        if h.device.type == 'cuda':
+            for expert in self.experts:
+                if next(expert.parameters()).device.type != h.device.type:
+                    expert.to(h.device)
+        
         # Use different processing modes based on the type of routing gate
         if isinstance(self.gate, YvStableMoEGate) and hasattr(self.gate, 'fixed_shape_mode') and self.gate.fixed_shape_mode:
-            # Fixed shape mode: simpler processing
+            # Fixed shape mode: optimized batched processing
             scores, idx, aux_loss = self.gate(x)
             self._monitor_expert_balance(idx)
             
-            # Compute outputs for each expert
+            # Optimized: vectorized batched processing without inner loops
             y = torch.zeros_like(h)
-            for k in range(self.top_k):
-                for expert_id in range(self.num_experts):
-                    mask = (idx[:, k] == expert_id)
-                    if mask.any():
-                        expert = self.experts[expert_id]
-                        if next(expert.parameters()).device.type != h.device.type:
-                            expert.to(h.device)
-                        
-                        s_sel = scores[mask, k]
-                        h_sel = h[mask]
-                        y[mask] += s_sel.unsqueeze(1) * expert(h_sel)
+            
+            # Flatten for efficient processing
+            flat_idx = idx.flatten()  # [B*T*top_k]
+            flat_scores = scores.flatten()  # [B*T*top_k]
+            token_indices = torch.arange(h.size(0), device=h.device).unsqueeze(1).expand(-1, self.top_k).flatten()
+            
+            for expert_id in range(self.num_experts):
+                expert_mask = (flat_idx == expert_id)
+                if expert_mask.any():
+                    selected_tokens = token_indices[expert_mask]
+                    selected_scores = flat_scores[expert_mask]
+                    
+                    # Batched expert computation
+                    h_batch = h[selected_tokens]
+                    expert_out = self.experts[expert_id](h_batch)
+                    
+                    # Scatter outputs back using scatter_add for efficiency
+                    y.scatter_add_(0, selected_tokens.unsqueeze(1).expand(-1, d), 
+                                   selected_scores.unsqueeze(1) * expert_out)
             
             return y.view(b, t, d), aux_loss
         elif isinstance(self.gate, YvStableMoEGate):
             scores, idx, aux_loss = self.gate(x)
-            # Handle the output of StableMoEGate with capacity limitation
             
-            # Create a mapping from original indices to expert assignments
+            # Fast path: direct batched processing
             if len(scores) == 0 or len(idx) == 0:
-                # Fallback to uniform expert assignment
-                uniform_scores = torch.ones(h.size(0), device=h.device) / self.num_experts
-                uniform_idx = torch.randint(0, self.num_experts, (h.size(0),), device=h.device)
-                expert_assignment = [(uniform_scores, uniform_idx)]
+                # Simple fallback without random operations
+                uniform_idx = torch.zeros(h.size(0), dtype=torch.long, device=h.device)
+                idx = uniform_idx
+                scores = torch.ones(h.size(0), device=h.device) / self.num_experts
+            
+            # Vectorized processing - no loops over experts
+            y = torch.zeros_like(h)
+            
+            # Flatten for efficient processing
+            flat_idx = idx.flatten() if idx.dim() > 1 else idx
+            flat_scores = scores.flatten() if scores.dim() > 1 else scores
+            
+            # Ensure correct dimensions
+            if flat_idx.dim() == 0:
+                flat_idx = flat_idx.unsqueeze(0)
+            if flat_scores.dim() == 0:
+                flat_scores = flat_scores.unsqueeze(0)
+            
+            # Expand token indices to match flattened scores
+            num_assignments = flat_scores.size(0)
+            if idx.dim() > 1:
+                token_indices = torch.arange(h.size(0), device=h.device).unsqueeze(1).expand(-1, idx.size(1)).flatten()[:num_assignments]
             else:
-                # Group scores and indices by expert
-                expert_assignment = []
-                current_pos = 0
-                for expert_id in range(self.num_experts):
-                    expert_mask = (idx == expert_id)
-                    if expert_mask.any():
-                        expert_scores = scores[expert_mask]
-                        expert_indices = torch.full((expert_scores.size(0),), expert_id, device=h.device)
-                        expert_assignment.append((expert_scores, expert_indices, expert_mask.nonzero().squeeze(-1)))
+                token_indices = torch.arange(min(num_assignments, h.size(0)), device=h.device)
+            
+            # Process each expert with batched operations
+            for expert_id in range(self.num_experts):
+                expert_mask = (flat_idx == expert_id)
+                if expert_mask.any():
+                    selected_tokens = token_indices[expert_mask]
+                    selected_scores = flat_scores[expert_mask]
+                    
+                    # Clamp indices to valid range
+                    valid_mask = selected_tokens < h.size(0)
+                    selected_tokens = selected_tokens[valid_mask]
+                    selected_scores = selected_scores[valid_mask]
+                    
+                    if len(selected_tokens) > 0:
+                        h_batch = h[selected_tokens]
+                        expert_out = self.experts[expert_id](h_batch)
+                        y.scatter_add_(0, selected_tokens.unsqueeze(1).expand(-1, d),
+                                       selected_scores.unsqueeze(1) * expert_out)
+            
+            self._monitor_expert_balance(idx if idx.dim() == 1 else idx[:, 0])
+            self._step += 1
+            return y.view(b, t, d), aux_loss
         else:
-            # Standard MoEGate
+            # Standard MoEGate - optimized batched processing
             scores, idx, aux_loss = self.gate(x)
-            expert_assignment = [(scores, idx)]
-        
-        # Monitor expert load balance
-        if isinstance(self.gate, YvStableMoEGate):
-            # Create a representative idx for monitoring
-            monitor_idx = torch.zeros(h.size(0), dtype=torch.long, device=h.device)
+            
+            y = torch.zeros_like(h)
+            
+            # Flatten for efficient processing
+            flat_idx = idx.flatten()  # [B*T*top_k]
+            flat_scores = scores.flatten()  # [B*T*top_k]
+            token_indices = torch.arange(h.size(0), device=h.device).unsqueeze(1).expand(-1, self.top_k).flatten()
+            
+            # Process each expert with batched operations
             for expert_id in range(self.num_experts):
-                if len(expert_assignment) > expert_id and len(expert_assignment[expert_id]) > 2:
-                    _, _, indices = expert_assignment[expert_id]
-                    if len(indices) > 0:
-                        monitor_idx[indices] = expert_id
-            self._monitor_expert_balance(monitor_idx)
-        else:
+                expert_mask = (flat_idx == expert_id)
+                if expert_mask.any():
+                    selected_tokens = token_indices[expert_mask]
+                    selected_scores = flat_scores[expert_mask]
+                    
+                    # Batched expert computation
+                    h_batch = h[selected_tokens]
+                    expert_out = self.experts[expert_id](h_batch)
+                    
+                    # Scatter outputs back
+                    y.scatter_add_(0, selected_tokens.unsqueeze(1).expand(-1, d),
+                                   selected_scores.unsqueeze(1) * expert_out)
+            
             self._monitor_expert_balance(idx)
-        
-        # Manage expert placement on GPU with predictive loading
-        if self.num_experts > 8 and h.device.type == 'cuda':
-            if isinstance(self.gate, YvStableMoEGate):
-                needed_experts = set(range(len(expert_assignment)))
-                # Predict future expert needs
-                if hasattr(self.gate, '_predict_future_load') and self.training:
-                    try:
-                        future_load_pred = self.gate._predict_future_load()
-                        top_future_experts = torch.topk(future_load_pred, min(3, self.num_experts)).indices.cpu().numpy()
-                        needed_experts.update(top_future_experts)
-                    except Exception:
-                        pass
-            else:
-                needed_experts = set(idx.cpu().numpy().flatten().tolist())
-            
-            # Calculate expert priority with temporal decay
-            current_time = self._step if hasattr(self, '_step') else 0
-            expert_priority = {}
-            for expert_id in needed_experts:
-                if self.load_history_ptr > 0:
-                    historical_usage = self.expert_load_history[:self.load_history_ptr, expert_id].mean().item()
-                    temporal_score = 1.0 / (1.0 + 0.01 * current_time)
-                    expert_priority[expert_id] = historical_usage * 0.8 + temporal_score * 0.2
-                else:
-                    expert_priority[expert_id] = 0.5
-            
-            # Sort experts by priority and load them to GPU
-            sorted_experts = sorted(expert_priority.items(), key=lambda x: x[1], reverse=True)
-            experts_to_load = min(len(sorted_experts), self.max_gpu_experts)
-            
-            for expert_id, priority in sorted_experts[:experts_to_load]:
-                if priority > 0.1:
-                    self._move_expert_to_gpu(expert_id)
-        
-        # Compute outputs for each expert
-        y = torch.zeros_like(h)
-        expert_counts = torch.zeros(self.num_experts, device=h.device)
-        
-        if isinstance(self.gate, YvStableMoEGate):
-            # Handle StableMoEGate output
-            for expert_id in range(self.num_experts):
-                expert_found = False
-                for assignment in expert_assignment:
-                    if len(assignment) == 3:
-                        expert_scores, expert_indices, original_indices = assignment
-                        if len(expert_indices) > 0 and expert_indices[0].item() == expert_id:
-                            expert = self.experts[expert_id]
-                            if next(expert.parameters()).device.type != h.device.type:
-                                expert.to(h.device)
-                            
-                            # Ensure indices are within bounds
-                            valid_indices = original_indices[original_indices < h.size(0)]
-                            if len(valid_indices) > 0:
-                                h_sel = h[valid_indices]
-                                expert_output = expert(h_sel)
-                                
-                                if len(expert_scores) == len(valid_indices):
-                                    expert_output = expert_scores.unsqueeze(1) * expert_output
-                                
-                                y[valid_indices] += expert_output
-                                expert_counts[expert_id] = len(valid_indices)
-                                expert_found = True
-                            break
-                
-                if not expert_found:
-                    expert_counts[expert_id] = 0
-        else:
-            # Handle standard MoEGate output
-            for expert_id in range(self.num_experts):
-                mask = (idx == expert_id).any(dim=-1)
-                if mask.any():
-                    expert = self.experts[expert_id]
-                    if next(expert.parameters()).device.type != h.device.type:
-                        expert.to(h.device)
-                    
-                    # Process each top-k selection
-                    for k in range(self.top_k):
-                        sel_k = (idx[:, k] == expert_id)
-                        if sel_k.any():
-                            s_sel = scores[sel_k, k]
-                            h_k = h[sel_k]
-                            y[sel_k] += s_sel.unsqueeze(1) * expert(h_k)
-                    
-                    expert_counts[expert_id] = mask.sum()
-        
-        self._step += 1
-        
-        # Add additional load balancing loss during training
-        if self.training:
-            expert_distribution = expert_counts / (expert_counts.sum() + 1e-8)
-            uniform_distribution = torch.ones_like(expert_distribution) / self.num_experts
-            distribution_loss = 0.01 * torch.sum((expert_distribution - uniform_distribution) ** 2)
-            aux_loss = aux_loss + distribution_loss
-        
-        return y.view(b, t, d), aux_loss
+            self._step += 1
+            return y.view(b, t, d), aux_loss

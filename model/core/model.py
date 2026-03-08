@@ -1470,10 +1470,6 @@ class YvModel(nn.Module):
             cache_dtype = torch.float32
             cache_quant_bits = 16
 
-        # Ensure CUDA is initialized before any operations
-        if x.device.type == 'cuda':
-            torch.cuda.synchronize(x.device)
-        
         next_cache = [] if use_cache else None
 
         for i in range(0, x.shape[1], chunk_size):
@@ -1559,8 +1555,9 @@ class YvModel(nn.Module):
             outputs.append(h_chunk)
             total_aux_loss = total_aux_loss + aux_chunk
 
-            if outputs:
-                x = torch.cat(outputs, dim=1)
+        # Concatenate all chunks at once after the loop (more efficient than per-chunk)
+        if outputs:
+            x = torch.cat(outputs, dim=1)
 
             if x.shape[1] == 0:
                 return {
@@ -1593,7 +1590,8 @@ class YvModel(nn.Module):
             if labels is not None:
                 lm_loss = F.cross_entropy(
                     logits[:, :lm_seq_len, :].reshape(-1, logits.size(-1)),
-                    labels.view(-1)
+                    labels.view(-1),
+                    ignore_index=-100
                 )
                 reasoner_loss = reasoner_out.get("loss", torch.tensor(0.0, device=x.device))
                 loss = lm_loss + reasoner_loss
@@ -1608,7 +1606,8 @@ class YvModel(nn.Module):
                                 mtp_logits = mtp_logits[:, :mtp_labels.shape[1]]
                             mtp_loss_i = F.cross_entropy(
                                 mtp_logits.reshape(-1, mtp_logits.size(-1)),
-                                mtp_labels.reshape(-1)
+                                mtp_labels.reshape(-1),
+                                ignore_index=-100
                             )
                             mtp_loss = mtp_loss + mtp_loss_i
                             mtp_logits_list.append(mtp_logits)

@@ -351,9 +351,27 @@ class OptimizerConfig:
     weight_decay: float = 0.01
     betas: tuple = (0.9, 0.999)
     eps: float = 1e-8
+    max_grad_norm: float = 1.0
     use_galore: bool = False
     galore_rank: int = 128
     galore_update_proj_gap: int = 200
+    galore_quantization_bits: int = 8  # 8bit quantization for memory efficiency
+    galore_lr_ratio: float = 1.0
+    galore_min_rank: int = 32
+    galore_max_rank: int = 512
+    galore_rank_adapt_interval: int = 1000
+    galore_rank_adapt_threshold: float = 0.1
+    galore_memory_efficient: bool = False
+    galore_moe_expert_only: bool = False
+    galore_multimodal_modules: List[str] = field(default_factory=lambda: ["vision_encoder", "audio_encoder", "multimodal_fusion"])
+    galore_sequence_threshold: int = 1024
+    galore_gradient_accumulation_sync: bool = True
+    
+    # FP4 Training Configuration (75% memory savings vs BF16)
+    use_fp4: bool = False
+    fp4_block_size: int = 16
+    fp4_stochastic_rounding: bool = True
+    fp4_master_weights_dtype: str = "fp32"
 
 
 @dataclass
@@ -659,6 +677,8 @@ class TrainingConfig:
                 self.optimizer.betas = tuple(opt["betas"])
             if "eps" in opt:
                 self.optimizer.eps = opt["eps"]
+            if "max_grad_norm" in opt:
+                self.optimizer.max_grad_norm = float(opt["max_grad_norm"])
             if "use_galore" in opt:
                 self.optimizer.use_galore = opt["use_galore"]
             if "galore_rank" in opt:
@@ -825,6 +845,7 @@ class TrainingConfig:
                 "weight_decay": self.optimizer.weight_decay,
                 "betas": self.optimizer.betas,
                 "eps": self.optimizer.eps,
+                "max_grad_norm": self.optimizer.max_grad_norm,
                 "use_galore": self.optimizer.use_galore,
                 "galore_rank": self.optimizer.galore_rank,
                 "galore_update_proj_gap": self.optimizer.galore_update_proj_gap
@@ -937,6 +958,7 @@ class TrainingConfig:
             config.optimizer.weight_decay = opt_dict.get("weight_decay", config.optimizer.weight_decay)
             config.optimizer.betas = tuple(opt_dict.get("betas", config.optimizer.betas))
             config.optimizer.eps = opt_dict.get("eps", config.optimizer.eps)
+            config.optimizer.max_grad_norm = float(opt_dict.get("max_grad_norm", config.optimizer.max_grad_norm) or config.optimizer.max_grad_norm)
             config.optimizer.use_galore = opt_dict.get("use_galore", config.optimizer.use_galore)
             config.optimizer.galore_rank = opt_dict.get("galore_rank", config.optimizer.galore_rank)
             config.optimizer.galore_update_proj_gap = opt_dict.get("galore_update_proj_gap", config.optimizer.galore_update_proj_gap)

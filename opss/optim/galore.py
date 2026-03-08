@@ -40,13 +40,21 @@ Reference:
     https://arxiv.org/abs/2403.03507
 """
 
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, List, Tuple
+
 import torch
 import torch.nn as nn
-from typing import Any, Dict, Optional, List, Tuple
 from configs.version import VERSION
-from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorConfig
+from utils.opsc.interface import (
+    PiscesLxOperatorInterface,
+    PiscesLxOperatorResult,
+    PiscesLxOperatorConfig,
+    PiscesLxOperatorStatus,
+)
 
 
+@dataclass
 class POPSSGaLoreConfig(PiscesLxOperatorConfig):
     """
     Configuration for GaLore optimizer.
@@ -60,11 +68,31 @@ class POPSSGaLoreConfig(PiscesLxOperatorConfig):
         scale: Scaling factor for transformed gradients. Default: 1.0
         proj_type: Type of projection method. Options: "std" (standard SVD).
                   Default: "std"
+        quantization_bits: Bits for quantizing projection matrices (0, 4, 8).
+                          8 = 8bit quantization, saves 75% memory. Default: 8
+        lr_ratio: Learning rate ratio for GaLore parameters. Default: 1.0
+        min_rank: Minimum rank for adaptive rank adjustment. Default: 32
+        max_rank: Maximum rank for adaptive rank adjustment. Default: 512
+        rank_adapt_interval: Steps between rank adaptation. Default: 1000
+        rank_adapt_threshold: Threshold for rank adaptation. Default: 0.1
+        memory_efficient: Enable memory-efficient mode. Default: False
+        moe_expert_only: Apply GaLore only to MoE experts. Default: False
     """
+    name: str = "galore"
+    version: str = VERSION
+
     rank: int = 128
     update_proj_gap: int = 50
     scale: float = 1.0
     proj_type: str = "std"
+    quantization_bits: int = 8
+    lr_ratio: float = 1.0
+    min_rank: int = 32
+    max_rank: int = 512
+    rank_adapt_interval: int = 1000
+    rank_adapt_threshold: float = 0.1
+    memory_efficient: bool = False
+    moe_expert_only: bool = False
 
 
 class POPSSGaLoreOperator(PiscesLxOperatorInterface):
@@ -96,8 +124,40 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
     def __init__(self):
         """Initialize the GaLore optimizer operator."""
         super().__init__()
-        self.name = "galore_optimizer"
-        self.version = VERSION
+        self._name = "galore_optimizer"
+        self._version = VERSION
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def version(self) -> str:
+        return self._version
+
+    @property
+    def description(self) -> str:
+        return "GaLore optimizer operator (gradient low-rank projection)"
+
+    @property
+    def input_schema(self) -> Dict[str, Any]:
+        return {
+            "model": {"type": "nn.Module", "required": True},
+            "gradients": {"type": "dict", "required": False},
+            "config": {"type": "POPSSGaLoreConfig", "required": False},
+            "optimizer_state": {"type": "dict", "required": False},
+        }
+
+    @property
+    def output_schema(self) -> Dict[str, Any]:
+        return {
+            "model": {"type": "nn.Module"},
+            "optimizer_state": {"type": "dict"},
+            "statistics": {"type": "dict"},
+        }
+
+    def validate_inputs(self, inputs: Dict[str, Any]) -> bool:
+        return isinstance(inputs, dict) and ("model" in inputs)
         
     def execute(self, inputs: Dict[str, Any], **kwargs) -> PiscesLxOperatorResult:
         """
@@ -127,41 +187,41 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
             gradients = inputs.get("gradients", {})
             config = inputs.get("config", POPSSGaLoreConfig())
             optimizer_state = inputs.get("optimizer_state", {})
-            
+
             if model is None:
                 raise ValueError("Model is required for GaLore optimization")
-            
+
             if not optimizer_state:
                 optimizer_state = self._initialize_galore_state(model, config)
-            
+
             updated_model, new_state, stats = self._perform_galore_step(
                 model, gradients, config, optimizer_state
             )
-            
+
             return PiscesLxOperatorResult(
-                success=True,
-                data={
+                operator_name=self.name,
+                status=PiscesLxOperatorStatus.SUCCESS,
+                output={
                     "model": updated_model,
                     "optimizer_state": new_state,
-                    "statistics": stats
+                    "statistics": stats,
                 },
                 metadata={
-                    "operator": self.name,
                     "version": self.version,
                     "algorithm": "GaLore",
-                    "memory_efficiency": "high"
-                }
+                },
             )
-            
+
         except Exception as e:
             return PiscesLxOperatorResult(
-                success=False,
+                operator_name=self.name,
+                status=PiscesLxOperatorStatus.FAILED,
+                output=None,
                 error=str(e),
                 metadata={
-                    "operator": self.name,
                     "version": self.version,
-                    "error_type": type(e).__name__
-                }
+                    "error_type": type(e).__name__,
+                },
             )
     
     def _initialize_galore_state(self, model: nn.Module, config: POPSSGaLoreConfig) -> Dict[str, Any]:
@@ -275,20 +335,30 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
         Returns:
             Projection matrix of shape (gradient_dim, rank)
         """
-        if gradient.dim() == 1:
-            U, S, V = torch.svd(gradient.unsqueeze(0))
+        # SVD kernels on CUDA are not consistently implemented for bf16.
+        # Compute the projection in fp32 for stability/compatibility, then cast back.
+        orig_dtype = gradient.dtype
+        work_grad = gradient
+        if work_grad.dtype not in (torch.float32, torch.float64):
+            work_grad = work_grad.float()
+
+        if work_grad.dim() == 1:
+            _, _, V = torch.svd(work_grad.unsqueeze(0))
         else:
-            grad_flat = gradient.view(-1, gradient.shape[-1])
+            grad_flat = work_grad.view(-1, work_grad.shape[-1])
             try:
-                U, S, V = torch.svd_lowrank(grad_flat, q=rank)
-            except:
-                U, S, V = torch.svd(grad_flat)
+                _, _, V = torch.svd_lowrank(grad_flat, q=rank)
+            except Exception:
+                _, _, V = torch.svd(grad_flat)
         
         if V.shape[1] >= rank:
             projection_matrix = V[:, :rank]
         else:
             projection_matrix = V
-            
+
+        if projection_matrix.dtype != orig_dtype:
+            projection_matrix = projection_matrix.to(dtype=orig_dtype)
+
         return projection_matrix
     
     def _apply_galore_transform(self, 
@@ -401,9 +471,10 @@ class POPSSGaLoreOptimizerAdapter:
         }
         
         result = self.operator.execute(inputs)
-        
-        if result.success:
-            self.state = result.data["optimizer_state"]
-            return result.data["model"], result.data["statistics"]
-        else:
-            raise RuntimeError(f"GaLore optimization failed: {result.error}")
+
+        if result is not None and hasattr(result, "is_success") and result.is_success():
+            out = result.output or {}
+            self.state = out.get("optimizer_state", {}) or {}
+            return out.get("model", model), out.get("statistics", {})
+
+        raise RuntimeError(f"GaLore optimization failed: {getattr(result, 'error', None) or 'unknown error'}")

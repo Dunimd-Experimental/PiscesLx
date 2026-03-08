@@ -73,7 +73,11 @@ training_config:
   gradient_accumulation_steps: 32
   max_steps: 100000
   warmup_ratio: 0.1
+  warmup_steps: 100
+  scheduler_name: cosine
   min_lr_ratio: 0.1
+  scheduler:
+    warmup_type: exponential
   gradient_checkpointing: true
   mixed_precision: bf16
   flash_attention: true
@@ -81,8 +85,28 @@ training_config:
   response_only_loss: false
   num_workers: 4
   pin_memory: true
-  prefetch_factor: 2
+  prefetch_factor: 4
+  packing: true
   max_grad_norm: 1.0
+  quantization:
+    enabled: true
+    method: nf4
+    bits: 4
+    group_size: 128
+    symmetric: false
+  lora:
+    enabled: true
+    r: 16
+    lora_alpha: 32
+    target_modules:
+      - q_proj
+      - v_proj
+      - o_proj
+      - gate_proj
+      - up_proj
+      - down_proj
+    lora_dropout: 0.05
+    bias: none
   moe_gradient:
     enabled: true
   kfac:
@@ -165,6 +189,13 @@ galore_multimodal_modules:
   - multimodal_fusion
 galore_sequence_threshold: 4096
 galore_gradient_accumulation_sync: true
+
+# FP4 Training Configuration (75% memory savings vs BF16)
+# Enable for extreme memory efficiency
+use_fp4: true
+fp4_block_size: 16
+fp4_stochastic_rounding: true
+fp4_master_weights_dtype: "fp32"
 
 chinchilla_optimal: false
 chinchilla_c_budget: 0

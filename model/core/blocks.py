@@ -1634,24 +1634,61 @@ class YvTransformerBlock(nn.Module):
         attn_past_key_values = past_key_values if past_key_values is not None else None
         should_checkpoint = self._should_use_checkpoint()
 
-        def _inner(xc, kv=None):
+        def _inner(xc, mask_arg=None, kv=None, use_cache_arg=False):
             """Inner function for gradient checkpointing.
 
             Args:
                 xc: Input tensor.
+                mask_arg: Attention mask tensor.
                 kv: Past key/value pairs.
+                use_cache_arg: Whether to use cache.
 
             Returns:
                 Output from _forward_core.
             """
-            return self._forward_core(xc, mask, kv, use_cache)
+            return self._forward_core(xc, mask_arg, kv, use_cache_arg)
 
         if should_checkpoint and self.training:
-            out = cp.checkpoint(_inner, x, attn_past_key_values, use_reentrant=False)
+            # Set checkpointing flag on MoE gates to disable non-deterministic operations
+            self._set_moe_checkpointing(True)
+            try:
+                out = cp.checkpoint(
+                    _inner, x, mask, attn_past_key_values, use_cache,
+                    use_reentrant=False,
+                    preserve_rng_state=True,
+                    determinism_check="default"
+                )
+            finally:
+                self._set_moe_checkpointing(False)
         else:
-            out = _inner(x, attn_past_key_values)
+            out = _inner(x, mask, attn_past_key_values, use_cache)
 
         return out
+
+    def _set_moe_checkpointing(self, is_checkpointing: bool):
+        """Set checkpointing flag on MoE gates to ensure deterministic routing.
+        
+        Args:
+            is_checkpointing: Whether currently in checkpointing mode.
+        """
+        for attr_name in ['mlp', 'parallel_block', 'deepnorm_block']:
+            if hasattr(self, attr_name):
+                attr = getattr(self, attr_name)
+                if attr is not None:
+                    if hasattr(attr, 'router') and hasattr(attr.router, '_is_checkpointing'):
+                        attr.router._is_checkpointing = is_checkpointing
+                    if hasattr(attr, 'gate') and hasattr(attr.gate, '_is_checkpointing'):
+                        attr.gate._is_checkpointing = is_checkpointing
+                    if hasattr(attr, 'mlp'):
+                        mlp = attr.mlp
+                        if mlp is not None:
+                            if hasattr(mlp, 'router') and hasattr(mlp.router, '_is_checkpointing'):
+                                mlp.router._is_checkpointing = is_checkpointing
+                            if hasattr(mlp, 'gate') and hasattr(mlp.gate, '_is_checkpointing'):
+                                mlp.gate._is_checkpointing = is_checkpointing
+                            for expert in getattr(mlp, 'experts', []):
+                                if hasattr(expert, '_is_checkpointing'):
+                                    expert._is_checkpointing = is_checkpointing
 
     def forward(self, x, mask, past_key_values=None, use_cache=False):
         """Forward pass through the transformer block.

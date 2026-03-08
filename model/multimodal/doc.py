@@ -339,7 +339,8 @@ class YvDocEncoder(nn.Module):
                     dropout=0.1,
                     batch_first=True
                 ),
-                num_layers=3
+                num_layers=3,
+                enable_nested_tensor=False
             ),
             'doc_type_classifier': nn.Sequential(
                 nn.Linear(cfg.hidden_size, 256),
