@@ -311,6 +311,11 @@ python manage.py action resources utilization
 # Task recovery
 python manage.py action recover <run_id>
 python manage.py action recover <run_id> --checkpoint runs/<run_id>/ckpt.pt
+
+# Developer mode (vim-style command interface for training)
+python manage.py dev enable    # Enable developer mode
+python manage.py dev disable   # Disable developer mode
+python manage.py dev status    # Check developer mode status
 ```
 
 ---

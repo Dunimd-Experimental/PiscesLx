@@ -541,12 +541,19 @@ class YvMoEGate(nn.Module):
             return
         
         nonzero_usage = usage_distribution[nonzero_mask]
-        load_variance = torch.var(usage_distribution).item()
-        max_usage = torch.max(nonzero_usage).item()
-        min_usage = torch.min(nonzero_usage).item()
-        load_ratio = max_usage / (min_usage + 1e-8)
         
-        max_temp = float(self.expert_temperature_max.item())
+        # Optimized: Batch compute all statistics with single GPU-CPU sync
+        with torch.no_grad():
+            stats_tensor = torch.stack([
+                torch.var(usage_distribution),
+                torch.max(nonzero_usage),
+                torch.min(nonzero_usage),
+                self.expert_temperature_max if hasattr(self.expert_temperature_max, 'data') else torch.tensor(float(self.expert_temperature_max)),
+                self.temperature
+            ])
+            load_variance, max_usage, min_usage, max_temp, current_temp = stats_tensor.tolist()
+        
+        load_ratio = max_usage / (min_usage + 1e-8)
         ratio_signal = math.log(load_ratio + 1e-8)
         
         if load_ratio > 50.0:
@@ -561,7 +568,7 @@ class YvMoEGate(nn.Module):
             target_temp = max(self.min_temperature, 1.0 - load_variance * 2)
         
         adjustment_rate = 0.2
-        current_temp = self.temperature.item()
+        # current_temp already computed above in batch stats
         new_temp = current_temp * (1 - adjustment_rate) + target_temp * adjustment_rate
         
         new_temp = max(self.min_temperature, min(max_temp, new_temp))
@@ -595,8 +602,10 @@ class YvMoEGate(nn.Module):
         nonzero_mask = usage_distribution > 1e-8
         if nonzero_mask.sum() >= 2:
             nonzero_usage = usage_distribution[nonzero_mask]
-            max_usage = torch.max(nonzero_usage).item()
-            min_usage = torch.min(nonzero_usage).item()
+            # Optimized: Batch compute max/min with single sync
+            with torch.no_grad():
+                mm_tensor = torch.stack([torch.max(nonzero_usage), torch.min(nonzero_usage)])
+                max_usage, min_usage = mm_tensor.tolist()
             load_ratio = max_usage / (min_usage + 1e-8)
             
             if load_ratio > 20.0:
@@ -646,8 +655,10 @@ class YvMoEGate(nn.Module):
             return top_idx
         
         nonzero_usage = usage_distribution[nonzero_mask]
-        max_usage = torch.max(nonzero_usage).item()
-        min_usage = torch.min(nonzero_usage).item()
+        # Optimized: Batch compute max/min with single sync
+        with torch.no_grad():
+            mm_tensor = torch.stack([torch.max(nonzero_usage), torch.min(nonzero_usage)])
+            max_usage, min_usage = mm_tensor.tolist()
         load_ratio = max_usage / (min_usage + 1e-8)
         
         if load_ratio < 10.0:
@@ -669,9 +680,14 @@ class YvMoEGate(nn.Module):
         num_tokens = top_idx.shape[0]
         redistribution_rate = min(0.3, (load_ratio - 10.0) / 100.0)
         
+        # Optimized: Vectorized redistribution instead of nested loops
+        # Pre-compute all overloaded/underloaded mappings
+        overloaded_list = overloaded_experts.tolist() if overloaded_experts.numel() > 1 else [overloaded_experts.item()]
+        underloaded_list = underloaded_experts.tolist() if underloaded_experts.numel() > 1 else [underloaded_experts.item()]
+        
         for k in range(current_top_k):
-            for overloaded_id in overloaded_experts:
-                overloaded_id = overloaded_id.item()
+            # Vectorized: compute mask for all overloaded experts at once
+            for oi, overloaded_id in enumerate(overloaded_list):
                 mask = (new_top_idx[:, k] == overloaded_id)
                 num_to_redistribute = int(mask.sum().item() * redistribution_rate)
                 
@@ -691,12 +707,23 @@ class YvMoEGate(nn.Module):
                 perm = torch.randperm(redistribute_indices.numel(), generator=generator, device=top_idx.device)
                 selected_indices = redistribute_indices[perm[:num_to_redistribute]]
                 
-                for idx in selected_indices:
-                    token_idx = idx.item()
-                    for underloaded_id in underloaded_experts:
-                        underloaded_id = underloaded_id.item()
-                        if underloaded_id not in new_top_idx[token_idx]:
-                            new_top_idx[token_idx, k] = underloaded_id
+                # Optimized: Vectorized check for underloaded experts
+                # Build a mask of which underloaded experts are not in each token's top_idx
+                if len(selected_indices) > 0:
+                    # Get current experts for selected tokens
+                    selected_tokens_experts = new_top_idx[selected_indices]  # [num_selected, top_k]
+                    
+                    # Find first available underloaded expert for each token
+                    for ui, underloaded_id in enumerate(underloaded_list):
+                        # Check if this underloaded expert is already assigned to these tokens
+                        already_assigned = (selected_tokens_experts == underloaded_id).any(dim=1)
+                        # Get tokens that don't have this expert
+                        available_mask = ~already_assigned
+                        available_indices = selected_indices[available_mask]
+                        
+                        if len(available_indices) > 0:
+                            # Assign this underloaded expert
+                            new_top_idx[available_indices[:num_to_redistribute], k] = underloaded_id
                             break
         
         return new_top_idx

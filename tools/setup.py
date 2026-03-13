@@ -444,6 +444,51 @@ def setup(args):
             logger_error(f"Error reading requirements.txt: {e}")
             return
 
+    _init_settings()
+
+
+def _init_settings():
+    """
+    Initialize the settings.yaml configuration file.
+    
+    This function creates the global settings file at .pisceslx/settings/settings.yaml
+    if it does not already exist. The settings file contains framework-wide configuration
+    options such as the developer mode toggle.
+    
+    The default settings file contains:
+        dev:
+          enabled: false
+    
+    This function is called automatically during setup to ensure the settings
+    file exists before any framework operations that might depend on it.
+    
+    Args:
+        None
+    
+    Returns:
+        None
+    
+    Side Effects:
+        - Creates .pisceslx/settings/ directory if it doesn't exist
+        - Creates .pisceslx/settings/settings.yaml with default content
+    
+    Example:
+        >>> _init_settings()  # Creates settings.yaml if not exists
+    """
+    try:
+        from utils.paths import get_settings_file
+        settings_path = get_settings_file()
+        
+        if not os.path.exists(settings_path):
+            os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+            with open(settings_path, 'w', encoding='utf-8') as f:
+                f.write("dev:\n  enabled: false\n")
+            logger_success(f"Settings file initialized at {settings_path}")
+        else:
+            logger_info(f"Settings file already exists at {settings_path}")
+    except Exception as e:
+        logger_warning(f"Failed to initialize settings file: {e}")
+
 
 def validate_setup_args(args):
     """

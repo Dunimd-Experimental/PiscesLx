@@ -1720,10 +1720,17 @@ class YvUnifiedCacheManager:
         self.cache_misses = 0
         self.cache_evictions = 0
 
-        self._lock = threading.Lock()
+        # Optimized: Use fine-grained per-layer locks instead of global lock
+        # This reduces contention in multi-threaded inference scenarios
+        self._num_layer_locks = 32  # Hash layers to 32 locks
+        self._layer_locks = [threading.Lock() for _ in range(self._num_layer_locks)]
+
+    def _get_layer_lock(self, layer_idx: int) -> threading.Lock:
+        """Get lock for a specific layer using modulo hashing."""
+        return self._layer_locks[layer_idx % self._num_layer_locks]
 
     def get_kv_cache(self, layer_idx: int, past_key_values: Optional[Tuple[torch.Tensor]] = None):
-        with self._lock:
+        with self._get_layer_lock(layer_idx):
             entry = self.kv_cache.get(layer_idx, None)
             if entry is None:
                 if past_key_values is not None:
@@ -1744,7 +1751,7 @@ class YvUnifiedCacheManager:
         current_pos: int,
         use_h2o: bool = True
     ):
-        with self._lock:
+        with self._get_layer_lock(layer_idx):
             if use_h2o and self.config.use_h2o_attention:
                 key_states, value_states = self._apply_h2o_cache_selection(key_states, value_states, current_pos)
 

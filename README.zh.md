@@ -311,6 +311,11 @@ python manage.py action resources utilization
 # 任务恢复
 python manage.py action recover <run_id>
 python manage.py action recover <run_id> --checkpoint runs/<run_id>/ckpt.pt
+
+# 开发者模式（训练时的vim风格命令界面）
+python manage.py dev enable    # 启用开发者模式
+python manage.py dev disable   # 禁用开发者模式
+python manage.py dev status    # 查看开发者模式状态
 ```
 
 ---

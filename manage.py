@@ -292,6 +292,7 @@ COMMANDS = [
     'help',       # Display comprehensive usage documentation
     'watermark',  # Detect and verify watermarks in content/models
     'action',     # Manage background training/inference processes
+    'dev',        # Developer mode management (enable/disable/status)
 ]
 
 
@@ -1451,6 +1452,39 @@ def main():
         # Output result in JSON format if requested
         if result is not None and args.json:
             print(json.dumps(result, ensure_ascii=False, indent=2))
+    
+    # -------------------------------------------------------------------------
+    # DEV COMMAND
+    # -------------------------------------------------------------------------
+    # Manage developer mode for training
+    # Supports enable, disable, and status operations
+    elif args.command == 'dev':
+        dev_action = unknown[0] if unknown else 'status'
+        
+        from tools.dev.manager import PiscesLxDevModeManager
+        
+        manager = PiscesLxDevModeManager.get_instance()
+        
+        if dev_action == 'enable':
+            manager.enable()
+        elif dev_action == 'disable':
+            manager.disable()
+        elif dev_action == 'status':
+            status = manager.get_status()
+            print(json.dumps({
+                "enabled": status['enabled'],
+                "paused": status['paused'],
+                "attached": status['attached'],
+                "ui_active": status['ui_active'],
+                "settings_path": status['settings_path']
+            }, indent=2))
+        
+        else:
+            print(json.dumps({
+                "error": f"Unknown dev action: {dev_action}",
+                "usage": "python manage.py dev [enable|disable|status]"
+            }, indent=2))
+            sys.exit(1)
     
     # -------------------------------------------------------------------------
     # UNKNOWN COMMAND (fallback)

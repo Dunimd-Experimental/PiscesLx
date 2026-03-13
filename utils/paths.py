@@ -334,4 +334,27 @@ def get_log_file(module_name: str) -> str:
     return str(Path(log_dir) / "output.log")
 
 
+def get_settings_file() -> str:
+    """
+    Get the settings.yaml file path.
+    
+    This function returns the path to the global settings configuration file
+    used for storing framework-wide settings like developer mode toggle.
+    
+    The settings file is located at:
+        .pisceslx/settings/settings.yaml
+    
+    Returns:
+        str: The absolute path to the settings.yaml file.
+            The parent directory is guaranteed to exist.
+    
+    Example:
+        >>> settings_path = get_settings_file()
+        >>> print(settings_path)
+        .pisceslx/settings/settings.yaml
+    """
+    settings_dir = get_cache_dir("settings")
+    return str(Path(settings_dir) / "settings.yaml")
+
+
 _LOG = PiscesLxLogger("PiscesLx.Core.Paths", file_path=get_log_file("PiscesLx.Core.Paths"), enable_file=True)

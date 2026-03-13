@@ -208,7 +208,7 @@ class PiscesLxOperatorConfig:
         Configurations should be validated during operator setup to ensure
         all required parameters are present and within acceptable ranges.
     """
-    name: str
+    name: str = "default_operator"
     version: str = VERSION
     timeout: float = 300.0
     retries: int = 3

@@ -158,6 +158,12 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         self._train_dataloader_factory: Optional[Callable] = None
         self._val_dataloader_factory: Optional[Callable] = None
         
+        self._dev_mode_manager = None
+        self._dev_mode_commands = None
+        self._dev_mode_ui = None
+        
+        self._init_dev_mode()
+        
         if self.stage:
             _LOG.info(f"PiscesLxTrainOrchestrator initialized with stage={self.stage.value}")
         else:
@@ -187,6 +193,109 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 return self._load_config_from_file(cfg_path)
         
         return TrainingConfig()
+    
+    def _init_dev_mode(self) -> None:
+        """
+        Initialize developer mode integration.
+        
+        This method checks if developer mode is enabled and sets up
+        the necessary components for the vim-style command interface.
+        """
+        try:
+            from tools.dev.manager import PiscesLxDevModeManager
+            from tools.dev.commands import PiscesLxDevModeCommands
+            
+            self._dev_mode_manager = PiscesLxDevModeManager.get_instance()
+            
+            if self._dev_mode_manager.is_enabled():
+                self._dev_mode_commands = PiscesLxDevModeCommands(self._dev_mode_manager)
+                _LOG.info("Developer mode enabled for training orchestrator")
+            else:
+                _LOG.debug("Developer mode disabled")
+        except Exception as e:
+            _LOG.warning(f"Failed to initialize developer mode: {e}")
+            self._dev_mode_manager = None
+            self._dev_mode_commands = None
+    
+    def _attach_dev_mode(self) -> None:
+        """
+        Attach developer mode to the training process.
+        
+        This method is called after training components are initialized
+        to enable the command interface.
+        """
+        if self._dev_mode_manager is None or not self._dev_mode_manager.is_enabled():
+            return
+        
+        try:
+            self._dev_mode_manager.attach(self.trainer)
+            
+            if self._dev_mode_commands is not None:
+                ui = self._dev_mode_manager.get_ui()
+                if ui is not None:
+                    ui.register_callback('command', self._handle_dev_command)
+                    ui.start()
+                    _LOG.info("Developer mode UI started")
+        except Exception as e:
+            _LOG.warning(f"Failed to attach developer mode: {e}")
+    
+    def _detach_dev_mode(self) -> None:
+        """
+        Detach developer mode from the training process.
+        """
+        if self._dev_mode_manager is None:
+            return
+        
+        try:
+            self._dev_mode_manager.detach()
+            _LOG.info("Developer mode detached")
+        except Exception as e:
+            _LOG.warning(f"Failed to detach developer mode: {e}")
+    
+    def _handle_dev_command(self, command: str) -> None:
+        """
+        Handle a command from the developer mode UI.
+        
+        Args:
+            command: The command string to execute
+        """
+        if self._dev_mode_commands is None or self._dev_mode_manager is None:
+            return
+        
+        try:
+            result, is_overlay = self._dev_mode_commands.execute(command, self.trainer)
+            
+            if result and is_overlay:
+                ui = self._dev_mode_manager.get_ui()
+                if ui is not None:
+                    ui.show_overlay(result)
+            elif result:
+                ui = self._dev_mode_manager.get_ui()
+                if ui is not None:
+                    ui.set_status(result)
+        except Exception as e:
+            _LOG.error(f"Failed to execute dev command: {e}")
+    
+    def _check_dev_mode_pause(self) -> bool:
+        """
+        Check if training should be paused via developer mode.
+        
+        Returns:
+            bool: True if training should pause
+        """
+        if self._dev_mode_manager is None:
+            return False
+        return self._dev_mode_manager.is_paused()
+    
+    def _wait_dev_mode_resume(self) -> None:
+        """
+        Wait for developer mode resume signal.
+        
+        This method blocks until training is resumed via developer mode.
+        """
+        import time
+        while self._check_dev_mode_pause():
+            time.sleep(0.1)
     
     def _load_config_from_file(self, config_path: str) -> TrainingConfig:
         """Load configuration from file."""
@@ -1241,6 +1350,9 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if getattr(self.train_config, 'enable_watermark', False):
             self._setup_watermark_pipeline()
         
+        # 10. Attach developer mode (if enabled)
+        self._attach_dev_mode()
+        
         self.is_initialized = True
         self.current_phase = "ready"
         
@@ -1340,11 +1452,13 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         self.training_history['timestamps']['start'] = datetime.now().isoformat()
         
         try:
-            # Get dataloaders
             train_loader = self._get_train_dataloader()
             val_loader = self._get_val_dataloader()
             
-            # Execute training
+            if self._check_dev_mode_pause():
+                _LOG.info("Training paused via developer mode before start")
+                self._wait_dev_mode_resume()
+            
             training_results = self.pipeline.fit(
                 train_dataloader=train_loader,
                 val_dataloader=val_loader,
@@ -1352,10 +1466,11 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 resume_from=resume_from
             )
             
-            # Record training history
             self.training_history['results'] = training_results
             self.training_history['timestamps']['end'] = datetime.now().isoformat()
             self.current_phase = "completed"
+            
+            self._detach_dev_mode()
             
             _LOG.info("Training completed successfully")
             return training_results
@@ -1365,6 +1480,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             self.training_history['error'] = str(e)
             self.training_history['timestamps']['error'] = datetime.now().isoformat()
             _LOG.error(f"Training failed: {e}")
+            self._detach_dev_mode()
             raise
     
     def _get_train_dataloader(self):
