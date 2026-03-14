@@ -217,19 +217,18 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             self._dev_mode_manager = None
             self._dev_mode_commands = None
     
-    def _attach_dev_mode(self) -> None:
+    def _start_dev_mode_ui(self) -> None:
         """
-        Attach developer mode to the training process.
+        Start developer mode UI before training engine initialization.
         
-        This method is called after training components are initialized
-        to enable the command interface.
+        This method starts the UI thread first, allowing it to be ready
+        before the training engine starts. The UI runs in a background
+        thread and waits for commands.
         """
         if self._dev_mode_manager is None or not self._dev_mode_manager.is_enabled():
             return
         
         try:
-            self._dev_mode_manager.attach(self.trainer)
-            
             if self._dev_mode_commands is not None:
                 ui = self._dev_mode_manager.get_ui()
                 if ui is not None:
@@ -237,7 +236,23 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                     ui.start()
                     _LOG.info("Developer mode UI started")
         except Exception as e:
-            _LOG.warning(f"Failed to attach developer mode: {e}")
+            _LOG.warning(f"Failed to start developer mode UI: {e}")
+    
+    def _attach_dev_mode_trainer(self) -> None:
+        """
+        Attach developer mode to the trainer after initialization.
+        
+        This method connects the developer mode manager to the trainer
+        instance, enabling real-time interaction with the training process.
+        """
+        if self._dev_mode_manager is None or not self._dev_mode_manager.is_enabled():
+            return
+        
+        try:
+            self._dev_mode_manager.attach(self.trainer)
+            _LOG.info("Developer mode attached to trainer")
+        except Exception as e:
+            _LOG.warning(f"Failed to attach developer mode to trainer: {e}")
     
     def _detach_dev_mode(self) -> None:
         """
@@ -1318,6 +1333,9 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         self._train_dataloader_factory = train_dataloader_factory
         self._val_dataloader_factory = val_dataloader_factory
         
+        # 0. Start developer mode UI first (if enabled)
+        self._start_dev_mode_ui()
+        
         # 1. Initialize core training operator
         self.trainer = PiscesLxTrainingOperator(self.train_config)
         
@@ -1350,8 +1368,8 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if getattr(self.train_config, 'enable_watermark', False):
             self._setup_watermark_pipeline()
         
-        # 10. Attach developer mode (if enabled)
-        self._attach_dev_mode()
+        # 10. Attach developer mode to trainer (if enabled)
+        self._attach_dev_mode_trainer()
         
         self.is_initialized = True
         self.current_phase = "ready"

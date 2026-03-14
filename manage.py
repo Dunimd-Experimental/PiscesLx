@@ -293,6 +293,8 @@ COMMANDS = [
     'watermark',  # Detect and verify watermarks in content/models
     'action',     # Manage background training/inference processes
     'dev',        # Developer mode management (enable/disable/status)
+    'cache',      # Cache management for .pisceslx directory
+    'plxs',       # Start PLx Studio (graphical workstation)
 ]
 
 
@@ -1114,6 +1116,35 @@ def main():
         help='Logging level'
     )
     
+    # -------------------------------------------------------------------------
+    # PLXS (PLx Studio) ARGUMENTS
+    # -------------------------------------------------------------------------
+    # --plxs_port: Port for PLxS backend API server
+    # Default is 3140
+    parser.add_argument(
+        '--plxs_port',
+        type=int,
+        default=3140,
+        help='Port for PLxS backend API server (for plxs command)'
+    )
+    
+    # --frontend_port: Port for PLxS frontend (Next.js)
+    # Default is 3000
+    parser.add_argument(
+        '--frontend_port',
+        type=int,
+        default=3000,
+        help='Port for PLxS frontend (for plxs command)'
+    )
+    
+    # --no_frontend: Flag to start only the backend server
+    # Useful for development or when frontend is run separately
+    parser.add_argument(
+        '--no_frontend',
+        action='store_true',
+        help='Start only the backend server without frontend (for plxs command)'
+    )
+    
     # =========================================================================
     # PARSE ARGUMENTS
     # =========================================================================
@@ -1485,6 +1516,50 @@ def main():
                 "usage": "python manage.py dev [enable|disable|status]"
             }, indent=2))
             sys.exit(1)
+    
+    # -------------------------------------------------------------------------
+    # CACHE COMMAND
+    # -------------------------------------------------------------------------
+    elif args.command == 'cache':
+        action = unknown[0] if unknown else 'status'
+        
+        from tools.cache.manager import PiscesLxCacheManager
+        
+        manager = PiscesLxCacheManager()
+        
+        if action == 'status' or action == '':
+            manager.status()
+        elif action == 'clean':
+            manager.clean()
+        else:
+            print(f"Unknown cache action: {action}")
+            print("Usage: python manage.py cache [status|clean]")
+            sys.exit(1)
+    
+    # -------------------------------------------------------------------------
+    # PLXS COMMAND
+    # -------------------------------------------------------------------------
+    # Start PLx Studio (graphical workstation for PiscesL1)
+    # Launches both the backend API server (port 3140) and the frontend
+    elif args.command == 'plxs':
+        from utils.plxs import PiscesLxPlxsServer
+        from utils.plxs.launcher import PiscesLxPlxsLauncher
+        
+        plxs_port = getattr(args, 'plxs_port', 3140)
+        frontend_port = getattr(args, 'frontend_port', 3000)
+        no_frontend = getattr(args, 'no_frontend', False)
+        
+        launcher = PiscesLxPlxsLauncher(
+            plxs_port=plxs_port,
+            frontend_port=frontend_port,
+            root_dir=ROOT
+        )
+        
+        if no_frontend:
+            server = PiscesLxPlxsServer(port=plxs_port, root_dir=ROOT)
+            server.run(host=args.host if hasattr(args, 'host') else "127.0.0.1")
+        else:
+            launcher.run()
     
     # -------------------------------------------------------------------------
     # UNKNOWN COMMAND (fallback)

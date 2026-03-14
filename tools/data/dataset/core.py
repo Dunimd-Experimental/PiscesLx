@@ -30,10 +30,26 @@ from model.tokenizer import YvTokenizer
 from utils.paths import get_cache_dir
 from model.multimodal import YvVisionEncoder as VisionEncoder, YvAudioEncoder as AudioEncoder, YvDocEncoder as DocEncoder, YvVideoEncoder as VideoEncoder
 
-IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
-AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]
-DOC_KEYS = ["doc", "document", "doc_path", "pdf"]
-VIDEO_KEYS = ["video", "video_path", "mp4", "avi", "mov", "mkv"]
+IMAGE_KEYS = [
+    "image", "img_path", "image_path", "picture", "pic",
+    "img", "images", "img_file", "image_file", "photo",
+    "screenshot", "frame", "frames", "visual", "visual_input"
+]
+AUDIO_KEYS = [
+    "audio", "audio_path", "wav", "sound", 
+    "audio_file", "audio_input", "speech", "voice",
+    "waveform", "spectrogram", "mel", "audio_data"
+]
+DOC_KEYS = [
+    "doc", "document", "doc_path", "pdf",
+    "document_path", "doc_file", "text_file", "txt",
+    "markdown", "md", "html", "document_input", "file_path"
+]
+VIDEO_KEYS = [
+    "video", "video_path", "mp4", "avi", "mov", "mkv",
+    "video_file", "video_input", "clip", "movie", "footage",
+    "video_data", "frames_path", "video_frames_path"
+]
 
 class Dataset:
     """A dataset class for Pisces that supports both text and multimodal data.
@@ -50,7 +66,15 @@ class Dataset:
             name: Name of the dataset.
             subset: Subset of the dataset (optional).
             split: Data split to use (e.g., 'train', 'test', 'validation').
-            config: Configuration dictionary (optional).
+            config: Configuration dictionary (optional). Supports:
+                - custom_image_keys: List of custom keys for image data
+                - custom_audio_keys: List of custom keys for audio data
+                - custom_doc_keys: List of custom keys for document data
+                - custom_video_keys: List of custom keys for video data
+                - force_enable_vision: Force enable vision encoder
+                - force_enable_audio: Force enable audio encoder
+                - force_enable_doc: Force enable doc encoder
+                - force_enable_video: Force enable video encoder
             cache_dir: Directory to cache the dataset (optional).
             max_samples: Maximum number of samples to load (optional).
         """
@@ -65,6 +89,18 @@ class Dataset:
         except Exception:
             pass
         self.max_samples = max_samples
+        
+        # Allow custom key names from config
+        self._image_keys = getattr(self.config, 'custom_image_keys', None) or IMAGE_KEYS
+        self._audio_keys = getattr(self.config, 'custom_audio_keys', None) or AUDIO_KEYS
+        self._doc_keys = getattr(self.config, 'custom_doc_keys', None) or DOC_KEYS
+        self._video_keys = getattr(self.config, 'custom_video_keys', None) or VIDEO_KEYS
+        
+        # Force enable flags for modalities (useful when keys don't match)
+        self._force_vision = getattr(self.config, 'force_enable_vision', False)
+        self._force_audio = getattr(self.config, 'force_enable_audio', False)
+        self._force_doc = getattr(self.config, 'force_enable_doc', False)
+        self._force_video = getattr(self.config, 'force_enable_video', False)
 
         data_cache = cache_dir or get_cache_dir("data_cache")
         cache_path = os.path.join(str(data_cache), self.subset)
@@ -85,10 +121,41 @@ class Dataset:
 
         # Initialize the tokenizer and modality encoders
         self.tokenizer = YvTokenizer()
-        self.vision_encoder = VisionEncoder(self.config) if self.config else None
-        self.audio_encoder = AudioEncoder(self.config) if self.config else None
-        self.doc_encoder = DocEncoder(self.config) if self.config else None
-        self.video_encoder = VideoEncoder(self.config) if self.config else None
+        # Lazy initialization: Do NOT create multimodal encoders at init time.
+        # They will be created on-demand or use the model's encoders during training.
+        # This prevents OOM during model initialization on low-VRAM systems.
+        self._vision_encoder = None
+        self._audio_encoder = None
+        self._doc_encoder = None
+        self._video_encoder = None
+
+    @property
+    def vision_encoder(self):
+        """Lazy-loaded vision encoder."""
+        if self._vision_encoder is None and self.config:
+            self._vision_encoder = VisionEncoder(self.config)
+        return self._vision_encoder
+
+    @property
+    def audio_encoder(self):
+        """Lazy-loaded audio encoder."""
+        if self._audio_encoder is None and self.config:
+            self._audio_encoder = AudioEncoder(self.config)
+        return self._audio_encoder
+
+    @property
+    def doc_encoder(self):
+        """Lazy-loaded doc encoder."""
+        if self._doc_encoder is None and self.config:
+            self._doc_encoder = DocEncoder(self.config)
+        return self._doc_encoder
+
+    @property
+    def video_encoder(self):
+        """Lazy-loaded video encoder."""
+        if self._video_encoder is None and self.config:
+            self._video_encoder = VideoEncoder(self.config)
+        return self._video_encoder
 
     def __len__(self) -> int:
         """Get the number of samples in the dataset.
@@ -117,10 +184,15 @@ class Dataset:
             ids = torch.clamp(ids, 0, vocab_size - 1)
         except Exception:
             ids = torch.tensor([0], dtype=torch.long)
-        pixel_values = self._process_mm(item, IMAGE_KEYS, self.vision_encoder, "image")
-        audio_input = self._process_mm(item, AUDIO_KEYS, self.audio_encoder, "audio")
-        doc_input = self._process_mm(item, DOC_KEYS, self.doc_encoder, "document")
-        video_frames = self._process_mm(item, VIDEO_KEYS, self.video_encoder, "video")
+        
+        # Optimized: Only create/access encoders when data actually exists for that modality
+        # This prevents unnecessary encoder initialization for modalities not present in the data
+        # Uses custom keys from config and respects force_enable flags
+        pixel_values = self._process_mm_lazy(item, self._image_keys, "vision_encoder", "image", self._force_vision)
+        audio_input = self._process_mm_lazy(item, self._audio_keys, "audio_encoder", "audio", self._force_audio)
+        doc_input = self._process_mm_lazy(item, self._doc_keys, "doc_encoder", "document", self._force_doc)
+        video_frames = self._process_mm_lazy(item, self._video_keys, "video_encoder", "video", self._force_video)
+        
         return {
             "input_ids": ids,
             "labels": ids.clone(),
@@ -129,6 +201,56 @@ class Dataset:
             "doc_input": doc_input,
             "video_frames": video_frames,
         }
+
+    def _process_mm_lazy(self, item: Dict[str, Any], keys: list, encoder_attr: str, kind: str, force_enable: bool = False) -> Optional[Any]:
+        """Process multi-modal data with lazy encoder initialization.
+
+        Only creates the encoder when the data actually contains this modality,
+        or when force_enable is True.
+
+        Args:
+            item: A dictionary representing a dataset item.
+            keys: A list of keys to search for in the item.
+            encoder_attr: The attribute name of the encoder (e.g., "vision_encoder").
+            kind: The type of data to process, e.g., "image", "audio", "document", "video".
+            force_enable: Force create encoder even if no data found (default: False).
+
+        Returns:
+            The processed data if successful, otherwise None.
+        """
+        # First check if data exists for this modality
+        path = None
+        for key in keys:
+            value = item.get(key) if isinstance(item, dict) else None
+            if isinstance(value, str) and value.strip():
+                path = value.strip()
+                break
+
+        # If no data found and not forced, skip encoder creation
+        if not path and not force_enable:
+            return None
+
+        # Data exists or forced, now get/create the encoder (lazy initialization)
+        encoder = getattr(self, encoder_attr)
+        if not encoder or not getattr(encoder, "enabled", False):
+            return None
+        
+        # If forced but no path, return None (encoder created but no data to process)
+        if not path:
+            return None
+
+        try:
+            if kind == "image":
+                return encoder.process_image(path)
+            if kind == "audio":
+                return encoder.process_audio(path)
+            if kind == "document":
+                return encoder.process_doc(path)
+            if kind == "video":
+                return encoder.process_video(path)
+        except Exception:
+            pass
+        return None
 
     def _extract_text(self, item: Dict[str, Any]) -> str:
         """Extract text from a dataset item through multiple strategies.
@@ -165,42 +287,3 @@ class Dataset:
                 if isinstance(value, str) and value.strip():
                     return value.strip()
         return ""
-
-    def _process_mm(self, item: Dict[str, Any], keys: list, encoder, kind: str) -> Optional[Any]:
-        """Process multi-modal data from a dataset item.
-
-        Args:
-            item (Dict[str, Any]): A dictionary representing a dataset item.
-            keys (list): A list of keys to search for in the item.
-            encoder: The encoder to process the data.
-            kind (str): The type of data to process, e.g., "image", "audio", "document", "video".
-
-        Returns:
-            Optional[Any]: The processed data if successful, otherwise None.
-        """
-        if not encoder or not getattr(encoder, "enabled", False):
-            return None
-
-        # Find the first valid path from the given keys
-        path = None
-        for key in keys:
-            value = item.get(key) if isinstance(item, dict) else None
-            if isinstance(value, str) and value.strip():
-                path = value.strip()
-                break
-
-        if not path:
-            return None
-
-        try:
-            if kind == "image":
-                return encoder.process_image(path)
-            if kind == "audio":
-                return encoder.process_audio(path)
-            if kind == "document":
-                return encoder.process_doc(path)
-            if kind == "video":
-                return encoder.process_video(path)
-        except Exception:
-            pass
-        return None

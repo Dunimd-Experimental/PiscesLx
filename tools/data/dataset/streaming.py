@@ -30,10 +30,26 @@ from typing import Iterator, Dict, List, Optional
 from model.tokenizer import YvTokenizer
 from model.multimodal import YvVisionEncoder, YvAudioEncoder, YvDocEncoder, YvVideoEncoder
 
-IMAGE_KEYS = ["image", "img_path", "image_path", "picture", "pic"]
-AUDIO_KEYS = ["audio", "audio_path", "wav", "sound"]
-DOC_KEYS = ["doc", "document", "doc_path", "pdf"]
-VIDEO_KEYS = ["video", "video_path", "mp4", "avi", "mov", "mkv"]
+IMAGE_KEYS = [
+    "image", "img_path", "image_path", "picture", "pic",
+    "img", "images", "img_file", "image_file", "photo",
+    "screenshot", "frame", "frames", "visual", "visual_input"
+]
+AUDIO_KEYS = [
+    "audio", "audio_path", "wav", "sound", 
+    "audio_file", "audio_input", "speech", "voice",
+    "waveform", "spectrogram", "mel", "audio_data"
+]
+DOC_KEYS = [
+    "doc", "document", "doc_path", "pdf",
+    "document_path", "doc_file", "text_file", "txt",
+    "markdown", "md", "html", "document_input", "file_path"
+]
+VIDEO_KEYS = [
+    "video", "video_path", "mp4", "avi", "mov", "mkv",
+    "video_file", "video_input", "clip", "movie", "footage",
+    "video_data", "frames_path", "video_frames_path"
+]
 
 class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
     """An iterable dataset for large-scale streaming data processing.
@@ -47,7 +63,15 @@ class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
 
         Args:
             data_sources (List[str]): List of paths to data sources, which can be files or directories.
-            config (Optional[dict]): Configuration dictionary. If None, default settings will be used.
+            config (Optional[dict]): Configuration dictionary. Supports:
+                - custom_image_keys: List of custom keys for image data
+                - custom_audio_keys: List of custom keys for audio data
+                - custom_doc_keys: List of custom keys for document data
+                - custom_video_keys: List of custom keys for video data
+                - force_enable_vision: Force enable vision encoder
+                - force_enable_audio: Force enable audio encoder
+                - force_enable_doc: Force enable doc encoder
+                - force_enable_video: Force enable video encoder
         """
         super().__init__()
         
@@ -55,12 +79,55 @@ class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
         self.tokenizer = YvTokenizer()
         self.config = config or {}
         self.memory = PiscesLxToolsMemoryMonitor(threshold_gb=8.0)
-        # Initialize multimodal encoders if config is provided
-        self.vision_encoder = YvVisionEncoder(config) if config else None
-        self.audio_encoder = YvAudioEncoder(config) if config else None
-        self.doc_encoder = YvDocEncoder(config) if config else None
-        self.video_encoder = YvVideoEncoder(config) if config else None
+        # Lazy initialization: Do NOT create multimodal encoders at init time.
+        # They will be created on-demand or use the model's encoders during training.
+        # This prevents OOM during model initialization on low-VRAM systems.
+        self._vision_encoder = None
+        self._audio_encoder = None
+        self._doc_encoder = None
+        self._video_encoder = None
+        
+        # Allow custom key names from config
+        self._image_keys = self.config.get('custom_image_keys', None) or IMAGE_KEYS
+        self._audio_keys = self.config.get('custom_audio_keys', None) or AUDIO_KEYS
+        self._doc_keys = self.config.get('custom_doc_keys', None) or DOC_KEYS
+        self._video_keys = self.config.get('custom_video_keys', None) or VIDEO_KEYS
+        
+        # Force enable flags for modalities (useful when keys don't match)
+        self._force_vision = self.config.get('force_enable_vision', False)
+        self._force_audio = self.config.get('force_enable_audio', False)
+        self._force_doc = self.config.get('force_enable_doc', False)
+        self._force_video = self.config.get('force_enable_video', False)
+        
         self._index: List[Dict] = self._build_index()
+
+    @property
+    def vision_encoder(self):
+        """Lazy-loaded vision encoder."""
+        if self._vision_encoder is None and self.config:
+            self._vision_encoder = YvVisionEncoder(self.config)
+        return self._vision_encoder
+
+    @property
+    def audio_encoder(self):
+        """Lazy-loaded audio encoder."""
+        if self._audio_encoder is None and self.config:
+            self._audio_encoder = YvAudioEncoder(self.config)
+        return self._audio_encoder
+
+    @property
+    def doc_encoder(self):
+        """Lazy-loaded doc encoder."""
+        if self._doc_encoder is None and self.config:
+            self._doc_encoder = YvDocEncoder(self.config)
+        return self._doc_encoder
+
+    @property
+    def video_encoder(self):
+        """Lazy-loaded video encoder."""
+        if self._video_encoder is None and self.config:
+            self._video_encoder = YvVideoEncoder(self.config)
+        return self._video_encoder
 
     def _build_index(self) -> List[Dict]:
         """Build an index of all valid data files.
@@ -167,7 +234,9 @@ class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
     def _extract_mm(self, sample: Dict) -> Dict:
         """Extract multimodal data from a sample.
 
-        Process image, audio, document, and video data if the corresponding encoders are enabled.
+        Process image, audio, document, and video data only when the data exists.
+        Uses lazy encoder initialization to avoid creating encoders for unused modalities.
+        Supports custom keys and force_enable flags from config.
 
         Args:
             sample (Dict): Data sample containing multimodal data.
@@ -177,19 +246,31 @@ class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
         """
         out = {"pixel_values": None, "audio_input": None, "doc_input": None, "video_frames": None}
         try:
-            if self.vision_encoder and self.vision_encoder.enabled:
-                ip = self._first_valid(sample, IMAGE_KEYS)
-                if ip: out["pixel_values"] = self.vision_encoder.process_image(ip)
-            if self.audio_encoder and self.audio_encoder.enabled:
-                ap = self._first_valid(sample, AUDIO_KEYS)
-                if ap: out["audio_input"] = self.audio_encoder.process_audio(ap)
-            if self.doc_encoder and self.doc_encoder.enabled:
-                dp = self._first_valid(sample, DOC_KEYS)
-                if dp: out["doc_input"] = self.doc_encoder.process_doc(dp)
-            if self.video_encoder and self.video_encoder.enabled:
-                vp = self._first_valid(sample, VIDEO_KEYS)
-                if vp and self.memory.check_memory()["system_available_gb"] > 4.0:
-                    out["video_frames"] = self.video_encoder.process_video(vp)
+            # Optimized: Check if data exists BEFORE accessing encoder (lazy init)
+            # Uses custom keys from config
+            ip = self._first_valid(sample, self._image_keys)
+            if ip or self._force_vision:
+                encoder = self.vision_encoder
+                if encoder and encoder.enabled and ip:
+                    out["pixel_values"] = encoder.process_image(ip)
+            
+            ap = self._first_valid(sample, self._audio_keys)
+            if ap or self._force_audio:
+                encoder = self.audio_encoder
+                if encoder and encoder.enabled and ap:
+                    out["audio_input"] = encoder.process_audio(ap)
+            
+            dp = self._first_valid(sample, self._doc_keys)
+            if dp or self._force_doc:
+                encoder = self.doc_encoder
+                if encoder and encoder.enabled and dp:
+                    out["doc_input"] = encoder.process_doc(dp)
+            
+            vp = self._first_valid(sample, self._video_keys)
+            if (vp or self._force_video) and self.memory.check_memory()["system_available_gb"] > 4.0:
+                encoder = self.video_encoder
+                if encoder and encoder.enabled and vp:
+                    out["video_frames"] = encoder.process_video(vp)
         except Exception as e:
             pass
         return out

@@ -215,8 +215,9 @@ class YvAgentic(nn.Module):
             self._base_model_ref = None
             self._model_ref = None
             self._reasoner = YvUnifiedReasoner(cfg)
-            self._vision_encoder = YvVisionEncoder(cfg)
-            self._audio_encoder = YvAudioEncoder(cfg)
+            # Lazy initialization: Do NOT create encoders at init time to save memory
+            self._vision_encoder = None
+            self._audio_encoder = None
         
         self.tree_reasoner = POPSSMCPTreeSearchReasoner(None, tokenizer) if tokenizer else None
 
@@ -348,6 +349,9 @@ class YvAgentic(nn.Module):
         """
         if self._base_model_ref:
             return self._base_model_ref().vision
+        # Lazy initialization
+        if self._vision_encoder is None:
+            self._vision_encoder = YvVisionEncoder(self.cfg)
         return self._vision_encoder
 
     @property
@@ -360,6 +364,9 @@ class YvAgentic(nn.Module):
         """
         if self._base_model_ref:
             return self._base_model_ref().audio
+        # Lazy initialization
+        if self._audio_encoder is None:
+            self._audio_encoder = YvAudioEncoder(self.cfg)
         return self._audio_encoder
 
     async def register_capability(self, name: str, description: str,

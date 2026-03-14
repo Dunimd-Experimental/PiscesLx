@@ -316,6 +316,10 @@ python manage.py action recover <run_id> --checkpoint runs/<run_id>/ckpt.pt
 python manage.py dev enable    # Enable developer mode
 python manage.py dev disable   # Disable developer mode
 python manage.py dev status    # Check developer mode status
+
+# Cache management for .pisceslx directory
+python manage.py cache         # Show cache status
+python manage.py cache clean   # Clean all cache (settings/ protected)
 ```
 
 ---

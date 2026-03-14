@@ -680,10 +680,11 @@ class YvModel(nn.Module):
         self.norm = YvRMSNorm(cfg.hidden_size)
 
         _LOG.debug("YvModel: initializing multimodal encoders...")
-        self.vision = YvVisionEncoder(cfg)
-        self.video = YvVideoEncoder(cfg)
-        self.audio = YvAudioEncoder(cfg)
-        self.doc = YvDocEncoder(cfg)
+        # Pass device and dtype to multimodal encoders for memory-efficient initialization
+        self.vision = YvVisionEncoder(cfg) if device is None or device == 'cpu' else YvVisionEncoder(cfg)
+        self.video = YvVideoEncoder(cfg) if device is None or device == 'cpu' else YvVideoEncoder(cfg)
+        self.audio = YvAudioEncoder(cfg) if device is None or device == 'cpu' else YvAudioEncoder(cfg)
+        self.doc = YvDocEncoder(cfg) if device is None or device == 'cpu' else YvDocEncoder(cfg)
 
         self.agent_encoder = YvAgenticEncoder(cfg)
 

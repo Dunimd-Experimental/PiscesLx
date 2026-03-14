@@ -316,6 +316,10 @@ python manage.py action recover <run_id> --checkpoint runs/<run_id>/ckpt.pt
 python manage.py dev enable    # 启用开发者模式
 python manage.py dev disable   # 禁用开发者模式
 python manage.py dev status    # 查看开发者模式状态
+
+# 缓存管理（.pisceslx目录）
+python manage.py cache         # 显示缓存状态
+python manage.py cache clean   # 清理所有缓存（settings/受保护）
 ```
 
 ---

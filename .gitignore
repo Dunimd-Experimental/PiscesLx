@@ -81,6 +81,14 @@ tensorboard_logs/
 # Jupyter Notebook
 .ipynb_checkpoints
 
+# Node.js / TypeScript
+node_modules/
+.next/
+out/
+dist/
+*.tsbuildinfo
+.turbo/
+
 # Environment Variables
 .env
 .env.local

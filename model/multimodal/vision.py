@@ -344,8 +344,8 @@ class YvVisualTextProcessor(nn.Module):
         self.patch_size = patch_size
 
         # Text-specific normalization tuned for high-contrast glyph imagery.
-        self.register_buffer('text_mean', torch.Tensor([0.95, 0.95, 0.95]).view(1, 3, 1, 1))
-        self.register_buffer('text_std', torch.Tensor([0.1, 0.1, 0.1]).view(1, 3, 1, 1))
+        self.register_buffer('text_mean', torch.tensor([0.95, 0.95, 0.95], dtype=torch.float32).view(1, 3, 1, 1))
+        self.register_buffer('text_std', torch.tensor([0.1, 0.1, 0.1], dtype=torch.float32).view(1, 3, 1, 1))
 
         # Text-aware patch embedding producing coarse glyph descriptors.
         self.text_patch_embed = nn.Conv2d(
@@ -463,10 +463,10 @@ class YvVisionEncoder(nn.Module):
         self.num_heads = cfg.n_head
         self.num_layers = cfg.n_layer
         _LOG.debug(f"VisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
-        # Register mean values for normalization
-        self.register_buffer('mean', torch.Tensor([0.485, 0.456, 0.406]).view(1, 3, 1, 1))
+        # Register mean values for normalization - use float32 for stability
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(1, 3, 1, 1))
         # Register standard deviation values for normalization
-        self.register_buffer('std', torch.Tensor([0.229, 0.224, 0.225]).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(1, 3, 1, 1))
         self.patch_embed = nn.Conv2d(
             in_channels=3,
             out_channels=self.hidden_size,

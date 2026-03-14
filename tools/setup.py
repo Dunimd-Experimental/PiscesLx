@@ -445,6 +445,188 @@ def setup(args):
             return
 
     _init_settings()
+    _setup_plxs()
+
+
+def _setup_plxs():
+    """
+    Set up PLx Studio frontend.
+    
+    This function handles the installation of npm dependencies and building
+    the PLx Studio frontend. The built output is placed in the project root
+    directory at .pisceslx/plxs/ for production use.
+    
+    The setup includes:
+        1. Checking for Node.js and npm availability
+        2. Installing npm dependencies in tools/plxs/
+        3. Building the Next.js application
+        4. Copying the build output to .pisceslx/plxs/
+    
+    Args:
+        None
+    
+    Returns:
+        None
+    
+    Side Effects:
+        - Creates node_modules in tools/plxs/
+        - Creates .next/ build directory in tools/plxs/
+        - Copies build output to .pisceslx/plxs/
+    
+    Example:
+        >>> _setup_plxs()  # Installs and builds plxs frontend
+    """
+    import shutil
+    
+    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    plxs_dir = os.path.join(project_root, "tools", "plxs")
+    output_dir = os.path.join(project_root, ".pisceslx", "plxs")
+    
+    if not os.path.exists(plxs_dir):
+        logger_warning("PLx Studio directory not found, skipping frontend setup")
+        return
+    
+    if not os.path.exists(os.path.join(plxs_dir, "package.json")):
+        logger_warning("PLx Studio package.json not found, skipping frontend setup")
+        return
+    
+    logger_info("Setting up PLx Studio frontend...")
+    
+    is_windows = platform.system().lower().startswith("win")
+    
+    npm_cmd = "npm.cmd" if is_windows else "npm"
+    npx_cmd = "npx.cmd" if is_windows else "npx"
+    
+    try:
+        result = subprocess.run(
+            [npm_cmd, "--version"],
+            capture_output=True,
+            text=True,
+            timeout=30
+        )
+        if result.returncode != 0:
+            logger_warning("npm not found, skipping PLx Studio setup")
+            logger_warning("Please install Node.js from https://nodejs.org/")
+            return
+        
+        npm_version = result.stdout.strip()
+        logger_info(f"Found npm version {npm_version}")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        logger_warning("npm not available, skipping PLx Studio setup")
+        logger_warning("Please install Node.js from https://nodejs.org/")
+        return
+    
+    logger_info("Installing PLx Studio dependencies...")
+    try:
+        subprocess.check_call(
+            [npm_cmd, "install"],
+            cwd=plxs_dir,
+            timeout=600
+        )
+        logger_success("PLx Studio dependencies installed")
+    except subprocess.CalledProcessError as e:
+        logger_error(f"Failed to install PLx Studio dependencies: {e}")
+        return
+    except subprocess.TimeoutExpired:
+        logger_error("npm install timed out")
+        return
+    
+    logger_info("Building PLx Studio...")
+    try:
+        subprocess.check_call(
+            [npm_cmd, "run", "build"],
+            cwd=plxs_dir,
+            timeout=600
+        )
+        logger_success("PLx Studio built successfully")
+    except subprocess.CalledProcessError as e:
+        logger_error(f"Failed to build PLx Studio: {e}")
+        return
+    except subprocess.TimeoutExpired:
+        logger_error("npm build timed out")
+        return
+    
+    logger_info("Deploying PLx Studio to production directory...")
+    try:
+        if os.path.exists(output_dir):
+            shutil.rmtree(output_dir)
+        
+        os.makedirs(output_dir, exist_ok=True)
+        
+        build_dir = os.path.join(plxs_dir, ".next")
+        if os.path.exists(build_dir):
+            shutil.copytree(build_dir, os.path.join(output_dir, ".next"))
+        
+        files_to_copy = ["package.json", "next.config.js", "public"]
+        for item in files_to_copy:
+            src = os.path.join(plxs_dir, item)
+            dst = os.path.join(output_dir, item)
+            if os.path.exists(src):
+                if os.path.isdir(src):
+                    shutil.copytree(src, dst)
+                else:
+                    shutil.copy2(src, dst)
+        
+        standalone_dir = os.path.join(build_dir, "standalone")
+        if os.path.exists(standalone_dir):
+            shutil.copytree(standalone_dir, os.path.join(output_dir, "standalone"))
+        
+        static_dir = os.path.join(build_dir, "static")
+        if os.path.exists(static_dir):
+            os.makedirs(os.path.join(output_dir, ".next", "static"), exist_ok=True)
+            shutil.copytree(static_dir, os.path.join(output_dir, ".next", "static"))
+        
+        logger_success(f"PLx Studio deployed to {output_dir}")
+        
+        _create_plxs_launcher(output_dir, project_root)
+        
+    except Exception as e:
+        logger_error(f"Failed to deploy PLx Studio: {e}")
+        return
+
+
+def _create_plxs_launcher(output_dir: str, project_root: str):
+    """
+    Create a launcher script for PLx Studio.
+    
+    This function creates a launcher script that starts the PLx Studio
+    frontend in production mode. The script is placed in the output directory.
+    
+    Args:
+        output_dir: The directory where PLx Studio is deployed.
+        project_root: The project root directory.
+    
+    Returns:
+        None
+    
+    Side Effects:
+        - Creates start script in output directory
+    """
+    is_windows = platform.system().lower().startswith("win")
+    
+    if is_windows:
+        launcher_content = """@echo off
+cd /d "%~dp0"
+node .next/standalone/server.js
+"""
+        launcher_path = os.path.join(output_dir, "start.bat")
+    else:
+        launcher_content = """#!/bin/bash
+cd "$(dirname "$0")"
+node .next/standalone/server.js
+"""
+        launcher_path = os.path.join(output_dir, "start.sh")
+    
+    try:
+        with open(launcher_path, 'w', encoding='utf-8') as f:
+            f.write(launcher_content)
+        
+        if not is_windows:
+            os.chmod(launcher_path, 0o755)
+        
+        logger_success(f"Created PLx Studio launcher at {launcher_path}")
+    except Exception as e:
+        logger_warning(f"Failed to create launcher script: {e}")
 
 
 def _init_settings():

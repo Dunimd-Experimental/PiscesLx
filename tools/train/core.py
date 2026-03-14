@@ -478,6 +478,19 @@ class PiscesLxTrainingOperator(object):
         """
         _LOG.info("Initializing training model...")
         
+        # Critical for low-VRAM training: Use memory-efficient initialization when quantization is enabled.
+        # Strategy: Create model on CPU with BF16 (not FP32) to halve memory, then quantize, then move to GPU.
+        # This works for all model sizes: 0.5B/7B/70B/etc.
+        force_cpu_init = self.config.quantization.enable_quantization
+        original_device = model_kwargs.get('device')
+        
+        if force_cpu_init:
+            # Use BF16 on CPU instead of FP32 - halves memory usage (7B: ~14GB instead of ~28GB)
+            # BF16 is stable enough for initialization and compatible with bitsandbytes quantization
+            model_kwargs['device'] = 'cpu'
+            model_kwargs['dtype'] = torch.bfloat16
+            _LOG.info("Low-VRAM mode: CPU+BF16 initialization for quantization")
+        
         # Create model instance with provided arguments
         self.model = model_class(**model_kwargs)
 
