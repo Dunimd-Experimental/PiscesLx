@@ -142,7 +142,8 @@ class POPSSFP4Config(PiscesLxOperatorConfig):
     save_optimizer_state: bool = True
     
     def __post_init__(self):
-        super().__post_init__()
+        if hasattr(super(), '__post_init__'):
+            super().__post_init__()
         if self.fp4_format not in ["E2M1", "E1M2"]:
             raise ValueError(f"Unknown FP4 format: {self.fp4_format}")
 

@@ -450,10 +450,10 @@ def setup(args):
 
 def _setup_plxs():
     """
-    Set up PLx Studio frontend.
+    Set up Xi Studio frontend.
     
     This function handles the installation of npm dependencies and building
-    the PLx Studio frontend. The built output is placed in the project root
+    the Xi Studio frontend. The built output is placed in the project root
     directory at .pisceslx/plxs/ for production use.
     
     The setup includes:
@@ -483,14 +483,14 @@ def _setup_plxs():
     output_dir = os.path.join(project_root, ".pisceslx", "plxs")
     
     if not os.path.exists(plxs_dir):
-        logger_warning("PLx Studio directory not found, skipping frontend setup")
+        logger_warning("Xi Studio directory not found, skipping frontend setup")
         return
     
     if not os.path.exists(os.path.join(plxs_dir, "package.json")):
-        logger_warning("PLx Studio package.json not found, skipping frontend setup")
+        logger_warning("Xi Studio package.json not found, skipping frontend setup")
         return
     
-    logger_info("Setting up PLx Studio frontend...")
+    logger_info("Setting up Xi Studio frontend...")
     
     is_windows = platform.system().lower().startswith("win")
     
@@ -505,48 +505,48 @@ def _setup_plxs():
             timeout=30
         )
         if result.returncode != 0:
-            logger_warning("npm not found, skipping PLx Studio setup")
+            logger_warning("npm not found, skipping Xi Studio setup")
             logger_warning("Please install Node.js from https://nodejs.org/")
             return
         
         npm_version = result.stdout.strip()
         logger_info(f"Found npm version {npm_version}")
     except (subprocess.TimeoutExpired, FileNotFoundError):
-        logger_warning("npm not available, skipping PLx Studio setup")
+        logger_warning("npm not available, skipping Xi Studio setup")
         logger_warning("Please install Node.js from https://nodejs.org/")
         return
     
-    logger_info("Installing PLx Studio dependencies...")
+    logger_info("Installing Xi Studio dependencies...")
     try:
         subprocess.check_call(
             [npm_cmd, "install"],
             cwd=plxs_dir,
             timeout=600
         )
-        logger_success("PLx Studio dependencies installed")
+        logger_success("Xi Studio dependencies installed")
     except subprocess.CalledProcessError as e:
-        logger_error(f"Failed to install PLx Studio dependencies: {e}")
+        logger_error(f"Failed to install Xi Studio dependencies: {e}")
         return
     except subprocess.TimeoutExpired:
         logger_error("npm install timed out")
         return
     
-    logger_info("Building PLx Studio...")
+    logger_info("Building Xi Studio...")
     try:
         subprocess.check_call(
             [npm_cmd, "run", "build"],
             cwd=plxs_dir,
             timeout=600
         )
-        logger_success("PLx Studio built successfully")
+        logger_success("Xi Studio built successfully")
     except subprocess.CalledProcessError as e:
-        logger_error(f"Failed to build PLx Studio: {e}")
+        logger_error(f"Failed to build Xi Studio: {e}")
         return
     except subprocess.TimeoutExpired:
         logger_error("npm build timed out")
         return
     
-    logger_info("Deploying PLx Studio to production directory...")
+    logger_info("Deploying Xi Studio to production directory...")
     try:
         if os.path.exists(output_dir):
             shutil.rmtree(output_dir)
@@ -576,24 +576,24 @@ def _setup_plxs():
             os.makedirs(os.path.join(output_dir, ".next", "static"), exist_ok=True)
             shutil.copytree(static_dir, os.path.join(output_dir, ".next", "static"))
         
-        logger_success(f"PLx Studio deployed to {output_dir}")
+        logger_success(f"Xi Studio deployed to {output_dir}")
         
         _create_plxs_launcher(output_dir, project_root)
         
     except Exception as e:
-        logger_error(f"Failed to deploy PLx Studio: {e}")
+        logger_error(f"Failed to deploy Xi Studio: {e}")
         return
 
 
 def _create_plxs_launcher(output_dir: str, project_root: str):
     """
-    Create a launcher script for PLx Studio.
+    Create a launcher script for Xi Studio.
     
-    This function creates a launcher script that starts the PLx Studio
+    This function creates a launcher script that starts the Xi Studio
     frontend in production mode. The script is placed in the output directory.
     
     Args:
-        output_dir: The directory where PLx Studio is deployed.
+        output_dir: The directory where Xi Studio is deployed.
         project_root: The project root directory.
     
     Returns:
@@ -624,7 +624,7 @@ node .next/standalone/server.js
         if not is_windows:
             os.chmod(launcher_path, 0o755)
         
-        logger_success(f"Created PLx Studio launcher at {launcher_path}")
+        logger_success(f"Created Xi Studio launcher at {launcher_path}")
     except Exception as e:
         logger_warning(f"Failed to create launcher script: {e}")
 

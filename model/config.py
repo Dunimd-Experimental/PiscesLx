@@ -302,6 +302,8 @@ class YvConfig:
     use_deepnorm: bool = False
     use_layerscale: bool = False
     layerscale_init: float = 1e-5
+    use_attn_res: bool = False
+    attn_res_block_size: int = 8
 
     enable_dynamic_fusion: bool = True
     fusion_quality_threshold: float = 0.3

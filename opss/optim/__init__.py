@@ -93,6 +93,15 @@ from .fp4 import (
     FP4_E2M1_MIN,
 )
 
+from .ink import (
+    POPSSInkConfig,
+    POPSSInkBlockQuantizer,
+    POPSSInkSparseSelector,
+    POPSSInkIntegrator,
+    POPSSInkOperator,
+    POPSSInkOptimizer,
+)
+
 __version__ = VERSION
 __author__ = AUTHOR
 
@@ -112,4 +121,10 @@ __all__ = [
     "FP4_E2M1_VALUES",
     "FP4_E2M1_MAX",
     "FP4_E2M1_MIN",
+    "POPSSInkConfig",
+    "POPSSInkBlockQuantizer",
+    "POPSSInkSparseSelector",
+    "POPSSInkIntegrator",
+    "POPSSInkOperator",
+    "POPSSInkOptimizer",
 ]

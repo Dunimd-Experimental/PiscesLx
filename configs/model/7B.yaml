@@ -197,6 +197,34 @@ fp4_block_size: 16
 fp4_stochastic_rounding: true
 fp4_master_weights_dtype: "fp32"
 
+# Ink Optimizer Configuration
+# Unified optimizer with INT8/INT4 compression, sparse gradients, GaLore, ROOT, QAT
+ink_optimizer:
+  enabled: true
+  momentum_bits: 8
+  momentum_block_size: 128
+  variance_bits: 8
+  variance_block_size: 256
+  sparse_ratio: 0.01
+  sparse_warmup_steps: 1000
+  sparse_adaptive: true
+  ortho_momentum: 0.9
+  gradient_bits: 8
+  gradient_block_size: 128
+  gradient_sparse_ratio: 0.01
+  kv_cache_bits: 8
+  kv_cache_block_size: 64
+  max_experts_on_gpu: 4
+  moe_offload_threshold: 0.8
+  moe_lru_cache_size: 8
+  checkpoint_transformer: true
+  checkpoint_ratio: 0.5
+  checkpoint_preserve_ratio: 0.3
+  root_ortho_steps: 5
+  root_soft_threshold: 0.1
+  root_spectral_norm_clip: 1.0
+  root_min_dim_for_ortho: 16
+
 chinchilla_optimal: false
 chinchilla_c_budget: 0
 chinchilla_d_ratio: 1.0

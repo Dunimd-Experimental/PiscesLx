@@ -112,7 +112,8 @@ class POPSSROOTConfig(PiscesLxOperatorConfig):
     maximize: bool = False
     
     def __post_init__(self):
-        super().__post_init__()
+        if hasattr(super(), '__post_init__'):
+            super().__post_init__()
         if self.lr < 0:
             raise ValueError(f"Invalid learning rate: {self.lr}")
         if self.beta1 < 0 or self.beta1 >= 1:
@@ -160,6 +161,26 @@ class POPSSROOTOperator(PiscesLxOperatorInterface):
     @property
     def description(self) -> str:
         return "Robust Orthogonalized Optimizer - Adam stability + Muon speed"
+    
+    @property
+    def input_schema(self) -> Dict[str, Any]:
+        return {
+            "model": {"type": "nn.Module", "required": True},
+            "gradients": {"type": "dict", "required": False},
+            "config": {"type": "POPSSROOTConfig", "required": False},
+            "optimizer_state": {"type": "dict", "required": False},
+        }
+    
+    @property
+    def output_schema(self) -> Dict[str, Any]:
+        return {
+            "model": {"type": "nn.Module"},
+            "optimizer_state": {"type": "dict"},
+            "statistics": {"type": "dict"},
+        }
+    
+    def validate_inputs(self, inputs: Dict[str, Any]) -> bool:
+        return isinstance(inputs, dict) and "model" in inputs
     
     def execute(self, inputs: Dict[str, Any], **kwargs) -> PiscesLxOperatorResult:
         """

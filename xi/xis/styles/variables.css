@@ -1,0 +1,58 @@
+/**
+ * Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+ *
+ * This file is part of PiscesL1.
+ * The PiscesL1 project belongs to the Dunimd Team.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * You may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * DISCLAIMER: Users must comply with applicable AI regulations.
+ * Non-compliance may result in service termination or legal liability.
+ */
+
+:root {
+  /* Window System */
+  --window-left: 0px;
+  --window-top: 0px;
+  --window-width: 800px;
+  --window-height: 600px;
+  --window-opacity: 1;
+  --window-pointer-events: auto;
+  
+  /* Popup System */
+  --popup-right: 8px;
+  --popup-top: 48px;
+  
+  /* Progress Bar System */
+  --progress-width: 0%;
+  
+  /* Grid System */
+  --grid-columns: 1;
+  
+  /* Z-Index Layers */
+  --z-window-focused: 50;
+  --z-window-normal: 40;
+  --z-popup: 50;
+  --z-context-menu: 9999;
+  
+  /* Context Menu */
+  --context-menu-left: 0px;
+  --context-menu-top: 0px;
+  
+  /* Textarea */
+  --textarea-height: 80px;
+  
+  /* Sidebar Apps Popup */
+  --apps-popup-left: 72px;
+  --apps-popup-bottom: 8px;
+}

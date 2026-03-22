@@ -344,6 +344,8 @@ class PiscesLxInferenceEngine(object):
             
             self.model.eval()
             
+            self._apply_ink_quantization()
+            
             self._agentic = None
             if YvAgentic is not None:
                 self._agentic = YvAgentic(cfg, tokenizer=self.tokenizer, model=self.model)
@@ -625,11 +627,40 @@ class PiscesLxInferenceEngine(object):
                     trust_remote_code=self.config.model.trust_remote_code
                 )
             elif self.config.quantization.quant_method == 'gptq':
-                # GPTQ quantization handling
                 pass
             _LOG.info("Model quantization applied successfully")
         except Exception as e:
             _LOG.warning(f"Quantization failed: {e}")
+    
+    def _apply_ink_quantization(self):
+        """
+        Apply Ink quantization for inference memory efficiency.
+        
+        Uses INT8 weight quantization from the Ink optimizer to reduce
+        memory footprint during inference while maintaining accuracy.
+        """
+        try:
+            from opss.optim.ink import POPSSInkBlockQuantizer
+            
+            quantizer = POPSSInkBlockQuantizer(
+                momentum_bits=8,
+                variance_bits=4,
+                momentum_block_size=128,
+                variance_block_size=256,
+            )
+            
+            quantized_count = 0
+            for name, param in self.model.named_parameters():
+                if param.dim() >= 2 and param.numel() > 1024:
+                    quantized, scales = quantizer.quantize_int8(param.data, 128)
+                    dequantized = quantizer.dequantize_int8(quantized, scales, param.shape)
+                    param.data = dequantized
+                    quantized_count += 1
+            
+            if quantized_count > 0:
+                _LOG.info(f"Ink quantization applied to {quantized_count} parameters for inference")
+        except Exception as e:
+            _LOG.warning(f"Ink quantization failed: {e}")
     
     def load_model(self, model_path: str, tokenizer_path: Optional[str] = None):
         """

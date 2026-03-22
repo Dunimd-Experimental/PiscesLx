@@ -1,0 +1,72 @@
+/**
+ * Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+ *
+ * This file is part of PiscesL1.
+ * The PiscesL1 project belongs to the Dunimd Team.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * You may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * DISCLAIMER: Users must comply with applicable AI regulations.
+ * Non-compliance may result in service termination or legal liability.
+ */
+
+/* Popup Base */
+.popup {
+  position: fixed;
+  z-index: var(--z-popup);
+}
+
+.popup--positioned {
+  right: var(--popup-right);
+  top: var(--popup-top);
+}
+
+/* Notification Popup */
+.notification-popup {
+  position: fixed;
+  right: var(--popup-right);
+  top: var(--popup-top);
+  z-index: var(--z-popup);
+  width: 384px;
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+/* Apps Popup (Sidebar) */
+.apps-popup {
+  position: fixed;
+  left: var(--apps-popup-left);
+  bottom: var(--apps-popup-bottom);
+  z-index: var(--z-popup);
+}
+
+/* Popup Header */
+.popup__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem 1rem;
+  border-bottom: 1px solid hsl(var(--border) / 0.5);
+}
+
+/* Popup Content */
+.popup__content {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+/* Popup Footer */
+.popup__footer {
+  padding: 0.75rem 1rem;
+  border-top: 1px solid hsl(var(--border) / 0.5);
+}

@@ -1,0 +1,282 @@
+# Copyright © 2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of Xi.
+# The Xi project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+[train]
+executable = "python"
+script = "manage.py"
+args = ["train"]
+env = { CUDA_VISIBLE_DEVICES = "0" }
+cwd = "${paths.root}"
+timeout = 86400
+background = true
+enable_action = true
+
+[train.defaults]
+model_size = "7B"
+dataset = ""
+train_mode = "standard"
+seq_len = 2048
+
+[train.schema]
+description = "Train a PiscesL1 model with specified configuration"
+
+[[train.schema.parameters]]
+name = "model_size"
+type = "select"
+description = "Model size configuration"
+required = true
+default = "7B"
+source = "${paths.configs}/model"
+source_type = "directory"
+tab = "basic"
+
+[[train.schema.parameters]]
+name = "dataset"
+type = "string"
+description = "Dataset name or path for training"
+required = false
+default = ""
+tab = "basic"
+
+[[train.schema.parameters]]
+name = "train_mode"
+type = "select"
+description = "Training mode: standard, quant_export, or preference"
+required = false
+default = "standard"
+options = ["standard", "quant_export", "preference"]
+tab = "basic"
+
+[[train.schema.parameters]]
+name = "train_config"
+type = "path"
+description = "Training config file path (JSON/YAML)"
+required = false
+default = ""
+tab = "basic"
+
+[[train.schema.parameters]]
+name = "seq_len"
+type = "integer"
+description = "Sequence length for training"
+required = false
+default = 2048
+min = 64
+max = 1048576
+tab = "basic"
+
+[[train.schema.parameters]]
+name = "model_path"
+type = "path"
+description = "Model path for preference training"
+required = false
+default = ""
+tab = "basic"
+
+[[train.schema.parameters]]
+name = "resume_ckpt"
+type = "path"
+description = "Path to checkpoint to resume training"
+required = false
+default = ""
+tab = "basic"
+
+[[train.schema.parameters]]
+name = "reset_lr"
+type = "boolean"
+description = "Reset learning rate after resuming"
+required = false
+default = false
+tab = "basic"
+
+[[train.schema.parameters]]
+name = "quant"
+type = "boolean"
+description = "Force enable 4-bit quantization"
+required = false
+default = false
+tab = "quant"
+
+[[train.schema.parameters]]
+name = "no_quant"
+type = "boolean"
+description = "Force disable quantization"
+required = false
+default = false
+tab = "quant"
+
+[[train.schema.parameters]]
+name = "force_quant"
+type = "boolean"
+description = "Override config to force quantization"
+required = false
+default = false
+tab = "quant"
+
+[[train.schema.parameters]]
+name = "force_lora"
+type = "boolean"
+description = "Override config to force LoRA"
+required = false
+default = false
+tab = "quant"
+
+[[train.schema.parameters]]
+name = "quant_bits"
+type = "select"
+description = "Quantization bits"
+required = false
+default = "4"
+options = ["2", "4", "8"]
+tab = "quant"
+
+[[train.schema.parameters]]
+name = "rlhf"
+type = "boolean"
+description = "Enable RLHF training"
+required = false
+default = false
+tab = "rlhf"
+
+[[train.schema.parameters]]
+name = "rlhf_dataset"
+type = "path"
+description = "RLHF human feedback dataset"
+required = false
+default = ""
+tab = "rlhf"
+
+[[train.schema.parameters]]
+name = "rlhf_lr"
+type = "float"
+description = "RLHF learning rate"
+required = false
+default = 1e-5
+min = 0.0
+max = 1.0
+tab = "rlhf"
+
+[[train.schema.parameters]]
+name = "rlhf_batch_size"
+type = "integer"
+description = "RLHF batch size"
+required = false
+default = 16
+min = 1
+max = 1024
+tab = "rlhf"
+
+[[train.schema.parameters]]
+name = "rlhf_mini_batch_size"
+type = "integer"
+description = "RLHF mini-batch size for PPO"
+required = false
+default = 4
+min = 1
+max = 256
+tab = "rlhf"
+
+[[train.schema.parameters]]
+name = "rlhf_accum_steps"
+type = "integer"
+description = "RLHF gradient accumulation steps"
+required = false
+default = 1
+min = 1
+max = 128
+tab = "rlhf"
+
+[[train.schema.parameters]]
+name = "rlhf_epochs"
+type = "integer"
+description = "RLHF training epochs"
+required = false
+default = 1
+min = 1
+max = 100
+tab = "rlhf"
+
+[[train.schema.parameters]]
+name = "rlhf_max_samples"
+type = "integer"
+description = "RLHF maximum samples"
+required = false
+default = 10000
+min = 1
+max = 10000000
+tab = "rlhf"
+
+[[train.schema.parameters]]
+name = "rlhf_max_length"
+type = "integer"
+description = "RLHF maximum sequence length"
+required = false
+default = 512
+min = 64
+max = 1048576
+tab = "rlhf"
+
+[[train.schema.parameters]]
+name = "run_id"
+type = "string"
+description = "Run ID for cross-terminal tracking"
+required = false
+default = ""
+tab = "advanced"
+
+[[train.schema.parameters]]
+name = "run_name"
+type = "string"
+description = "Human-readable run name"
+required = false
+default = ""
+tab = "advanced"
+
+[[train.schema.parameters]]
+name = "run_dir"
+type = "path"
+description = "Override default run directory"
+required = false
+default = ""
+tab = "advanced"
+
+[[train.schema.parameters]]
+name = "control_interval"
+type = "float"
+description = "Control polling interval (seconds)"
+required = false
+default = 0.5
+min = 0.1
+max = 10.0
+tab = "advanced"
+
+[[train.schema.parameters]]
+name = "dry_run"
+type = "boolean"
+description = "Resolve configs and exit"
+required = false
+default = false
+tab = "advanced"
+
+[[train.schema.parameters]]
+name = "log_level"
+type = "select"
+description = "Logging level"
+required = false
+default = "INFO"
+options = ["DEBUG", "INFO", "WARNING", "ERROR"]
+tab = "advanced"

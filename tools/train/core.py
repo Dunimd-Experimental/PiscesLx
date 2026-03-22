@@ -755,111 +755,110 @@ class PiscesLxTrainingOperator(object):
     
     def initialize_optimizer(self, optimizer_class: Optional[type] = None, **optimizer_kwargs) -> torch.optim.Optimizer:
         """
-        Initialize the optimizer.
+        Initialize the optimizer with Ink as the default unified optimizer.
+        
+        The Ink optimizer integrates INT8/INT4 state compression, sparse gradients,
+        and GaLore/FP4/ROOT techniques for maximum memory efficiency and throughput.
         
         Args:
-            optimizer_class: Optimizer class, defaults to AdamW.
+            optimizer_class: Optimizer class (ignored when using Ink).
             **optimizer_kwargs: Optimizer parameters.
             
         Returns:
             Initialized optimizer instance.
         """
-        _LOG.info("Initializing optimizer...")
+        _LOG.info("Initializing Ink optimizer...")
         
-        # Default optimizer parameters
-        default_params = {
-            'lr': self.config.optimizer.learning_rate,
-            'weight_decay': self.config.optimizer.weight_decay,
-            'betas': self.config.optimizer.betas,
-            'eps': self.config.optimizer.eps
-        }
-        default_params.update(optimizer_kwargs)
+        trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         
-        # Select optimizer class
-        if optimizer_class is None:
+        try:
+            from opss.optim.ink import POPSSInkOptimizer, POPSSInkConfig
+            
+            ink_section = getattr(self.config, 'ink_optimizer', None) or self.config
+            
+            ink_config = POPSSInkConfig(
+                lr=self.config.optimizer.learning_rate,
+                weight_decay=self.config.optimizer.weight_decay,
+                betas=self.config.optimizer.betas,
+                eps=self.config.optimizer.eps,
+                max_grad_norm=getattr(self.config.optimizer, 'max_grad_norm', 1.0),
+                momentum_bits=getattr(ink_section, 'momentum_bits', 8),
+                momentum_block_size=getattr(ink_section, 'momentum_block_size', 128),
+                variance_bits=getattr(ink_section, 'variance_bits', 8),
+                variance_block_size=getattr(ink_section, 'variance_block_size', 256),
+                sparse_ratio=getattr(ink_section, 'sparse_ratio', 0.01),
+                sparse_warmup_steps=getattr(ink_section, 'sparse_warmup_steps', 1000),
+                sparse_adaptive=True,
+                ortho_momentum=getattr(ink_section, 'ortho_momentum', 0.9),
+                galore_rank=getattr(ink_section, 'galore_rank', 160),
+                galore_update_proj_gap=getattr(ink_section, 'galore_update_proj_gap', 200),
+                galore_quantization_bits=getattr(ink_section, 'galore_quantization_bits', 8),
+                galore_min_rank=getattr(ink_section, 'galore_min_rank', 40),
+                galore_max_rank=getattr(ink_section, 'galore_max_rank', 320),
+                galore_rank_adapt_interval=getattr(ink_section, 'galore_rank_adapt_interval', 1000),
+                galore_rank_adapt_threshold=getattr(ink_section, 'galore_rank_adapt_threshold', 0.1),
+                galore_memory_efficient=getattr(ink_section, 'galore_memory_efficient', True),
+                galore_moe_expert_only=getattr(ink_section, 'galore_moe_expert_only', False),
+                fp4_block_size=getattr(ink_section, 'fp4_block_size', 16),
+                fp4_stochastic_rounding=getattr(ink_section, 'fp4_stochastic_rounding', True),
+                fp4_master_weights_dtype=getattr(ink_section, 'fp4_master_weights_dtype', 'fp32'),
+                root_ortho_steps=getattr(ink_section, 'root_ortho_steps', 5),
+                root_soft_threshold=getattr(ink_section, 'root_soft_threshold', 0.1),
+                root_spectral_norm_clip=getattr(ink_section, 'root_spectral_norm_clip', 1.0),
+                root_min_dim_for_ortho=getattr(ink_section, 'root_min_dim_for_ortho', 16),
+                gradient_bits=getattr(ink_section, 'gradient_bits', 8),
+                gradient_block_size=getattr(ink_section, 'gradient_block_size', 128),
+                gradient_sparse_ratio=getattr(ink_section, 'gradient_sparse_ratio', 0.01),
+                kv_cache_bits=getattr(ink_section, 'kv_cache_bits', 8),
+                kv_cache_block_size=getattr(ink_section, 'kv_cache_block_size', 64),
+                max_experts_on_gpu=getattr(ink_section, 'max_experts_on_gpu', 4),
+                moe_offload_threshold=getattr(ink_section, 'moe_offload_threshold', 0.8),
+                moe_lru_cache_size=getattr(ink_section, 'moe_lru_cache_size', 8),
+                checkpoint_transformer=getattr(ink_section, 'checkpoint_transformer', True),
+                checkpoint_ratio=getattr(ink_section, 'checkpoint_ratio', 0.5),
+                checkpoint_preserve_ratio=getattr(ink_section, 'checkpoint_preserve_ratio', 0.3),
+            )
+
+            self.optimizer = POPSSInkOptimizer(trainable_params, config=ink_config)
+            self._ink_config = ink_config
+
+            memory_stats = self.optimizer.get_memory_stats()
+            _LOG.info(
+                f"Ink optimizer initialized: "
+                f"momentum={ink_config.momentum_bits}bit, "
+                f"variance={ink_config.variance_bits}bit, "
+                f"sparse_ratio={ink_config.sparse_ratio}, "
+                f"gradient={ink_config.gradient_bits}bit, "
+                f"kv_cache={ink_config.kv_cache_bits}bit, "
+                f"moe_gpu={ink_config.max_experts_on_gpu}, "
+                f"checkpoint_ratio={ink_config.checkpoint_ratio}, "
+                f"compression_ratio={memory_stats['compression_ratio']:.2f}x, "
+                f"ortho_momentum={ink_config.ortho_momentum}, "
+                f"galore_rank={ink_config.galore_rank}"
+            )
+            
+        except Exception as e:
+            _LOG.warning(f"Ink optimizer initialization failed, falling back to AdamW: {e}")
+            
+            default_params = {
+                'lr': self.config.optimizer.learning_rate,
+                'weight_decay': self.config.optimizer.weight_decay,
+                'betas': self.config.optimizer.betas,
+                'eps': self.config.optimizer.eps
+            }
+            default_params.update(optimizer_kwargs)
+            
             opt_name = str(getattr(self.config.optimizer, "name", "adamw") or "adamw").lower()
-
-            # Check if 8-bit optimizer is requested
-            want_8bit = opt_name in ("adamw8bit", "adamw_8bit", "bnb_adamw")
-            want_8bit = want_8bit or bool(getattr(self.config.optimizer, "use_fp4", False))
-            want_8bit = want_8bit or bool(getattr(self.config.optimizer, "galore_memory_efficient", False))
-            want_8bit = want_8bit or (int(getattr(self.config.optimizer, "galore_quantization_bits", 0) or 0) == 8)
-
-            if opt_name in ("adamw", "adamw8bit", "adamw_8bit", "bnb_adamw"):
-                if want_8bit:
-                    try:
-                        import bitsandbytes as bnb
-
-                        optimizer_class = bnb.optim.AdamW8bit
-                        _LOG.info("Using bitsandbytes AdamW8bit for memory efficiency")
-                    except Exception as e:
-                        _LOG.warning(f"bitsandbytes AdamW8bit requested but unavailable; falling back to torch AdamW: {e}")
-                        optimizer_class = torch.optim.AdamW
-                else:
-                    optimizer_class = torch.optim.AdamW
-            elif opt_name == "sgd":
+            if opt_name == "sgd":
                 optimizer_class = torch.optim.SGD
             else:
-                raise ValueError(f"Unsupported optimizer: {self.config.optimizer.name}")
-        
-        # FP4 Training (prioritized when enabled; expected to be the most memory-efficient path)
-        if getattr(self.config.optimizer, 'use_fp4', False):
-            try:
-                from opss.optim.fp4 import POPSSFP4Operator, POPSSFP4Config, PiscesLxOperatorStatus
-
-                fp4_config = POPSSFP4Config(
-                    block_size=getattr(self.config.optimizer, 'fp4_block_size', 16),
-                    stochastic_rounding=getattr(self.config.optimizer, 'fp4_stochastic_rounding', True),
-                    master_weights_dtype=getattr(self.config.optimizer, 'fp4_master_weights_dtype', 'fp32'),
-                    learning_rate=default_params['lr'],
-                    weight_decay=default_params['weight_decay'],
-                )
-                self._fp4_operator = POPSSFP4Operator()
-                self._fp4_config = fp4_config
-
-                trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-                self.optimizer = optimizer_class(trainable_params, **default_params)
-                _LOG.info(f"FP4 training enabled: block_size={fp4_config.block_size}, master_weights={fp4_config.master_weights_dtype}")
-            except Exception as e:
-                _LOG.warning(f"FP4 initialization failed, falling back to standard optimizer: {e}")
-                trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-                self.optimizer = optimizer_class(trainable_params, **default_params)
-
-        # Apply GaLore (if enabled and FP4 not enabled)
-        elif self.config.optimizer.use_galore:
-            try:
-                from opss.optim.galore import POPSSGaLoreOptimizerAdapter, POPSSGaLoreConfig
-                
-                # Get trainable parameters
-                trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-                
-                galore_config = POPSSGaLoreConfig(
-                    rank=self.config.optimizer.galore_rank,
-                    update_proj_gap=self.config.optimizer.galore_update_proj_gap,
-                    quantization_bits=getattr(self.config.optimizer, 'galore_quantization_bits', 8),
-                    lr_ratio=getattr(self.config.optimizer, 'galore_lr_ratio', 1.0),
-                    min_rank=getattr(self.config.optimizer, 'galore_min_rank', 32),
-                    max_rank=getattr(self.config.optimizer, 'galore_max_rank', 512),
-                    rank_adapt_interval=getattr(self.config.optimizer, 'galore_rank_adapt_interval', 1000),
-                    rank_adapt_threshold=getattr(self.config.optimizer, 'galore_rank_adapt_threshold', 0.1),
-                    memory_efficient=getattr(self.config.optimizer, 'galore_memory_efficient', False),
-                    moe_expert_only=getattr(self.config.optimizer, 'galore_moe_expert_only', False),
-                )
-                self._galore_adapter = POPSSGaLoreOptimizerAdapter(galore_config)
-                self.optimizer = optimizer_class(trainable_params, **default_params)
-                _LOG.info(f"GaLore optimizer initialized with rank={galore_config.rank}, quantization={galore_config.quantization_bits}bit")
-            except Exception as e:
-                _LOG.warning(f"GaLore initialization failed, falling back to standard AdamW: {e}")
-                trainable_params = [p for p in self.model.parameters() if p.requires_grad]
-                self.optimizer = optimizer_class(trainable_params, **default_params)
-        else:
-            trainable_params = [p for p in self.model.parameters() if p.requires_grad]
+                optimizer_class = torch.optim.AdamW
+            
             self.optimizer = optimizer_class(trainable_params, **default_params)
+            _LOG.info(f"Fallback optimizer {self.optimizer.__class__.__name__} initialized")
         
-        # Initialize learning rate scheduler
         self._initialize_scheduler()
         
-        _LOG.info(f"Optimizer {self.optimizer.__class__.__name__} initialized")
         return self.optimizer
     
     def _initialize_scheduler(self):

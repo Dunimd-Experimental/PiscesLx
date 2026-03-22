@@ -294,7 +294,7 @@ COMMANDS = [
     'action',     # Manage background training/inference processes
     'dev',        # Developer mode management (enable/disable/status)
     'cache',      # Cache management for .pisceslx directory
-    'plxs',       # Start PLx Studio (graphical workstation)
+    'plxs',       # Start Xi Studio (graphical workstation)
 ]
 
 
@@ -1117,7 +1117,7 @@ def main():
     )
     
     # -------------------------------------------------------------------------
-    # PLXS (PLx Studio) ARGUMENTS
+    # PLXS (Xi Studio) ARGUMENTS
     # -------------------------------------------------------------------------
     # --plxs_port: Port for PLxS backend API server
     # Default is 3140
@@ -1539,24 +1539,24 @@ def main():
     # -------------------------------------------------------------------------
     # PLXS COMMAND
     # -------------------------------------------------------------------------
-    # Start PLx Studio (graphical workstation for PiscesL1)
+    # Start Xi Studio (graphical workstation for PiscesL1)
     # Launches both the backend API server (port 3140) and the frontend
     elif args.command == 'plxs':
-        from utils.plxs import PiscesLxPlxsServer
-        from utils.plxs.launcher import PiscesLxPlxsLauncher
-        
+        from xi.xsc import XiServer
+        from xi.xsc import XiLauncher
+
         plxs_port = getattr(args, 'plxs_port', 3140)
         frontend_port = getattr(args, 'frontend_port', 3000)
         no_frontend = getattr(args, 'no_frontend', False)
-        
-        launcher = PiscesLxPlxsLauncher(
-            plxs_port=plxs_port,
+
+        launcher = XiLauncher(
+            xi_port=plxs_port,
             frontend_port=frontend_port,
-            root_dir=ROOT
+            root_dir=Path(ROOT)
         )
-        
+
         if no_frontend:
-            server = PiscesLxPlxsServer(port=plxs_port, root_dir=ROOT)
+            server = XiServer(port=plxs_port, root_dir=Path(ROOT))
             server.run(host=args.host if hasattr(args, 'host') else "127.0.0.1")
         else:
             launcher.run()

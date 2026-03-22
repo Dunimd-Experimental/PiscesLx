@@ -310,6 +310,8 @@ class YvBlockConfig:
     use_dora: bool = False
     mixture_of_depths: bool = False
     mod_routing_weight: float = 0.1
+    use_attn_res: bool = False
+    attn_res_block_size: int = 8
 
 
 class YvLayerScale(nn.Module):
@@ -1407,6 +1409,15 @@ class YvTransformerBlock(nn.Module):
         # Auto-enabled when hidden_size >= 2048 (sufficient capacity for SSM)
         # Provides O(n) complexity alternative to O(n^2) attention
         self._init_hybrid_ssm(cfg, device, dtype)
+        
+        # Attention Residuals for deep layer contribution balancing
+        self.use_attn_res = getattr(cfg, 'use_attn_res', False)
+        if self.use_attn_res:
+            self.attn_res_block_size = getattr(cfg, 'attn_res_block_size', 8)
+            self.attn_res_proj = nn.Linear(cfg.hidden_size, 1, bias=False, device=device, dtype=dtype)
+            self.attn_res_norm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
+            self.register_buffer('_attn_res_blocks', None, persistent=False)
+            self.register_buffer('_partial_block_sum', None, persistent=False)
 
     def _init_parallel_block(self, cfg, device, dtype):
         """Initialize parallel attention-MLP block.
@@ -1722,6 +1733,10 @@ class YvTransformerBlock(nn.Module):
             Output tensor(s).
         """
         residual = x
+        
+        if self.use_attn_res:
+            x = self._apply_attn_res(x)
+        
         x_norm = self.pre_norm1(x)
         attn_cache = None
         past_for_attn = attn_past_key_values
@@ -1760,8 +1775,9 @@ class YvTransformerBlock(nn.Module):
         if self.use_layerscale:
             attn_out = self.attn_layerscale(attn_out)
         
-        # Hierarchical Communication: Distributed training optimization
-        # Auto-enabled when multi-GPU distributed training
+        if self.use_attn_res:
+            self._accumulate_partial_block(attn_out)
+        
         if torch.cuda.device_count() > 1 and self.training:
             try:
                 import torch.distributed as dist
@@ -1780,16 +1796,11 @@ class YvTransformerBlock(nn.Module):
         x_out = residual + self.residual_dropout(self.residual_scale * attn_out)
         x_out = self.norm1(x_out)
         
-        # Hybrid SSM Path: Auto-activated for long sequences (seq_len > 8192)
-        # Provides O(n) complexity alternative to O(n^2) attention
         if hasattr(self, 'ssm_layer') and self.ssm_layer is not None:
             seq_len = x_out.shape[1]
             if seq_len > 8192:
-                # Compute SSM output with linear complexity
                 ssm_out = self.ssm_layer(x_out)
-                # Sigmoid gate for smooth blending (learnable)
                 gate = torch.sigmoid(self.ssm_gate)
-                # Blend attention output with SSM output
                 x_out = gate * x_out + (1.0 - gate) * ssm_out
 
         residual = x_out
@@ -1798,6 +1809,9 @@ class YvTransformerBlock(nn.Module):
         
         if self.use_layerscale:
             mlp_out = self.mlp_layerscale(mlp_out)
+        
+        if self.use_attn_res:
+            self._accumulate_partial_block(mlp_out)
             
         x_out = residual + self.residual_dropout(self.residual_scale * mlp_out)
         x_out = self.norm2(x_out)
@@ -1805,10 +1819,65 @@ class YvTransformerBlock(nn.Module):
         if self.use_mixture_of_depths:
             x_out, mod_loss = self.mod_router(x_out, lambda h: h)
             aux_loss = aux_loss + mod_loss
+        
+        if self.use_attn_res:
+            self._update_attn_res_block(x_out)
 
         if use_cache:
             return x_out, aux_loss, attn_cache
         return x_out, aux_loss
+
+    def _apply_attn_res(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply block-level attention residual aggregation.
+        
+        Args:
+            x: Input tensor of shape [batch_size, seq_len, hidden_size].
+            
+        Returns:
+            Aggregated tensor with attention-weighted block contributions.
+        """
+        if self._attn_res_blocks is None or len(self._attn_res_blocks) == 0:
+            return x
+        
+        blocks = list(self._attn_res_blocks) + [x]
+        V = torch.stack(blocks, dim=0)
+        K = self.attn_res_norm(V)
+        
+        logits = torch.einsum('d, n b t d -> n b t', 
+                              self.attn_res_proj.weight.squeeze(), K)
+        weights = logits.softmax(dim=0)
+        
+        h = torch.einsum('n b t, n b t d -> b t d', weights, V)
+        return h
+
+    def _update_attn_res_block(self, x: torch.Tensor) -> None:
+        """Update block representation at block boundaries.
+        
+        Args:
+            x: Current hidden state tensor.
+        """
+        if self.layer_idx < 0:
+            return
+            
+        if self.layer_idx % self.attn_res_block_size == 0:
+            if self._attn_res_blocks is None:
+                self._attn_res_blocks = torch.stack([x.detach()])
+            else:
+                new_block = x.detach().unsqueeze(0)
+                self._attn_res_blocks = torch.cat([self._attn_res_blocks, new_block], dim=0)
+            
+            self._partial_block_sum = None
+
+    def _accumulate_partial_block(self, output: torch.Tensor) -> None:
+        """Accumulate output into partial block sum.
+        
+        Args:
+            output: Output tensor from attention or MLP layer.
+        """
+        if self._partial_block_sum is None:
+            self._partial_block_sum = output.detach().clone()
+        else:
+            self._partial_block_sum = self._partial_block_sum + output.detach()
 
 
 class YvManifoldConstraint(nn.Module):

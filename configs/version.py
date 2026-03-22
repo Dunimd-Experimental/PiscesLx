@@ -114,5 +114,5 @@ Note:
 """
 
 VERSION = "1.0.0"
-CVERSION = "0.3.1"
+CVERSION = "0.3.2"
 AUTHOR = "Dunimd Team"

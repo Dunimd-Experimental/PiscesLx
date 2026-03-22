@@ -198,6 +198,17 @@ fp4_block_size: 16
 fp4_stochastic_rounding: true
 fp4_master_weights_dtype: "fp32"
 
+ink_optimizer:
+  enabled: true
+  momentum_bits: 8
+  variance_bits: 8
+  sparse_ratio: 0.01
+  gradient_bits: 8
+  kv_cache_bits: 8
+  galore_rank: 400
+  max_experts_on_gpu: 8
+  checkpoint_ratio: 0.5
+
 chinchilla_optimal: false
 chinchilla_c_budget: 0
 chinchilla_d_ratio: 1.0
