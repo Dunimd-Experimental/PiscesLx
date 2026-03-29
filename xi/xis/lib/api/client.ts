@@ -146,8 +146,8 @@ class ApiClient {
     return response.data;
   }
 
-  async controlRun(request: RunControlRequest): Promise<RunControlResponse> {
-    const response = await this.client.post("/runs/control", request);
+  async controlRun(runId: string, request: RunControlRequest): Promise<RunControlResponse> {
+    const response = await this.client.post(`/runs/${runId}/control`, request);
     return response.data;
   }
 
@@ -336,6 +336,219 @@ class ApiClient {
 
   getBaseUrl(): string {
     return API_BASE_URL;
+  }
+
+  getHandshakeState(): HandshakeState {
+    return { ...this._handshakeState };
+  }
+
+  async getStats(): Promise<{
+    cpu_percent: number;
+    memory_percent: number;
+    memory_used_gb: number;
+    memory_total_gb: number;
+    gpu_count: number;
+    gpus: Array<{
+      index: number;
+      vendor: string;
+      name: string;
+      utilization: number;
+      memory_used_gb: number;
+      memory_total_gb: number;
+      temperature: number;
+    }>;
+    qps?: number;
+  }> {
+    const response = await this.client.get("/system/stats");
+    return response.data;
+  }
+
+  async getDrives(): Promise<{
+    is_windows: boolean;
+    drives: Array<{
+      name: string;
+      path: string;
+      total: number;
+      used: number;
+      free: number;
+    }>;
+  }> {
+    const response = await this.client.get("/fs/drives");
+    return response.data;
+  }
+
+  async getDirectory(path: string): Promise<{
+    path: string;
+    items: Array<{
+      name: string;
+      path: string;
+      is_dir: boolean;
+      size: number;
+      modified: string;
+    }>;
+    disk?: {
+      total: number;
+      used: number;
+      free: number;
+    } | null;
+    is_windows: boolean;
+  }> {
+    const response = await this.client.get("/fs/list", {
+      params: { path },
+    });
+    return response.data;
+  }
+
+  async deleteItem(path: string): Promise<{ success: boolean; message: string; error?: string }> {
+    const response = await this.client.delete("/fs/delete", {
+      params: { path },
+    });
+    return response.data;
+  }
+
+  async renameItem(oldPath: string, newPath: string): Promise<{ success: boolean; message: string; error?: string }> {
+    const response = await this.client.post("/fs/rename", null, {
+      params: { old_path: oldPath, new_path: newPath },
+    });
+    return response.data;
+  }
+
+  async createFolder(path: string): Promise<{ success: boolean; message: string; error?: string }> {
+    const response = await this.client.post("/fs/mkdir", null, {
+      params: { path },
+    });
+    return response.data;
+  }
+
+  async createFile(path: string): Promise<{ success: boolean; message: string; error?: string }> {
+    const response = await this.client.post("/fs/touch", null, {
+      params: { path },
+    });
+    return response.data;
+  }
+
+  async copyItem(srcPath: string, destPath: string): Promise<{ success: boolean; message: string; error?: string }> {
+    const response = await this.client.post("/fs/copy", null, {
+      params: { src: srcPath, dest: destPath },
+    });
+    return response.data;
+  }
+
+  async moveItem(srcPath: string, destPath: string): Promise<{ success: boolean; message: string; error?: string }> {
+    const response = await this.client.post("/fs/move", null, {
+      params: { src: srcPath, dest: destPath },
+    });
+    return response.data;
+  }
+
+  async checkFirstLaunch(): Promise<{ is_first_launch: boolean }> {
+    const response = await this.client.get("/v1/xi/first-launch");
+    return response.data;
+  }
+
+  async completeFirstLaunch(): Promise<{ success: boolean }> {
+    const response = await this.client.post("/v1/xi/complete-first-launch");
+    return response.data;
+  }
+
+  async getCommandSchema(command: string): Promise<{
+    command: string;
+    description: string;
+    available: boolean;
+    unavailable_reason: string;
+    tabs: Array<{
+      name: string;
+      label: string;
+      available: boolean;
+      unavailable_reason: string;
+      parameters?: string[];
+    }>;
+    parameters: Array<{
+      name: string;
+      type: string;
+      description: string;
+      required?: boolean;
+      default?: unknown;
+      source?: string;
+      source_type?: string;
+      available?: boolean;
+      unavailable_reason?: string;
+      min?: number;
+      max?: number;
+      filter?: string;
+      tab?: string;
+      options?: string[];
+    }>;
+  }> {
+    const response = await this.client.get(`/commands/${command}/schema`);
+    return response.data;
+  }
+
+  async getParameterOptions(command: string, parameterName: string): Promise<{
+    parameter: string;
+    options: Array<{
+      label: string;
+      value: string;
+    }>;
+  }> {
+    const response = await this.client.get(`/commands/${command}/parameters/${parameterName}/options`);
+    return response.data;
+  }
+
+  async chatCompletion(request: {
+    model: string;
+    messages: Array<{ role: string; content: unknown }>;
+    temperature?: number;
+    max_tokens?: number;
+  }): Promise<{
+    id: string;
+    choices: Array<{
+      index: number;
+      message: {
+        role: string;
+        content: string;
+      };
+      finish_reason: string;
+    }>;
+    usage: {
+      prompt_tokens: number;
+      completion_tokens: number;
+      total_tokens: number;
+    };
+  }> {
+    const response = await this.client.post("/v1/chat/completions", request);
+    return response.data;
+  }
+
+  async *streamChatCompletion(request: {
+    model: string;
+    messages: Array<{ role: string; content: unknown }>;
+    temperature?: number;
+    max_tokens?: number;
+    stream?: boolean;
+  }): AsyncGenerator<string, void, unknown> {
+    const response = await fetch(`${API_BASE_URL}/v1/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(this._handshakeState.token && { Authorization: `Bearer ${this._handshakeState.token}` }),
+      },
+      body: JSON.stringify({ ...request, stream: true }),
+    });
+
+    if (!response.body) {
+      throw new Error("No response body");
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value);
+      yield chunk;
+    }
   }
 }
 

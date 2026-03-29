@@ -21,7 +21,7 @@ version = "1.0.0"
 backend = "piscesl1"
 description = "PiscesLx LLM Training Project"
 author = ""
-first_launch = true
+first_launch = false
 
 [project.commands]
 enabled = ["train", "inference", "benchmark", "download"]

@@ -22,6 +22,7 @@
 
 "use client";
 
+import { useEffect } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -30,7 +31,6 @@ import {
   Play,
   Pause,
   Square,
-  RotateCcw,
   Brain,
   MessageSquare,
   Download,
@@ -39,24 +39,24 @@ import {
   Clock,
   CheckCircle,
   XCircle,
-  Loader,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "@/lib/api";
+import { useRunsStore } from "@/lib/stores";
 import Link from "next/link";
 import type { RunInfo } from "@/types/training";
 
 export default function RunsPage() {
-  const { data: runs, isLoading, refetch } = useQuery({
-    queryKey: ["runs"],
-    queryFn: () => apiClient.listRuns(),
-    refetchInterval: 5000,
-  });
+  const { runs, isLoading, isWsConnected, connectWebSocket, controlRun } = useRunsStore();
+
+  useEffect(() => {
+    if (!isWsConnected) {
+      connectWebSocket();
+    }
+  }, [isWsConnected, connectWebSocket]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
       case "running":
-        return <Loader className="h-4 w-4 animate-spin text-green-500" />;
+        return <img src="/load.svg" alt="Running" className="h-4 w-4" />;
       case "completed":
         return <CheckCircle className="h-4 w-4 text-blue-500" />;
       case "failed":
@@ -109,11 +109,11 @@ export default function RunsPage() {
   };
 
   const stats = {
-    total: runs?.total || 0,
-    running: runs?.runs.filter((r: { status: string }) => r.status === "running").length || 0,
-    completed: runs?.runs.filter((r: { status: string }) => r.status === "completed").length || 0,
-    failed: runs?.runs.filter((r: { status: string }) => r.status === "failed").length || 0,
-    paused: runs?.runs.filter((r: { status: string }) => r.status === "paused").length || 0,
+    total: runs.length,
+    running: runs.filter((r: RunInfo) => r.status === "running").length,
+    completed: runs.filter((r: RunInfo) => r.status === "completed").length,
+    failed: runs.filter((r: RunInfo) => r.status === "failed").length,
+    paused: runs.filter((r: RunInfo) => r.status === "paused").length,
   };
 
   return (
@@ -126,18 +126,12 @@ export default function RunsPage() {
               Manage all training, inference, and background tasks
             </p>
           </div>
-          <div className="flex gap-2">
-            <Button variant="secondary" onClick={() => refetch()}>
-              <RotateCcw className="mr-2 h-4 w-4" />
-              Refresh
-            </Button>
-            <Button variant="secondary" asChild>
-              <Link href="/training/new">
-                <Play className="mr-2 h-4 w-4" />
-                New Run
-              </Link>
-            </Button>
-          </div>
+          <Button variant="secondary" asChild>
+            <Link href="/training/new">
+              <Play className="mr-2 h-4 w-4" />
+              New Run
+            </Link>
+          </Button>
         </div>
 
         <div className="grid gap-4 md:grid-cols-5">
@@ -153,7 +147,7 @@ export default function RunsPage() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium">Running</CardTitle>
-              <Loader className="h-4 w-4 text-green-500" />
+              <img src="/load.svg" alt="Running" className="h-4 w-4" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-green-500">{stats.running}</div>
@@ -197,10 +191,16 @@ export default function RunsPage() {
           </CardHeader>
           <CardContent>
             {isLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+              <div className="flex flex-col items-center justify-center py-12">
+                <img src="/load.svg" alt="Loading" className="h-12 w-12 mb-4" />
+                <span className="text-muted-foreground">Loading runs...</span>
               </div>
-            ) : !runs?.runs || runs.runs.length === 0 ? (
+            ) : !isWsConnected ? (
+              <div className="flex flex-col items-center justify-center py-12">
+                <img src="/load.svg" alt="Connecting" className="h-12 w-12 mb-4" />
+                <span className="text-muted-foreground">Connecting to runs service...</span>
+              </div>
+            ) : runs.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Play className="h-12 w-12 text-muted-foreground mb-4" />
                 <p className="text-muted-foreground mb-2">No runs yet</p>
@@ -224,7 +224,7 @@ export default function RunsPage() {
                   <div className="col-span-2">Created</div>
                   <div className="col-span-1">Actions</div>
                 </div>
-                {runs.runs.map((run: RunInfo) => (
+                {runs.map((run: RunInfo) => (
                   <div
                     key={run.run_id}
                     className="grid grid-cols-12 gap-4 rounded-lg border p-3 hover:bg-muted/50 transition-colors items-center"
@@ -262,17 +262,32 @@ export default function RunsPage() {
                       <div className="flex gap-1">
                         {run.status === "running" && (
                           <>
-                            <Button variant="secondary" size="icon" className="h-8 w-8">
+                            <Button
+                              variant="secondary"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => controlRun(run.run_id, "pause")}
+                            >
                               <Pause className="h-3 w-3" />
                             </Button>
-                            <Button variant="secondary" size="icon" className="h-8 w-8">
+                            <Button
+                              variant="secondary"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => controlRun(run.run_id, "cancel")}
+                            >
                               <Square className="h-3 w-3" />
                             </Button>
                           </>
                         )}
                         {run.status === "paused" && (
-                          <Button variant="secondary" size="icon" className="h-8 w-8">
-                            <RotateCcw className="h-3 w-3" />
+                          <Button
+                            variant="secondary"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => controlRun(run.run_id, "resume")}
+                          >
+                            <Play className="h-3 w-3" />
                           </Button>
                         )}
                         {run.status === "completed" && (

@@ -22,87 +22,106 @@
 
 /* Progress Bar Container */
 .progress {
+  position: relative;
   height: 0.5rem;
-  background-color: hsl(var(--muted));
-  border-radius: 9999px;
+  width: 100%;
   overflow: hidden;
+  border-radius: var(--radius-full);
+  background: hsl(var(--secondary));
+}
+
+/* Progress Sizes */
+.progress--sm {
+  height: 0.25rem;
+}
+
+.progress--md {
+  height: 0.5rem;
 }
 
 .progress--lg {
   height: 0.75rem;
 }
 
-.progress--sm {
-  height: 0.375rem;
-}
-
-/* Progress Bar Fill */
-.progress-bar {
+/* Progress Indicator */
+.progress__indicator {
   height: 100%;
-  width: var(--progress-width);
-  transition: width 300ms ease;
+  width: var(--progress-width, 0%);
+  background: hsl(var(--primary));
+  transition: width var(--transition-slow);
   border-radius: inherit;
 }
 
-/* Progress Bar Colors */
+/* Progress Indicator Colors */
+.progress__indicator--primary {
+  background: hsl(var(--primary));
+}
+
+.progress__indicator--success {
+  background: hsl(142 76% 36%);
+}
+
+.progress__indicator--warning {
+  background: hsl(38 92% 50%);
+}
+
+.progress__indicator--danger {
+  background: hsl(var(--destructive));
+}
+
+.progress__indicator--info {
+  background: hsl(217 91% 60%);
+}
+
+/* Legacy Progress Bar (for backward compatibility) */
+.progress-bar {
+  height: 100%;
+  width: var(--progress-width);
+  transition: width var(--transition-slow);
+  border-radius: inherit;
+}
+
 .progress-bar--emerald {
-  background-color: theme('colors.emerald.500');
+  background: hsl(160 84% 39%);
 }
 
 .progress-bar--amber {
-  background-color: theme('colors.amber.500');
+  background: hsl(38 92% 50%);
 }
 
 .progress-bar--green {
-  background-color: theme('colors.green.500');
+  background: hsl(142 76% 36%);
 }
 
 .progress-bar--red {
-  background-color: theme('colors.red.500');
+  background: hsl(0 84% 60%);
 }
 
 .progress-bar--blue {
-  background-color: theme('colors.blue.500');
+  background: hsl(217 91% 60%);
 }
 
 .progress-bar--violet {
-  background-color: theme('colors.violet.500');
+  background: hsl(262 83% 58%);
 }
 
 .progress-bar--primary {
-  background-color: hsl(var(--primary));
+  background: hsl(var(--primary));
 }
 
 /* Disk Usage Progress */
 .disk-progress {
   height: 0.75rem;
-  background-color: hsl(var(--muted));
-  border-radius: 9999px;
+  width: 12rem;
   overflow: hidden;
-  width: 192px;
+  border-radius: var(--radius-full);
+  background: hsl(var(--muted));
 }
 
 .disk-progress__bar {
   height: 100%;
-  background-color: theme('colors.blue.500');
-  border-radius: inherit;
-  transition: width 300ms ease;
   width: var(--progress-width);
-}
-
-/* GPU Vendor Colors */
-.bg-green-500 {
-  background-color: theme('colors.green.500');
-}
-
-.bg-red-500 {
-  background-color: theme('colors.red.500');
-}
-
-.bg-blue-500 {
-  background-color: theme('colors.blue.500');
-}
-
-.bg-violet-500 {
-  background-color: theme('colors.violet.500');
+  border-radius: inherit;
+  transition: width var(--transition-slow);
+  background: hsl(217 91% 60%);
 }

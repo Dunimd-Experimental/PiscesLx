@@ -77,8 +77,8 @@ export function Header() {
 
   return (
     <>
-      <header className="flex h-12 items-center justify-between border-b bg-card px-2">
-        <div className="flex items-center gap-1">
+      <header className="header">
+        <div className="header__left">
           <Button
             variant="secondary"
             size="icon"
@@ -93,7 +93,7 @@ export function Header() {
           </Button>
         </div>
 
-        <div className="flex items-center gap-1">
+        <div className="header__right">
           <Button
             variant="secondary"
             size="icon"

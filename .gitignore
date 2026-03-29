@@ -1,4 +1,4 @@
-# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei & Annian Wang. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -87,7 +87,13 @@ node_modules/
 out/
 dist/
 *.tsbuildinfo
+*.tsbuildinfo.*
+.tsbuildinfo
+tsconfig.tsbuildinfo
 .turbo/
+*.next.js
+*.next.css
+static/
 
 # Environment Variables
 .env

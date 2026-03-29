@@ -28,6 +28,7 @@ import { apiClient } from "@/lib/api/client";
 import { useApps } from "./apps-context";
 import { useContextMenu } from "./context-menu";
 import { AppWindow } from "./app-window";
+import { useExplorerStore } from "@/lib/stores";
 import {
   Folder,
   File,
@@ -70,9 +71,9 @@ interface FileExplorerWindowProps {
 interface FileItem {
   name: string;
   path: string;
-  is_dir: boolean;
-  size: number;
-  modified: string;
+  type: "file" | "directory" | "unknown";
+  size?: number;
+  modified?: string;
 }
 
 interface DriveInfo {
@@ -100,7 +101,7 @@ interface DrivesInfo {
 }
 
 const getFileIcon = (item: FileItem) => {
-  if (item.is_dir) {
+  if (item.type === "directory") {
     return <Folder className="h-5 w-5 text-amber-500" />;
   }
   
@@ -151,15 +152,16 @@ const getFileIcon = (item: FileItem) => {
   }
 };
 
-const formatSize = (bytes: number): string => {
-  if (bytes === 0) return "0 B";
+const formatSize = (bytes: number | undefined): string => {
+  if (!bytes) return "0 B";
   const k = 1024;
   const sizes = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
   return parseFloat((bytes / Math.pow(k, i)).toFixed(1)) + " " + sizes[i];
 };
 
-const formatDate = (dateStr: string): string => {
+const formatDate = (dateStr: string | undefined): string => {
+  if (!dateStr) return "-";
   try {
     const date = new Date(dateStr);
     return date.toLocaleDateString() + " " + date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
@@ -202,27 +204,20 @@ export function FileExplorerWindow({ state }: FileExplorerWindowProps) {
   const [creatingFile, setCreatingFile] = useState(false);
   const [newItemName, setNewItemName] = useState("");
 
-  const { data: drivesInfo, isLoading: drivesLoading } = useQuery<DrivesInfo>({
-    queryKey: ["drives"],
-    queryFn: async () => {
-      const result = await apiClient.getDrives();
-      return result as DrivesInfo;
-    },
-    staleTime: 30000,
-  });
+  const { diskInfo, isLoading: drivesLoading, isWsConnected, connectWebSocket, disconnectWebSocket, browse } = useExplorerStore();
 
-  const isWindows = drivesInfo?.is_windows ?? true;
+  const isWindows = diskInfo?.is_windows ?? true;
 
-  const { data: directoryInfo, isLoading: dirLoading, refetch } = useQuery<DirectoryInfo>({
-    queryKey: ["directory", currentPath],
-    queryFn: async () => {
-      if (!currentPath || showDrivesView) return { path: "", items: [], is_windows: isWindows };
-      const result = await apiClient.getDirectory(currentPath);
-      return result as DirectoryInfo;
-    },
-    enabled: !!currentPath && !showDrivesView,
-    staleTime: 5000,
-  });
+  useEffect(() => {
+    if (!isWsConnected) {
+      connectWebSocket();
+    }
+    return () => {
+      disconnectWebSocket();
+    };
+  }, [isWsConnected, connectWebSocket, disconnectWebSocket]);
+
+  const { items, isLoading: dirLoading } = useExplorerStore();
 
   const navigateTo = useCallback((path: string) => {
     if (path === "") {
@@ -283,16 +278,15 @@ export function FileExplorerWindow({ state }: FileExplorerWindowProps) {
 
   const pathParts = currentPath ? currentPath.replace(/\\/g, "/").split("/").filter(Boolean) : [];
 
-  const filteredItems = directoryInfo?.items?.filter((item) =>
+  const filteredItems = items?.filter((item) =>
     item.name.toLowerCase().includes(searchQuery.toLowerCase())
   ) || [];
 
   const isLoading = drivesLoading || dirLoading;
 
   const refreshDirectory = useCallback(() => {
-    queryClient.invalidateQueries({ queryKey: ["directory", currentPath] });
-    refetch();
-  }, [queryClient, currentPath, refetch]);
+    browse(currentPath);
+  }, [browse, currentPath]);
 
   const handleDelete = useCallback(async (item: FileItem) => {
     if (!confirm(`Are you sure you want to delete "${item.name}"?`)) return;
@@ -394,10 +388,10 @@ export function FileExplorerWindow({ state }: FileExplorerWindowProps) {
     const menuItems = item ? [
       {
         id: "open",
-        label: item.is_dir ? "Open" : "Open file",
-        icon: item.is_dir ? <Folder className="h-4 w-4" /> : <Eye className="h-4 w-4" />,
+        label: item.type === "directory" ? "Open" : "Open file",
+        icon: item.type === "directory" ? <Folder className="h-4 w-4" /> : <Eye className="h-4 w-4" />,
         onClick: () => {
-          if (item.is_dir) {
+          if (item.type === "directory") {
             navigateTo(item.path);
           }
         },
@@ -512,8 +506,6 @@ export function FileExplorerWindow({ state }: FileExplorerWindowProps) {
     return null;
   }
 
-  const diskInfo = directoryInfo?.disk;
-
   return (
     <AppWindow
       appId="explorer"
@@ -612,19 +604,22 @@ export function FileExplorerWindow({ state }: FileExplorerWindowProps) {
                 {isWindows ? "Devices and drives" : "Storage"}
               </div>
               
-              {drivesInfo?.drives?.map((drive, index) => (
-                <button
-                  key={index}
-                  className={cn(
-                    "w-full flex items-center gap-2 px-2 py-1.5 rounded text-sm hover:bg-muted/50 transition-colors mb-1",
-                    currentPath === drive.path && !showDrivesView && "bg-muted"
-                  )}
-                  onClick={() => navigateTo(drive.path)}
-                >
-                  <HardDrive className="h-4 w-4 text-blue-500 flex-shrink-0" />
-                  <span className="truncate">{drive.name}</span>
-                </button>
-              ))}
+              {diskInfo && (
+                <div className="flex items-center justify-between px-3 py-2 border-t border-border/50 bg-muted/30 text-xs text-muted-foreground">
+                  <div className="flex items-center gap-2">
+                    {diskInfo.total > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        {formatSize(diskInfo.used)} / {formatSize(diskInfo.total)} used
+                      </span>
+                    )}
+                    {diskInfo.free > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        {formatSize(diskInfo.free)} free of {formatSize(diskInfo.total)}
+                      </span>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -699,33 +694,15 @@ export function FileExplorerWindow({ state }: FileExplorerWindowProps) {
                   Loading...
                 </div>
               ) : showDrivesView ? (
-                <div>
-                  <div className="text-lg font-medium mb-4">{isWindows ? "Devices and drives" : "Storage"}</div>
-                  <div className="grid grid-cols-1 gap-4">
-                    {drivesInfo?.drives?.map((drive, index) => (
-                      <button
-                        key={index}
-                        className="flex items-center gap-4 p-4 rounded-lg border border-border/50 hover:bg-muted/30 transition-colors text-left"
-                        onClick={() => navigateTo(drive.path)}
-                      >
-                        <HardDrive className="h-12 w-12 text-blue-500 flex-shrink-0" />
-                        <div className="flex-1 min-w-0">
-                          <div className="font-medium text-base">{drive.name}</div>
-                          <div className="mt-2">
-                            <div className="h-3 bg-muted rounded-full overflow-hidden w-48">
-                              <div 
-                                className="disk-progress__bar"
-                                style={{ '--progress-width': `${drive.total > 0 ? ((drive.total - drive.free) / drive.total) * 100 : 0}%` } as React.CSSProperties}
-                              />
-                            </div>
-                            <div className="text-xs text-muted-foreground mt-1">
-                              {formatSize(drive.free)} free of {formatSize(drive.total)}
-                            </div>
-                          </div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
+                <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
+                  <HardDrive className="h-12 w-12 mb-2 opacity-30" />
+                  <p className="text-sm">Select a drive to browse</p>
+                  {diskInfo && (
+                    <div className="mt-4 text-xs">
+                      <p>{formatSize(diskInfo.used)} / {formatSize(diskInfo.total)} used</p>
+                      <p>{formatSize(diskInfo.free)} free</p>
+                    </div>
+                  )}
                 </div>
               ) : filteredItems.length === 0 && !creatingFolder && !creatingFile ? (
                 <div className="flex flex-col items-center justify-center h-full text-muted-foreground">
@@ -821,7 +798,7 @@ export function FileExplorerWindow({ state }: FileExplorerWindowProps) {
                         clipboard?.path === item.path && clipboard.operation === "cut" && "opacity-50"
                       )}
                       onDoubleClick={() => {
-                        if (item.is_dir) {
+                        if (item.type === "directory") {
                           navigateTo(item.path);
                         }
                       }}
@@ -830,7 +807,7 @@ export function FileExplorerWindow({ state }: FileExplorerWindowProps) {
                     >
                       {renamingItem?.path === item.path ? (
                         <>
-                          {item.is_dir ? (
+                          {item.type === "directory" ? (
                             <Folder className="h-10 w-10 text-amber-500 mb-1" />
                           ) : (
                             <div className="h-10 w-10 flex items-center justify-center">
@@ -865,7 +842,7 @@ export function FileExplorerWindow({ state }: FileExplorerWindowProps) {
                         </>
                       ) : (
                         <>
-                          {item.is_dir ? (
+                          {item.type === "directory" ? (
                             <Folder className="h-10 w-10 text-amber-500 mb-1" />
                           ) : (
                             <div className="h-10 w-10 flex items-center justify-center">
@@ -983,7 +960,7 @@ export function FileExplorerWindow({ state }: FileExplorerWindowProps) {
                         clipboard?.path === item.path && clipboard.operation === "cut" && "opacity-50"
                       )}
                       onDoubleClick={() => {
-                        if (item.is_dir) {
+                        if (item.type === "directory") {
                           navigateTo(item.path);
                         }
                       }}
@@ -1034,10 +1011,10 @@ export function FileExplorerWindow({ state }: FileExplorerWindowProps) {
                             {formatDate(item.modified)}
                           </div>
                           <div className="col-span-2 text-muted-foreground text-xs self-center">
-                            {item.is_dir ? "Folder" : item.name.split(".").pop()?.toUpperCase() || "File"}
+                            {item.type === "directory" ? "Folder" : item.name.split(".").pop()?.toUpperCase() || "File"}
                           </div>
                           <div className="col-span-2 text-right text-muted-foreground text-xs self-center">
-                            {item.is_dir ? "-" : formatSize(item.size)}
+                            {item.type === "directory" ? "-" : formatSize(item.size)}
                           </div>
                         </>
                       )}
@@ -1051,7 +1028,7 @@ export function FileExplorerWindow({ state }: FileExplorerWindowProps) {
 
         <div className="flex items-center justify-between px-3 py-2 border-t border-border/50 bg-muted/30 text-xs text-muted-foreground">
           <div className="flex items-center gap-4">
-            <span>{showDrivesView ? `${drivesInfo?.drives?.length || 0} drives` : `${filteredItems.length} items`}</span>
+            <span>{showDrivesView ? `0 drives` : `${filteredItems.length} items`}</span>
             {!showDrivesView && diskInfo && (
               <span>
                 {formatSize(diskInfo.free)} free of {formatSize(diskInfo.total)}

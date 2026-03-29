@@ -1,0 +1,71 @@
+/**
+ * Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+ *
+ * This file is part of PiscesL1.
+ * The PiscesL1 project belongs to the Dunimd Team.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * You may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * DISCLAIMER: Users must comply with applicable AI regulations.
+ * Non-compliance may result in service termination or legal liability.
+ */
+
+/* Input Base */
+.input {
+  display: flex;
+  height: var(--h-md);
+  width: 100%;
+  border-radius: var(--radius-md);
+  border: 1px solid hsl(var(--input));
+  background: hsl(var(--background));
+  padding: 0 var(--spacing-3);
+  font-size: var(--text-sm);
+  transition: all var(--transition-normal);
+  color: hsl(var(--foreground));
+}
+
+.input::placeholder {
+  color: hsl(var(--muted-foreground));
+}
+
+.input:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px hsl(var(--ring));
+}
+
+.input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Input File */
+.input--file {
+  cursor: pointer;
+}
+
+.input--file::file-selector-button {
+  border: none;
+  background: transparent;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  margin-right: var(--spacing-2);
+}
+
+/* Input Variants - Error */
+.input--error {
+  border-color: hsl(var(--destructive));
+}
+
+.input--error:focus {
+  box-shadow: 0 0 0 2px hsl(var(--destructive));
+}

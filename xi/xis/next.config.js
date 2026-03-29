@@ -34,10 +34,6 @@ const nextConfig = {
         destination: "http://127.0.0.1:3140/v1/:path*",
       },
       {
-        source: "/ws/:path*",
-        destination: "http://127.0.0.1:3140/ws/:path*",
-      },
-      {
         source: "/stats",
         destination: "http://127.0.0.1:3140/stats",
       },

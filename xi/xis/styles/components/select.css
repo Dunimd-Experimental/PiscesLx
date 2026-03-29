@@ -1,0 +1,132 @@
+/**
+ * Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+ *
+ * This file is part of PiscesL1.
+ * The PiscesL1 project belongs to the Dunimd Team.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * You may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * DISCLAIMER: Users must comply with applicable AI regulations.
+ * Non-compliance may result in service termination or legal liability.
+ */
+
+/* Select Trigger */
+.select-trigger {
+  display: flex;
+  height: var(--h-md);
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  border-radius: var(--radius-md);
+  border: 1px solid hsl(var(--input));
+  background: hsl(var(--background));
+  padding: 0 var(--spacing-3);
+  font-size: var(--text-sm);
+  transition: all var(--transition-normal);
+  color: hsl(var(--foreground));
+  cursor: pointer;
+}
+
+.select-trigger:focus {
+  outline: none;
+  box-shadow: 0 0 0 2px hsl(var(--ring));
+}
+
+.select-trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.select-trigger__icon {
+  opacity: 0.5;
+  margin-left: var(--spacing-2);
+}
+
+/* Select Content */
+.select-content {
+  position: relative;
+  z-index: 50;
+  max-height: 15rem;
+  min-width: 8rem;
+  overflow: hidden;
+  border-radius: var(--radius-md);
+  border: 1px solid hsl(var(--border));
+  background: hsl(var(--popover));
+  color: hsl(var(--popover-foreground));
+  box-shadow: var(--shadow-lg);
+}
+
+/* Select Viewport */
+.select-viewport {
+  padding: var(--spacing-1);
+  height: var(--radix-select-trigger-height);
+  width: 100%;
+  min-width: var(--radix-select-trigger-width);
+}
+
+/* Select Item */
+.select-item {
+  display: flex;
+  position: relative;
+  width: 100%;
+  cursor: default;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  padding: var(--spacing-1) var(--spacing-2) var(--spacing-1) var(--spacing-8);
+  font-size: var(--text-sm);
+  outline: none;
+  user-select: none;
+}
+
+.select-item:focus {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+.select-item:disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.select-item__indicator {
+  position: absolute;
+  left: var(--spacing-2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 0.875rem;
+  height: 0.875rem;
+}
+
+/* Select Label */
+.select-label {
+  padding: var(--spacing-1) var(--spacing-2) var(--spacing-1) var(--spacing-8);
+  font-size: var(--text-sm);
+  font-weight: 600;
+}
+
+/* Select Separator */
+.select-separator {
+  margin: var(--spacing-1) calc(-1 * var(--spacing-1));
+  height: 1px;
+  background: hsl(var(--muted));
+}
+
+/* Select Scroll Button */
+.select-scroll-button {
+  display: flex;
+  cursor: default;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-1);
+}

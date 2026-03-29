@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei & Annian Wang. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -21,20 +21,123 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-from .config import PiscesLxToolsBenchmarkConfig
-from .builders import PiscesLxToolsModelConfigBuilder, PiscesLxToolsDatasetConfigBuilder, PiscesLxToolsMetricConfigBuilder, PiscesLxToolsTaskConfigBuilder
+"""
+PiscesL1 Benchmark Module - Flagship-level evaluation suite.
+
+This module provides comprehensive benchmark evaluation including:
+- Text benchmarks (MMLU, HumanEval, GSM8K, etc.)
+- Multimodal benchmarks (Vision, Audio, Video)
+- Agent benchmarks (AgentBench, WebShop, etc.)
+- Long context benchmarks (LongBench, Needle in Haystack)
+- Performance metrics (Latency, Throughput, Memory)
+- Flagship model comparison (LLaMA-4, DeepSeek, Qwen, etc.)
+- Visualization and report generation
+"""
+
+from .config import PiscesLxToolsBenchmarkConfig, MODALITY_DATASETS
+from .builders import (
+    PiscesLxToolsModelConfigBuilder,
+    PiscesLxToolsDatasetConfigBuilder,
+    PiscesLxToolsMetricConfigBuilder,
+    PiscesLxToolsTaskConfigBuilder
+)
 from .result import PiscesLxToolsResultManager, PiscesLxToolsComparisonManager
 from .runner import PiscesLxToolsBenchmark, PiscesLxToolsBenchmarkRunner, PiscesLxToolsBenchmarkComparer
+from .benchmark import PiscesL1BenchmarkConfig, PiscesL1BenchmarkEvaluator, create_benchmark_evaluator
+
+from .multimodal import (
+    PiscesLxToolsMultimodalConfig,
+    PiscesLxToolsVisionEvaluator,
+    PiscesLxToolsAudioEvaluator,
+    PiscesLxToolsVideoEvaluator,
+    PiscesLxToolsMultimodalBenchmarkRunner,
+    create_multimodal_evaluator,
+)
+
+from .agent import (
+    PiscesLxToolsAgentConfig,
+    PiscesLxToolsAgentEvaluator,
+    PiscesLxToolsAgentMetrics,
+    PiscesLxToolsAgentBenchmarkRunner,
+    create_agent_evaluator,
+)
+
+from .long_context import (
+    PiscesLxToolsLongContextConfig,
+    PiscesLxToolsLongContextEvaluator,
+    PiscesLxToolsLongContextMetrics,
+    PiscesLxToolsLongContextBenchmarkRunner,
+    create_long_context_evaluator,
+)
+
+from .visualization import (
+    PiscesLxToolsVisualizationConfig,
+    PiscesLxToolsBenchmarkVisualizer,
+    PiscesLxToolsReportGenerator,
+    create_visualizer,
+    create_report_generator,
+)
+
+from .comparison import (
+    PiscesLxToolsComparisonConfig,
+    PiscesLxToolsFlagshipComparator,
+    FLAGSHIP_MODELS,
+    compare_with_flagships,
+    get_flagship_benchmark_data,
+)
+
+from .performance import (
+    PiscesLxToolsPerformanceConfig,
+    PiscesLxToolsPerformanceEvaluator,
+    PiscesLxToolsPerformanceMetrics,
+    PiscesLxToolsPerformanceBenchmarkRunner,
+    create_performance_evaluator,
+)
 
 __all__ = [
     "PiscesLxToolsBenchmarkConfig",
+    "MODALITY_DATASETS",
     "PiscesLxToolsModelConfigBuilder",
-    "PiscesLxToolsDatasetConfigBuilder", 
+    "PiscesLxToolsDatasetConfigBuilder",
     "PiscesLxToolsMetricConfigBuilder",
     "PiscesLxToolsTaskConfigBuilder",
     "PiscesLxToolsResultManager",
     "PiscesLxToolsComparisonManager",
     "PiscesLxToolsBenchmark",
-    "PiscesLxToolsBenchmarkRunner", 
-    "PiscesLxToolsBenchmarkComparer"
+    "PiscesLxToolsBenchmarkRunner",
+    "PiscesLxToolsBenchmarkComparer",
+    "PiscesL1BenchmarkConfig",
+    "PiscesL1BenchmarkEvaluator",
+    "create_benchmark_evaluator",
+    "PiscesLxToolsMultimodalConfig",
+    "PiscesLxToolsVisionEvaluator",
+    "PiscesLxToolsAudioEvaluator",
+    "PiscesLxToolsVideoEvaluator",
+    "PiscesLxToolsMultimodalBenchmarkRunner",
+    "create_multimodal_evaluator",
+    "PiscesLxToolsAgentConfig",
+    "PiscesLxToolsAgentEvaluator",
+    "PiscesLxToolsAgentMetrics",
+    "PiscesLxToolsAgentBenchmarkRunner",
+    "create_agent_evaluator",
+    "PiscesLxToolsLongContextConfig",
+    "PiscesLxToolsLongContextEvaluator",
+    "PiscesLxToolsLongContextMetrics",
+    "PiscesLxToolsLongContextBenchmarkRunner",
+    "create_long_context_evaluator",
+    "PiscesLxToolsVisualizationConfig",
+    "PiscesLxToolsBenchmarkVisualizer",
+    "PiscesLxToolsReportGenerator",
+    "create_visualizer",
+    "create_report_generator",
+    "PiscesLxToolsComparisonConfig",
+    "PiscesLxToolsFlagshipComparator",
+    "FLAGSHIP_MODELS",
+    "compare_with_flagships",
+    "get_flagship_benchmark_data",
+    "PiscesLxToolsPerformanceConfig",
+    "PiscesLxToolsPerformanceEvaluator",
+    "PiscesLxToolsPerformanceMetrics",
+    "PiscesLxToolsPerformanceBenchmarkRunner",
+    "create_performance_evaluator",
 ]

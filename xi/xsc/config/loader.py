@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+# Copyright © 2026 Wenze Wei. All Rights Reserved.
 #
-# This file is part of PiscesL1.
-# The PiscesL1 project belongs to the Dunimd Team.
+# This file is part of Xi.
+# The Xi project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -17,9 +17,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-#
-# DISCLAIMER: Users must comply with applicable AI regulations.
-# Non-compliance may result in service termination or legal liability.
 
 """
 Configuration Loader for Xi Studio.
@@ -33,9 +30,10 @@ import os
 import re
 import tomllib
 from pathlib import Path
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 
-from .config import (
+from ..core.dc import XiLogger
+from .schema import (
     XiConfig,
     XiProjectConfig,
     XiProjectCommandsConfig,
@@ -56,7 +54,6 @@ from .config import (
     XiWidgetValidation,
     XiValueMapping,
 )
-from .dc import XiLogger
 
 
 class XiConfigLoader:
@@ -166,7 +163,6 @@ class XiConfigLoader:
             "XI_API_HOST": ("api", "host"),
             "XI_API_PORT": ("api", "port"),
             "XI_API_TIMEOUT": ("api", "timeout"),
-            "XI_UI_TITLE": ("ui", "title"),
             "XI_UI_THEME": ("ui", "theme"),
             "XI_UI_LANGUAGE": ("ui", "language"),
         }
@@ -627,6 +623,33 @@ class XiConfigLoader:
 _config_loader: Optional[XiConfigLoader] = None
 
 
+def find_project_root(start_path: Optional[Path] = None) -> Path:
+    """
+    Find the project root directory by searching for .xi directory.
+
+    Searches upward from the start path until a directory containing
+    the .xi subdirectory is found.
+
+    Args:
+        start_path: Starting path for search. Defaults to current directory.
+
+    Returns:
+        Path to the project root directory, or start_path if not found.
+    """
+    current = Path(start_path) if start_path else Path.cwd()
+
+    search_path = current
+    while True:
+        xi_dir = search_path / ".xi"
+        if xi_dir.exists() and xi_dir.is_dir():
+            return search_path
+        if search_path == search_path.parent:
+            break
+        search_path = search_path.parent
+
+    return Path(start_path) if start_path else Path.cwd()
+
+
 def get_config_loader(project_root: Optional[Path] = None) -> XiConfigLoader:
     """
     Get the global configuration loader instance.
@@ -639,6 +662,8 @@ def get_config_loader(project_root: Optional[Path] = None) -> XiConfigLoader:
     """
     global _config_loader
     if _config_loader is None:
+        if project_root is None:
+            project_root = find_project_root()
         _config_loader = XiConfigLoader(project_root)
     return _config_loader
 

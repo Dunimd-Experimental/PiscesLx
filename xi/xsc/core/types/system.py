@@ -19,43 +19,15 @@
 # limitations under the License.
 
 """
-Type definitions for Xi Studio Backend Server.
+System type definitions for Xi Studio.
 
-This module defines all data types, request/response models, and
-enumerations used by the Xi backend API server.
+Contains dataclasses for system statistics, GPU info, and log entries.
 """
 
-from enum import Enum
-from typing import Optional, List, Dict, Any
 from dataclasses import dataclass, field
-from datetime import datetime
+from typing import List, Optional
 
-
-class XiCommand(str, Enum):
-    TRAIN = "train"
-    SERVE = "serve"
-    BENCHMARK = "benchmark"
-    DOWNLOAD = "download"
-    MONITOR = "monitor"
-    TEST = "test"
-    CACHE = "cache"
-    DEV = "dev"
-
-
-class XiRunStatus(str, Enum):
-    PENDING = "pending"
-    RUNNING = "running"
-    PAUSED = "paused"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
-
-
-class XiGpuVendor(str, Enum):
-    NVIDIA = "nvidia"
-    AMD = "amd"
-    INTEL = "intel"
-    UNKNOWN = "unknown"
+from .base import XiGpuVendor
 
 
 @dataclass
@@ -70,38 +42,6 @@ class XiGpuInfo:
     power_draw: float = 0.0
     power_limit: float = 0.0
     driver_version: str = ""
-
-
-@dataclass
-class XiRequest:
-    command: XiCommand
-    args: Dict[str, Any] = field(default_factory=dict)
-    run_id: Optional[str] = None
-    run_name: Optional[str] = None
-    background: bool = True
-
-
-@dataclass
-class XiResponse:
-    success: bool
-    run_id: Optional[str] = None
-    message: str = ""
-    error: Optional[str] = None
-    data: Optional[Dict[str, Any]] = None
-
-
-@dataclass
-class XiRunInfo:
-    run_id: str
-    run_name: str
-    command: str
-    status: XiRunStatus
-    phase: str
-    pid: Optional[int] = None
-    created_at: str = ""
-    updated_at: str = ""
-    progress: float = 0.0
-    metrics: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -130,19 +70,3 @@ class XiLogEntry:
     message: str
     source: str = "xi"
     run_id: Optional[str] = None
-
-
-@dataclass
-class XiControlRequest:
-    run_id: str
-    action: str
-
-
-@dataclass
-class XiControlResponse:
-    success: bool
-    run_id: str
-    action: str
-    message: str
-    previous_status: Optional[str] = None
-    new_status: Optional[str] = None

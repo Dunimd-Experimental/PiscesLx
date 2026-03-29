@@ -34,6 +34,7 @@ import {
   Pause,
   ChevronRight,
   Layers,
+  Loader2,
 } from "lucide-react";
 import { useTrainingStore } from "@/lib/stores";
 import Link from "next/link";
@@ -49,12 +50,20 @@ const statusColors: Record<RunStatus, string> = {
 };
 
 export default function TrainingPage() {
-  const { runs, isLoading, fetchRuns, controlRun } = useTrainingStore();
+  const { runs, isLoading, isWsConnected, error, connectWebSocket, fetchRuns, controlRun } = useTrainingStore();
   const [activeTab, setActiveTab] = useState<RunStatus | "all">("all");
 
   useEffect(() => {
-    fetchRuns();
-  }, [fetchRuns]);
+    if (!isWsConnected && !error) {
+      connectWebSocket();
+    }
+  }, [isWsConnected, error, connectWebSocket]);
+
+  useEffect(() => {
+    if (isWsConnected && !isLoading) {
+      fetchRuns();
+    }
+  }, [isWsConnected, isLoading, fetchRuns]);
 
   const filteredRuns = activeTab === "all"
     ? runs
@@ -116,6 +125,27 @@ export default function TrainingPage() {
             </Card>
           </div>
 
+          {!isWsConnected && !isLoading && (
+            <Card>
+              <CardContent className="flex flex-col items-center justify-center py-8">
+                {error ? (
+                  <>
+                    <Brain className="h-12 w-12 text-red-500 mb-4" />
+                    <p className="text-red-500 mb-4">{error}</p>
+                    <Button variant="secondary" onClick={() => connectWebSocket()}>
+                      Retry Connection
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <img src="/load.svg" alt="Loading" className="h-12 w-12 mb-4" />
+                    <span className="text-muted-foreground">Connecting to training service...</span>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+          )}
+
           <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as RunStatus | "all")}>
             <TabsList>
               <TabsTrigger value="all">All</TabsTrigger>
@@ -125,10 +155,13 @@ export default function TrainingPage() {
             </TabsList>
 
             <TabsContent value={activeTab} className="mt-4">
-              {isLoading ? (
-                <div className="flex items-center justify-center py-12">
-                  <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-                </div>
+              {isLoading && isWsConnected ? (
+                <Card>
+                  <CardContent className="flex flex-col items-center justify-center py-8">
+                    <img src="/load.svg" alt="Loading" className="h-12 w-12 mb-4" />
+                    <span className="text-muted-foreground">Loading runs...</span>
+                  </CardContent>
+                </Card>
               ) : filteredRuns.length === 0 ? (
                 <Card>
                   <CardContent className="flex flex-col items-center justify-center py-12">
@@ -174,7 +207,7 @@ export default function TrainingPage() {
                               </Button>
                             )}
                             <Button variant="secondary" size="icon" asChild>
-                              <Link href={`/training/${run.run_id}`}>
+                              <Link href={`/runs?run_id=${run.run_id}`}>
                                 <ChevronRight className="h-4 w-4" />
                               </Link>
                             </Button>

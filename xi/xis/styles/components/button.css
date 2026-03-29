@@ -1,0 +1,148 @@
+/**
+ * Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+ *
+ * This file is part of PiscesL1.
+ * The PiscesL1 project belongs to the Dunimd Team.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * You may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * DISCLAIMER: Users must comply with applicable AI regulations.
+ * Non-compliance may result in service termination or legal liability.
+ */
+
+/* Button Base */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--spacing-2);
+  white-space: nowrap;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  transition: all var(--transition-normal);
+  outline: none;
+  cursor: pointer;
+  border: none;
+  text-decoration: none;
+}
+
+.btn:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.btn:disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+/* Button Variants - Default (Gray Outline Style) */
+.btn--default {
+  background: #ffffff;
+  color: #1a1a1a;
+  border: 1px solid #d1d5db;
+}
+
+.btn--default:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.btn--default:active {
+  background: #e5e7eb;
+}
+
+/* Button Variants - Destructive */
+.btn--destructive {
+  background: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+}
+
+.btn--destructive:hover {
+  background: hsl(var(--destructive) / 0.9);
+}
+
+/* Button Variants - Outline */
+.btn--outline {
+  background: #ffffff;
+  color: #1a1a1a;
+  border: 1px solid #d1d5db;
+}
+
+.btn--outline:hover {
+  background: #f3f4f6;
+  border-color: #d1d5db;
+}
+
+.btn--outline:active {
+  background: #e5e7eb;
+}
+
+/* Button Variants - Secondary */
+.btn--secondary {
+  background: #ffffff;
+  color: #1a1a1a;
+  border: 1px solid #d1d5db;
+}
+
+.btn--secondary:hover {
+  background: #f3f4f6;
+}
+
+/* Button Variants - Ghost */
+.btn--ghost {
+  background: transparent;
+  color: hsl(var(--foreground));
+}
+
+.btn--ghost:hover {
+  background: hsl(var(--accent));
+  color: hsl(var(--accent-foreground));
+}
+
+/* Button Variants - Link */
+.btn--link {
+  background: transparent;
+  color: hsl(var(--primary));
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.btn--link:hover {
+  text-decoration: underline;
+}
+
+/* Button Sizes */
+.btn--sm {
+  height: var(--h-sm);
+  padding: 0 var(--spacing-3);
+  border-radius: var(--radius-md);
+}
+
+.btn--md {
+  height: var(--h-md);
+  padding: 0 var(--spacing-4);
+}
+
+.btn--lg {
+  height: var(--h-lg);
+  padding: 0 var(--spacing-8);
+  border-radius: var(--radius-md);
+}
+
+.btn--icon {
+  height: var(--h-md);
+  width: var(--h-md);
+  padding: 0;
+}

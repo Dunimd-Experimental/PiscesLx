@@ -40,7 +40,7 @@ import type { ModelInfo } from "@/types";
 export default function ModelsPage() {
   const { data: models, isLoading, refetch } = useQuery({
     queryKey: ["models"],
-    queryFn: () => apiClient.getModels(),
+    queryFn: () => apiClient.listModels(),
   });
 
   const modelList = models?.data || [];

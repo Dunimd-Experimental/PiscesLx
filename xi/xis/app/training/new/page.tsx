@@ -35,32 +35,67 @@ import { DynamicField } from "@/components/ui/dynamic-widget";
 import { UnavailableTab, UnavailableCommand } from "@/components/ui/unavailable";
 
 export default function NewTrainingPage() {
-  const { 
-    config, 
-    schema, 
-    parameters, 
-    tabs, 
-    dynamicOptions, 
-    isLoading, 
-    fetchSchema, 
+  const {
+    config,
+    schema,
+    parameters,
+    tabs,
+    dynamicOptions,
+    isLoading,
+    fetchSchema,
     setConfig,
     startTraining,
     error,
+    isWsConnected,
+    connectWebSocket,
   } = useTrainingStore();
   const [activeTab, setActiveTab] = useState("basic");
   const [isStarting, setIsStarting] = useState(false);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchSchema();
-  }, [fetchSchema]);
+    if (!isWsConnected) {
+      connectWebSocket().catch((err) => {
+        setConnectionError(String(err));
+      });
+    }
+  }, [isWsConnected, connectWebSocket]);
+
+  useEffect(() => {
+    // Wait for both WebSocket connection and API handshake before fetching schema
+    const checkAndFetchSchema = () => {
+      if (isWsConnected && schema === null && !isLoading) {
+        // Check if API client has completed handshake
+        const { apiClient } = require("@/lib/api");
+        if (apiClient.handshakeState.isConnected) {
+          fetchSchema();
+        }
+      }
+    };
+
+    // Check immediately
+    checkAndFetchSchema();
+
+    // Also set up an interval to check periodically
+    const interval = setInterval(checkAndFetchSchema, 500);
+
+    return () => clearInterval(interval);
+  }, [isWsConnected, schema, isLoading, fetchSchema]);
 
   const handleStartTraining = async () => {
+    if (!isWsConnected) {
+      setConnectionError("WebSocket not connected. Please wait...");
+      return;
+    }
+
     setIsStarting(true);
+    setConnectionError(null);
     const result = await startTraining();
-    if (result.success && result.run_id) {
-      window.location.href = `/runs`;
+    if (result.success) {
+      window.location.href = `/training`;
     } else {
       console.error("Failed to start training:", result.error);
+      setConnectionError(result.error || "Failed to start training");
     }
     setIsStarting(false);
   };
@@ -87,7 +122,7 @@ export default function NewTrainingPage() {
         {params.map((param) => {
           const isAvailable = param.available !== false;
           const options = dynamicOptions[param.name] || [];
-          
+
           return (
             <div key={param.name} className={`space-y-2 ${!isAvailable ? "opacity-60" : ""}`}>
               <DynamicField
@@ -127,11 +162,11 @@ export default function NewTrainingPage() {
   const renderTabContent = (tab: DynamicTab) => {
     const isAvailable = tab.available !== false;
     const tabParams = getParamsByTab(tab.name);
-    
+
     if (!isAvailable) {
       return <UnavailableTab reason={tab.unavailable_reason} />;
     }
-    
+
     return (
       <Card>
         <CardHeader>
@@ -168,29 +203,46 @@ export default function NewTrainingPage() {
           </div>
         </div>
 
-        {isLoading && (
-          <div className="flex items-center justify-center py-8">
-            <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
-            <span className="ml-2 text-muted-foreground">Loading configuration...</span>
+        {!isWsConnected && !connectionError && (
+          <Card>
+            <CardContent className="flex flex-col items-center justify-center py-8">
+              <img src="/load.svg" alt="Loading" className="h-12 w-12 mb-4" />
+              <span className="text-muted-foreground">Connecting to training service...</span>
+            </CardContent>
+          </Card>
+        )}
+
+        {connectionError && (
+          <Card>
+            <CardContent className="flex items-center justify-center py-4 text-destructive">
+              <span>Connection error: {connectionError}</span>
+            </CardContent>
+          </Card>
+        )}
+
+        {(isLoading || (isWsConnected && schema === null)) && (
+          <div className="flex flex-col items-center justify-center py-8">
+            <img src="/load.svg" alt="Loading" className="h-12 w-12 mb-4" />
+            <span className="text-muted-foreground">Loading configuration...</span>
           </div>
         )}
 
         {!isLoading && !isCommandAvailable && (
-          <UnavailableCommand 
-            command="training" 
-            reason={unavailableReason} 
+          <UnavailableCommand
+            command="training"
+            reason={unavailableReason}
           />
         )}
 
         {!isLoading && isCommandAvailable && tabs.length > 0 && (
           <Tabs value={activeTab} onValueChange={setActiveTab}>
-            <TabsList 
+            <TabsList
               className="tabs-list--grid"
               style={{ '--grid-columns': Math.min(tabs.length, 6) } as React.CSSProperties}
             >
               {tabs.map((tab) => (
-                <TabsTrigger 
-                  key={tab.name} 
+                <TabsTrigger
+                  key={tab.name}
                   value={tab.name}
                   disabled={tab.available === false}
                   className={tab.available === false ? "cursor-not-allowed" : ""}
@@ -212,13 +264,13 @@ export default function NewTrainingPage() {
           <Button variant="secondary" asChild>
             <Link href="/training">Cancel</Link>
           </Button>
-          {error && (
-            <p className="text-sm text-destructive self-center">{error}</p>
+          {(error || connectionError) && (
+            <p className="text-sm text-destructive self-center">{error || connectionError}</p>
           )}
-          <Button 
-            variant="secondary" 
-            onClick={handleStartTraining} 
-            disabled={isLoading || isStarting || !isCommandAvailable}
+          <Button
+            variant="secondary"
+            onClick={handleStartTraining}
+            disabled={isLoading || isStarting || !isCommandAvailable || !isWsConnected}
           >
             {isStarting ? (
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />

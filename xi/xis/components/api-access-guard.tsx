@@ -54,7 +54,7 @@ export function XisApiAccessGuard({ children }: XisApiAccessGuardProps) {
 
     try {
       const health = await apiClient.healthCheck();
-      const config = await apiClient.getXiConfig();
+      const config = await apiClient.getConfig();
 
       const configData = config as Record<string, unknown>;
       const projectData = configData?.project as Record<string, unknown> | undefined;
@@ -159,7 +159,7 @@ export function ApiAccessPanel() {
 
     try {
       const health = await apiClient.healthCheck();
-      const config = await apiClient.getXiConfig();
+      const config = await apiClient.getConfig();
       
       const configData = config as Record<string, unknown>;
       const projectData = configData?.project as Record<string, unknown> | undefined;

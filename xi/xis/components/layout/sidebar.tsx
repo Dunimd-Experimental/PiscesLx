@@ -77,11 +77,11 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "flex flex-col border-r bg-card transition-all duration-300",
-        collapsed ? "w-16" : "w-48"
+        "sidebar",
+        collapsed ? "sidebar--collapsed" : "sidebar--expanded"
       )}
     >
-      <nav className="flex-1 space-y-1 p-2">
+      <nav className="sidebar__nav">
         {navigation.map((item) => {
           const isActive = pathname.startsWith(item.href);
           const Icon = item.icon;
@@ -92,11 +92,9 @@ export function Sidebar() {
                 <Link
                   href={item.href}
                   className={cn(
-                    "flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors",
-                    isActive
-                      ? "bg-primary/10 text-primary"
-                      : "text-muted-foreground hover:bg-muted hover:text-foreground",
-                    collapsed && "justify-center px-2"
+                    "sidebar__item",
+                    isActive && "sidebar__item--active",
+                    collapsed && "sidebar__item--collapsed"
                   )}
                 >
                   <Icon className="h-5 w-5 flex-shrink-0" />
@@ -113,15 +111,15 @@ export function Sidebar() {
         })}
       </nav>
 
-      <div className="mt-auto border-t p-2">
+      <div className="sidebar__footer">
         <div className="relative" ref={appsRef}>
           <Tooltip delayDuration={0}>
             <TooltipTrigger asChild>
               <Button
                 variant="secondary"
                 className={cn(
-                  "h-9 rounded-lg bg-muted/50 hover:bg-muted",
-                  !collapsed && "w-full justify-start px-3"
+                  "sidebar__apps-btn",
+                  collapsed && "sidebar__apps-btn--collapsed"
                 )}
                 onClick={() => setShowApps(!showApps)}
               >
@@ -149,7 +147,7 @@ export function Sidebar() {
                 '--apps-popup-bottom': '8px',
               } as React.CSSProperties}
             >
-              <div className="grid grid-cols-3 gap-3">
+              <div className="sidebar__apps-grid">
                 {apps.map((app) => {
                   const Icon = app.icon;
                   const isRunning = isAppRunning(app.id);
@@ -161,15 +159,15 @@ export function Sidebar() {
                         setShowApps(false);
                         openApp(app.id);
                       }}
-                      className="relative flex flex-col items-center gap-2 rounded-lg p-3 transition-colors hover:bg-muted"
+                      className="sidebar__app-item relative"
                     >
-                      <div className={`flex h-12 w-12 items-center justify-center rounded-xl ${app.color} shadow-md`}>
+                      <div className={`sidebar__app-icon sidebar__app-icon--${app.id === 'monitor' ? 'blue' : 'amber'}`}>
                         <Icon className="h-6 w-6 text-white" />
                       </div>
                       {isRunning && (
-                        <span className="absolute top-2 right-2 h-2.5 w-2.5 rounded-full bg-green-500 ring-2 ring-popover animate-pulse" />
+                        <span className="sidebar__app-indicator" />
                       )}
-                      <span className="text-xs font-medium">{app.name}</span>
+                      <span className="sidebar__app-label">{app.name}</span>
                     </button>
                   );
                 })}

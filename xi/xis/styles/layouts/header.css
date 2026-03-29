@@ -1,0 +1,121 @@
+/**
+ * Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+ *
+ * This file is part of PiscesL1.
+ * The PiscesL1 project belongs to the Dunimd Team.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * You may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * DISCLAIMER: Users must comply with applicable AI regulations.
+ * Non-compliance may result in service termination or legal liability.
+ */
+
+/* Header Base */
+.header {
+  display: flex;
+  height: 3rem;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid hsl(var(--border));
+  padding: 0 var(--spacing-4);
+  background: hsl(var(--card));
+}
+
+/* Header Sections */
+.header__left {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-4);
+}
+
+.header__center {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-4);
+}
+
+.header__right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+}
+
+/* Header Logo */
+.header__logo {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  font-weight: 600;
+  font-size: var(--text-lg);
+}
+
+/* Header Title */
+.header__title {
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: hsl(var(--muted-foreground));
+}
+
+/* Header Actions */
+.header__action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: var(--h-md);
+  width: var(--h-md);
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: background var(--transition-normal);
+  background: transparent;
+  border: none;
+  color: hsl(var(--foreground));
+}
+
+.header__action:hover {
+  background: hsl(var(--muted));
+}
+
+/* Header Divider */
+.header__divider {
+  width: 1px;
+  height: 1.5rem;
+  background: hsl(var(--border));
+  margin: 0 var(--spacing-2);
+}
+
+/* Header Status */
+.header__status {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-2);
+  font-size: var(--text-sm);
+  color: hsl(var(--muted-foreground));
+}
+
+.header__status-dot {
+  height: 0.5rem;
+  width: 0.5rem;
+  border-radius: var(--radius-full);
+}
+
+.header__status-dot--online {
+  background: hsl(142 76% 36%);
+}
+
+.header__status-dot--offline {
+  background: hsl(var(--muted-foreground));
+}
+
+.header__status-dot--error {
+  background: hsl(var(--destructive));
+}

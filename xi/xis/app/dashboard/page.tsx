@@ -42,25 +42,22 @@ import {
   Gauge,
   Trash2,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "@/lib/api";
 import Link from "next/link";
 import type { RunInfo } from "@/types/training";
+import { useTrainingStore } from "@/lib/stores/training-store";
+import { useMonitorStore } from "@/lib/stores/monitor-store";
+import { useEffect } from "react";
 
 export default function DashboardPage() {
-  const { data: stats } = useQuery({
-    queryKey: ["stats"],
-    queryFn: () => apiClient.getStats(),
-    refetchInterval: 5000,
-  });
+  const { runs, isLoading: runsLoading, connectWebSocket: connectTrainingWs } = useTrainingStore();
+  const { stats, connectWebSocket: connectMonitorWs } = useMonitorStore();
 
-  const { data: runs, isLoading: runsLoading } = useQuery({
-    queryKey: ["runs"],
-    queryFn: () => apiClient.listRuns(),
-    refetchInterval: 10000,
-  });
+  useEffect(() => {
+    connectTrainingWs();
+    connectMonitorWs();
+  }, [connectTrainingWs, connectMonitorWs]);
 
-  const systemStats = stats as Record<string, unknown> | undefined;
+  const systemStats = stats;
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -120,12 +117,12 @@ export default function DashboardPage() {
 
   return (
     <ScrollArea className="h-full">
-      <div className="space-y-6 p-6">
-        <div className="grid gap-6 md:grid-cols-2">
-          <Card className="card-hover cursor-pointer border-2 hover:border-primary/50 transition-colors" asChild>
+      <div className="page-container">
+        <div className="page-grid page-grid--2col">
+          <Card className="card--hover" asChild>
             <Link href="/training/new">
-              <CardHeader className="pb-4">
-                <div className="flex items-center justify-between">
+              <CardHeader>
+                <div className="page-header">
                   <div className="flex items-center gap-3">
                     <div className="rounded-lg bg-primary/10 p-3">
                       <Brain className="h-8 w-8 text-primary" />
@@ -139,24 +136,24 @@ export default function DashboardPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <div className="flex items-center gap-1">
+                <div className="page-stats">
+                  <div className="page-stats__item">
                     <Play className="h-4 w-4" />
-                    <span>{runs?.runs.filter((r: { status: string }) => r.status === "running").length || 0} Active</span>
+                    <span>{runs.filter((r: RunInfo) => r.status === "running").length || 0} Active</span>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="page-stats__item">
                     <Clock className="h-4 w-4" />
-                    <span>{runs?.total || 0} Total Runs</span>
+                    <span>{runs.length || 0} Total Runs</span>
                   </div>
                 </div>
               </CardContent>
             </Link>
           </Card>
 
-          <Card className="card-hover cursor-pointer border-2 hover:border-primary/50 transition-colors" asChild>
+          <Card className="card--hover" asChild>
             <Link href="/inference">
-              <CardHeader className="pb-4">
-                <div className="flex items-center justify-between">
+              <CardHeader>
+                <div className="page-header">
                   <div className="flex items-center gap-3">
                     <div className="rounded-lg bg-primary/10 p-3">
                       <MessageSquare className="h-8 w-8 text-primary" />
@@ -170,12 +167,12 @@ export default function DashboardPage() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                  <div className="flex items-center gap-1">
+                <div className="page-stats">
+                  <div className="page-stats__item">
                     <Activity className="h-4 w-4" />
                     <span>QPS: {((systemStats?.qps as number) || 0).toFixed(2)}</span>
                   </div>
-                  <div className="flex items-center gap-1">
+                  <div className="page-stats__item">
                     <Cpu className="h-4 w-4" />
                     <span>{(systemStats?.gpu_count as number) || 0} GPUs</span>
                   </div>
@@ -187,7 +184,7 @@ export default function DashboardPage() {
 
         <Card>
           <CardHeader>
-            <div className="flex items-center justify-between">
+            <div className="page-header">
               <div>
                 <CardTitle>All Runs</CardTitle>
                 <CardDescription>
@@ -201,14 +198,14 @@ export default function DashboardPage() {
           </CardHeader>
           <CardContent>
             {runsLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <div className="h-8 w-8 animate-spin rounded-full border-4 border-primary border-t-transparent" />
+              <div className="page-loading">
+                <div className="page-loading__spinner" />
               </div>
-            ) : !runs?.runs || runs.runs.length === 0 ? (
-              <div className="flex flex-col items-center justify-center py-12 text-center">
-                <Play className="h-12 w-12 text-muted-foreground mb-4" />
-                <p className="text-muted-foreground mb-2">No runs yet</p>
-                <p className="text-sm text-muted-foreground mb-4">
+            ) : runs.length === 0 ? (
+              <div className="page-empty">
+                <Play className="page-empty__icon h-12 w-12" />
+                <p className="page-empty__title">No runs yet</p>
+                <p className="page-empty__description">
                   Start a new task via manage.py action
                 </p>
                 <Button variant="secondary" asChild>
@@ -219,8 +216,8 @@ export default function DashboardPage() {
                 </Button>
               </div>
             ) : (
-              <div className="space-y-2">
-                <div className="grid grid-cols-12 gap-4 rounded-lg bg-muted/50 p-3 text-sm font-medium">
+              <div className="page-list">
+                <div className="page-list__header" style={{ gridTemplateColumns: 'repeat(12, 1fr)' }}>
                   <div className="col-span-2">Status</div>
                   <div className="col-span-3">Run ID</div>
                   <div className="col-span-2">Command</div>
@@ -228,10 +225,11 @@ export default function DashboardPage() {
                   <div className="col-span-2">Created</div>
                   <div className="col-span-1">Actions</div>
                 </div>
-                {runs.runs.map((run: RunInfo) => (
+                {runs.map((run: RunInfo) => (
                   <div
                     key={run.run_id}
-                    className="grid grid-cols-12 gap-4 rounded-lg border p-3 hover:bg-muted/50 transition-colors items-center"
+                    className="page-list__item"
+                    style={{ gridTemplateColumns: 'repeat(12, 1fr)' }}
                   >
                     <div className="col-span-2">
                       <div className="flex items-center gap-2">

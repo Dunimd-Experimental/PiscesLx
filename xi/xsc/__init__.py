@@ -19,29 +19,72 @@
 # limitations under the License.
 
 """
-Xi Studio - Flagship LLM Workstation
+Xi Studio Backend - Flagship LLM Workstation
 
-This package provides the Xi Studio backend server and launcher.
+Xi is a flagship-grade LLM training and inference workstation
+built on the PiscesL1 architecture.
+
+Modules:
+    - core: Core utilities (dc, types)
+    - config: Configuration management
+    - session: Session and notification management
+    - executor: Command execution layer
+    - server: FastAPI server with routes
+    - launcher: Backend/frontend orchestration
+    - cli: Command-line interface
 """
 
-from .dc import XiLogger, XiLogLevel, XiErrorCode, XiErrorContext, XiError
-from .types import (
+from .core import (
+    XiLogger,
+    XiLogLevel,
+    XiErrorCode,
+    XiErrorContext,
+    XiError,
     XiCommand,
+    XiRunStatus,
+    XiGpuVendor,
+    XiGpuInfo,
     XiRequest,
     XiResponse,
-    XiRunStatus,
     XiRunInfo,
     XiSystemStats,
     XiLogEntry,
     XiControlRequest,
     XiControlResponse,
-    XiGpuVendor,
-    XiGpuInfo,
 )
-from .session import XmcSession, XmcSessionManager
+from .config import (
+    XiConfig,
+    XiProjectConfig,
+    XiPathsConfig,
+    XiApiConfig,
+    XiUiConfig,
+    XiNotificationConfig,
+    XiEnvironmentConfig,
+    XiCommandConfig,
+    XiCommandSchema,
+    XiParameterSchema,
+    XiTabSchema,
+    XiWidgetConfig,
+    XiWidgetStyle,
+    XiWidgetValidation,
+    XiValueMapping,
+    XiConfigLoader,
+    get_config_loader,
+    get_xi_config,
+)
+from .session import (
+    XmcSession,
+    XmcSessionManager,
+    XmcNotification,
+    XmcNotificationManager,
+)
 from .executor import XiExecutor
-from .server import XiServer, app
+from .server import XiServer, app, get_app
 from .launcher import XiLauncher
+from .cli import main
+
+__version__ = "1.0.0"
+__author__ = "Wenze Wei"
 
 __all__ = [
     "XiLogger",
@@ -50,20 +93,42 @@ __all__ = [
     "XiErrorContext",
     "XiError",
     "XiCommand",
+    "XiRunStatus",
+    "XiGpuVendor",
+    "XiGpuInfo",
     "XiRequest",
     "XiResponse",
-    "XiRunStatus",
     "XiRunInfo",
     "XiSystemStats",
     "XiLogEntry",
     "XiControlRequest",
     "XiControlResponse",
-    "XiGpuVendor",
-    "XiGpuInfo",
+    "XiConfig",
+    "XiProjectConfig",
+    "XiPathsConfig",
+    "XiApiConfig",
+    "XiUiConfig",
+    "XiNotificationConfig",
+    "XiEnvironmentConfig",
+    "XiCommandConfig",
+    "XiCommandSchema",
+    "XiParameterSchema",
+    "XiTabSchema",
+    "XiWidgetConfig",
+    "XiWidgetStyle",
+    "XiWidgetValidation",
+    "XiValueMapping",
+    "XiConfigLoader",
+    "get_config_loader",
+    "get_xi_config",
     "XmcSession",
     "XmcSessionManager",
+    "XmcNotification",
+    "XmcNotificationManager",
     "XiExecutor",
     "XiServer",
-    "XiLauncher",
     "app",
+    "get_app",
+    "XiLauncher",
+    "main",
 ]

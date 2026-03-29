@@ -18,57 +18,88 @@
  */
 
 import { create } from "zustand";
-import type { SystemStats, MonitorStats, GPUStats, Alert } from "@/types";
-import { apiClient } from "@/lib/api/client";
+import type { SystemStats } from "@/types";
+import { PiscesL1MonitorWS, monitorWS, type MonitorServerMessage } from "@/lib/api/monitor-ws";
 
 interface MonitorState {
-  systemStats: SystemStats | null;
-  monitorStats: MonitorStats | null;
-  alerts: Alert[];
+  stats: SystemStats | null;
   isLoading: boolean;
   error: string | null;
-  autoRefresh: boolean;
-  refreshInterval: number;
+  ws: PiscesL1MonitorWS | null;
+  isWsConnected: boolean;
 
-  fetchStats: () => Promise<void>;
-  addAlert: (alert: Alert) => void;
-  clearAlerts: () => void;
-  setAutoRefresh: (enabled: boolean) => void;
-  setRefreshInterval: (ms: number) => void;
+  connectWebSocket: () => Promise<void>;
+  disconnectWebSocket: () => void;
 }
 
+const initialStats: SystemStats = {
+  cpu_percent: 0,
+  memory_percent: 0,
+  memory_used_gb: 0,
+  memory_total_gb: 0,
+  gpu_count: 0,
+  gpu_utilization: [],
+  gpu_memory_used: [],
+  gpu_memory_total: [],
+  gpu_vendors: [],
+  gpu_names: [],
+  gpu_temperatures: [],
+  gpu_power_draw: [],
+  uptime_seconds: 0,
+  request_count: 0,
+  qps: 0,
+};
+
 export const useMonitorStore = create<MonitorState>((set, get) => ({
-  systemStats: null,
-  monitorStats: null,
-  alerts: [],
+  stats: initialStats,
   isLoading: false,
   error: null,
-  autoRefresh: true,
-  refreshInterval: 2000,
+  ws: null,
+  isWsConnected: false,
 
-  fetchStats: async () => {
-    set({ isLoading: true, error: null });
+  connectWebSocket: async () => {
+    const existingWs = get().ws;
+    if (existingWs && existingWs.isConnected) {
+      return;
+    }
+
+    const ws = new PiscesL1MonitorWS();
+
+    ws.onConnect(() => {
+      set({ isWsConnected: true, error: null });
+      ws.getStats();
+    });
+
+    ws.onDisconnect(() => {
+      set({ isWsConnected: false });
+    });
+
+    ws.on("stats", (msg: MonitorServerMessage) => {
+      if (msg.type === "stats") {
+        set({ stats: msg.data, isLoading: false });
+      }
+    });
+
+    ws.on("error", (msg: MonitorServerMessage) => {
+      if (msg.type === "error") {
+        set({ error: msg.message });
+      }
+    });
+
     try {
-      const stats = await apiClient.getStats();
-      set({ systemStats: stats as unknown as SystemStats, isLoading: false });
+      set({ isLoading: true });
+      await ws.connect();
+      set({ ws });
     } catch (error) {
       set({ error: String(error), isLoading: false });
     }
   },
 
-  addAlert: (alert) => {
-    set((state) => ({ alerts: [...state.alerts, alert] }));
-  },
-
-  clearAlerts: () => {
-    set({ alerts: [] });
-  },
-
-  setAutoRefresh: (enabled) => {
-    set({ autoRefresh: enabled });
-  },
-
-  setRefreshInterval: (ms) => {
-    set({ refreshInterval: ms });
+  disconnectWebSocket: () => {
+    const ws = get().ws;
+    if (ws) {
+      ws.disconnect();
+      set({ ws: null, isWsConnected: false });
+    }
   },
 }));

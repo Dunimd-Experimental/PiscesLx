@@ -18,18 +18,21 @@
  */
 
 export interface SystemStats {
+  cpu_percent: number;
+  memory_percent: number;
+  memory_used_gb: number;
+  memory_total_gb: number;
+  gpu_count: number;
+  gpu_utilization: number[];
+  gpu_memory_used: number[];
+  gpu_memory_total: number[];
+  gpu_vendors: string[];
+  gpu_names: string[];
+  gpu_temperatures: number[];
+  gpu_power_draw: number[];
   uptime_seconds: number;
   request_count: number;
-  success_count: number;
-  error_count: number;
   qps: number;
-  model_size: string;
-  latency_p50_ms?: number;
-  latency_p95_ms?: number;
-  engine_status?: Record<string, unknown>;
-  model_info?: Record<string, unknown>;
-  run_status?: Record<string, unknown>;
-  opss_status?: Record<string, unknown>;
 }
 
 export interface GPUStats {

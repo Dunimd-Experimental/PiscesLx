@@ -27,6 +27,7 @@ import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Loader2, AlertCircle, CheckCircle2, ArrowRight } from "lucide-react";
 import { apiClient } from "@/lib/api";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import {
   Dialog,
   DialogContent,
@@ -416,30 +417,27 @@ export function WelcomeScreen({ onComplete }: WelcomeScreenProps) {
   if (step === 0) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background px-8">
-        <div className="w-full max-w-2xl text-center">
-          <div className="mb-8 flex justify-center">
-            <Image
-              src="/xi-logo.svg"
-              alt="Xi Logo"
-              width={200}
-              height={80}
-              priority
-            />
+        <div className="card flex flex-col items-center justify-center" style={{ width: "520px", height: "360px" }}>
+          <div className="card__content flex flex-col items-center text-center">
+            <h1 className="text-3xl font-bold mb-10 text-foreground">
+              Welcome
+            </h1>
+
+            <Button
+              onClick={handleStart}
+              size="lg"
+              className="px-8"
+            >
+              Get Started
+              <ArrowRight className="ml-2 h-5 w-5" />
+            </Button>
           </div>
-
-          <h1 className="text-4xl font-bold mb-10 text-foreground">
-            Welcome to Xi Studio
-          </h1>
-
-          <Button
-            variant="outline"
-            onClick={handleStart}
-            size="lg"
-            className="px-8"
-          >
-            Get Started
-            <ArrowRight className="ml-2 h-5 w-5" />
-          </Button>
+        </div>
+        <div className="flex justify-center gap-3 mt-8">
+          <div className="w-3 h-3 rounded-full bg-blue-500" />
+          <div className="w-3 h-3 rounded-full bg-gray-300" />
+          <div className="w-3 h-3 rounded-full bg-gray-300" />
+          <div className="w-3 h-3 rounded-full bg-gray-300" />
         </div>
       </div>
     );
@@ -449,34 +447,41 @@ export function WelcomeScreen({ onComplete }: WelcomeScreenProps) {
     return (
       <>
         <div className="flex flex-col items-center justify-center min-h-screen bg-background px-8">
-          <div className="w-full max-w-2xl">
-            <h2 className="text-xl font-semibold mb-4 text-center">Service Agreement</h2>
-            
-            <div className="border border-border rounded-lg overflow-hidden">
-              <div className="p-6 h-[300px] overflow-y-auto bg-muted/30 text-sm whitespace-pre-wrap textarea--agreement">
-                {AGREEMENT_TEXT}
+          <div className="card flex flex-col items-center justify-center" style={{ width: "520px", height: "400px" }}>
+            <div className="card__header">
+              <h2 className="text-xl font-semibold text-center">Service Agreement</h2>
+            </div>
+            <div className="card__content w-full">
+              <div className="border border-border rounded-lg overflow-hidden">
+                <div className="p-6 h-[180px] overflow-y-auto bg-muted/30 text-sm whitespace-pre-wrap textarea--agreement">
+                  {AGREEMENT_TEXT}
+                </div>
+              </div>
+
+              <div className="flex justify-center gap-4 mt-6">
+                <Button
+                  onClick={handleDisagree}
+                  size="lg"
+                  className="px-8"
+                >
+                  Disagree
+                </Button>
+                <Button
+                  onClick={handleAgree}
+                  disabled={countdown > 0}
+                  size="lg"
+                  className="px-8"
+                >
+                  {countdown > 0 ? `Agree (${countdown}s)` : "Agree"}
+                </Button>
               </div>
             </div>
-
-            <div className="flex justify-center gap-4 mt-8">
-              <Button
-                variant="outline"
-                onClick={handleDisagree}
-                size="lg"
-                className="px-8"
-              >
-                Disagree
-              </Button>
-              <Button
-                variant="outline"
-                onClick={handleAgree}
-                disabled={countdown > 0}
-                size="lg"
-                className="px-8"
-              >
-                {countdown > 0 ? `Agree (${countdown}s)` : "Agree"}
-              </Button>
-            </div>
+          </div>
+          <div className="flex justify-center gap-3 mt-8">
+            <div className="w-3 h-3 rounded-full bg-gray-300" />
+            <div className="w-3 h-3 rounded-full bg-blue-500" />
+            <div className="w-3 h-3 rounded-full bg-gray-300" />
+            <div className="w-3 h-3 rounded-full bg-gray-300" />
           </div>
         </div>
 
@@ -485,13 +490,13 @@ export function WelcomeScreen({ onComplete }: WelcomeScreenProps) {
             <DialogHeader>
               <DialogTitle>Decline Agreement</DialogTitle>
               <DialogDescription>
-                You must agree to the Service Agreement to use Xi Studio. 
+                You must agree to the Service Agreement to use Xi Studio.
                 If you decline, you will be returned to the welcome screen.
                 Are you sure you want to decline?
               </DialogDescription>
             </DialogHeader>
             <DialogFooter>
-              <Button variant="outline" onClick={handleDisagreeCancel}>
+              <Button onClick={handleDisagreeCancel}>
                 Cancel
               </Button>
               <Button variant="destructive" onClick={handleDisagreeConfirm}>
@@ -513,78 +518,85 @@ export function WelcomeScreen({ onComplete }: WelcomeScreenProps) {
   if (step === 2) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background px-8">
-        <div className="w-full max-w-lg">
-          <h2 className="text-xl font-semibold mb-8 text-center">Validating Configuration</h2>
-
-          {!isValidationComplete && !hasValidationFailed && (
-            <div className="flex flex-col items-center justify-center gap-6 py-8">
-              <div className="relative w-32 h-14">
-                <Image
-                  src="/load.svg"
-                  alt="Loading"
-                  fill
-                  className="object-contain animate-pulse"
-                  priority
-                />
-              </div>
-              {currentMessage && (
-                <p className="text-sm text-muted-foreground text-center">{currentMessage}</p>
-              )}
-            </div>
-          )}
-
-          <div className="space-y-2">
-            {steps.filter(s => s.status !== "pending").map((s) => (
-              <div
-                key={s.step}
-                className={`flex items-center gap-4 p-3 rounded-lg border ${
-                  s.status === "checking"
-                    ? "border-primary"
-                    : s.valid
-                      ? "border-green-500"
-                      : "border-red-500"
-                }`}
-              >
-                <div className="flex-shrink-0">{getStatusIcon(s)}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">
-                    {STEP_LABELS[s.step] || s.step}
-                  </div>
-                  {s.status === "done" && s.error && (
-                    <div className={`text-xs mt-0.5 ${s.valid ? "text-yellow-600" : "text-red-500"}`}>
-                      {s.error}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
+        <div className="card flex flex-col items-center justify-center" style={{ width: "520px", height: "400px" }}>
+          <div className="card__header">
+            <h2 className="text-xl font-semibold text-center">Validating Configuration</h2>
           </div>
+          <div className="card__content w-full">
+            {!isValidationComplete && !hasValidationFailed && (
+              <div className="flex flex-col items-center justify-center gap-4 py-4">
+                <div className="relative w-24 h-10">
+                  <Image
+                    src="/load.svg"
+                    alt="Loading"
+                    fill
+                    className="object-contain animate-pulse"
+                    priority
+                  />
+                </div>
+                {currentMessage && (
+                  <p className="text-sm text-muted-foreground text-center">{currentMessage}</p>
+                )}
+              </div>
+            )}
 
-          {validationError && (
-            <div className="mt-6 flex justify-center">
-              <Button
-                variant="outline"
-                onClick={handleRetry}
-                size="lg"
-                className="px-8"
-              >
-                Retry
-              </Button>
+            <div className="space-y-2">
+              {steps.filter(s => s.status !== "pending").map((s) => (
+                <div
+                  key={s.step}
+                  className={`flex items-center gap-4 p-3 rounded-lg border ${
+                    s.status === "checking"
+                      ? "border-primary"
+                      : s.valid
+                        ? "border-green-500"
+                        : "border-red-500"
+                  }`}
+                >
+                  <div className="flex-shrink-0">{getStatusIcon(s)}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">
+                      {STEP_LABELS[s.step] || s.step}
+                    </div>
+                    {s.status === "done" && s.error && (
+                      <div className={`text-xs mt-0.5 ${s.valid ? "text-yellow-600" : "text-red-500"}`}>
+                        {s.error}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
-          )}
 
-          {hasValidationFailed && (
-            <div className="mt-6 flex justify-center">
-              <Button
-                variant="outline"
-                onClick={handleRetry}
-                size="lg"
-                className="px-8"
-              >
-                Retry
-              </Button>
-            </div>
-          )}
+            {validationError && (
+              <div className="mt-6 flex justify-center">
+                <Button
+                  onClick={handleRetry}
+                  size="lg"
+                  className="px-8"
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+
+            {hasValidationFailed && (
+              <div className="mt-6 flex justify-center">
+                <Button
+                  onClick={handleRetry}
+                  size="lg"
+                  className="px-8"
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex justify-center gap-3 mt-8">
+          <div className="w-3 h-3 rounded-full bg-gray-300" />
+          <div className="w-3 h-3 rounded-full bg-gray-300" />
+          <div className="w-3 h-3 rounded-full bg-blue-500" />
+          <div className="w-3 h-3 rounded-full bg-gray-300" />
         </div>
       </div>
     );
@@ -593,84 +605,91 @@ export function WelcomeScreen({ onComplete }: WelcomeScreenProps) {
   if (step === 3) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background px-8">
-        <div className="w-full max-w-lg">
-          <h2 className="text-xl font-semibold mb-8 text-center">Environment Setup</h2>
-
-          {!isSetupComplete && !hasSetupFailed && (
-            <div className="flex flex-col items-center justify-center gap-6 py-8">
-              <div className="relative w-32 h-14">
-                <Image
-                  src="/load.svg"
-                  alt="Loading"
-                  fill
-                  className="object-contain animate-pulse"
-                  priority
-                />
-              </div>
-              {setupCurrentMessage && (
-                <p className="text-sm text-muted-foreground text-center">{setupCurrentMessage}</p>
-              )}
-            </div>
-          )}
-
-          <div className="space-y-2">
-            {setupSteps.filter(s => s.status !== "pending").map((s) => (
-              <div
-                key={s.step}
-                className={`flex items-center gap-4 p-3 rounded-lg border ${
-                  s.status === "checking"
-                    ? "border-primary"
-                    : s.valid
-                      ? "border-green-500"
-                      : "border-red-500"
-                }`}
-              >
-                <div className="flex-shrink-0">{getStatusIcon(s)}</div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-medium truncate">
-                    {SETUP_STEP_LABELS[s.step] || s.step}
-                  </div>
-                  {s.status === "done" && s.error && (
-                    <div className={`text-xs mt-0.5 ${s.valid ? "text-yellow-600" : "text-red-500"}`}>
-                      {s.error}
-                    </div>
-                  )}
-                </div>
-              </div>
-            ))}
+        <div className="card flex flex-col items-center justify-center" style={{ width: "520px", height: "400px" }}>
+          <div className="card__header">
+            <h2 className="text-xl font-semibold text-center">Environment Setup</h2>
           </div>
+          <div className="card__content w-full">
+            {!isSetupComplete && !hasSetupFailed && (
+              <div className="flex flex-col items-center justify-center gap-4 py-4">
+                <div className="relative w-24 h-10">
+                  <Image
+                    src="/load.svg"
+                    alt="Loading"
+                    fill
+                    className="object-contain animate-pulse"
+                    priority
+                  />
+                </div>
+                {setupCurrentMessage && (
+                  <p className="text-sm text-muted-foreground text-center">{setupCurrentMessage}</p>
+                )}
+              </div>
+            )}
 
-          {setupError && (
-            <div className="mt-6 flex justify-center">
-              <Button
-                variant="outline"
-                onClick={handleSetupRetry}
-                size="lg"
-                className="px-8"
-              >
-                Retry
-              </Button>
+            <div className="space-y-2">
+              {setupSteps.filter(s => s.status !== "pending").map((s) => (
+                <div
+                  key={s.step}
+                  className={`flex items-center gap-4 p-3 rounded-lg border ${
+                    s.status === "checking"
+                      ? "border-primary"
+                      : s.valid
+                        ? "border-green-500"
+                        : "border-red-500"
+                  }`}
+                >
+                  <div className="flex-shrink-0">{getStatusIcon(s)}</div>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-sm font-medium truncate">
+                      {SETUP_STEP_LABELS[s.step] || s.step}
+                    </div>
+                    {s.status === "done" && s.error && (
+                      <div className={`text-xs mt-0.5 ${s.valid ? "text-yellow-600" : "text-red-500"}`}>
+                        {s.error}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
-          )}
 
-          {hasSetupFailed && (
-            <div className="mt-6 flex justify-center">
-              <Button
-                variant="outline"
-                onClick={handleSetupRetry}
-                size="lg"
-                className="px-8"
-              >
-                Retry
-              </Button>
-            </div>
-          )}
+            {setupError && (
+              <div className="mt-6 flex justify-center">
+                <Button
+                  onClick={handleSetupRetry}
+                  size="lg"
+                  className="px-8"
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
 
-          {isSetupComplete && (
-            <div className="mt-6 flex justify-center">
-              <p className="text-sm text-muted-foreground">Environment setup complete. Loading...</p>
-            </div>
-          )}
+            {hasSetupFailed && (
+              <div className="mt-6 flex justify-center">
+                <Button
+                  onClick={handleSetupRetry}
+                  size="lg"
+                  className="px-8"
+                >
+                  Retry
+                </Button>
+              </div>
+            )}
+
+            {isSetupComplete && (
+              <div className="mt-6 flex justify-center">
+                <p className="text-sm text-muted-foreground">Environment setup complete. Loading...</p>
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="flex justify-center gap-3 mt-8">
+          <div className="w-3 h-3 rounded-full bg-gray-300" />
+          <div className="w-3 h-3 rounded-full bg-gray-300" />
+          <div className="w-3 h-3 rounded-full bg-blue-500" />
+          <div className="w-3 h-3 rounded-full bg-gray-300" />
         </div>
       </div>
     );
@@ -679,38 +698,35 @@ export function WelcomeScreen({ onComplete }: WelcomeScreenProps) {
   if (step === 4) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-background px-8">
-        <div className="w-full max-w-2xl text-center">
-          <div className="mb-8 flex justify-center">
-            <Image
-              src="/xi-logo.svg"
-              alt="Xi Logo"
-              width={200}
-              height={80}
-              priority
-            />
+        <div className="card flex flex-col items-center justify-center" style={{ width: "520px", height: "360px" }}>
+          <div className="card__content flex flex-col items-center text-center">
+            <div className="flex justify-center mb-4">
+              <CheckCircle2 className="h-16 w-16 text-green-500" />
+            </div>
+
+            <h1 className="text-2xl font-bold mb-4 text-foreground">
+              Congratulations!
+            </h1>
+
+            <p className="text-base text-muted-foreground mb-6">
+              You can now use Xi Studio
+            </p>
+
+            <Button
+              onClick={handleComplete}
+              size="lg"
+              className="px-8"
+            >
+              Get Started
+              <ArrowRight className="ml-2 h-5 w-5" />
+            </Button>
           </div>
-
-          <div className="flex justify-center mb-8">
-            <CheckCircle2 className="h-24 w-24 text-green-500" />
-          </div>
-
-          <h1 className="text-4xl font-bold mb-4 text-foreground">
-            Congratulations!
-          </h1>
-
-          <p className="text-xl text-muted-foreground mb-10">
-            You can now use Xi Studio
-          </p>
-
-          <Button
-            variant="outline"
-            onClick={handleComplete}
-            size="lg"
-            className="px-8"
-          >
-            Get Started
-            <ArrowRight className="ml-2 h-5 w-5" />
-          </Button>
+        </div>
+        <div className="flex justify-center gap-3 mt-8">
+          <div className="w-3 h-3 rounded-full bg-gray-300" />
+          <div className="w-3 h-3 rounded-full bg-gray-300" />
+          <div className="w-3 h-3 rounded-full bg-gray-300" />
+          <div className="w-3 h-3 rounded-full bg-blue-500" />
         </div>
       </div>
     );

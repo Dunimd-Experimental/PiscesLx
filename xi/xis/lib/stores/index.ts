@@ -20,4 +20,6 @@
 export { useChatStore } from "./chat-store";
 export { useTrainingStore } from "./training-store";
 export { useMonitorStore } from "./monitor-store";
+export { useRunsStore } from "./runs-store";
+export { useExplorerStore } from "./explorer-store";
 export { useConfigStore, useTheme, useNotifications } from "./config-store";

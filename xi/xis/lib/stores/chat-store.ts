@@ -103,16 +103,28 @@ export const useChatStore = create<ChatState>((set, get) => ({
       let fullContent = "";
 
       for await (const chunk of stream) {
-        const delta = chunk.choices[0]?.delta?.content || "";
-        fullContent += delta;
+        try {
+          const lines = chunk.split("\n");
+          for (const line of lines) {
+            if (line.startsWith("data: ")) {
+              const data = line.slice(6);
+              if (data === "[DONE]") continue;
+              const parsed = JSON.parse(data);
+              const delta = parsed.choices?.[0]?.delta?.content || "";
+              fullContent += delta;
 
-        set((state) => ({
-          messages: state.messages.map((msg, idx) =>
-            idx === state.messages.length - 1
-              ? { ...msg, content: fullContent }
-              : msg
-          ),
-        }));
+              set((state) => ({
+                messages: state.messages.map((msg, idx) =>
+                  idx === state.messages.length - 1
+                    ? { ...msg, content: fullContent }
+                    : msg
+                ),
+              }));
+            }
+          }
+        } catch {
+          // Skip invalid JSON chunks
+        }
       }
     } catch (error) {
       set({ error: String(error) });

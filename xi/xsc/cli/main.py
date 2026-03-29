@@ -31,10 +31,15 @@ Usage:
 import sys
 import argparse
 
-from .launcher import XiLauncher
+from ..launcher import XiLauncher
 
 
 def main():
+    """
+    Main entry point for Xi Studio CLI.
+    
+    Parses command line arguments and starts the launcher.
+    """
     parser = argparse.ArgumentParser(
         prog="xis",
         description="Xi Studio - Flagship LLM Workstation",
@@ -47,34 +52,34 @@ Examples:
     xis --port 8080 --frontend-port 8081 Start with both custom ports
         """
     )
-
+    
     parser.add_argument(
         "--port", "-p",
         type=int,
         default=3140,
         help="Backend API port (default: 3140)"
     )
-
+    
     parser.add_argument(
         "--frontend-port", "-f",
         type=int,
         default=3000,
         help="Frontend port (default: 3000)"
     )
-
+    
     parser.add_argument(
         "--version", "-v",
         action="version",
         version="Xi Studio 1.0.0"
     )
-
+    
     args = parser.parse_args()
-
+    
     launcher = XiLauncher(
         xi_port=args.port,
         frontend_port=args.frontend_port
     )
-
+    
     exit_code = launcher.run()
     sys.exit(exit_code)
 

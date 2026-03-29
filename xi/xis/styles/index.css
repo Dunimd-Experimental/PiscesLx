@@ -32,9 +32,21 @@
 /* Utilities */
 @import './utilities.css';
 
-/* Components */
+/* UI Components */
+@import './components/button.css';
+@import './components/card.css';
+@import './components/input.css';
+@import './components/badge.css';
+@import './components/select.css';
+@import './components/dialog.css';
+@import './components/tooltip.css';
+@import './components/progress.css';
 @import './components/window.css';
 @import './components/popup.css';
-@import './components/progress.css';
 @import './components/menu.css';
 @import './components/tabs.css';
+
+/* Layouts */
+@import './layouts/sidebar.css';
+@import './layouts/header.css';
+@import './layouts/page.css';

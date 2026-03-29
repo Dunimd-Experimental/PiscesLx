@@ -22,8 +22,8 @@
 
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { apiClient } from "@/lib/api/client";
+import { useEffect } from "react";
+import { useMonitorStore } from "@/lib/stores";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Activity,
@@ -99,31 +99,31 @@ export function MonitorWindow({ state }: MonitorWindowProps) {
   const maximized = isAppMaximized("monitor");
   const focused = isAppFocused("monitor");
 
-  const { data: stats } = useQuery({
-    queryKey: ["stats"],
-    queryFn: async () => {
-      const result = await apiClient.getStats();
-      return result as Record<string, unknown>;
-    },
-    refetchInterval: 2000,
-  });
+  const { stats, isLoading, isWsConnected, connectWebSocket, disconnectWebSocket } = useMonitorStore();
 
-  const systemStats = stats as Record<string, unknown> | undefined;
+  useEffect(() => {
+    if (!isWsConnected) {
+      connectWebSocket();
+    }
+    return () => {
+      disconnectWebSocket();
+    };
+  }, [isWsConnected, connectWebSocket, disconnectWebSocket]);
 
-  const cpuPercent = (systemStats?.cpu_percent as number) || 0;
-  const memPercent = (systemStats?.memory_percent as number) || 0;
-  const memUsed = (systemStats?.memory_used_gb as number) || 0;
-  const memTotal = (systemStats?.memory_total_gb as number) || 0;
-  const gpuCount = (systemStats?.gpu_count as number) || 0;
-  const gpuVendors = (systemStats?.gpu_vendors as string[]) || [];
-  const gpuNames = (systemStats?.gpu_names as string[]) || [];
-  const gpuUtils = (systemStats?.gpu_utilization as number[]) || [];
-  const gpuMemUsed = (systemStats?.gpu_memory_used as number[]) || [];
-  const gpuMemTotal = (systemStats?.gpu_memory_total as number[]) || [];
-  const gpuTemps = (systemStats?.gpu_temperatures as number[]) || [];
-  const gpuPower = (systemStats?.gpu_power_draw as number[]) || [];
-  const qps = ((systemStats?.qps as number) || 0).toFixed(2);
-  const uptime = (systemStats?.uptime_seconds as number) || 0;
+  const cpuPercent = stats?.cpu_percent || 0;
+  const memPercent = stats?.memory_percent || 0;
+  const memUsed = stats?.memory_used_gb || 0;
+  const memTotal = stats?.memory_total_gb || 0;
+  const gpuCount = stats?.gpu_count || 0;
+  const gpuVendors = stats?.gpu_vendors || [];
+  const gpuNames = stats?.gpu_names || [];
+  const gpuUtils = stats?.gpu_utilization || [];
+  const gpuMemUsed = stats?.gpu_memory_used || [];
+  const gpuMemTotal = stats?.gpu_memory_total || [];
+  const gpuTemps = stats?.gpu_temperatures || [];
+  const gpuPower = stats?.gpu_power_draw || [];
+  const qps = (stats?.qps || 0).toFixed(2);
+  const uptime = stats?.uptime_seconds || 0;
 
   const gpus: GpuInfo[] = [];
   for (let i = 0; i < gpuCount; i++) {
