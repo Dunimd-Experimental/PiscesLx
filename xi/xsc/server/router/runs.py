@@ -33,6 +33,7 @@ from fastapi import FastAPI, HTTPException
 from ...core.types import XiCommand, XiRunStatus
 from ...core.dc import XiLogger
 from ...config import get_xi_config
+from ...config.loader import load_run_types
 
 
 def setup_runs_routes(app: FastAPI, root_dir: Path, executor, logger: XiLogger, request_count: Dict[str, int]) -> None:
@@ -46,6 +47,15 @@ def setup_runs_routes(app: FastAPI, root_dir: Path, executor, logger: XiLogger, 
         logger: XiLogger instance
         request_count: Mutable request count reference
     """
+    @app.get("/v1/runs/types")
+    async def get_run_types():
+        request_count["value"] = request_count.get("value", 0) + 1
+        run_types = load_run_types()
+        return {
+            "run_types": [rt.to_dict() for rt in run_types],
+            "total": len(run_types)
+        }
+    
     @app.get("/v1/runs")
     async def list_runs():
         request_count["value"] = request_count.get("value", 0) + 1

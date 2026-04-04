@@ -24,7 +24,7 @@
 .dialog-overlay {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: 105;
   background: hsl(var(--background) / 0.8);
   backdrop-filter: blur(4px);
 }
@@ -34,7 +34,7 @@
   position: fixed;
   left: 50%;
   top: 50%;
-  z-index: 50;
+  z-index: 106;
   display: grid;
   width: 100%;
   max-width: 32rem;
@@ -51,12 +51,12 @@
 .dialog-header {
   display: flex;
   flex-direction: column;
-  gap: var(--spacing-1);
-  text-align: center;
+  gap: var(--spacing-2);
+  text-align: left;
 }
 
-.dialog-header--left {
-  text-align: left;
+.dialog-header--center {
+  text-align: center;
 }
 
 /* Dialog Title */

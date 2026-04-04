@@ -22,8 +22,9 @@
 
 "use client";
 
-import { useEffect } from "react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { useEffect, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -39,19 +40,34 @@ import {
   Clock,
   CheckCircle,
   XCircle,
+  Package,
 } from "lucide-react";
 import { useRunsStore } from "@/lib/stores";
-import Link from "next/link";
+import { useApps } from "@/components/layout/apps-context";
 import type { RunInfo } from "@/types/training";
 
 export default function RunsPage() {
   const { runs, isLoading, isWsConnected, connectWebSocket, controlRun } = useRunsStore();
+  const { openApp } = useApps();
+  const searchParams = useSearchParams();
+  const router = useRouter();
+  const [hasAutoOpened, setHasAutoOpened] = useState(false);
 
   useEffect(() => {
     if (!isWsConnected) {
       connectWebSocket();
     }
   }, [isWsConnected, connectWebSocket]);
+
+  useEffect(() => {
+    if (!hasAutoOpened && searchParams.get("create") === "true") {
+      setHasAutoOpened(true);
+      router.replace("/runs");
+      setTimeout(() => {
+        openApp("new-run");
+      }, 100);
+    }
+  }, [searchParams, hasAutoOpened, router, openApp]);
 
   const getStatusIcon = (status: string) => {
     switch (status) {
@@ -88,11 +104,14 @@ export default function RunsPage() {
       case "train":
         return <Brain className="h-4 w-4" />;
       case "serve":
+      case "inference":
         return <MessageSquare className="h-4 w-4" />;
       case "download":
         return <Download className="h-4 w-4" />;
       case "benchmark":
         return <Gauge className="h-4 w-4" />;
+      case "install":
+        return <Package className="h-4 w-4" />;
       default:
         return <Play className="h-4 w-4" />;
     }
@@ -101,8 +120,10 @@ export default function RunsPage() {
   const commandLabels: Record<string, string> = {
     train: "Training",
     serve: "Inference",
+    inference: "Inference",
     download: "Download",
     benchmark: "Benchmark",
+    install: "Install",
     monitor: "Monitor",
     test: "Test",
     dev: "Dev",
@@ -120,17 +141,10 @@ export default function RunsPage() {
     <ScrollArea className="h-full">
       <div className="space-y-6 p-6">
         <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Runs</h1>
-            <p className="text-muted-foreground">
-              Manage all training, inference, and background tasks
-            </p>
-          </div>
-          <Button variant="secondary" asChild>
-            <Link href="/training/new">
-              <Play className="mr-2 h-4 w-4" />
-              New Run
-            </Link>
+          <h1 className="text-3xl font-bold tracking-tight">Runs</h1>
+          <Button variant="secondary" onClick={() => openApp("new-run")}>
+            <Play className="mr-2 h-4 w-4" />
+            New Run
           </Button>
         </div>
 
@@ -185,9 +199,6 @@ export default function RunsPage() {
         <Card>
           <CardHeader>
             <CardTitle>All Runs</CardTitle>
-            <CardDescription>
-              All tasks from training, inference, downloads, and benchmarks
-            </CardDescription>
           </CardHeader>
           <CardContent>
             {isLoading ? (
@@ -203,16 +214,7 @@ export default function RunsPage() {
             ) : runs.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Play className="h-12 w-12 text-muted-foreground mb-4" />
-                <p className="text-muted-foreground mb-2">No runs yet</p>
-                <p className="text-sm text-muted-foreground mb-4">
-                  Start a new training, inference, or benchmark task
-                </p>
-                <Button variant="secondary" asChild>
-                  <Link href="/training/new">
-                    <Play className="mr-2 h-4 w-4" />
-                    New Run
-                  </Link>
-                </Button>
+                <p className="text-muted-foreground">No runs yet</p>
               </div>
             ) : (
               <div className="space-y-2">

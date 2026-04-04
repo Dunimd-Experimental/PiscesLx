@@ -22,7 +22,7 @@
 
 "use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
@@ -40,12 +40,7 @@ export default function SettingsPage() {
   return (
     <ScrollArea className="h-full">
         <div className="space-y-6">
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
-            <p className="text-muted-foreground">
-              Configure your Xi Studio preferences
-            </p>
-          </div>
+          <h1 className="text-3xl font-bold tracking-tight">Settings</h1>
 
           <div className="grid gap-6">
             <Card>
@@ -54,9 +49,6 @@ export default function SettingsPage() {
                   <Server className="h-5 w-5" />
                   Server Configuration
                 </CardTitle>
-                <CardDescription>
-                  Configure the backend server connection
-                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="grid gap-4 md:grid-cols-2">
@@ -78,9 +70,6 @@ export default function SettingsPage() {
                   <Key className="h-5 w-5" />
                   API Key
                 </CardTitle>
-                <CardDescription>
-                  Configure your API authentication
-                </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
@@ -97,9 +86,6 @@ export default function SettingsPage() {
                   <Palette className="h-5 w-5" />
                   Appearance
                 </CardTitle>
-                <CardDescription>
-                  Customize the look and feel
-                </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
@@ -114,9 +100,6 @@ export default function SettingsPage() {
                   <Bell className="h-5 w-5" />
                   Notifications
                 </CardTitle>
-                <CardDescription>
-                  Configure notification preferences
-                </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">
@@ -131,9 +114,6 @@ export default function SettingsPage() {
                   <Shield className="h-5 w-5" />
                   Security
                 </CardTitle>
-                <CardDescription>
-                  Security and privacy settings
-                </CardDescription>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">

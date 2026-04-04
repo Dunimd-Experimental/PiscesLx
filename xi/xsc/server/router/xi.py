@@ -20,26 +20,31 @@
 
 """
 Xi configuration routes.
+
+HTTP routes for Xi configuration operations.
+Business logic is delegated to the service layer.
 """
 
-import os
-import re
+import asyncio
 import json
-import subprocess
-import shutil
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 
 from ...core.dc import XiLogger
-from ...config import get_xi_config
+from ...config import get_xi_config, get_config_loader
+from ..service.welcome import (
+    get_welcome_validator,
+    get_welcome_setup,
+    get_welcome_agreement,
+)
 
 
 def setup_xi_routes(app: FastAPI, root_dir: Path, logger: XiLogger, request_count: Dict[str, int]) -> None:
     """
-    Setup Xi configuration routes.
+    Setup Xi API routes.
     
     Args:
         app: FastAPI application
@@ -47,91 +52,53 @@ def setup_xi_routes(app: FastAPI, root_dir: Path, logger: XiLogger, request_coun
         logger: XiLogger instance
         request_count: Mutable request count reference
     """
+    
     @app.get("/v1/xi/first-launch")
     async def check_first_launch():
         request_count["value"] = request_count.get("value", 0) + 1
-        import tomli
-        
-        xi_toml_path = root_dir / ".xi" / "xi.toml"
-        
-        if not xi_toml_path.exists():
-            return {"is_first_launch": True}
         
         try:
-            with open(xi_toml_path, "rb") as f:
-                config = tomli.load(f)
+            agreement_service = get_welcome_agreement(root_dir)
+            loop = asyncio.get_event_loop()
+            is_first = await loop.run_in_executor(None, agreement_service.is_first_launch)
             
-            first_launch = config.get("project", {}).get("first_launch", True)
-            return {"is_first_launch": bool(first_launch)}
-        except Exception:
-            return {"is_first_launch": True}
-    
+            return {"is_first_launch": is_first}
+        except Exception as e:
+            logger.error(f"Failed to check first launch: {e}", event="xi.first_launch.error")
+            return {"is_first_launch": False}
+
+    @app.get("/v1/xi/agreement")
+    async def get_agreement():
+        request_count["value"] = request_count.get("value", 0) + 1
+        
+        agreement_service = get_welcome_agreement(root_dir)
+        loop = asyncio.get_event_loop()
+        agreement_info = await loop.run_in_executor(None, agreement_service.get_agreement)
+        
+        return {"agreement": agreement_info.content, "version": agreement_info.version}
+
     @app.post("/v1/xi/complete-first-launch")
     async def complete_first_launch():
         request_count["value"] = request_count.get("value", 0) + 1
-
-        import tomli
-
-        xi_toml_path = root_dir / ".xi" / "xi.toml"
-
-        if not xi_toml_path.exists():
-            return {"success": False, "error": "xi.toml not found"}
-
-        try:
-            with open(xi_toml_path, "r", encoding="utf-8") as f:
-                content = f.read()
-
-            new_content = re.sub(r'first_launch\s*=\s*true', 'first_launch = false', content, flags=re.IGNORECASE)
-
-            with open(xi_toml_path, "w", encoding="utf-8", newline="\n") as f:
-                f.write(new_content)
-
+        
+        agreement_service = get_welcome_agreement(root_dir)
+        loop = asyncio.get_event_loop()
+        success = await loop.run_in_executor(None, agreement_service.complete_first_launch)
+        
+        if success:
             return {"success": True}
-        except Exception as e:
-            return {"success": False, "error": str(e)}
+        else:
+            return {"success": False, "error": "Failed to update configuration"}
     
     @app.get("/v1/xi/validate-config")
     async def validate_xi_config():
         async def generate_validation_events():
-            all_valid = True
-            xi_dir = root_dir / ".xi"
-            xi_toml_path = xi_dir / "xi.toml"
+            validator = get_welcome_validator(root_dir)
             
-            yield f"data: {json.dumps({'event': 'checking', 'step': 'xi_toml_syntax', 'message': 'Checking main configuration syntax'})}\n\n"
-            
-            import tomli
-            if not xi_toml_path.exists():
-                all_valid = False
-                yield f"data: {json.dumps({'event': 'result', 'step': 'xi_toml_syntax', 'valid': False, 'error': 'xi.toml not found'})}\n\n"
-                yield f"data: {json.dumps({'event': 'done', 'valid': False})}\n\n"
-                return
-            
-            try:
-                with open(xi_toml_path, "rb") as f:
-                    tomli.load(f)
-                yield f"data: {json.dumps({'event': 'result', 'step': 'xi_toml_syntax', 'valid': True, 'error': None})}\n\n"
-            except tomli.TOMLDecodeError as e:
-                all_valid = False
-                error_msg = f"Syntax error at line {e.lineno}: {e.msg}" if hasattr(e, 'lineno') else str(e)
-                yield f"data: {json.dumps({'event': 'result', 'step': 'xi_toml_syntax', 'valid': False, 'error': error_msg})}\n\n"
-                yield f"data: {json.dumps({'event': 'done', 'valid': False})}\n\n"
-                return
-            
-            yield f"data: {json.dumps({'event': 'checking', 'step': 'project_info', 'message': 'Checking project information'})}\n\n"
-            
-            try:
-                config = get_xi_config()
+            async for result in validator.validate_all():
+                yield f"data: {json.dumps({'event': 'checking', 'step': result.step, 'message': f'Checking {validator.get_step_label(result.step)}...'})}\n\n"
                 
-                if not config.project.name:
-                    all_valid = False
-                    yield f"data: {json.dumps({'event': 'result', 'step': 'project_info', 'valid': False, 'error': 'Project name not configured'})}\n\n"
-                else:
-                    yield f"data: {json.dumps({'event': 'result', 'step': 'project_info', 'valid': True, 'error': None, 'data': {'name': config.project.name, 'version': config.project.version, 'backend': config.project.backend}})}\n\n"
-            except Exception as e:
-                all_valid = False
-                yield f"data: {json.dumps({'event': 'result', 'step': 'project_info', 'valid': False, 'error': str(e)})}\n\n"
-            
-            yield f"data: {json.dumps({'event': 'done', 'valid': all_valid})}\n\n"
+                yield f"data: {json.dumps({'event': 'result', 'step': result.step, 'valid': result.valid, 'error': result.error, 'data': result.data, 'warnings': result.warnings})}\n\n"
         
         return StreamingResponse(
             generate_validation_events(),
@@ -145,42 +112,12 @@ def setup_xi_routes(app: FastAPI, root_dir: Path, logger: XiLogger, request_coun
     @app.get("/v1/xi/setup-environment")
     async def setup_environment():
         async def generate_setup_events():
-            all_valid = True
+            setup = get_welcome_setup(root_dir)
             
-            yield f"data: {json.dumps({'event': 'checking', 'step': 'venv_create', 'message': 'Checking virtual environment'})}\n\n"
-            
-            try:
-                config = get_xi_config()
+            async for result in setup.setup_all():
+                yield f"data: {json.dumps({'event': 'checking', 'step': result.step, 'message': f'Setting up {setup.get_step_label(result.step)}...'})}\n\n"
                 
-                venv_enabled = config.environment.virtualenv and config.environment.virtualenv.enabled
-                venv_path = root_dir / config.environment.virtualenv.path if venv_enabled else None
-                
-                if venv_enabled and venv_path:
-                    if not venv_path.exists():
-                        yield f"data: {json.dumps({'event': 'checking', 'step': 'venv_create', 'message': 'Creating virtual environment...'})}\n\n"
-                        
-                        create_result = subprocess.run(
-                            ["python", "-m", "venv", str(venv_path)],
-                            capture_output=True,
-                            text=True,
-                            timeout=300
-                        )
-                        
-                        if create_result.returncode != 0:
-                            all_valid = False
-                            yield f"data: {json.dumps({'event': 'result', 'step': 'venv_create', 'valid': False, 'error': f'Failed to create venv: {create_result.stderr}'})}\n\n"
-                        else:
-                            yield f"data: {json.dumps({'event': 'result', 'step': 'venv_create', 'valid': True, 'error': None, 'data': {'path': str(venv_path)}})}\n\n"
-                    else:
-                        yield f"data: {json.dumps({'event': 'result', 'step': 'venv_create', 'valid': True, 'error': None, 'data': {'path': str(venv_path), 'exists': True}})}\n\n"
-                else:
-                    yield f"data: {json.dumps({'event': 'result', 'step': 'venv_create', 'valid': True, 'error': None, 'data': {'message': 'Virtual environment not configured'}})}\n\n"
-            
-            except Exception as e:
-                all_valid = False
-                yield f"data: {json.dumps({'event': 'result', 'step': 'venv_create', 'valid': False, 'error': str(e)})}\n\n"
-            
-            yield f"data: {json.dumps({'event': 'done', 'valid': all_valid})}\n\n"
+                yield f"data: {json.dumps({'event': 'result', 'step': result.step, 'valid': result.success, 'error': result.error, 'data': result.data, 'warnings': result.warnings})}\n\n"
         
         return StreamingResponse(
             generate_setup_events(),

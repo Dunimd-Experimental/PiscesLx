@@ -126,6 +126,9 @@ class XiServer:
             log_level="info",
             ws_ping_interval=20,
             ws_ping_timeout=20,
+            timeout_keep_alive=5,
+            limit_concurrency=100,
+            limit_max_requests=1000,
         )
 
 

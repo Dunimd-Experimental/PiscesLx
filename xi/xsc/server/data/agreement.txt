@@ -1,0 +1,48 @@
+# Xi Studio Service Agreement
+
+Effective Date: March 21, 2026
+
+## 1. ACCEPTANCE OF TERMS
+
+By clicking "Agree" and using Xi Studio ("the Software"), you agree to be bound by these Terms of Service. If you do not agree to these terms, please do not use the Software.
+
+## 2. DESCRIPTION OF SERVICE
+
+Xi Studio is an AI workstation platform that provides tools for model training, inference, and data management. The Software is provided for personal and commercial use subject to these terms.
+
+## 3. USER RESPONSIBILITIES
+
+You are responsible for:
+- Maintaining the security of your account and data
+- Ensuring compliance with applicable AI regulations in your jurisdiction
+- Proper use of AI models and generated content
+- All activities that occur under your account
+
+## 4. ACCEPTABLE USE
+
+You agree NOT to:
+- Use the Software for any illegal or unauthorized purpose
+- Violate any applicable local, state, national, or international law
+- Infringe upon the intellectual property rights of others
+- Attempt to reverse engineer, decompile, or disassemble the Software
+- Use the Software to create harmful, malicious, or unethical AI content
+
+## 5. AI REGULATORY COMPLIANCE
+
+Users must comply with all applicable AI regulations, including but not limited to:
+- Content labeling and disclosure requirements
+- Data privacy and protection regulations
+- AI transparency and accountability requirements
+- Prohibited use cases as defined by applicable law
+
+## 6. INTELLECTUAL PROPERTY
+
+The Software and its original content, features, and functionality are owned by Wenze Wei and the Dunimd Team. You retain ownership of your data and content created using the Software.
+
+## 7. DISCLAIMER
+
+THE SOFTWARE IS PROVIDED "AS IS" WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+By clicking "Agree", you acknowledge that you have read, understood, and agree to be bound by these Terms of Service.

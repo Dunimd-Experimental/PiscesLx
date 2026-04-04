@@ -33,6 +33,7 @@ from .environment import XiEnvironmentConfig, XiRequirementConfig, XiVirtualenvC
 from .command import XiCommandConfig, XiCommandSchema
 from .parameter import XiParameterSchema, XiTabSchema
 from .widget import XiWidgetConfig, XiWidgetStyle, XiWidgetValidation, XiValueMapping
+from .run_types import XiRunTypeConfig
 from .base import XiConfig
 
 __all__ = [
@@ -55,4 +56,5 @@ __all__ = [
     "XiWidgetStyle",
     "XiWidgetValidation",
     "XiValueMapping",
+    "XiRunTypeConfig",
 ]

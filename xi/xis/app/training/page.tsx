@@ -23,6 +23,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -37,6 +38,7 @@ import {
   Loader2,
 } from "lucide-react";
 import { useTrainingStore } from "@/lib/stores";
+import { useApps } from "@/components/layout/apps-context";
 import Link from "next/link";
 import type { RunStatus } from "@/types";
 
@@ -51,7 +53,11 @@ const statusColors: Record<RunStatus, string> = {
 
 export default function TrainingPage() {
   const { runs, isLoading, isWsConnected, error, connectWebSocket, fetchRuns, controlRun } = useTrainingStore();
+  const { openAppWithParams } = useApps();
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [activeTab, setActiveTab] = useState<RunStatus | "all">("all");
+  const [hasAutoOpened, setHasAutoOpened] = useState(false);
 
   useEffect(() => {
     if (!isWsConnected && !error) {
@@ -65,6 +71,16 @@ export default function TrainingPage() {
     }
   }, [isWsConnected, isLoading, fetchRuns]);
 
+  useEffect(() => {
+    if (!hasAutoOpened && searchParams.get("create") === "true") {
+      setHasAutoOpened(true);
+      router.replace("/training");
+      setTimeout(() => {
+        openAppWithParams("new-run", { runType: "train" });
+      }, 100);
+    }
+  }, [searchParams, hasAutoOpened, router, openAppWithParams]);
+
   const filteredRuns = activeTab === "all"
     ? runs
     : runs.filter((run) => run.status === activeTab);
@@ -77,17 +93,10 @@ export default function TrainingPage() {
     <ScrollArea className="h-full">
         <div className="space-y-6">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold tracking-tight">Training</h1>
-              <p className="text-muted-foreground">
-                Manage and monitor your training jobs
-              </p>
-            </div>
-            <Button variant="secondary" asChild>
-              <Link href="/training/new">
-                <Plus className="mr-2 h-4 w-4" />
-                New Training
-              </Link>
+            <h1 className="text-3xl font-bold tracking-tight">Training</h1>
+            <Button variant="secondary" onClick={() => openAppWithParams("new-run", { runType: "train" })}>
+              <Plus className="mr-2 h-4 w-4" />
+              New Training
             </Button>
           </div>
 
@@ -167,8 +176,8 @@ export default function TrainingPage() {
                   <CardContent className="flex flex-col items-center justify-center py-12">
                     <Brain className="h-12 w-12 text-muted-foreground mb-4" />
                     <p className="text-muted-foreground">No training runs found</p>
-                    <Button variant="secondary" className="mt-4" asChild>
-                      <Link href="/training/new">Start Training</Link>
+                    <Button variant="secondary" className="mt-4" onClick={() => openAppWithParams("new-run", { runType: "train" })}>
+                      Start Training
                     </Button>
                   </CardContent>
                 </Card>

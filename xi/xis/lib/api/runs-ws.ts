@@ -21,16 +21,75 @@ import type { RunInfo } from "@/types";
 
 export type RunStatus = "pending" | "running" | "paused" | "completed" | "failed" | "cancelled";
 
+export interface RunTypeSchema {
+  run_type: string;
+  description: string;
+  available: boolean;
+  unavailable_reason: string;
+  tabs: RunTypeTab[];
+  parameters: RunTypeParameter[];
+}
+
+export interface RunTypeTab {
+  name: string;
+  label: string;
+  available: boolean;
+  unavailable_reason: string;
+}
+
+export interface RunTypeParameter {
+  name: string;
+  type: string;
+  description: string;
+  required: boolean;
+  default: unknown;
+  options: string[];
+  min?: number;
+  max?: number;
+  source: string;
+  source_type: string | null;
+  filter: string;
+  available: boolean;
+  unavailable_reason: string;
+  tab: string;
+  widget?: {
+    type: string;
+    style: {
+      width: string;
+      placeholder: string;
+    };
+    props: Record<string, unknown>;
+  };
+}
+
 export type RunsClientMessage =
   | { type: "get_runs" }
+  | { type: "get_run_types" }
+  | { type: "get_schema"; run_type: string }
+  | { type: "create_run"; run_type: string; name: string; config: Record<string, unknown>; run_id?: string }
   | { type: "control"; run_id: string; action: "pause" | "resume" | "cancel" | "kill" };
+
+export interface RunTypeInfo {
+  name: string;
+  label: string;
+  description: string;
+  icon: string;
+  color: string;
+  enabled: boolean;
+  order: number;
+}
 
 export type RunsServerMessage =
   | { type: "runs_list"; runs: RunInfo[]; total: number }
   | { type: "runs_update"; runs: RunInfo[]; timestamp: string }
   | { type: "run_update"; run: RunInfo }
+  | { type: "run_types"; run_types: RunTypeInfo[]; total: number }
+  | { type: "schema"; run_type: string; description: string; available: boolean; unavailable_reason: string; tabs: RunTypeTab[]; parameters: RunTypeParameter[] }
+  | { type: "run_created"; run_id: string; run_type: string; name: string; status: string; message: string }
+  | { type: "run_completed"; run_id: string; exit_code: number; status: string; timestamp: string }
+  | { type: "output"; run_id: string; line: string; source: string; timestamp: string }
   | { type: "control_result"; run_id: string; action: string; success: boolean }
-  | { type: "error"; run_id?: string; message: string };
+  | { type: "error"; run_id?: string; run_type?: string; message: string };
 
 type RunsMessageHandler = (message: RunsServerMessage) => void;
 type ConnectionHandler = () => void;
@@ -155,6 +214,18 @@ export class PiscesL1RunsWS {
 
   getRuns(): void {
     this.send({ type: "get_runs" });
+  }
+
+  getRunTypes(): void {
+    this.send({ type: "get_run_types" });
+  }
+
+  getSchema(runType: string): void {
+    this.send({ type: "get_schema", run_type: runType });
+  }
+
+  createRun(runType: string, name: string, config: Record<string, unknown>, runId?: string): void {
+    this.send({ type: "create_run", run_type: runType, name, config, run_id: runId });
   }
 
   control(runId: string, action: "pause" | "resume" | "cancel" | "kill"): void {

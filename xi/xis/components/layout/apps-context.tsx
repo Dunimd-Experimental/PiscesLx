@@ -37,12 +37,15 @@ interface App {
   state: AppState;
   position: AppPosition | null;
   size: { width: number; height: number } | null;
+  hidden?: boolean;
+  params?: Record<string, unknown>;
 }
 
 interface AppsContextType {
   apps: App[];
   focusedAppId: string | null;
-  openApp: (id: string) => void;
+  openApp: (id: string, hidden?: boolean) => void;
+  openAppWithParams: (id: string, params: Record<string, unknown>) => void;
   closeApp: (id: string) => void;
   minimizeApp: (id: string) => void;
   maximizeApp: (id: string) => void;
@@ -55,7 +58,8 @@ interface AppsContextType {
   getAppPosition: (id: string) => AppPosition | null;
   updateAppSize: (id: string, size: { width: number; height: number }) => void;
   getAppSize: (id: string) => { width: number; height: number } | null;
-  getNextWindowPosition: (defaultSize: { width: number; height: number }) => AppPosition;
+  getAppParams: (id: string) => Record<string, unknown> | null;
+  clearAppParams: (id: string) => void;
 }
 
 const AppsContext = createContext<AppsContextType | undefined>(undefined);
@@ -64,55 +68,38 @@ export function AppsProvider({ children }: { children: ReactNode }) {
   const [apps, setApps] = useState<App[]>([
     { id: "monitor", name: "System Monitor", state: "closed", position: null, size: null },
     { id: "explorer", name: "File Explorer", state: "closed", position: null, size: null },
+    { id: "new-run", name: "New Run", state: "closed", position: null, size: null, hidden: true },
   ]);
   const [focusedAppId, setFocusedAppId] = useState<string | null>(null);
 
-  const getNextWindowPosition = (defaultSize: { width: number; height: number }): AppPosition => {
-    const HEADER_HEIGHT = 48;
-    const OFFSET = 30;
-    const runningApps = apps.filter(a => a.state !== "closed" && a.position);
-    
-    if (runningApps.length === 0) {
-      const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
-      const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
-      return {
-        x: Math.max(0, (viewportWidth - defaultSize.width) / 2),
-        y: Math.max(HEADER_HEIGHT, (viewportHeight - defaultSize.height) / 2),
-      };
-    }
-    
-    const lastApp = runningApps[runningApps.length - 1];
-    const lastPos = lastApp.position!;
-    
-    let newX = lastPos.x + OFFSET;
-    let newY = lastPos.y + OFFSET;
-    
-    const viewportWidth = typeof window !== 'undefined' ? window.innerWidth : 1200;
-    const viewportHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
-    
-    if (newX + defaultSize.width > viewportWidth) {
-      newX = OFFSET;
-    }
-    if (newY + defaultSize.height > viewportHeight - HEADER_HEIGHT) {
-      newY = HEADER_HEIGHT + OFFSET;
-    }
-    
-    return { x: newX, y: newY };
-  };
-
-  const openApp = (id: string) => {
+  const openApp = (id: string, hidden?: boolean) => {
     setApps((prev) =>
       prev.map((app) => {
         if (app.id === id) {
           if (app.state === "closed") {
-            const newPosition = getNextWindowPosition({ width: 800, height: 600 });
-            return { ...app, state: "normal", position: newPosition };
+            return { ...app, state: "normal", position: null };
           }
           return { ...app, state: "normal" };
         }
         return app;
       })
     );
+    setFocusedAppId(id);
+  };
+
+  const openAppWithParams = (id: string, params: Record<string, unknown>) => {
+    setApps((prev) =>
+      prev.map((app) => {
+        if (app.id === id) {
+          if (app.state === "closed") {
+            return { ...app, state: "normal", position: null, params };
+          }
+          return { ...app, state: "normal", params };
+        }
+        return app;
+      })
+    );
+    setFocusedAppId(id);
   };
 
   const closeApp = (id: string) => {
@@ -191,12 +178,26 @@ export function AppsProvider({ children }: { children: ReactNode }) {
     return focusedAppId === id;
   };
 
+  const getAppParams = (id: string) => {
+    const app = apps.find((a) => a.id === id);
+    return app?.params || null;
+  };
+
+  const clearAppParams = (id: string) => {
+    setApps((prev) =>
+      prev.map((app) =>
+        app.id === id ? { ...app, params: undefined } : app
+      )
+    );
+  };
+
   return (
     <AppsContext.Provider
       value={{ 
         apps, 
         focusedAppId,
         openApp, 
+        openAppWithParams,
         closeApp, 
         minimizeApp, 
         maximizeApp, 
@@ -208,8 +209,9 @@ export function AppsProvider({ children }: { children: ReactNode }) {
         updateAppPosition, 
         getAppPosition, 
         updateAppSize, 
-        getAppSize, 
-        getNextWindowPosition 
+        getAppSize,
+        getAppParams,
+        clearAppParams
       }}
     >
       {children}

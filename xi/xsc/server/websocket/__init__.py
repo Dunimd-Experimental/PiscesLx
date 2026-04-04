@@ -36,6 +36,7 @@ from ...config import get_xi_config
 from .runs import get_runs_ws_handler
 from .monitor import get_monitor_ws_handler
 from .explorer import get_explorer_ws_handler
+from .welcome import get_welcome_ws_handler
 
 
 class PiscesL1TrainingWebSocket:
@@ -582,7 +583,7 @@ def setup_websockets(
             logger.error(f"Stats WebSocket error: {e}", event="xi.ws.stats.error")
 
     # Runs WebSocket endpoint
-    runs_handler = get_runs_ws_handler(executor, logger)
+    runs_handler = get_runs_ws_handler(executor, logger, root_dir)
     
     @app.websocket("/ws/runs")
     async def runs_websocket(websocket: WebSocket):
@@ -652,3 +653,73 @@ def setup_websockets(
             logger.error(f"Explorer WebSocket error: {e}", event="xi.explorer_ws.error")
         finally:
             explorer_handler.disconnect(websocket)
+
+    # Welcome WebSocket endpoint
+    welcome_handler = get_welcome_ws_handler(logger)
+    
+    @app.websocket("/ws/welcome")
+    async def welcome_websocket(websocket: WebSocket):
+        await welcome_handler.connect(websocket)
+        last_activity = asyncio.get_event_loop().time()
+        CONNECTION_TIMEOUT = 300  # 5 minutes timeout
+
+        async def ping_task():
+            nonlocal last_activity
+            try:
+                while True:
+                    await asyncio.sleep(30)
+                    try:
+                        await websocket.send_json({"type": "ping"})
+                    except Exception:
+                        break
+            except asyncio.CancelledError:
+                pass
+
+        async def timeout_monitor():
+            nonlocal last_activity
+            try:
+                while True:
+                    await asyncio.sleep(60)
+                    current_time = asyncio.get_event_loop().time()
+                    if current_time - last_activity > CONNECTION_TIMEOUT:
+                        logger.info("Welcome WebSocket connection timed out", event="xi.welcome_ws.timeout")
+                        try:
+                            await websocket.close(code=1001, reason="Connection timeout")
+                        except Exception:
+                            pass
+                        break
+            except asyncio.CancelledError:
+                pass
+
+        ping = asyncio.create_task(ping_task())
+        timeout_task = asyncio.create_task(timeout_monitor())
+
+        try:
+            async for raw_message in websocket.iter_text():
+                last_activity = asyncio.get_event_loop().time()
+                try:
+                    data = json.loads(raw_message)
+                    if data.get("type") == "pong":
+                        continue
+                    await welcome_handler.handle_message(websocket, data)
+                except json.JSONDecodeError:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Invalid JSON message"
+                    })
+        except WebSocketDisconnect:
+            pass
+        except Exception as e:
+            logger.error(f"Welcome WebSocket error: {e}", event="xi.welcome_ws.error")
+        finally:
+            ping.cancel()
+            timeout_task.cancel()
+            try:
+                await ping
+            except asyncio.CancelledError:
+                pass
+            try:
+                await timeout_task
+            except asyncio.CancelledError:
+                pass
+            await welcome_handler.disconnect(websocket)

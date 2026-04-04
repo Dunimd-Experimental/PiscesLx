@@ -91,8 +91,37 @@ class XiExecutor:
         try:
             argv = build_argv(request, self.root_dir)
             
+            import sys
+            from ..config import get_xi_config
+            
+            config = get_xi_config()
+            venv_python = None
+            
+            if config.environment.virtualenv and config.environment.virtualenv.enabled:
+                venv_path = config.environment.virtualenv.path
+                if not Path(venv_path).is_absolute():
+                    venv_path = str(self.root_dir / venv_path)
+                
+                if sys.platform == "win32":
+                    venv_python = str(Path(venv_path) / "Scripts" / "python.exe")
+                else:
+                    venv_python = str(Path(venv_path) / "bin" / "python")
+                
+                if not Path(venv_python).exists():
+                    self.logger.warning(
+                        f"Virtual environment Python not found: {venv_python}, falling back to system Python",
+                        event="xi.executor.venv_not_found"
+                    )
+                    venv_python = None
+            
+            if venv_python:
+                if argv and argv[0] in ("python", "python3", sys.executable):
+                    argv[0] = venv_python
+                elif argv and not argv[0].endswith("python"):
+                    argv.insert(0, venv_python)
+            
             self.logger.info(
-                f"Executing command: {' '.join(argv)}",
+                f"Executing command: {' '.join(argv)}, venv={venv_python is not None}",
                 event="xi.executor.execute"
             )
             

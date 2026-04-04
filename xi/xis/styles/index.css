@@ -45,6 +45,7 @@
 @import './components/popup.css';
 @import './components/menu.css';
 @import './components/tabs.css';
+@import './components/global-overlay.css';
 
 /* Layouts */
 @import './layouts/sidebar.css';

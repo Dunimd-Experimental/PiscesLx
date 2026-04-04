@@ -22,7 +22,7 @@
 
 "use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -49,12 +49,7 @@ export default function ModelsPage() {
     <ScrollArea className="h-full">
         <div className="space-y-6">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold tracking-tight">Models</h1>
-              <p className="text-muted-foreground">
-                Manage and configure your models
-              </p>
-            </div>
+            <h1 className="text-3xl font-bold tracking-tight">Models</h1>
             <div className="flex gap-2">
               <Button variant="secondary" onClick={() => refetch()}>
                 <RefreshCw className="mr-2 h-4 w-4" />

@@ -156,6 +156,22 @@ class ApiClient {
     return response.data;
   }
 
+  async getRunTypes(): Promise<{
+    run_types: Array<{
+      name: string;
+      label: string;
+      description: string;
+      icon: string;
+      color: string;
+      enabled: boolean;
+      order: number;
+    }>;
+    total: number;
+  }> {
+    const response = await this.client.get("/v1/runs/types");
+    return response.data;
+  }
+
   async getRunStatus(runId: string): Promise<{
     run_id: string;
     status: string;
@@ -441,8 +457,11 @@ class ApiClient {
     return response.data;
   }
 
-  async checkFirstLaunch(): Promise<{ is_first_launch: boolean }> {
-    const response = await this.client.get("/v1/xi/first-launch");
+  async checkFirstLaunch(signal?: AbortSignal): Promise<{ is_first_launch: boolean }> {
+    const response = await this.client.get("/v1/xi/first-launch", {
+      signal,
+      timeout: 5000,
+    });
     return response.data;
   }
 

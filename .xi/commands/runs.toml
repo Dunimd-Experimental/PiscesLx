@@ -1,0 +1,64 @@
+# Copyright © 2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of Xi.
+# The Xi project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Run Types Configuration
+# This file defines all available run types that can be created from the UI.
+
+[[run_types]]
+name = "train"
+label = "Training"
+description = "Train and fine-tune models"
+icon = "Brain"
+color = "#3B82F6"
+enabled = true
+order = 1
+
+[[run_types]]
+name = "inference"
+label = "Inference"
+description = "Start inference server"
+icon = "MessageSquare"
+color = "#10B981"
+enabled = true
+order = 2
+
+[[run_types]]
+name = "benchmark"
+label = "Benchmark"
+description = "Run performance benchmarks"
+icon = "Gauge"
+color = "#F59E0B"
+enabled = true
+order = 3
+
+[[run_types]]
+name = "download"
+label = "Download"
+description = "Download models and datasets"
+icon = "Download"
+color = "#8B5CF6"
+enabled = true
+order = 4
+
+[[run_types]]
+name = "install"
+label = "Install"
+description = "Install dependencies"
+icon = "Package"
+color = "#6B7280"
+enabled = true
+order = 5

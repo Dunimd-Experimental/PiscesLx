@@ -22,7 +22,7 @@
 
 "use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
@@ -56,12 +56,7 @@ export default function DataPage() {
     <ScrollArea className="h-full">
         <div className="space-y-6">
           <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-3xl font-bold tracking-tight">Data Management</h1>
-              <p className="text-muted-foreground">
-                Upload and manage your training datasets
-              </p>
-            </div>
+            <h1 className="text-3xl font-bold tracking-tight">Data Management</h1>
             <Button variant="secondary">
               <Upload className="mr-2 h-4 w-4" />
               Upload Dataset

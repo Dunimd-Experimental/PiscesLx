@@ -29,6 +29,7 @@ from enum import Enum
 
 class XiCommand(str, Enum):
     TRAIN = "train"
+    INFERENCE = "inference"
     SERVE = "serve"
     BENCHMARK = "benchmark"
     DOWNLOAD = "download"

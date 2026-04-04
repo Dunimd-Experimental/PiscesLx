@@ -40,6 +40,7 @@ import {
   Cpu,
   Play,
   Folder,
+  LayoutGrid,
 } from "lucide-react";
 
 const navigation = [
@@ -51,17 +52,24 @@ const navigation = [
   { name: "Runs", href: "/runs", icon: Play },
 ];
 
-const apps = [
-  { id: "monitor", name: "Monitor", icon: Monitor, color: "bg-blue-500" },
-  { id: "explorer", name: "Explorer", icon: Folder, color: "bg-amber-500" },
-];
+const appIcons: Record<string, React.ElementType> = {
+  monitor: Monitor,
+  explorer: Folder,
+};
+
+const appColors: Record<string, string> = {
+  monitor: "blue",
+  explorer: "amber",
+};
 
 export function Sidebar() {
   const pathname = usePathname();
   const { collapsed } = useSidebar();
-  const { openApp, isAppRunning } = useApps();
+  const { apps, openApp, isAppRunning } = useApps();
   const [showApps, setShowApps] = useState(false);
   const appsRef = useRef<HTMLDivElement>(null);
+
+  const visibleApps = apps.filter(app => !app.hidden);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -73,6 +81,10 @@ export function Sidebar() {
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
+
+  const handleAppsClick = () => {
+    setShowApps(!showApps);
+  };
 
   return (
     <aside
@@ -109,32 +121,25 @@ export function Sidebar() {
             </Tooltip>
           );
         })}
-      </nav>
 
-      <div className="sidebar__footer">
-        <div className="relative" ref={appsRef}>
+        <div ref={appsRef} className="contents">
           <Tooltip delayDuration={0}>
             <TooltipTrigger asChild>
-              <Button
-                variant="secondary"
+              <button
                 className={cn(
-                  "sidebar__apps-btn",
-                  collapsed && "sidebar__apps-btn--collapsed"
+                  "sidebar__item",
+                  "sidebar__item--apps",
+                  collapsed && "sidebar__item--collapsed"
                 )}
-                onClick={() => setShowApps(!showApps)}
+                onClick={handleAppsClick}
               >
-                <div className="grid grid-cols-2 gap-0.5">
-                  <div className="h-1.5 w-1.5 rounded-sm bg-current" />
-                  <div className="h-1.5 w-1.5 rounded-sm bg-current" />
-                  <div className="h-1.5 w-1.5 rounded-sm bg-current" />
-                  <div className="h-1.5 w-1.5 rounded-sm bg-current" />
-                </div>
-                {!collapsed && <span className="ml-3 text-sm">Apps</span>}
-              </Button>
+                <LayoutGrid className="h-5 w-5 flex-shrink-0" />
+                {!collapsed && <span>Applications</span>}
+              </button>
             </TooltipTrigger>
             {collapsed && (
               <TooltipContent side="right" className="font-medium">
-                Apps
+                Applications
               </TooltipContent>
             )}
           </Tooltip>
@@ -148,9 +153,10 @@ export function Sidebar() {
               } as React.CSSProperties}
             >
               <div className="sidebar__apps-grid">
-                {apps.map((app) => {
-                  const Icon = app.icon;
+                {visibleApps.map((app) => {
+                  const Icon = appIcons[app.id] || Monitor;
                   const isRunning = isAppRunning(app.id);
+                  const color = appColors[app.id] || "blue";
 
                   return (
                     <button
@@ -161,7 +167,7 @@ export function Sidebar() {
                       }}
                       className="sidebar__app-item relative"
                     >
-                      <div className={`sidebar__app-icon sidebar__app-icon--${app.id === 'monitor' ? 'blue' : 'amber'}`}>
+                      <div className={`sidebar__app-icon sidebar__app-icon--${color}`}>
                         <Icon className="h-6 w-6 text-white" />
                       </div>
                       {isRunning && (
@@ -175,7 +181,7 @@ export function Sidebar() {
             </div>
           )}
         </div>
-      </div>
+      </nav>
     </aside>
   );
 }

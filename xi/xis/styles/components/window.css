@@ -86,21 +86,132 @@
 /* Resize Handle */
 .resize-handle {
   position: absolute;
+  z-index: 10;
+}
+
+.resize-handle--n {
+  top: 0;
+  left: 8px;
+  right: 8px;
+  height: 6px;
+  cursor: n-resize;
+}
+
+.resize-handle--s {
+  bottom: 0;
+  left: 8px;
+  right: 8px;
+  height: 6px;
+  cursor: s-resize;
+}
+
+.resize-handle--e {
+  right: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 6px;
+  cursor: e-resize;
+}
+
+.resize-handle--w {
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 6px;
+  cursor: w-resize;
+}
+
+.resize-handle--ne {
+  top: 0;
+  right: 0;
+  width: 12px;
+  height: 12px;
+  cursor: ne-resize;
+}
+
+.resize-handle--nw {
+  top: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: nw-resize;
+}
+
+.resize-handle--se {
   bottom: 0;
   right: 0;
+  width: 12px;
+  height: 12px;
+  cursor: se-resize;
+}
+
+.resize-handle--sw {
+  bottom: 0;
+  left: 0;
+  width: 12px;
+  height: 12px;
+  cursor: sw-resize;
+}
+
+/* macOS-style Window Controls */
+.window-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  cursor: default;
+  background: transparent;
+  border-radius: 6px;
+}
+
+.window-control {
   width: 20px;
   height: 20px;
-  cursor: se-resize;
-  z-index: 10;
-  background: linear-gradient(
-    135deg,
-    transparent 40%,
-    rgba(128, 128, 128, 0.5) 40%,
-    rgba(128, 128, 128, 0.5) 45%,
-    transparent 45%,
-    transparent 55%,
-    rgba(128, 128, 128, 0.5) 55%,
-    rgba(128, 128, 128, 0.5) 60%,
-    transparent 60%
-  );
+  border-radius: 50%;
+  border: none;
+  cursor: pointer;
+  transition: filter 0.15s ease;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  box-sizing: border-box;
+}
+
+.window-control:hover {
+  filter: brightness(0.9);
+}
+
+.window-control:active {
+  filter: brightness(0.8);
+}
+
+.window-control__icon {
+  width: 12px;
+  height: 12px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+  color: rgba(0, 0, 0, 0.6);
+  stroke-width: 2.5;
+  flex-shrink: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.window-control:hover .window-control__icon {
+  opacity: 1;
+}
+
+.window-control--close {
+  background-color: #ff5f57;
+}
+
+.window-control--minimize {
+  background-color: #febc2e;
+}
+
+.window-control--maximize {
+  background-color: #28c840;
 }

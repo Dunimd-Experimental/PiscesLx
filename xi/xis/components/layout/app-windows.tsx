@@ -25,6 +25,7 @@
 import { useApps } from "./apps-context";
 import { MonitorWindow } from "./monitor-window";
 import { FileExplorerWindow } from "./file-explorer-window";
+import { NewRunWindow } from "./new-run-window";
 
 export function AppWindows() {
   const { apps } = useApps();
@@ -33,12 +34,14 @@ export function AppWindows() {
     <>
       {apps.map((app) => {
         if (app.state === "closed") return null;
-
+        
         switch (app.id) {
           case "monitor":
             return <MonitorWindow key={app.id} state={app.state} />;
           case "explorer":
             return <FileExplorerWindow key={app.id} state={app.state} />;
+          case "new-run":
+            return <NewRunWindow key={app.id} state={app.state} />;
           default:
             return null;
         }

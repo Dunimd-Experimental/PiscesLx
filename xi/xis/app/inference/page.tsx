@@ -148,9 +148,6 @@ export default function InferencePage() {
                       <Send className="h-6 w-6 text-muted-foreground" />
                     </div>
                     <h3 className="text-lg font-semibold">Start a conversation</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Send a message to start chatting with PiscesL1
-                    </p>
                   </div>
                 </div>
               ) : (

@@ -22,7 +22,7 @@
 
 "use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Badge } from "@/components/ui/badge";
@@ -44,18 +44,18 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import type { RunInfo } from "@/types/training";
-import { useTrainingStore } from "@/lib/stores/training-store";
+import { useRunsStore } from "@/lib/stores";
 import { useMonitorStore } from "@/lib/stores/monitor-store";
 import { useEffect } from "react";
 
 export default function DashboardPage() {
-  const { runs, isLoading: runsLoading, connectWebSocket: connectTrainingWs } = useTrainingStore();
+  const { runs, isLoading: runsLoading, connectWebSocket: connectRunsWs, controlRun } = useRunsStore();
   const { stats, connectWebSocket: connectMonitorWs } = useMonitorStore();
 
   useEffect(() => {
-    connectTrainingWs();
+    connectRunsWs();
     connectMonitorWs();
-  }, [connectTrainingWs, connectMonitorWs]);
+  }, [connectRunsWs, connectMonitorWs]);
 
   const systemStats = stats;
 
@@ -120,7 +120,7 @@ export default function DashboardPage() {
       <div className="page-container">
         <div className="page-grid page-grid--2col">
           <Card className="card--hover" asChild>
-            <Link href="/training/new">
+            <Link href="/training?create=true">
               <CardHeader>
                 <div className="page-header">
                   <div className="flex items-center gap-3">
@@ -129,7 +129,6 @@ export default function DashboardPage() {
                     </div>
                     <div>
                       <CardTitle className="text-xl">Training</CardTitle>
-                      <CardDescription>Train and fine-tune models</CardDescription>
                     </div>
                   </div>
                   <Plus className="h-6 w-6 text-muted-foreground" />
@@ -160,7 +159,6 @@ export default function DashboardPage() {
                     </div>
                     <div>
                       <CardTitle className="text-xl">Inference</CardTitle>
-                      <CardDescription>Chat with your models</CardDescription>
                     </div>
                   </div>
                   <Zap className="h-6 w-6 text-muted-foreground" />
@@ -185,12 +183,7 @@ export default function DashboardPage() {
         <Card>
           <CardHeader>
             <div className="page-header">
-              <div>
-                <CardTitle>All Runs</CardTitle>
-                <CardDescription>
-                  All tasks from training, inference, downloads, benchmarks, and more
-                </CardDescription>
-              </div>
+              <CardTitle>All Runs</CardTitle>
               <Button variant="secondary" size="sm" asChild>
                 <Link href="/runs">View Details</Link>
               </Button>
@@ -205,11 +198,8 @@ export default function DashboardPage() {
               <div className="page-empty">
                 <Play className="page-empty__icon h-12 w-12" />
                 <p className="page-empty__title">No runs yet</p>
-                <p className="page-empty__description">
-                  Start a new task via manage.py action
-                </p>
                 <Button variant="secondary" asChild>
-                  <Link href="/runs">
+                  <Link href="/runs?create=true">
                     <Play className="mr-2 h-4 w-4" />
                     New Run
                   </Link>
@@ -264,16 +254,31 @@ export default function DashboardPage() {
                       <div className="flex gap-1">
                         {run.status === "running" && (
                           <>
-                            <Button variant="secondary" size="icon" className="h-8 w-8">
+                            <Button
+                              variant="secondary"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => controlRun(run.run_id, "pause")}
+                            >
                               <Pause className="h-3 w-3" />
                             </Button>
-                            <Button variant="secondary" size="icon" className="h-8 w-8">
+                            <Button
+                              variant="secondary"
+                              size="icon"
+                              className="h-8 w-8"
+                              onClick={() => controlRun(run.run_id, "cancel")}
+                            >
                               <Square className="h-3 w-3" />
                             </Button>
                           </>
                         )}
                         {run.status === "paused" && (
-                          <Button variant="secondary" size="icon" className="h-8 w-8">
+                          <Button
+                            variant="secondary"
+                            size="icon"
+                            className="h-8 w-8"
+                            onClick={() => controlRun(run.run_id, "resume")}
+                          >
                             <RotateCcw className="h-3 w-3" />
                           </Button>
                         )}

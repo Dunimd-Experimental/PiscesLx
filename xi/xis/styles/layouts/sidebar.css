@@ -76,37 +76,10 @@
   padding: var(--spacing-2);
 }
 
-/* Sidebar Footer */
-.sidebar__footer {
+/* Sidebar Apps Item */
+.sidebar__item--apps {
   margin-top: auto;
-  border-top: 1px solid hsl(var(--border));
-  padding: var(--spacing-2);
-}
-
-/* Sidebar Apps Button */
-.sidebar__apps-btn {
-  display: flex;
-  height: 2.25rem;
-  align-items: center;
-  gap: var(--spacing-3);
-  border-radius: var(--radius-lg);
-  background: hsl(var(--muted) / 0.5);
-  padding: var(--spacing-2) var(--spacing-3);
-  cursor: pointer;
-  transition: background var(--transition-normal);
-  border: none;
-  width: 100%;
-  font-size: var(--text-sm);
-  color: hsl(var(--foreground));
-}
-
-.sidebar__apps-btn:hover {
-  background: hsl(var(--muted));
-}
-
-.sidebar__apps-btn--collapsed {
-  justify-content: center;
-  padding: var(--spacing-2);
+  border-radius: 0;
 }
 
 /* Sidebar Apps Grid */

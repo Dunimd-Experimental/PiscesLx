@@ -29,6 +29,7 @@ and default value fallbacks.
 import os
 import re
 import tomllib
+import threading
 from pathlib import Path
 from typing import Optional, Dict, Any
 
@@ -53,6 +54,7 @@ from .schema import (
     XiWidgetStyle,
     XiWidgetValidation,
     XiValueMapping,
+    XiRunTypeConfig,
 )
 
 
@@ -90,6 +92,7 @@ class XiConfigLoader:
         self.logger = XiLogger("Xi.ConfigLoader", enable_file=True)
         self._config: Optional[XiConfig] = None
         self._raw_config: Dict[str, Any] = {}
+        self._lock = threading.RLock()
     
     def load(self) -> XiConfig:
         """
@@ -98,23 +101,24 @@ class XiConfigLoader:
         Returns:
             XiConfig: Loaded and resolved configuration
         """
-        if self._config is not None:
-            return self._config
-        
-        self._raw_config = self._load_toml()
-        
-        if not self._raw_config:
-            self.logger.info("No configuration file found, using defaults", event="xi.config.defaults")
-            self._raw_config = {}
-        
-        self._apply_env_overrides()
-        
-        config = self._build_config()
-        
-        self._config = config
-        self.logger.info(f"Configuration loaded from {self.config_file}", event="xi.config.loaded")
-        
-        return config
+        with self._lock:
+            if self._config is not None:
+                return self._config
+            
+            self._raw_config = self._load_toml()
+            
+            if not self._raw_config:
+                self.logger.info("No configuration file found, using defaults", event="xi.config.defaults")
+                self._raw_config = {}
+            
+            self._apply_env_overrides()
+            
+            config = self._build_config()
+            
+            self._config = config
+            self.logger.info(f"Configuration loaded from {self.config_file}", event="xi.config.loaded")
+            
+            return config
     
     def _load_toml(self) -> Dict[str, Any]:
         """
@@ -604,9 +608,10 @@ class XiConfigLoader:
         Returns:
             XiConfig object
         """
-        if self._config is None:
-            return self.load()
-        return self._config
+        with self._lock:
+            if self._config is None:
+                return self.load()
+            return self._config
     
     def reload(self) -> XiConfig:
         """
@@ -615,9 +620,10 @@ class XiConfigLoader:
         Returns:
             Newly loaded XiConfig object
         """
-        self._config = None
-        self._raw_config = {}
-        return self.load()
+        with self._lock:
+            self._config = None
+            self._raw_config = {}
+            return self.load()
 
 
 _config_loader: Optional[XiConfigLoader] = None
@@ -676,3 +682,43 @@ def get_xi_config() -> XiConfig:
         XiConfig object
     """
     return get_config_loader().get_config()
+
+
+def load_run_types() -> list[XiRunTypeConfig]:
+    """
+    Load run types from .xi/commands/runs.toml file.
+    
+    Returns:
+        List of XiRunTypeConfig objects
+    """
+    loader = get_config_loader()
+    runs_file = loader.config_dir / loader.COMMANDS_DIR / "runs.toml"
+    
+    if not runs_file.exists():
+        return []
+    
+    try:
+        with open(runs_file, "rb") as f:
+            data = tomllib.load(f)
+        
+        run_types = []
+        for rt_data in data.get("run_types", []):
+            run_type = XiRunTypeConfig(
+                name=rt_data.get("name", ""),
+                label=rt_data.get("label", ""),
+                description=rt_data.get("description", ""),
+                icon=rt_data.get("icon", "Play"),
+                color=rt_data.get("color", "#6B7280"),
+                enabled=rt_data.get("enabled", True),
+                order=rt_data.get("order", 0),
+            )
+            run_types.append(run_type)
+        
+        run_types.sort(key=lambda x: x.order)
+        return run_types
+    except Exception as e:
+        loader.logger.error(
+            f"Failed to load run types: {e}",
+            event="xi.run_types.load_error"
+        )
+        return []

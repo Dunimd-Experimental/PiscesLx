@@ -1,0 +1,216 @@
+/**
+ * Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+ *
+ * This file is part of PiscesL1.
+ * The Pisces L1 project belongs to the Dunimd Team.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * You may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * DISCLAIMER: Users must comply with applicable AI regulations.
+ * Non-compliance may result in service termination or legal liability.
+ */
+
+/* === Overlay System Variables === */
+:root {
+  --overlay-bg: rgba(240, 242, 255, 0.95);
+  --overlay-panel-radius: 1.5rem;
+  --overlay-z-index: 100;
+  --overlay-margin-x: 60px;
+  --overlay-margin-y: 80px;
+  --overlay-min-width: 400px;
+  --overlay-min-height: 400px;
+  --overlay-max-width: 1200px;
+  --overlay-max-height: 600px;
+}
+
+/* === Global Overlay Container === */
+.global-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--overlay-z-index);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--overlay-bg);
+  animation: overlayFadeIn 0.3s ease-out;
+}
+
+@keyframes overlayFadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* === Overlay Panel === */
+.global-overlay__panel {
+  position: relative;
+  z-index: 1;
+  width: calc(100vw - var(--overlay-margin-x) * 2);
+  height: calc(100vh - var(--overlay-margin-y) * 2);
+  min-width: var(--overlay-min-width);
+  min-height: var(--overlay-min-height);
+  max-width: var(--overlay-max-width);
+  max-height: var(--overlay-max-height);
+  background: #f8f9fc;
+  border-radius: var(--overlay-panel-radius);
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.05),
+    0 25px 50px -12px rgba(0, 0, 0, 0.15),
+    0 0 100px rgba(0, 0, 0, 0.05);
+  overflow: hidden;
+  animation: panelSlideUp 0.4s ease-out;
+}
+
+@keyframes panelSlideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* === Split Layout === */
+.global-overlay__panel--split {
+  display: flex;
+}
+
+.global-overlay__left {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-8);
+  position: relative;
+}
+
+.global-overlay__left::after {
+  content: "";
+  position: absolute;
+  right: 0;
+  top: 50%;
+  transform: translateY(-50%);
+  height: 60%;
+  width: 1px;
+  background: hsl(var(--border));
+}
+
+.global-overlay__right {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: var(--spacing-8);
+  overflow: visible;
+  min-width: 0;
+}
+
+.global-overlay__right > * {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+
+/* === Full Layout === */
+.global-overlay__panel--full {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--spacing-8);
+}
+
+.global-overlay__panel--full > * {
+  width: 100%;
+  height: 100%;
+}
+
+/* === Close Button === */
+.global-overlay__close {
+  position: absolute;
+  top: var(--spacing-4);
+  right: var(--spacing-4);
+  z-index: 10;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-full);
+  background: hsl(var(--muted));
+  border: none;
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  color: hsl(var(--muted-foreground));
+}
+
+.global-overlay__close:hover {
+  background: hsl(var(--destructive) / 0.1);
+  color: hsl(var(--destructive));
+}
+
+.global-overlay__close svg {
+  width: 16px;
+  height: 16px;
+}
+
+/* === Responsive === */
+@media (max-width: 1024px) {
+  :root {
+    --overlay-margin-x: 40px;
+    --overlay-margin-y: 60px;
+    --overlay-max-height: 500px;
+  }
+}
+
+@media (max-width: 768px) {
+  :root {
+    --overlay-margin-x: 24px;
+    --overlay-margin-y: 40px;
+    --overlay-max-height: 450px;
+  }
+
+  .global-overlay__panel--split {
+    flex-direction: column;
+  }
+
+  .global-overlay__left {
+    position: relative;
+  }
+
+  .global-overlay__left::after {
+    right: auto;
+    bottom: 0;
+    top: auto;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 60%;
+    height: 1px;
+  }
+
+  .global-overlay__right {
+    padding: var(--spacing-6);
+  }
+}
+
+@media (max-width: 480px) {
+  :root {
+    --overlay-margin-x: 12px;
+    --overlay-margin-y: 24px;
+    --overlay-panel-radius: 1rem;
+    --overlay-max-height: 400px;
+  }
+}

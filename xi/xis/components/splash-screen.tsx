@@ -23,7 +23,7 @@
 "use client";
 
 import Image from "next/image";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { apiClient } from "@/lib/api";
 import { WelcomeScreen } from "./welcome-screen";
 
@@ -35,32 +35,35 @@ type AppState = "loading" | "welcome" | "ready";
 
 export function SplashScreen({ onComplete }: SplashScreenProps) {
   const [appState, setAppState] = useState<AppState>("loading");
+  const isMountedRef = useRef(true);
 
   const checkFirstLaunch = useCallback(async () => {
     try {
       const result = await apiClient.checkFirstLaunch();
       
+      if (!isMountedRef.current) return;
+      
       if (result.is_first_launch) {
         setAppState("welcome");
       } else {
-        await new Promise((r) => setTimeout(r, 500));
         onComplete();
       }
     } catch (e) {
-      setAppState("welcome");
+      if (!isMountedRef.current) return;
+      console.error("Failed to check first launch:", e);
     }
   }, [onComplete]);
 
   useEffect(() => {
+    isMountedRef.current = true;
     checkFirstLaunch();
+    
+    return () => {
+      isMountedRef.current = false;
+    };
   }, [checkFirstLaunch]);
 
-  const handleWelcomeComplete = useCallback(async () => {
-    try {
-      await apiClient.completeFirstLaunch();
-    } catch (e) {
-      console.error("Failed to complete first launch:", e);
-    }
+  const handleWelcomeComplete = useCallback(() => {
     setAppState("ready");
     onComplete();
   }, [onComplete]);
