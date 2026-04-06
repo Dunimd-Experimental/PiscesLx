@@ -36,6 +36,17 @@ logs = ".pisceslx/logs"
 cache = ".pisceslx/cache"
 temp = ".pisceslx/temp"
 configs = "configs"
+runs = ".pisceslx/runs"
+
+[paths.run_files]
+spec = "spec.json"
+state = "state.json"
+events = "events.jsonl"
+metrics = "metrics.jsonl"
+control = "control.jsonl"
+stdout = "stdout.log"
+artifacts = "artifacts.json"
+lock = ".lock"
 
 [api]
 host = "127.0.0.1"
