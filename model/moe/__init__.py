@@ -56,6 +56,16 @@ Module Components:
        - YvExpertChoiceRouter: Expert-choice routing mechanism
        - YvFineGrainedRouter: Fine-grained expert segmentation
        - YvDeepSeekMoELayer: DeepSeek-V3 style complete MoE
+    
+    4. Diversity Regularization (diversity.py):
+       - YvInformationBottleneckExpert: MINE-based mutual information estimation
+       - YvContrastiveDiversification: Contrastive learning for expert diversity
+       - YvDiversityRegularizer: Combined diversity regularization
+       - YvDiversityConfig: Configuration for diversity components
+    
+    5. Online Clustering Router (online_router.py):
+       - YvOnlineClusterRouter: Online clustering-based routing
+       - YvClusterConfig: Configuration for cluster routing
 
 Key Features:
     - Expert-choice routing with capacity constraints
@@ -124,6 +134,17 @@ from .expert import (
     YvExpertType,
     create_expert_module,
 )
+from .diversity import (
+    YvDiversityConfig,
+    YvMineStatisticsNetwork,
+    YvInformationBottleneckExpert,
+    YvExpertEmbedding,
+    YvContrastiveDiversification,
+    YvDiversityRegularizer,
+)
+from .online_router import YvOnlineClusterRouter, YvClusterConfig
+from .expert_init import YvGradientClusterInitializer, GradientStatistics, ClusterInfo
+from .regularization import YvRegularizationConfig, YvExpertDiversityRegularizer
 
 __all__ = [
     "YvMoEGate",
@@ -142,4 +163,17 @@ __all__ = [
     "YvExpertConfig",
     "YvExpertType",
     "create_expert_module",
+    "YvDiversityConfig",
+    "YvMineStatisticsNetwork",
+    "YvInformationBottleneckExpert",
+    "YvExpertEmbedding",
+    "YvContrastiveDiversification",
+    "YvDiversityRegularizer",
+    "YvOnlineClusterRouter",
+    "YvClusterConfig",
+    "YvGradientClusterInitializer",
+    "GradientStatistics",
+    "ClusterInfo",
+    "YvRegularizationConfig",
+    "YvExpertDiversityRegularizer",
 ]

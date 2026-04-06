@@ -40,10 +40,23 @@ moe_temperature_max: 3.0
 moe_random_to_gradient_steps: 2000
 
 enable_dynamic_fusion: true
-fusion_quality_threshold: 0.28
-fusion_dropout: 0.08
+fusion_quality_threshold: 0.25
+fusion_dropout: 0.03
 enable_cognitive_density: true
 enable_dynamic_capacity: true
+
+# Knowledge Density Optimization Configuration
+expert_init_method: 'hybrid'
+diversity_weight: 0.005
+mi_weight: 0.05
+online_clustering: true
+orthogonality_weight: 0.005
+routing_entropy_weight: 0.0005
+activation_variance_weight: 0.005
+expert_warmup_steps: 50
+auto_detect_clusters: true
+min_clusters: 2
+max_clusters: 8
 
 intermediate_size: 1280
 max_position_embeddings: 262144

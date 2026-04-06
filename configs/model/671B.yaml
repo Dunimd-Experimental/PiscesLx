@@ -45,6 +45,19 @@ fusion_dropout: 0.01
 enable_cognitive_density: true
 enable_dynamic_capacity: true
 
+# Knowledge Density Optimization Configuration
+expert_init_method: 'hybrid'
+diversity_weight: 0.022
+mi_weight: 0.22
+online_clustering: true
+orthogonality_weight: 0.022
+routing_entropy_weight: 0.0022
+activation_variance_weight: 0.022
+expert_warmup_steps: 250
+auto_detect_clusters: true
+min_clusters: 14
+max_clusters: 32
+
 intermediate_size: 65536
 max_position_embeddings: 10485760
 rope_theta: 10000.0

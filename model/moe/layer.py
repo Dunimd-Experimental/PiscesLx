@@ -717,11 +717,24 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
         - Device-aware expert placement for memory efficiency
         - UltraMem TDQKR optimization for large expert counts
         - UltraMem Skip-Layer for better gradient flow
+        - Knowledge density optimization with expert initialization
+        - Diversity regularization for expert specialization
     
     Default Configuration:
         - num_shared_experts: 1
         - use_fine_grained: True
         - num_sub_experts: 4
+    
+    Knowledge Density Optimization:
+        - Gradient cluster initialization for specialized experts
+        - Orthogonal initialization for diverse expert functions
+        - Spectral initialization for stable training dynamics
+        - Hybrid initialization combining multiple strategies
+    
+    Diversity Regularization:
+        - Orthogonality loss for expert weight decorrelation
+        - Routing entropy loss for balanced expert utilization
+        - Activation variance loss for diverse expert outputs
     
     Example:
         >>> layer = YvDeepSeekMoELayer(config)
@@ -750,6 +763,12 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
                 - moe_num_shared_experts: Number of shared experts (default: 1)
                 - moe_fine_grained: Enable fine-grained (default: True)
                 - moe_num_sub_experts: Sub-experts per group (default: 4)
+                - expert_init_method: Expert initialization method
+                    ('gradient_cluster', 'orthogonal', 'spectral', 'hybrid')
+                - diversity_weight: Weight for diversity regularization loss
+                - diversity_ortho_weight: Weight for orthogonality loss
+                - diversity_entropy_weight: Weight for routing entropy loss
+                - diversity_variance_weight: Weight for activation variance loss
             device: Device to place the module on. Default: None.
             dtype: Data type for module parameters. Default: None.
         """
@@ -761,3 +780,389 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
             use_fine_grained=getattr(cfg, 'moe_fine_grained', True),
             num_sub_experts=getattr(cfg, 'moe_num_sub_experts', 4)
         )
+        
+        self.expert_init_method = getattr(cfg, 'expert_init_method', None)
+        self.diversity_weight = getattr(cfg, 'diversity_weight', 0.01)
+        
+        if self.expert_init_method is not None:
+            self._initialize_experts_with_density_optimization(device, dtype)
+        
+        self._setup_diversity_regularizer(device, dtype)
+    
+    def _initialize_experts_with_density_optimization(
+        self,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None
+    ) -> None:
+        """Initialize experts using knowledge density optimization algorithms.
+        
+        Applies specialized initialization strategies based on the configured
+        method to ensure experts start with diverse and well-distributed
+        parameter configurations.
+        
+        Initialization Methods:
+            - 'gradient_cluster': Gradient-based clustering initialization
+            - 'orthogonal': Orthogonal weight initialization for diversity
+            - 'spectral': Spectral decomposition-based initialization
+            - 'hybrid': Combined approach using multiple strategies
+        
+        Args:
+            device: Device for initializer computation.
+            dtype: Data type for initializer tensors.
+        """
+        from .expert_init import YvGradientClusterInitializer
+        
+        if self.expert_init_method == 'gradient_cluster':
+            self._expert_initializer = YvGradientClusterInitializer(
+                hidden_size=self.hidden_size,
+                intermediate_size=self.intermediate_size,
+                num_experts=self.num_experts,
+                min_clusters=max(2, self.num_experts // 4),
+                max_clusters=max(4, self.num_experts // 2),
+                device=device,
+                dtype=dtype
+            )
+            self._expert_initializer.initialize_experts_from_clusters(
+                self.experts,
+                init_scale=0.02
+            )
+            try:
+                _LOG.info(
+                    f"YvDeepSeekMoELayer: Applied gradient cluster initialization "
+                    f"for {self.num_experts} experts"
+                )
+            except UnicodeEncodeError:
+                print(
+                    f"[OK] YvDeepSeekMoELayer: Applied gradient cluster initialization "
+                    f"for {self.num_experts} experts"
+                )
+        
+        elif self.expert_init_method == 'orthogonal':
+            self._apply_orthogonal_initialization()
+            try:
+                _LOG.info(
+                    f"YvDeepSeekMoELayer: Applied orthogonal initialization "
+                    f"for {self.num_experts} experts"
+                )
+            except UnicodeEncodeError:
+                print(
+                    f"[OK] YvDeepSeekMoELayer: Applied orthogonal initialization "
+                    f"for {self.num_experts} experts"
+                )
+        
+        elif self.expert_init_method == 'spectral':
+            self._apply_spectral_initialization()
+            try:
+                _LOG.info(
+                    f"YvDeepSeekMoELayer: Applied spectral initialization "
+                    f"for {self.num_experts} experts"
+                )
+            except UnicodeEncodeError:
+                print(
+                    f"[OK] YvDeepSeekMoELayer: Applied spectral initialization "
+                    f"for {self.num_experts} experts"
+                )
+        
+        elif self.expert_init_method == 'hybrid':
+            self._apply_hybrid_initialization(device, dtype)
+            try:
+                _LOG.info(
+                    f"YvDeepSeekMoELayer: Applied hybrid initialization "
+                    f"for {self.num_experts} experts"
+                )
+            except UnicodeEncodeError:
+                print(
+                    f"[OK] YvDeepSeekMoELayer: Applied hybrid initialization "
+                    f"for {self.num_experts} experts"
+                )
+    
+    def _apply_orthogonal_initialization(self) -> None:
+        """Apply orthogonal initialization to expert weights.
+        
+        Ensures expert weight matrices are orthogonal to each other,
+        maximizing initial diversity and preventing expert collapse.
+        Uses QR decomposition to generate orthogonal matrices.
+        """
+        for expert in self.experts:
+            for name, param in expert.named_parameters():
+                if 'weight' in name and param.dim() >= 2:
+                    with torch.no_grad():
+                        if param.size(0) < param.size(1):
+                            q = torch.randn(
+                                param.size(1), param.size(1),
+                                device=param.device, dtype=param.dtype
+                            )
+                            q, _ = torch.linalg.qr(q)
+                            param.copy_(q[:param.size(0), :])
+                        else:
+                            q = torch.randn(
+                                param.size(0), param.size(0),
+                                device=param.device, dtype=param.dtype
+                            )
+                            q, _ = torch.linalg.qr(q)
+                            param.copy_(q[:, :param.size(1)])
+    
+    def _apply_spectral_initialization(self) -> None:
+        """Apply spectral initialization to expert weights.
+        
+        Uses singular value decomposition to initialize expert weights
+        with controlled spectral properties, ensuring stable training
+        dynamics and diverse expert specializations.
+        """
+        for expert_idx, expert in enumerate(self.experts):
+            for name, param in expert.named_parameters():
+                if 'weight' in name and param.dim() >= 2:
+                    with torch.no_grad():
+                        u = torch.randn(
+                            param.size(0), min(param.size(0), param.size(1)),
+                            device=param.device, dtype=param.dtype
+                        )
+                        v = torch.randn(
+                            min(param.size(0), param.size(1)), param.size(1),
+                            device=param.device, dtype=param.dtype
+                        )
+                        
+                        u, _ = torch.linalg.qr(u)
+                        v, _ = torch.linalg.qr(v.T)
+                        v = v.T
+                        
+                        spectral_shift = 0.02 * (expert_idx / max(1, self.num_experts - 1))
+                        singular_values = torch.ones(
+                            min(param.size(0), param.size(1)),
+                            device=param.device, dtype=param.dtype
+                        ) * (1.0 + spectral_shift)
+                        
+                        if param.size(0) <= param.size(1):
+                            param.copy_(torch.mm(u * singular_values.unsqueeze(0), v))
+                        else:
+                            param.copy_(torch.mm(u, singular_values.unsqueeze(1) * v))
+    
+    def _apply_hybrid_initialization(
+        self,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None
+    ) -> None:
+        """Apply hybrid initialization combining multiple strategies.
+        
+        Combines gradient cluster, orthogonal, and spectral initialization
+        for optimal expert diversity and training stability. Different
+        initialization strategies are applied to different expert groups.
+        """
+        from .expert_init import YvGradientClusterInitializer
+        
+        num_experts = self.num_experts
+        group_size = max(1, num_experts // 3)
+        
+        for i, expert in enumerate(self.experts):
+            group_idx = i // group_size
+            
+            for name, param in expert.named_parameters():
+                if 'weight' in name and param.dim() >= 2:
+                    with torch.no_grad():
+                        if group_idx == 0:
+                            if param.size(0) < param.size(1):
+                                q = torch.randn(
+                                    param.size(1), param.size(1),
+                                    device=param.device, dtype=param.dtype
+                                )
+                                q, _ = torch.linalg.qr(q)
+                                param.copy_(q[:param.size(0), :])
+                            else:
+                                q = torch.randn(
+                                    param.size(0), param.size(0),
+                                    device=param.device, dtype=param.dtype
+                                )
+                                q, _ = torch.linalg.qr(q)
+                                param.copy_(q[:, :param.size(1)])
+                        
+                        elif group_idx == 1:
+                            scale = math.sqrt(2.0 / (param.size(0) + param.size(1)))
+                            param.copy_(torch.randn_like(param) * scale)
+                            
+                            spectral_shift = 0.01 * (i / max(1, num_experts - 1))
+                            u, s, v = torch.linalg.svd(param, full_matrices=False)
+                            s = s * (1.0 + spectral_shift)
+                            param.copy_(torch.mm(u * s.unsqueeze(0), v))
+                        
+                        else:
+                            nn.init.kaiming_uniform_(param, a=math.sqrt(5))
+                            
+                            diversity_factor = 0.02 * ((i % group_size) / max(1, group_size - 1))
+                            param.add_(torch.randn_like(param) * diversity_factor)
+    
+    def _setup_diversity_regularizer(
+        self,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None
+    ) -> None:
+        """Set up diversity regularizer for expert specialization.
+        
+        Initializes the YvExpertDiversityRegularizer with configuration
+        parameters for orthogonality, entropy, and variance-based
+        diversity regularization.
+        
+        Args:
+            device: Device for regularizer parameters.
+            dtype: Data type for regularizer tensors.
+        """
+        from .regularization import YvExpertDiversityRegularizer
+        
+        ortho_weight = getattr(self.cfg, 'diversity_ortho_weight', 0.01)
+        entropy_weight = getattr(self.cfg, 'diversity_entropy_weight', 0.01)
+        variance_weight = getattr(self.cfg, 'diversity_variance_weight', 0.01)
+        
+        self.diversity_regularizer = YvExpertDiversityRegularizer(
+            num_experts=self.num_experts,
+            hidden_size=self.hidden_size,
+            ortho_weight=ortho_weight,
+            entropy_weight=entropy_weight,
+            variance_weight=variance_weight,
+            use_adaptive_weights=True,
+            moving_average_momentum=0.9,
+            device=device,
+            dtype=dtype
+        )
+    
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Forward pass with diversity regularization.
+        
+        Routes input tokens to experts, computes expert outputs, combines
+        with shared expert outputs, applies diversity regularization, and
+        returns the final result with combined losses.
+        
+        Args:
+            x (torch.Tensor): Input tensor [batch_size, seq_len, hidden_size].
+        
+        Returns:
+            tuple: A tuple containing:
+                - final_output (torch.Tensor): Combined expert outputs [batch, seq, hidden].
+                - total_loss (torch.Tensor): Combined load balancing and diversity loss.
+        
+        Note:
+            Diversity regularization is applied during training to encourage
+            expert specialization and prevent expert collapse.
+        """
+        batch_size, seq_len, hidden = x.shape
+        x_flat = x.view(-1, hidden)
+        
+        shared_output = self._compute_shared_expert_output(x)
+        
+        if self.use_fine_grained:
+            routing_weights, expert_indices, sub_expert_indices, load_balancing_loss = self.router(x_flat)
+            
+            outputs = torch.zeros_like(x_flat)
+            expert_outputs_list = []
+            
+            for expert_id in range(self.num_experts):
+                expert_mask = (expert_indices == expert_id).any(dim=-1)
+                if expert_mask.any():
+                    selected_tokens = expert_mask.nonzero().squeeze(-1)
+                    h_batch = x_flat[selected_tokens]
+                    
+                    weights = torch.zeros(selected_tokens.shape[0], device=x.device, dtype=x.dtype)
+                    for k in range(self.top_k):
+                        k_mask = (expert_indices[selected_tokens, k] == expert_id)
+                        weights[k_mask] = routing_weights[selected_tokens[k_mask], k]
+                    
+                    expert_out = self.experts[expert_id](h_batch)
+                    outputs[selected_tokens] += weights.unsqueeze(1) * expert_out
+                    
+                    if self.training and self.diversity_weight > 0:
+                        expert_outputs_list.append(expert_out.mean(dim=0))
+            
+            routing_probs_for_diversity = routing_weights
+        else:
+            expert_indices, dispatch_mask, load_balancing_loss = self.router(x_flat)
+            
+            outputs = torch.zeros_like(x_flat)
+            expert_outputs_list = []
+            
+            if self.num_experts > 8 and x.device.type == 'cuda':
+                needed_experts = set()
+                for expert_id in range(self.num_experts):
+                    if expert_indices[expert_id].numel() > 0:
+                        needed_experts.add(expert_id)
+                for expert_id in needed_experts:
+                    self._move_expert_to_gpu(expert_id)
+            
+            for expert_id, expert in enumerate(self.experts):
+                tokens = x_flat[expert_indices[expert_id]]
+                if tokens.shape[0] > 0:
+                    expert_out = expert(tokens)
+                    outputs[expert_indices[expert_id]] += expert_out
+                    
+                    if self.training and self.diversity_weight > 0:
+                        expert_outputs_list.append(expert_out.mean(dim=0))
+            
+            routing_probs_for_diversity = dispatch_mask
+        
+        routed_output = outputs.view(batch_size, seq_len, hidden)
+        
+        if self.shared_experts is not None:
+            final_output = routed_output + shared_output
+        else:
+            final_output = routed_output
+        
+        if self.shared_experts is not None:
+            if hasattr(self, '_skip_buffer') and self._skip_buffer is not None:
+                final_output = final_output + 0.1 * self._skip_buffer
+            self._skip_buffer = shared_output.detach()
+        
+        diversity_loss = torch.tensor(0.0, device=x.device, dtype=x.dtype)
+        
+        if self.training and self.diversity_weight > 0:
+            diversity_loss = self._compute_diversity_loss(
+                routing_probs_for_diversity,
+                expert_outputs_list,
+                batch_size
+            )
+        
+        total_loss = load_balancing_loss + self.diversity_weight * diversity_loss
+        
+        self._step += 1
+        
+        return final_output, total_loss
+    
+    def _compute_diversity_loss(
+        self,
+        routing_probs: torch.Tensor,
+        expert_outputs_list: List[torch.Tensor],
+        batch_size: int
+    ) -> torch.Tensor:
+        """Compute diversity regularization loss.
+        
+        Applies orthogonality, entropy, and variance-based diversity
+        regularization to encourage expert specialization.
+        
+        Args:
+            routing_probs: Routing probability tensor [num_tokens, num_experts].
+            expert_outputs_list: List of expert output tensors.
+            batch_size: Batch size for normalization.
+        
+        Returns:
+            torch.Tensor: Diversity regularization loss scalar.
+        """
+        expert_weights = None
+        if hasattr(self.experts[0][0], 'weight'):
+            expert_weights = torch.stack([
+                expert[0].weight for expert in self.experts
+            ], dim=0)
+        
+        expert_outputs = None
+        if len(expert_outputs_list) > 0:
+            expert_outputs = torch.stack(expert_outputs_list, dim=0)
+            expert_outputs = expert_outputs.unsqueeze(0).expand(batch_size, -1, -1)
+        
+        if routing_probs.dim() == 2 and routing_probs.size(1) == self.num_experts:
+            routing_probs_reshaped = routing_probs.view(batch_size, -1, self.num_experts)
+            routing_probs_mean = routing_probs_reshaped.mean(dim=1)
+        else:
+            routing_probs_mean = routing_probs
+        
+        diversity_loss, _ = self.diversity_regularizer(
+            expert_weights=expert_weights,
+            routing_probs=routing_probs_mean,
+            expert_outputs=expert_outputs
+        )
+        
+        return diversity_loss

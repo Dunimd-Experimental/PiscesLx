@@ -45,7 +45,7 @@ wheel>=0.45.0
 PyYAML>=6.0
 pathlib2>=2.3.6;python_version<"3.4"
 addict>=2.4.0
-dmsc==0.1.8-beta.3
+dmsc==0.1.8
 
 # =============================================================================
 # SECTION 2: PyTorch Core (MUST install first)
