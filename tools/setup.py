@@ -394,6 +394,8 @@ def setup(args):
         return
     else:
         logger_info("Already in virtual environment.")
+        logger_info(f"  Python: {sys.executable}")
+        logger_info(f"  Venv: {sys.prefix}")
 
     logger_info("Upgrading pip...")
     try:
@@ -403,106 +405,108 @@ def setup(args):
         logger_error(f"Failed to upgrade pip: {e}")
         return
 
-    logger_info("Installing requirements.txt...")
-    
     compiled_packages = {
         'flash-attn': {
             'description': 'Flash Attention 2 - optimized attention kernel',
-            'fallback': 'flash-attn==2.5.0',
             'platform_note': 'Requires CUDA 11.6+ and compatible GPU',
-            'optional': True,
         },
         'triton': {
             'description': 'Triton GPU programming language',
-            'fallback': 'triton==3.0.0',
             'platform_note': 'Linux recommended, Windows may require WSL2',
-            'optional': True,
         },
         'mamba-ssm': {
             'description': 'Mamba State Space Model implementation',
-            'fallback': 'mamba-ssm==2.2.0',
             'platform_note': 'Requires CUDA for GPU acceleration',
-            'optional': True,
         },
         'causal-conv1d': {
             'description': 'Causal 1D convolution for Mamba',
-            'fallback': 'causal-conv1d==1.4.0',
             'platform_note': 'Required by mamba-ssm for optimal performance',
-            'optional': True,
         },
     }
     
+    requirements_path = os.path.join(project_root, "requirements.txt")
+    installed_packages = []
+    failed_packages = []
+    compiled_to_install = []
+    
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
-        logger_success("Requirements installed successfully")
-    except subprocess.CalledProcessError as e:
-        logger_warning("Failed to install all requirements, trying fallback approach...")
-
-        requirements_path = os.path.join(project_root, "requirements.txt")
-
+        with open(requirements_path, 'r', encoding='utf-8') as f:
+            requirements = f.readlines()
+    except FileNotFoundError:
+        logger_error("requirements.txt not found")
+        return
+    except Exception as e:
+        logger_error(f"Error reading requirements.txt: {e}")
+        return
+    
+    logger_info("Phase 1: Installing base packages (excluding compiled packages)...")
+    logger_info(f"  Using Python: {sys.executable}")
+    
+    for line in requirements:
+        line = line.strip()
+        if not line or line.startswith('#') or line.startswith('--'):
+            continue
+        
+        pkg_name = line.split('>=')[0].split('==')[0].split('[')[0].lower()
+        
+        is_compiled = False
+        for compiled_pkg in compiled_packages.keys():
+            if pkg_name == compiled_pkg or pkg_name.startswith(compiled_pkg.replace('-', '_')):
+                is_compiled = True
+                compiled_to_install.append((compiled_pkg, line))
+                break
+        
+        if is_compiled:
+            logger_info(f"  Skipping compiled package for later: {pkg_name}")
+            continue
+        
         try:
-            with open(requirements_path, 'r', encoding='utf-8') as f:
-                requirements = f.readlines()
-
-            failed_packages = []
-            installed_packages = []
-            skipped_compiled = []
-
-            for line in requirements:
-                line = line.strip()
-                if not line or line.startswith('#'):
-                    continue
-                
-                pkg_name = line.split('>=')[0].split('==')[0].split('[')[0].lower()
-                
-                for compiled_pkg, pkg_info in compiled_packages.items():
-                    if pkg_name == compiled_pkg or pkg_name.startswith(compiled_pkg.replace('-', '_')):
-                        logger_info(f"Installing compiled package: {compiled_pkg}")
-                        logger_info(f"  Description: {pkg_info['description']}")
-                        logger_info(f"  Platform note: {pkg_info['platform_note']}")
-                        
-                        try:
-                            subprocess.check_call(
-                                [sys.executable, "-m", "pip", "install", line, "--no-build-isolation"],
-                                timeout=1800
-                            )
-                            installed_packages.append(line)
-                            logger_success(f"Installed compiled package: {compiled_pkg}")
-                        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-                            logger_warning(f"Failed to install compiled package: {compiled_pkg}")
-                            logger_warning(f"  This package is optional for basic functionality")
-                            logger_warning(f"  For full multimodal capabilities, consider:")
-                            logger_warning(f"    - Using Linux with CUDA support")
-                            logger_warning(f"    - Using WSL2 on Windows")
-                            logger_warning(f"    - Installing pre-built wheels if available")
-                            skipped_compiled.append(compiled_pkg)
-                        break
-                else:
-                    try:
-                        subprocess.check_call([sys.executable, "-m", "pip", "install", line])
-                        installed_packages.append(line)
-                        logger_success(f"Installed: {line}")
-                    except subprocess.CalledProcessError:
-                        failed_packages.append(line)
-                        logger_warning(f"Failed to install: {line}")
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", line],
+                timeout=600
+            )
+            installed_packages.append(line)
+            logger_success(f"Installed: {line}")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            failed_packages.append(line)
+            logger_warning(f"Failed to install: {line}")
+    
+    logger_success(f"Phase 1 complete: {len(installed_packages)} base packages installed")
+    
+    if failed_packages:
+        logger_warning(f"Failed to install {len(failed_packages)} packages: {failed_packages}")
+    
+    if compiled_to_install:
+        logger_info("Phase 2: Installing compiled packages in virtual environment...")
+        logger_info(f"  Using Python: {sys.executable}")
+        
+        for compiled_pkg, line in compiled_to_install:
+            pkg_info = compiled_packages[compiled_pkg]
+            logger_info(f"Installing compiled package: {compiled_pkg}")
+            logger_info(f"  Description: {pkg_info['description']}")
+            logger_info(f"  Platform note: {pkg_info['platform_note']}")
             
-            if installed_packages:
-                logger_success(f"Successfully installed {len(installed_packages)} packages")
-            if failed_packages:
-                logger_warning(f"Failed to install {len(failed_packages)} packages: {failed_packages}")
-            if skipped_compiled:
-                logger_warning(f"Skipped {len(skipped_compiled)} compiled packages: {skipped_compiled}")
-                logger_warning("Some advanced features may require these packages:")
-                for pkg in skipped_compiled:
-                    info = compiled_packages[pkg]
-                    logger_warning(f"  - {pkg}: {info['description']}")
-                
-        except FileNotFoundError:
-            logger_error("requirements.txt not found")
-            return
-        except Exception as e:
-            logger_error(f"Error reading requirements.txt: {e}")
-            return
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", line, "--no-build-isolation"],
+                    timeout=1800
+                )
+                installed_packages.append(line)
+                logger_success(f"Installed compiled package: {compiled_pkg}")
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                logger_warning(f"Failed to install compiled package: {compiled_pkg}")
+                logger_warning(f"  This package is optional for basic functionality")
+                logger_warning(f"  For full multimodal capabilities, consider:")
+                logger_warning(f"    - Using Linux with CUDA support")
+                logger_warning(f"    - Using WSL2 on Windows")
+                logger_warning(f"    - Installing pre-built wheels if available")
+                failed_packages.append(line)
+        
+        logger_info("Phase 2 complete")
+    
+    logger_success(f"Setup complete: {len(installed_packages)} packages installed")
+    if failed_packages:
+        logger_warning(f"Failed packages ({len(failed_packages)}): {failed_packages}")
 
     _init_settings()
 

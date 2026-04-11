@@ -66,17 +66,17 @@ class PiscesLxToolsDataDatasetDownload:
             
             # Apply max_samples limit if specified and valid
             if max_samples is not None and max_samples > 0 and len(ds) > max_samples:
-                logger.info(f"Limiting dataset {name} from {len(ds)} to {max_samples} samples")
+                _LOG.info(f"Limiting dataset {name} from {len(ds)} to {max_samples} samples")
                 ds = ds.select(range(max_samples))
             
             save_path = os.path.join(data_dir, name)
-            logger.info(f"Saving dataset '{name}' to: {save_path}")
+            _LOG.info(f"Saving dataset '{name}' to: {save_path}")
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             ds.save_to_disk(save_path)
-            logger.info(f"Successfully saved dataset '{name}' to: {save_path}")
+            _LOG.info(f"Successfully saved dataset '{name}' to: {save_path}")
             return True
         except Exception as e:
-            logger.error(f"Failed to save dataset {name}: {str(e)}")
+            _LOG.error(f"Failed to save dataset {name}: {str(e)}")
             return False
 
     @staticmethod
