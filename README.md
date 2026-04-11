@@ -530,6 +530,7 @@ Open source packages and their agreement information used by this project:
 | pandas | BSD 3-Clause | gradio | Apache 2.0 |
 | ijson | BSD 3-Clause | pyarrow | Apache 2.0 |
 | tqdm | MIT | jsonlines | MIT |
+| windows-curses | BSD 3-Clause | psutil | BSD 3-Clause |
 | streamlit | Apache 2.0 | PyYAML | MIT |
 | GitPython | BSD 3-Clause | opencv-python | MIT |
 | av | BSD 3-Clause | decord | Apache 2.0 |

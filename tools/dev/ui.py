@@ -22,631 +22,417 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-PiscesLx Developer Mode UI - Refactored with Rich Live + Layout.
+PiscesLx Developer Mode UI - Curses-based Terminal UI.
 
-This module implements a professional terminal UI for developer mode using
-Rich's Live display with Layout for true split-screen rendering.
+This module implements a vim-style terminal UI using curses/ncurses,
+providing full terminal compatibility including SSH, Docker, and telnet.
 
 Architecture:
-    The UI uses Rich's Layout system to create a persistent split-screen:
-    
-    +------------------------------------------+
-    |                                          |
-    |         Training Logs (scrollable)       |
-    |         Layout: logs (ratio=4)           |
-    |                                          |
-    +------------------------------------------+
-    | > _                                      |
-    | [Dev Mode] Type :help for commands       |
-    | Layout: command (size=3, fixed)          |
-    +------------------------------------------+
-
-Key Improvements:
-    1. Live Display: Persistent UI that won't be overwritten by logs
-    2. Split Layout: Logs and command bar in separate regions
-    3. Blocking Input: Reliable keyboard capture via queue
-    4. Log Handler: Captures training logs for display
-
-Usage:
-    >>> from tools.dev import PiscesLxDevModeManager
-    >>> manager = PiscesLxDevModeManager.get_instance()
-    >>> manager.attach(trainer)
-    >>> # UI automatically starts with Live display
+    - Curses-based split screen: logs (top) + command bar (bottom)
+    - Keyboard-driven vim-style commands
+    - Real-time log capture and display
+    - Non-blocking input with escape sequence support
 """
 
-import queue
+import os
 import sys
-import threading
 import time
+import queue
+import threading
+import curses
 from collections import deque
-from typing import Any, Callable, Deque, Dict, List, Optional
+from typing import Optional, Callable, Dict, Any, List
+from dataclasses import dataclass
 
-from rich.console import Console, Group
-from rich.layout import Layout
-from rich.live import Live
-from rich.panel import Panel
-from rich.style import Style
-from rich.text import Text
-
-from utils.paths import get_log_file
 from utils.dc import PiscesLxLogger
 
+_LOG = PiscesLxLogger("PiscesLx.Tools.Dev", enable_console=True, enable_file=False)
 
-_LOG = PiscesLxLogger("PiscesLx.Tools.Dev", file_path=get_log_file("PiscesLx.Tools.Dev"), enable_file=True)
 
-
+@dataclass
 class PiscesLxDevModeLogHandler:
-    """
-    Log handler that captures training logs for display in the UI.
-    
-    This handler intercepts log records and forwards them to the UI
-    for real-time display in the logs panel.
-    
-    Attributes:
-        _ui: Reference to the PiscesLxDevModeUI instance
-        _logs: Buffer of recent log entries
-        _max_logs: Maximum number of logs to keep
-    """
-    
-    def __init__(self, ui: 'PiscesLxDevModeUI', max_logs: int = 200):
-        self._ui = ui
-        self._logs: Deque[str] = deque(maxlen=max_logs)
-        self._max_logs = max_logs
-        self._lock = threading.Lock()
-    
-    def emit(self, record: str) -> None:
-        """
-        Add a log record to the buffer and update UI.
-        
-        Args:
-            record: The log message to add
-        """
-        with self._lock:
-            self._logs.append(record)
-            self._ui.update_logs(list(self._logs))
-    
-    def add_log(self, message: str) -> None:
-        """
-        Add a log message directly.
-        
-        Args:
-            message: The log message to add
-        """
-        self.emit(message)
-    
-    def get_logs(self) -> List[str]:
-        """
-        Get all buffered logs.
-        
-        Returns:
-            List[str]: List of log messages
-        """
-        with self._lock:
-            return list(self._logs)
-    
-    def clear(self) -> None:
-        """Clear all buffered logs."""
-        with self._lock:
-            self._logs.clear()
+    _instance = None
+
+    def __init__(self):
+        self._buffer: deque = deque(maxlen=1000)
+        self._callbacks: List[Callable] = []
+
+    @classmethod
+    def get_instance(cls):
+        if cls._instance is None:
+            cls._instance = cls()
+        return cls._instance
+
+    def emit(self, message: str):
+        self._buffer.append(message)
+        for cb in self._callbacks:
+            try:
+                cb(message)
+            except Exception:
+                pass
+
+    def register_callback(self, cb: Callable):
+        self._callbacks.append(cb)
+
+    def get_recent(self, count: int = 100) -> List[str]:
+        return list(self._buffer)[-count:]
 
 
 class PiscesLxDevModeUI:
-    """
-    Professional terminal UI for developer mode with Live display.
-    
-    This class provides a vim-style command interface using Rich's Live
-    display system, ensuring the UI remains visible during training.
-    
-    The UI uses a split-screen layout:
-    - Top section: Training logs (scrollable, auto-updating)
-    - Bottom section: Command bar (fixed, always visible)
-    
-    Attributes:
-        _manager: Reference to the PiscesLxDevModeManager
-        _console: Rich console for rendering
-        _layout: Split-screen layout
-        _live: Live display instance
-        _command_buffer: Current command being typed
-        _history: Command history for navigation
-        _history_index: Current position in history
-        _running: Whether the UI is active
-        _overlay_active: Whether an overlay is displayed
-        _overlay_content: Current overlay content
-        _input_thread: Thread for keyboard input
-        _input_queue: Queue for input events
-        _log_buffer: Recent log lines for display
-        _status_message: Current status message
-        _callbacks: Registered callback functions
-        _log_handler: Log handler instance
-    
-    Example:
-        >>> ui = PiscesLxDevModeUI(manager)
-        >>> ui.start()
-        >>> # UI is now running with Live display
-        >>> ui.stop()
-    """
-    
-    COMMAND_BAR_HEIGHT = 3
-    MAX_LOG_LINES = 200
-    MAX_HISTORY = 50
+    KEY_UP = curses.KEY_UP
+    KEY_DOWN = curses.KEY_DOWN
+    KEY_LEFT = curses.KEY_LEFT
+    KEY_RIGHT = curses.KEY_RIGHT
+    KEY_ENTER = curses.KEY_ENTER
+    KEY_ESCAPE = 27
+    KEY_BACKSPACE = curses.KEY_BACKSPACE
+    KEY_DELETE = curses.KEY_DC
+    KEY_HOME = curses.KEY_HOME
+    KEY_END = curses.KEY_END
+    KEY_PAGE_UP = curses.KEY_PPAGE
+    KEY_PAGE_DOWN = curses.KEY_NPAGE
+
     REFRESH_RATE = 10
-    
-    def __init__(self, manager: Any):
-        """
-        Initialize the UI renderer with Live display support.
-        
-        Args:
-            manager: The PiscesLxDevModeManager instance
-        """
+    COMMAND_BAR_HEIGHT = 3
+    MAX_HISTORY = 100
+    MAX_LOG_LINES = 1000
+
+    def __init__(self, manager, use_curses: Optional[bool] = None):
         self._manager = manager
-        self._console = Console(force_terminal=True)
-        self._layout = Layout()
-        self._live: Optional[Live] = None
-        
+        self._log_handler = PiscesLxDevModeLogHandler.get_instance()
+        self._log_handler.register_callback(self._on_log_message)
+
         self._command_buffer = ""
-        self._history: Deque[str] = deque(maxlen=self.MAX_HISTORY)
+        self._history: deque = deque(maxlen=self.MAX_HISTORY)
         self._history_index = -1
         self._running = False
-        self._overlay_active = False
-        self._overlay_content = ""
-        
+        self._paused = False
+
         self._input_thread: Optional[threading.Thread] = None
         self._input_queue: queue.Queue = queue.Queue()
-        
-        self._log_buffer: Deque[str] = deque(maxlen=self.MAX_LOG_LINES)
-        self._status_message = ""
+
+        self._status_message = "Ready"
         self._callbacks: Dict[str, Callable] = {}
         self._lock = threading.RLock()
-        
-        self._cursor_visible = True
-        self._last_cursor_toggle = 0.0
-        self._cursor_blink_interval = 0.5
-        
-        self._log_handler: Optional[PiscesLxDevModeLogHandler] = None
-        
-        self._setup_layout()
-        
-        _LOG.info("PiscesLxDevModeUI initialized with Live display")
-    
-    def _setup_layout(self) -> None:
-        """
-        Setup the split-screen layout.
-        
-        Creates a layout with:
-        - logs: Top section for training logs (ratio=4)
-        - command: Bottom section for command bar (fixed size=3)
-        """
-        self._layout.split_column(
-            Layout(name="logs", ratio=4),
-            Layout(name="command", size=self.COMMAND_BAR_HEIGHT)
-        )
-    
+
+        self._window: Optional[curses.window] = None
+        self._logs_win: Optional[curses.window] = None
+        self._cmd_win: Optional[curses.window] = None
+        self._status_win: Optional[curses.window] = None
+
+        self._log_offset = 0
+        self._cmd_pos = 0
+
+        self._use_curses = True
+
+        _LOG.info("PiscesLxDevModeUI initialized with curses")
+
+    def _check_curses_support(self) -> bool:
+        if not sys.stdout.isatty():
+            return False
+
+        term = os.environ.get("TERM", "")
+        if term == "dumb":
+            return False
+
+        try:
+            curses.initscr()
+            curses.endwin()
+            return True
+        except Exception:
+            return False
+
+    def register_callback(self, event: str, callback: Callable):
+        with self._lock:
+            self._callbacks[event] = callback
+
+    def _on_log_message(self, message: str):
+        pass
+
     def start(self) -> None:
-        """
-        Start the UI with Live display.
-        
-        This method starts the keyboard input thread and begins
-        the Live display, which will persist throughout training.
-        """
         if self._running:
             return
-        
+
         self._running = True
-        
         self._input_thread = threading.Thread(
-            target=self._input_loop,
+            target=self._curses_main,
             daemon=True,
-            name="DevModeUI-Input"
+            name="DevModeUI-Curses"
         )
         self._input_thread.start()
-        
-        self._live = Live(
-            self._layout,
-            console=self._console,
-            refresh_per_second=self.REFRESH_RATE,
-            screen=True,
-            transient=False
-        )
-        self._live.start()
-        
-        _LOG.info("Developer mode UI started with Live display")
-    
+
+        _LOG.info("Developer mode UI started with curses")
+
     def stop(self) -> None:
-        """
-        Stop the UI and clean up resources.
-        
-        This method stops the Live display and input thread.
-        """
         self._running = False
-        
-        if self._live is not None:
-            self._live.stop()
-            self._live = None
-        
+
+        if self._window is not None:
+            try:
+                curses.nocbreak()
+                self._window.keypad(False)
+                curses.echo()
+                curses.endwin()
+            except Exception:
+                pass
+            self._window = None
+
         if self._input_thread is not None:
             self._input_thread.join(timeout=1.0)
             self._input_thread = None
-        
+
         _LOG.info("Developer mode UI stopped")
-    
-    def is_running(self) -> bool:
-        """
-        Check if the UI is running.
-        
-        Returns:
-            bool: True if the UI is active
-        """
-        return self._running
-    
-    def get_log_handler(self) -> PiscesLxDevModeLogHandler:
-        """
-        Get or create the log handler for this UI.
-        
-        Returns:
-            PiscesLxDevModeLogHandler: The log handler instance
-        """
-        if self._log_handler is None:
-            self._log_handler = PiscesLxDevModeLogHandler(self, self.MAX_LOG_LINES)
-        return self._log_handler
-    
-    def update_logs(self, logs: List[str]) -> None:
-        """
-        Update the logs display with new log entries.
-        
-        Args:
-            logs: List of log messages to display
-        """
-        with self._lock:
-            self._log_buffer.clear()
-            for log in logs[-self.MAX_LOG_LINES:]:
-                self._log_buffer.append(log)
-            self._refresh_display()
-    
-    def add_log(self, message: str) -> None:
-        """
-        Add a single log message to the display.
-        
-        Args:
-            message: Log message to add
-        """
-        with self._lock:
-            self._log_buffer.append(message)
-            self._refresh_display()
-    
-    def set_status(self, message: str) -> None:
-        """
-        Set the status message displayed in the command bar.
-        
-        Args:
-            message: Status message to display
-        """
-        with self._lock:
-            self._status_message = message
-            self._refresh_display()
-    
-    def show_overlay(self, content: str) -> None:
-        """
-        Display an overlay with the given content.
-        
-        Args:
-            content: Text content to display in the overlay
-        """
-        with self._lock:
-            self._overlay_active = True
-            self._overlay_content = content
-            self._refresh_display()
-    
-    def hide_overlay(self) -> None:
-        """Hide the current overlay and return to main view."""
-        with self._lock:
-            self._overlay_active = False
-            self._overlay_content = ""
-            self._refresh_display()
-    
-    def is_overlay_active(self) -> bool:
-        """
-        Check if an overlay is currently displayed.
-        
-        Returns:
-            bool: True if overlay is active
-        """
-        return self._overlay_active
-    
-    def register_callback(self, event: str, callback: Callable) -> None:
-        """
-        Register a callback for a specific event.
-        
-        Args:
-            event: Event name (e.g., 'command', 'quit')
-            callback: Function to call when event occurs
-        """
-        self._callbacks[event] = callback
-    
-    def _input_loop(self) -> None:
-        """
-        Main input handling loop running in separate thread.
-        
-        Uses blocking input read to ensure no key presses are missed.
-        """
+
+    def _curses_main(self, stdscr: curses.window) -> None:
+        curses.use_default_colors()
+        curses.curs_set(1)
+        curses.noecho()
+        curses.cbreak()
+        stdscr.nodelay(True)
+        stdscr.keypad(True)
+
+        self._window = stdscr
+        max_y, max_x = stdscr.getmaxyx()
+
+        log_height = max_y - self.COMMAND_BAR_HEIGHT - 1
+        self._logs_win = curses.newwin(log_height, max_x, 0, 0)
+        self._logs_win.scrollok(True)
+        self._logs_win.idlok(True)
+
+        self._status_win = curses.newwin(1, max_x, log_height, 0)
+
+        self._cmd_win = curses.newwin(self.COMMAND_BAR_HEIGHT, max_x, log_height + 1, 0)
+        self._cmd_win.keypad(True)
+
+        self._draw_border()
+        self._refresh_all()
+
+        last_refresh = time.time()
+        refresh_interval = 1.0 / self.REFRESH_RATE
+
         while self._running:
             try:
-                char = self._read_char_blocking()
-                if char is not None:
-                    self._input_queue.put(char)
-                    self._process_input_queue()
-            except Exception as e:
-                _LOG.debug("Input loop error", error=str(e))
+                key = self._cmd_win.getch()
+
+                if key != curses.ERR:
+                    self._handle_input(key)
+
+                now = time.time()
+                if now - last_refresh >= refresh_interval:
+                    self._refresh_all()
+                    last_refresh = now
+
                 time.sleep(0.01)
-    
-    def _read_char_blocking(self) -> Optional[str]:
-        """
-        Read a character with blocking wait.
-        
-        Returns:
-            Optional[str]: The character read, or None on error
-        """
+
+            except curses.error:
+                time.sleep(0.01)
+                continue
+            except Exception:
+                time.sleep(0.01)
+                continue
+
+    def _draw_border(self) -> None:
+        if self._window is None:
+            return
+
+        max_y, max_x = self._window.getmaxyx()
         try:
-            if sys.platform == 'win32':
-                import msvcrt
-                if msvcrt.kbhit():
-                    ch = msvcrt.getch()
-                    if ch == b'\xe0':
-                        ch2 = msvcrt.getch()
-                        if ch2 == b'H':
-                            return '\x1b[A'
-                        elif ch2 == b'P':
-                            return '\x1b[B'
-                        return None
-                    if ch == b'\x03':
-                        return '\x03'
-                    try:
-                        return ch.decode('utf-8')
-                    except UnicodeDecodeError:
-                        return None
-                time.sleep(0.01)
-                return None
-            else:
-                import select
-                import sys
-                if select.select([sys.stdin], [], [], 0.1)[0]:
-                    ch = sys.stdin.read(1)
-                    if ch == '\x1b':
-                        if select.select([sys.stdin], [], [], 0.01)[0]:
-                            ch2 = sys.stdin.read(1)
-                            if ch2 == '[':
-                                ch3 = sys.stdin.read(1)
-                                return f'\x1b[{ch3}'
-                        return '\x1b'
-                    return ch
-                return None
-        except Exception:
-            return None
-    
-    def _process_input_queue(self) -> None:
-        """Process all pending input events from the queue."""
-        while not self._input_queue.empty():
+            self._window.clear()
+            self._window.border()
+            title = " PiscesL1 Developer Mode - Press ? for help "
+            self._window.addstr(0, (max_x - len(title)) // 2, title, curses.A_BOLD | curses.color_pair(1))
+            self._window.refresh()
+        except curses.error:
+            pass
+
+    def _refresh_all(self) -> None:
+        if self._logs_win:
             try:
-                char = self._input_queue.get_nowait()
-                self._handle_char(char)
-            except queue.Empty:
-                break
-            except Exception as e:
-                _LOG.debug("Input processing error", error=str(e))
-        
-        self._refresh_display()
-    
-    def _handle_char(self, char: str) -> None:
-        """
-        Handle a character input.
-        
-        Args:
-            char: The input character or escape sequence
-        """
-        if char == '\x1b[A':
-            self._history_up()
-        elif char == '\x1b[B':
-            self._history_down()
-        elif char in ('\r', '\n'):
+                self._logs_win.refresh()
+            except curses.error:
+                pass
+
+        if self._status_win:
+            try:
+                max_y, max_x = self._status_win.getmaxyx()
+                self._status_win.clear()
+                status_text = f" {self._status_message} "
+                self._status_win.addstr(0, 0, status_text, curses.A_REVERSE)
+                self._status_win.clrtoeol()
+                self._status_win.refresh()
+            except curses.error:
+                pass
+
+        if self._cmd_win:
+            try:
+                max_y, max_x = self._cmd_win.getmaxyx()
+                self._cmd_win.clear()
+                self._cmd_win.border()
+
+                prompt = ": "
+                self._cmd_win.addstr(1, 2, prompt, curses.A_BOLD | curses.color_pair(2))
+
+                display_cmd = self._command_buffer[:max_x - len(prompt) - 4]
+                if self._cmd_pos < len(display_cmd):
+                    cursor_x = 2 + len(prompt) + self._cmd_pos
+                else:
+                    cursor_x = 2 + len(prompt) + len(display_cmd)
+
+                self._cmd_win.addstr(1, 2 + len(prompt), display_cmd, curses.color_pair(3))
+                self._cmd_win.move(1, min(cursor_x, max_x - 2))
+                self._cmd_win.refresh()
+            except curses.error:
+                pass
+
+    def _handle_input(self, key: int) -> None:
+        if key == curses.KEY_UP:
+            self._navigate_history(-1)
+        elif key == curses.KEY_DOWN:
+            self._navigate_history(1)
+        elif key == curses.KEY_LEFT:
+            self._cmd_pos = max(0, self._cmd_pos - 1)
+        elif key == curses.KEY_RIGHT:
+            self._cmd_pos = min(len(self._command_buffer), self._cmd_pos + 1)
+        elif key == curses.KEY_HOME:
+            self._cmd_pos = 0
+        elif key == curses.KEY_END:
+            self._cmd_pos = len(self._command_buffer)
+        elif key == curses.KEY_BACKSPACE:
+            if self._cmd_pos > 0 and self._command_buffer:
+                self._command_buffer = (
+                    self._command_buffer[: self._cmd_pos - 1]
+                    + self._command_buffer[self._cmd_pos :]
+                )
+                self._cmd_pos -= 1
+        elif key == curses.KEY_DC:
+            if self._cmd_pos < len(self._command_buffer):
+                self._command_buffer = (
+                    self._command_buffer[: self._cmd_pos]
+                    + self._command_buffer[self._cmd_pos + 1 :]
+                )
+        elif key == curses.KEY_ENTER or key in (10, 13):
             self._execute_command()
-        elif char in ('\x7f', '\x08'):
-            self._backspace()
-        elif char == '\x1b':
-            if self._overlay_active:
-                self.hide_overlay()
-        elif char == '\x03':
-            self._handle_quit()
-        elif char and char.isprintable():
-            self._command_buffer += char
-    
-    def _backspace(self) -> None:
-        """Remove the last character from the command buffer."""
-        if self._command_buffer:
-            self._command_buffer = self._command_buffer[:-1]
-    
-    def _history_up(self) -> None:
-        """Navigate up in command history."""
+        elif key == 27:
+            self._command_buffer = ""
+            self._cmd_pos = 0
+        elif 32 <= key <= 126:
+            ch = chr(key)
+            self._command_buffer = (
+                self._command_buffer[: self._cmd_pos]
+                + ch
+                + self._command_buffer[self._cmd_pos :]
+            )
+            self._cmd_pos += 1
+
+        self._refresh_all()
+
+    def _navigate_history(self, direction: int) -> None:
         if not self._history:
             return
-        
-        if self._history_index < len(self._history) - 1:
-            self._history_index += 1
-            self._command_buffer = list(self._history)[-(self._history_index + 1)]
-    
-    def _history_down(self) -> None:
-        """Navigate down in command history."""
-        if self._history_index > 0:
-            self._history_index -= 1
-            self._command_buffer = list(self._history)[-(self._history_index + 1)]
-        elif self._history_index == 0:
-            self._history_index = -1
-            self._command_buffer = ""
-    
+
+        new_index = self._history_index + direction
+
+        if new_index < 0:
+            new_index = 0
+        elif new_index >= len(self._history):
+            new_index = len(self._history) - 1
+
+        if new_index != self._history_index:
+            self._history_index = new_index
+            self._command_buffer = self._history[new_index]
+            self._cmd_pos = len(self._command_buffer)
+
     def _execute_command(self) -> None:
-        """Execute the current command in the buffer."""
-        command = self._command_buffer.strip()
+        cmd = self._command_buffer.strip()
+
+        if cmd:
+            self._history.append(cmd)
+            self._history_index = len(self._history)
+
         self._command_buffer = ""
-        self._history_index = -1
-        
-        if not command:
-            return
-        
-        if command not in self._history:
-            self._history.append(command)
-        
-        if command.lower() in ('q', ':q', 'quit', ':quit'):
-            if self._overlay_active:
-                self.hide_overlay()
-            return
-        
-        if 'command' in self._callbacks:
+        self._cmd_pos = 0
+
+        if cmd:
+            self._process_command(cmd)
+
+    def _process_command(self, cmd: str) -> None:
+        with self._lock:
+            if "command" in self._callbacks:
+                try:
+                    self._callbacks["command"](cmd)
+                except Exception as e:
+                    self._log(f"Command error: {e}")
+            else:
+                self._log(f"Command received: {cmd}")
+
+        if cmd == "q" or cmd == "quit":
+            self._running = False
+        elif cmd == "?" or cmd == "help":
+            self._show_help()
+        elif cmd == "pause":
+            self._paused = True
+            self._status_message = "PAUSED - Press resume to continue"
+            if "pause" in self._callbacks:
+                self._callbacks["pause"]()
+        elif cmd == "resume" or cmd == "continue":
+            self._paused = False
+            self._status_message = "Running"
+            if "resume" in self._callbacks:
+                self._callbacks["resume"]()
+        elif cmd == "status":
+            self._status_message = "Status: Running"
+        elif cmd.startswith("log"):
+            parts = cmd.split()
+            if len(parts) > 1:
+                try:
+                    count = int(parts[1])
+                    self._show_logs(count)
+                except ValueError:
+                    self._log("Usage: log <count>")
+            else:
+                self._show_logs(20)
+
+    def _log(self, message: str) -> None:
+        if self._logs_win:
             try:
-                self._callbacks['command'](command)
-            except Exception as e:
-                _LOG.error("Callback error", error=str(e))
-    
-    def _handle_quit(self) -> None:
-        """Handle quit signal (Ctrl+C)."""
-        if 'quit' in self._callbacks:
-            try:
-                self._callbacks['quit']()
-            except Exception:
+                max_y, max_x = self._logs_win.getmaxyx()
+                self._logs_win.addstr(f"{message}\n")
+                self._logs_win.clrtoeol()
+                self._logs_win.refresh()
+            except curses.error:
                 pass
-    
-    def _refresh_display(self) -> None:
-        """Refresh the Live display with current state."""
-        if self._live is None or not self._running:
-            return
-        
-        current_time = time.time()
-        if current_time - self._last_cursor_toggle > self._cursor_blink_interval:
-            self._cursor_visible = not self._cursor_visible
-            self._last_cursor_toggle = current_time
-        
-        self._update_layout()
-    
-    def _update_layout(self) -> None:
-        """Update the layout sections with current content."""
-        if self._overlay_active:
-            self._render_overlay_to_layout()
-        else:
-            self._render_logs_to_layout()
-            self._render_command_to_layout()
-    
-    def _render_logs_to_layout(self) -> None:
-        """Render the logs section."""
-        logs_text = Text()
-        
-        with self._lock:
-            logs = list(self._log_buffer)
-        
-        if logs:
-            visible_logs = logs[-30:]
-            for log in visible_logs:
-                logs_text.append(log)
-                logs_text.append("\n")
-        else:
-            logs_text.append("[Waiting for training logs...]", style=Style(color="dim"))
-        
-        panel = Panel(
-            logs_text,
-            title="[bold cyan]Training Logs[/bold cyan]",
-            border_style="cyan",
-            padding=(0, 1)
-        )
-        
-        self._layout["logs"].update(panel)
-    
-    def _render_command_to_layout(self) -> None:
-        """Render the command bar section."""
-        cursor_char = "\u2588" if self._cursor_visible else " "
-        
-        command_text = Text()
-        command_text.append("> ", style=Style(color="green", bold=True))
-        command_text.append(self._command_buffer)
-        command_text.append(cursor_char, style=Style(blink=True, bold=True))
-        
-        status = self._status_message or "Type :help for commands"
-        status_text = Text()
-        status_text.append("[Dev Mode] ", style=Style(color="cyan", bold=True))
-        status_text.append(status, style=Style(color="dim"))
-        
-        content = Group(command_text, status_text)
-        
-        panel = Panel(
-            content,
-            title="[bold]Command Bar[/bold]",
-            border_style="blue",
-            padding=(0, 1)
-        )
-        
-        self._layout["command"].update(panel)
-    
-    def _render_overlay_to_layout(self) -> None:
-        """Render overlay content in the logs section."""
-        panel = Panel(
-            self._overlay_content,
-            title="[bold cyan]Developer Mode - Overlay[/bold cyan]",
-            border_style="cyan",
-            padding=(1, 2)
-        )
-        
-        self._layout["logs"].update(panel)
-        
-        hint_text = Text()
-        hint_text.append("Press ", style=Style(color="dim"))
-        hint_text.append("'q'", style=Style(color="yellow", bold=True))
-        hint_text.append(" or ", style=Style(color="dim"))
-        hint_text.append("Escape", style=Style(color="yellow", bold=True))
-        hint_text.append(" to return", style=Style(color="dim"))
-        
-        hint_panel = Panel(
-            hint_text,
-            border_style="dim",
-            padding=(0, 1)
-        )
-        
-        self._layout["command"].update(hint_panel)
-    
-    def get_command_buffer(self) -> str:
-        """
-        Get the current command buffer content.
-        
-        Returns:
-            str: Current command being typed
-        """
-        return self._command_buffer
-    
-    def clear_command_buffer(self) -> None:
-        """Clear the command buffer."""
-        self._command_buffer = ""
-    
-    def get_history(self) -> List[str]:
-        """
-        Get the command history.
-        
-        Returns:
-            List[str]: List of previous commands
-        """
-        return list(self._history)
-    
-    def get_log_buffer(self) -> List[str]:
-        """
-        Get the log buffer content.
-        
-        Returns:
-            List[str]: Recent log lines
-        """
-        with self._lock:
-            return list(self._log_buffer)
-    
-    def render_full_display(self, logs: Optional[List[str]] = None) -> None:
-        """
-        Render the full display including logs and command bar.
-        
-        Args:
-            logs: Optional list of log lines to display
-        """
-        if logs:
-            self.update_logs(logs)
-        else:
-            self._refresh_display()
+
+    def _show_help(self) -> None:
+        help_text = [
+            "=== PiscesL1 Developer Mode Commands ===",
+            "q, quit           Exit developer mode",
+            "pause             Pause training",
+            "resume, continue  Resume training",
+            "status            Show training status",
+            "log <n>           Show last n log entries",
+            "h, history        Show command history",
+            "?, help           Show this help",
+            "========================================",
+        ]
+
+        for line in help_text:
+            self._log(line)
+
+    def _show_logs(self, count: int) -> None:
+        logs = self._log_handler.get_recent(count)
+        self._log(f"=== Last {len(logs)} log entries ===")
+        for log in logs[-count:]:
+            self._log(log)
+        self._log("=" * 40)
+
+    def is_running(self) -> bool:
+        return self._running
+
+    def is_paused(self) -> bool:
+        return self._paused
+
+    def update_status(self, message: str) -> None:
+        self._status_message = message
+
+    def add_log(self, message: str) -> None:
+        self._log_handler.emit(message)
+        self._log(message)

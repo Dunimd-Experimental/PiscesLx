@@ -101,6 +101,8 @@ import re
 import json
 import unicodedata
 import urllib.request
+import threading
+import socket
 from utils.dc import PiscesLxLogger
 from PIL import Image, ImageDraw, ImageFont
 import torch
@@ -110,6 +112,8 @@ from pathlib import Path
 
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.Tokenizer", file_path=get_log_file("Yv.Tokenizer"), enable_file=True)
+
+_DEFAULT_HF_TIMEOUT = 30
 
 MULTIMODAL_TOKENS = [
     "<agentic>", "</agentic>", 
@@ -425,7 +429,7 @@ class _YvQwenTokenizer:
         trust_remote_code: bool = True,
     ):
         """Initialize the Qwen3 tokenizer.
-        
+
         Args:
             model_name (str): HuggingFace model identifier for Qwen3.
                 Default: "Qwen/Qwen3-8B".
@@ -433,11 +437,11 @@ class _YvQwenTokenizer:
                 If None, uses default HuggingFace cache. Default: None.
             trust_remote_code (bool): Whether to trust remote code execution.
                 Required for some Qwen models. Default: True.
-        
+
         Raises:
             ImportError: If transformers library is not installed.
             RuntimeError: If tokenizer loading fails.
-        
+
         Initializes:
             - model_name: Model identifier
             - cache_dir: Cache directory
@@ -448,22 +452,153 @@ class _YvQwenTokenizer:
         self.model_name = model_name
         self.cache_dir = cache_dir
         self.trust_remote_code = trust_remote_code
-        
-        try:
+
+        self._tokenizer = None
+        self._multimodal_token_ids = {}
+
+        self._try_load_local_first()
+
+        if self._tokenizer is None:
+            self._download_with_timeout()
+
+        if self._tokenizer is None:
+            raise RuntimeError(
+                f"Failed to load Qwen tokenizer '{model_name}'. "
+                f"Neither local cache nor download succeeded. "
+                f"Please ensure network connectivity or provide a local tokenizer."
+            )
+
+        _LOG.info(f"Qwen3 tokenizer loaded: {model_name}, vocab_size={len(self._tokenizer)}")
+        self._add_multimodal_tokens()
+
+    def _get_local_tokenizer_path(self) -> Optional[Path]:
+        """Check if tokenizer exists in local tokenizer/ directory or HuggingFace cache.
+
+        Returns:
+            Optional[Path]: Path to local tokenizer if exists, None otherwise.
+        """
+        from transformers import AutoTokenizer
+
+        project_tokenizer_path = Path("tokenizer")
+        if project_tokenizer_path.exists():
+            tokenizer_config = project_tokenizer_path / "tokenizer.json"
+            if tokenizer_config.exists():
+                _LOG.info(f"Found local tokenizer at project tokenizer/: {project_tokenizer_path}")
+                return project_tokenizer_path
+
+            vocab_json = project_tokenizer_path / "vocab.json"
+            if vocab_json.exists():
+                _LOG.info(f"Found local tokenizer vocab at project tokenizer/: {project_tokenizer_path}")
+                return project_tokenizer_path
+
+        if self.cache_dir:
+            search_path = Path(self.cache_dir)
+        else:
+            hf_cache = os.path.expanduser("~/.cache/huggingface")
+            search_path = Path(hf_cache)
+
+        model_slug = self.model_name.replace("/", "--")
+        possible_paths = [
+            search_path / "hub" / model_slug / "models--Qwen--Qwen3-8B" / "snapshots" / "*",
+            search_path / "hub" / f"models--{model_slug}" / "snapshots" / "*",
+            search_path / "hub" / model_slug,
+        ]
+
+        for base in possible_paths:
+            if str(base).endswith("*"):
+                continue
+            if base.exists():
+                tokenizer_config = base / "tokenizer.json"
+                if tokenizer_config.exists():
+                    return base
+            parent = base.parent
+            if parent.exists():
+                for item in parent.iterdir():
+                    if item.is_dir() and model_slug in str(item):
+                        tokenizer_config = item / "tokenizer.json"
+                        if tokenizer_config.exists():
+                            return item
+
+        local_path = AutoTokenizer.get_tokenizer_file(self.model_name)
+        if local_path and Path(local_path).parent.exists():
+            return Path(local_path).parent
+
+        return None
+
+    def _try_load_local_first(self) -> bool:
+        """Try to load tokenizer from local cache.
+
+        Returns:
+            bool: True if local load succeeded, False otherwise.
+        """
+        from transformers import AutoTokenizer, AutoConfig
+
+        local_path = self._get_local_tokenizer_path()
+
+        if local_path is not None:
+            _LOG.info(f"Found local tokenizer at: {local_path}")
+
+        resolved_cache_dir = self.cache_dir
+        if resolved_cache_dir is None:
+            resolved_cache_dir = os.path.expanduser("~/.cache/huggingface")
+
+        model_id = self.model_name.replace("/", "--")
+        model_cache = Path(resolved_cache_dir) / "hub" / f"models--{model_id}"
+
+        if model_cache.exists():
+            snapshots = model_cache / "snapshots"
+            if snapshots.exists():
+                for snapshot in snapshots.iterdir():
+                    if snapshot.is_dir():
+                        tokenizer_file = snapshot / "tokenizer.json"
+                        if tokenizer_file.exists():
+                            _LOG.info(f"Loading tokenizer from local cache: {snapshot}")
+                            self._tokenizer = AutoTokenizer.from_pretrained(
+                                str(snapshot),
+                                local_files_only=True,
+                                trust_remote_code=self.trust_remote_code,
+                            )
+                            _LOG.info(f"Successfully loaded tokenizer from: {snapshot}")
+                            return True
+
+        if local_path is not None:
+            _LOG.info(f"Attempting to load from: {local_path}")
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                str(local_path),
+                local_files_only=True,
+                trust_remote_code=self.trust_remote_code,
+            )
+            return True
+
+        return False
+
+    def _download_with_timeout(self) -> None:
+        """Download tokenizer with timeout and fallback."""
+        _LOG.info(f"Downloading tokenizer '{self.model_name}' (timeout={_DEFAULT_HF_TIMEOUT}s)...")
+
+        def _download():
             from transformers import AutoTokenizer
             self._tokenizer = AutoTokenizer.from_pretrained(
-                model_name,
-                cache_dir=cache_dir,
-                trust_remote_code=trust_remote_code,
+                self.model_name,
+                cache_dir=self.cache_dir,
+                trust_remote_code=self.trust_remote_code,
+                timeout=_DEFAULT_HF_TIMEOUT,
             )
-            _LOG.info(f"Qwen3 tokenizer loaded: {model_name}, vocab_size={len(self._tokenizer)}")
-        except ImportError:
-            raise ImportError("transformers library required for Qwen tokenizer. Install with: pip install transformers")
-        except Exception as e:
-            raise RuntimeError(f"Failed to load Qwen tokenizer: {e}")
-        
-        self._multimodal_token_ids = {}
-        self._add_multimodal_tokens()
+
+        download_thread = threading.Thread(target=_download, daemon=True)
+        download_thread.start()
+        download_thread.join(timeout=_DEFAULT_HF_TIMEOUT + 5)
+
+        if download_thread.is_alive():
+            _LOG.error(f"Tokenizer download timed out after {_DEFAULT_HF_TIMEOUT}s")
+            raise RuntimeError(
+                f"Tokenizer download timed out after {_DEFAULT_HF_TIMEOUT}s. "
+                f"Network may be slow or unavailable. "
+                f"Try: 1) Check network connection, 2) Use local tokenizer, 3) Set HF_HUB_OFFLINE=1"
+            )
+
+        if self._tokenizer is None:
+            _LOG.error(f"Failed to download tokenizer '{self.model_name}'")
     
     def _add_multimodal_tokens(self):
         """Add multimodal tokens to the tokenizer vocabulary.

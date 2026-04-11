@@ -183,6 +183,11 @@ psutil>=6.0.0
 nvidia-ml-py3>=7.350.0
 tqdm>=4.67.0
 
+# Curses support for developer mode UI (vim-style terminal)
+# Linux/macOS: built-in, no installation needed
+# Windows: requires windows-curses
+windows-curses>=2.0.0; platform_system=="Windows"
+
 # =============================================================================
 # SECTION 13: Web & Network Tools
 # =============================================================================

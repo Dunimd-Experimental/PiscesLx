@@ -190,7 +190,7 @@ class PiscesLxDataResumeManager:
 
 class PiscesLxToolsDataDatasetDownload:
     @staticmethod
-    def save_dataset(ds: Any, data_dir: str, name: str, max_samples: Optional[int] = None) -> bool:
+    def save_dataset(ds: Any, data_dir: str, name: str, max_samples: Optional[int] = None) -> Optional[str]:
         try:
             try:
                 from .sources import PiscesLxToolsDataSourceRouter
@@ -207,10 +207,10 @@ class PiscesLxToolsDataDatasetDownload:
             os.makedirs(os.path.dirname(save_path), exist_ok=True)
             ds.save_to_disk(save_path)
             _LOG.info(f"Successfully saved dataset '{name}' to: {save_path}")
-            return True
+            return save_path
         except Exception as e:
             _LOG.error(f"Failed to save dataset {name}: {str(e)}")
-            return False
+            return None
 
     @staticmethod
     def download_worker(task: Tuple) -> Optional[str]:
@@ -222,14 +222,34 @@ class PiscesLxToolsDataDatasetDownload:
         cache = PiscesLxToolsDataDownloadCache()
         cache.setup_env()
 
+        os.environ["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+        os.environ["HF_HUB_DISABLE_SYMLINKS"] = "1"
+        os.environ["HF_HUB_HTTP_TIMEOUT"] = "300"
+
         PiscesLxToolsDataSourceRouter.setup_hf_mirror()
 
         logger = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
         logger.info(f"Starting download: {dataset_name} -> {save_name}")
 
+        temp_dir = cache.get_temp_dir()
+        state_dir = os.path.join(temp_dir, "download_states")
+        resume_manager = PiscesLxDataResumeManager(state_dir)
+
+        existing_state = resume_manager.load_state(save_name)
+        if existing_state and existing_state.status == "completed":
+            logger.info(f"Dataset {save_name} already completed, skipping")
+            return save_name
+
+        state = PiscesLxDataDownloadState(
+            dataset_name=dataset_name,
+            save_name=save_name,
+            status="in_progress",
+            source=preferred_sources[0] if preferred_sources else "modelscope"
+        )
+
         max_retries = retry_config.get("max_retries", 3) if retry_config else 3
-        base_delay = retry_config.get("base_delay", 1.0) if retry_config else 1.0
-        max_delay = retry_config.get("max_delay", 60.0) if retry_config else 60.0
+        base_delay = retry_config.get("base_delay", 2.0) if retry_config else 2.0
+        max_delay = retry_config.get("max_delay", 120.0) if retry_config else 120.0
 
         retry_strategy = PiscesLxDataRetryStrategy(
             max_retries=max_retries,
@@ -238,6 +258,9 @@ class PiscesLxToolsDataDatasetDownload:
         )
 
         for attempt in range(max_retries):
+            state.attempt = attempt
+            state.start_time = time.time()
+
             try:
                 logger.debug(f"Downloading {dataset_name} (attempt {attempt + 1}/{max_retries})")
 
@@ -274,31 +297,53 @@ class PiscesLxToolsDataDatasetDownload:
 
                 if ds is None:
                     logger.error(f"Failed to load dataset {dataset_name} after all methods. Last error: {last_err}")
+                    state.last_error = last_err
 
                     if attempt < max_retries - 1 and retry_strategy.should_retry(attempt, Exception(last_err)):
                         delay = retry_strategy.get_delay(attempt)
                         logger.info(f"Retrying {dataset_name} in {delay:.1f} seconds...")
+                        resume_manager.save_state(state)
                         time.sleep(delay)
                         continue
+                    state.status = "failed"
+                    state.end_time = time.time()
+                    resume_manager.save_state(state)
                     return None
 
-                if PiscesLxToolsDataDatasetDownload.save_dataset(ds, data_dir, save_name, max_samples):
+                saved_path = PiscesLxToolsDataDatasetDownload.save_dataset(ds, data_dir, save_name, max_samples)
+                if saved_path:
                     logger.info(f"Successfully saved dataset {dataset_name} -> {save_name}")
+                    state.status = "completed"
+                    state.end_time = time.time()
+                    resume_manager.save_state(state)
                     return save_name
                 else:
                     logger.error(f"Failed to save dataset {dataset_name} to {save_name}")
+                    state.last_error = "Save failed"
+                    state.status = "failed"
+                    state.end_time = time.time()
+                    resume_manager.save_state(state)
                     return None
 
             except Exception as e:
                 logger.error(f"Exception in download_worker for {dataset_name}: {str(e)}")
+                state.last_error = str(e)
+                state.end_time = time.time()
 
                 if attempt < max_retries - 1 and retry_strategy.should_retry(attempt, e):
                     delay = retry_strategy.get_delay(attempt)
                     logger.info(f"Retrying after exception for {dataset_name} in {delay:.1f} seconds...")
+                    resume_manager.save_state(state)
                     time.sleep(delay)
                     continue
+
+                state.status = "failed"
+                resume_manager.save_state(state)
                 return None
 
+        state.status = "failed"
+        state.end_time = time.time()
+        resume_manager.save_state(state)
         return None
 
     def __init__(self) -> None:
@@ -318,9 +363,9 @@ class PiscesLxToolsDataDatasetDownload:
         self._resume_manager = PiscesLxDataResumeManager(state_dir)
 
         self._retry_config = {
-            "max_retries": 3,
-            "base_delay": 2.0,
-            "max_delay": 120.0
+            "max_retries": 5,
+            "base_delay": 5.0,
+            "max_delay": 300.0
         }
 
     def download(self, config_path: str | int = "configs/dataset.yaml", max_samples_per_dataset: Optional[int] = None):
@@ -420,7 +465,11 @@ class PiscesLxToolsDataDatasetDownload:
         for item in cfg.datasets:
             p = os.path.join(self._DATA, item.save)
             if os.path.exists(p):
-                downloaded.add(item.save)
+                state = self._resume_manager.load_state(item.save)
+                if state and state.status == "completed":
+                    downloaded.add(item.save)
+                else:
+                    logger.info(f"Found incomplete download for {item.save}, will resume")
 
         seen_names: Set[str] = set()
         def preferred_sources_for(d: PiscesLxToolsDatasetItem) -> List[str]:
@@ -433,6 +482,10 @@ class PiscesLxToolsDataDatasetDownload:
         to_download: List[Tuple[str, str, str, List[str]]] = []
         for d in cfg.datasets:
             if d.save not in downloaded and d.name not in seen_names:
+                state = self._resume_manager.load_state(d.save)
+                if state and state.status == "completed":
+                    logger.info(f"Skipping {d.save} (already completed in data_cache)")
+                    continue
                 to_download.append((d.name, d.save, d.desc, self._norm_sources(preferred_sources_for(d))))
                 seen_names.add(d.name)
             elif d.name in seen_names:
@@ -444,16 +497,19 @@ class PiscesLxToolsDataDatasetDownload:
             return
 
         cpu_cores = multiprocessing.cpu_count()
-        workers = max(1, cpu_cores - 1) if cpu_cores < 8 else min(cpu_cores, 8)
+        total_memory_gb = self._get_total_memory_gb()
+        max_concurrent = self._calculate_max_concurrent(cpu_cores, total_memory_gb)
+
+        logger.info(f"CPU cores: {cpu_cores}, Total memory: {total_memory_gb:.1f}GB, Max concurrent: {max_concurrent}")
 
         success_count = 0
         successfully_downloaded: Set[str] = set()
 
         tasks = []
         for n, s, d, prefs in to_download:
-            pending_attempt = self._resume_manager.get_pending_attempt(s)
-            if pending_attempt > 0:
-                logger.info(f"Resuming {s} from attempt {pending_attempt}")
+            state = self._resume_manager.load_state(s)
+            if state and state.attempt > 0:
+                logger.info(f"Resuming {s} from attempt {state.attempt}")
 
             tasks.append((n, s, d, prefs, self._DATA, max_samples_per_dataset, self._retry_config))
 
@@ -465,18 +521,34 @@ class PiscesLxToolsDataDatasetDownload:
             logger.info("All datasets already downloaded or skipped")
             return
 
-        try:
-            with multiprocessing.Pool(processes=workers) as pool:
-                results = list(tqdm(pool.imap_unordered(PiscesLxToolsDataDatasetDownload.download_worker, tasks), total=len(tasks), desc=f"Downloading {len(tasks)} unique datasets"))
-        except Exception:
-            results = []
-            for t in tqdm(tasks, total=len(tasks), desc=f"Downloading {len(tasks)} unique datasets (sequential)"):
-                results.append(PiscesLxToolsDataDatasetDownload.download_worker(t))
+        model_file = os.path.join(self._DATA, "model.txt")
 
-        for save_name in results:
-            if save_name:
-                success_count += 1
-                successfully_downloaded.add(save_name)
+        def update_model_file(save_name: str):
+            try:
+                with open(model_file, "a", encoding="utf-8") as f:
+                    f.write(f"{save_name}\n")
+                logger.info(f"Recorded {save_name} to model.txt")
+            except Exception as e:
+                logger.debug(f"Failed to update model.txt for {save_name}: {e}")
+
+        logger.info(f"Using multiprocessing with {max_concurrent} concurrent workers")
+
+        successfully_downloaded: Set[str] = set()
+
+        try:
+            with multiprocessing.Pool(processes=max_concurrent) as pool:
+                for result in pool.imap_unordered(PiscesLxToolsDataDatasetDownload.download_worker, tasks):
+                    if result:
+                        successfully_downloaded.add(result)
+                        update_model_file(result)
+                        logger.info(f"Progress: {len(successfully_downloaded)}/{len(tasks)} datasets downloaded")
+        except Exception as e:
+            logger.error(f"Multiprocessing failed: {e}, falling back to sequential")
+            for task in tqdm(tasks, total=len(tasks), desc=f"Downloading {len(tasks)} datasets"):
+                result = PiscesLxToolsDataDatasetDownload.download_worker(task)
+                if result:
+                    successfully_downloaded.add(result)
+                    update_model_file(result)
 
         if getattr(cfg, 'post_download_clean', True) and successfully_downloaded:
             try:
@@ -514,12 +586,36 @@ class PiscesLxToolsDataDatasetDownload:
         if successfully_downloaded:
             try:
                 model_file = os.path.join(self._DATA, "model.txt")
+                existing = set()
+                if os.path.exists(model_file):
+                    with open(model_file, "r", encoding="utf-8") as f:
+                        existing = set(line.strip() for line in f if line.strip())
+
+                all_names = existing | successfully_downloaded
                 with open(model_file, "w", encoding="utf-8") as f:
-                    for name in sorted(successfully_downloaded):
+                    for name in sorted(all_names):
                         f.write(f"{name}\n")
-                logger.info(f"Successfully generated model.txt with {len(successfully_downloaded)} datasets")
+                logger.info(f"model.txt updated with {len(all_names)} datasets ({len(successfully_downloaded)} new)")
             except Exception as e:
-                logger.error(f"Exception in generating model.txt: {str(e)}")
+                logger.error(f"Exception in updating model.txt: {str(e)}")
+
+    def _get_total_memory_gb(self) -> float:
+        import psutil
+        return psutil.virtual_memory().total / (1024 ** 3)
+
+    def _calculate_max_concurrent(self, cpu_cores: int, memory_gb: float) -> int:
+        base_workers = max(1, cpu_cores - 1)
+
+        if memory_gb <= 8:
+            return 1
+        elif memory_gb <= 16:
+            return min(base_workers, 2)
+        elif memory_gb <= 32:
+            return min(base_workers, 3)
+        elif memory_gb <= 64:
+            return min(base_workers, 4)
+        else:
+            return min(base_workers, 6)
 
     def _cleanup_caches(self) -> None:
         logger = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
