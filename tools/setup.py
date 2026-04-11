@@ -404,6 +404,34 @@ def setup(args):
         return
 
     logger_info("Installing requirements.txt...")
+    
+    compiled_packages = {
+        'flash-attn': {
+            'description': 'Flash Attention 2 - optimized attention kernel',
+            'fallback': 'flash-attn==2.5.0',
+            'platform_note': 'Requires CUDA 11.6+ and compatible GPU',
+            'optional': True,
+        },
+        'triton': {
+            'description': 'Triton GPU programming language',
+            'fallback': 'triton==3.0.0',
+            'platform_note': 'Linux recommended, Windows may require WSL2',
+            'optional': True,
+        },
+        'mamba-ssm': {
+            'description': 'Mamba State Space Model implementation',
+            'fallback': 'mamba-ssm==2.2.0',
+            'platform_note': 'Requires CUDA for GPU acceleration',
+            'optional': True,
+        },
+        'causal-conv1d': {
+            'description': 'Causal 1D convolution for Mamba',
+            'fallback': 'causal-conv1d==1.4.0',
+            'platform_note': 'Required by mamba-ssm for optimal performance',
+            'optional': True,
+        },
+    }
+    
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"])
         logger_success("Requirements installed successfully")
@@ -418,24 +446,56 @@ def setup(args):
 
             failed_packages = []
             installed_packages = []
+            skipped_compiled = []
 
             for line in requirements:
                 line = line.strip()
                 if not line or line.startswith('#'):
                     continue
                 
-                try:
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", line])
-                    installed_packages.append(line)
-                    logger_success(f"Installed: {line}")
-                except subprocess.CalledProcessError:
-                    failed_packages.append(line)
-                    logger_warning(f"Failed to install: {line}")
+                pkg_name = line.split('>=')[0].split('==')[0].split('[')[0].lower()
+                
+                for compiled_pkg, pkg_info in compiled_packages.items():
+                    if pkg_name == compiled_pkg or pkg_name.startswith(compiled_pkg.replace('-', '_')):
+                        logger_info(f"Installing compiled package: {compiled_pkg}")
+                        logger_info(f"  Description: {pkg_info['description']}")
+                        logger_info(f"  Platform note: {pkg_info['platform_note']}")
+                        
+                        try:
+                            subprocess.check_call(
+                                [sys.executable, "-m", "pip", "install", line, "--no-build-isolation"],
+                                timeout=1800
+                            )
+                            installed_packages.append(line)
+                            logger_success(f"Installed compiled package: {compiled_pkg}")
+                        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                            logger_warning(f"Failed to install compiled package: {compiled_pkg}")
+                            logger_warning(f"  This package is optional for basic functionality")
+                            logger_warning(f"  For full multimodal capabilities, consider:")
+                            logger_warning(f"    - Using Linux with CUDA support")
+                            logger_warning(f"    - Using WSL2 on Windows")
+                            logger_warning(f"    - Installing pre-built wheels if available")
+                            skipped_compiled.append(compiled_pkg)
+                        break
+                else:
+                    try:
+                        subprocess.check_call([sys.executable, "-m", "pip", "install", line])
+                        installed_packages.append(line)
+                        logger_success(f"Installed: {line}")
+                    except subprocess.CalledProcessError:
+                        failed_packages.append(line)
+                        logger_warning(f"Failed to install: {line}")
             
             if installed_packages:
                 logger_success(f"Successfully installed {len(installed_packages)} packages")
             if failed_packages:
                 logger_warning(f"Failed to install {len(failed_packages)} packages: {failed_packages}")
+            if skipped_compiled:
+                logger_warning(f"Skipped {len(skipped_compiled)} compiled packages: {skipped_compiled}")
+                logger_warning("Some advanced features may require these packages:")
+                for pkg in skipped_compiled:
+                    info = compiled_packages[pkg]
+                    logger_warning(f"  - {pkg}: {info['description']}")
                 
         except FileNotFoundError:
             logger_error("requirements.txt not found")
@@ -445,188 +505,6 @@ def setup(args):
             return
 
     _init_settings()
-    _setup_plxs()
-
-
-def _setup_plxs():
-    """
-    Set up Xi Studio frontend.
-    
-    This function handles the installation of npm dependencies and building
-    the Xi Studio frontend. The built output is placed in the project root
-    directory at .pisceslx/plxs/ for production use.
-    
-    The setup includes:
-        1. Checking for Node.js and npm availability
-        2. Installing npm dependencies in tools/plxs/
-        3. Building the Next.js application
-        4. Copying the build output to .pisceslx/plxs/
-    
-    Args:
-        None
-    
-    Returns:
-        None
-    
-    Side Effects:
-        - Creates node_modules in tools/plxs/
-        - Creates .next/ build directory in tools/plxs/
-        - Copies build output to .pisceslx/plxs/
-    
-    Example:
-        >>> _setup_plxs()  # Installs and builds plxs frontend
-    """
-    import shutil
-    
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    plxs_dir = os.path.join(project_root, "tools", "plxs")
-    output_dir = os.path.join(project_root, ".pisceslx", "plxs")
-    
-    if not os.path.exists(plxs_dir):
-        logger_warning("Xi Studio directory not found, skipping frontend setup")
-        return
-    
-    if not os.path.exists(os.path.join(plxs_dir, "package.json")):
-        logger_warning("Xi Studio package.json not found, skipping frontend setup")
-        return
-    
-    logger_info("Setting up Xi Studio frontend...")
-    
-    is_windows = platform.system().lower().startswith("win")
-    
-    npm_cmd = "npm.cmd" if is_windows else "npm"
-    npx_cmd = "npx.cmd" if is_windows else "npx"
-    
-    try:
-        result = subprocess.run(
-            [npm_cmd, "--version"],
-            capture_output=True,
-            text=True,
-            timeout=30
-        )
-        if result.returncode != 0:
-            logger_warning("npm not found, skipping Xi Studio setup")
-            logger_warning("Please install Node.js from https://nodejs.org/")
-            return
-        
-        npm_version = result.stdout.strip()
-        logger_info(f"Found npm version {npm_version}")
-    except (subprocess.TimeoutExpired, FileNotFoundError):
-        logger_warning("npm not available, skipping Xi Studio setup")
-        logger_warning("Please install Node.js from https://nodejs.org/")
-        return
-    
-    logger_info("Installing Xi Studio dependencies...")
-    try:
-        subprocess.check_call(
-            [npm_cmd, "install"],
-            cwd=plxs_dir,
-            timeout=600
-        )
-        logger_success("Xi Studio dependencies installed")
-    except subprocess.CalledProcessError as e:
-        logger_error(f"Failed to install Xi Studio dependencies: {e}")
-        return
-    except subprocess.TimeoutExpired:
-        logger_error("npm install timed out")
-        return
-    
-    logger_info("Building Xi Studio...")
-    try:
-        subprocess.check_call(
-            [npm_cmd, "run", "build"],
-            cwd=plxs_dir,
-            timeout=600
-        )
-        logger_success("Xi Studio built successfully")
-    except subprocess.CalledProcessError as e:
-        logger_error(f"Failed to build Xi Studio: {e}")
-        return
-    except subprocess.TimeoutExpired:
-        logger_error("npm build timed out")
-        return
-    
-    logger_info("Deploying Xi Studio to production directory...")
-    try:
-        if os.path.exists(output_dir):
-            shutil.rmtree(output_dir)
-        
-        os.makedirs(output_dir, exist_ok=True)
-        
-        build_dir = os.path.join(plxs_dir, ".next")
-        if os.path.exists(build_dir):
-            shutil.copytree(build_dir, os.path.join(output_dir, ".next"))
-        
-        files_to_copy = ["package.json", "next.config.js", "public"]
-        for item in files_to_copy:
-            src = os.path.join(plxs_dir, item)
-            dst = os.path.join(output_dir, item)
-            if os.path.exists(src):
-                if os.path.isdir(src):
-                    shutil.copytree(src, dst)
-                else:
-                    shutil.copy2(src, dst)
-        
-        standalone_dir = os.path.join(build_dir, "standalone")
-        if os.path.exists(standalone_dir):
-            shutil.copytree(standalone_dir, os.path.join(output_dir, "standalone"))
-        
-        static_dir = os.path.join(build_dir, "static")
-        if os.path.exists(static_dir):
-            os.makedirs(os.path.join(output_dir, ".next", "static"), exist_ok=True)
-            shutil.copytree(static_dir, os.path.join(output_dir, ".next", "static"))
-        
-        logger_success(f"Xi Studio deployed to {output_dir}")
-        
-        _create_plxs_launcher(output_dir, project_root)
-        
-    except Exception as e:
-        logger_error(f"Failed to deploy Xi Studio: {e}")
-        return
-
-
-def _create_plxs_launcher(output_dir: str, project_root: str):
-    """
-    Create a launcher script for Xi Studio.
-    
-    This function creates a launcher script that starts the Xi Studio
-    frontend in production mode. The script is placed in the output directory.
-    
-    Args:
-        output_dir: The directory where Xi Studio is deployed.
-        project_root: The project root directory.
-    
-    Returns:
-        None
-    
-    Side Effects:
-        - Creates start script in output directory
-    """
-    is_windows = platform.system().lower().startswith("win")
-    
-    if is_windows:
-        launcher_content = """@echo off
-cd /d "%~dp0"
-node .next/standalone/server.js
-"""
-        launcher_path = os.path.join(output_dir, "start.bat")
-    else:
-        launcher_content = """#!/bin/bash
-cd "$(dirname "$0")"
-node .next/standalone/server.js
-"""
-        launcher_path = os.path.join(output_dir, "start.sh")
-    
-    try:
-        with open(launcher_path, 'w', encoding='utf-8') as f:
-            f.write(launcher_content)
-        
-        if not is_windows:
-            os.chmod(launcher_path, 0o755)
-        
-        logger_success(f"Created Xi Studio launcher at {launcher_path}")
-    except Exception as e:
-        logger_warning(f"Failed to create launcher script: {e}")
 
 
 def _init_settings():

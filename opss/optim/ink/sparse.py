@@ -108,6 +108,9 @@ class POPSSInkSparseSelector:
         warmup_steps: int = 1000,
         adaptive: bool = True,
         ortho_momentum: float = 0.9,
+        structured_sparsity: bool = True,
+        block_size: int = 32,
+        gradient_compression_ratio: float = 0.1,
     ):
         """
         Initialize the sparse gradient selector.
@@ -117,11 +120,17 @@ class POPSSInkSparseSelector:
             warmup_steps: Steps to gradually increase sparsity (default: 1000)
             adaptive: Whether to adaptively adjust sparsity (default: True)
             ortho_momentum: Momentum for orthogonal direction tracking (default: 0.9)
+            structured_sparsity: Enable structured sparse gradients (default: True)
+            block_size: Block size for structured sparsity (default: 32)
+            gradient_compression_ratio: Compression ratio for structured sparsity (default: 0.1)
         """
         self.sparse_ratio = sparse_ratio
         self.warmup_steps = warmup_steps
         self.adaptive = adaptive
         self.ortho_momentum = ortho_momentum
+        self.structured_sparsity = structured_sparsity
+        self.block_size = block_size
+        self.gradient_compression_ratio = gradient_compression_ratio
         self.step = 0
         
         self._importance_history: Dict[str, torch.Tensor] = {}
@@ -178,6 +187,9 @@ class POPSSInkSparseSelector:
                 - sparse_gradient: Gradient with only top-K% values
                 - mask: Binary mask indicating selected positions
         """
+        if self.structured_sparsity and gradient.numel() > self.block_size * 10:
+            return self._structured_sparse_projection(gradient, param_name)
+        
         ratio = self.get_effective_ratio()
         
         flat_grad = gradient.flatten()
@@ -369,6 +381,64 @@ class POPSSInkSparseSelector:
             "total_elements": 0,
             "avg_sparsity": 0.0,
         }
+    
+    def _structured_sparse_projection(
+        self,
+        gradient: torch.Tensor,
+        param_name: Optional[str] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Apply structured sparse projection for gradient compression.
+        
+        This method projects gradients onto a structured sparse subspace by
+        dividing the gradient into blocks and selecting only the most important
+        blocks. This provides better hardware efficiency than unstructured sparsity.
+        
+        Args:
+            gradient: Input gradient tensor
+            param_name: Optional parameter name for tracking
+        
+        Returns:
+            Tuple of (sparse_gradient, mask)
+        """
+        original_shape = gradient.shape
+        flat_grad = gradient.flatten()
+        num_elements = flat_grad.numel()
+        
+        num_blocks = (num_elements + self.block_size - 1) // self.block_size
+        padded_size = num_blocks * self.block_size
+        
+        if padded_size > num_elements:
+            padding = torch.zeros(padded_size - num_elements, dtype=gradient.dtype, device=gradient.device)
+            grad_padded = torch.cat([flat_grad, padding])
+        else:
+            grad_padded = flat_grad
+        
+        grad_blocks = grad_padded.view(num_blocks, self.block_size)
+        
+        block_importance = grad_blocks.abs().sum(dim=1)
+        
+        k = max(1, int(num_blocks * self.gradient_compression_ratio))
+        _, top_k_indices = torch.topk(block_importance, k)
+        
+        sparse_blocks = torch.zeros_like(grad_blocks)
+        sparse_blocks[top_k_indices] = grad_blocks[top_k_indices]
+        
+        sparse_grad = sparse_blocks.flatten()[:num_elements].view(original_shape)
+        
+        mask = torch.zeros(num_elements, dtype=torch.bool, device=gradient.device)
+        for idx in top_k_indices:
+            start = idx * self.block_size
+            end = min(start + self.block_size, num_elements)
+            mask[start:end] = True
+        mask = mask.view(original_shape)
+        
+        if param_name is not None:
+            self._update_importance(param_name, gradient, mask)
+        
+        self._update_stats(mask)
+        self.step += 1
+        
+        return sparse_grad, mask
     
     def get_statistics(self) -> Dict[str, Any]:
         """

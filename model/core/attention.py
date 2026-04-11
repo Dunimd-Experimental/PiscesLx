@@ -4016,6 +4016,19 @@ class YvAttention(nn.Module):
         self.kv_lora_rank = int(getattr(cfg, 'kv_lora_rank', 512))
         self.q_lora_rank = getattr(cfg, 'mla_q_lora_rank', None)
         
+        self.dsa_sparse_ratio = float(getattr(cfg, 'dsa_sparse_ratio', 0.3))
+        self.dsa_importance_threshold = float(getattr(cfg, 'dsa_importance_threshold', 0.1))
+        self.dsa_use_dynamic = bool(getattr(cfg, 'dsa_use_dynamic', True))
+        
+        if self.dsa_sparse_ratio > 0 and not self.use_h2o:
+            self.dsa_importance_scorer = nn.Sequential(
+                nn.Linear(self.head_dim, max(1, self.head_dim // 4), bias=False),
+                nn.ReLU(inplace=True),
+                nn.Linear(max(1, self.head_dim // 4), 1, bias=False)
+            )
+            nn.init.xavier_uniform_(self.dsa_importance_scorer[0].weight, gain=0.01)
+            nn.init.xavier_uniform_(self.dsa_importance_scorer[2].weight, gain=0.01)
+        
         if self.use_h2o:
             self.h2o_attention = YvH2OAttention(
                 hidden_size=cfg.hidden_size,
@@ -4333,6 +4346,38 @@ class YvAttention(nn.Module):
 
         if hasattr(self, 'qk_norm') and self.use_qk_norm:
             q, k = self.qk_norm(q, k)
+
+        if self.dsa_sparse_ratio > 0 and not self.training and not self.use_h2o and k.shape[2] > 1024:
+            with torch.no_grad():
+                kv_len = k.shape[2]
+                k_sparse_count = max(1, int(kv_len * (1.0 - self.dsa_sparse_ratio)))
+                
+                if self.dsa_use_dynamic and hasattr(self, 'dsa_importance_scorer'):
+                    k_flat = k.reshape(-1, self.head_dim)
+                    importance = self.dsa_importance_scorer(k_flat).squeeze(-1)
+                    importance = importance.reshape(b, self.n_kv_head, kv_len)
+                    importance = importance.mean(dim=1)
+                else:
+                    importance = k.norm(dim=-1).mean(dim=1)
+                
+                _, top_k_indices = torch.topk(importance, k_sparse_count, dim=-1)
+                
+                k_selected = torch.zeros(
+                    b, self.n_kv_head, k_sparse_count, self.head_dim,
+                    dtype=k.dtype, device=k.device
+                )
+                v_selected = torch.zeros(
+                    b, self.n_kv_head, k_sparse_count, self.head_dim,
+                    dtype=v.dtype, device=v.device
+                )
+                
+                for batch_idx in range(b):
+                    for head_idx in range(self.n_kv_head):
+                        k_selected[batch_idx, head_idx] = k[batch_idx, head_idx, top_k_indices[batch_idx]]
+                        v_selected[batch_idx, head_idx] = v[batch_idx, head_idx, top_k_indices[batch_idx]]
+                
+                k = k_selected
+                v = v_selected
 
         if hasattr(self, 'rope'):
             max_pe_len = getattr(self.cfg, 'max_position_embeddings', 4096)

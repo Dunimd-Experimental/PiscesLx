@@ -503,21 +503,26 @@ python manage.py download
 | torchaudio | BSD-style | torch-directml | MIT |
 | transformers | Apache 2.0 | tokenizers | Apache 2.0 |
 | huggingface-hub | Apache 2.0 | modelscope | Apache 2.0 |
-| numpy | BSD 3-Clause | addict | MIT |
+| numpy | BSD 3-Clause | scipy | BSD 3-Clause |
+| scikit-learn | BSD 3-Clause | addict | MIT |
 | accelerate | Apache 2.0 | einops | MIT |
 | timm | Apache 2.0 | pytorch-lightning | Apache 2.0 |
 | pillow | HPND | PyMuPDF | AGPL 3.0 |
 | python-docx | MIT | python-pptx | MIT |
-| bitsandbytes | MIT | peft | Apache 2.0 |
-| wheel | MIT | xformers | BSD 3-Clause |
-| trl | Apache 2.0 | nvidia-ml-py3 | BSD 3-Clause |
-| fastapi | MIT | uvicorn | BSD 3-Clause |
-| python-multipart | Apache 2.0 | pydantic | MIT |
+| pdfplumber | MIT | pdf2image | MIT |
+| ocrmypdf | MPL 2.0 | bitsandbytes | MIT |
+| peft | Apache 2.0 | wheel | MIT |
+| xformers | BSD 3-Clause | trl | Apache 2.0 |
+| nvidia-ml-py3 | BSD 3-Clause | fastapi | MIT |
+| uvicorn | BSD 3-Clause | python-multipart | Apache 2.0 |
+| pydantic | MIT | httpx | BSD 3-Clause |
 | pandas | BSD 3-Clause | gradio | Apache 2.0 |
 | ijson | BSD 3-Clause | pyarrow | Apache 2.0 |
 | tqdm | MIT | jsonlines | MIT |
 | streamlit | Apache 2.0 | PyYAML | MIT |
 | GitPython | BSD 3-Clause | opencv-python | MIT |
+| av | BSD 3-Clause | decord | Apache 2.0 |
+| imageio | BSD 3-Clause | imageio-ffmpeg | BSD 3-Clause |
 | openai | Apache 2.0 | requests | Apache 2.0 |
 | beautifulsoup4 | MIT | psutil | BSD 3-Clause |
 | pytz | MIT | pywin32 | PSF |
@@ -526,6 +531,15 @@ python manage.py download
 | deepspeed | Apache 2.0 | aiofiles | Apache 2.0 |
 | pathlib2 | MIT | textual | MIT |
 | dmsc | Apache 2.0 | datasets | Apache 2.0 |
+| rich | MIT | omegaconf | BSD 3-Clause |
+| hydra-core | MIT | wandb | MIT |
+| tensorboard | Apache 2.0 | mlflow | Apache 2.0 |
+| lm-eval | MIT | rouge-score | Apache 2.0 |
+| sacrebleu | Apache 2.0 | bert-score | MIT |
+| librosa | ISC | soundfile | BSD 3-Clause |
+| audioread | MIT | pydub | MIT |
+| flash-attn | BSD 3-Clause | triton | MIT |
+| mamba-ssm | Apache 2.0 | causal-conv1d | Apache 2.0 |
 
 </div>
 

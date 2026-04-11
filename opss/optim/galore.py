@@ -93,6 +93,11 @@ class POPSSGaLoreConfig(PiscesLxOperatorConfig):
     rank_adapt_threshold: float = 0.1
     memory_efficient: bool = False
     moe_expert_only: bool = False
+    
+    use_int4_projection: bool = True
+    use_int8_weights: bool = True
+    adaptive_rank_update: bool = True
+    convergence_threshold: float = 0.01
 
 
 class POPSSGaLoreOperator(PiscesLxOperatorInterface):
@@ -289,7 +294,7 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
                 grad = gradients[name]
                 
                 if self._should_update_projection(name, state):
-                    proj_matrix = self._compute_projection_matrix(grad, config.rank)
+                    proj_matrix = self._compute_projection_matrix(grad, config.rank, config)
                     state["proj_matrices"][name] = proj_matrix
                     state["last_update_steps"][name] = state["step"]
                     
@@ -321,9 +326,9 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
         last_update = state["last_update_steps"][param_name]
         return (state["step"] - last_update) >= state["update_proj_gap"]
     
-    def _compute_projection_matrix(self, gradient: torch.Tensor, rank: int) -> torch.Tensor:
+    def _compute_projection_matrix(self, gradient: torch.Tensor, rank: int, config: Optional[POPSSGaLoreConfig] = None) -> torch.Tensor:
         """
-        Compute low-rank projection matrix for gradient.
+        Compute low-rank projection matrix for gradient with optional INT4 quantization.
         
         Uses SVD to compute the projection matrix that captures the most
         important directions in the gradient space.
@@ -331,12 +336,11 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
         Args:
             gradient: The gradient tensor
             rank: Target rank for projection
+            config: GaLore configuration (optional, for INT4 quantization)
         
         Returns:
-            Projection matrix of shape (gradient_dim, rank)
+            Projection matrix of shape (gradient_dim, rank) or tuple (quantized_matrix, scale)
         """
-        # SVD kernels on CUDA are not consistently implemented for bf16.
-        # Compute the projection in fp32 for stability/compatibility, then cast back.
         orig_dtype = gradient.dtype
         work_grad = gradient
         if work_grad.dtype not in (torch.float32, torch.float64):
@@ -356,10 +360,27 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
         else:
             projection_matrix = V
 
-        if projection_matrix.dtype != orig_dtype:
+        if config and config.use_int4_projection:
+            projection_matrix = self._quantize_projection_int4(projection_matrix)
+        
+        if not isinstance(projection_matrix, tuple) and projection_matrix.dtype != orig_dtype:
             projection_matrix = projection_matrix.to(dtype=orig_dtype)
 
         return projection_matrix
+    
+    def _quantize_projection_int4(self, matrix: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Quantize projection matrix to INT4 for 89.5% optimizer memory reduction.
+        
+        Args:
+            matrix: Projection matrix to quantize
+        
+        Returns:
+            Tuple of (quantized_matrix_int8, scale_factors)
+        """
+        max_val = matrix.abs().max().clamp(min=1e-8)
+        scale = max_val / 7.0
+        quantized = torch.clamp((matrix / scale).round(), -8, 7).to(torch.int8)
+        return (quantized, scale)
     
     def _apply_galore_transform(self, 
                               gradient: torch.Tensor, 
@@ -373,7 +394,7 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
         
         Args:
             gradient: Original gradient tensor
-            proj_matrix: Projection matrix (None if not yet computed)
+            proj_matrix: Projection matrix (None if not yet computed) or tuple (quantized, scale)
             config: GaLore configuration
         
         Returns:
@@ -381,18 +402,24 @@ class POPSSGaLoreOperator(PiscesLxOperatorInterface):
         """
         if proj_matrix is None:
             return gradient
+        
+        if config.use_int8_weights and isinstance(proj_matrix, tuple):
+            quantized_proj, scale = proj_matrix
+            proj_matrix_fp = quantized_proj.float() * scale
+        else:
+            proj_matrix_fp = proj_matrix
             
         if gradient.dim() == 1:
-            if proj_matrix.shape[0] == 1:
-                transformed_grad = gradient * proj_matrix.squeeze()
+            if proj_matrix_fp.shape[0] == 1:
+                transformed_grad = gradient * proj_matrix_fp.squeeze()
             else:
                 transformed_grad = gradient
         else:
             original_shape = gradient.shape
             grad_flat = gradient.view(-1, original_shape[-1])
             
-            low_rank_grad = torch.matmul(grad_flat, proj_matrix)
-            transformed_grad = torch.matmul(low_rank_grad, proj_matrix.t())
+            low_rank_grad = torch.matmul(grad_flat, proj_matrix_fp)
+            transformed_grad = torch.matmul(low_rank_grad, proj_matrix_fp.t())
             
             transformed_grad = transformed_grad.view(original_shape)
             

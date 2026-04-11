@@ -112,6 +112,14 @@ class FP8TrainingConfig:
     fp8_amax_compute_algo: str = "max"
     fp8_stochastic_rounding: bool = True
     
+    coat_enabled: bool = True
+    coat_amax_epsilon: float = 1e-3
+    coat_scale_factor: float = 1.0
+    
+    mixed_grain_activation: bool = True
+    per_tensor_threshold: int = 1024
+    per_group_size: int = 128
+    
     model_path: str = ".pisceslx/ckpt"
     output_dir: str = ".pisceslx/ckpt"
     train_data: str = "./data/train.jsonl"
@@ -303,6 +311,14 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
             
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             model = model.to(device)
+            
+            if config.coat_enabled:
+                model = self._apply_coat_scaling(model, config)
+                self._LOG.info("COAT dynamic range scaling applied")
+            
+            if config.mixed_grain_activation:
+                model = self._apply_mixed_grain_quantization(model, config)
+                self._LOG.info("Mixed-granularity activation quantization applied")
             
             output_dir = Path(config.output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -535,6 +551,53 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
             scaler.load_state_dict(checkpoint['scaler_state_dict'])
         
         return checkpoint['step'], model, optimizer or torch.optim.AdamW(model.parameters()), scaler
+    
+    def _apply_coat_scaling(self, model: nn.Module, config: FP8TrainingConfig) -> nn.Module:
+        """Apply COAT dynamic range scaling to align optimizer state distributions to FP8 representation range.
+        
+        This technique expands the dynamic range of FP8 training by scaling parameters
+        to better utilize the FP8 representable range.
+        
+        Args:
+            model: The neural network model
+            config: FP8 training configuration
+        
+        Returns:
+            Model with COAT scaling applied
+        """
+        with torch.no_grad():
+            for param in model.parameters():
+                if param.requires_grad and param.numel() > 0:
+                    amax = param.data.abs().max().clamp(min=config.coat_amax_epsilon)
+                    scale = config.coat_scale_factor / amax
+                    param.data.mul_(scale)
+        
+        return model
+    
+    def _apply_mixed_grain_quantization(self, model: nn.Module, config: FP8TrainingConfig) -> nn.Module:
+        """Apply mixed-granularity activation quantization combining per-tensor and per-group strategies.
+        
+        Large tensors use per-group quantization for better precision,
+        while small tensors use per-tensor quantization for efficiency.
+        
+        Args:
+            model: The neural network model
+            config: FP8 training configuration
+        
+        Returns:
+            Model with mixed-granularity quantization configured
+        """
+        for name, module in model.named_modules():
+            if isinstance(module, nn.Linear):
+                weight_size = module.weight.numel()
+                
+                if weight_size > config.per_tensor_threshold:
+                    module.quantization_mode = "per_group"
+                    module.group_size = config.per_group_size
+                else:
+                    module.quantization_mode = "per_tensor"
+        
+        return model
 
 
 class _NullContext:

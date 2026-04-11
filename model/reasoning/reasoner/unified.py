@@ -179,6 +179,23 @@ class YvUnifiedReasoner(nn.Module):
         self.mpr_threshold = getattr(cfg, "mpr_threshold", 0.6)
         self.seq_len_threshold = getattr(cfg, "mpr_seq_len_threshold", 512)
 
+        self.thinking_intensity = float(getattr(cfg, 'thinking_intensity', 0.5))
+        self.complexity_threshold_low = float(getattr(cfg, 'complexity_threshold_low', 0.3))
+        self.complexity_threshold_high = float(getattr(cfg, 'complexity_threshold_high', 0.7))
+        
+        if self.thinking_intensity > 0:
+            self.complexity_estimator = nn.Sequential(
+                nn.Linear(cfg.hidden_size, max(1, cfg.hidden_size // 4)),
+                nn.ReLU(inplace=True),
+                nn.Dropout(0.1),
+                nn.Linear(max(1, cfg.hidden_size // 4), 1),
+                nn.Sigmoid()
+            )
+            
+            self.thinking_depth_controller = nn.Parameter(
+                torch.ones(1) * self.thinking_intensity
+            )
+
         # Parameter controlling temperature scaling for logit alignment.
         self._logit_temp = nn.Parameter(torch.tensor(1.0))
 
@@ -336,6 +353,33 @@ class YvUnifiedReasoner(nn.Module):
         """
         device = next(self.parameters()).device
         hidden_states = self._extract_hidden_states(input_ids, kwargs).to(device)
+        
+        thinking_depth = 1
+        complexity_score = 0.5
+        
+        if self.thinking_intensity > 0 and hasattr(self, 'complexity_estimator'):
+            seq_len = hidden_states.shape[1]
+            length_factor = torch.log1p(torch.tensor(float(seq_len), dtype=torch.float)) / 10.0
+            
+            variance_factor = hidden_states.var(dim=-1).mean(dim=-1)
+            variance_factor = torch.sigmoid(variance_factor)
+            
+            learned_complexity = self.complexity_estimator(hidden_states.mean(dim=1))
+            
+            complexity_score = 0.3 * length_factor.to(device) + 0.3 * variance_factor + 0.4 * learned_complexity.squeeze(-1)
+            complexity_score = complexity_score.mean().item()
+            
+            intensity = torch.sigmoid(self.thinking_depth_controller).item()
+            effective_complexity = complexity_score * intensity
+            
+            if effective_complexity < self.complexity_threshold_low:
+                thinking_depth = 1
+            elif effective_complexity < self.complexity_threshold_high:
+                thinking_depth = 3
+            elif effective_complexity < 0.9:
+                thinking_depth = 5
+            else:
+                thinking_depth = 10
 
         # If memory_context carries labels, remap accordingly.
         if labels is None and torch.is_tensor(memory_context):
@@ -427,6 +471,8 @@ class YvUnifiedReasoner(nn.Module):
             "attention_weights": attention_weights,
             "final_state": final_state,
             "loss": core_out.get("loss", torch.tensor(0.0, device=device)),
+            "thinking_depth": thinking_depth,
+            "complexity_score": complexity_score,
         }
 
     def _sample_next_token(self, logits: torch.Tensor, temperature: float = 0.7, top_p: float = 0.9, top_k: int = 50) -> torch.Tensor:

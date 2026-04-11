@@ -257,3 +257,41 @@ generation_max_tokens: 4096
 generation_temperature: 1.0
 generation_top_p: 0.95
 generation_top_k: 50
+
+flagship_level: 1.0
+
+dsa_sparse_ratio: 0.5
+dsa_importance_threshold: 0.1
+dsa_use_dynamic: true
+
+thinking_intensity: 0.9
+complexity_threshold_low: 0.3
+complexity_threshold_high: 0.7
+
+swarm_intensity: 0.9
+num_swarm_agents: 4
+
+coat_enabled: true
+coat_amax_epsilon: 0.001
+coat_scale_factor: 1.0
+mixed_grain_activation: true
+per_tensor_threshold: 1024
+per_group_size: 128
+
+use_int4_projection: true
+use_int8_weights: true
+adaptive_rank_update: true
+convergence_threshold: 0.01
+
+structured_sparsity: true
+grass_block_size: 32
+gradient_compression_ratio: 0.1
+
+adaptive_recomputation: true
+compute_cost_threshold: 0.5
+activation_size_threshold: 1048576
+
+enable_teraio: false
+gpu_memory_budget: 42949672960
+cpu_memory_budget: 137438953472
+enable_gds: true

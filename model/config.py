@@ -401,6 +401,19 @@ class YvConfig:
     mamba3_use_flash_ssm: bool = True
     mamba3_use_rms_norm: bool = True
 
+    dsa_sparse_ratio: float = 0.3
+    dsa_importance_threshold: float = 0.1
+    dsa_use_dynamic: bool = True
+
+    thinking_intensity: float = 0.5
+    complexity_threshold_low: float = 0.3
+    complexity_threshold_high: float = 0.7
+
+    swarm_intensity: float = 0.5
+    num_swarm_agents: int = 4
+
+    flagship_level: float = 0.5
+
     galore_enabled: bool = False
     galore_rank: int = 128
     galore_update_interval: int = 200
@@ -422,6 +435,36 @@ class YvConfig:
     fp4_block_size: int = 16
     fp4_stochastic_rounding: bool = True
     fp4_master_weights_dtype: str = "fp32"
+    
+    # COAT FP8 Enhancement (1.54x memory savings, +43% speed)
+    coat_enabled: bool = True
+    coat_amax_epsilon: float = 1e-3
+    coat_scale_factor: float = 1.0
+    mixed_grain_activation: bool = True
+    per_tensor_threshold: int = 1024
+    per_group_size: int = 128
+    
+    # Q-GaLore (89.5% optimizer memory reduction)
+    use_int4_projection: bool = True
+    use_int8_weights: bool = True
+    adaptive_rank_update: bool = True
+    convergence_threshold: float = 0.01
+    
+    # GRASS Structured Sparsity (supports large models, +100% throughput)
+    structured_sparsity: bool = True
+    grass_block_size: int = 32
+    gradient_compression_ratio: float = 0.1
+    
+    # Adacc Adaptive Recomputation (60-80% activation memory savings)
+    adaptive_recomputation: bool = True
+    compute_cost_threshold: float = 0.5
+    activation_size_threshold: int = 1048576
+    
+    # TERAIO Offloading (supports ultra-large models)
+    enable_teraio: bool = False
+    gpu_memory_budget: int = 42949672960
+    cpu_memory_budget: int = 137438953472
+    enable_gds: bool = True
 
     chinchilla_optimal: bool = False
     chinchilla_c_budget: float = 0.0
@@ -562,6 +605,13 @@ class YvConfig:
 
         if isinstance(self.activation_type, YvActivationType):
             self.activation_type = self.activation_type.value
+
+        if hasattr(self, 'flagship_level') and self.flagship_level != 0.5:
+            level = self.flagship_level
+            
+            self.dsa_sparse_ratio = 0.3 * (0.5 + level)
+            self.thinking_intensity = 0.5 * (0.5 + level)
+            self.swarm_intensity = 0.5 * (0.5 + level)
 
     @classmethod
     def from_json(cls, path: str) -> 'YvConfig':

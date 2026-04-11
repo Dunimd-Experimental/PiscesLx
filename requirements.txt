@@ -27,6 +27,30 @@
 # 3. Then everything else
 # 4. Use --no-deps for packages with known good transitive dependencies
 # =============================================================================
+# 
+# IMPORTANT NOTES FOR WINDOWS USERS:
+# =============================================================================
+# 1. flash-attn: Requires compilation, may take 10-30 minutes
+#    - If fails: pip install flash-attn --no-build-isolation
+#    - Or skip: PiscesL1 will use PyTorch's native attention
+#
+# 2. triton: Not fully supported on Windows
+#    - Automatically skipped on Windows (platform_system=="Linux")
+#    - PiscesL1 will work without it
+#
+# 3. mamba-ssm & causal-conv1d: Require CUDA compilation
+#    - If fails: PiscesL1 will fall back to standard attention
+#    - Ensure CUDA toolkit is installed and in PATH
+#
+# 4. bitsandbytes: May require Visual Studio Build Tools
+#    - If fails: pip install bitsandbytes-windows
+#
+# QUICK INSTALL (Recommended):
+# pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+# pip install -r requirements.txt --no-deps
+# pip install -r requirements.txt
+#
+# =============================================================================
 
 # Use Tsinghua mirror for China (syncs pre-release versions)
 # Alternative mirrors:
@@ -62,12 +86,26 @@ torch-directml==0.2.1; platform_system=="Windows"
 xformers
 bitsandbytes
 
+# Flash Attention (requires compilation, may fail on some systems)
+# If installation fails, use: pip install flash-attn --no-build-isolation
+# Or skip and use PyTorch's native scaled_dot_product_attention
+flash-attn>=2.5.0
+
+# Triton (required for Flash Attention 2, may not work on all platforms)
+# Windows users may need to skip this
+triton>=3.0.0; platform_system=="Linux"
+
 # These have flexible versions but need torch-compatible builds
 accelerate==1.3.0
 peft==0.14.0
 trl==0.14.0
 deepspeed==0.16.5
 pytorch-lightning==2.5.0
+
+# Mamba State Space Model dependencies (requires CUDA compilation)
+# If installation fails, the model will fall back to standard attention
+mamba-ssm>=2.2.0
+causal-conv1d>=1.4.0
 
 # =============================================================================
 # SECTION 4: Core ML Libraries (No torch dep or flexible)
@@ -76,6 +114,8 @@ numpy>=2.2.0
 einops>=0.8.0
 timm>=1.0.0
 safetensors>=0.5.0
+scipy>=1.14.0
+scikit-learn>=1.5.0
 
 # =============================================================================
 # SECTION 5: Transformers Ecosystem (Order matters)
@@ -107,6 +147,10 @@ modelscope>=1.19.0
 opencv-python>=4.10.0
 pillow>=11.0.0
 pytz>=2024.2
+av>=14.0.0
+decord>=0.6.0
+imageio>=2.36.0
+imageio-ffmpeg>=0.5.1
 
 # =============================================================================
 # SECTION 9: Document Processing
@@ -114,6 +158,9 @@ pytz>=2024.2
 PyMuPDF>=1.25.0
 python-docx>=1.1.0
 python-pptx>=1.0;python_version>="3.11"
+pdfplumber>=0.11.0
+pdf2image>=1.17.0
+ocrmypdf>=16.0.0
 
 # =============================================================================
 # SECTION 10: API & Server Frameworks
@@ -162,11 +209,32 @@ openai>=1.50.0
 # SECTION 16: Evaluation & Benchmarking
 # =============================================================================
 evalscope>=0.16.0
+lm-eval>=0.4.0
+rouge-score>=0.1.2
+sacrebleu>=2.4.0
+bert-score>=0.3.13
 
 # =============================================================================
-# SECTION 17: Platform-specific Dependencies
+# SECTION 17: Audio Processing
+# =============================================================================
+librosa>=0.10.0
+soundfile>=0.12.0
+audioread>=3.0.0
+pydub>=0.25.0
+
+# =============================================================================
+# SECTION 18: Platform-specific Dependencies
 # =============================================================================
 pywin32>=308; platform_system=="Windows"
+
+# =============================================================================
+# SECTION 19: Additional Utilities
+# =============================================================================
+omegaconf>=2.3.0
+hydra-core>=1.3.0
+wandb>=0.18.0
+tensorboard>=2.18.0
+mlflow>=2.16.0
 
 # =============================================================================
 # Recommended install command:

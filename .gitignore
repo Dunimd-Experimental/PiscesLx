@@ -129,3 +129,4 @@ models/*.pt
 models/*.pth
 
 piscesl1/
+doc/

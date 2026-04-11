@@ -292,6 +292,44 @@ class YvAgentic(nn.Module):
         self.action_param_head = nn.Linear(cfg.hidden_size, cfg.hidden_size)
         self.confidence_head = nn.Linear(cfg.hidden_size, 1)
         
+        self.swarm_intensity = float(getattr(cfg, 'swarm_intensity', 0.5))
+        self.num_swarm_agents = int(getattr(cfg, 'num_swarm_agents', 4))
+        
+        if self.swarm_intensity > 0:
+            self.specialized_agents = nn.ModuleDict({
+                'reasoner': nn.Sequential(
+                    nn.Linear(cfg.hidden_size, cfg.hidden_size),
+                    nn.LayerNorm(cfg.hidden_size),
+                    nn.ReLU(inplace=True)
+                ),
+                'fact_checker': nn.Sequential(
+                    nn.Linear(cfg.hidden_size, cfg.hidden_size),
+                    nn.LayerNorm(cfg.hidden_size),
+                    nn.ReLU(inplace=True)
+                ),
+                'planner': nn.Sequential(
+                    nn.Linear(cfg.hidden_size, cfg.hidden_size),
+                    nn.LayerNorm(cfg.hidden_size),
+                    nn.ReLU(inplace=True)
+                ),
+                'executor': nn.Sequential(
+                    nn.Linear(cfg.hidden_size, cfg.hidden_size),
+                    nn.LayerNorm(cfg.hidden_size),
+                    nn.ReLU(inplace=True)
+                )
+            })
+            
+            self.agent_coordinator = nn.Sequential(
+                nn.Linear(cfg.hidden_size * 4, cfg.hidden_size * 2),
+                nn.ReLU(inplace=True),
+                nn.Linear(cfg.hidden_size * 2, cfg.hidden_size),
+                nn.Tanh()
+            )
+            
+            self.agent_fusion_weights = nn.Parameter(
+                torch.ones(4) / 4
+            )
+
         # Register state machine callbacks
         self._setup_state_machine_callbacks()
         
@@ -858,6 +896,20 @@ class YvAgentic(nn.Module):
             query_embedding=query_embedding
         )
         
+        agent_outputs = {}
+        swarm_mode = False
+        
+        if self.swarm_intensity > 0.3 and hasattr(self, 'specialized_agents'):
+            try:
+                query_hidden = query_embedding.unsqueeze(0) if query_embedding.dim() == 2 else query_embedding
+                
+                for agent_name, agent_module in self.specialized_agents.items():
+                    agent_outputs[agent_name] = agent_module(query_hidden)
+                
+                swarm_mode = True
+            except Exception:
+                swarm_mode = False
+
         # Execute multi-step chain-of-thought reasoning to plan the response.
         with torch.no_grad():
             if self.base_model and hasattr(self, 'reasoner'):
@@ -935,6 +987,24 @@ class YvAgentic(nn.Module):
                 confidence=confidence,
                 reasoning=reasoning_trace
             )
+        
+        if swarm_mode and len(agent_outputs) > 0 and hasattr(self, 'agent_coordinator'):
+            try:
+                agent_hidden = torch.cat(list(agent_outputs.values()), dim=-1)
+                fused_hidden = self.agent_coordinator(agent_hidden)
+                
+                weights = torch.softmax(self.agent_fusion_weights, dim=0)
+                agent_confidences = {}
+                for i, (agent_name, agent_out) in enumerate(agent_outputs.items()):
+                    agent_conf = torch.sigmoid(self.confidence_head(agent_out[:, -1])).item()
+                    agent_confidences[agent_name] = agent_conf
+                
+                confidence = sum(
+                    weights[i].item() * agent_confidences.get(name, 0.5)
+                    for i, name in enumerate(agent_outputs.keys())
+                )
+            except Exception:
+                pass
 
     def _prepare_reasoning_input(self, context: Dict[str, Any], memory_context: Dict[str, List]) -> Dict[str, Any]:
         """Assemble the minimal payload required by the baseline reasoner.

@@ -72,11 +72,17 @@ class POPSSInkCheckpointSelector:
         preserve_ratio: float = 0.3,
         enable_transformer: bool = True,
         activation_compress_ratio: float = 0.25,
+        adaptive_recomputation: bool = True,
+        compute_cost_threshold: float = 0.5,
+        activation_size_threshold: int = 1024 * 1024,
     ):
         self.checkpoint_ratio = checkpoint_ratio
         self.preserve_ratio = preserve_ratio
         self.enable_transformer = enable_transformer
         self.activation_compress_ratio = activation_compress_ratio
+        self.adaptive_recomputation = adaptive_recomputation
+        self.compute_cost_threshold = compute_cost_threshold
+        self.activation_size_threshold = activation_size_threshold
         
         self._layer_info: Dict[str, Dict[str, Any]] = {}
         self._checkpoint_layers: Set[str] = set()
@@ -231,9 +237,63 @@ class POPSSInkCheckpointSelector:
         
         self._non_checkpoint_layers = set(self._layer_info.keys()) - self._checkpoint_layers
         
+        if self.adaptive_recomputation:
+            self._adaptive_checkpoint_selection()
+        
         self._stats["checkpoint_layers"] = len(self._checkpoint_layers)
         
         return self._checkpoint_layers
+    
+    def _adaptive_checkpoint_selection(self):
+        """Apply adaptive checkpoint selection based on compute cost and activation size.
+        
+        This method refines the checkpoint selection by considering:
+        - Compute cost: Expensive layers are kept in GPU memory
+        - Activation size: Large activations are checkpointed for memory savings
+        
+        Decision logic:
+        - High compute cost + small activation -> Keep in GPU (not checkpointed)
+        - Low compute cost + large activation -> Checkpoint (recompute)
+        """
+        for name, info in self._layer_info.items():
+            if not info["is_transformer"]:
+                continue
+            
+            compute_cost = self._estimate_compute_cost(info)
+            activation_size = self._estimate_activation_size(info)
+            
+            if compute_cost > self.compute_cost_threshold and activation_size < self.activation_size_threshold:
+                if name in self._checkpoint_layers:
+                    self._checkpoint_layers.remove(name)
+                    self._non_checkpoint_layers.add(name)
+            else:
+                if name not in self._checkpoint_layers:
+                    self._checkpoint_layers.add(name)
+                    self._non_checkpoint_layers.discard(name)
+    
+    def _estimate_compute_cost(self, layer_info: Dict[str, Any]) -> float:
+        """Estimate compute cost normalized to [0, 1].
+        
+        Args:
+            layer_info: Layer information dictionary
+        
+        Returns:
+            Compute cost estimate in [0, 1]
+        """
+        param_count = layer_info["param_count"]
+        return min(1.0, param_count / 1e8)
+    
+    def _estimate_activation_size(self, layer_info: Dict[str, Any]) -> int:
+        """Estimate activation size in bytes.
+        
+        Args:
+            layer_info: Layer information dictionary
+        
+        Returns:
+            Estimated activation size in bytes
+        """
+        param_count = layer_info["param_count"]
+        return param_count * 4
     
     def apply_checkpoint(
         self,

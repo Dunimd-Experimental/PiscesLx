@@ -1449,8 +1449,8 @@ class YvModel(nn.Module):
 
         t = x.shape[1]
         lm_seq_len = x.shape[1]
-        mask = torch.full((t, t), float('-inf'), device=x.device, dtype=x.dtype)
-        mask = torch.triu(mask, diagonal=1)
+        
+        mask = torch.triu(torch.full((t, t), float('-inf'), device=x.device, dtype=x.dtype), diagonal=1)
 
         total_aux_loss = 0.0
         chunk_size = min(getattr(self.cfg, 'max_position_embeddings', 2048), 8192)
