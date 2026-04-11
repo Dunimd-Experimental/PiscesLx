@@ -216,6 +216,8 @@ python manage.py help
 | mcp       | MCP tool management (status / warmup / refresh-cache)              |
 | watermark | Watermark detection (text/file/image/audio/video/model weights)    |
 | action    | Background process management (submit/status/control)              |
+| dev       | Developer mode for training (vim-style command interface)          |
+| cache     | Cache management for .pisceslx directory                           |
 | help      | Show help information                                              |
 
 ### Quick Experience
@@ -316,6 +318,15 @@ python manage.py action recover <run_id> --checkpoint runs/<run_id>/ckpt.pt
 python manage.py dev enable    # Enable developer mode
 python manage.py dev disable   # Disable developer mode
 python manage.py dev status    # Check developer mode status
+
+# Available commands during training:
+#   Memory: :mem, :mem-gpu, :mem-cpu
+#   Model: :layer, :layers, :grad, :grad-norm
+#   Training: :pause, :resume, :save, :lr, :batch
+#   Config: :config, :config-model, :config-data
+#   Monitoring: :watch, :watch-clear, :profile
+#   Intervention: :inject, :freeze, :unfreeze, :nan-check
+#   Other: :help, :q
 
 # Cache management for .pisceslx directory
 python manage.py cache         # Show cache status

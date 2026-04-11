@@ -283,13 +283,15 @@ class POPSSFlashAttention3Operator(PiscesLxOperatorInterface):
         key = key.transpose(1, 2)
         value = value.transpose(1, 2)
         
+        is_training = torch.is_grad_enabled() and self.config.dropout > 0
+        
         if hasattr(F, 'scaled_dot_product_attention'):
             is_causal = self.config.causal and mask is None
             
             output = F.scaled_dot_product_attention(
                 query, key, value,
                 attn_mask=mask,
-                dropout_p=self.config.dropout if self.training else 0.0,
+                dropout_p=self.config.dropout if is_training else 0.0,
                 is_causal=is_causal,
                 scale=self.config.softmax_scale
             )
@@ -308,7 +310,7 @@ class POPSSFlashAttention3Operator(PiscesLxOperatorInterface):
                 attn_weights = attn_weights.masked_fill(mask == 0, float('-inf'))
             
             attn_probs = F.softmax(attn_weights, dim=-1)
-            if self.config.dropout > 0 and self.training:
+            if is_training:
                 attn_probs = F.dropout(attn_probs, p=self.config.dropout)
             
             output = torch.matmul(attn_probs, value)

@@ -536,14 +536,8 @@ class _QualityAwareFusion(nn.Module):
         attention_mask = []
         for feat in modality_features:
             if feat.size(1) < max_len:
-                padding = torch.zeros(
-                    batch_size,
-                    max_len - feat.size(1),
-                    self.hidden_size,
-                    device=feat.device,
-                    dtype=feat.dtype
-                )
-                padded = torch.cat([feat, padding], dim=1)
+                pad_len = max_len - feat.size(1)
+                padded = F.pad(feat, (0, 0, 0, pad_len), value=0.0)
                 mask = torch.ones(batch_size, max_len, dtype=torch.bool, device=feat.device)
                 mask[:, :feat.size(1)] = False
             else:

@@ -22,13 +22,11 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-PiscesLx Developer Mode Manager.
+PiscesLx Developer Mode Manager - Refactored with Log Handler Integration.
 
 This module implements the global singleton manager for the developer mode,
-providing centralized control over developer mode state and settings.
-
-The manager reads/writes the settings file at .pisceslx/settings/settings.yaml
-and provides methods to enable, disable, and check the developer mode status.
+providing centralized control over developer mode state, settings, and
+log capture for the UI.
 
 Architecture:
     The PiscesLxDevModeManager follows the singleton pattern to ensure a single
@@ -38,6 +36,7 @@ Architecture:
     2. State Management: Tracks whether developer mode is enabled
     3. UI Integration: Provides reference to the UI component when attached
     4. Trainer Binding: Maintains reference to the training operator
+    5. Log Capture: Integrates with logging system to capture training logs
 
 Usage:
     Get the singleton instance:
@@ -52,10 +51,14 @@ Usage:
         >>> manager.enable()   # Writes settings.yaml
         >>> manager.disable()  # Writes settings.yaml
     
+    Start UI before training:
+        >>> manager.start_ui()  # Start Live display before training
+    
     Attach to trainer:
         >>> manager.attach(trainer)
 """
 
+import logging
 import os
 import threading
 from pathlib import Path
@@ -70,12 +73,47 @@ from utils.dc import PiscesLxLogger
 _LOG = PiscesLxLogger("PiscesLx.Tools.Dev", file_path=get_log_file("PiscesLx.Tools.Dev"), enable_file=True)
 
 
+class PiscesLxDevModeLogCapture(logging.Handler):
+    """
+    Logging handler that captures log records for display in the developer mode UI.
+    
+    This handler intercepts all log records and forwards them to the UI's
+    log handler for real-time display.
+    
+    Attributes:
+        _ui: Reference to the PiscesLxDevModeUI instance
+        _formatter: Log formatter for consistent output
+    """
+    
+    def __init__(self, ui: Any):
+        super().__init__()
+        self._ui = ui
+        self._formatter = logging.Formatter(
+            '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s',
+            datefmt='%H:%M:%S'
+        )
+    
+    def emit(self, record: logging.LogRecord) -> None:
+        """
+        Emit a log record to the UI.
+        
+        Args:
+            record: The log record to emit
+        """
+        try:
+            formatted = self._formatter.format(record)
+            if hasattr(self._ui, 'add_log'):
+                self._ui.add_log(formatted)
+        except Exception:
+            pass
+
+
 class PiscesLxDevModeManager:
     """
     Global singleton manager for PiscesL1 developer mode.
     
     This class provides centralized control over the developer mode feature,
-    managing settings persistence and state across the application.
+    managing settings persistence, UI lifecycle, and log capture.
     
     The manager uses a singleton pattern to ensure only one instance exists,
     which is important for maintaining consistent state across different
@@ -88,6 +126,8 @@ class PiscesLxDevModeManager:
         _settings_path: Path to the settings.yaml file
         _trainer: Reference to the attached training operator
         _ui: Reference to the UI component
+        _log_capture: Log capture handler
+        _paused: Whether training is paused
     
     Example:
         >>> manager = PiscesLxDevModeManager.get_instance()
@@ -132,6 +172,8 @@ class PiscesLxDevModeManager:
         self._trainer: Optional[Any] = None
         self._ui: Optional[Any] = None
         self._paused = False
+        self._log_capture: Optional[PiscesLxDevModeLogCapture] = None
+        self._commands: Optional[Any] = None
         
         self._load_settings()
         self._initialized = True
@@ -272,7 +314,102 @@ class PiscesLxDevModeManager:
         if self._enabled:
             self._enabled = False
             self._save_settings()
+            self._stop_ui()
             _LOG.info("Developer mode disabled")
+    
+    def start_ui(self) -> None:
+        """
+        Start the developer mode UI before training begins.
+        
+        This method initializes and starts the UI with Live display,
+        and sets up log capture to intercept training logs.
+        
+        Should be called BEFORE training starts to ensure the UI
+        is ready to capture logs from the beginning.
+        
+        Side Effects:
+            - Creates UI instance
+            - Starts Live display
+            - Attaches log capture handler
+        """
+        if not self._enabled:
+            return
+        
+        if self._ui is not None:
+            return
+        
+        try:
+            from .ui import PiscesLxDevModeUI
+            from .commands import PiscesLxDevModeCommands
+            
+            self._ui = PiscesLxDevModeUI(self)
+            self._commands = PiscesLxDevModeCommands(self)
+            
+            self._ui.register_callback('command', self._handle_command)
+            self._ui.start()
+            
+            self._setup_log_capture()
+            
+            _LOG.info("Developer mode UI started with Live display and log capture")
+        except Exception as e:
+            _LOG.error("Failed to start UI", error=str(e))
+            self._ui = None
+    
+    def _setup_log_capture(self) -> None:
+        """
+        Setup log capture to intercept training logs.
+        
+        This method attaches a log handler to the root logger to capture
+        all training logs for display in the UI.
+        """
+        if self._ui is None:
+            return
+        
+        try:
+            self._log_capture = PiscesLxDevModeLogCapture(self._ui)
+            self._log_capture.setLevel(logging.DEBUG)
+            
+            root_logger = logging.getLogger()
+            root_logger.addHandler(self._log_capture)
+            
+            _LOG.debug("Log capture handler attached to root logger")
+        except Exception as e:
+            _LOG.warning("Failed to setup log capture", error=str(e))
+    
+    def _teardown_log_capture(self) -> None:
+        """
+        Remove log capture handler from root logger.
+        """
+        if self._log_capture is not None:
+            try:
+                root_logger = logging.getLogger()
+                root_logger.removeHandler(self._log_capture)
+                self._log_capture = None
+                _LOG.debug("Log capture handler removed from root logger")
+            except Exception as e:
+                _LOG.warning("Failed to teardown log capture", error=str(e))
+    
+    def _handle_command(self, command: str) -> None:
+        """
+        Handle a command from the UI.
+        
+        Args:
+            command: The command string to execute
+        """
+        if self._commands is None:
+            return
+        
+        try:
+            result, is_overlay = self._commands.execute(command, self._trainer)
+            
+            if result and is_overlay:
+                if self._ui is not None:
+                    self._ui.show_overlay(result)
+            elif result:
+                if self._ui is not None:
+                    self._ui.set_status(result)
+        except Exception as e:
+            _LOG.error("Failed to execute command", error=str(e))
     
     def attach(self, trainer: Any) -> None:
         """
@@ -286,13 +423,9 @@ class PiscesLxDevModeManager:
         
         Side Effects:
             - Sets self._trainer reference
-            - Initializes UI if developer mode is enabled
         """
         self._trainer = trainer
         _LOG.info("Attached to trainer", trainer_type=type(trainer).__name__)
-        
-        if self._enabled:
-            self._init_ui()
     
     def detach(self) -> None:
         """
@@ -305,6 +438,7 @@ class PiscesLxDevModeManager:
             - Stops UI if running
         """
         self._trainer = None
+        self._teardown_log_capture()
         if self._ui is not None:
             self._stop_ui()
         _LOG.info("Detached from trainer")
@@ -313,9 +447,12 @@ class PiscesLxDevModeManager:
         """
         Initialize the developer mode UI.
         
-        This method creates and starts the UI component for the
-        command-line interface.
+        This method creates the UI component for the command-line interface.
+        Note: Use start_ui() instead for full initialization with Live display.
         """
+        if self._ui is not None:
+            return
+            
         try:
             from .ui import PiscesLxDevModeUI
             self._ui = PiscesLxDevModeUI(self)
@@ -330,6 +467,8 @@ class PiscesLxDevModeManager:
         
         This method stops and cleans up the UI component.
         """
+        self._teardown_log_capture()
+        
         if self._ui is not None:
             try:
                 if hasattr(self._ui, 'stop'):
@@ -338,6 +477,7 @@ class PiscesLxDevModeManager:
                 _LOG.warning("Error stopping UI", error=str(e))
             finally:
                 self._ui = None
+                self._commands = None
     
     def get_trainer(self) -> Optional[Any]:
         """
@@ -357,6 +497,15 @@ class PiscesLxDevModeManager:
         """
         return self._ui
     
+    def get_commands(self) -> Optional[Any]:
+        """
+        Get the commands instance.
+        
+        Returns:
+            Optional[Any]: The commands instance, or None if not initialized
+        """
+        return self._commands
+    
     def is_paused(self) -> bool:
         """
         Check if training is paused.
@@ -374,6 +523,8 @@ class PiscesLxDevModeManager:
         the training loop to suspend training.
         """
         self._paused = True
+        if self._ui is not None:
+            self._ui.set_status("PAUSED - Type :resume to continue")
         _LOG.info("Training paused via developer mode")
     
     def resume(self) -> None:
@@ -383,6 +534,8 @@ class PiscesLxDevModeManager:
         This method clears the paused flag, allowing training to continue.
         """
         self._paused = False
+        if self._ui is not None:
+            self._ui.set_status("Training resumed")
         _LOG.info("Training resumed via developer mode")
     
     def get_status(self) -> Dict[str, Any]:
@@ -397,5 +550,6 @@ class PiscesLxDevModeManager:
             'paused': self._paused,
             'attached': self._trainer is not None,
             'ui_active': self._ui is not None,
+            'log_capture_active': self._log_capture is not None,
             'settings_path': self._settings_path
         }

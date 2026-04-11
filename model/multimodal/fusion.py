@@ -202,7 +202,7 @@ class YvDynamicModalFusion(nn.Module):
         self._generation_cache: Dict[str, torch.Tensor] = {}
 
     def _signature(self, features: Dict[str, Optional[torch.Tensor]]) -> str:
-        """Summarize modality presence into a cache signature string.
+        """Summarize modality presence and tensor shapes into a cache signature string.
         
         Creates a unique identifier for the current modality configuration
         to enable caching of previously computed fusion outputs.
@@ -212,11 +212,19 @@ class YvDynamicModalFusion(nn.Module):
                 Keys are modality names, values are feature tensors or None.
         
         Returns:
-            str: Colon-delimited presence signature, e.g., ``"text:1:image:0"``.
+            str: Colon-delimited presence signature with shape info.
+                e.g., ``"text:1:128:image:0:0"``.
                 Used as cache key for weight_cache lookup.
         """
-        present = [f"{m}:{1 if (features.get(m) is not None) else 0}" for m in self.modalities]
-        return ":".join(present)
+        parts = []
+        for m in self.modalities:
+            feat = features.get(m)
+            if feat is not None and isinstance(feat, torch.Tensor):
+                seq_len = feat.shape[1] if feat.dim() >= 2 else 0
+                parts.append(f"{m}:1:{seq_len}:{feat.dtype}:{feat.device.type}")
+            else:
+                parts.append(f"{m}:0:0")
+        return ":".join(parts)
 
     def generate_modality(self, target_modal: str, prompt_tokens: Optional[torch.Tensor] = None,
                           temperature: float = 1.0, top_k: Optional[int] = None) -> torch.Tensor:

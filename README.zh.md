@@ -216,6 +216,8 @@ python manage.py help
 | mcp        | MCP 工具管理（status / warmup / refresh-cache） |
 | watermark  | 水印检测（文本/文件/图像/音频/视频/模型权重）                    |
 | action     | 后台进程管理（提交/状态/控制）                                   |
+| dev        | 开发者模式（训练时的vim风格命令界面）                            |
+| cache      | 缓存管理（.pisceslx目录）                                        |
 | help       | 显示帮助信息                                                     |
 
 ### 快速体验
@@ -316,6 +318,15 @@ python manage.py action recover <run_id> --checkpoint runs/<run_id>/ckpt.pt
 python manage.py dev enable    # 启用开发者模式
 python manage.py dev disable   # 禁用开发者模式
 python manage.py dev status    # 查看开发者模式状态
+
+# 训练时可用的命令:
+#   内存: :mem, :mem-gpu, :mem-cpu
+#   模型: :layer, :layers, :grad, :grad-norm
+#   训练: :pause, :resume, :save, :lr, :batch
+#   配置: :config, :config-model, :config-data
+#   监控: :watch, :watch-clear, :profile
+#   干预: :inject, :freeze, :unfreeze, :nan-check
+#   其他: :help, :q
 
 # 缓存管理（.pisceslx目录）
 python manage.py cache         # 显示缓存状态

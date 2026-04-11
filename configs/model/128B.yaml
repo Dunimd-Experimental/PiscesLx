@@ -78,6 +78,17 @@ use_gradient_checkpointing: true
 use_pre_norm: true
 attention_dropout: 0.0
 
+# Attention Residuals Configuration (Kimi AttnRes, arXiv:2603.15031, 2026)
+# Replaces fixed-weight residual accumulation with dynamic attention-based aggregation
+use_attn_res: true
+attn_res_block_size: 8
+attn_res_use_two_phase: true
+attn_res_use_online_softmax: true
+attn_res_cache_pipeline: true
+attn_res_max_blocks: 32
+attn_res_learnable_query: true
+attn_res_use_rmsnorm: true
+
 training_config:
   learning_rate: 6.0e-6
   weight_decay: 0.01
@@ -265,6 +276,12 @@ flagship_level: 0.9
 dsa_sparse_ratio: 0.42
 dsa_importance_threshold: 0.1
 dsa_use_dynamic: true
+
+use_hisa_attention: true
+hisa_block_size: 64
+hisa_superblock_size: 512
+hisa_local_ratio: 0.4
+hisa_block_ratio: 0.3
 
 thinking_intensity: 0.75
 complexity_threshold_low: 0.3

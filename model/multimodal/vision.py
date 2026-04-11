@@ -462,6 +462,7 @@ class YvVisionEncoder(nn.Module):
         self.hidden_size = cfg.hidden_size
         self.num_heads = cfg.n_head
         self.num_layers = cfg.n_layer
+        self.cache_manager = cache_manager
         _LOG.debug(f"VisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         # Register mean values for normalization - use float32 for stability
         self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(1, 3, 1, 1))
@@ -480,64 +481,7 @@ class YvVisionEncoder(nn.Module):
             self.visual_text_processor = self._create_visual_text_processor()
             _LOG.info("H-Network visual text processor initialized")
 
-    def _create_visual_text_processor(self):
-        """Instantiate a processor specialized for rendered text inputs.
-        
-        Creates a YvVisualTextProcessor instance configured for
-        high-contrast text image processing.
-        
-        Returns:
-            YvVisualTextProcessor: Text image processor instance.
-        """
-        return YvVisualTextProcessor(self.hidden_size, self.patch_size)
-
-    def process_visual_text(self, text_images: torch.Tensor) -> torch.Tensor:
-        """Project rendered text images into embeddings via the text processor.
-        
-        Routes text images through the specialized visual text processor
-        for H-Network tokenization support. Requires h_network_enabled
-        in configuration.
-        
-        Args:
-            text_images (torch.Tensor): Input tensor shaped ``[B, C, H, W]``.
-                Expected to be rendered text images with high contrast.
-        
-        Returns:
-            torch.Tensor: Token embeddings shaped ``[B, N, hidden_size]``.
-        
-        Raises:
-            RuntimeError: If the visual text processor has not been enabled via
-                ``cfg.h_network_enabled``.
-        """
-        if self.visual_text_processor is None:
-            raise RuntimeError("Visual text processor not initialized. Enable h_network_enabled in config.")
-
-        return self.visual_text_processor(text_images)
-
-    def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        """Encode images or rendered text into stabilized vision embeddings.
-        
-        Main entry point for vision encoding. Routes to either standard
-        image processing or visual text processing based on kwargs.
-        
-        Args:
-            x (torch.Tensor): Input tensor shaped ``[B, C, H, W]``.
-            **kwargs: Optional flags including:
-                - is_visual_text (bool): Route through text processor.
-                - video_shape (Tuple[int, int, int]): Video shape for 3D RoPE.
-        
-        Returns:
-            torch.Tensor: Clamped vision features respecting ``hidden_size``.
-                Shape depends on input and processing mode.
-        
-        Note:
-            Output is clamped to [-10.0, 10.0] for numerical stability.
-        """
-        if kwargs.get('is_visual_text', False) and self.visual_text_processor is not None:
-            return self.process_visual_text(x)
-
-        output = self._standard_forward(x)
-        return torch.clamp(output, -10.0, 10.0)
+        # Initialize all components that were previously in dead code after return statement
         max_patches_h = 1024 // self.patch_size
         max_patches_w = 1024 // self.patch_size
         self.pos_embed = nn.Parameter(torch.randn(1, max_patches_h * max_patches_w, self.hidden_size))
@@ -761,69 +705,80 @@ class YvVisionEncoder(nn.Module):
             nn.SiLU(),
             nn.Linear(self.hidden_size, self.hidden_size)
         )
-    
+
+    def _create_visual_text_processor(self):
+        """Instantiate a processor specialized for rendered text inputs.
+        
+        Creates a YvVisualTextProcessor instance configured for
+        high-contrast text image processing.
+        
+        Returns:
+            YvVisualTextProcessor: Text image processor instance.
+        """
+        return YvVisualTextProcessor(self.hidden_size, self.patch_size)
+
+    def process_visual_text(self, text_images: torch.Tensor) -> torch.Tensor:
+        """Project rendered text images into embeddings via the text processor.
+        
+        Routes text images through the specialized visual text processor
+        for H-Network tokenization support. Requires h_network_enabled
+        in configuration.
+        
+        Args:
+            text_images (torch.Tensor): Input tensor shaped ``[B, C, H, W]``.
+                Expected to be rendered text images with high contrast.
+        
+        Returns:
+            torch.Tensor: Token embeddings shaped ``[B, N, hidden_size]``.
+        
+        Raises:
+            RuntimeError: If the visual text processor has not been enabled via
+                ``cfg.h_network_enabled``.
+        """
+        if self.visual_text_processor is None:
+            raise RuntimeError("Visual text processor not initialized. Enable h_network_enabled in config.")
+
+        return self.visual_text_processor(text_images)
+
     def _lfq_encode(self, features: torch.Tensor) -> torch.Tensor:
-        """
-        LFQ encode features to discrete tokens.
-        
-        No explicit codebook required, direct discretization via sign function.
-        Based on Emu3 (Nature 2026) and Google/CMU research.
-        """
+        """LFQ encode features to discrete tokens without explicit codebook."""
         B, T, D = features.shape
-        
         features = features.view(B, T, self.lfq_num_codebooks, self.lfq_dim)
-        
         quantized = torch.sign(features) * torch.sqrt(torch.abs(features) + 1e-8)
         quantized = quantized * self.lfq_scales.view(1, 1, self.lfq_num_codebooks, self.lfq_dim)
-        
         binary = (quantized > 0).int()
         token_ids = torch.zeros(B, T, self.lfq_num_codebooks, dtype=torch.long, device=features.device)
-        for i in range(min(13, self.lfq_dim)):
+        bits_to_encode = min(self.lfq_dim, 13)
+        for i in range(bits_to_encode):
             token_ids = token_ids * 2 + binary[..., i]
-        
         return token_ids
-    
+
     def _lfq_decode(self, token_ids: torch.Tensor) -> torch.Tensor:
-        """
-        LFQ decode discrete tokens back to continuous features.
-        """
+        """LFQ decode discrete tokens back to continuous features."""
         B, T, num_codebooks = token_ids.shape
-        
         binary = torch.zeros(B, T, num_codebooks, self.lfq_dim, device=token_ids.device)
         temp_ids = token_ids.clone()
-        for i in range(min(13, self.lfq_dim)):
-            binary[..., 12 - i] = temp_ids % 2
+        bits_to_decode = min(self.lfq_dim, 13)
+        for i in range(bits_to_decode):
+            binary[..., bits_to_decode - 1 - i] = temp_ids % 2
             temp_ids = temp_ids // 2
-        
         features = binary.float() * 2 - 1
         features = features / (self.lfq_scales.view(1, 1, self.lfq_num_codebooks, self.lfq_dim) + 1e-8)
-        
         features = features.view(B, T, self.hidden_size)
-        
         return features
-    
+
     def _decode_from_tokens(self, tokens: torch.Tensor) -> torch.Tensor:
-        """
-        Decode tokens to image pixels for generation mode.
-        """
+        """Decode tokens to image pixels for generation mode."""
         features = self._lfq_decode(tokens)
-        
         features = self.generate_proj(features)
-        
         pixels = self.image_decoder(features)
-        
         B, T, _ = pixels.shape
         patch_size = self.patch_size
         pixels = pixels.view(B, T, 3, patch_size, patch_size)
-        
         return pixels
-    
+
     def encode_to_tokens(self, pixel_values: torch.Tensor) -> torch.Tensor:
-        """
-        Encode image to discrete tokens for NTP generation.
-        
-        Public method for external invocation.
-        """
+        """Encode image to discrete tokens for NTP generation."""
         result = self.forward(pixel_values, mode='understand')
         if isinstance(result, dict) and 'features' in result:
             features = result['features']
@@ -831,16 +786,7 @@ class YvVisionEncoder(nn.Module):
         return None
 
     def process_image(self, image_path, target_size=None):
-        """
-        Process an image from the given path, including normalization.
-
-        Args:
-            image_path (str): Path to the image file.
-            target_size (Optional[Tuple[int, int]]): Target size to resize the image. Defaults to None.
-
-        Returns:
-            Optional[torch.Tensor]: Processed image tensor. Returns None if an error occurs.
-        """
+        """Process an image from the given path, including normalization."""
         _LOG.debug(f"Processing image: {image_path}")
         try:
             with Image.open(image_path) as img:
@@ -855,17 +801,7 @@ class YvVisionEncoder(nn.Module):
             return None
 
     def interpolate_pos_encoding(self, pos_embed, h, w):
-        """
-        Interpolate position embeddings to match the given height and width.
-
-        Args:
-            pos_embed (torch.Tensor): Position embeddings.
-            h (int): Target height.
-            w (int): Target width.
-
-        Returns:
-            torch.Tensor: Interpolated position embeddings.
-        """
+        """Interpolate position embeddings to match the given height and width."""
         npatch = h * w
         N = pos_embed.shape[1] - 1
         if npatch == N:
@@ -885,7 +821,7 @@ class YvVisionEncoder(nn.Module):
         patch_pos_embed = patch_pos_embed.permute(0, 2, 3, 1).view(1, h0 * w0, dim)
         return torch.cat((class_pos_embed, patch_pos_embed), dim=1)
 
-    def forward(self, pixel_values, video_shape=None, mode='understand'):
+    def forward(self, pixel_values, video_shape=None, mode='understand', **kwargs):
         """
         Forward pass of the YvVisionEncoder.
 
@@ -893,10 +829,15 @@ class YvVisionEncoder(nn.Module):
             pixel_values (torch.Tensor): Input pixel values.
             video_shape (Optional[Tuple[int, int, int]]): Shape of the video (temporal, height, width). Defaults to None.
             mode (str): 'understand' for encoding, 'generate' for decoding.
+            **kwargs: Optional flags including:
+                - is_visual_text (bool): Route through text processor.
 
         Returns:
             Dict or torch.Tensor: Detection results or generated tokens.
         """
+        if kwargs.get('is_visual_text', False) and self.visual_text_processor is not None:
+            return self.process_visual_text(pixel_values)
+        
         if mode == 'generate':
             return self._decode_from_tokens(pixel_values)
         

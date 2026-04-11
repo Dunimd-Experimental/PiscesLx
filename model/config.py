@@ -315,6 +315,12 @@ class YvConfig:
     layerscale_init: float = 1e-5
     use_attn_res: bool = False
     attn_res_block_size: int = 8
+    attn_res_use_two_phase: bool = True
+    attn_res_use_online_softmax: bool = True
+    attn_res_cache_pipeline: bool = True
+    attn_res_max_blocks: int = 32
+    attn_res_learnable_query: bool = True
+    attn_res_use_rmsnorm: bool = True
 
     enable_dynamic_fusion: bool = True
     fusion_quality_threshold: float = 0.3
@@ -404,6 +410,12 @@ class YvConfig:
     dsa_sparse_ratio: float = 0.3
     dsa_importance_threshold: float = 0.1
     dsa_use_dynamic: bool = True
+
+    use_hisa_attention: bool = False
+    hisa_block_size: int = 64
+    hisa_superblock_size: int = 512
+    hisa_local_ratio: float = 0.4
+    hisa_block_ratio: float = 0.3
 
     thinking_intensity: float = 0.5
     complexity_threshold_low: float = 0.3

@@ -312,6 +312,12 @@ class YvBlockConfig:
     mod_routing_weight: float = 0.1
     use_attn_res: bool = False
     attn_res_block_size: int = 8
+    attn_res_use_two_phase: bool = True
+    attn_res_use_online_softmax: bool = True
+    attn_res_cache_pipeline: bool = True
+    attn_res_max_blocks: int = 32
+    attn_res_learnable_query: bool = True
+    attn_res_use_rmsnorm: bool = True
 
 
 class YvLayerScale(nn.Module):
@@ -1411,13 +1417,70 @@ class YvTransformerBlock(nn.Module):
         self._init_hybrid_ssm(cfg, device, dtype)
         
         # Attention Residuals for deep layer contribution balancing
+        # Based on Kimi Attention Residuals (arXiv:2603.15031, 2026)
+        # Replaces fixed-weight residual accumulation with dynamic attention-based aggregation
         self.use_attn_res = getattr(cfg, 'use_attn_res', False)
         if self.use_attn_res:
             self.attn_res_block_size = getattr(cfg, 'attn_res_block_size', 8)
-            self.attn_res_proj = nn.Linear(cfg.hidden_size, 1, bias=False, device=device, dtype=dtype)
-            self.attn_res_norm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
+            self.attn_res_use_two_phase = getattr(cfg, 'attn_res_use_two_phase', True)
+            self.attn_res_use_online_softmax = getattr(cfg, 'attn_res_use_online_softmax', True)
+            self.attn_res_cache_pipeline = getattr(cfg, 'attn_res_cache_pipeline', True)
+            self.attn_res_max_blocks = getattr(cfg, 'attn_res_max_blocks', 32)
+            self.attn_res_learnable_query = getattr(cfg, 'attn_res_learnable_query', True)
+            self.attn_res_use_rmsnorm = getattr(cfg, 'attn_res_use_rmsnorm', True)
+            
+            # Learnable query for attention-based residual aggregation
+            # Input-independent parameter for efficient parallel computation
+            if self.attn_res_learnable_query:
+                self.attn_res_query = nn.Parameter(
+                    torch.randn(1, 1, cfg.hidden_size, device=device, dtype=dtype) * 0.02
+                )
+            else:
+                self.register_buffer(
+                    'attn_res_query',
+                    torch.randn(1, 1, cfg.hidden_size, device=device, dtype=dtype) * 0.02,
+                    persistent=False
+                )
+            
+            # Key projection for block representations
+            self.attn_res_key_proj = nn.Linear(
+                cfg.hidden_size, cfg.hidden_size, bias=False, device=device, dtype=dtype
+            )
+            
+            # Value projection (optional, can use identity)
+            self.attn_res_value_proj = nn.Linear(
+                cfg.hidden_size, cfg.hidden_size, bias=False, device=device, dtype=dtype
+            )
+            
+            # Output projection
+            self.attn_res_out_proj = nn.Linear(
+                cfg.hidden_size, cfg.hidden_size, bias=False, device=device, dtype=dtype
+            )
+            
+            # Normalization layer
+            if self.attn_res_use_rmsnorm:
+                self.attn_res_norm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
+            else:
+                self.attn_res_norm = nn.LayerNorm(cfg.hidden_size, device=device, dtype=dtype)
+            
+            # Block-level representations cache
+            # Stores aggregated block outputs for efficient attention computation
             self.register_buffer('_attn_res_blocks', None, persistent=False)
+            self.register_buffer('_attn_res_block_count', torch.tensor(0, dtype=torch.long), persistent=False)
+            
+            # Online softmax state for two-phase computation
+            # Maintains running statistics for streaming aggregation
+            self.register_buffer('_online_softmax_m', None, persistent=False)
+            self.register_buffer('_online_softmax_n', None, persistent=False)
+            
+            # Pipeline cache for cross-stage communication
+            if self.attn_res_cache_pipeline:
+                self.register_buffer('_pipeline_cache', None, persistent=False)
+                self.register_buffer('_pipeline_ready', torch.tensor(False), persistent=False)
+            
+            # Partial block accumulation for current block
             self.register_buffer('_partial_block_sum', None, persistent=False)
+            self.register_buffer('_partial_block_count', torch.tensor(0, dtype=torch.long), persistent=False)
 
     def _init_parallel_block(self, cfg, device, dtype):
         """Initialize parallel attention-MLP block.
@@ -1690,6 +1753,10 @@ class YvTransformerBlock(nn.Module):
                         attr.router._is_checkpointing = is_checkpointing
                     if hasattr(attr, 'gate') and hasattr(attr.gate, '_is_checkpointing'):
                         attr.gate._is_checkpointing = is_checkpointing
+                    if hasattr(attr, 'experts'):
+                        for expert in attr.experts:
+                            if hasattr(expert, '_is_checkpointing'):
+                                expert._is_checkpointing = is_checkpointing
                     if hasattr(attr, 'mlp'):
                         mlp = attr.mlp
                         if mlp is not None:
@@ -1697,9 +1764,10 @@ class YvTransformerBlock(nn.Module):
                                 mlp.router._is_checkpointing = is_checkpointing
                             if hasattr(mlp, 'gate') and hasattr(mlp.gate, '_is_checkpointing'):
                                 mlp.gate._is_checkpointing = is_checkpointing
-                            for expert in getattr(mlp, 'experts', []):
-                                if hasattr(expert, '_is_checkpointing'):
-                                    expert._is_checkpointing = is_checkpointing
+                            if hasattr(mlp, 'experts'):
+                                for expert in mlp.experts:
+                                    if hasattr(expert, '_is_checkpointing'):
+                                        expert._is_checkpointing = is_checkpointing
 
     def forward(self, x, mask, past_key_values=None, use_cache=False):
         """Forward pass through the transformer block.
@@ -1785,7 +1853,13 @@ class YvTransformerBlock(nn.Module):
                     world_size = dist.get_world_size()
                     
                     compressed = attn_out.mean(dim=1)
-                    gathered = [torch.zeros_like(compressed) for _ in range(world_size)]
+                    
+                    if not hasattr(self, '_gather_buffer') or self._gather_buffer is None or self._gather_buffer[0].shape != compressed.shape:
+                        self._gather_buffer = [torch.zeros_like(compressed) for _ in range(world_size)]
+                    
+                    gathered = self._gather_buffer
+                    for g in gathered:
+                        g.zero_()
                     dist.all_gather(gathered, compressed)
                     
                     other_info = torch.stack(gathered).mean(dim=0)
@@ -1828,7 +1902,11 @@ class YvTransformerBlock(nn.Module):
         return x_out, aux_loss
 
     def _apply_attn_res(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply block-level attention residual aggregation.
+        """Apply block-level attention residual aggregation with two-phase computation.
+        
+        Implements Kimi Attention Residuals (arXiv:2603.15031, 2026):
+        - Phase 1 (Parallel): Compute attention over all blocks with input-independent query
+        - Phase 2 (Serial): Merge block-level attention with current block via Online-Softmax
         
         Args:
             x: Input tensor of shape [batch_size, seq_len, hidden_size].
@@ -1836,48 +1914,196 @@ class YvTransformerBlock(nn.Module):
         Returns:
             Aggregated tensor with attention-weighted block contributions.
         """
-        if self._attn_res_blocks is None or len(self._attn_res_blocks) == 0:
+        if self._attn_res_blocks is None or self._attn_res_block_count == 0:
             return x
         
-        blocks = list(self._attn_res_blocks) + [x]
-        V = torch.stack(blocks, dim=0)
-        K = self.attn_res_norm(V)
+        batch_size, seq_len, hidden_size = x.shape
+        device = x.device
+        dtype = x.dtype
         
-        logits = torch.einsum('d, n b t d -> n b t', 
-                              self.attn_res_proj.weight.squeeze(), K)
-        weights = logits.softmax(dim=0)
+        # Get number of blocks to attend over (limited by max_blocks)
+        num_blocks = min(self._attn_res_block_count.item(), self.attn_res_max_blocks)
+        if num_blocks == 0:
+            return x
         
-        h = torch.einsum('n b t, n b t d -> b t d', weights, V)
-        return h
+        # Phase 1: Parallel computation of block-level attention
+        # Query is input-independent, enabling efficient batched computation
+        query = self.attn_res_query.expand(batch_size, -1, -1)  # [B, 1, H]
+        
+        # Get block representations (most recent num_blocks)
+        if self._attn_res_blocks.shape[0] > num_blocks:
+            blocks = self._attn_res_blocks[-num_blocks:]  # [N, B, T, H]
+        else:
+            blocks = self._attn_res_blocks  # [N, B, T, H]
+        
+        # Normalize blocks for attention
+        blocks_flat = blocks.view(-1, hidden_size)  # [N*B*T, H]
+        blocks_norm = self.attn_res_norm(blocks_flat).view_as(blocks)  # [N, B, T, H]
+        
+        # Project keys and values
+        # Key projection: [N, B, T, H]
+        keys = self.attn_res_key_proj(blocks_norm)  # [N, B, T, H]
+        
+        # Value projection: [N, B, T, H]
+        values = self.attn_res_value_proj(blocks)  # [N, B, T, H]
+        
+        # Compute attention scores
+        # Query: [B, 1, H], Keys: [N, B, T, H]
+        # Reshape for batched matmul
+        query_expanded = query.unsqueeze(1)  # [B, 1, 1, H]
+        keys_transposed = keys.permute(1, 0, 2, 3)  # [B, N, T, H]
+        
+        # Compute attention logits: [B, N, T]
+        # Use scaled dot-product attention
+        scale = hidden_size ** -0.5
+        attn_logits = torch.matmul(
+            query_expanded.squeeze(1),  # [B, H]
+            keys_transposed.reshape(batch_size, -1, hidden_size).transpose(-1, -2)  # [B, H, N*T]
+        ) * scale  # [B, N*T]
+        
+        # Reshape back to [B, N, T]
+        attn_logits = attn_logits.view(batch_size, num_blocks, -1)
+        
+        if self.attn_res_use_two_phase and self.attn_res_use_online_softmax:
+            # Phase 2: Online Softmax for streaming aggregation
+            # Merge block-level attention with current block
+            
+            # Get current block representation
+            current_norm = self.attn_res_norm(x)  # [B, T, H]
+            current_key = self.attn_res_key_proj(current_norm)  # [B, T, H]
+            current_value = self.attn_res_value_proj(x)  # [B, T, H]
+            
+            # Compute attention for current block
+            current_logits = torch.matmul(
+                query.squeeze(1),  # [B, H]
+                current_key.transpose(-1, -2)  # [B, H, T]
+            ) * scale  # [B, T]
+            
+            # Online Softmax: merge previous blocks with current block
+            # m: running maximum, n: running normalization factor
+            if self._online_softmax_m is None:
+                # Initialize with current block
+                m_current = current_logits.max(dim=-1, keepdim=True)[0]  # [B, 1]
+                n_current = torch.exp(current_logits - m_current).sum(dim=-1, keepdim=True)  # [B, 1]
+                
+                # Update state
+                self._online_softmax_m = m_current
+                self._online_softmax_n = n_current
+            else:
+                # Get previous state
+                m_prev = self._online_softmax_m  # [B, 1]
+                n_prev = self._online_softmax_n  # [B, 1]
+                
+                # Compute new maximum
+                m_new = torch.maximum(m_prev, current_logits.max(dim=-1, keepdim=True)[0])
+                
+                # Update normalization factor
+                n_prev_scaled = n_prev * torch.exp(m_prev - m_new)
+                n_current = torch.exp(current_logits - m_new).sum(dim=-1, keepdim=True)
+                n_new = n_prev_scaled + n_current
+                
+                # Update state
+                self._online_softmax_m = m_new
+                self._online_softmax_n = n_new
+            
+            # Compute final attention weights
+            # For blocks: use stored m and n
+            m_final = self._online_softmax_m
+            n_final = self._online_softmax_n
+            
+            # Block attention weights
+            block_weights = torch.exp(attn_logits - m_final.unsqueeze(-1)) / (n_final.unsqueeze(-1) + 1e-8)
+            block_weights = block_weights / block_weights.sum(dim=-1, keepdim=True)  # Normalize
+            
+            # Current block weight
+            current_weight = torch.exp(current_logits - m_final) / (n_final + 1e-8)
+            current_weight = current_weight / current_weight.sum(dim=-1, keepdim=True)
+            
+            # Weighted aggregation
+            # Block contributions: [B, N, T] @ [N, B, T, H] -> [B, T, H]
+            block_contrib = torch.einsum('b n t, n b t h -> b t h', block_weights, values)
+            
+            # Current contribution: [B, T] @ [B, T, H] -> [B, T, H]
+            current_contrib = current_weight.unsqueeze(-1) * current_value
+            
+            # Combined output
+            aggregated = block_contrib + current_contrib
+        else:
+            # Standard softmax attention over blocks
+            attn_weights = F.softmax(attn_logits.view(batch_size, -1), dim=-1)
+            attn_weights = attn_weights.view(batch_size, num_blocks, -1)
+            
+            # Weighted sum: [B, N, T] @ [N, B, T, H] -> [B, T, H]
+            aggregated = torch.einsum('b n t, n b t h -> b t h', attn_weights, values)
+        
+        # Output projection
+        output = self.attn_res_out_proj(aggregated)
+        
+        return output
 
     def _update_attn_res_block(self, x: torch.Tensor) -> None:
-        """Update block representation at block boundaries.
+        """Update block representation at block boundaries with pipeline caching.
         
         Args:
-            x: Current hidden state tensor.
+            x: Current hidden state tensor [B, T, H].
         """
         if self.layer_idx < 0:
             return
-            
+        
+        # Check if we're at a block boundary
         if self.layer_idx % self.attn_res_block_size == 0:
-            if self._attn_res_blocks is None:
-                self._attn_res_blocks = torch.stack([x.detach()])
-            else:
-                new_block = x.detach().unsqueeze(0)
-                self._attn_res_blocks = torch.cat([self._attn_res_blocks, new_block], dim=0)
+            # Detach to prevent gradient flow through block storage
+            block_repr = x.detach()
             
+            # Update block count
+            self._attn_res_block_count += 1
+            
+            # Store block representation
+            if self._attn_res_blocks is None:
+                self._attn_res_blocks = block_repr.unsqueeze(0)  # [1, B, T, H]
+            else:
+                # Append new block
+                new_block = block_repr.unsqueeze(0)  # [1, B, T, H]
+                
+                # Limit memory by keeping only max_blocks
+                if self._attn_res_blocks.shape[0] >= self.attn_res_max_blocks:
+                    # Remove oldest block
+                    self._attn_res_blocks = torch.cat([
+                        self._attn_res_blocks[1:],
+                        new_block
+                    ], dim=0)
+                else:
+                    self._attn_res_blocks = torch.cat([
+                        self._attn_res_blocks,
+                        new_block
+                    ], dim=0)
+            
+            # Reset partial block accumulation
             self._partial_block_sum = None
+            self._partial_block_count.zero_()
+            
+            # Update pipeline cache if enabled
+            if self.attn_res_cache_pipeline:
+                # Store aggregated block for pipeline communication
+                self._pipeline_cache = block_repr
+                self._pipeline_ready.fill_(True)
 
     def _accumulate_partial_block(self, output: torch.Tensor) -> None:
-        """Accumulate output into partial block sum.
+        """Accumulate output into partial block sum for current block.
         
         Args:
-            output: Output tensor from attention or MLP layer.
+            output: Output tensor from attention or MLP layer [B, T, H].
         """
+        # Detach to prevent gradient flow
+        output_detached = output.detach()
+        
         if self._partial_block_sum is None:
-            self._partial_block_sum = output.detach().clone()
+            self._partial_block_sum = output_detached.clone()
         else:
-            self._partial_block_sum = self._partial_block_sum + output.detach()
+            self._partial_block_sum = self._partial_block_sum + output_detached
+        
+        # Update count
+        self._partial_block_count += 1
 
 
 class YvManifoldConstraint(nn.Module):

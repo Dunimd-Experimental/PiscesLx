@@ -159,7 +159,6 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         self._val_dataloader_factory: Optional[Callable] = None
         
         self._dev_mode_manager = None
-        self._dev_mode_commands = None
         self._dev_mode_ui = None
         
         self._init_dev_mode()
@@ -200,41 +199,39 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         
         This method checks if developer mode is enabled and sets up
         the necessary components for the vim-style command interface.
+        The UI is started immediately with Live display to capture
+        all subsequent logs.
         """
         try:
             from tools.dev.manager import PiscesLxDevModeManager
-            from tools.dev.commands import PiscesLxDevModeCommands
             
             self._dev_mode_manager = PiscesLxDevModeManager.get_instance()
             
             if self._dev_mode_manager.is_enabled():
-                self._dev_mode_commands = PiscesLxDevModeCommands(self._dev_mode_manager)
-                _LOG.info("Developer mode enabled for training orchestrator")
+                self._dev_mode_manager.start_ui()
+                _LOG.info("Developer mode enabled and UI started with Live display")
             else:
                 _LOG.debug("Developer mode disabled")
         except Exception as e:
             _LOG.warning(f"Failed to initialize developer mode: {e}")
             self._dev_mode_manager = None
-            self._dev_mode_commands = None
     
     def _start_dev_mode_ui(self) -> None:
         """
         Start developer mode UI before training engine initialization.
         
-        This method starts the UI thread first, allowing it to be ready
-        before the training engine starts. The UI runs in a background
-        thread and waits for commands.
+        This method ensures the UI is started with Live display before
+        training begins. The UI captures all subsequent logs.
+        
+        Note: UI is now started in _init_dev_mode() for earlier initialization.
+        This method is kept for compatibility and ensures UI is ready.
         """
         if self._dev_mode_manager is None or not self._dev_mode_manager.is_enabled():
             return
         
         try:
-            if self._dev_mode_commands is not None:
-                ui = self._dev_mode_manager.get_ui()
-                if ui is not None:
-                    ui.register_callback('command', self._handle_dev_command)
-                    ui.start()
-                    _LOG.info("Developer mode UI started")
+            self._dev_mode_manager.start_ui()
+            _LOG.info("Developer mode UI confirmed ready")
         except Exception as e:
             _LOG.warning(f"Failed to start developer mode UI: {e}")
     
@@ -266,30 +263,6 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             _LOG.info("Developer mode detached")
         except Exception as e:
             _LOG.warning(f"Failed to detach developer mode: {e}")
-    
-    def _handle_dev_command(self, command: str) -> None:
-        """
-        Handle a command from the developer mode UI.
-        
-        Args:
-            command: The command string to execute
-        """
-        if self._dev_mode_commands is None or self._dev_mode_manager is None:
-            return
-        
-        try:
-            result, is_overlay = self._dev_mode_commands.execute(command, self.trainer)
-            
-            if result and is_overlay:
-                ui = self._dev_mode_manager.get_ui()
-                if ui is not None:
-                    ui.show_overlay(result)
-            elif result:
-                ui = self._dev_mode_manager.get_ui()
-                if ui is not None:
-                    ui.set_status(result)
-        except Exception as e:
-            _LOG.error(f"Failed to execute dev command: {e}")
     
     def _check_dev_mode_pause(self) -> bool:
         """

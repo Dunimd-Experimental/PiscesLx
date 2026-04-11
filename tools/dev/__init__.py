@@ -22,16 +22,36 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-PiscesL1 Developer Mode Module.
+PiscesL1 Developer Mode Module - Refactored with Rich Live + Layout.
 
 This module provides an interactive developer mode for training debugging,
-featuring a vim-style command interface at the bottom of the training log display.
+featuring a vim-style command interface with true split-screen display.
+
+Architecture:
+    The UI uses Rich's Live display with Layout for persistent split-screen:
+    
+    +------------------------------------------+
+    |                                          |
+    |         Training Logs (scrollable)       |
+    |         Layout: logs (ratio=4)           |
+    |                                          |
+    +------------------------------------------+
+    | > _                                      |
+    | [Dev Mode] Type :help for commands       |
+    | Layout: command (size=3, fixed)          |
+    +------------------------------------------+
 
 Key Components:
-    - PiscesLxDevModeManager: Global singleton manager for developer mode
-    - PiscesLxDevModeUI: Terminal UI renderer with rich library
+    - PiscesLxDevModeManager: Global singleton manager with log capture
+    - PiscesLxDevModeUI: Terminal UI with Rich Live display
     - PiscesLxDevModeCommands: Command registry and executor
-    - PiscesLxDevModeOverlay: Temporary overlay display for command results
+    - PiscesLxDevModeLogCapture: Log handler for capturing training logs
+
+Key Improvements:
+    1. Live Display: Persistent UI that won't be overwritten by logs
+    2. Split Layout: Logs and command bar in separate regions
+    3. Blocking Input: Reliable keyboard capture via queue
+    4. Log Handler: Captures training logs for display
 
 Usage:
     Enable developer mode:

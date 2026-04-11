@@ -495,7 +495,7 @@ class YvSelectiveSSM(nn.Module):
         C: torch.Tensor,
         D: torch.Tensor
     ) -> torch.Tensor:
-        """Perform selective scan operation for SSM computation.
+        """Perform selective scan operation for SSM computation with vectorized implementation.
         
         Implements the recurrent state space model scan:
             h_t = exp(delta_t * A) * h_{t-1} + delta_t * B_t * u_t
@@ -513,8 +513,8 @@ class YvSelectiveSSM(nn.Module):
             Output tensor [batch, seq_len, d_inner].
         
         Note:
-            This is a reference implementation. For production use,
-            consider using optimized CUDA kernels for the scan operation.
+            Vectorized implementation using associative scan pattern.
+            For very long sequences, consider using optimized CUDA kernels.
         """
         batch_size, seq_len, d_inner = u.shape
         state_dim = A.shape[1]
@@ -522,15 +522,23 @@ class YvSelectiveSSM(nn.Module):
         deltaA = torch.exp(delta.unsqueeze(-1) * A.unsqueeze(0).unsqueeze(0))
         deltaB_u = delta.unsqueeze(-1) * B.unsqueeze(2) * u.unsqueeze(-1)
         
-        h = torch.zeros(batch_size, d_inner, state_dim, device=u.device, dtype=u.dtype)
-        ys = []
+        if seq_len <= 256:
+            h = torch.zeros(batch_size, d_inner, state_dim, device=u.device, dtype=u.dtype)
+            ys = []
+            for i in range(seq_len):
+                h = deltaA[:, i] * h + deltaB_u[:, i]
+                y = torch.sum(h * C[:, i].unsqueeze(1), dim=-1)
+                ys.append(y)
+            y = torch.stack(ys, dim=1)
+        else:
+            log_deltaA = delta.unsqueeze(-1) * A.unsqueeze(0).unsqueeze(0)
+            log_deltaA_cumsum = torch.cumsum(log_deltaA, dim=1)
+            scale = torch.exp(log_deltaA_cumsum)
+            scaled_deltaB_u = deltaB_u / (deltaA + 1e-8)
+            h_cumsum = torch.cumsum(scaled_deltaB_u, dim=1)
+            h = h_cumsum * scale
+            y = torch.sum(h * C.unsqueeze(1), dim=-1)
         
-        for i in range(seq_len):
-            h = deltaA[:, i] * h + deltaB_u[:, i]
-            y = torch.sum(h * C[:, i].unsqueeze(1), dim=-1)
-            ys.append(y)
-            
-        y = torch.stack(ys, dim=1)
         y = y + u * D.unsqueeze(0).unsqueeze(0)
         
         return y

@@ -723,14 +723,52 @@ class PiscesLxDevModeCommands:
         return "\n".join(lines), True
     
     def _cmd_inject(self, args: str, trainer: Any) -> Tuple[str, bool]:
-        """Force injection into model."""
+        """
+        Force injection into model parameters.
+        
+        Usage:
+            :inject <path> [operation]
+            
+        Operations:
+            zeros              - Fill with zeros
+            ones               - Fill with ones
+            freeze             - Freeze parameter (requires_grad=False)
+            unfreeze           - Unfreeze parameter (requires_grad=True)
+            <number>           - Fill with scalar value (e.g., 0.5)
+            normal(mean,std)   - Normal distribution N(mean, std)
+            uniform(a,b)       - Uniform distribution U(a, b)
+            xavier             - Xavier/Glorot initialization
+            kaiming            - Kaiming/He initialization
+            scale(factor)      - Multiply by factor
+            clip(min,max)      - Clip values to [min, max]
+            add(value)         - Add value to all elements
+            negate             - Negate all values
+            abs                - Take absolute value
+            sqrt               - Take square root
+            square             - Square all values
+            log                - Natural logarithm
+            exp                - Exponential
+            sin/cos/tan        - Trigonometric functions
+            relu/sigmoid/tanh  - Activation functions
+            copy <src_path>    - Copy from another parameter
+            
+        Examples:
+            :inject layer.5.weight zeros
+            :inject layer.5.weight 0.5
+            :inject layer.5.weight normal(0,0.02)
+            :inject layer.5.weight uniform(-0.1,0.1)
+            :inject layer.5.weight xavier
+            :inject layer.5.weight scale(0.5)
+            :inject layer.5.weight clip(-1,1)
+            :inject layer.5.weight copy layer.4.weight
+        """
         target = args.strip()
         if not target:
-            return "Usage: :inject <target> [value]", True
+            return "Usage: :inject <path> [operation]\nType :help inject for details", True
         
         parts = target.split(None, 1)
         param_path = parts[0]
-        value_str = parts[1] if len(parts) > 1 else None
+        operation = parts[1] if len(parts) > 1 else None
         
         model = self._get_model(trainer)
         if model is None:
@@ -743,6 +781,8 @@ class PiscesLxDevModeCommands:
             for part in parts_path[:-1]:
                 if hasattr(obj, part):
                     obj = getattr(obj, part)
+                elif part.isdigit() and isinstance(obj, (list, tuple)):
+                    obj = obj[int(part)]
                 else:
                     return f"Path not found: {param_path}", True
             
@@ -752,20 +792,201 @@ class PiscesLxDevModeCommands:
             
             param = getattr(obj, final_attr)
             
-            if value_str == 'zeros':
-                if isinstance(param, torch.nn.Parameter):
-                    param.data.zero_()
-                    return f"Set {param_path} to zeros", False
-            elif value_str == 'freeze':
-                param.requires_grad = False
-                return f"Frozen {param_path}", False
-            elif value_str == 'unfreeze':
-                param.requires_grad = True
-                return f"Unfrozen {param_path}", False
+            if not isinstance(param, (torch.Tensor, torch.nn.Parameter)):
+                return f"Target is not a tensor: {type(param).__name__}", True
             
-            return f"Current value of {param_path}: shape={param.shape if hasattr(param, 'shape') else 'N/A'}", True
+            if operation is None:
+                info = f"[PARAMETER INFO]\n"
+                info += f"Path: {param_path}\n"
+                info += f"Shape: {list(param.shape)}\n"
+                info += f"Dtype: {param.dtype}\n"
+                info += f"Device: {param.device}\n"
+                info += f"Requires grad: {param.requires_grad}\n"
+                info += f"Min: {param.data.min().item():.6f}\n"
+                info += f"Max: {param.data.max().item():.6f}\n"
+                info += f"Mean: {param.data.mean().item():.6f}\n"
+                info += f"Std: {param.data.std().item():.6f}\n"
+                info += f"Norm: {param.data.norm().item():.6f}\n"
+                info += "\nType :inject <path> <operation> to modify"
+                return info, True
+            
+            operation = operation.strip()
+            result_msg = self._apply_injection(param, param_path, operation, model)
+            return result_msg, False
+            
         except Exception as e:
-            return f"Error: {str(e)}", True
+            _LOG.error("Injection failed", path=param_path, operation=operation, error=str(e))
+            return f"Injection error: {str(e)}", True
+    
+    def _apply_injection(self, param: torch.Tensor, path: str, operation: str, model: Any) -> str:
+        """
+        Apply an injection operation to a parameter.
+        
+        Args:
+            param: The tensor/parameter to modify
+            path: Parameter path for logging
+            operation: The operation string to apply
+            model: Model reference for copy operations
+            
+        Returns:
+            str: Result message
+        """
+        import math
+        data = param.data if isinstance(param, torch.nn.Parameter) else param
+        
+        if operation == 'zeros':
+            data.zero_()
+            return f"Set {path} to zeros"
+        
+        elif operation == 'ones':
+            data.fill_(1.0)
+            return f"Set {path} to ones"
+        
+        elif operation == 'freeze':
+            param.requires_grad = False
+            return f"Frozen {path}"
+        
+        elif operation == 'unfreeze':
+            param.requires_grad = True
+            return f"Unfrozen {path}"
+        
+        elif operation == 'negate':
+            data.neg_()
+            return f"Negated {path}"
+        
+        elif operation == 'abs':
+            data.abs_()
+            return f"Applied abs to {path}"
+        
+        elif operation == 'sqrt':
+            data.sqrt_()
+            return f"Applied sqrt to {path}"
+        
+        elif operation == 'square':
+            data.square_()
+            return f"Squared {path}"
+        
+        elif operation == 'log':
+            data.log_()
+            return f"Applied log to {path}"
+        
+        elif operation == 'exp':
+            data.exp_()
+            return f"Applied exp to {path}"
+        
+        elif operation == 'sin':
+            data.sin_()
+            return f"Applied sin to {path}"
+        
+        elif operation == 'cos':
+            data.cos_()
+            return f"Applied cos to {path}"
+        
+        elif operation == 'tan':
+            data.tan_()
+            return f"Applied tan to {path}"
+        
+        elif operation == 'relu':
+            data.clamp_(min=0)
+            return f"Applied ReLU to {path}"
+        
+        elif operation == 'sigmoid':
+            data.sigmoid_()
+            return f"Applied sigmoid to {path}"
+        
+        elif operation == 'tanh':
+            data.tanh_()
+            return f"Applied tanh to {path}"
+        
+        elif operation == 'xavier':
+            std = math.sqrt(2.0 / (data.shape[0] + data.shape[-1] if data.dim() >= 2 else data.numel()))
+            data.normal_(0, std)
+            return f"Applied Xavier initialization to {path} (std={std:.6f})"
+        
+        elif operation == 'kaiming':
+            std = math.sqrt(2.0 / data.shape[0]) if data.dim() >= 1 else 1.0
+            data.normal_(0, std)
+            return f"Applied Kaiming initialization to {path} (std={std:.6f})"
+        
+        elif operation.startswith('normal(') and operation.endswith(')'):
+            params = operation[7:-1].split(',')
+            if len(params) != 2:
+                return "Invalid normal syntax. Use: normal(mean,std)"
+            mean = float(params[0].strip())
+            std = float(params[1].strip())
+            data.normal_(mean, std)
+            return f"Applied N({mean},{std}) to {path}"
+        
+        elif operation.startswith('uniform(') and operation.endswith(')'):
+            params = operation[8:-1].split(',')
+            if len(params) != 2:
+                return "Invalid uniform syntax. Use: uniform(a,b)"
+            a = float(params[0].strip())
+            b = float(params[1].strip())
+            data.uniform_(a, b)
+            return f"Applied U({a},{b}) to {path}"
+        
+        elif operation.startswith('scale(') and operation.endswith(')'):
+            factor = float(operation[6:-1])
+            data.mul_(factor)
+            return f"Scaled {path} by {factor}"
+        
+        elif operation.startswith('clip(') and operation.endswith(')'):
+            params = operation[6:-1].split(',')
+            if len(params) != 2:
+                return "Invalid clip syntax. Use: clip(min,max)"
+            min_val = float(params[0].strip())
+            max_val = float(params[1].strip())
+            data.clamp_(min_val, max_val)
+            return f"Clipped {path} to [{min_val},{max_val}]"
+        
+        elif operation.startswith('add(') and operation.endswith(')'):
+            value = float(operation[5:-1])
+            data.add_(value)
+            return f"Added {value} to {path}"
+        
+        elif operation.startswith('copy '):
+            src_path = operation[5:].strip()
+            src_param = self._get_param_by_path(model, src_path)
+            if src_param is None:
+                return f"Source parameter not found: {src_path}"
+            if src_param.shape != data.shape:
+                return f"Shape mismatch: {src_path} has shape {list(src_param.shape)}, {path} has shape {list(data.shape)}"
+            data.copy_(src_param.data if isinstance(src_param, torch.nn.Parameter) else src_param)
+            return f"Copied {src_path} to {path}"
+        
+        else:
+            try:
+                value = float(operation)
+                data.fill_(value)
+                return f"Set {path} to {value}"
+            except ValueError:
+                return f"Unknown operation: {operation}\nType :help inject for available operations"
+    
+    def _get_param_by_path(self, model: Any, path: str) -> Optional[torch.Tensor]:
+        """
+        Get a parameter by its path.
+        
+        Args:
+            model: The model to search
+            path: Dot-separated path to the parameter
+            
+        Returns:
+            Optional[torch.Tensor]: The parameter tensor, or None if not found
+        """
+        try:
+            parts = path.split('.')
+            obj = model
+            for part in parts:
+                if hasattr(obj, part):
+                    obj = getattr(obj, part)
+                elif part.isdigit() and isinstance(obj, (list, tuple)):
+                    obj = obj[int(part)]
+                else:
+                    return None
+            return obj
+        except Exception:
+            return None
     
     def _cmd_freeze(self, args: str, trainer: Any) -> Tuple[str, bool]:
         """Freeze a layer or parameter."""
@@ -882,6 +1103,7 @@ class PiscesLxDevModeCommands:
                 'watch': ':watch <var> - Watch a variable\n  Example:\n    :watch optimizer.param_groups.0.lr',
                 'profile': ':profile [type] - Performance profiling\n  Types: gpu, cpu, memory\n  Example:\n    :profile gpu',
                 'freeze': ':freeze <layer> - Freeze parameters matching pattern\n  Example:\n    :freeze layer.5',
+                'inject': ':inject <path> [operation] - Inject into model parameters\n  Operations:\n    zeros, ones, freeze, unfreeze\n    <number> - Fill with value\n    normal(mean,std), uniform(a,b)\n    xavier, kaiming\n    scale(factor), clip(min,max), add(value)\n    negate, abs, sqrt, square, log, exp\n    sin, cos, tan, relu, sigmoid, tanh\n    copy <src_path>\n  Examples:\n    :inject layer.5.weight\n    :inject layer.5.weight zeros\n    :inject layer.5.weight 0.5\n    :inject layer.5.weight normal(0,0.02)\n    :inject layer.5.weight xavier\n    :inject layer.5.weight scale(0.5)\n    :inject layer.5.weight copy layer.4.weight',
             }
             
             if specific_cmd in help_texts:
