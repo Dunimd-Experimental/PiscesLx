@@ -37,6 +37,8 @@ from functools import lru_cache
 
 from model.tokenizer import YvTokenizer
 from utils.paths import get_cache_dir
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 from model.multimodal import (
     YvVisionEncoder as VisionEncoder,
     YvAudioEncoder as AudioEncoder,
@@ -64,6 +66,8 @@ VIDEO_KEYS = [
     "video_file", "video_input", "clip", "movie", "footage",
     "video_data", "frames_path", "video_frames_path"
 ]
+
+_LOG = PiscesLxLogger("PiscesLx.Data", file_path=get_log_file("PiscesLx.Data"), enable_file=True)
 
 
 @dataclass
@@ -255,8 +259,16 @@ class Dataset(TorchDataset):
             raise FileNotFoundError(f"Dataset cache not found at {cache_path}. Please run downloader to prepare local cache.")
 
         ds = load_from_disk(cache_path)
-        if isinstance(ds, dict) and self.split in ds:
-            ds = ds[self.split]
+        if hasattr(ds, 'keys'):
+            if self.split in ds:
+                ds = ds[self.split]
+            else:
+                available_splits = list(ds.keys()) if hasattr(ds, 'keys') else []
+                if available_splits:
+                    default_split = available_splits[0]
+                    _LOG.warning(f"Dataset split '{self.split}' not found. Using first available split: '{default_split}'")
+                    ds = ds[default_split]
+                    self.split = default_split
         self.ds = ds
 
         if self.max_samples is not None and len(self.ds) > self.max_samples:

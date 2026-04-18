@@ -154,6 +154,7 @@ class POPSSInkConfig(PiscesLxOperatorConfig):
     sparse_adaptive: bool = True
     ortho_momentum: float = 0.9
     
+    use_galore: bool = False
     galore_rank: int = 128
     galore_update_proj_gap: int = 200
     galore_quantization_bits: int = 8
@@ -164,10 +165,12 @@ class POPSSInkConfig(PiscesLxOperatorConfig):
     galore_memory_efficient: bool = False
     galore_moe_expert_only: bool = False
     
+    use_fp4: bool = False
     fp4_block_size: int = 16
     fp4_stochastic_rounding: bool = True
     fp4_master_weights_dtype: str = "fp32"
     
+    use_root_ortho: bool = False
     root_ortho_steps: int = 5
     root_soft_threshold: float = 0.1
     root_spectral_norm_clip: float = 1.0

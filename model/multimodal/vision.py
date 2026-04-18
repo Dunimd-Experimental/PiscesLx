@@ -491,23 +491,17 @@ class YvVisionEncoder(nn.Module):
             'layers': nn.ModuleList([
                 nn.ModuleDict({
                     'norm1': nn.LayerNorm(self.hidden_size),
-                    **({
-                        'attn_type': 'sdpa',
-                        'attn': nn.ModuleDict({
-                            'q': nn.Linear(self.hidden_size, self.hidden_size),
-                            'k': nn.Linear(self.hidden_size, self.hidden_size),
-                            'v': nn.Linear(self.hidden_size, self.hidden_size),
-                            'o': nn.Linear(self.hidden_size, self.hidden_size),
-                            'drop': nn.Dropout(getattr(cfg, 'attention_dropout', 0.0))
-                        })
-                    } if use_sdpa_vision else {
-                        'attn_type': 'mha',
-                        'attn': nn.MultiheadAttention(
-                            embed_dim=self.hidden_size,
-                            num_heads=self.num_heads,
-                            batch_first=True
-                        )
-                    }),
+                    'attn': nn.ModuleDict({
+                        'q': nn.Linear(self.hidden_size, self.hidden_size),
+                        'k': nn.Linear(self.hidden_size, self.hidden_size),
+                        'v': nn.Linear(self.hidden_size, self.hidden_size),
+                        'o': nn.Linear(self.hidden_size, self.hidden_size),
+                        'drop': nn.Dropout(getattr(cfg, 'attention_dropout', 0.0))
+                    }) if use_sdpa_vision else nn.MultiheadAttention(
+                        embed_dim=self.hidden_size,
+                        num_heads=self.num_heads,
+                        batch_first=True
+                    ),
                     'norm2': nn.LayerNorm(self.hidden_size),
                     'mlp': nn.Sequential(
                         nn.Linear(self.hidden_size, 4 * self.hidden_size),
@@ -902,7 +896,7 @@ class YvVisionEncoder(nn.Module):
             x = torch.cat([cls_tokens_video, patch_tokens], dim=1)
         for layer in self.transformer['layers']:
             x_norm = layer['norm1'](x)
-            if layer.get('attn_type', 'mha') == 'sdpa':
+            if isinstance(layer['attn'], nn.ModuleDict):
                 q_lin = layer['attn']['q'](x_norm)
                 k_lin = layer['attn']['k'](x_norm)
                 v_lin = layer['attn']['v'](x_norm)

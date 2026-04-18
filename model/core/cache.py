@@ -399,6 +399,7 @@ class YvCacheBlock:
         Note:
             Memory is allocated immediately upon initialization.
             The block starts empty with filled_size=0.
+            Automatically falls back to CPU if CUDA is unavailable.
         """
         self.block_id = block_id
         self.block_size = block_size
@@ -407,9 +408,26 @@ class YvCacheBlock:
         self.dtype = dtype
         self.device = device
 
-        self.key_cache = torch.zeros(1, n_heads, block_size, head_dim, dtype=dtype, device=device)
-        self.value_cache = torch.zeros(1, n_heads, block_size, head_dim, dtype=dtype, device=device)
+        actual_device = device
+        if device.startswith("cuda"):
+            if not torch.cuda.is_available():
+                actual_device = "cpu"
 
+        try:
+            self.key_cache = torch.zeros(1, n_heads, block_size, head_dim, dtype=dtype, device=actual_device)
+            self.value_cache = torch.zeros(1, n_heads, block_size, head_dim, dtype=dtype, device=actual_device)
+        except RuntimeError as e:
+            if "cuda" in str(e).lower() or "CUDA" in str(e):
+                if actual_device != "cpu":
+                    actual_device = "cpu"
+                    self.key_cache = torch.zeros(1, n_heads, block_size, head_dim, dtype=dtype, device="cpu")
+                    self.value_cache = torch.zeros(1, n_heads, block_size, head_dim, dtype=dtype, device="cpu")
+                else:
+                    raise
+            else:
+                raise
+
+        self.device = actual_device
         self.filled_size = 0
         self.ref_count = 0
         self.last_access_time = time.time()
@@ -571,7 +589,11 @@ class YvPagedCacheManager:
         self.sequence_blocks: Dict[int, List[int]] = {}
         self.block_tables: Dict[int, torch.Tensor] = {}
 
+        self._cpu_fallback_count = 0
         self._initialize_block_pool(min(1000, max_blocks))
+
+        if self._cpu_fallback_count > 0:
+            _LOG.warning(f"YvPagedCacheManager: {self._cpu_fallback_count} blocks fell back to CPU due to CUDA unavailability")
 
     def _initialize_block_pool(self, n_blocks: int):
         """Pre-allocate a pool of blocks for efficient allocation.
@@ -586,6 +608,9 @@ class YvPagedCacheManager:
             block = YvCacheBlock(
                 self.next_block_id, self.block_size, self.n_heads, self.head_dim, self.dtype, self.device
             )
+            if block.device != self.device and self.device.startswith("cuda"):
+                if block.device == "cpu":
+                    self._cpu_fallback_count += 1
             self.blocks[self.next_block_id] = block
             self.free_blocks.append(self.next_block_id)
             self.next_block_id += 1
@@ -680,13 +705,16 @@ class YvPagedCacheManager:
         
         Note:
             Block tables are used for fast lookup in attention kernels.
+            Block tables are created on the same device as the cache blocks.
         """
         if seq_id not in self.sequence_blocks:
             return
 
         block_ids = self.sequence_blocks[seq_id]
         if block_ids:
-            self.block_tables[seq_id] = torch.tensor(block_ids, dtype=torch.int32, device=self.device)
+            block = self.blocks[block_ids[0]]
+            actual_device = block.key_cache.device
+            self.block_tables[seq_id] = torch.tensor(block_ids, dtype=torch.int32, device=actual_device)
 
     def append(
         self,

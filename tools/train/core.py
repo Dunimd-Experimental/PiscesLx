@@ -619,7 +619,7 @@ class PiscesLxTrainingOperator(object):
                                 child.out_features,
                                 bias=child.bias is not None,
                                 quant_type=quant_type,
-                                compress_statistics=True,
+                                compress_statistics=False,
                                 compute_dtype=compute_dtype,
                             )
                             # Load float weights/bias first, then move the module to the target device.

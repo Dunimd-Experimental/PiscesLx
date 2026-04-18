@@ -1864,8 +1864,8 @@ class YvTransformerBlock(nn.Module):
                     
                     other_info = torch.stack(gathered).mean(dim=0)
                     attn_out = attn_out + 0.05 * other_info.unsqueeze(1)
-            except Exception:
-                pass
+            except Exception as e:
+                _LOG.debug(f"YvTransformerBlock: distributed attention gathering skipped: {e}")
             
         x_out = residual + self.residual_dropout(self.residual_scale * attn_out)
         x_out = self.norm1(x_out)
@@ -1957,7 +1957,7 @@ class YvTransformerBlock(nn.Module):
         # Use scaled dot-product attention
         scale = hidden_size ** -0.5
         attn_logits = torch.matmul(
-            query_expanded.squeeze(1),  # [B, H]
+            query_expanded.squeeze(1).to(keys_transposed.dtype),  # [B, H]
             keys_transposed.reshape(batch_size, -1, hidden_size).transpose(-1, -2)  # [B, H, N*T]
         ) * scale  # [B, N*T]
         
@@ -1975,7 +1975,7 @@ class YvTransformerBlock(nn.Module):
             
             # Compute attention for current block
             current_logits = torch.matmul(
-                query.squeeze(1),  # [B, H]
+                query.squeeze(1).to(current_key.dtype),  # [B, H]
                 current_key.transpose(-1, -2)  # [B, H, T]
             ) * scale  # [B, T]
             

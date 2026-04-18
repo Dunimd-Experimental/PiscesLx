@@ -21,84 +21,63 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-"""Yv Tokenizer Module - Multi-backend tokenization for the Yv architecture.
+"""Yv Tokenizer Module - Unified tokenization for the Yv architecture.
 
 This module provides comprehensive tokenization utilities for the Yv model,
-supporting multiple tokenization backends including BPE-based text tokenization
-and H-Network visual tokenization. It integrates seamlessly with the model's
-multimodal, reasoning, and agent capabilities.
+using the tokenizer.json format from tokenizer/ directory.
 
-Architecture Overview:
-    The tokenizer module is organized into four main components:
-    
+Architecture:
+    The tokenizer module is organized into three main components:
+
     1. **YvTokenizer** (tokenizer.py):
-       - Primary tokenizer interface with multiple backend support
-       - Supports Qwen3 tokenizer for 100+ language coverage
-       - Supports H-Network visual tokenizer for image-based processing
-       - Unified API for encode/decode operations
-    
+       - Unified tokenizer interface using GLM5.1 tokenizer.json
+       - Singleton pattern for efficient resource usage
+       - Full support for GLM special tokens and chat template
+       - Multimodal token support (vision, audio, video)
+
     2. **YvTokenizerBuilder** (builder.py):
-       - Factory class for creating and configuring tokenizers
-       - Supports training from corpus using BPE algorithm
-       - Supports loading pre-trained tokenizers
-       - Supports merging multiple tokenizers
-    
+       - Factory class for creating tokenizers
+       - Loading from pre-trained tokenizer directories
+       - BPE training from corpus (legacy support)
+
     3. **YvSpecialTokens** (special_tokens.py):
-       - Comprehensive special token definitions
-       - Categories: standard, multimodal, reasoning, agent, control
+       - Special token definitions for Yv architecture
        - Token-to-ID and ID-to-token mappings
-       - Serialization support for saving/loading
-    
-    4. **Backend Implementations**:
-       - _YvQwenTokenizer: Qwen3-based tokenizer with multimodal support
-       - _YvHNetworkTokenizer: Visual tokenizer for H-Network processing
+       - Serialization support
 
-Token Categories:
-    - **Standard Tokens**: BOS, EOS, PAD, UNK, MASK, SEP, CLS
-    - **Multimodal Tokens**: <image>, <audio>, <video>, <document>
-    - **Reasoning Tokens**: <think/>, <answer/>, <verify/>, <reasoning/>
-    - **Agent Tokens**: <tool/>, <action/>, <observation/>
-    - **Control Tokens**: Separators, masks, and structural markers
-
-Supported Backends:
-    - **qwen3**: Qwen3 tokenizer with 100+ language support (recommended)
-    - **h_network**: Visual tokenizer that renders text as images and
-      compresses them into visual token representations
+Special Tokens (Loaded from tokenizer_config.json):
+    =======================  =====================================
+    See tokenizer_config.json for complete list.
+    Categories: Native, Agentic, Vision, Audio, etc.
+    =======================  =====================================
 
 Example:
-    >>> from model.tokenizer import YvTokenizer, YvTokenizerBuilder
-    >>> 
-    >>> # Load pre-trained tokenizer
-    >>> tokenizer = YvTokenizerBuilder.from_pretrained("./tokenizers/base")
-    >>> 
-    >>> # Or create with specific backend
-    >>> tokenizer = YvTokenizer(tokenizer_type="qwen3")
-    >>> 
-    >>> # Encode and decode
+    >>> from model.tokenizer import YvTokenizer, get_tokenizer
+    >>>
+    >>> tokenizer = YvTokenizer()
+    >>>
     >>> tokens = tokenizer.encode("Hello, world!")
     >>> text = tokenizer.decode(tokens)
-    >>> print(f"Tokens: {tokens}, Decoded: {text}")
+    >>>
+    >>> messages = [{"role": "user", "content": "Hi"}]
+    >>> chat_text = tokenizer.apply_chat_template(messages)
 
 Dependencies:
-    - transformers: For Qwen3 tokenizer backend
-    - PIL/Pillow: For H-Network visual tokenization
+    - transformers: For AutoTokenizer
     - torch: For tensor operations
-    - numpy: For array operations
 
 Note:
-    The Qwen3 backend requires the transformers library and downloads
-    tokenizer files on first use. The H-Network backend provides a
-    fallback mechanism when visual processing fails.
+    The tokenizer uses tokenizer.json from the local tokenizer/ directory.
+    This file embeds vocabulary, merge rules, and configuration.
 """
 
-from .tokenizer import YvTokenizer, _YvQwenTokenizer, _YvHNetworkTokenizer
+from .tokenizer import YvTokenizer, get_tokenizer
 from .builder import YvTokenizerBuilder, YvTokenizerConfig
 from .special_tokens import YvSpecialTokens, YvSpecialTokenType
 
 __all__ = [
     "YvTokenizer",
-    "_YvQwenTokenizer",
-    "_YvHNetworkTokenizer",
+    "get_tokenizer",
     "YvTokenizerBuilder",
     "YvTokenizerConfig",
     "YvSpecialTokens",
