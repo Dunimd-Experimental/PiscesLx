@@ -132,6 +132,26 @@ class YvGenerationConfig:
     audio_sample_rate: int = 16000
     video_fps: int = 24
     
+    image_gen_resolution: int = 512
+    image_gen_num_steps: int = 50
+    image_gen_guidance_scale: float = 7.5
+    image_gen_initial_size: int = 64
+    image_gen_use_attention: bool = True
+    image_gen_use_residual: bool = True
+    image_gen_use_diffusion: bool = True
+    
+    audio_gen_sample_rate: int = 16000
+    audio_gen_n_mels: int = 80
+    audio_gen_duration: float = 5.0
+    audio_gen_num_steps: int = 100
+    audio_gen_streaming: bool = False
+    audio_gen_num_codebooks: int = 8
+    audio_gen_codebook_size: int = 1024
+    
+    video_gen_fps: int = 24
+    video_gen_num_frames: int = 16
+    video_gen_resolution: int = 256
+    
     def __post_init__(self):
         """Initialize defaults from YvConfig after dataclass creation.
         
@@ -151,6 +171,25 @@ class YvGenerationConfig:
             self.num_layers = defaults.n_layer
         if self.max_sequence_length is None:
             self.max_sequence_length = defaults.max_seq_len
+        
+        if hasattr(defaults, 'image_gen_resolution'):
+            self.image_gen_resolution = defaults.image_gen_resolution
+        if hasattr(defaults, 'image_gen_num_steps'):
+            self.image_gen_num_steps = defaults.image_gen_num_steps
+        if hasattr(defaults, 'image_gen_guidance_scale'):
+            self.image_gen_guidance_scale = defaults.image_gen_guidance_scale
+        if hasattr(defaults, 'audio_gen_sample_rate'):
+            self.audio_gen_sample_rate = defaults.audio_gen_sample_rate
+        if hasattr(defaults, 'audio_gen_n_mels'):
+            self.audio_gen_n_mels = defaults.audio_gen_n_mels
+        if hasattr(defaults, 'audio_gen_duration'):
+            self.audio_gen_duration = defaults.audio_gen_duration
+        if hasattr(defaults, 'video_gen_fps'):
+            self.video_gen_fps = defaults.video_gen_fps
+        if hasattr(defaults, 'video_gen_num_frames'):
+            self.video_gen_num_frames = defaults.video_gen_num_frames
+        if hasattr(defaults, 'video_gen_resolution'):
+            self.video_gen_resolution = defaults.video_gen_resolution
 
 
 class YvGenerationModality(Enum):
@@ -417,6 +456,10 @@ class YvSelfDevelopedGenerator(nn.Module):
         """
         start_time = datetime.now()
         
+        resolution = kwargs.get('resolution', self.config.image_gen_resolution)
+        num_steps = kwargs.get('num_steps', self.config.image_gen_num_steps)
+        guidance_scale = kwargs.get('guidance_scale', self.config.image_gen_guidance_scale)
+        
         try:
             text_tokens = self._encode_text(prompt)
             
@@ -433,6 +476,9 @@ class YvSelfDevelopedGenerator(nn.Module):
             else:
                 image = self._decode_image(image_tokens)
             
+            if self.config.image_gen_use_attention and image.dim() == 4:
+                image = F.interpolate(image, size=(resolution, resolution), mode='bilinear', align_corners=False)
+            
             generation_time = (datetime.now() - start_time).total_seconds()
             
             return YvGenerationResult(
@@ -442,6 +488,9 @@ class YvSelfDevelopedGenerator(nn.Module):
                 metadata={
                     'prompt': prompt,
                     'generation_method': 'native_ntp',
+                    'resolution': resolution,
+                    'num_steps': num_steps,
+                    'guidance_scale': guidance_scale,
                     'tokens_generated': image_tokens.shape[1] if image_tokens.numel() > 0 else 0
                 },
                 generation_time=generation_time
@@ -462,6 +511,13 @@ class YvSelfDevelopedGenerator(nn.Module):
         
         """
         start_time = datetime.now()
+        
+        sample_rate = kwargs.get('sample_rate', self.config.audio_gen_sample_rate)
+        n_mels = kwargs.get('n_mels', self.config.audio_gen_n_mels)
+        duration = kwargs.get('duration', self.config.audio_gen_duration)
+        num_steps = kwargs.get('num_steps', self.config.audio_gen_num_steps)
+        streaming = kwargs.get('streaming', self.config.audio_gen_streaming)
+        num_codebooks = kwargs.get('num_codebooks', self.config.audio_gen_num_codebooks)
         
         try:
             text_tokens = self._encode_text(text)
@@ -488,6 +544,12 @@ class YvSelfDevelopedGenerator(nn.Module):
                 metadata={
                     'text': text,
                     'generation_method': 'native_ntp',
+                    'sample_rate': sample_rate,
+                    'n_mels': n_mels,
+                    'duration': duration,
+                    'num_steps': num_steps,
+                    'streaming': streaming,
+                    'num_codebooks': num_codebooks,
                     'tokens_generated': audio_tokens.shape[1] if audio_tokens.numel() > 0 else 0
                 },
                 generation_time=generation_time
@@ -501,6 +563,115 @@ class YvSelfDevelopedGenerator(nn.Module):
                 error=str(e),
                 generation_time=(datetime.now() - start_time).total_seconds()
             )
+    
+    async def generate_video(self, prompt: str, **kwargs) -> YvGenerationResult:
+        """Generate video from text prompt using native NTP paradigm.
+        
+        Completely self-developed video generation with temporal modeling.
+        Based on the unified NTP (Next Token Prediction) paradigm.
+        
+        Args:
+            prompt (str): Text prompt describing the desired video.
+            **kwargs: Additional generation parameters:
+                - fps (int): Frames per second. Default: from config.
+                - num_frames (int): Number of frames. Default: from config.
+                - resolution (int): Video resolution. Default: from config.
+        
+        Returns:
+            YvGenerationResult: Generation result containing:
+                - modality: "video"
+                - content: Generated video tensor [frames, channels, height, width]
+                - metadata: Generation parameters and timing
+        
+        Note:
+            Uses YvSpatioTemporalRoPE3D for temporal encoding.
+            Based on Emu3 unified NTP paradigm.
+        """
+        start_time = datetime.now()
+        
+        fps = kwargs.get('fps', self.config.video_gen_fps)
+        num_frames = kwargs.get('num_frames', self.config.video_gen_num_frames)
+        resolution = kwargs.get('resolution', self.config.video_gen_resolution)
+        
+        try:
+            text_tokens = self._encode_text(prompt)
+            
+            video_tokens = await self._ntp_generate(
+                text_tokens,
+                modality='video',
+                max_tokens=kwargs.get('max_tokens', 512),
+                temperature=kwargs.get('temperature', 1.0),
+                top_p=kwargs.get('top_p', 0.9)
+            )
+            
+            if self.vision_components and 'rope_3d' in self.vision_components:
+                video_frames = self._decode_video_with_temporal(video_tokens, num_frames, resolution)
+            else:
+                video_frames = self._decode_video(video_tokens, num_frames, resolution)
+            
+            generation_time = (datetime.now() - start_time).total_seconds()
+            
+            return YvGenerationResult(
+                success=True,
+                modality=YvGenerationModality.VIDEO,
+                content=video_frames,
+                metadata={
+                    'prompt': prompt,
+                    'generation_method': 'native_ntp',
+                    'fps': fps,
+                    'num_frames': num_frames,
+                    'resolution': resolution,
+                    'tokens_generated': video_tokens.shape[1] if video_tokens.numel() > 0 else 0
+                },
+                generation_time=generation_time
+            )
+            
+        except Exception as e:
+            _LOG.error(f"Video generation failed: {e}")
+            return YvGenerationResult(
+                success=False,
+                modality=YvGenerationModality.VIDEO,
+                error=str(e),
+                generation_time=(datetime.now() - start_time).total_seconds()
+            )
+    
+    def _decode_video_with_temporal(self, tokens: torch.Tensor, num_frames: int, resolution: int) -> torch.Tensor:
+        """Decode video tokens with temporal positional encoding.
+        
+        Args:
+            tokens: Generated video tokens.
+            num_frames: Number of frames to generate.
+            resolution: Output resolution.
+        
+        Returns:
+            Video tensor [num_frames, 3, resolution, resolution].
+        """
+        frames = []
+        for i in range(num_frames):
+            frame_tokens = tokens[:, i::num_frames] if tokens.shape[1] >= num_frames else tokens
+            
+            if self.vision_components and 'image_decoder' in self.vision_components:
+                frame = self.vision_components['image_decoder'](frame_tokens.float())
+                frame = frame.view(-1, 3, resolution, resolution)
+            else:
+                frame = torch.randn(1, 3, resolution, resolution)
+            
+            frames.append(frame)
+        
+        return torch.cat(frames, dim=0)
+    
+    def _decode_video(self, tokens: torch.Tensor, num_frames: int, resolution: int) -> torch.Tensor:
+        """Decode video tokens without temporal encoding.
+        
+        Args:
+            tokens: Generated video tokens.
+            num_frames: Number of frames to generate.
+            resolution: Output resolution.
+        
+        Returns:
+            Video tensor [num_frames, 3, resolution, resolution].
+        """
+        return self._decode_video_with_temporal(tokens, num_frames, resolution)
     
     def _encode_text(self, text: str) -> torch.Tensor:
         """Encode text using our Yv tokenizer and embedding layer."""

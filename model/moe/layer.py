@@ -776,7 +776,7 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
             cfg,
             device=device,
             dtype=dtype,
-            num_shared_experts=getattr(cfg, 'moe_num_shared_experts', 1),
+            num_shared_experts=getattr(cfg, 'moe_shared_experts', getattr(cfg, 'moe_num_shared_experts', 0)),
             use_fine_grained=getattr(cfg, 'moe_fine_grained', True),
             num_sub_experts=getattr(cfg, 'moe_num_sub_experts', 4)
         )

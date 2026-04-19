@@ -78,6 +78,33 @@ use_gradient_checkpointing: true
 use_pre_norm: true
 attention_dropout: 0.0
 
+# ========================================
+# Algorithm Optimization Configuration
+# ========================================
+# QK Normalization: Stabilizes attention computation
+use_qk_norm: true
+
+# Label Smoothing: Prevents overfitting, improves generalization
+label_smoothing: 0.1
+
+# Learnable Attention Scale: Adaptive scaling for attention scores
+learnable_attention_scale: true
+
+# LayerScale Initialization: Stabilizes deep network training
+# Formula: init_value = 1e-7 for ultra-deep networks (120+ layers)
+layer_scale_init: 1.0e-7
+
+# Depth-Aware Initialization: Adjusts init std based on network depth
+# Formula: std = 1 / sqrt(2 * n_layer * hidden_size)
+depth_aware_init: true
+
+# Residual Alpha: Scales residual connections for stability
+# Formula: alpha = (2 * n_layer) ** 0.25 for DeepNorm-style stability
+residual_alpha: 3.31
+
+# Embedding Normalization Weight: Auxiliary loss for stable training
+embedding_norm_weight: 0.01
+
 # Attention Residuals Configuration (Kimi AttnRes, arXiv:2603.15031, 2026)
 # Replaces fixed-weight residual accumulation with dynamic attention-based aggregation
 use_attn_res: true

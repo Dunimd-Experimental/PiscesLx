@@ -768,7 +768,9 @@ class YvModel(nn.Module):
             acceptance_threshold=getattr(cfg, 'speculative_acceptance_threshold', 0.8),
             temperature=getattr(cfg, 'speculative_temperature', 0.7),
             top_k=getattr(cfg, 'speculative_top_k', 50),
-            top_p=getattr(cfg, 'speculative_top_p', 0.9)
+            top_p=getattr(cfg, 'speculative_top_p', 0.9),
+            tree_width=getattr(cfg, 'speculative_tree_width', 4),
+            tree_depth=getattr(cfg, 'speculative_tree_depth', 5)
         )
         self.speculative_decoder = YvAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
         _LOG.debug("YvModel: speculative decoder initialized")
@@ -787,6 +789,26 @@ class YvModel(nn.Module):
                 _LOG.debug("YvModel: LoRA adapters injected (peft)")
             except Exception as e:
                 _LOG.error(f"LoRA injection failed: {e}")
+
+        if getattr(cfg, 'depth_aware_init', True):
+            from ..core.norms import _depth_aware_init_weights
+            self.apply(lambda m: _depth_aware_init_weights(m, cfg.n_layer, cfg.hidden_size))
+            _LOG.debug("YvModel: depth-aware initialization applied")
+        
+        initializer_range = getattr(cfg, 'initializer_range', 0.02)
+        use_scaled_init = getattr(cfg, 'use_scaled_init', True)
+        if use_scaled_init and initializer_range != 0.02:
+            scaled_std = initializer_range / math.sqrt(cfg.n_layer)
+            for module in self.modules():
+                if hasattr(module, 'weight') and module.weight is not None:
+                    if module.weight.dim() >= 2:
+                        nn.init.normal_(module.weight, mean=0, std=scaled_std)
+            _LOG.debug(f"YvModel: scaled initialization applied (std={scaled_std:.6f})")
+        
+        if getattr(cfg, 'tie_word_embeddings', False):
+            if hasattr(self, 'lm_head') and hasattr(self, 'embed'):
+                self.lm_head.weight = self.embed.weight
+                _LOG.debug("YvModel: word embeddings tied")
 
         total_params = sum(p.numel() for p in self.parameters())
         _LOG.debug(f"YvModel: total parameters = {total_params/1e6:.2f}M")
@@ -1006,10 +1028,10 @@ class YvModel(nn.Module):
         self,
         input_ids: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
-        max_length: int = 100,
-        temperature: float = 0.7,
-        top_k: int = 50,
-        top_p: float = 0.9,
+        max_length: int = None,
+        temperature: float = None,
+        top_k: int = None,
+        top_p: float = None,
         use_speculative: bool = True,
         mode: str = 'auto',
         **kwargs
@@ -1036,10 +1058,10 @@ class YvModel(nn.Module):
         Args:
             input_ids: Input token IDs [batch, seq_len].
             attention_mask: Attention mask [batch, seq_len].
-            max_length: Maximum total sequence length. Default: 100.
-            temperature: Sampling temperature. Higher = more random. Default: 0.7.
-            top_k: Top-k sampling vocabulary size. Default: 50.
-            top_p: Nucleus sampling cumulative probability. Default: 0.9.
+            max_length: Maximum total sequence length. Default: from config.
+            temperature: Sampling temperature. Higher = more random. Default: from config.
+            top_k: Top-k sampling vocabulary size. Default: from config.
+            top_p: Nucleus sampling cumulative probability. Default: from config.
             use_speculative: Whether to use speculative decoding. Default: True.
             mode: Generation mode ('fast', 'thinking', 'auto'). Default: 'auto'.
             **kwargs: Additional generation parameters.
@@ -1065,6 +1087,11 @@ class YvModel(nn.Module):
             >>> print(f"Generated {generated.shape[1]} tokens")
             >>> print(f"Speedup: {stats['speedup']:.2f}x")
         """
+        max_length = max_length or getattr(self.cfg, 'generation_max_tokens', 100)
+        temperature = temperature if temperature is not None else getattr(self.cfg, 'generation_temperature', 0.7)
+        top_k = top_k if top_k is not None else getattr(self.cfg, 'generation_top_k', 50)
+        top_p = top_p if top_p is not None else getattr(self.cfg, 'generation_top_p', 0.9)
+        
         routing = 'fast'
         if mode == 'thinking':
             routing = 'thinking'

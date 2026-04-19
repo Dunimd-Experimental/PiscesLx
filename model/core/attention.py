@@ -2099,8 +2099,8 @@ class YvFlashAttention(nn.Module):
         
         if past_key_value is not None:
             past_k, past_v = past_key_value
-            k = torch.cat([past_k, k], dim=1)
-            v = torch.cat([past_v, v], dim=1)
+            k = torch.cat([past_k, k], dim=-2)
+            v = torch.cat([past_v, v], dim=-2)
             
         kv_seq_len = k.shape[1]
         
@@ -3378,7 +3378,8 @@ class YvDynamicH2OAttention(nn.Module):
                         level_q, level_k, level_v,
                         attn_mask=attn_mask,
                         dropout_p=self.dropout.p if self.training else 0.0,
-                        is_causal=False
+                        is_causal=False,
+                        softmax_scale=self.scale,
                     )
                     level_outputs[level_name] = level_out.reshape(batch_size, num_heads, window_size, head_dim)
             
@@ -3809,7 +3810,8 @@ class YvH2OAttention(nn.Module):
                 q, k, v,
                 attn_mask=attn_mask,
                 dropout_p=self.dropout.p if self.training else 0.0,
-                is_causal=False
+                is_causal=False,
+                softmax_scale=self.scale,
             )
             window_output = window_output.reshape(batch_size, num_heads, window_size, head_dim)
             
@@ -4532,20 +4534,30 @@ class YvAttention(nn.Module):
         self.n_head = cfg.n_head
         self.n_kv_head = getattr(cfg, 'n_kv_head', cfg.n_head)
         self.head_dim = cfg.hidden_size // cfg.n_head
-        self.scale = getattr(cfg, 'attention_scale', None) or (self.head_dim ** -0.5)
+        
+        self.learnable_attention_scale = bool(getattr(cfg, 'learnable_attention_scale', True))
+        if self.learnable_attention_scale:
+            self.scale = nn.Parameter(
+                torch.ones(1, device=device, dtype=dtype) * (self.head_dim ** -0.5)
+            )
+        else:
+            self.scale = getattr(cfg, 'attention_scale', None) or (self.head_dim ** -0.5)
         
         self.use_h2o = bool(getattr(cfg, 'use_h2o_attention', False)) or (cfg.max_position_embeddings > 1000000)
         self.use_flash = bool(getattr(cfg, 'use_flash_attention', True))
+        self.flash_version = int(getattr(cfg, 'flash_attention_version', 2))
         self.use_alibi = bool(getattr(cfg, 'use_alibi', False))
         self.use_attention_sink = bool(getattr(cfg, 'use_attention_sink', True))
         self.use_qk_norm = bool(getattr(cfg, 'use_qk_norm', True))
         self.use_linear = bool(getattr(cfg, 'use_linear_attention', False))
-        self.sliding_window = int(getattr(cfg, 'sliding_window', 0))
+        self.sliding_window = int(getattr(cfg, 'sliding_window_size', getattr(cfg, 'sliding_window', 0)))
         self.sparse_pattern = getattr(cfg, 'sparse_attention_pattern', 'none')
+        self.long_factor = int(getattr(cfg, 'long_factor', 32))
         
         self.use_mla = bool(getattr(cfg, 'use_mla', True))
         self.kv_lora_rank = int(getattr(cfg, 'kv_lora_rank', 512))
         self.q_lora_rank = getattr(cfg, 'mla_q_lora_rank', None)
+        self.mla_rope_scaling = float(getattr(cfg, 'mla_rope_scaling_factor', 1.0))
         
         self.dsa_sparse_ratio = float(getattr(cfg, 'dsa_sparse_ratio', 0.3))
         self.dsa_importance_threshold = float(getattr(cfg, 'dsa_importance_threshold', 0.1))
@@ -4870,30 +4882,40 @@ class YvAttention(nn.Module):
 
         if self.use_mla:
             kv_latent = self.kv_compress(x)
-            
+
             if hasattr(self, 'q_compress'):
                 q_latent = self.q_compress(x)
                 q = self.q_decompress(q_latent)
             else:
                 q = self.q_proj(x)
-            
-            k_for_rope = self.rope_decompress(kv_latent)
-            k_for_rope = k_for_rope.view(b, t, 1, self.head_dim)
-            
-            k = self.k_decompress(kv_latent)
-            v = self.v_decompress(kv_latent)
-            
-            q = q.view(b, t, self.n_head, self.head_dim).transpose(1, 2)
-            k = k.view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
-            v = v.view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
-            
+
             if hasattr(self, 'rope'):
+                k_full = self.k_decompress(kv_latent)
+                v = self.v_decompress(kv_latent)
+
+                k_for_rope = self.rope_decompress(kv_latent)
+                k_for_rope = k_for_rope.view(b, t, self.n_kv_head, self.head_dim)
                 k_for_rope = k_for_rope.transpose(1, 2)
                 k_for_rope = self.rope(k_for_rope, t)
                 k_for_rope = k_for_rope.transpose(1, 2)
-                
-                k_rope_expanded = k_for_rope.expand(-1, self.n_kv_head, -1, -1)
-                k = k + k_rope_expanded * 0.1
+                k_for_rope = k_for_rope.reshape(b, t, self.n_kv_head * self.head_dim)
+
+                k_rope_expanded = k_for_rope.view(b, t, self.n_kv_head, self.head_dim)
+                k_full = k_full.view(b, t, self.n_kv_head, self.head_dim)
+                k_full = k_full + k_rope_expanded * 0.1
+                k = k_full.view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
+            else:
+                k = self.k_decompress(kv_latent).view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
+                v = self.v_decompress(kv_latent).view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
+
+            q = q.view(b, t, self.n_head, self.head_dim).transpose(1, 2)
+
+            past_kv_latent = None
+            if past_key_values is not None:
+                past_kv_latent = past_key_values[0] if isinstance(past_key_values, (list, tuple)) else past_key_values
+
+            if past_kv_latent is not None:
+                kv_latent = torch.cat([past_kv_latent, kv_latent], dim=1)
         elif getattr(self, 'fused_qkv', False):
             qkv = self.qkv_proj(x)
             q_end = self.n_head * self.head_dim
@@ -5112,6 +5134,7 @@ class YvAttention(nn.Module):
                     attn_mask=attn_mask,
                     dropout_p=self.attn_dropout.p if self.training else 0.0,
                     is_causal=False,
+                    softmax_scale=self.scale,
                 )
         else:
             out_ = F.scaled_dot_product_attention(
@@ -5119,6 +5142,7 @@ class YvAttention(nn.Module):
                 attn_mask=attn_mask,
                 dropout_p=self.attn_dropout.p if self.training else 0.0,
                 is_causal=False,
+                softmax_scale=self.scale,
             )
 
         # Gated Attention: Head-specific gating without extra parameters
@@ -5141,6 +5165,8 @@ class YvAttention(nn.Module):
             out = out + contrast_weight * contrast
 
         if use_cache:
+            if self.use_mla:
+                return out, (kv_latent, kv_latent)
             k_cache = k[:, :self.n_kv_head] if self.n_kv_head != self.n_head else k
             v_cache = v[:, :self.n_kv_head] if self.n_kv_head != self.n_head else v
             return out, (k_cache, v_cache)

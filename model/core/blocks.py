@@ -1395,19 +1395,19 @@ class YvTransformerBlock(nn.Module):
         self.pre_norm2 = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
 
         self.residual_scale = nn.Parameter(
-            torch.ones(1, device=device, dtype=dtype) * (2.0 * cfg.n_layer) ** -0.5
+            torch.ones(1, device=device, dtype=dtype) * getattr(cfg, 'residual_alpha', (2.0 * cfg.n_layer) ** -0.5)
         )
         self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout_p', 0.1))
         
         if self.use_layerscale:
             self.attn_layerscale = YvLayerScale(
                 cfg.hidden_size,
-                init_value=getattr(cfg, 'layerscale_init', 1e-5),
+                init_value=getattr(cfg, 'layer_scale_init', getattr(cfg, 'layerscale_init', 1e-5)),
                 device=device, dtype=dtype
             )
             self.mlp_layerscale = YvLayerScale(
                 cfg.hidden_size,
-                init_value=getattr(cfg, 'layerscale_init', 1e-5),
+                init_value=getattr(cfg, 'layer_scale_init', getattr(cfg, 'layerscale_init', 1e-5)),
                 device=device, dtype=dtype
             )
         

@@ -313,6 +313,18 @@ class YvConfig:
     use_deepnorm: bool = False
     use_layerscale: bool = False
     layerscale_init: float = 1e-5
+
+    # ========================================
+    # Algorithm Optimization Configuration
+    # ========================================
+    use_qk_norm: bool = True
+    label_smoothing: float = 0.1
+    learnable_attention_scale: bool = True
+    layer_scale_init: float = 1e-5
+    depth_aware_init: bool = True
+    residual_alpha: float = 2.0
+    embedding_norm_weight: float = 0.01
+
     use_attn_res: bool = False
     attn_res_block_size: int = 8
     attn_res_use_two_phase: bool = True

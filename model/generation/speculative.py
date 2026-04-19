@@ -211,6 +211,8 @@ class YvSpeculativeConfig:
     verification_strategy: YvVerificationStrategy = YvVerificationStrategy.PARALLEL
     medusa_heads: int = 4
     use_tree_attention: bool = True
+    tree_width: int = 4
+    tree_depth: int = 5
     
     def __post_init__(self):
         """Post-initialization to validate and bound parameters."""

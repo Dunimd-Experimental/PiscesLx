@@ -1273,6 +1273,124 @@ class YvRLDrivenMetacognition(nn.Module):
         self.critic_optimizer = torch.optim.Adam(self.critic_network.parameters(), lr=learning_rate)
         
         self.action_names = ['continue', 'refine', 'verify', 'conclude']
+
+        self.context_editor = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, hidden_size)
+        )
+
+        self.performance_predictor = nn.Linear(hidden_size, 1)
+
+        self.forward_consistency = nn.Linear(hidden_size * 2, 1)
+        self.backward_consistency = nn.Linear(hidden_size * 2, 1)
+
+        self.layer_entropy_scale = nn.Parameter(torch.ones(1))
+
+        self.num_candidates = 3
+        self.max_evolution_iterations = 3
+        self.evolution_threshold = 0.01
+
+    def _context_evolution(self, hidden_states: torch.Tensor) -> Tuple[torch.Tensor, bool]:
+        batch_size = hidden_states.size(0)
+        pooled = hidden_states.mean(dim=1)
+
+        current_score = self.performance_predictor(pooled).squeeze(-1)
+
+        improved_context = pooled + self.context_editor(pooled)
+
+        new_score = self.performance_predictor(improved_context).squeeze(-1)
+
+        improvement = new_score - current_score
+
+        if improvement > self.evolution_threshold:
+            if batch_size == 1:
+                return improved_context.unsqueeze(0), True
+            return improved_context, True
+        else:
+            return pooled, False
+
+    def _implicit_verify(self, reasoning_hidden: torch.Tensor, conclusion_hidden: torch.Tensor) -> torch.Tensor:
+        concat_hidden = torch.cat([reasoning_hidden, conclusion_hidden], dim=-1)
+
+        forward_score = torch.sigmoid(self.forward_consistency(concat_hidden))
+        backward_score = torch.sigmoid(self.backward_consistency(concat_hidden))
+
+        consistency_score = (forward_score + backward_score) / 2.0
+
+        return consistency_score
+
+    def tree_guided_evolution(self, hidden_states: torch.Tensor, reasoning_context: torch.Tensor = None) -> Dict[str, torch.Tensor]:
+        batch_size = hidden_states.size(0)
+        base_pooled = hidden_states.mean(dim=1) if reasoning_context is None else reasoning_context
+
+        candidates = []
+        candidate_scores = []
+
+        for i in range(self.num_candidates):
+            noise_scale = 0.1 * (i + 1) / self.num_candidates
+            noise = torch.randn_like(base_pooled) * noise_scale
+            variant_pooled = base_pooled + noise
+
+            variant_context = variant_pooled + self.context_editor(variant_pooled)
+            score = self.performance_predictor(variant_context).squeeze(-1)
+
+            candidates.append(variant_context)
+            candidate_scores.append(score)
+
+        candidate_scores_tensor = torch.stack(candidate_scores)
+        best_idx = candidate_scores_tensor.argmax(dim=0)
+
+        best_candidate = candidates[best_idx]
+
+        refined_context = best_candidate
+        accepted_refinement = False
+
+        for iteration in range(self.max_evolution_iterations - 1):
+            evolved_context, improved = self._context_evolution(
+                refined_context.unsqueeze(0) if refined_context.dim() == 2 else refined_context
+            )
+
+            if evolved_context.dim() == 2:
+                evolved_context = evolved_context.squeeze(0)
+
+            new_score = self.performance_predictor(evolved_context.unsqueeze(0)).squeeze(-1)
+
+            if improved and new_score > candidate_scores_tensor[best_idx]:
+                refined_context = evolved_context
+                accepted_refinement = True
+            else:
+                break
+
+        if batch_size == 1:
+            refined_context = refined_context.unsqueeze(0)
+
+        return {
+            'evolved_context': refined_context,
+            'best_candidate_idx': best_idx,
+            'initial_score': candidate_scores_tensor[best_idx],
+            'final_score': self.performance_predictor(refined_context).squeeze(-1) if refined_context.dim() == 2 else self.performance_predictor(refined_context.unsqueeze(0)).squeeze(-1),
+            'accepted_refinement': accepted_refinement
+        }
+
+    def _layer_entropy_control(
+        self,
+        layer_hidden: torch.Tensor,
+        layer_index: int,
+        total_layers: int
+    ) -> torch.Tensor:
+        relative_position = layer_index / max(total_layers - 1, 1)
+
+        if relative_position < 0.33:
+            target_entropy_scale = 1.0 + (0.33 - relative_position) * 0.5
+        elif relative_position < 0.66:
+            target_entropy_scale = 1.0
+        else:
+            target_entropy_scale = 1.0 - (relative_position - 0.66) * 0.5
+
+        layer_entropy = self.layer_entropy_scale * target_entropy_scale
+
+        return layer_hidden * layer_entropy
     
     def _store_transition(
         self,
@@ -1354,22 +1472,39 @@ class YvRLDrivenMetacognition(nn.Module):
     def forward(
         self,
         hidden_states: torch.Tensor,
-        reasoning_outputs: Dict[str, torch.Tensor] = None
+        reasoning_outputs: Dict[str, torch.Tensor] = None,
+        enable_evolution: bool = False,
+        layer_index: int = None,
+        total_layers: int = None
     ) -> Dict[str, torch.Tensor]:
         batch_size = hidden_states.size(0)
         pooled = hidden_states.mean(dim=1)
-        
-        action, action_probs, value = self.select_action(hidden_states)
-        
+
+        if enable_evolution and layer_index is not None and total_layers is not None:
+            evolved_result = self.tree_guided_evolution(hidden_states, reasoning_context=pooled if reasoning_outputs is not None else None)
+            pooled = evolved_result['evolved_context'].squeeze(0) if batch_size == 1 else evolved_result['evolved_context']
+            meta_output = {
+                'evolved': evolved_result['accepted_refinement'],
+                'evolution_score': evolved_result['final_score']
+            }
+        else:
+            meta_output = {}
+
+        if layer_index is not None and total_layers is not None:
+            pooled = self._layer_entropy_control(pooled, layer_index, total_layers)
+
+        action, action_probs, value = self.select_action(hidden_states if batch_size == 1 else hidden_states.mean(dim=1).unsqueeze(0))
+
         selected_action = action.item() if batch_size == 1 else action[0].item()
         action_name = self.action_names[selected_action]
-        
+
         return {
             'selected_action': action,
             'action_probs': action_probs,
             'action_value': value,
             'action_name': action_name,
-            'metacognitive_feedback': pooled
+            'metacognitive_feedback': pooled,
+            **meta_output
         }
 
 

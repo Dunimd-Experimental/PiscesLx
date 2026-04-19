@@ -207,7 +207,7 @@ python manage.py help
 | 命令       | 描述                                                             |
 |------------|------------------------------------------------------------------|
 | setup      | 环境设置与依赖安装                                               |
-| train      | 训练模型（支持量化 / LoRA / RLHF / GaLore）                      |
+| train      | 训练模型（支持量化 / LoRA / RLHF / GaLore）                    |
 | serve      | 启动 OpenAI 兼容后端推理服务                                     |
 | test       | 项目健康检查（8阶段验证）                                        |
 | monitor    | 系统监控（GPU/CPU/内存）                                         |
@@ -218,6 +218,7 @@ python manage.py help
 | action     | 后台进程管理（提交/状态/控制）                                   |
 | dev        | 开发者模式（训练时的vim风格命令界面）                            |
 | cache      | 缓存管理（.pisceslx目录）                                        |
+| publish    | 模型打包发布（Docker镜像）                                       |
 | help       | 显示帮助信息                                                     |
 
 ### 快速体验
@@ -331,6 +332,16 @@ python manage.py dev status    # 查看开发者模式状态
 # 缓存管理（.pisceslx目录）
 python manage.py cache         # 显示缓存状态
 python manage.py cache clean   # 清理所有缓存（settings/受保护）
+
+# 模型打包发布（Docker镜像）
+python manage.py publish --publish_action full --publish_model_size 7B --publish_registry docker.io
+python manage.py publish --publish_action full --publish_model_size 7B --publish_model_path ./ckpt/7B.pt
+python manage.py publish --publish_action export --publish_model_size 7B --publish_output_dir ./export/
+python manage.py publish --publish_action build --publish_model_size 7B --publish_template gpu
+python manage.py publish --publish_action push --publish_registry ghcr.io --publish_registry_namespace myuser
+python manage.py publish --publish_action validate --publish_model_size 7B
+python manage.py publish --publish_action info --publish_model_size 7B
+python manage.py publish --publish_action list
 ```
 
 ---
@@ -552,6 +563,7 @@ python manage.py download
 | audioread | MIT | pydub | MIT |
 | flash-attn | BSD 3-Clause | triton | MIT |
 | mamba-ssm | Apache 2.0 | causal-conv1d | Apache 2.0 |
+| docker | Apache 2.0 | | |
 
 </div>
 

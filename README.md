@@ -206,19 +206,20 @@ python manage.py help
 
 | Command   | Description                                                         |
 |-----------|---------------------------------------------------------------------|
-| setup     | Environment setup and dependency installation                      |
+| setup     | Environment setup and dependency installation                       |
 | train     | Train model (support quantization / LoRA / RLHF / GaLore)          |
 | serve     | Start OpenAI-compatible backend inference service                  |
 | test      | Project health check (8-stage validation)                          |
-| monitor   | System monitoring (GPU/CPU/memory)                                 |
-| download  | Download dataset                                                  |
-| benchmark | Model evaluation and benchmarking                                  |
+| monitor   | System monitoring (GPU/CPU/memory)                                  |
+| download  | Download dataset                                                   |
+| benchmark | Model evaluation and benchmarking                                   |
 | mcp       | MCP tool management (status / warmup / refresh-cache)              |
-| watermark | Watermark detection (text/file/image/audio/video/model weights)    |
-| action    | Background process management (submit/status/control)              |
-| dev       | Developer mode for training (vim-style command interface)          |
+| watermark | Watermark detection (text/file/image/audio/video/model weights)   |
+| action    | Background process management (submit/status/control)               |
+| dev       | Developer mode for training (vim-style command interface)           |
 | cache     | Cache management for .pisceslx directory                           |
-| help      | Show help information                                              |
+| publish   | Package and publish models as Docker images                        |
+| help      | Show help information                                             |
 
 ### Quick Experience
 ```bash
@@ -331,6 +332,16 @@ python manage.py dev status    # Check developer mode status
 # Cache management for .pisceslx directory
 python manage.py cache         # Show cache status
 python manage.py cache clean   # Clean all cache (settings/ protected)
+
+# Publish models as Docker images with inference engine
+python manage.py publish --publish_action full --publish_model_size 7B --publish_registry docker.io
+python manage.py publish --publish_action full --publish_model_size 7B --publish_model_path ./ckpt/7B.pt
+python manage.py publish --publish_action export --publish_model_size 7B --publish_output_dir ./export/
+python manage.py publish --publish_action build --publish_model_size 7B --publish_template gpu
+python manage.py publish --publish_action push --publish_registry ghcr.io --publish_registry_namespace myuser
+python manage.py publish --publish_action validate --publish_model_size 7B
+python manage.py publish --publish_action info --publish_model_size 7B
+python manage.py publish --publish_action list
 ```
 
 ---
@@ -552,6 +563,7 @@ Open source packages and their agreement information used by this project:
 | audioread | MIT | pydub | MIT |
 | flash-attn | BSD 3-Clause | triton | MIT |
 | mamba-ssm | Apache 2.0 | causal-conv1d | Apache 2.0 |
+| docker | Apache 2.0 | | |
 
 </div>
 

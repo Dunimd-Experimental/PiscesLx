@@ -97,6 +97,7 @@ class AdvancedTrainingConfig(PiscesLxOperatorConfig):
     label_smoothing: float = 0.1
     dropout_rate: float = 0.1
     weight_decay: float = 0.01
+    embedding_norm_weight: float = 0.01
     
     mixed_precision: bool = True
     amp_dtype: str = "float16"
@@ -411,9 +412,14 @@ class RegularizationOperator(PiscesLxOperatorInterface):
             if config.weight_decay > 0:
                 weight_decay_loss = self._compute_weight_decay(model, config.weight_decay)
             
+            embedding_norm_loss = None
+            if config.embedding_norm_weight > 0:
+                embedding_norm_loss = self._create_embedding_norm_loss(model, config.embedding_norm_weight)
+            
             result = {
                 "label_smoothing_loss": label_smoothing_loss,
                 "weight_decay_loss": weight_decay_loss,
+                "embedding_norm_loss": embedding_norm_loss,
                 "dropout_rate": config.dropout_rate
             }
             
@@ -493,6 +499,30 @@ class RegularizationOperator(PiscesLxOperatorInterface):
         for param in model.parameters():
             l2_reg += torch.norm(param, 2) ** 2
         return weight_decay * l2_reg
+    
+    def _create_embedding_norm_loss(self, model: nn.Module, weight: float = 0.01):
+        """
+        Create embedding normalization loss for training stability.
+        
+        This auxiliary loss penalizes large embedding norms to prevent
+        gradient explosion in deep transformer networks.
+        
+        Mathematical Formulation:
+            L_emb = weight * ||embed.weight||^2
+            
+        Args:
+            model: The neural network model
+            weight: Regularization weight (default: 0.01)
+        
+        Returns:
+            Embedding norm loss function
+        """
+        def embedding_norm_loss():
+            if hasattr(model, 'embed') and model.embed is not None:
+                return weight * torch.norm(model.embed.weight, 2) ** 2
+            return torch.tensor(0., device=next(model.parameters()).device)
+        
+        return embedding_norm_loss
 
 
 class DistributedTrainingOperator(PiscesLxOperatorInterface):

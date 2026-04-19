@@ -295,6 +295,7 @@ COMMANDS = [
     'dev',        # Developer mode management (enable/disable/status)
     'cache',      # Cache management for .pisceslx directory
     'plxs',       # Start Xi Studio (graphical workstation)
+    'publish',    # Package and publish models as Docker images
 ]
 
 
@@ -1145,6 +1146,266 @@ def main():
         help='Start only the backend server without frontend (for plxs command)'
     )
     
+    # -------------------------------------------------------------------------
+    # PUBLISH COMMAND ARGUMENTS
+    # -------------------------------------------------------------------------
+    # --publish_action: Action to perform for publishing
+    # full: Run full pipeline (export, build, push)
+    # export: Export model weights and configs only
+    # build: Build Docker image only
+    # push: Push image to registry only
+    # validate: Validate publish configuration
+    # info: Show publish configuration info
+    # list: List available publish templates
+    parser.add_argument(
+        '--publish_action',
+        type=str,
+        choices=['full', 'export', 'build', 'push', 'validate', 'info', 'list'],
+        default='full',
+        help='Publish action: full, export, build, push, validate, info, list (default: full)'
+    )
+    
+    # --model_size: Model size for publishing
+    # Must match available model sizes: 0.5B, 1B, 7B, 14B, 72B, 671B, 1T
+    parser.add_argument(
+        '--publish_model_size',
+        type=str,
+        default=None,
+        help='Model size for publishing: 0.5B, 1B, 7B, 14B, 72B, 671B, 1T'
+    )
+    
+    # --model_path: Path to model checkpoint for publishing
+    # Can be safetensors, pytorch, or checkpoint directory
+    parser.add_argument(
+        '--publish_model_path',
+        type=str,
+        default=None,
+        help='Path to model checkpoint for publishing'
+    )
+    
+    # --output_dir: Output directory for exported/published artifacts
+    parser.add_argument(
+        '--publish_output_dir',
+        type=str,
+        default=None,
+        help='Output directory for publish artifacts'
+    )
+    
+    # --registry: Container registry URL for pushing images
+    # Supported: docker.io, ghcr.io, nvcr.io, azurecr.io, gcr.io
+    parser.add_argument(
+        '--publish_registry',
+        type=str,
+        default='docker.io',
+        help='Container registry URL (default: docker.io)'
+    )
+    
+    # --registry_namespace: Namespace (user/org) on the registry
+    parser.add_argument(
+        '--publish_registry_namespace',
+        type=str,
+        default=None,
+        help='Registry namespace (user or organization name)'
+    )
+    
+    # --registry_repo: Repository name for the image
+    parser.add_argument(
+        '--publish_registry_repo',
+        type=str,
+        default=None,
+        help='Repository name for the image'
+    )
+    
+    # --registry_tag: Tag for the image (default: latest)
+    parser.add_argument(
+        '--publish_registry_tag',
+        type=str,
+        default='latest',
+        help='Image tag (default: latest)'
+    )
+    
+    # --username: Username for registry authentication
+    parser.add_argument(
+        '--publish_username',
+        type=str,
+        default=None,
+        help='Username for registry authentication'
+    )
+    
+    # --password: Password/token for registry authentication
+    parser.add_argument(
+        '--publish_password',
+        type=str,
+        default=None,
+        help='Password or token for registry authentication'
+    )
+    
+    # --template: Docker image template to use
+    # default: Standard image with all dependencies
+    # minimal: Minimal image with just inference engine
+    # gpu: GPU-optimized image with CUDA support
+    parser.add_argument(
+        '--publish_template',
+        type=str,
+        choices=['default', 'minimal', 'gpu'],
+        default='default',
+        help='Docker image template: default, minimal, gpu (default: default)'
+    )
+    
+    # --export_format: Format for exporting model weights
+    # safetensors: SafeTensor format (recommended, secure)
+    # pytorch: PyTorch format
+    parser.add_argument(
+        '--publish_export_format',
+        type=str,
+        choices=['safetensors', 'pytorch'],
+        default='safetensors',
+        help='Model export format: safetensors, pytorch (default: safetensors)'
+    )
+    
+    # --export_quantize: Enable quantization on export
+    parser.add_argument(
+        '--publish_export_quantize',
+        action='store_true',
+        help='Export model with quantization'
+    )
+    
+    # --quant_bits: Quantization bits when --publish_export_quantize is set
+    parser.add_argument(
+        '--publish_quant_bits',
+        type=int,
+        choices=[2, 4, 8],
+        default=4,
+        help='Quantization bits: 2, 4, 8 (default: 4)'
+    )
+    
+    # --base_image: Base Docker image to use
+    parser.add_argument(
+        '--publish_base_image',
+        type=str,
+        default=None,
+        help='Base Docker image for building (default: auto-selected based on template)'
+    )
+    
+    # --env_vars: Environment variables for the Docker image
+    # Format: KEY1=VALUE1,KEY2=VALUE2
+    parser.add_argument(
+        '--publish_env_vars',
+        type=str,
+        default=None,
+        help='Environment variables for Docker image (format: KEY1=VALUE1,KEY2=VALUE2)'
+    )
+    
+    # --port: Port for the inference server inside Docker
+    parser.add_argument(
+        '--publish_port',
+        type=int,
+        default=8000,
+        help='Inference server port inside Docker (default: 8000)'
+    )
+    
+    # --health_check: Enable health check in Docker
+    parser.add_argument(
+        '--publish_health_check',
+        action='store_true',
+        default=True,
+        help='Enable health check in Docker image (default: True)'
+    )
+    
+    # --no_health_check: Disable health check in Docker
+    parser.add_argument(
+        '--publish_no_health_check',
+        action='store_true',
+        help='Disable health check in Docker image'
+    )
+    
+    # --retry_count: Number of retries for pushing to registry
+    parser.add_argument(
+        '--publish_retry_count',
+        type=int,
+        default=3,
+        help='Number of retries for registry push (default: 3)'
+    )
+    
+    # --retry_delay: Delay between retries in seconds
+    parser.add_argument(
+        '--publish_retry_delay',
+        type=int,
+        default=5,
+        help='Delay between retries in seconds (default: 5)'
+    )
+    
+    # --metadata_name: Model name for metadata
+    parser.add_argument(
+        '--publish_metadata_name',
+        type=str,
+        default=None,
+        help='Model name for metadata'
+    )
+    
+    # --metadata_version: Model version for metadata
+    parser.add_argument(
+        '--publish_metadata_version',
+        type=str,
+        default='1.0.0',
+        help='Model version for metadata (default: 1.0.0)'
+    )
+    
+    # --metadata_description: Model description for metadata
+    parser.add_argument(
+        '--publish_metadata_description',
+        type=str,
+        default=None,
+        help='Model description for metadata'
+    )
+    
+    # --metadata_author: Model author for metadata
+    parser.add_argument(
+        '--publish_metadata_author',
+        type=str,
+        default=None,
+        help='Model author for metadata'
+    )
+    
+    # --metadata_license: Model license for metadata
+    parser.add_argument(
+        '--publish_metadata_license',
+        type=str,
+        default='Apache-2.0',
+        help='Model license for metadata (default: Apache-2.0)'
+    )
+    
+    # --generate_checksum: Generate checksum files for published artifacts
+    parser.add_argument(
+        '--publish_generate_checksum',
+        action='store_true',
+        default=True,
+        help='Generate checksum files (default: True)'
+    )
+    
+    # --no_checksum: Skip checksum generation
+    parser.add_argument(
+        '--publish_no_checksum',
+        action='store_true',
+        help='Skip checksum generation'
+    )
+    
+    # --checksum_algorithms: Comma-separated list of checksum algorithms
+    parser.add_argument(
+        '--publish_checksum_algorithms',
+        type=str,
+        default='sha256,md5',
+        help='Checksum algorithms (default: sha256,md5)'
+    )
+    
+    # --config: Path to publish config file (JSON/YAML)
+    parser.add_argument(
+        '--publish_config',
+        type=str,
+        default=None,
+        help='Publish configuration file path (JSON/YAML)'
+    )
+    
     # =========================================================================
     # PARSE ARGUMENTS
     # =========================================================================
@@ -1560,6 +1821,43 @@ def main():
             server.run(host=args.host if hasattr(args, 'host') else "127.0.0.1")
         else:
             launcher.run()
+    
+    # -------------------------------------------------------------------------
+    # PUBLISH COMMAND
+    # -------------------------------------------------------------------------
+    # Package and publish models as Docker images with inference engine
+    elif args.command == 'publish':
+        from tools.publish.runner import PiscesLxToolsPublish
+
+        runner = PiscesLxToolsPublish(args)
+
+        action = getattr(args, 'publish_action', 'full')
+
+        if action == 'export':
+            result = runner.run_export()
+        elif action == 'build':
+            result = runner.run_build()
+        elif action == 'push':
+            result = runner.run_publish()
+        elif action == 'validate':
+            result = runner.run_validate()
+            if result.get('errors'):
+                print("Validation errors:")
+                for err in result['errors']:
+                    print(f"  - {err}")
+            else:
+                print("Validation passed!")
+        elif action == 'info':
+            import json
+            result = runner.run_info()
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        elif action == 'list':
+            import json
+            result = runner.run_list()
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+        else:
+            result = runner.run()
+            runner.print_summary()
     
     # -------------------------------------------------------------------------
     # UNKNOWN COMMAND (fallback)

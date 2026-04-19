@@ -99,14 +99,19 @@ class POPSSGRPOConfig(PiscesLxOperatorConfig):
     gamma: float = 1.0
     advantage_normalization: bool = True
     min_std: float = 1e-8
-    
+
     top_p: float = 0.95
     top_k: int = 50
     repetition_penalty: float = 1.0
-    
+
     ppo_epochs: int = 4
     mini_batch_size: int = 4
-    
+
+    enable_self_verification: bool = False
+    verification_weight: float = 0.3
+    max_refinement_iterations: int = 3
+    refinement_reward_threshold: float = 0.01
+
     def __post_init__(self):
         super().__post_init__()
         if self.group_size < 2:
@@ -271,8 +276,9 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         stats = {key: [] for key in [
             "policy_losses", "kl_divergences", "entropies",
             "advantages", "rewards", "clip_fractions", "approx_kl",
+            "verification_rewards", "refinement_iterations",
         ]}
-        
+
         responses, log_probs, old_log_probs = self._sample_group_responses(
             model=model,
             prompt=prompt,
@@ -280,30 +286,69 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
             config=config,
             tokenizer=tokenizer,
         )
-        
-        rewards = self._compute_rewards(
-            responses=responses,
+
+        refined_responses, verification_rewards = self._apply_iterative_refinement(
+            model=model,
             prompt=prompt,
-            reward_function=reward_function,
+            responses=responses,
+            config=config,
+            tokenizer=tokenizer,
         )
-        
+
+        if config.enable_self_verification and any(v > 0 for v in verification_rewards):
+            final_responses = refined_responses
+            combined_rewards = []
+            for i, (original_reward, refined_reward) in enumerate(zip(
+                self._compute_rewards(responses, prompt, reward_function),
+                verification_rewards
+            )):
+                combined_reward = original_reward + config.verification_weight * refined_reward
+                combined_rewards.append(combined_reward)
+        else:
+            final_responses = responses
+            combined_rewards = self._compute_rewards(
+                responses=responses,
+                prompt=prompt,
+                reward_function=reward_function,
+            )
+
+        rewards_tensor = torch.tensor(combined_rewards, dtype=torch.float32)
+
         advantages = self.compute_group_advantages(
-            rewards=torch.tensor(rewards, dtype=torch.float32),
+            rewards=rewards_tensor,
             group_size=config.group_size,
             normalize=config.advantage_normalization,
             min_std=config.min_std,
         )
-        
+
         if reference_model and config.use_reference_model:
             ref_log_probs = self._compute_reference_log_probs(
                 reference_model=reference_model,
                 prompt=prompt,
-                responses=responses,
+                responses=final_responses,
                 tokenizer=tokenizer,
             )
         else:
             ref_log_probs = torch.zeros_like(log_probs)
-        
+
+        if config.enable_self_verification:
+            refined_log_probs = []
+            for response in final_responses:
+                if tokenizer:
+                    full_text = prompt + response
+                    input_ids = tokenizer.encode(full_text, return_tensors="pt").to(next(model.parameters()).device)
+                else:
+                    input_ids = torch.tensor([[ord(c) for c in prompt + response]], dtype=torch.long, device=next(model.parameters()).device)
+
+                outputs = model(input_ids)
+                logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
+                log_probs_response = F.log_softmax(logits, dim=-1)
+                token_log_probs = log_probs_response[:, :-1, :].gather(2, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+                refined_log_probs.append(token_log_probs.sum())
+
+            refined_log_probs_tensor = torch.stack(refined_log_probs)
+            log_probs = refined_log_probs_tensor
+
         for epoch in range(config.ppo_epochs):
             epoch_stats = self._ppo_update(
                 model=model,
@@ -314,13 +359,15 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
                 config=config,
                 optimizer=optimizer,
             )
-            
+
             for key, values in epoch_stats.items():
                 stats[key].extend(values)
-        
-        stats["rewards"].extend(rewards)
+
+        stats["rewards"].extend(combined_rewards)
         stats["advantages"].extend(advantages.tolist())
-        
+        stats["verification_rewards"].extend(verification_rewards)
+        stats["refinement_iterations"].append(sum(1 for v in verification_rewards if v > 0))
+
         return stats
     
     def compute_group_advantages(
@@ -372,7 +419,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         responses = []
         all_log_probs = []
         all_old_log_probs = []
-        
+
         model.eval()
         with torch.no_grad():
             for _ in range(group_size):
@@ -385,14 +432,14 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
                 responses.append(response)
                 all_log_probs.append(log_prob)
                 all_old_log_probs.append(log_prob.clone())
-        
+
         model.train()
-        
+
         log_probs = torch.stack(all_log_probs)
         old_log_probs = torch.stack(all_old_log_probs)
-        
+
         return responses, log_probs, old_log_probs
-    
+
     def _generate_response(
         self,
         model: nn.Module,
@@ -402,25 +449,32 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
     ) -> Tuple[str, torch.Tensor]:
         """Generate a single response with log probability."""
         device = next(model.parameters()).device
-        
+
         if tokenizer:
             input_ids = tokenizer.encode(prompt, return_tensors="pt").to(device)
         else:
             input_ids = torch.tensor([[ord(c) for c in prompt]], dtype=torch.long, device=device)
-        
-        generated_ids = input_ids.clone()
+
+        past_key_values = None
         log_probs_sum = torch.tensor(0.0, device=device)
-        
+        generated_ids = input_ids
+
         for _ in range(config.max_new_tokens):
-            outputs = model(generated_ids)
+            outputs = model(
+                input_ids=generated_ids[:, -1:] if generated_ids.shape[1] > 1 else generated_ids,
+                past_key_values=past_key_values,
+                use_cache=True
+            ) if hasattr(model, 'forward') else model(generated_ids)
+
             logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
-            
-            next_token_logits = logits[:, -1, :] / config.temperature
-            
+            past_key_values = outputs.past_key_values if hasattr(outputs, 'past_key_values') else None
+
+            next_token_logits = logits[:, -1, :] / config.temperature if config.temperature > 0 else logits[:, -1, :]
+
             if config.top_k > 0:
                 indices_to_remove = next_token_logits < torch.topk(next_token_logits, config.top_k)[0][..., -1, None]
                 next_token_logits[indices_to_remove] = float('-inf')
-            
+
             if config.top_p < 1.0:
                 sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
                 cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
@@ -429,27 +483,27 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
                 sorted_indices_to_remove[..., 0] = 0
                 indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
                 next_token_logits[indices_to_remove] = float('-inf')
-            
+
             probs = F.softmax(next_token_logits, dim=-1)
-            
+
             if config.temperature > 0:
                 next_token = torch.multinomial(probs, num_samples=1)
             else:
                 next_token = torch.argmax(probs, dim=-1, keepdim=True)
-            
+
             token_log_prob = torch.log(probs.gather(1, next_token) + 1e-10)
             log_probs_sum = log_probs_sum + token_log_prob.squeeze()
-            
+
             generated_ids = torch.cat([generated_ids, next_token], dim=-1)
-            
+
             if tokenizer and next_token.item() == tokenizer.eos_token_id:
                 break
-        
+
         if tokenizer:
             response = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
         else:
             response = "".join(chr(c) for c in generated_ids[0].tolist())
-        
+
         return response, log_probs_sum
     
     def _compute_rewards(
@@ -470,6 +524,123 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
             except Exception:
                 rewards.append(0.0)
         return rewards
+
+    def _compute_verification_reward(
+        self,
+        original_response: str,
+        refined_response: str,
+        prompt: str,
+    ) -> float:
+        """Compute consistency-based verification reward between original and refined response."""
+        original_lower = original_response.lower()
+        refined_lower = refined_response.lower()
+
+        original_words = set(original_lower.split())
+        refined_words = set(refined_lower.split())
+
+        if len(original_words) == 0:
+            return 0.0
+
+        word_overlap = len(original_words & refined_words) / max(len(original_words), len(refined_words))
+
+        if original_lower == refined_lower:
+            consistency_score = 1.0
+        elif original_lower in refined_lower or refined_lower in original_lower:
+            consistency_score = 0.9
+        else:
+            semantic_similarity = word_overlap
+            consistency_score = semantic_similarity * 0.5
+
+        return consistency_score
+
+    def _refine_response(
+        self,
+        model: nn.Module,
+        prompt: str,
+        original_response: str,
+        config: POPSSGRPOConfig,
+        tokenizer,
+    ) -> Tuple[str, float]:
+        """Refine a response through self-verification and improvement."""
+        device = next(model.parameters()).device
+
+        current_response = original_response
+        best_response = original_response
+        best_score = 0.0
+
+        refinement_history = [original_response]
+
+        for iteration in range(config.max_refinement_iterations):
+            verification_prompt = f"{prompt}\n\nOriginal response: {current_response}\n\nPlease verify if the response is correct and provide an improved version if needed:"
+
+            if tokenizer:
+                input_ids = tokenizer.encode(verification_prompt, return_tensors="pt").to(device)
+            else:
+                input_ids = torch.tensor([[ord(c) for c in verification_prompt]], dtype=torch.long, device=device)
+
+            max_new_tokens = min(len(current_response.split()) * 2, config.max_new_tokens)
+
+            with torch.no_grad():
+                outputs = model(
+                    input_ids=input_ids,
+                    max_new_tokens=max_new_tokens,
+                    temperature=config.temperature * 0.8,
+                    top_p=config.top_p,
+                )
+
+            refined_text = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
+            if hasattr(refined_text, 'generated_text'):
+                refined_response = refined_text.generated_text
+            else:
+                if tokenizer:
+                    refined_response = tokenizer.decode(refined_text[0], skip_special_tokens=True)
+                else:
+                    refined_response = "".join(chr(c) for c in refined_text[0].tolist())
+
+            verification_reward = self._compute_verification_reward(
+                original_response=current_response,
+                refined_response=refined_response,
+                prompt=prompt,
+            )
+
+            if verification_reward > best_score:
+                best_score = verification_reward
+                best_response = refined_response
+                current_response = refined_response
+            else:
+                break
+
+            refinement_history.append(refined_response)
+
+        return best_response, best_score
+
+    def _apply_iterative_refinement(
+        self,
+        model: nn.Module,
+        prompt: str,
+        responses: List[str],
+        config: POPSSGRPOConfig,
+        tokenizer,
+    ) -> Tuple[List[str], List[float]]:
+        """Apply iterative refinement to responses with self-verification."""
+        if not config.enable_self_verification:
+            return responses, [0.0] * len(responses)
+
+        refined_responses = []
+        verification_rewards = []
+
+        for original_response in responses:
+            refined_response, verification_reward = self._refine_response(
+                model=model,
+                prompt=prompt,
+                original_response=original_response,
+                config=config,
+                tokenizer=tokenizer,
+            )
+            refined_responses.append(refined_response)
+            verification_rewards.append(verification_reward)
+
+        return refined_responses, verification_rewards
     
     def _compute_reference_log_probs(
         self,

@@ -279,74 +279,69 @@ class POPSSSpeculativeDecodingOperator(PiscesLxOperatorInterface):
             'stats': stats
         }
     
-    def _draft_generation(self, draft_model: nn.Module, input_ids: torch.Tensor, 
+    def _draft_generation(self, draft_model: nn.Module, input_ids: torch.Tensor,
                          config: POPSSSpeculativeConfig, device: torch.device) -> torch.Tensor:
         """Generate draft tokens using the fast draft model."""
         generated_tokens = []
-        
-        current_input = input_ids.clone()
-        
+
+        seq_len = input_ids.shape[1]
+        past_key_values = None
+
         for i in range(config.gamma):
             with torch.no_grad():
-                # Enable caching for efficiency
                 outputs = draft_model(
-                    input_ids=current_input,
-                    use_cache=config.use_cache
+                    input_ids=input_ids[:, -1:] if i > 0 else input_ids,
+                    past_key_values=past_key_values,
+                    use_cache=True
                 )
-                
-                # Get logits for the last token
+
                 logits = outputs.logits[:, -1, :]
-                
-                # Apply temperature scaling
+
                 if config.draft_temperature != 1.0:
                     logits = logits / config.draft_temperature
-                
-                # Sample next token
+
                 probs = F.softmax(logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1).squeeze(-1)
-                
-                generated_tokens.append(next_token)
-                current_input = torch.cat([current_input, next_token.unsqueeze(0).unsqueeze(0)], dim=1)
-                
-                # Stop if EOS token is generated
+
+                generated_tokens.append(next_token.item() if next_token.numel() == 1 else next_token[0])
+
+                past_key_values = outputs.past_key_values
+
                 if config.stop_token_id is not None and next_token.item() == config.stop_token_id:
                     break
-        
-        return torch.stack(generated_tokens) if generated_tokens else torch.tensor([])
+
+        return torch.tensor(generated_tokens, device=device, dtype=torch.long) if generated_tokens else torch.tensor([], device=device, dtype=torch.long)
     
     def _verify_draft(self, target_model: nn.Module, input_ids: torch.Tensor,
-                     draft_tokens: torch.Tensor, config: POPSSSpeculativeConfig, 
+                     draft_tokens: torch.Tensor, config: POPSSSpeculativeConfig,
                      device: torch.device) -> Tuple[int, float]:
         """Verify draft tokens using the target model."""
         start_time = time.time()
-        
+
         if len(draft_tokens) == 0:
             return 0, 0.0
-        
-        # Prepare input for verification
-        verification_input = torch.cat([input_ids, draft_tokens.unsqueeze(0)], dim=1)
-        
+
+        past_key_values = None
+        accepted_count = 0
+
         with torch.no_grad():
-            # Get target model predictions for all positions
-            target_outputs = target_model(
-                input_ids=verification_input,
-                use_cache=config.use_cache
-            )
-            
-            target_logits = target_outputs.logits[:, -len(draft_tokens)-1:-1, :]  # Exclude last token
-            
-            # Compare with draft tokens
-            accepted_count = 0
             for i, draft_token in enumerate(draft_tokens):
-                target_probs = F.softmax(target_logits[0, i, :], dim=-1)
+                target_outputs = target_model(
+                    input_ids=draft_tokens[i:i+1].unsqueeze(0) if i > 0 else torch.cat([input_ids, draft_tokens[:1].unsqueeze(0)], dim=1),
+                    past_key_values=past_key_values,
+                    use_cache=True
+                )
+
+                target_logits = target_outputs.logits[0, -1, :]
+                target_probs = F.softmax(target_logits, dim=-1)
                 draft_prob = target_probs[draft_token].item()
-                
-                # Accept if probability is above threshold
+
                 if draft_prob > config.acceptance_threshold:
                     accepted_count += 1
+                    past_key_values = target_outputs.past_key_values
                 else:
-                    break  # Reject remaining tokens
-        
+                    break
+
         verification_time = time.time() - start_time
         return accepted_count, verification_time
     

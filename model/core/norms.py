@@ -148,6 +148,61 @@ def _arctic_init_weights(m: nn.Module):
         nn.init.normal_(m.weight, mean=0, std=0.02)
 
 
+def _depth_aware_init_weights(m: nn.Module, n_layer: int, hidden_size: int):
+    """Depth-aware weight initialization for stable deep network training.
+    
+    Adjusts initialization standard deviation based on network depth to
+    prevent gradient explosion/vanishing in very deep transformers.
+    
+    Mathematical Formulation:
+        std = 1 / sqrt(2 * n_layer * hidden_size)
+        
+    This formula ensures that the variance of activations remains stable
+    across all layers, enabling training of networks with 100+ layers.
+    
+    Args:
+        m: Module to initialize.
+        n_layer: Total number of transformer layers.
+        hidden_size: Model hidden dimension.
+    
+    Reference:
+        - DeepNet: Stable Transformers for Deeper Models (arXiv:2203.00555)
+        - LayerScale: Very Deep Transformers (arXiv:2010.11929)
+    """
+    depth_std = 1.0 / math.sqrt(2 * n_layer * hidden_size)
+    
+    if isinstance(m, nn.Linear):
+        nn.init.normal_(m.weight, mean=0, std=depth_std)
+        if m.bias is not None:
+            nn.init.zeros_(m.bias)
+    elif isinstance(m, nn.Embedding):
+        nn.init.normal_(m.weight, mean=0, std=depth_std * math.sqrt(hidden_size))
+    elif hasattr(m, 'weight') and m.weight is not None:
+        if m.weight.dim() >= 2:
+            nn.init.normal_(m.weight, mean=0, std=depth_std)
+
+
+def _residual_alpha_for_depth(n_layer: int) -> float:
+    """Compute optimal residual alpha for DeepNorm-style stability.
+    
+    Formula: alpha = (2 * n_layer) ** 0.25
+    
+    This scaling factor ensures stable gradient flow in deep residual
+    networks by balancing the contribution of residual and skip connections.
+    
+    Args:
+        n_layer: Number of transformer layers.
+    
+    Returns:
+        Optimal residual alpha scaling factor.
+    
+    Example:
+        >>> alpha = _residual_alpha_for_depth(28)  # 7B model
+        >>> alpha = _residual_alpha_for_depth(80)  # 70B model
+    """
+    return (2 * n_layer) ** 0.25
+
+
 class YvRMSNorm(nn.Module):
     """Root Mean Square Layer Normalization for efficient normalization.
     
@@ -813,8 +868,8 @@ class YvYaRNRotaryEmbedding(nn.Module):
         Returns:
             Scale factors tensor.
         """
-        if seq_len > self.max_seq_len_seen:
-            self.max_seq_len_seen = torch.tensor(seq_len, device=device)
+        if seq_len > self.max_seq_len_seen.item():
+            self.max_seq_len_seen.fill_(seq_len)
             
         ntk_scale = self._compute_dynamic_ntk_scale(seq_len)
         
@@ -1057,11 +1112,8 @@ class YvDynamicYaRNRotaryEmbedding(YvYaRNRotaryEmbedding):
         Returns:
             Scale factors tensor.
         """
-        if seq_len > self.max_seq_len_seen:
-            self.max_seq_len_seen = torch.tensor(
-                seq_len,
-                device=task_embedding.device if task_embedding is not None else self.dynamic_base.device
-            )
+        if seq_len > self.max_seq_len_seen.item():
+            self.max_seq_len_seen.fill_(seq_len)
             
         ntk_scale = self._compute_dynamic_ntk_scale(seq_len)
         
