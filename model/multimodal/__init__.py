@@ -124,7 +124,7 @@ from .doc import YvDocEncoder
 from .agentic import YvAgentic
 from .agentic_encoder import YvAgenticEncoder
 from .attention import YvCrossModalAttention
-from .fusion import YvDynamicModalFusion
+from .fusion import YvDynamicModalFusion, YvRecurrentModalRefiner
 from .enhanced_fusion import YvEnhancedModalFusion, YvModalFusionConfig
 from .generator import YvGenerator, YvGenerationResult, YvGenerationBackend
 from .hw import YvHardwareAdaptiveConfig
@@ -153,6 +153,7 @@ __all__ = [
     "YvAgenticEncoder",
     "YvCrossModalAttention",
     "YvDynamicModalFusion",
+    "YvRecurrentModalRefiner",
     "YvEnhancedModalFusion",
     "YvModalFusionConfig",
     "YvGenerator",

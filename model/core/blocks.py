@@ -196,6 +196,7 @@ from .attention import YvAttention
 from utils.dc import PiscesLxLogger
 from ..moe.gate import YvMoELayer as MoELayer
 from ..moe.layer import YvDynamicMoELayer
+from .mamba3 import YvMamba3Block, YvMamba3Config
 
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.Core", file_path=get_log_file("Yv.Core"), enable_file=True)
@@ -712,28 +713,32 @@ class YvAdaptiveComputationTime(nn.Module):
 
 
 class YvMixtureOfDepths(nn.Module):
-    """Mixture-of-Depths for dynamic layer skipping.
-    
+    """Mixture-of-Depths for dynamic layer skipping with modal protection.
+
     Enables the model to skip layers for certain tokens, improving
     efficiency by not processing all tokens through all layers.
+    Cross-modal tokens are force-protected from skipping to preserve
+    modal context integrity.
     """
-    
+
     def __init__(
         self,
         hidden_size: int,
         n_head: int,
         routing_weight: float = 0.1,
         capacity_factor: float = 1.25,
+        modal_protection: bool = True,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ):
         """Initialize Mixture-of-Depths.
-        
+
         Args:
             hidden_size: Model hidden dimension.
             n_head: Number of attention heads.
             routing_weight: Weight for routing decisions.
             capacity_factor: Capacity factor for token allocation.
+            modal_protection: Whether to protect cross-modal tokens from skipping.
             device: Device for parameters.
             dtype: Data type for parameters.
         """
@@ -742,66 +747,79 @@ class YvMixtureOfDepths(nn.Module):
         self.n_head = n_head
         self.routing_weight = routing_weight
         self.capacity_factor = capacity_factor
-        
+        self.modal_protection = modal_protection
+
         self.router = nn.Linear(hidden_size, 2, bias=False, device=device, dtype=dtype)
-        
+
         self.skip_norm = YvRMSNorm(hidden_size, device=device, dtype=dtype)
         self.process_norm = YvRMSNorm(hidden_size, device=device, dtype=dtype)
-        
+
     def forward(
         self,
         x: torch.Tensor,
-        process_fn: Callable[[torch.Tensor], torch.Tensor]
+        process_fn: Callable[[torch.Tensor], torch.Tensor],
+        modal_protection_mask: Optional[torch.Tensor] = None
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Apply mixture-of-depths routing.
-        
+        """Apply mixture-of-depths routing with optional modal protection.
+
         Args:
-            x: Input tensor.
+            x: Input tensor [B, T, H].
             process_fn: Function to apply to processed tokens.
-            
+            modal_protection_mask: Boolean mask [B, T] where True forces processing.
+
         Returns:
             Tuple of (output, routing_loss).
         """
         batch_size, seq_len, _ = x.shape
-        
+
         router_logits = self.router(x)
         router_probs = F.softmax(router_logits, dim=-1)
-        
+
         process_prob = router_probs[..., 0]
         skip_prob = router_probs[..., 1]
-        
+
+        if self.modal_protection and modal_protection_mask is not None:
+            if modal_protection_mask.shape != process_prob.shape:
+                if modal_protection_mask.dim() == 1:
+                    modal_protection_mask = modal_protection_mask.unsqueeze(0).expand(batch_size, -1)
+            process_prob = process_prob * (1.0 - modal_protection_mask.float()) + modal_protection_mask.float()
+            skip_prob = 1.0 - process_prob
+
         capacity = int(seq_len * self.capacity_factor)
-        
+
         _, top_indices = torch.topk(process_prob, min(capacity, seq_len), dim=-1)
-        
+
         process_mask = torch.zeros_like(process_prob)
         process_mask.scatter_(1, top_indices, 1.0)
-        
+
+        if self.modal_protection and modal_protection_mask is not None:
+            process_mask = torch.clamp(process_mask + modal_protection_mask.float(), 0.0, 1.0)
+
         x_process = self.process_norm(x)
         processed = process_fn(x_process)
-        
+
         x_skip = self.skip_norm(x)
-        
+
         output = process_mask.unsqueeze(-1) * processed + skip_prob.unsqueeze(-1) * x_skip
-        
+
         routing_loss = self._compute_routing_loss(router_probs)
-        
+
         return output, routing_loss
-        
+
     def _compute_routing_loss(self, router_probs: torch.Tensor) -> torch.Tensor:
         """Compute auxiliary routing loss for load balancing.
-        
+
         Args:
             router_probs: Router probabilities.
-            
+
         Returns:
             Routing loss tensor.
         """
         process_prob = router_probs[..., 0]
         skip_prob = router_probs[..., 1]
-        
+
         balance_loss = torch.var(process_prob.mean(dim=1)) + torch.var(skip_prob.mean(dim=1))
-        
+
         return balance_loss * self.routing_weight
 
 
@@ -1513,9 +1531,6 @@ class YvTransformerBlock(nn.Module):
             State Spaces", arXiv 2023.
             Dao et al., "Mamba-2: Transforming Transformers", arXiv 2024.
         """
-        from .mamba3 import YvMamba3Block, YvMamba3Config
-        
-        # Auto-enable SSM for models with sufficient capacity
         if cfg.hidden_size >= 2048:
             # Derive SSM configuration from model config
             # Use n_kv_head (GQA heads) as a proxy for state dimension
@@ -1950,7 +1965,7 @@ class YvTransformerBlock(nn.Module):
         # Compute attention scores
         # Query: [B, 1, H], Keys: [N, B, T, H]
         # Reshape for batched matmul
-        query_expanded = query.unsqueeze(1)  # [B, 1, 1, H]
+        query_expanded = query  # [B, 1, H]
         keys_transposed = keys.permute(1, 0, 2, 3)  # [B, N, T, H]
         
         # Compute attention logits: [B, N, T]

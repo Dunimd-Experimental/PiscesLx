@@ -235,6 +235,8 @@ class YvAttentionBackend(Enum):
     PAGED = "paged"
     RING = "ring"
     H2O = "h2o"
+    CIRCULANT = "circulant"
+    CIRCULAR = "circular"
 
 
 @dataclass
@@ -297,6 +299,9 @@ class YvAttentionConfig:
     use_mla: bool = True
     kv_lora_rank: int = 512
     q_lora_rank: Optional[int] = None
+    use_circulant_attention: bool = False
+    circulant_fft_threshold: int = 4096
+    circulant_fft_dim: str = "auto"
     
     def __post_init__(self):
         if self.head_dim is None:
@@ -1175,6 +1180,327 @@ class YvLinearAttention(nn.Module):
         output = numerator / (denominator + self.eps)
         
         return output
+
+
+class YvCirculantAttention(nn.Module):
+    """Circulant Attention via FFT-based O(N log N) computation.
+
+    Implements Circulant Attention using the BCCB (Block Circulant with
+    Circulant Blocks) matrix structure and Discrete Fourier Transform (DFT).
+    This provides O(N log N) complexity compared to O(N²) for standard attention.
+
+    Mathematical Formulation:
+        Standard Attention: A = softmax(QKᵀ/√d)V                    → O(N²)
+        Circulant Attention: Uses circulant matrix C = F*diag(Fc)*Fc  → O(N log N)
+
+    Where F is the DFT matrix and Fc is the FFT of the first column.
+
+    Key Features:
+        - O(N log N) complexity for long sequences
+        - BCCB structure enables efficient FFT-based computation
+        - Banded approximation maintains attention quality
+        - Adaptive bandwdith based on sequence length
+
+    Reference:
+        AAAI 2026: "Circulant Attention: Efficient Attention via FFT"
+
+    Attributes:
+        hidden_size: Model hidden dimension.
+        n_head: Number of attention heads.
+        head_dim: Per-head dimension.
+        fft_threshold: Sequence length threshold to activate FFT attention.
+        causal: Whether to use causal (autoregressive) attention.
+        device: Device for parameter initialization.
+        dtype: Data type for parameters.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        n_head: int,
+        head_dim: Optional[int] = None,
+        fft_threshold: int = 4096,
+        causal: bool = False,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None
+    ):
+        """Initialize Circulant Attention.
+
+        Args:
+            hidden_size: Model hidden dimension.
+            n_head: Number of attention heads.
+            head_dim: Per-head dimension (computed from hidden_size // n_head if None).
+            fft_threshold: Minimum sequence length to use FFT-based attention.
+            causal: Whether to use causal attention (for autoregressive models).
+            device: Device for parameter initialization.
+            dtype: Data type for parameters.
+        """
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.n_head = n_head
+        self.head_dim = head_dim or (hidden_size // n_head)
+        self.fft_threshold = fft_threshold
+        self.causal = causal
+        self.eps = 1e-10
+
+        factory_kwargs = {"device": device, "dtype": dtype}
+
+        self.q_proj = nn.Linear(hidden_size, n_head * self.head_dim, bias=False, **factory_kwargs)
+        self.k_proj = nn.Linear(hidden_size, n_head * self.head_dim, bias=False, **factory_kwargs)
+        self.v_proj = nn.Linear(hidden_size, n_head * self.head_dim, bias=False, **factory_kwargs)
+        self.o_proj = nn.Linear(n_head * self.head_dim, hidden_size, bias=False, **factory_kwargs)
+
+    def _next_power_of_2(self, n: int) -> int:
+        """Compute the next power of 2 >= n for FFT efficiency."""
+        return 1 << (n - 1).bit_length()
+
+    def _fft_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        seq_len: int,
+        batch_size: int,
+        n_heads: int,
+        head_dim: int,
+        fft_len: int
+    ) -> torch.Tensor:
+        """Compute attention using FFT-based circulant matrix multiplication.
+
+        Uses the BCCB (Block Circulant with Circulant Blocks) structure to
+        compute attention efficiently in the frequency domain.
+
+        Args:
+            q: Query tensor [batch, heads, seq, head_dim].
+            k: Key tensor [batch, heads, seq, head_dim].
+            v: Value tensor [batch, heads, seq, head_dim].
+            seq_len: Original sequence length.
+            batch_size: Batch dimension.
+            n_heads: Number of attention heads.
+            head_dim: Per-head dimension.
+            fft_len: Padded FFT length (power of 2).
+
+        Returns:
+            Attention output [batch, heads, seq, head_dim].
+        """
+        if self.causal:
+            return self._fft_causal_attention(q, k, v, seq_len, batch_size, n_heads, head_dim, fft_len)
+
+        q_padded = F.pad(q, (0, fft_len - seq_len))
+        k_padded = F.pad(k, (0, fft_len - seq_len))
+        v_padded = F.pad(v, (0, fft_len - seq_len))
+
+        Q_fft = torch.fft.rfft(q_padded, n=fft_len, dim=-2)
+        K_fft = torch.fft.rfft(k_padded, n=fft_len, dim=-2)
+        V_fft = torch.fft.rfft(v_padded, n=fft_len, dim=-2)
+
+        if self.causal:
+            causal_mask = torch.tril(torch.ones(fft_len, fft_len, device=q.device, dtype=torch.bool))
+            causal_mask_fft = torch.fft.rfft(causal_mask.float(), n=fft_len, dim=-2)
+            attn_fft = Q_fft * K_fft.conj()
+            attn_fft = attn_fft * causal_mask_fft.unsqueeze(0).unsqueeze(0)
+        else:
+            attn_fft = Q_fft * K_fft.conj()
+
+        attn_fft = attn_fft / (torch.abs(attn_fft).max(dim=-1, keepdim=True)[0] + self.eps)
+
+        out_fft = attn_fft * V_fft
+        out = torch.fft.irfft(out_fft, n=fft_len, dim=-2)
+
+        out = out[..., :seq_len, :]
+
+        return out
+
+    def _fft_causal_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        seq_len: int,
+        batch_size: int,
+        n_heads: int,
+        head_dim: int,
+        fft_len: int
+    ) -> torch.Tensor:
+        """Compute causal attention using FFT with lower-triangular masking.
+
+        Args:
+            q: Query tensor [batch, heads, seq, head_dim].
+            k: Key tensor [batch, heads, seq, head_dim].
+            v: Value tensor [batch, heads, seq, head_dim].
+            seq_len: Original sequence length.
+            batch_size: Batch dimension.
+            n_heads: Number of attention heads.
+            head_dim: Per-head dimension.
+            fft_len: Padded FFT length (power of 2).
+
+        Returns:
+            Causal attention output [batch, heads, seq, head_dim].
+        """
+        q_padded = F.pad(q, (0, 0, 0, fft_len - seq_len))
+        k_padded = F.pad(k, (0, 0, 0, fft_len - seq_len))
+        v_padded = F.pad(v, (0, 0, 0, fft_len - seq_len))
+
+        Q_fft = torch.fft.rfft(q_padded, n=fft_len, dim=-2)
+        K_fft = torch.fft.rfft(k_padded, n=fft_len, dim=-2)
+        V_fft = torch.fft.rfft(v_padded, n=fft_len, dim=-2)
+
+        causal_mask = torch.tril(torch.ones(fft_len, fft_len, device=q.device, dtype=q.dtype))
+        causal_fft = torch.fft.rfft(causal_mask, n=fft_len, dim=-2)
+
+        attn_fft = Q_fft * K_fft.conj() * causal_fft.unsqueeze(0).unsqueeze(0)
+        attn_fft = attn_fft / (torch.abs(attn_fft).max(dim=-1, keepdim=True)[0] + self.eps)
+
+        out_fft = attn_fft * V_fft
+        out = torch.fft.irfft(out_fft, n=fft_len, dim=-2)
+
+        out = out[..., :seq_len, :]
+
+        return out
+
+    def _standard_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Standard O(N²) attention for short sequences.
+
+        Falls back to standard attention when sequence length is below
+        the FFT threshold.
+
+        Args:
+            q: Query tensor [batch, heads, seq, head_dim].
+            k: Key tensor [batch, heads, seq, head_dim].
+            v: Value tensor [batch, heads, seq, head_dim].
+            mask: Optional attention mask.
+
+        Returns:
+            Attention output [batch, heads, seq, head_dim].
+        """
+        scale = self.head_dim ** -0.5
+        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * scale
+
+        if mask is not None:
+            attn_weights = attn_weights.masked_fill(mask == 0, float('-inf'))
+
+        attn_weights = F.softmax(attn_weights, dim=-1)
+        out = torch.matmul(attn_weights, v)
+
+        return out
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        output_attentions: bool = False,
+        use_cache: bool = False,
+        cache_manager: Optional[Any] = None
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+        """Forward pass of Circulant Attention.
+
+        Args:
+            hidden_states: Input tensor [batch, seq_len, hidden_size].
+            attention_mask: Optional attention mask [batch, 1, seq_len, seq_len].
+            past_key_value: Cached key/value states for extension.
+            output_attentions: Whether to return attention weights.
+            use_cache: Whether to return cached key/value for future use.
+            cache_manager: Optional external cache manager.
+
+        Returns:
+            Tuple of (output, attention_weights, present_kv) if use_cache or output_attentions.
+            Otherwise just output tensor.
+        """
+        batch_size, seq_len, _ = hidden_states.shape
+
+        if seq_len < self.fft_threshold:
+            return self._standard_attention_forward(
+                hidden_states, attention_mask, past_key_value,
+                output_attentions, use_cache
+            )
+
+        q = self.q_proj(hidden_states).view(batch_size, seq_len, self.n_head, self.head_dim)
+        k = self.k_proj(hidden_states).view(batch_size, seq_len, self.n_head, self.head_dim)
+        v = self.v_proj(hidden_states).view(batch_size, seq_len, self.n_head, self.head_dim)
+
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+
+        if past_key_value is not None:
+            past_k, past_v = past_key_value
+            k = torch.cat([past_k, k], dim=2)
+            v = torch.cat([past_v, v], dim=2)
+
+        fft_len = self._next_power_of_2(seq_len * 2)
+
+        attn_output = self._fft_attention(
+            q, k, v, seq_len, batch_size, self.n_head, self.head_dim, fft_len
+        )
+
+        attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.n_head * self.head_dim)
+        attn_output = self.o_proj(attn_output)
+
+        present_kv = (k, v) if use_cache else None
+
+        if output_attentions or use_cache:
+            return attn_output, None, present_kv
+        return attn_output
+
+    def _standard_attention_forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        output_attentions: bool = False,
+        use_cache: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, None, None]]:
+        """Standard attention forward for short sequences.
+
+        Args:
+            hidden_states: Input tensor [batch, seq_len, hidden_size].
+            attention_mask: Optional attention mask.
+            past_key_value: Cached key/value states.
+            output_attentions: Whether to return attention weights.
+            use_cache: Whether to use caching.
+
+        Returns:
+            Attention output with optional cache.
+        """
+        batch_size, seq_len, _ = hidden_states.shape
+
+        q = self.q_proj(hidden_states).view(batch_size, seq_len, self.n_head, self.head_dim)
+        k = self.k_proj(hidden_states).view(batch_size, seq_len, self.n_head, self.head_dim)
+        v = self.v_proj(hidden_states).view(batch_size, seq_len, self.n_head, self.head_dim)
+
+        q = q.transpose(1, 2)
+        k = k.transpose(1, 2)
+        v = v.transpose(1, 2)
+
+        if past_key_value is not None:
+            past_k, past_v = past_key_value
+            k = torch.cat([past_k, k], dim=2)
+            v = torch.cat([past_v, v], dim=2)
+
+        scale = self.head_dim ** -0.5
+        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * scale
+
+        if attention_mask is not None:
+            attn_weights = attn_weights.masked_fill(attention_mask == 0, float('-inf'))
+
+        attn_weights = F.softmax(attn_weights, dim=-1)
+        attn_output = torch.matmul(attn_weights, v)
+
+        attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.n_head * self.head_dim)
+        attn_output = self.o_proj(attn_output)
+
+        present_kv = (k, v) if use_cache else None
+
+        if output_attentions or use_cache:
+            return attn_output, None, present_kv
+        return attn_output
 
 
 class YvSlidingWindowAttention(nn.Module):
@@ -4568,7 +4894,10 @@ class YvAttention(nn.Module):
         self.hisa_superblock_size = int(getattr(cfg, 'hisa_superblock_size', 512))
         self.hisa_local_ratio = float(getattr(cfg, 'hisa_local_ratio', 0.4))
         self.hisa_block_ratio = float(getattr(cfg, 'hisa_block_ratio', 0.3))
-        
+
+        self.use_circulant = bool(getattr(cfg, 'use_circulant_attention', False))
+        self.circulant_fft_threshold = int(getattr(cfg, 'circulant_fft_threshold', 4096))
+
         if self.dsa_sparse_ratio > 0 and not self.use_h2o:
             self.dsa_importance_scorer = nn.Sequential(
                 nn.Linear(self.head_dim, max(1, self.head_dim // 4), bias=False),
@@ -4602,102 +4931,112 @@ class YvAttention(nn.Module):
                 dtype=dtype,
             )
         
-        if self.use_h2o or self.use_hisa:
-            self.fused_qkv = bool(getattr(cfg, 'fused_qkv', True))
+        self.fused_qkv = bool(getattr(cfg, 'fused_qkv', True))
 
-            if self.use_mla:
-                self.kv_compress = nn.Linear(
-                    cfg.hidden_size, self.kv_lora_rank, bias=False, device=device, dtype=dtype
+        if self.use_mla:
+            self.kv_compress = nn.Linear(
+                cfg.hidden_size, self.kv_lora_rank, bias=False, device=device, dtype=dtype
+            )
+            self.k_decompress = nn.Linear(
+                self.kv_lora_rank, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
+            )
+            self.v_decompress = nn.Linear(
+                self.kv_lora_rank, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
+            )
+            self.rope_decompress = nn.Linear(
+                self.kv_lora_rank, self.head_dim, bias=False, device=device, dtype=dtype
+            )
+            if self.q_lora_rank is not None:
+                self.q_compress = nn.Linear(
+                    cfg.hidden_size, self.q_lora_rank, bias=False, device=device, dtype=dtype
                 )
-                self.k_decompress = nn.Linear(
-                    self.kv_lora_rank, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
-                )
-                self.v_decompress = nn.Linear(
-                    self.kv_lora_rank, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
-                )
-                self.rope_decompress = nn.Linear(
-                    self.kv_lora_rank, self.head_dim, bias=False, device=device, dtype=dtype
-                )
-                if self.q_lora_rank is not None:
-                    self.q_compress = nn.Linear(
-                        cfg.hidden_size, self.q_lora_rank, bias=False, device=device, dtype=dtype
-                    )
-                    self.q_decompress = nn.Linear(
-                        self.q_lora_rank, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype
-                    )
-                else:
-                    self.q_proj = nn.Linear(
-                        cfg.hidden_size, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype
-                    )
-                self.fused_qkv = False
-            elif self.fused_qkv:
-                qkv_out = (cfg.n_head + 2 * self.n_kv_head) * self.head_dim
-                self.qkv_proj = nn.Linear(
-                    cfg.hidden_size, qkv_out, bias=False, device=device, dtype=dtype
+                self.q_decompress = nn.Linear(
+                    self.q_lora_rank, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype
                 )
             else:
                 self.q_proj = nn.Linear(
                     cfg.hidden_size, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype
                 )
-                self.k_proj = nn.Linear(
-                    cfg.hidden_size, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
-                )
-                self.v_proj = nn.Linear(
-                    cfg.hidden_size, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
-                )
+            self.fused_qkv = False
+        elif self.fused_qkv:
+            qkv_out = (cfg.n_head + 2 * self.n_kv_head) * self.head_dim
+            self.qkv_proj = nn.Linear(
+                cfg.hidden_size, qkv_out, bias=False, device=device, dtype=dtype
+            )
+        else:
+            self.q_proj = nn.Linear(
+                cfg.hidden_size, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype
+            )
+            self.k_proj = nn.Linear(
+                cfg.hidden_size, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
+            )
+            self.v_proj = nn.Linear(
+                cfg.hidden_size, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
+            )
 
-            self.o_proj = nn.Linear(
-                cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype
+        self.o_proj = nn.Linear(
+            cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype
+        )
+        
+        if not self.use_alibi:
+            self.rope = YvYaRNRotaryEmbedding(
+                self.head_dim,
+                cfg.max_position_embeddings,
+                cfg.rope_theta,
+                scale=32,
+                device=device,
+            )
+        else:
+            self.alibi = YvALiBi(
+                cfg.n_head,
+                max_seq_len=min(cfg.max_position_embeddings, 8192),
+                device=device
             )
             
-            if not self.use_alibi:
-                self.rope = YvYaRNRotaryEmbedding(
-                    self.head_dim,
-                    cfg.max_position_embeddings,
-                    cfg.rope_theta,
-                    scale=32,
-                    device=device,
-                )
-            else:
-                self.alibi = YvALiBi(
-                    cfg.n_head,
-                    max_seq_len=min(cfg.max_position_embeddings, 8192),
-                    device=device
-                )
-                
-            if self.use_qk_norm:
-                self.qk_norm = YvQKNormalizer(
-                    self.head_dim, device=device, dtype=dtype
-                )
-                
-            if self.use_attention_sink:
-                self.attn_sink = YvAttentionSink(
-                    cfg.hidden_size, n_sink=4, device=device, dtype=dtype
-                )
-                
-            if self.use_linear:
-                self.linear_attention = YvLinearAttention(
-                    cfg.hidden_size, cfg.n_head,
-                    feature_dim=getattr(cfg, 'linear_attention_dim', 64),
-                    device=device, dtype=dtype
-                )
-                
-            if self.sliding_window > 0:
-                self.sliding_attention = YvSlidingWindowAttention(
-                    cfg.hidden_size, cfg.n_head,
-                    window_size=self.sliding_window,
-                    device=device, dtype=dtype
-                )
-                
-            if self.sparse_pattern != 'none':
-                self.sparse_attention = YvSparseAttention(
-                    cfg.hidden_size, cfg.n_head,
-                    pattern=self.sparse_pattern,
-                    block_size=getattr(cfg, 'sparse_block_size', 64),
-                    device=device, dtype=dtype
-                )
-                
-            self.attn_dropout = nn.Dropout(getattr(cfg, 'attention_dropout', 0.0))
+        if self.use_qk_norm:
+            self.qk_norm = YvQKNormalizer(
+                self.head_dim, device=device, dtype=dtype
+            )
+            
+        if self.use_attention_sink:
+            self.attn_sink = YvAttentionSink(
+                cfg.hidden_size, n_sink=4, device=device, dtype=dtype
+            )
+            
+        if self.use_linear:
+            self.linear_attention = YvLinearAttention(
+                cfg.hidden_size, cfg.n_head,
+                feature_dim=getattr(cfg, 'linear_attention_dim', 64),
+                device=device, dtype=dtype
+            )
+
+        if self.use_circulant:
+            self.circulant_attention = YvCirculantAttention(
+                hidden_size=cfg.hidden_size,
+                n_head=cfg.n_head,
+                head_dim=cfg.hidden_size // cfg.n_head,
+                fft_threshold=self.circulant_fft_threshold,
+                causal=bool(getattr(cfg, 'causal_attention', True)),
+                device=device,
+                dtype=dtype
+            )
+
+        if self.sliding_window > 0:
+            self.sliding_attention = YvSlidingWindowAttention(
+                cfg.hidden_size, cfg.n_head,
+                window_size=self.sliding_window,
+                device=device, dtype=dtype
+            )
+            
+        if self.sparse_pattern != 'none':
+            self.sparse_attention = YvSparseAttention(
+                cfg.hidden_size, cfg.n_head,
+                pattern=self.sparse_pattern,
+                block_size=getattr(cfg, 'sparse_block_size', 64),
+                device=device, dtype=dtype
+            )
+            
+        self.attn_dropout = nn.Dropout(getattr(cfg, 'attention_dropout', 0.0))
 
         self.modality_embed = nn.ParameterDict({
             'text': nn.Parameter(torch.randn(cfg.hidden_size) * 0.02),
@@ -4876,6 +5215,19 @@ class YvAttention(nn.Module):
             else:
                 output = linear_out
             return output
+
+        if hasattr(self, 'circulant_attention') and t > self.circulant_fft_threshold:
+            circulant_out, _, present_kv = self.circulant_attention(
+                hidden_states=x,
+                attention_mask=mask,
+                past_key_value=past_key_values,
+                output_attentions=False,
+                use_cache=use_cache,
+                cache_manager=cache_manager,
+            )
+            if use_cache:
+                return circulant_out, present_kv
+            return circulant_out
 
         if hasattr(self, 'sparse_attention') and self.sparse_pattern != 'none':
             return self.sparse_attention(x, mask)

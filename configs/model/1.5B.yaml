@@ -340,3 +340,31 @@ enable_teraio: false
 gpu_memory_budget: 42949672960
 cpu_memory_budget: 137438953472
 enable_gds: true
+
+modal_aware_routing: true
+n_cross_modal_experts: 0
+modal_affinity_alpha: 1.0
+n_modalities: 7
+
+use_recurrent_modal_refiner: true
+rdt_max_loops: 3
+rdt_spectral_radius: 0.95
+rdt_convergence_threshold: 0.99
+rdt_refine_heads: 2
+rdt_refine_ffn_ratio: 1.0
+
+modal_protection_mod: true
+
+use_ultra_sparse_gate: false
+ultra_sparse_tier1_threshold: 0.3
+ultra_sparse_tier2_threshold: 0.8
+ultra_sparse_tier1_topk: 1
+ultra_sparse_tier2_topk: 2
+ultra_sparse_tier3_topk: 4
+
+use_circulant_attention: true
+circulant_threshold: 4096
+
+use_rdt_layers: true
+rdt_layer_indices: []
+rdt_loops_per_layer: 2

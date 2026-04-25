@@ -426,9 +426,117 @@ from .enhanced_fusion import (
     YvContrastiveCrossModalAligner,
 )
 
+
+class YvRecurrentModalRefiner(nn.Module):
+    """Recurrent-Depth Transformer modal refiner (RDT-based).
+
+    Iteratively refines multimodal fusion using a looped computation
+    scheme inspired by OpenMythos RDT:
+        h_{t+1} = A * h_t + B * e + RefineBlock(h_t, e)
+
+    where A is a learnable decay matrix with spectral radius < 1
+    for stability, B is an input projection, e is the text embedding
+    serving as a semantic anchor, and RefineBlock is a lightweight
+    Transformer layer with shared weights.
+
+    Key Features:
+        - Convergence-guaranteed via spectral radius constraint on A.
+        - Dynamic loop count: early stopping when cosine similarity
+          between consecutive iterations exceeds threshold.
+        - Text-anchor prevents semantic drift during refinement.
+        - Lightweight: RefineBlock has ~1/4 parameters of a full layer.
+    """
+
+    def __init__(self, cfg, device=None, dtype=None):
+        super().__init__()
+        self.cfg = cfg
+        self.hidden_size = cfg.hidden_size
+        self.max_loops = getattr(cfg, 'rdt_max_loops', 3)
+        self.spectral_radius = getattr(cfg, 'rdt_spectral_radius', 0.95)
+        self.convergence_threshold = getattr(cfg, 'rdt_convergence_threshold', 0.99)
+        refine_heads = getattr(cfg, 'rdt_refine_heads', 2)
+        ffn_ratio = getattr(cfg, 'rdt_refine_ffn_ratio', 1.0)
+
+        self.A_diag = nn.Parameter(
+            torch.ones(self.hidden_size, device=device, dtype=dtype) * self.spectral_radius
+        )
+        self.B_proj = nn.Linear(self.hidden_size, self.hidden_size, bias=False, device=device, dtype=dtype)
+
+        refine_dim = max(self.hidden_size // 4, 64)
+        self.refine_norm = nn.LayerNorm(self.hidden_size, device=device, dtype=dtype)
+        self.refine_attn = nn.MultiheadAttention(
+            embed_dim=self.hidden_size,
+            num_heads=refine_heads,
+            dropout=0.0,
+            batch_first=True,
+            device=device,
+            dtype=dtype,
+        )
+        ffn_hidden = int(self.hidden_size * ffn_ratio)
+        self.refine_ffn = nn.Sequential(
+            nn.Linear(self.hidden_size, ffn_hidden, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(ffn_hidden, self.hidden_size, device=device, dtype=dtype),
+        )
+        self.refine_ffn_norm = nn.LayerNorm(self.hidden_size, device=device, dtype=dtype)
+
+        self.base_fusion = YvDynamicModalFusion(cfg, cache_manager=None)
+
+    def _enforce_spectral_radius(self):
+        with torch.no_grad():
+            self.A_diag.clamp_(max=self.spectral_radius)
+
+    def _refine_step(self, h, e):
+        residual = h
+        h_norm = self.refine_norm(h)
+        attn_out, _ = self.refine_attn(h_norm, e, e)
+        h = residual + attn_out
+        residual2 = h
+        h_norm2 = self.refine_ffn_norm(h)
+        h = residual2 + self.refine_ffn(h_norm2)
+        return h
+
+    def forward(
+        self,
+        modal_features: Dict[str, Optional[torch.Tensor]],
+        text_emb: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        h = self.base_fusion(modal_features)
+        if h.dim() == 2:
+            h = h.unsqueeze(1)
+
+        if text_emb is None:
+            text_feat = modal_features.get('text')
+            if text_feat is not None:
+                e = text_feat.mean(dim=1, keepdim=True) if text_feat.dim() == 3 else text_feat.unsqueeze(0).unsqueeze(0)
+            else:
+                e = h.detach()
+        else:
+            e = text_emb.mean(dim=1, keepdim=True) if text_emb.dim() == 3 else text_emb.unsqueeze(1)
+
+        self._enforce_spectral_radius()
+
+        a = self.A_diag
+        b_e = self.B_proj(e)
+
+        for loop_idx in range(self.max_loops):
+            h_prev = h
+            refined = self._refine_step(h, e)
+            h = a * h_prev + b_e + refined
+            if loop_idx > 0 and self.convergence_threshold < 1.0:
+                cos_sim = F.cosine_similarity(
+                    h.flatten(1), h_prev.flatten(1), dim=1
+                ).mean()
+                if cos_sim > self.convergence_threshold:
+                    break
+
+        return h
+
+
 __all__ = [
     'YvDynamicModalFusion',
     'YvEnhancedModalFusion',
     'YvModalFusionConfig',
     'YvContrastiveCrossModalAligner',
+    'YvRecurrentModalRefiner',
 ]

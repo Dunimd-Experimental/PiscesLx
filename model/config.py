@@ -610,6 +610,34 @@ class YvConfig:
     extreme_vram_mode: bool = False
     ultra_low_vram: bool = False
 
+    modal_aware_routing: bool = True
+    n_cross_modal_experts: int = 0
+    modal_affinity_alpha: float = 1.0
+    n_modalities: int = 7
+
+    use_recurrent_modal_refiner: bool = True
+    rdt_max_loops: int = 3
+    rdt_spectral_radius: float = 0.95
+    rdt_convergence_threshold: float = 0.99
+    rdt_refine_heads: int = 2
+    rdt_refine_ffn_ratio: float = 1.0
+
+    modal_protection_mod: bool = True
+
+    use_ultra_sparse_gate: bool = False
+    ultra_sparse_tier1_threshold: float = 0.3
+    ultra_sparse_tier2_threshold: float = 0.8
+    ultra_sparse_tier1_topk: int = 1
+    ultra_sparse_tier2_topk: int = 2
+    ultra_sparse_tier3_topk: int = 4
+
+    use_circulant_attention: bool = True
+    circulant_threshold: int = 4096
+
+    use_rdt_layers: bool = True
+    rdt_layer_indices: List[int] = field(default_factory=list)
+    rdt_loops_per_layer: int = 2
+
     def __post_init__(self):
         """Initialize computed fields after dataclass construction.
         

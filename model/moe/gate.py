@@ -1617,3 +1617,245 @@ class YvMoELayer(nn.Module):
             self._monitor_expert_balance(idx)
             self._step += 1
             return y.view(b, t, d), aux_loss
+
+
+class YvModalAwareRouter(nn.Module):
+    """Modal-aware MoE routing gate with cross-modal expert protection.
+
+    Extends standard top-k routing with modality affinity biases so that
+    cross-modal tokens are always routed to experts specialised for
+    cross-modal reasoning, preventing modal context loss under sparse
+    activation.
+
+    Architecture:
+        1. Base routing logits (same as YvMoEGate).
+        2. Modal affinity bias added to logits per (expert, modality).
+        3. Cross-modal token forced routing to dedicated experts.
+
+    Key Features:
+        - Per-expert learnable modality affinity vectors.
+        - Forced routing for cross-modal tokens (modal_id == n_modalities - 1).
+        - Load-balancing loss compatible with existing MoE training.
+        - Configurable number of dedicated cross-modal experts.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_experts: int,
+        top_k: int = 2,
+        n_modalities: int = 7,
+        n_cross_modal_experts: int = 0,
+        affinity_alpha: float = 1.0,
+        device=None,
+        dtype=None,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self.n_modalities = n_modalities
+        self.affinity_alpha = affinity_alpha
+
+        self.n_cross_modal_experts = max(2, n_cross_modal_experts) if n_cross_modal_experts > 0 else max(2, num_experts // 16)
+        if self.n_cross_modal_experts > num_experts:
+            self.n_cross_modal_experts = num_experts
+
+        self.gate_proj = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
+        self.expert_modal_affinity = nn.Parameter(
+            torch.zeros(num_experts, n_modalities, device=device, dtype=dtype)
+        )
+        nn.init.normal_(self.expert_modal_affinity, mean=0.0, std=0.02)
+
+        self.cross_modal_expert_ids = list(range(self.n_cross_modal_experts))
+
+        self._step = 0
+        self.noise_std = 0.1
+        self.load_balance_alpha = 0.01
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        modal_id: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        B, T, _ = x.shape
+        logits = self.gate_proj(x)
+
+        if modal_id is not None:
+            if modal_id.shape != (B, T):
+                if modal_id.numel() == B:
+                    modal_id = modal_id.unsqueeze(1).expand(B, T)
+                else:
+                    modal_id = modal_id.view(B, T)
+            affinity_bias = self.expert_modal_affinity[:, modal_id.long()]
+            affinity_bias = affinity_bias.permute(2, 0, 1)
+            logits = logits + self.affinity_alpha * affinity_bias
+
+        if self.training and self.noise_std > 0:
+            logits = logits + torch.randn_like(logits) * self.noise_std
+
+        is_cross_modal = False
+        if modal_id is not None:
+            is_cross_modal = (modal_id == (self.n_modalities - 1))
+
+        if is_cross_modal.any():
+            cm_mask = is_cross_modal.unsqueeze(-1).expand_as(logits)
+            forbidden_mask = torch.ones_like(logits, dtype=torch.bool)
+            forbidden_mask[:, :, self.cross_modal_expert_ids] = False
+            logits = torch.where(cm_mask & forbidden_mask, torch.tensor(float('-inf'), device=logits.device, dtype=logits.dtype), logits)
+
+        scores = F.softmax(logits, dim=-1)
+        top_k = min(self.top_k, self.num_experts)
+        top_scores, top_idx = torch.topk(scores, top_k, dim=-1)
+
+        top_scores = top_scores / (top_scores.sum(dim=-1, keepdim=True) + 1e-9)
+
+        aux_loss = self._compute_load_balance_loss(scores, top_idx, top_k)
+
+        self._step += 1
+        return top_scores, top_idx, aux_loss
+
+    def _compute_load_balance_loss(self, scores, top_idx, current_top_k):
+        avg_scores = scores.mean(dim=[0, 1])
+        expert_counts = torch.zeros(self.num_experts, device=scores.device)
+        for k in range(current_top_k):
+            expert_counts.scatter_add_(0, top_idx[:, :, k].reshape(-1), torch.ones(top_idx[:, :, k].numel(), device=scores.device))
+        expert_counts = expert_counts / (top_idx.shape[0] * top_idx.shape[1])
+        balance_loss = self.num_experts * (avg_scores * expert_counts).sum()
+        return balance_loss * self.load_balance_alpha
+
+
+class YvUltraSparseGate(nn.Module):
+    """Ultra-sparse tiered MoE routing gate with modal-aware importance scoring.
+
+    Implements a three-tier routing strategy:
+        - Tier 1 (low importance): top_k=1 for maximum sparsity (~90% tokens).
+        - Tier 2 (medium importance): top_k=2 for standard MoE (~9% tokens).
+        - Tier 3 (high importance): top_k=4 for complex reasoning (~1% tokens).
+
+    Cross-modal tokens are forced into Tier 3 to preserve modal context.
+
+    Architecture:
+        1. Importance scorer: lightweight network assessing token complexity.
+        2. Tier assignment based on importance thresholds.
+        3. Per-tier top-k routing with modal-aware forced tiering.
+        4. Compatible with YvStableMoEGate load prediction.
+
+    Key Features:
+        - Configurable tier thresholds and top-k values.
+        - Modal-aware forced tiering for cross-modal tokens.
+        - Load-balancing across tiers.
+        - Importance-weighted auxiliary loss.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_experts: int,
+        top_k: int = 2,
+        tier1_threshold: float = 0.3,
+        tier2_threshold: float = 0.8,
+        tier1_topk: int = 1,
+        tier2_topk: int = 2,
+        tier3_topk: int = 4,
+        n_modalities: int = 7,
+        device=None,
+        dtype=None,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_experts = num_experts
+        self.top_k = top_k
+        self.tier1_threshold = tier1_threshold
+        self.tier2_threshold = tier2_threshold
+        self.tier1_topk = min(tier1_topk, num_experts)
+        self.tier2_topk = min(tier2_topk, num_experts)
+        self.tier3_topk = min(tier3_topk, num_experts)
+        self.n_modalities = n_modalities
+
+        self.gate_proj = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
+        self.importance_proj = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 4, bias=False, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(hidden_size // 4, 1, bias=False, device=device, dtype=dtype),
+        )
+
+        self.expert_modal_affinity = nn.Parameter(
+            torch.zeros(num_experts, n_modalities, device=device, dtype=dtype)
+        )
+        nn.init.normal_(self.expert_modal_affinity, mean=0.0, std=0.02)
+
+        self._step = 0
+        self.noise_std = 0.1
+        self.load_balance_alpha = 0.01
+        self.affinity_alpha = 1.0
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        modal_id: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        B, T, _ = x.shape
+
+        importance = torch.sigmoid(self.importance_proj(x)).squeeze(-1)
+
+        logits = self.gate_proj(x)
+
+        if modal_id is not None:
+            if modal_id.shape != (B, T):
+                if modal_id.numel() == B:
+                    modal_id = modal_id.unsqueeze(1).expand(B, T)
+                else:
+                    modal_id = modal_id.view(B, T)
+            affinity_bias = self.expert_modal_affinity[:, modal_id.long()]
+            affinity_bias = affinity_bias.permute(2, 0, 1)
+            logits = logits + self.affinity_alpha * affinity_bias
+
+        if self.training and self.noise_std > 0:
+            logits = logits + torch.randn_like(logits) * self.noise_std
+
+        if modal_id is not None:
+            cross_modal_mask = (modal_id == (self.n_modalities - 1))
+            importance = importance * (~cross_modal_mask).float() + cross_modal_mask.float()
+
+        tier_assignment = torch.zeros(B, T, dtype=torch.long, device=x.device)
+        tier_assignment[importance < self.tier1_threshold] = 0
+        tier_assignment[(importance >= self.tier1_threshold) & (importance < self.tier2_threshold)] = 1
+        tier_assignment[importance >= self.tier2_threshold] = 2
+
+        scores = F.softmax(logits, dim=-1)
+
+        max_topk = max(self.tier1_topk, self.tier2_topk, self.tier3_topk)
+        all_top_scores = torch.zeros(B, T, max_topk, device=x.device, dtype=x.dtype)
+        all_top_idx = torch.zeros(B, T, max_topk, device=x.device, dtype=torch.long)
+
+        for tier, tier_topk in enumerate([self.tier1_topk, self.tier2_topk, self.tier3_topk]):
+            mask = (tier_assignment == tier)
+            if not mask.any():
+                continue
+            tier_logits = logits[mask]
+            tier_scores = F.softmax(tier_logits, dim=-1)
+            ts, ti = torch.topk(tier_scores, tier_topk, dim=-1)
+            ts = ts / (ts.sum(dim=-1, keepdim=True) + 1e-9)
+            all_top_scores[mask, :, :tier_topk] = ts
+            all_top_idx[mask, :, :tier_topk] = ti
+
+        effective_topk = max_topk
+        aux_loss = self._compute_load_balance_loss(scores, all_top_idx, effective_topk)
+        aux_loss = aux_loss + 0.01 * importance.var()
+
+        self._step += 1
+        return all_top_scores, all_top_idx, aux_loss
+
+    def _compute_load_balance_loss(self, scores, top_idx, current_top_k):
+        avg_scores = scores.mean(dim=[0, 1])
+        expert_counts = torch.zeros(self.num_experts, device=scores.device)
+        for k in range(current_top_k):
+            idx_k = top_idx[:, :, k].reshape(-1)
+            valid = idx_k >= 0
+            if valid.any():
+                expert_counts.scatter_add_(0, idx_k[valid], torch.ones(valid.sum(), device=scores.device))
+        total_tokens = max(expert_counts.sum().item(), 1.0)
+        expert_counts = expert_counts / total_tokens
+        balance_loss = self.num_experts * (avg_scores * expert_counts).sum()
+        return balance_loss * self.load_balance_alpha

@@ -565,12 +565,15 @@ class PiscesLxTrainingOperator(object):
                 bias=str(getattr(lora_cfg, "bias", "none")),
                 task_type=str(getattr(lora_cfg, "task_type", "CAUSAL_LM")),
             )
+            
+            _LOG.info(f"Applying LoRA to {len(target_modules)} module types...")
             self.model = get_peft_model(self.model, peft_cfg)
+            
             try:
-                self.model.print_trainable_parameters()
+                trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+                _LOG.info(f"LoRA enabled: {trainable:,} trainable parameters")
             except Exception:
-                pass
-            _LOG.info("LoRA enabled")
+                _LOG.info("LoRA enabled")
         except Exception as e:
             _LOG.warning(f"Failed to enable LoRA: {e}")
     
@@ -585,12 +588,12 @@ class PiscesLxTrainingOperator(object):
         bits = int(getattr(self.config.quantization, "bits", 4) or 4)
         group_size = int(getattr(self.config.quantization, "group_size", 128) or 128)
 
-        # Prefer bitsandbytes 4-bit quantization for training (QLoRA). This is the only path
-        # that can realistically bring 7B into 20GB.
         if bits == 4 and method in {"nf4", "int4", "fp4"}:
             try:
                 import bitsandbytes as bnb
                 import torch.nn as nn
+                import warnings
+                warnings.filterwarnings('ignore', message='.*_check_is_size.*')
 
                 quant_type = "nf4" if method == "nf4" else "fp4"
                 compute_dtype = torch.bfloat16 if str(getattr(self.config, "mixed_precision", "bf16")).lower() == "bf16" else torch.float16
@@ -598,74 +601,55 @@ class PiscesLxTrainingOperator(object):
                 linear4bit_count = 0
                 conv_quantized_count = 0
 
-                def _convert(module: nn.Module):
-                    nonlocal linear4bit_count, conv_quantized_count
-                    # torch.nn.MultiheadAttention directly calls F.linear() with raw weight tensors
-                    # (e.g. out_proj_weight). Replacing its internal Linear weights with bnb 4-bit
-                    # modules will produce uint8/quantized weights and crash with dtype mismatch.
-                    # Keep MHA blocks in floating dtype for correctness.
+                _LOG.info(f"Quantizing linear layers...")
+
+                skip_modules = set()
+                for name, module in self.model.named_modules():
                     if isinstance(module, nn.MultiheadAttention):
-                        return
-                    for name, child in list(module.named_children()):
-                        if isinstance(child, nn.Linear):
-                            child_device = None
-                            try:
-                                child_device = child.weight.device
-                            except Exception:
-                                child_device = None
+                        for child_name, _ in module.named_modules():
+                            if child_name:
+                                skip_modules.add(f"{name}.{child_name}")
+                            else:
+                                skip_modules.add(name)
 
-                            new_mod = bnb.nn.Linear4bit(
-                                child.in_features,
-                                child.out_features,
-                                bias=child.bias is not None,
-                                quant_type=quant_type,
-                                compress_statistics=False,
-                                compute_dtype=compute_dtype,
-                            )
-                            # Load float weights/bias first, then move the module to the target device.
-                            # bitsandbytes will initialize and pack the 4-bit quantization state on .to(device).
-                            try:
-                                new_mod.load_state_dict(child.state_dict(), strict=False)
-                            except Exception:
-                                pass
+                for name, module in list(self.model.named_modules()):
+                    if name in skip_modules:
+                        continue
+                    if isinstance(module, nn.Linear):
+                        parent = self.model
+                        parts = name.split('.')
+                        for part in parts[:-1]:
+                            parent = getattr(parent, part)
+                        child_name = parts[-1] if parts else name
+                        
+                        new_mod = bnb.nn.Linear4bit(
+                            module.in_features,
+                            module.out_features,
+                            bias=module.bias is not None,
+                            quant_type=quant_type,
+                            compress_statistics=False,
+                            compute_dtype=compute_dtype,
+                        )
+                        new_mod.weight = bnb.nn.Params4bit(
+                            module.weight.data,
+                            requires_grad=False,
+                            quant_type=quant_type,
+                        )
+                        if module.bias is not None:
+                            new_mod.bias.data = module.bias.data
+                        setattr(parent, child_name, new_mod)
+                        linear4bit_count += 1
+                    elif isinstance(module, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
+                        if module.weight.dtype != compute_dtype:
+                            module.weight.data = module.weight.data.to(compute_dtype)
+                            if module.bias is not None:
+                                module.bias.data = module.bias.data.to(compute_dtype)
+                            conv_quantized_count += 1
 
-                            # Ensure the newly created module is on the same device as the original layer.
-                            # This is critical for bitsandbytes 4-bit layers to initialize quantization state
-                            # and avoid assertion errors during the first forward.
-                            try:
-                                if child_device is not None:
-                                    new_mod = new_mod.to(device=child_device)
-                            except Exception:
-                                pass
-
-                            setattr(module, name, new_mod)
-                            linear4bit_count += 1
-                        elif isinstance(child, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
-                            # Conv layers: bitsandbytes doesn't support 4-bit Conv for training.
-                            # Use compute dtype (BF16/FP16) for memory efficiency while maintaining training stability.
-                            # This reduces memory by 50% compared to FP32 while preserving gradient flow.
-                            try:
-                                if child.weight.dtype != compute_dtype:
-                                    child.weight.data = child.weight.data.to(compute_dtype)
-                                    if child.bias is not None and child.bias.dtype != compute_dtype:
-                                        child.bias.data = child.bias.data.to(compute_dtype)
-                                    conv_quantized_count += 1
-                            except Exception:
-                                pass
-                            _convert(child)
-                        else:
-                            _convert(child)
-
-                _convert(self.model)
-
-                # Freeze base weights; keep trainable params to adapters (LoRA) or explicit trainable heads.
                 for p in self.model.parameters():
                     p.requires_grad = False
 
-                try:
-                    trainable = sum(int(p.numel()) for p in self.model.parameters() if p.requires_grad)
-                except Exception:
-                    trainable = -1
+                trainable = sum(int(p.numel()) for p in self.model.parameters() if p.requires_grad)
 
                 _LOG.info(
                     "bitsandbytes 4bit conversion finished",

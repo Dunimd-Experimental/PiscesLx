@@ -309,6 +309,7 @@ class YvLayerType(Enum):
     SSM = "ssm"
     HYBRID = "hybrid"
     MOE = "moe"
+    RECURRENT = "recurrent"
 
 
 @dataclass
@@ -413,11 +414,22 @@ class YvLayerRouter:
         Priority order:
             1. MoE layers (if in moe_layers list)
             2. SSM layers (if in mamba3_layers list)
-            3. Hybrid layers (if use_mamba3 and sequence threshold met)
-            4. Default attention layers
+            3. Recurrent layers (if in rdt_layer_indices list)
+            4. Hybrid layers (if use_mamba3 and sequence threshold met)
+            5. Default attention layers
         """
         mamba3_layers = getattr(self.config, 'mamba3_layers', [])
         moe_layers = getattr(self.config, 'moe_layers', [])
+        rdt_layer_indices = getattr(self.config, 'rdt_layer_indices', [])
+        use_rdt_layers = getattr(self.config, 'use_rdt_layers', True)
+
+        if not rdt_layer_indices and use_rdt_layers:
+            n = self.n_layer
+            if n >= 16:
+                rdt_start = max(0, n - max(2, n // 8))
+                rdt_layer_indices = list(range(rdt_start, n - max(1, n // 16)))
+            elif n >= 8:
+                rdt_layer_indices = [n - 2, n - 3]
 
         for i in range(self.n_layer):
             layer_type = YvLayerType.ATTENTION
@@ -426,6 +438,8 @@ class YvLayerRouter:
                 layer_type = YvLayerType.SSM
             elif i in moe_layers:
                 layer_type = YvLayerType.MOE
+            elif i in rdt_layer_indices:
+                layer_type = YvLayerType.RECURRENT
             elif getattr(self.config, 'use_mamba3', False):
                 threshold = getattr(self.config, 'mamba3_sequence_threshold', 8192)
                 if not mamba3_layers or i in mamba3_layers:
@@ -689,7 +703,12 @@ class YvModel(nn.Module):
         self.agent_encoder = YvAgenticEncoder(cfg)
 
         use_enhanced_fusion = getattr(cfg, 'use_enhanced_fusion', False)
-        if use_enhanced_fusion:
+        use_recurrent_refiner = getattr(cfg, 'use_recurrent_modal_refiner', True)
+        if use_recurrent_refiner:
+            from ..multimodal.fusion import YvRecurrentModalRefiner
+            self.modal_fusion = YvRecurrentModalRefiner(cfg, device=device, dtype=dtype)
+            _LOG.debug("YvModel: using YvRecurrentModalRefiner")
+        elif use_enhanced_fusion:
             from ..multimodal import YvEnhancedModalFusion, YvModalFusionConfig
             fusion_config = YvModalFusionConfig(
                 hidden_size=cfg.hidden_size,
@@ -1454,7 +1473,11 @@ class YvModel(nn.Module):
             modal_features['agentic'] = agent_feat
 
         if len(modal_features) > 1:
-            fused_features = self.modal_fusion(modal_features)
+            use_recurrent_refiner = getattr(self.cfg, 'use_recurrent_modal_refiner', True)
+            if use_recurrent_refiner and hasattr(self.modal_fusion, 'forward') and 'text_emb' in self.modal_fusion.forward.__code__.co_varnames:
+                fused_features = self.modal_fusion(modal_features, text_emb=text_emb)
+            else:
+                fused_features = self.modal_fusion(modal_features)
             if fused_features is None:
                 x = text_emb
             elif fused_features.dim() == 3:
@@ -1473,9 +1496,23 @@ class YvModel(nn.Module):
                 x = text_emb
         else:
             x = text_emb
+            fused_features = None
 
         t = x.shape[1]
         lm_seq_len = x.shape[1]
+
+        modal_id = None
+        modal_protection_mask = None
+        if getattr(self.cfg, 'modal_aware_routing', True) or getattr(self.cfg, 'modal_protection_mod', True):
+            n_modalities = getattr(self.cfg, 'n_modalities', 7)
+            modal_id = torch.zeros(b, t, dtype=torch.long, device=x.device)
+            modal_protection_mask = torch.zeros(b, t, dtype=torch.bool, device=x.device)
+            if len(modal_features) > 1:
+                modal_token_count = getattr(self, 'modal_token_count', 8)
+                if fused_features is not None:
+                    actual_modal_tokens = min(modal_token_count, t)
+                    modal_id[:, :actual_modal_tokens] = n_modalities - 1
+                    modal_protection_mask[:, :actual_modal_tokens] = True
         
         mask = torch.triu(torch.full((t, t), float('-inf'), device=x.device, dtype=x.dtype), diagonal=1)
 
