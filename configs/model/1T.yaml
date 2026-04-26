@@ -267,6 +267,84 @@ kv_lora_rank: 2560
 mla_q_lora_rank: null
 mla_rope_scaling_factor: 1.0
 
+# ========================================
+# Flagship Algorithm Integration (2025-2026)
+# ========================================
+
+# EG-MLA: Embedding-Gated Multi-Head Latent Attention (NeurIPS 2025)
+use_eg_mla: false
+eg_mla_compression_ratio: 0.916
+
+# DuoAttention: Retrieval vs Streaming Heads (ICLR 2026 MIT)
+use_duo_attention: false
+duo_attention_retrieval_ratio: 0.2
+duo_attention_buffer_size: 1024
+
+# Test-Time Training TTT-E2E (arXiv 2512.23675)
+use_ttt_e2e: false
+ttt_update_layers: 2
+ttt_learning_rate: 0.00001
+ttt_max_steps: 5
+ttt_confidence_threshold: 0.6
+ttt_complexity_threshold: 0.7
+
+# Expert Evolution: Hebbian Learning + Domain Specialization
+use_expert_evolution: false
+expert_evolution_base_lr: 0.00001
+expert_evolution_decay: 0.99
+
+# EWC: Elastic Weight Consolidation
+use_ewc: false
+ewc_lambda: 1000.0
+
+# SEAL: Self-Adapting LLMs (MIT 2025)
+use_seal: false
+seal_confidence_threshold: 0.85
+seal_max_synthetic_samples: 100
+
+# DAPO: Decoupled Clipping Policy Optimization (2025)
+use_dapo: false
+dapo_epsilon_low: 0.2
+dapo_epsilon_high: 0.4
+dapo_diversity_threshold: 0.3
+
+# Verification: CRV + OTV + ARES
+use_crv_verification: false
+use_otv_verification: false
+use_ares_verification: false
+otv_quality_threshold: 0.6
+
+# SyncFusion: Audio-Video Synchronous Understanding (ICLR 2025)
+use_sync_fusion: false
+sync_fusion_temporal_bins: 16
+
+# Coupled Mamba Fusion (NeurIPS 2024)
+use_coupled_mamba_fusion: false
+coupled_mamba_coupling_strength: 0.3
+
+# SparseSSM: Training-Free Mamba Pruning (ICLR 2026)
+use_sparse_ssm: false
+sparse_ssm_ratio: 0.5
+
+# Gated Delta Networks (ICLR 2025)
+use_gated_delta: false
+
+# OOMB: Million-Token Context Training (ICLR 2026)
+use_oomb_context: false
+oomb_chunk_size: 32768
+oomb_max_context: 4194304
+
+# REFORM: Compress-Gather-Recompute (2025)
+use_reform: false
+reform_compression_ratio: 4
+reform_importance_threshold: 0.1
+
+# Quartet: End-to-End FP4 Training (OpenReview 2025)
+use_quartet: false
+
+# Long Context Extensions
+max_context_length: 1048576
+
 num_mtp_heads: 4
 mtp_loss_weight: 0.5
 mtp_share_embeddings: true

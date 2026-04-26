@@ -580,6 +580,15 @@ class TrainingConfig:
         enable_sft: Enable Supervised Fine-Tuning mode
         enable_pref_align: Enable preference alignment training
         enable_multitask: Enable multi-task training
+        enable_distillation: Enable knowledge distillation training
+        
+        # Distillation Configuration
+        distill_teacher_path: Teacher model path or API URL
+        distill_teacher_name: Model name for API calls
+        distill_teacher_api_key: API key for remote authentication
+        distill_teacher_type: Teacher provider type (local/server/remote)
+        distill_alpha: Distillation loss weight
+        distill_temperature: Temperature for soft labels
     """
     model_name: str = "pisceslx-base"
     output_dir: str = ".pisceslx/ckpt"
@@ -602,6 +611,7 @@ class TrainingConfig:
     data: DataConfig = field(default_factory=DataConfig)
     quantization: QuantizationConfig = field(default_factory=QuantizationConfig)
     lora: LoRAConfig = field(default_factory=LoRAConfig)
+    evolution: EvolutionConfig = field(default_factory=EvolutionConfig)
     
     stage: Optional[TrainingStage] = None
     
@@ -632,6 +642,14 @@ class TrainingConfig:
     enable_sft: bool = False
     enable_pref_align: bool = False
     enable_multitask: bool = False
+    enable_distillation: bool = False
+    
+    distill_teacher_path: Optional[str] = None
+    distill_teacher_name: Optional[str] = None
+    distill_teacher_api_key: Optional[str] = None
+    distill_teacher_type: str = "local"
+    distill_alpha: float = 0.5
+    distill_temperature: float = 2.0
     
     parallel_3d: Dict[str, Any] = field(default_factory=lambda: {
         "enabled": False,
@@ -882,6 +900,7 @@ class TrainingConfig:
                 "bias": self.lora.bias,
                 "task_type": self.lora.task_type,
             },
+            "evolution": self.evolution.to_dict() if hasattr(self, 'evolution') else {},
             "special_modes": {
                 "enable_dpo": self.enable_dpo,
                 "enable_sft": self.enable_sft,
@@ -1002,6 +1021,9 @@ class TrainingConfig:
             config.lora.bias = lora_dict.get("bias", config.lora.bias)
             config.lora.task_type = lora_dict.get("task_type", config.lora.task_type)
         
+        if "evolution" in config_dict:
+            config.evolution = EvolutionConfig.from_dict(config_dict["evolution"])
+        
         # Special mode configuration
         if "special_modes" in config_dict:
             modes_dict = config_dict["special_modes"]
@@ -1116,3 +1138,87 @@ class TrainingConfig:
 
         if args.get("force_lora"):
             self.lora.enabled = True
+
+
+@dataclass
+class EvolutionConfig:
+    """
+    Evolution Training Configuration
+    
+    Configuration for self-evolution training pipeline implementing:
+    - Knowledge distillation from teacher to seed model
+    - Progressive model growth (depth/width/experts)
+    - Self-evolution using SEAL/SPIN
+    - Weak-to-strong training for final model
+    
+    Based on NeurIPS/ICML/ICLR 2024-2025 papers:
+    - NeurIPS 2024: Gstack (Stacking Your Transformers)
+    - ICML 2024: SPIN (Self-Play Fine-Tuning)
+    - ICML 2024: Weak-to-Strong Generalization (OpenAI)
+    - ICLR 2025: Architect Thyself (Neural Darwinism)
+    
+    Attributes:
+        enabled: Enable evolution training mode.
+        seed_size: Initial seed model size (e.g., "0.5B").
+        target_size: Target model size (e.g., "7B").
+        distill_steps: Number of distillation training steps.
+        evolution_steps: Number of self-evolution steps.
+        w2s_steps: Number of weak-to-strong training steps.
+        growth_stages: List of growth stage configurations.
+        confidence_threshold: Confidence threshold for weak-to-strong.
+        use_curriculum: Enable curriculum learning in W2S.
+        use_self_correction: Enable self-correction mechanism.
+    """
+    
+    enabled: bool = False
+    seed_size: str = "0.5B"
+    target_size: str = "7B"
+    distill_steps: int = 2000
+    evolution_steps: int = 1000
+    w2s_steps: int = 2000
+    growth_stages: List[Dict[str, Any]] = field(default_factory=lambda: [
+        {"type": "depth", "num_layers": 4, "train_steps": 500},
+        {"type": "width", "hidden_size": 2048, "train_steps": 500},
+        {"type": "experts", "num_experts": 16, "train_steps": 500},
+        {"type": "depth", "num_layers": 8, "train_steps": 1000},
+    ])
+    confidence_threshold: float = 0.7
+    use_curriculum: bool = True
+    use_self_correction: bool = True
+    correction_weight: float = 0.3
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "enabled": self.enabled,
+            "seed_size": self.seed_size,
+            "target_size": self.target_size,
+            "distill_steps": self.distill_steps,
+            "evolution_steps": self.evolution_steps,
+            "w2s_steps": self.w2s_steps,
+            "growth_stages": self.growth_stages,
+            "confidence_threshold": self.confidence_threshold,
+            "use_curriculum": self.use_curriculum,
+            "use_self_correction": self.use_self_correction,
+            "correction_weight": self.correction_weight,
+        }
+    
+    @classmethod
+    def from_dict(cls, config_dict: Dict[str, Any]) -> 'EvolutionConfig':
+        return cls(
+            enabled=config_dict.get("enabled", False),
+            seed_size=config_dict.get("seed_size", "0.5B"),
+            target_size=config_dict.get("target_size", "7B"),
+            distill_steps=config_dict.get("distill_steps", 2000),
+            evolution_steps=config_dict.get("evolution_steps", 1000),
+            w2s_steps=config_dict.get("w2s_steps", 2000),
+            growth_stages=config_dict.get("growth_stages", [
+                {"type": "depth", "num_layers": 4, "train_steps": 500},
+                {"type": "width", "hidden_size": 2048, "train_steps": 500},
+                {"type": "experts", "num_experts": 16, "train_steps": 500},
+                {"type": "depth", "num_layers": 8, "train_steps": 1000},
+            ]),
+            confidence_threshold=config_dict.get("confidence_threshold", 0.7),
+            use_curriculum=config_dict.get("use_curriculum", True),
+            use_self_correction=config_dict.get("use_self_correction", True),
+            correction_weight=config_dict.get("correction_weight", 0.3),
+        )

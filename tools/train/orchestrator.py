@@ -144,6 +144,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         self.optimizers = {}
         self.quantizers = {}
         self.multitask_ops = {}
+        self._teacher_provider = None
         
         self.is_initialized = False
         self.current_phase = "initialization"
@@ -798,6 +799,32 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if train_mode == "standard" and (params.get("save") is not None or params.get("bits") is not None):
             train_mode = "quant_export"
 
+        enable_distill = bool(params.get("distill", False))
+        teacher_model_path = params.get("teacher_model")
+        teacher_name = params.get("teacher_name")
+        teacher_api_key = params.get("teacher_api_key")
+        teacher_type = str(params.get("teacher_type") or "local").strip() or "local"
+        distill_alpha = float(params.get("distill_alpha") or 0.5)
+        distill_temperature = float(params.get("distill_temperature") or 2.0)
+
+        if enable_distill and teacher_model_path:
+            _LOG.info(
+                "Distillation enabled",
+                teacher_model=str(teacher_model_path),
+                teacher_name=str(teacher_name) if teacher_name else "default",
+                teacher_api_key="***" if teacher_api_key else "none",
+                teacher_type=teacher_type,
+                distill_alpha=distill_alpha,
+                distill_temperature=distill_temperature,
+            )
+            self.train_config.enable_distillation = True
+            self.train_config.distill_teacher_path = str(teacher_model_path)
+            self.train_config.distill_teacher_name = str(teacher_name) if teacher_name else None
+            self.train_config.distill_teacher_api_key = str(teacher_api_key) if teacher_api_key else None
+            self.train_config.distill_teacher_type = teacher_type
+            self.train_config.distill_alpha = distill_alpha
+            self.train_config.distill_temperature = distill_temperature
+
         stage_param = params.get("stage")
         if stage_param:
             from .config import TrainingStage
@@ -1306,42 +1333,34 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         self._train_dataloader_factory = train_dataloader_factory
         self._val_dataloader_factory = val_dataloader_factory
         
-        # 0. Start developer mode UI first (if enabled)
         self._start_dev_mode_ui()
         
-        # 1. Initialize core training operator
         self.trainer = PiscesLxTrainingOperator(self.train_config)
         
-        # 2. Initialize model
         model = self.trainer.initialize_model(model_class, **model_kwargs)
         
-        # 3. Initialize optimizers
+        if getattr(self.train_config, 'enable_distillation', False):
+            self._setup_distillation()
+        
         self._setup_optimizers()
         
-        # 4. Initialize quantization components (if enabled)
         if self.train_config.quantization.enable_quantization:
             self._setup_quantization()
         
-        # 5. Initialize multi-task components (if enabled)
         if self.train_config.enable_multitask:
             self._setup_multitask()
         
-        # 6. Initialize watermark components (if enabled)
         if getattr(self.train_config, 'enable_watermark', False):
             self._setup_watermark()
         
-        # 7. Initialize training pipeline
         self.pipeline = TrainingPipelineOperator(self.train_config, trainer=self.trainer)
         
-        # 8. Setup curriculum learning (if configured)
         if hasattr(self.train_config, 'curriculum') and self.train_config.curriculum:
             self._setup_curriculum_learning()
         
-        # 9. Setup watermark pipeline (if watermark enabled)
         if getattr(self.train_config, 'enable_watermark', False):
             self._setup_watermark_pipeline()
         
-        # 10. Attach developer mode to trainer (if enabled)
         self._attach_dev_mode_trainer()
         
         self.is_initialized = True
@@ -1349,6 +1368,67 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         
         _LOG.info("Training environment initialization completed")
         return self
+    
+    def _setup_distillation(self):
+        """Setup distillation components with teacher provider."""
+        teacher_path = getattr(self.train_config, 'distill_teacher_path', None)
+        teacher_name = getattr(self.train_config, 'distill_teacher_name', None)
+        teacher_api_key = getattr(self.train_config, 'distill_teacher_api_key', None)
+        teacher_type = getattr(self.train_config, 'distill_teacher_type', 'local')
+        distill_alpha = getattr(self.train_config, 'distill_alpha', 0.5)
+        distill_temperature = getattr(self.train_config, 'distill_temperature', 2.0)
+        
+        if not teacher_path:
+            _LOG.warning("Distillation enabled but no teacher model path specified")
+            return
+        
+        try:
+            from opss.train.distill_provider import (
+                POPSSTeacherProviderFactory,
+                POPSSTeacherConfig,
+                POPSSLocalTeacherProvider,
+                POPSSServerTeacherProvider,
+                POPSSRemoteTeacherProvider,
+            )
+            
+            provider_config = POPSSTeacherConfig(
+                provider_type=teacher_type,
+                alpha=distill_alpha,
+                temperature=distill_temperature,
+            )
+            
+            if teacher_type == "local":
+                provider_config.model_path = teacher_path
+                self._teacher_provider = POPSSLocalTeacherProvider(provider_config)
+                _LOG.info(f"Local teacher provider created from: {teacher_path}")
+            
+            elif teacher_type == "server":
+                provider_config.server_url = teacher_path
+                self._teacher_provider = POPSSServerTeacherProvider(provider_config)
+                _LOG.info(f"Server teacher provider created for: {teacher_path}")
+            
+            elif teacher_type == "remote":
+                provider_config.base_url = teacher_path
+                if teacher_name:
+                    provider_config.model_name = teacher_name
+                if teacher_api_key:
+                    provider_config.api_key = teacher_api_key
+                self._teacher_provider = POPSSRemoteTeacherProvider(provider_config)
+                _LOG.info(f"Remote API teacher provider created: base_url={teacher_path}, model={teacher_name}")
+            
+            else:
+                _LOG.warning(f"Unknown teacher type: {teacher_type}, falling back to local")
+                provider_config.model_path = teacher_path
+                self._teacher_provider = POPSSLocalTeacherProvider(provider_config)
+            
+            if self.trainer is not None:
+                self.trainer.set_teacher_provider(self._teacher_provider)
+                _LOG.info("Teacher provider attached to trainer")
+            
+        except ImportError as e:
+            _LOG.warning(f"Distillation provider modules not available: {e}")
+        except Exception as e:
+            _LOG.error(f"Failed to setup distillation: {e}")
     
     def _setup_optimizers(self):
         """Setup optimizer components."""
@@ -1423,49 +1503,53 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             return {"status": self.get_training_status()}
         raise ValueError(f"Unsupported action: {action}")
     
-    def start_training(self, epochs: int = 1, 
+    def start_training(self, epochs: int = 1,
                       resume_from: Optional[str] = None) -> Dict[str, Any]:
         """
         Start the training process.
-        
+
         Args:
             epochs: Number of training epochs.
             resume_from: Path to checkpoint for resuming training.
-            
+
         Returns:
             Training history dictionary.
         """
         if not self.is_initialized:
             raise RuntimeError("Training environment not initialized. Call initialize_training() first.")
-        
+
         _LOG.info(f"Starting training for {epochs} epochs")
         self.current_phase = "training"
         self.training_history['timestamps']['start'] = datetime.now().isoformat()
-        
+
         try:
+            if getattr(self.train_config, 'enable_distillation', False):
+                _LOG.info("Distillation mode detected, using POPSSDistillationOperator")
+                return self._run_distillation_training(epochs, resume_from)
+
             train_loader = self._get_train_dataloader()
             val_loader = self._get_val_dataloader()
-            
+
             if self._check_dev_mode_pause():
                 _LOG.info("Training paused via developer mode before start")
                 self._wait_dev_mode_resume()
-            
+
             training_results = self.pipeline.fit(
                 train_dataloader=train_loader,
                 val_dataloader=val_loader,
                 epochs=epochs,
                 resume_from=resume_from
             )
-            
+
             self.training_history['results'] = training_results
             self.training_history['timestamps']['end'] = datetime.now().isoformat()
             self.current_phase = "completed"
-            
+
             self._detach_dev_mode()
-            
+
             _LOG.info("Training completed successfully")
             return training_results
-            
+
         except Exception as e:
             self.current_phase = "failed"
             self.training_history['error'] = str(e)
@@ -1473,6 +1557,53 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             _LOG.error(f"Training failed: {e}")
             self._detach_dev_mode()
             raise
+
+    def _run_distillation_training(self, epochs: int, resume_from: Optional[str]) -> Dict[str, Any]:
+        """Run distillation training using POPSSDistillationOperator."""
+        _LOG.info("Starting distillation training...")
+
+        teacher_provider = self._teacher_provider
+        if teacher_provider is None:
+            raise ValueError(
+                "Distillation is enabled but teacher_provider is not set. "
+                "Please ensure _setup_distillation() was called before start_training()."
+            )
+
+        from opss.train.distill import (
+            POPSSDistillationConfig,
+            POPSSDistillationOperator,
+        )
+
+        distill_cfg = POPSSDistillationConfig(
+            student_model_path=str(resume_from) if resume_from else ".pisceslx/ckpt",
+            output_dir=getattr(self.train_config, 'output_dir', '.pisceslx/distill_output'),
+            train_data=getattr(self.train_config.data, 'train_data_path', './data/train.jsonl'),
+            val_data=getattr(self.train_config.data, 'val_data_path', './data/val.jsonl'),
+            batch_size=int(getattr(self.train_config.data, 'batch_size', 4)),
+            micro_batch_size=int(getattr(self.train_config.data, 'micro_batch_size', 1)),
+            gradient_accumulation_steps=int(getattr(self.train_config, 'gradient_accumulation_steps', 4)),
+            learning_rate=float(getattr(self.train_config.optimizer, 'learning_rate', 1e-5)),
+            temperature=float(getattr(self.train_config, 'distill_temperature', 2.0)),
+            alpha=float(getattr(self.train_config, 'distill_alpha', 0.5)),
+            max_steps=int(getattr(self.train_config, 'max_steps', 10000)),
+            max_grad_norm=float(getattr(self.train_config.optimizer, 'max_grad_norm', 1.0)),
+            use_bf16=True,
+            use_gradient_checkpointing=True,
+        )
+
+        distill_operator = POPSSDistillationOperator()
+        result = distill_operator.execute({
+            "config": distill_cfg,
+            "teacher_provider": teacher_provider,
+        })
+
+        self.training_history['results'] = result.data
+        self.training_history['timestamps']['end'] = datetime.now().isoformat()
+        self.current_phase = "completed"
+        self._detach_dev_mode()
+
+        _LOG.info("Distillation training completed successfully")
+        return result.data
     
     def _get_train_dataloader(self):
         """Get training dataloader."""

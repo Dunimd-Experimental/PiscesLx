@@ -328,6 +328,13 @@ def _build_train_argv_from_args(args) -> list:
         ("run_id", "--run_id"),
         ("run_dir", "--run_dir"),
         ("run_name", "--run_name"),
+        ("distill", "--distill"),
+        ("teacher_model", "--teacher_model"),
+        ("teacher_name", "--teacher_name"),
+        ("teacher_api_key", "--teacher_api_key"),
+        ("teacher_type", "--teacher_type"),
+        ("distill_alpha", "--distill_alpha"),
+        ("distill_temperature", "--distill_temperature"),
     ]
     for attr, flag in mapping:
         if not hasattr(args, attr):
@@ -920,6 +927,78 @@ def main():
         choices=['standard', 'quant_export', 'preference'],  # Valid modes
         default='standard',  # Default to normal training
         help='Training mode'
+    )
+    
+    # -------------------------------------------------------------------------
+    # DISTILLATION ARGUMENTS
+    # -------------------------------------------------------------------------
+    # --distill: Flag to enable knowledge distillation training
+    # When set, training will use a teacher model for knowledge transfer
+    parser.add_argument(
+        '--distill', 
+        action='store_true',  # Boolean flag
+        help='Enable knowledge distillation training with a teacher model'
+    )
+    
+    # --teacher_model: Path or URL for the teacher model
+    # local: Path to checkpoint file (e.g., /path/to/teacher.pt)
+    # server: Server URL (e.g., http://localhost:8000)
+    # remote: Base URL for API endpoint (e.g., http://localhost:11434/v1 or https://api.openai.com/v1)
+    parser.add_argument(
+        '--teacher_model', 
+        type=str,  # Teacher model path or URL as string
+        default=None,  # None means no distillation
+        help='Teacher model: local path, server URL, or API base URL (for remote)'
+    )
+    
+    # --teacher_name: Model name for API calls (required for remote type)
+    # Examples: "gpt-4", "llama3.1", "claude-3-opus"
+    parser.add_argument(
+        '--teacher_name', 
+        type=str,  # Model name as string
+        default=None,  # None means use default
+        help='Model name for API (required for remote type): gpt-4, llama3.1, etc.'
+    )
+    
+    # --teacher_api_key: API key for remote API authentication
+    # For OpenAI: sk-xxxxx, For Anthropic: sk-ant-xxxxx
+    parser.add_argument(
+        '--teacher_api_key', 
+        type=str,  # API key as string
+        default=None,  # None means no auth
+        help='API key for remote API authentication'
+    )
+    
+    # --teacher_type: Type of teacher model source
+    # local: Load from local checkpoint file
+    # server: Connect to a local/remote server
+    # remote: Use remote API (OpenAI-compatible endpoint)
+    parser.add_argument(
+        '--teacher_type', 
+        type=str,  # Type name as string
+        choices=['local', 'server', 'remote'],  # Valid types
+        default='local',  # Default to local model
+        help='Teacher model source type: local (checkpoint), server (URL), or remote (API)'
+    )
+    
+    # --distill_alpha: Weight for distillation loss (0.0-1.0)
+    # Higher values = more influence from teacher model
+    # 0.5 means equal weight for student and teacher losses
+    parser.add_argument(
+        '--distill_alpha', 
+        type=float,  # Must be a float
+        default=0.5,  # Default to equal weighting
+        help='Distillation loss weight (0.0-1.0, default: 0.5)'
+    )
+    
+    # --distill_temperature: Temperature for soft label distillation
+    # Higher values = softer probability distributions
+    # Typical values: 1.0-10.0
+    parser.add_argument(
+        '--distill_temperature', 
+        type=float,  # Must be a float
+        default=2.0,  # Default temperature
+        help='Temperature for soft label distillation (default: 2.0)'
     )
     
     # --train_config: Path to training configuration file

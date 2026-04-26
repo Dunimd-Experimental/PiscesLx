@@ -152,7 +152,7 @@ Version History:
 """
 
 from .core import PiscesLxTrainingOperator
-from .config import TrainingConfig
+from .config import TrainingConfig, EvolutionConfig
 from .orchestrator import PiscesLxTrainOrchestrator
 from .watermark import TrainingWatermarkIntegrationOperator, TrainingPipelineWatermarkOperator
 
@@ -164,6 +164,7 @@ __author__ = AUTHOR
 __all__ = [
     "PiscesLxTrainingOperator",
     "TrainingConfig", 
+    "EvolutionConfig",
     "PiscesLxTrainOrchestrator",
     "TrainingWatermarkIntegrationOperator",
     "TrainingPipelineWatermarkOperator"

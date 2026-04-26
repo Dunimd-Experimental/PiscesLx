@@ -299,6 +299,21 @@ from .utils import (
     YvQuantizationType,
 )
 
+from .core import (
+    YvEGMLA,
+    YvDuoAttention,
+    YvEWC,
+    YvOOMBContext,
+    YvREFORM,
+    YvSparseSSM,
+    YvGatedDeltaNetwork,
+)
+
+from .reasoning.ttt_e2e import YvTestTimeTrainer
+from .reasoning.self_evolution import YvSEAL, YvAgenticEvolution, YvSOLAR
+from .reasoning.verification import YvCRV, YvOTV, YvARES
+from .multimodal.sync_fusion import YvSyncFusion, YvCoupledMambaFusion
+
 __all__ = [
     "YvConfig",
     "YvAttentionType",
@@ -471,4 +486,22 @@ __all__ = [
     "YvQuantizer",
     "YvQuantizationConfig",
     "YvQuantizationType",
+
+    "YvEGMLA",
+    "YvDuoAttention",
+    "YvEWC",
+    "YvOOMBContext",
+    "YvREFORM",
+    "YvSparseSSM",
+    "YvGatedDeltaNetwork",
+
+    "YvTestTimeTrainer",
+    "YvSEAL",
+    "YvAgenticEvolution",
+    "YvSOLAR",
+    "YvCRV",
+    "YvOTV",
+    "YvARES",
+    "YvSyncFusion",
+    "YvCoupledMambaFusion",
 ]

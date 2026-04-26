@@ -497,6 +497,96 @@ class YvConfig:
     use_mla: bool = True
     kv_lora_rank: int = 512
     mla_q_lora_rank: Optional[int] = None
+    
+    # ========================================
+    # Lazy Initialization Configuration
+    # ========================================
+    lazy_init_enabled: bool = False
+    lazy_init_vision_encoder: bool = True
+    lazy_init_audio_encoder: bool = True
+    lazy_init_video_encoder: bool = True
+    lazy_init_doc_encoder: bool = True
+    lazy_init_modal_fusion: bool = False
+    lazy_init_reasoner: bool = False
+    lazy_init_speculative_decoder: bool = True
+
+    # ========================================
+    # Flagship Algorithm Integration (2025-2026)
+    # ========================================
+
+    # EG-MLA: Embedding-Gated Multi-Head Latent Attention
+    use_eg_mla: bool = False
+    eg_mla_compression_ratio: float = 0.916
+
+    # DuoAttention: Retrieval vs Streaming Heads
+    use_duo_attention: bool = False
+    duo_attention_retrieval_ratio: float = 0.2
+    duo_attention_buffer_size: int = 1024
+
+    # Test-Time Training (TTT-E2E)
+    use_ttt_e2e: bool = False
+    ttt_update_layers: int = 2
+    ttt_learning_rate: float = 1e-5
+    ttt_max_steps: int = 5
+    ttt_confidence_threshold: float = 0.6
+    ttt_complexity_threshold: float = 0.7
+
+    # Expert Evolution
+    use_expert_evolution: bool = False
+    expert_evolution_base_lr: float = 1e-5
+    expert_evolution_decay: float = 0.99
+
+    # EWC: Elastic Weight Consolidation
+    use_ewc: bool = False
+    ewc_lambda: float = 1000.0
+
+    # SEAL: Self-Adapting LLMs
+    use_seal: bool = False
+    seal_confidence_threshold: float = 0.85
+    seal_max_synthetic_samples: int = 100
+
+    # DAPO: Decoupled Clipping Policy Optimization
+    use_dapo: bool = False
+    dapo_epsilon_low: float = 0.2
+    dapo_epsilon_high: float = 0.4
+    dapo_diversity_threshold: float = 0.3
+
+    # Verification: CRV + OTV + ARES
+    use_crv_verification: bool = False
+    use_otv_verification: bool = False
+    use_ares_verification: bool = False
+    otv_quality_threshold: float = 0.6
+
+    # SyncFusion: Audio-Video Synchronous Understanding
+    use_sync_fusion: bool = False
+    sync_fusion_temporal_bins: int = 16
+
+    # Coupled Mamba Fusion
+    use_coupled_mamba_fusion: bool = False
+    coupled_mamba_coupling_strength: float = 0.3
+
+    # SparseSSM: Training-Free Mamba Pruning
+    use_sparse_ssm: bool = False
+    sparse_ssm_ratio: float = 0.5
+
+    # Gated Delta Networks
+    use_gated_delta: bool = False
+
+    # OOMB: Million-Token Context
+    use_oomb_context: bool = False
+    oomb_chunk_size: int = 32768
+    oomb_max_context: int = 4194304
+
+    # REFORM: Compress-Gather-Recompute
+    use_reform: bool = False
+    reform_compression_ratio: int = 4
+    reform_importance_threshold: float = 0.1
+
+    # Quartet: End-to-End FP4 Training
+    use_quartet: bool = False
+
+    # Long Context Extensions
+    max_context_length: int = 1048576  # 1M default, extensible to 4M+
     mla_rope_scaling_factor: float = 1.0
 
     num_mtp_heads: int = 4

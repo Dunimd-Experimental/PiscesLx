@@ -162,6 +162,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from .norms import _arctic_init_weights, YvRMSNorm, YvYaRNRotaryEmbedding
+from .eg_mla import YvEGMLA
+from .duo_attention import YvDuoAttention
 from utils.dc import PiscesLxLogger
 
 from utils.paths import get_log_file
@@ -4931,6 +4933,32 @@ class YvAttention(nn.Module):
                 dtype=dtype,
             )
         
+        # Flagship Algorithm Integration (2025-2026)
+        self.use_eg_mla = bool(getattr(cfg, 'use_eg_mla', False))
+        self.use_duo_attention = bool(getattr(cfg, 'use_duo_attention', False))
+
+        if self.use_eg_mla:
+            self.eg_mla = YvEGMLA(
+                hidden_size=cfg.hidden_size,
+                num_heads=cfg.n_head,
+                kv_lora_rank=getattr(cfg, 'kv_lora_rank', 512),
+                q_lora_rank=getattr(cfg, 'mla_q_lora_rank', None),
+                num_kv_heads=self.n_kv_head,
+                device=device,
+                dtype=dtype
+            )
+
+        if self.use_duo_attention:
+            self.duo_attention = YvDuoAttention(
+                hidden_size=cfg.hidden_size,
+                num_heads=cfg.n_head,
+                num_kv_heads=self.n_kv_head,
+                retrieval_ratio=getattr(cfg, 'duo_attention_retrieval_ratio', 0.2),
+                streaming_buffer_size=getattr(cfg, 'duo_attention_buffer_size', 1024),
+                device=device,
+                dtype=dtype
+            )
+
         self.fused_qkv = bool(getattr(cfg, 'fused_qkv', True))
 
         if self.use_mla:
@@ -5166,6 +5194,29 @@ class YvAttention(nn.Module):
         if modality in self.modality_embed:
             x = x + self.modality_embed[modality].view(1, 1, -1)
         
+        # Flagship Algorithm Routing (2025-2026)
+        if self.use_eg_mla:
+            attn_out, present_kv = self.eg_mla(
+                hidden_states=x,
+                attention_mask=mask,
+                past_key_value=past_key_values,
+                use_cache=use_cache
+            )
+            if use_cache:
+                return attn_out, present_kv
+            return attn_out
+
+        if self.use_duo_attention:
+            attn_out, present_kv = self.duo_attention(
+                hidden_states=x,
+                attention_mask=mask,
+                past_key_value=past_key_values,
+                use_cache=use_cache
+            )
+            if use_cache:
+                return attn_out, present_kv
+            return attn_out
+
         if layer_idx < 8:
             effective_window = min(2048, t)
         elif layer_idx < 16:
@@ -5301,22 +5352,14 @@ class YvAttention(nn.Module):
                 
                 _, top_k_indices = torch.topk(importance, k_sparse_count, dim=-1)
                 
-                k_selected = torch.zeros(
-                    b, self.n_kv_head, k_sparse_count, self.head_dim,
-                    dtype=k.dtype, device=k.device
+                top_k_indices_expanded = top_k_indices.unsqueeze(1).unsqueeze(-1).expand(
+                    -1, self.n_kv_head, -1, self.head_dim
                 )
-                v_selected = torch.zeros(
-                    b, self.n_kv_head, k_sparse_count, self.head_dim,
-                    dtype=v.dtype, device=v.device
-                )
+                k_gathered = k.gather(2, top_k_indices_expanded)
+                v_gathered = v.gather(2, top_k_indices_expanded)
                 
-                for batch_idx in range(b):
-                    for head_idx in range(self.n_kv_head):
-                        k_selected[batch_idx, head_idx] = k[batch_idx, head_idx, top_k_indices[batch_idx]]
-                        v_selected[batch_idx, head_idx] = v[batch_idx, head_idx, top_k_indices[batch_idx]]
-                
-                k = k_selected
-                v = v_selected
+                k = k_gathered
+                v = v_gathered
 
         if hasattr(self, 'rope'):
             max_pe_len = getattr(self.cfg, 'max_position_embeddings', 4096)

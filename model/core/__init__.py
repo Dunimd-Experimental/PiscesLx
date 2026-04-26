@@ -264,6 +264,12 @@ from .mamba3 import (
     YvFlashSSM,
 )
 
+from .eg_mla import YvEGMLA
+from .duo_attention import YvDuoAttention
+from .ewc import YvEWC
+from .long_context import YvOOMBContext, YvREFORM
+from .mamba_upgrades import YvSparseSSM, YvGatedDeltaNetwork
+
 __all__ = [
     "YvModel",
     "YvModelForCausalLM",
@@ -378,4 +384,12 @@ __all__ = [
     "YvHierarchicalSSM",
     "YvStateCache",
     "YvFlashSSM",
+
+    "YvEGMLA",
+    "YvDuoAttention",
+    "YvEWC",
+    "YvOOMBContext",
+    "YvREFORM",
+    "YvSparseSSM",
+    "YvGatedDeltaNetwork",
 ]

@@ -694,11 +694,40 @@ class YvModel(nn.Module):
         self.norm = YvRMSNorm(cfg.hidden_size)
 
         _LOG.debug("YvModel: initializing multimodal encoders...")
-        # Pass device and dtype to multimodal encoders for memory-efficient initialization
-        self.vision = YvVisionEncoder(cfg) if device is None or device == 'cpu' else YvVisionEncoder(cfg)
-        self.video = YvVideoEncoder(cfg) if device is None or device == 'cpu' else YvVideoEncoder(cfg)
-        self.audio = YvAudioEncoder(cfg) if device is None or device == 'cpu' else YvAudioEncoder(cfg)
-        self.doc = YvDocEncoder(cfg) if device is None or device == 'cpu' else YvDocEncoder(cfg)
+        self._lazy_init_flags = {
+            'vision': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_vision_encoder', True),
+            'video': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_video_encoder', True),
+            'audio': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_audio_encoder', True),
+            'doc': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_doc_encoder', True),
+            'modal_fusion': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_modal_fusion', False),
+            'reasoner': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_reasoner', False),
+            'speculative_decoder': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_speculative_decoder', True),
+        }
+        self._lazy_initialized = {k: False for k in self._lazy_init_flags}
+        
+        if self._lazy_init_flags.get('vision', False):
+            self._vision_encoder = None
+            self.vision = None
+        else:
+            self.vision = YvVisionEncoder(cfg) if device is None or device == 'cpu' else YvVisionEncoder(cfg)
+        
+        if self._lazy_init_flags.get('video', False):
+            self._video_encoder = None
+            self.video = None
+        else:
+            self.video = YvVideoEncoder(cfg) if device is None or device == 'cpu' else YvVideoEncoder(cfg)
+        
+        if self._lazy_init_flags.get('audio', False):
+            self._audio_encoder = None
+            self.audio = None
+        else:
+            self.audio = YvAudioEncoder(cfg) if device is None or device == 'cpu' else YvAudioEncoder(cfg)
+        
+        if self._lazy_init_flags.get('doc', False):
+            self._doc_encoder = None
+            self.doc = None
+        else:
+            self.doc = YvDocEncoder(cfg) if device is None or device == 'cpu' else YvDocEncoder(cfg)
 
         self.agent_encoder = YvAgenticEncoder(cfg)
 
@@ -885,6 +914,53 @@ class YvModel(nn.Module):
         """
         for layer in self.layers:
             layer.use_checkpoint = enabled
+    
+    def _lazy_get_vision_encoder(self):
+        """Get vision encoder with lazy initialization."""
+        if self.vision is None and self._lazy_init_flags.get('vision', False):
+            if not self._lazy_initialized.get('vision', False):
+                self.vision = YvVisionEncoder(self.cfg)
+                self._lazy_initialized['vision'] = True
+                _LOG.debug("YvModel: vision encoder lazy initialized")
+        return self.vision
+    
+    def _lazy_get_audio_encoder(self):
+        """Get audio encoder with lazy initialization."""
+        if self.audio is None and self._lazy_init_flags.get('audio', False):
+            if not self._lazy_initialized.get('audio', False):
+                self.audio = YvAudioEncoder(self.cfg)
+                self._lazy_initialized['audio'] = True
+                _LOG.debug("YvModel: audio encoder lazy initialized")
+        return self.audio
+    
+    def _lazy_get_video_encoder(self):
+        """Get video encoder with lazy initialization."""
+        if self.video is None and self._lazy_init_flags.get('video', False):
+            if not self._lazy_initialized.get('video', False):
+                self.video = YvVideoEncoder(self.cfg)
+                self._lazy_initialized['video'] = True
+                _LOG.debug("YvModel: video encoder lazy initialized")
+        return self.video
+    
+    def _lazy_get_doc_encoder(self):
+        """Get doc encoder with lazy initialization."""
+        if self.doc is None and self._lazy_init_flags.get('doc', False):
+            if not self._lazy_initialized.get('doc', False):
+                self.doc = YvDocEncoder(self.cfg)
+                self._lazy_initialized['doc'] = True
+                _LOG.debug("YvModel: doc encoder lazy initialized")
+        return self.doc
+    
+    def is_lazy_initialized(self, component: str) -> bool:
+        """Check if a component has been lazy initialized.
+        
+        Args:
+            component: Component name ('vision', 'audio', 'video', 'doc', etc.)
+            
+        Returns:
+            True if the component has been initialized, False otherwise.
+        """
+        return self._lazy_initialized.get(component, True)
 
     def to(self, device=None, dtype=None, non_blocking=False):
         """Move model to specified device and/or dtype.

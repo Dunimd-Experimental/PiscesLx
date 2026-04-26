@@ -98,6 +98,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils.dc import PiscesLxLogger
+from .expert_evolution import YvExpertEvolution
 from .gate import moe_init_weights
 from .expert import YvSharedExpert, YvExpertConfig, YvExpertType
 
@@ -536,7 +537,19 @@ class YvDynamicMoELayer(nn.Module):
         self.max_gpu_experts = getattr(cfg, 'max_gpu_experts', 4)
         self._active_experts = OrderedDict()
         self._step = 0
-        
+
+        # Expert Evolution Integration
+        self.use_expert_evolution = bool(getattr(cfg, 'use_expert_evolution', False))
+        if self.use_expert_evolution:
+            self.expert_evolution = YvExpertEvolution(
+                num_experts=self.num_experts,
+                hidden_size=cfg.hidden_size,
+                base_lr=getattr(cfg, 'expert_evolution_base_lr', 1e-5),
+                decay=getattr(cfg, 'expert_evolution_decay', 0.99),
+                device=device,
+                dtype=dtype
+            )
+
         if YvDynamicMoELayer._layer_count == 1:
             shared_info = f", {self.num_shared_experts} shared" if self.num_shared_experts > 0 else ""
             fine_grained_info = f" (fine-grained x{self.num_sub_experts})" if use_fine_grained else ""
@@ -648,20 +661,14 @@ class YvDynamicMoELayer(nn.Module):
             
             # Batched processing: group tokens by expert for efficient computation
             for expert_id in range(self.num_experts):
-                # Find all tokens assigned to this expert across all top-k positions
                 expert_mask = (expert_indices == expert_id).any(dim=-1)
                 if expert_mask.any():
-                    # Get tokens and weights for this expert
                     selected_tokens = expert_mask.nonzero().squeeze(-1)
                     h_batch = x_flat[selected_tokens]
                     
-                    # Get corresponding weights (need to find which top-k position)
-                    weights = torch.zeros(selected_tokens.shape[0], device=x.device, dtype=x.dtype)
-                    for k in range(self.top_k):
-                        k_mask = (expert_indices[selected_tokens, k] == expert_id)
-                        weights[k_mask] = routing_weights[selected_tokens[k_mask], k]
+                    weights = (expert_indices[selected_tokens] == expert_id).float() * routing_weights[selected_tokens]
+                    weights = weights.max(dim=-1)[0]
                     
-                    # Batched expert computation
                     expert_out = self.experts[expert_id](h_batch)
                     outputs[selected_tokens] += weights.unsqueeze(1) * expert_out
         else:
@@ -698,8 +705,18 @@ class YvDynamicMoELayer(nn.Module):
                 final_output = final_output + 0.1 * self._skip_buffer
             self._skip_buffer = shared_output.detach()
         
+        # Expert Evolution: Update usage statistics and apply Hebbian learning
+        if self.use_expert_evolution and hasattr(self, 'expert_evolution'):
+            if self.use_fine_grained:
+                self.expert_evolution.update_expert_usage(routing_weights, expert_indices)
+            else:
+                # Create pseudo routing weights from dispatch mask
+                pseudo_weights = torch.ones(batch_size * seq_len, self.top_k, device=x.device) / self.top_k
+                pseudo_indices = torch.stack([expert_indices[i] for i in range(self.num_experts) if expert_indices[i].numel() > 0], dim=1) if any(expert_indices[i].numel() > 0 for i in range(self.num_experts)) else torch.zeros(batch_size * seq_len, self.top_k, device=x.device, dtype=torch.long)
+                self.expert_evolution.update_expert_usage(pseudo_weights, pseudo_indices)
+
         self._step += 1
-        
+
         return final_output, load_balancing_loss
 
 
@@ -1059,10 +1076,8 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
                     selected_tokens = expert_mask.nonzero().squeeze(-1)
                     h_batch = x_flat[selected_tokens]
                     
-                    weights = torch.zeros(selected_tokens.shape[0], device=x.device, dtype=x.dtype)
-                    for k in range(self.top_k):
-                        k_mask = (expert_indices[selected_tokens, k] == expert_id)
-                        weights[k_mask] = routing_weights[selected_tokens[k_mask], k]
+                    weights = (expert_indices[selected_tokens] == expert_id).float() * routing_weights[selected_tokens]
+                    weights = weights.max(dim=-1)[0]
                     
                     expert_out = self.experts[expert_id](h_batch)
                     outputs[selected_tokens] += weights.unsqueeze(1) * expert_out

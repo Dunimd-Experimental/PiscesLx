@@ -271,6 +271,7 @@ class PiscesLxTrainingOperator(object):
         self.loss_type = getattr(config, 'loss_type', 'lm')
         self.response_only_loss = getattr(config, 'response_only_loss', False)
         self._reference_model = None
+        self._teacher_provider = None
 
         self.device = setup_training_device(
             local_rank=getattr(config, 'local_rank', -1),
@@ -317,12 +318,17 @@ class PiscesLxTrainingOperator(object):
         self._compliance_operator = None
         self._audit_operator = None
         self._watermark_config = None
+        
+        self._evolution_operator = None
+        self._growth_operator = None
+        self._w2s_operator = None
 
         self._grad_accum_step = 0
 
         self._setup_advanced_operators()
         self._setup_parallel_3d_operator()
         self._setup_watermark_operator()
+        self._setup_evolution_operator()
         
         if self.stage:
             _LOG.info(f"PiscesLxTrainingEngine initialized on {self.device} with stage={self.stage.value}")
@@ -454,6 +460,98 @@ class PiscesLxTrainingOperator(object):
             self._weight_watermark_operator = None
             self._compliance_operator = None
             self._audit_operator = None
+    
+    def _setup_evolution_operator(self):
+        """Setup evolution operators for self-evolution training pipeline.
+        
+        Initializes:
+            - POPSSModelGrowthOperator: For progressive model expansion
+            - POPSSWeakToStrongOperator: For weak-to-strong training
+            - POPSSEvolutionPipeline: Complete evolution pipeline
+        """
+        try:
+            evolution_cfg = getattr(self.config, 'evolution', None)
+            if evolution_cfg is None or not getattr(evolution_cfg, 'enabled', False):
+                return
+            
+            from opss.train.growth import POPSSModelGrowthOperator
+            from opss.train.weak_to_strong import POPSSWeakToStrongOperator
+            from opss.train.evolution_pipeline import POPSSEvolutionPipeline, POPSSEvolutionConfig
+            
+            self._growth_operator = POPSSModelGrowthOperator()
+            _LOG.info("Model growth operator initialized")
+            
+            self._evolution_config = POPSSEvolutionConfig(
+                seed_size=getattr(evolution_cfg, 'seed_size', '0.5B'),
+                target_size=getattr(evolution_cfg, 'target_size', '7B'),
+                distill_steps=getattr(evolution_cfg, 'distill_steps', 2000),
+                evolution_steps=getattr(evolution_cfg, 'evolution_steps', 1000),
+                w2s_steps=getattr(evolution_cfg, 'w2s_steps', 2000),
+                growth_stages=getattr(evolution_cfg, 'growth_stages', []),
+            )
+            
+            self._evolution_operator = POPSSEvolutionPipeline(self._evolution_config)
+            _LOG.info(
+                f"Evolution pipeline initialized: seed={self._evolution_config.seed_size}, "
+                f"target={self._evolution_config.target_size}"
+            )
+            
+        except Exception as e:
+            _LOG.warning(f"Failed to initialize evolution operators: {e}")
+            self._evolution_operator = None
+            self._growth_operator = None
+            self._w2s_operator = None
+    
+    def run_evolution(self, teacher_model, dataloader, seed_model=None):
+        """Run complete evolution pipeline.
+        
+        Args:
+            teacher_model: Teacher model for distillation.
+            dataloader: Training data loader.
+            seed_model: Optional pre-built seed model.
+            
+        Returns:
+            Evolution result with final model.
+        """
+        if self._evolution_operator is None:
+            raise RuntimeError("Evolution operator not initialized. Enable evolution in config.")
+        
+        return self._evolution_operator.run(
+            teacher_model=teacher_model,
+            dataloader=dataloader,
+            seed_model=seed_model,
+        )
+    
+    def grow_model(self, growth_type: str = "depth", **kwargs):
+        """Grow model using specified growth strategy.
+        
+        Args:
+            growth_type: Type of growth ('depth', 'width', 'expert').
+            **kwargs: Growth parameters (num_layers, hidden_size, num_experts).
+            
+        Returns:
+            Grown model.
+        """
+        if self._growth_operator is None:
+            raise RuntimeError("Growth operator not initialized.")
+        
+        if growth_type == "depth":
+            return self._growth_operator.grow_depth(
+                self.model, 
+                kwargs.get("num_layers", 4)
+            )
+        elif growth_type == "width":
+            return self._growth_operator.grow_width(
+                self.model,
+                kwargs.get("hidden_size", 2048)
+            )
+        elif growth_type == "expert":
+            return self._growth_operator.grow_experts(
+                self.model,
+                kwargs.get("num_experts", 8)
+            )
+        else:
+            raise ValueError(f"Unknown growth type: {growth_type}")
     
     def initialize_model(self, model_class: type, **model_kwargs) -> nn.Module:
         """
@@ -1267,6 +1365,38 @@ class PiscesLxTrainingOperator(object):
                 param.requires_grad = False
             _LOG.info("Reference model set for alignment training")
     
+    def set_teacher_provider(self, teacher_provider):
+        """
+        Set teacher provider for knowledge distillation.
+        
+        Args:
+            teacher_provider: POPSSTeacherProvider instance for distillation
+        """
+        self._teacher_provider = teacher_provider
+        if self._teacher_provider is not None:
+            _LOG.info(
+                "Teacher provider set for distillation",
+                provider_type=type(teacher_provider).__name__
+            )
+    
+    def get_teacher_provider(self):
+        """
+        Get the teacher provider for distillation.
+        
+        Returns:
+            Teacher provider instance or None
+        """
+        return self._teacher_provider
+    
+    def is_distillation_enabled(self):
+        """
+        Check if distillation is enabled.
+        
+        Returns:
+            bool: True if teacher provider is set
+        """
+        return self._teacher_provider is not None
+    
     def backward_pass(self, loss: torch.Tensor) -> float:
         """
         Execute backward pass with advanced gradient processing.
@@ -1389,6 +1519,14 @@ class PiscesLxTrainingOperator(object):
                 'tp_size': self._parallel_3d_operator.config.tp_size,
                 'pp_size': self._parallel_3d_operator.config.pp_size,
                 'world_size': self._parallel_3d_operator.config.world_size
+            }
+        
+        if self._evolution_operator is not None:
+            stats['evolution'] = {
+                'enabled': True,
+                'seed_size': self._evolution_config.seed_size if hasattr(self, '_evolution_config') else '0.5B',
+                'target_size': self._evolution_config.target_size if hasattr(self, '_evolution_config') else '7B',
+                'progress': self._evolution_operator.get_progress() if hasattr(self._evolution_operator, 'get_progress') else {},
             }
         
         return stats

@@ -152,6 +152,60 @@ from .lr_scheduler import (
     POPSSInverseSquareRootScheduler,
 )
 
+from .distill_provider import (
+    TeacherProviderType,
+    TeacherConfig,
+    TeacherProvider,
+    LocalTeacherProvider,
+    ServerTeacherProvider,
+    RemoteTeacherProvider,
+    TeacherProviderFactory,
+)
+
+from .distill_loss import (
+    DistillationLossConfig,
+    LogitsDistillationLoss,
+    HiddenStateDistillationLoss,
+    AttentionDistillationLoss,
+    LayerWiseDistillationLoss,
+    ContrastiveDistillationLoss,
+    DistillationLoss,
+)
+
+from .distill import (
+    POPSSDistillationConfig,
+    POPSSDistillationDataset,
+    POPSSDistillationOperator,
+)
+
+from .growth import (
+    POPSSGrowthType,
+    POPSSModelGrowthConfig,
+    POPSSOptimalTransportAligner,
+    POPSSDepthGrower,
+    POPSSWidthGrower,
+    POPSSExpertGrower,
+    POPSSModelGrowthOperator,
+)
+
+from .weak_to_strong import (
+    POPSSW2SMode,
+    POPSSWeakToStrongConfig,
+    POPSSWeakLabelGenerator,
+    POPSSCurriculumScheduler,
+    POPSSSelfCorrection,
+    POPSSWeakToStrongOperator,
+    POPSSIterativeAmplification,
+)
+
+from .evolution_pipeline import (
+    POPSSEvolutionStage,
+    POPSSGrowthStage,
+    POPSSEvolutionConfig,
+    POPSSEvolutionTracker,
+    POPSSEvolutionPipeline,
+)
+
 __version__ = VERSION
 __author__ = AUTHOR
 
@@ -202,4 +256,40 @@ __all__ = [
     "POPSSCosineWarmupScheduler",
     "POPSSLinearWarmupScheduler",
     "POPSSInverseSquareRootScheduler",
+    "TeacherProviderType",
+    "TeacherConfig",
+    "TeacherProvider",
+    "LocalTeacherProvider",
+    "ServerTeacherProvider",
+    "RemoteTeacherProvider",
+    "TeacherProviderFactory",
+    "DistillationLossConfig",
+    "LogitsDistillationLoss",
+    "HiddenStateDistillationLoss",
+    "AttentionDistillationLoss",
+    "LayerWiseDistillationLoss",
+    "ContrastiveDistillationLoss",
+    "DistillationLoss",
+    "POPSSDistillationConfig",
+    "POPSSDistillationDataset",
+    "POPSSDistillationOperator",
+    "POPSSGrowthType",
+    "POPSSModelGrowthConfig",
+    "POPSSOptimalTransportAligner",
+    "POPSSDepthGrower",
+    "POPSSWidthGrower",
+    "POPSSExpertGrower",
+    "POPSSModelGrowthOperator",
+    "POPSSW2SMode",
+    "POPSSWeakToStrongConfig",
+    "POPSSWeakLabelGenerator",
+    "POPSSCurriculumScheduler",
+    "POPSSSelfCorrection",
+    "POPSSWeakToStrongOperator",
+    "POPSSIterativeAmplification",
+    "POPSSEvolutionStage",
+    "POPSSGrowthStage",
+    "POPSSEvolutionConfig",
+    "POPSSEvolutionTracker",
+    "POPSSEvolutionPipeline",
 ]

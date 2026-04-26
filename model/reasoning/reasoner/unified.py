@@ -86,6 +86,7 @@ import torch.nn.functional as F
 from typing import Any, Dict, Optional
 from .cot_memory import YvCoTMemoryReasoner
 from .multipath_core import YvMultiPathReasoningEngine
+from ..ttt_e2e import YvTestTimeTrainer
 
 
 class YvUnifiedReasoner(nn.Module):
@@ -198,6 +199,10 @@ class YvUnifiedReasoner(nn.Module):
 
         # Parameter controlling temperature scaling for logit alignment.
         self._logit_temp = nn.Parameter(torch.tensor(1.0))
+
+        # Test-Time Training (TTT-E2E) Integration
+        self.use_ttt_e2e = bool(getattr(cfg, 'use_ttt_e2e', False))
+        self.ttt_trainer = None  # Lazy initialization
 
     def _extract_hidden_states(self, input_ids: Optional[torch.Tensor], kwargs: Dict[str, Any]) -> torch.Tensor:
         """Obtain hidden states compatible with downstream reasoning modules.
@@ -380,6 +385,28 @@ class YvUnifiedReasoner(nn.Module):
                 thinking_depth = 5
             else:
                 thinking_depth = 10
+
+        # Test-Time Training (TTT-E2E) adaptation
+        if self.use_ttt_e2e and not self.training:
+            if self.ttt_trainer is None:
+                # Lazy initialization: create trainer with a dummy model
+                # In practice, this should be the actual model being used
+                self.ttt_trainer = YvTestTimeTrainer(
+                    model=self,
+                    update_layers=getattr(self.cfg, 'ttt_update_layers', 2),
+                    lr=getattr(self.cfg, 'ttt_learning_rate', 1e-5),
+                    max_steps=getattr(self.cfg, 'ttt_max_steps', 5)
+                )
+
+            if self.ttt_trainer.should_adapt(
+                confidence=complexity_score,
+                complexity=complexity_score,
+                confidence_threshold=getattr(self.cfg, 'ttt_confidence_threshold', 0.6),
+                complexity_threshold=getattr(self.cfg, 'ttt_complexity_threshold', 0.7)
+            ):
+                # Note: In practice, batch_input should be the actual input batch
+                # This is a placeholder for the adaptation mechanism
+                pass
 
         # If memory_context carries labels, remap accordingly.
         if labels is None and torch.is_tensor(memory_context):

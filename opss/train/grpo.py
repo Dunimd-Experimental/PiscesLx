@@ -48,6 +48,8 @@ import sys
 from pathlib import Path
 
 import torch
+
+from .dapo import YvDAPO
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.distributions import Categorical
@@ -111,6 +113,12 @@ class POPSSGRPOConfig(PiscesLxOperatorConfig):
     verification_weight: float = 0.3
     max_refinement_iterations: int = 3
     refinement_reward_threshold: float = 0.01
+
+    # DAPO: Decoupled Clipping and Dynamic Sampling
+    use_dapo: bool = False
+    dapo_epsilon_low: float = 0.2
+    dapo_epsilon_high: float = 0.4
+    dapo_diversity_threshold: float = 0.3
 
     def __post_init__(self):
         super().__post_init__()
@@ -683,7 +691,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         config: POPSSGRPOConfig,
         optimizer: Optional[torch.optim.Optimizer],
     ) -> Dict[str, List[float]]:
-        """Perform PPO-style policy update."""
+        """Perform PPO-style policy update with optional DAPO."""
         stats = {
             "policy_losses": [],
             "kl_divergences": [],
@@ -691,40 +699,80 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
             "clip_fractions": [],
             "approx_kl": [],
         }
-        
+
         if optimizer:
             optimizer.zero_grad()
-        
+
+        # DAPO: Decoupled clipping and dynamic sampling
+        if getattr(config, 'use_dapo', False):
+            dapo = YvDAPO(
+                epsilon_low=config.dapo_epsilon_low,
+                epsilon_high=config.dapo_epsilon_high,
+                beta=config.kl_coef,
+                diversity_threshold=config.dapo_diversity_threshold
+            )
+
+            # Recompute advantages with DAPO decoupled normalization
+            advantages_dapo = dapo.compute_decoupled_advantages(advantages)
+
+            # Compute DAPO policy loss with asymmetric clipping
+            total_loss, metrics = dapo.compute_policy_loss(
+                log_probs=log_probs,
+                ref_log_probs=ref_log_probs,
+                advantages=advantages_dapo
+            )
+
+            policy_loss = torch.tensor(metrics["policy_loss"], device=log_probs.device)
+            kl_div = torch.tensor(metrics["kl_div"], device=log_probs.device)
+            entropy = -log_probs.mean()
+
+            if optimizer and total_loss.requires_grad:
+                total_loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+                optimizer.step()
+
+            clip_fraction = ((torch.exp(log_probs - old_log_probs) - 1.0).abs() > config.clip_ratio).float().mean()
+            approx_kl = (old_log_probs - log_probs).mean().abs()
+
+            stats["policy_losses"].append(metrics["policy_loss"])
+            stats["kl_divergences"].append(metrics["kl_div"])
+            stats["entropies"].append(entropy.item())
+            stats["clip_fractions"].append(clip_fraction.item())
+            stats["approx_kl"].append(approx_kl.item())
+
+            return stats
+
+        # Standard PPO update
         ratio = torch.exp(log_probs - old_log_probs)
-        
+
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1.0 - config.clip_ratio, 1.0 + config.clip_ratio) * advantages
         policy_loss = -torch.min(surr1, surr2).mean()
-        
+
         kl_div = (log_probs - ref_log_probs).mean()
-        
+
         entropy = -log_probs.mean()
-        
+
         total_loss = (
             policy_loss +
             config.kl_coef * kl_div -
             config.entropy_coef * entropy
         )
-        
+
         if optimizer and total_loss.requires_grad:
             total_loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
             optimizer.step()
-        
+
         clip_fraction = ((ratio - 1.0).abs() > config.clip_ratio).float().mean()
         approx_kl = (old_log_probs - log_probs).mean().abs()
-        
+
         stats["policy_losses"].append(policy_loss.item())
         stats["kl_divergences"].append(kl_div.item())
         stats["entropies"].append(entropy.item())
         stats["clip_fractions"].append(clip_fraction.item())
         stats["approx_kl"].append(approx_kl.item())
-        
+
         return stats
     
     def _safe_mean(self, values: List[float]) -> float:
