@@ -5189,6 +5189,20 @@ class YvAttention(nn.Module):
         Returns:
             Attention output or tuple (output, (present_k, present_v)) if use_cache.
         """
+        if x.dim() > 3:
+            orig_shape = x.shape
+            if x.dim() == 4:
+                b, h, t, d = x.shape
+                if h == 1:
+                    x = x.squeeze(1)
+                else:
+                    x = x.transpose(1, 2).reshape(b, t, h * d)
+            else:
+                x = x.reshape(x.size(0), -1, x.size(-1))
+            _LOG.warning(f"Attn input reshaped from {orig_shape} to {x.shape}")
+        elif x.dim() < 3:
+            x = x.reshape(1, -1, x.size(-1))
+
         b, t, _ = x.shape
         
         if modality in self.modality_embed:
@@ -5196,26 +5210,32 @@ class YvAttention(nn.Module):
         
         # Flagship Algorithm Routing (2025-2026)
         if self.use_eg_mla:
-            attn_out, present_kv = self.eg_mla(
+            eg_result = self.eg_mla(
                 hidden_states=x,
                 attention_mask=mask,
                 past_key_value=past_key_values,
                 use_cache=use_cache
             )
             if use_cache:
+                attn_out, present_kv = eg_result
                 return attn_out, present_kv
-            return attn_out
+            else:
+                attn_out = eg_result
+                return attn_out
 
         if self.use_duo_attention:
-            attn_out, present_kv = self.duo_attention(
+            duo_result = self.duo_attention(
                 hidden_states=x,
                 attention_mask=mask,
                 past_key_value=past_key_values,
                 use_cache=use_cache
             )
             if use_cache:
+                attn_out, present_kv = duo_result
                 return attn_out, present_kv
-            return attn_out
+            else:
+                attn_out = duo_result
+                return attn_out
 
         if layer_idx < 8:
             effective_window = min(2048, t)
@@ -5225,7 +5245,7 @@ class YvAttention(nn.Module):
             effective_window = t
         
         if self.use_h2o:
-            attn_out, present_kv = self.h2o_attention(
+            h2o_result = self.h2o_attention(
                 hidden_states=x,
                 attention_mask=None,
                 past_key_value=past_key_values,
@@ -5234,11 +5254,14 @@ class YvAttention(nn.Module):
                 cache_manager=cache_manager,
             )
             if use_cache:
+                attn_out, present_kv = h2o_result
                 return attn_out, present_kv
-            return attn_out
+            else:
+                attn_out = h2o_result
+                return attn_out
 
         if self.use_hisa:
-            attn_out, present_kv = self.hisa_attention(
+            hisa_result = self.hisa_attention(
                 hidden_states=x,
                 attention_mask=mask,
                 past_key_value=past_key_values,
@@ -5247,14 +5270,30 @@ class YvAttention(nn.Module):
                 cache_manager=cache_manager,
             )
             if use_cache:
+                attn_out, present_kv = hisa_result
                 return attn_out, present_kv
-            return attn_out
+            else:
+                attn_out = hisa_result
+                return attn_out
 
         if self.use_attention_sink and self.training:
             x, sink_mask = self.attn_sink(x)
             if mask is not None:
                 sink_mask_expanded = sink_mask.unsqueeze(1).unsqueeze(2)
                 mask = torch.cat([sink_mask_expanded.expand(-1, mask.shape[1], -1, -1), mask], dim=-1)
+
+        if x.dim() > 3:
+            orig_shape = x.shape
+            if x.dim() == 4:
+                b, h, t, d = x.shape
+                if h == 1:
+                    x = x.squeeze(1)
+                else:
+                    x = x.transpose(1, 2).reshape(b, t, h * d)
+            else:
+                x = x.reshape(x.size(0), -1, x.size(-1))
+        elif x.dim() < 3:
+            x = x.reshape(1, -1, x.size(-1))
 
         b, t, _ = x.shape
 

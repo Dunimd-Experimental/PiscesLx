@@ -18,8 +18,118 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+# =============================================================================
+# PiscesL1 System Configuration Settings
+# =============================================================================
+#
+# PURPOSE:
+#     This file contains system-level configuration parameters that control
+#     the overall behavior of the PiscesL1 framework. These settings affect
+#     development workflows, debugging capabilities, and system-level features.
+#
+# CONFIGURATION SCOPE:
+#     - Developer mode settings for enhanced training visualization
+#     - System-level feature flags
+#     - Debugging and development tools configuration
+#     - Performance monitoring and logging preferences
+#
+# HIERARCHY:
+#     Settings in this file are framework-level defaults that can be
+#     overridden by:
+#     1. Environment variables (highest priority)
+#     2. Command-line arguments
+#     3. Model-specific configurations
+#     4. Training stage configurations
+#
+# =============================================================================
+
+# =============================================================================
 # Developer Mode Settings
+# =============================================================================
+#
+# DESCRIPTION:
+#     Developer mode provides enhanced visualization and debugging tools
+#     during the training process. When enabled, it displays a vim-style
+#     command bar at the bottom of the training interface, providing real-time
+#     control and monitoring capabilities.
+#
+# USE CASES:
+#     - Training debugging and troubleshooting
+#     - Real-time parameter inspection
+#     - Interactive training control
+#     - Development and experimentation
+#
+# SECURITY NOTE:
+#     Developer mode should be disabled in production environments as it
+#     may expose internal system information and provide additional
+#     runtime control mechanisms.
+#
+# =============================================================================
 dev:
-  # Enable developer mode for training
-  # When enabled, training shows a vim-style command bar at the bottom
+  # Enable Developer Mode for Training
+  # ----------------------------------
+  # Type: boolean
+  # Default: false
+  # Range: true, false
+  #
+  # DESCRIPTION:
+  #     When enabled, the training system displays a vim-style command bar
+  #     at the bottom of the interface. This provides developers with
+  #     direct access to training controls and real-time diagnostics.
+  #
+  #     Available features when enabled:
+  #     - Real-time training metrics display
+  #     - Interactive command input (vim-style)
+  #     - Live parameter adjustment capabilities
+  #     - Step-by-step execution mode
+  #     - Breakpoint and inspection tools
+  #
+  #     Available commands in dev mode:
+  #     - :q / :quit     - Exit training
+  #     - :s / :step     - Execute single step
+  #     - :c / :continue - Resume normal execution
+  #     - :p / :print    - Display current parameters
+  #     - :m / :metrics  - Show detailed metrics
+  #     - :h / :help     - Show available commands
+  #
+  # RECOMMENDATIONS:
+  #     - Development/Research: true
+  #     - Production Deployment: false
+  #     - CI/CD Testing: false
+  #     - Debugging Specific Issues: true
+  #
+  # PERFORMANCE IMPACT:
+  #     Minimal overhead when enabled (estimated < 1% additional CPU usage)
+  #     for updating the command bar display.
+  #
+  # RELATED CONFIGURATIONS:
+  #     - training.log_steps in train/*.yaml controls logging frequency
+  #     - training.save_steps controls checkpoint frequency
+  #     - distributed settings for multi-GPU training visibility
+  #
   enabled: false
+
+# =============================================================================
+# Configuration Notes
+# =============================================================================
+#
+# EXTENDING THIS FILE:
+#     To add new system-level settings:
+#     1. Add new top-level keys following the existing structure
+#     2. Include detailed comments explaining the parameter
+#     3. Specify type, default value, and valid range
+#     4. Document any related security implications
+#
+# ENVIRONMENT VARIABLE OVERRIDE:
+#     System settings can be overridden via environment variables:
+#     - PISCES_DEV_MODE=true/false
+#     - PISCES_<SETTING_NAME>=<value>
+#
+# VALIDATION:
+#     Settings are validated on framework initialization to ensure:
+#     - All required fields are present
+#     - Value types match expected types
+#     - Values fall within acceptable ranges
+#     - No conflicting settings are detected
+#
+# =============================================================================

@@ -1936,20 +1936,23 @@ class YvTransformerBlock(nn.Module):
         device = x.device
         dtype = x.dtype
         
-        # Get number of blocks to attend over (limited by max_blocks)
-        num_blocks = min(self._attn_res_block_count.item(), self.attn_res_max_blocks)
+        if self._attn_res_blocks is None or self._attn_res_block_count.item() == 0:
+            return x
+        
+        num_blocks_stored = self._attn_res_blocks.shape[0]
+        num_blocks = min(num_blocks_stored, self.attn_res_max_blocks)
         if num_blocks == 0:
+            return x
+        
+        blocks = self._attn_res_blocks[-num_blocks:]  # [N, B, T, H] where N = num_blocks
+        
+        if blocks.dim() != 4 or blocks.shape[0] != num_blocks:
+            _LOG.warning(f"AttnRes blocks shape mismatch: blocks.shape={blocks.shape}, num_blocks={num_blocks}")
             return x
         
         # Phase 1: Parallel computation of block-level attention
         # Query is input-independent, enabling efficient batched computation
         query = self.attn_res_query.expand(batch_size, -1, -1)  # [B, 1, H]
-        
-        # Get block representations (most recent num_blocks)
-        if self._attn_res_blocks.shape[0] > num_blocks:
-            blocks = self._attn_res_blocks[-num_blocks:]  # [N, B, T, H]
-        else:
-            blocks = self._attn_res_blocks  # [N, B, T, H]
         
         # Normalize blocks for attention
         blocks_flat = blocks.view(-1, hidden_size)  # [N*B*T, H]
@@ -1977,7 +1980,7 @@ class YvTransformerBlock(nn.Module):
         ) * scale  # [B, N*T]
         
         # Reshape back to [B, N, T]
-        attn_logits = attn_logits.view(batch_size, num_blocks, -1)
+        attn_logits = attn_logits.view(batch_size, num_blocks, seq_len)
         
         if self.attn_res_use_two_phase and self.attn_res_use_online_softmax:
             # Phase 2: Online Softmax for streaming aggregation
@@ -2036,7 +2039,10 @@ class YvTransformerBlock(nn.Module):
             
             # Weighted aggregation
             # Block contributions: [B, N, T] @ [N, B, T, H] -> [B, T, H]
-            block_contrib = torch.einsum('b n t, n b t h -> b t h', block_weights, values)
+            # Ensure dimensions match before einsum
+            block_weights_3d = block_weights.view(batch_size, num_blocks, seq_len)
+            values_4d = values.view(num_blocks, batch_size, seq_len, hidden_size)
+            block_contrib = torch.einsum('bnt,nbth->bth', block_weights_3d, values_4d)
             
             # Current contribution: [B, T] @ [B, T, H] -> [B, T, H]
             current_contrib = current_weight.unsqueeze(-1) * current_value
@@ -2049,7 +2055,9 @@ class YvTransformerBlock(nn.Module):
             attn_weights = attn_weights.view(batch_size, num_blocks, -1)
             
             # Weighted sum: [B, N, T] @ [N, B, T, H] -> [B, T, H]
-            aggregated = torch.einsum('b n t, n b t h -> b t h', attn_weights, values)
+            attn_weights_3d = attn_weights.view(batch_size, num_blocks, seq_len)
+            values_4d = values.view(num_blocks, batch_size, seq_len, hidden_size)
+            aggregated = torch.einsum('bnt,nbth->bth', attn_weights_3d, values_4d)
         
         # Output projection
         output = self.attn_res_out_proj(aggregated)

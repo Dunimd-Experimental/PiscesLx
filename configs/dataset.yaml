@@ -18,288 +18,960 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+# =============================================================================
+# PiscesL1 Dataset Configuration Registry
+# =============================================================================
+#
+# PURPOSE:
+#     This file defines the complete registry of datasets used for training
+#     the PiscesL1 large language model. It provides a centralized configuration
+#     for all data sources across different modalities and domains.
+#
+# DATASET REGISTRY STRUCTURE:
+#     Each dataset entry contains:
+#     - name: Full dataset identifier (source format)
+#     - save: Local storage name for cached data
+#     - desc: Human-readable description of dataset content
+#     - source: Data source platform (huggingface, modelscope, etc.)
+#
+# DATA SOURCES:
+#     - huggingface: HuggingFace Hub (https://huggingface.co/datasets)
+#     - modelscope: ModelScope (https://modelscope.cn/datasets)
+#
+# USAGE:
+#     datasets:
+#       - name: "dataset_identifier"
+#         save: "local_name"
+#         desc: "Description"
+#         source: "platform"
+#
+# PROCESSING FLOW:
+#     1. Dataset name is resolved to actual dataset location
+#     2. Data is downloaded from source if not cached
+#     3. Dataset is saved under the specified 'save' name
+#     4. Post-download cleanup removes temporary files
+#     5. Dataset is preprocessed according to model requirements
+#
+# =============================================================================
+
+# Framework version placeholder - replaced with actual version during loading
 version: "{{VERSION}}"
 
+# =============================================================================
+# Global Dataset Configuration
+# =============================================================================
 defaults:
+  # Maximum samples per dataset (-1 means unlimited)
+  # Type: integer
+  # Default: -1 (no limit)
+  # Range: -1 (unlimited), or positive integer (max samples)
+  #
+  # DESCRIPTION:
+  #     Controls the maximum number of samples to use from any single dataset.
+  #     Setting this to -1 disables the limit and uses all available samples.
+  #     This is useful for:
+  #     - Debugging with smaller data subsets
+  #     - Balancing dataset contributions
+  #     - Managing memory during development
+  #
+  #     For production training, typically set to -1 to utilize full datasets.
+  #
   max_samples_per_dataset: -1
+
+  # Post-download cleanup flag
+  # Type: boolean
+  # Default: true
+  #
+  # DESCRIPTION:
+  #     When true, removes temporary files after dataset download completes.
+  #     This saves disk space but extends download time.
+  #     When false, keeps downloaded files for faster re-initialization.
+  #
   post_download_clean: true
+
+  # Source preference ordering for dataset resolution
+  # Type: list of strings
+  # Default: ["modelscope", "huggingface"]
+  #
+  # DESCRIPTION:
+  #     Specifies the priority order when resolving dataset sources.
+  #     If a dataset exists on multiple platforms, the first match wins.
+  #     Useful for:
+  #     - Preferring faster regional servers
+  #     - Using platform-specific optimizations
+  #     - Handling platform availability issues
+  #
   source_preference:
     - "modelscope"
     - "huggingface"
 
+# =============================================================================
+# Dataset Registry
+# =============================================================================
+# All available datasets organized by category and domain.
+# Each dataset is a single YAML mapping with name, save, desc, and source fields.
+# =============================================================================
+
 datasets:
-  # ============================================================
+
+  # ==========================================================================
   # Text Pre-training Corpora
-  # ============================================================
+  # ==========================================================================
+  # Large-scale text collections for foundational language model pre-training.
+  # These datasets provide broad coverage of general language patterns.
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # The Pile Deduplicated
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     The Pile is a massive 825GB deduplicated text corpus curated by
+  #     EleutherAI. It aggregates high-quality text from diverse sources
+  #     including academic papers, books, web content, code, and more.
+  #     The deduplicated version removes exact duplicates to improve
+  #     training efficiency and reduce redundancy.
+  #
+  # CONTENT SOURCES:
+  #     - Academic papers (arXiv, PubMed)
+  #     - Books (Gutenberg, Books3)
+  #     - Web content (OpenWebText2, Pile Subset)
+  #     - Code (GitHub, Stack Exchange)
+  #     - Conversations (ChatGPT interactions)
+  #
+  # USE CASE:
+  #     Primary pre-training corpus for general language understanding
+  # --------------------------------------------------------------------------
   - name: "EleutherAI/the_pile_deduplicated"
     save: "Pile"
     desc: "The Pile deduplicated - 825GB high-quality text"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # English Wikipedia
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Complete English Wikipedia articles providing structured,
+  #     encyclopedic knowledge coverage. Wikipedia is known for its
+  #     high-quality, fact-checked content spanning all knowledge domains.
+  #
+  # CONTENT:
+  #     - Encyclopedia articles
+  #     - Historical events
+  #     - Scientific concepts
+  #     - Biographies
+  #     - Geographic information
+  #
+  # USE CASE:
+  #     Factual knowledge injection and structured reasoning
+  # --------------------------------------------------------------------------
   - name: "wikipedia/en"
     save: "WikiEN"
     desc: "English Wikipedia"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # BookCorpus
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Collection of books text extracted from various sources.
+  #     Provides long-form narrative content with complex sentence
+  #     structures and literary language patterns.
+  #
+  # CONTENT:
+  #     - Fiction novels
+  #     - Non-fiction books
+  #     - Academic texts
+  #     - Technical manuals
+  #
+  # USE CASE:
+  #     Long-range dependency learning and narrative understanding
+  # --------------------------------------------------------------------------
   - name: "bookcorpus/bookcorpus"
     save: "BookCorpus"
     desc: "BookCorpus - books text (if available in parquet format)"
     source: "huggingface"
 
-  # ============================================================
+  # ==========================================================================
   # Chinese Corpora
-  # ============================================================
+  # ==========================================================================
+  # Specialized datasets for Chinese language model training, including
+  # instruction datasets and domain-specific Chinese content.
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # Llama3 Chinese Dataset
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Chinese instruction dataset derived from Llama3 training.
+  #     Contains high-quality Chinese question-answer pairs and
+  #     instruction-response examples.
+  # --------------------------------------------------------------------------
   - name: "baicai003/Llama3-Chinese-dataset"
     save: "Chinese1"
     desc: "Chinese instruction dataset"
     source: "modelscope"
+
+  # --------------------------------------------------------------------------
+  # DeepSeek R1 Chinese Distill Data
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Chinese dataset distilled from DeepSeek R1 model outputs.
+  #     Contains chain-of-thought reasoning examples in Chinese
+  #     with step-by-step problem solving demonstrations.
+  # --------------------------------------------------------------------------
   - name: "liucong/Chinese-DeepSeek-R1-Distill-data-110k-SFT"
     save: "Chinese2"
     desc: "Chinese DeepSeek R1 distill data"
     source: "modelscope"
+
+  # --------------------------------------------------------------------------
+  # OpenOrca (Chinese portion)
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Chinese portion of the OpenOrca dataset containing GPT-4
+  #     generated explanations and QA pairs.
+  # --------------------------------------------------------------------------
   - name: "Open-Orca/OpenOrca"
     save: "Chinese3"
     desc: "Chinese OpenOrca"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Qwen3 Chinese Distill Data
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Chinese dataset distilled from Qwen3 235B model outputs.
+  #     High-quality Chinese instruction examples with extensive
+  #     coverage of various domains.
+  # --------------------------------------------------------------------------
   - name: "swift/Chinese-Qwen3-235B-2507-Distill-data-110k-SFT"
     save: "Chinese4"
     desc: "Chinese Qwen3 distill data"
     source: "modelscope"
+
+  # --------------------------------------------------------------------------
+  # Chinese Medical Dialogue
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Chinese medical consultation dialogues providing
+  #     domain-specific conversational data in healthcare.
+  # --------------------------------------------------------------------------
   - name: "xiaofengalg/Chinese-medical-dialogue"
     save: "Chinese5"
     desc: "Chinese medical dialogue"
     source: "modelscope"
+
+  # --------------------------------------------------------------------------
+  # Chinese Cosmopedia
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Chinese educational content covering scientific and
+  #     general knowledge topics.
+  # --------------------------------------------------------------------------
   - name: "opencsg/chinese-cosmopedia"
     save: "Chinese6"
     desc: "Chinese cosmopedia"
     source: "modelscope"
 
-  # ============================================================
+  # ==========================================================================
   # Code Datasets
-  # ============================================================
+  # ==========================================================================
+  # Programming code corpora for code generation and understanding tasks.
+  # Critical for developing code generation capabilities.
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # The Stack V2
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Massive 823B token code corpus covering 600+ programming
+  #     languages. The Stack V2 is one of the largest code datasets
+  #     available for training code language models.
+  #
+  # LANGUAGES INCLUDED:
+  #     Python, JavaScript, TypeScript, Java, C++, Go, Rust,
+  #     Ruby, PHP, Swift, Kotlin, and 590+ more
+  #
+  # USE CASE:
+  #     Primary code generation training corpus
+  # --------------------------------------------------------------------------
   - name: "bigcode/the-stack-v2"
     save: "TheStackV2"
     desc: "The Stack V2 - 823B tokens, 600+ languages"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # StarCoder Training Data
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Curated code dataset from BigCode containing training data
+  #     specifically processed for StarCoder model training.
+  #     Covers 80+ programming languages with quality filtering.
+  # --------------------------------------------------------------------------
   - name: "bigcode/starcoderdata"
     save: "StarCoderData"
     desc: "StarCoder training data - 80+ languages"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Code Alpaca 20K
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Instruction dataset for code generation with 20K examples
+  #     covering basic programming tasks.
+  # --------------------------------------------------------------------------
   - name: "HuggingFaceH4/CodeAlpaca_20K"
     save: "Code1"
     desc: "Code Alpaca 20K"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # GitHub Python Code
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Large collection of Python code from GitHub repositories.
+  #     Provides real-world Python implementations.
+  # --------------------------------------------------------------------------
   - name: "codeparrot/github-code"
     save: "Code2"
     desc: "GitHub Python code"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Python Exercises
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Python code exercises with solutions for educational
+  #     programming tasks.
+  # --------------------------------------------------------------------------
   - name: "bigcode/python-exercises"
     save: "Code3"
     desc: "Python code exercises"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Magicoder OSS Instruct 75K
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     High-quality code instruction dataset with 75K examples
+  #     generated from open-source code repositories.
+  # --------------------------------------------------------------------------
   - name: "ise-uiuc/Magicoder-OSS-Instruct-75K"
     save: "Magicoder"
     desc: "Magicoder - high-quality code instruction"
     source: "huggingface"
 
-  # ============================================================
-  # Math & Reasoning
-  # ============================================================
+  # ==========================================================================
+  # Math & Reasoning Datasets
+  # ==========================================================================
+  # Mathematical and logical reasoning corpora for developing
+  # problem-solving and chain-of-thought capabilities.
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # MetaMathQA
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     395K mathematical question-answer dataset specifically
+  #     designed for math reasoning training. Contains diverse
+  #     mathematical problems with verified answers.
+  # --------------------------------------------------------------------------
   - name: "meta-math/MetaMathQA"
     save: "Math1"
     desc: "MetaMathQA - 395K math reasoning"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # NuminaMath CoT
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     860K math problems with chain-of-thought reasoning.
+  #     Contains step-by-step solutions demonstrating mathematical
+  #     problem-solving processes.
+  # --------------------------------------------------------------------------
   - name: "AI-ModelScope/NuminaMath-CoT"
     save: "Math2"
     desc: "NuminaMath CoT - 860K math chain-of-thought"
     source: "modelscope"
+
+  # --------------------------------------------------------------------------
+  # Competition Math Problems
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Collection of competition-level mathematics problems
+  #     from various math contests and olympiads.
+  # --------------------------------------------------------------------------
   - name: "hendrycks/competition_math"
     save: "Math3"
     desc: "Competition math problems"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # GSM8K
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Grade School Math 8K dataset containing 8,500 middle school
+  #     math word problems. Commonly used benchmark for mathematical
+  #     reasoning capabilities.
+  # --------------------------------------------------------------------------
   - name: "gsm8k"
     save: "GSM8K"
     desc: "GSM8K - grade school math"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # MATH Benchmark
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Competition-level math problems from the MATH benchmark
+  #     dataset. Contains 12,500 problems with detailed solutions.
+  # --------------------------------------------------------------------------
   - name: "lighteval/MATH"
     save: "MATH"
     desc: "MATH benchmark - competition level"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Chain-of-Thought Reasoning
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     General chain-of-thought reasoning examples across
+  #     multiple reasoning domains.
+  # --------------------------------------------------------------------------
   - name: "cjwbw/CoT"
     save: "CoT"
     desc: "Chain-of-Thought reasoning"
     source: "huggingface"
 
-  # ============================================================
+  # ==========================================================================
   # Image-Text Datasets
-  # ============================================================
+  # ==========================================================================
+  # Paired image and text data for multimodal model training,
+  # enabling visual understanding and image captioning capabilities.
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # LAION-2B English
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     2 billion English image-text pairs from the LAION dataset.
+  #     One of the largest image-text datasets for multimodal training.
+  # --------------------------------------------------------------------------
   - name: "laion/laion2B-en"
     save: "LAION2B"
     desc: "LAION-2B English - 2B image-text pairs"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # LAION-400M
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     400 million image-text pairs with CLIP filtering.
+  #     High-quality subset of image-text data.
+  # --------------------------------------------------------------------------
   - name: "laion/laion400M"
     save: "LAION400M"
     desc: "LAION-400M - CLIP filtered"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # COYO-700M
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     700 million high-quality image-text pairs from Kakao Brain.
+  #     Curated for image-text alignment quality.
+  # --------------------------------------------------------------------------
   - name: "kakaobrain/coyo-700m"
     save: "COYO700M"
     desc: "COYO-700M - high-quality image-text"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # COCO Captions
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Microsoft COCO dataset captions with 2014 split.
+  #     Standard benchmark for image captioning.
+  # --------------------------------------------------------------------------
   - name: "lmms-lab/COCO-2014-Captions"
     save: "COCO"
     desc: "COCO captions"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # ShareGPT4V
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Image descriptions generated by GPT-4V for enhanced
+  #     visual understanding training.
+  # --------------------------------------------------------------------------
   - name: "LiuSirui/ShareGPT4V"
     save: "ShareGPT4V"
     desc: "ShareGPT-4V image descriptions"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Valley VQA
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Visual Question Answering dataset for training
+  #     visual comprehension abilities.
+  # --------------------------------------------------------------------------
   - name: "AI-VLG/Valley-VQA"
     save: "VQAv2"
     desc: "VQA v2 dataset"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Open Images 2019
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Google Open Images dataset with 9 million images
+  #     covering thousands of object categories.
+  # --------------------------------------------------------------------------
   - name: "openimages/openimages_2019_04_24"
     save: "OpenImages"
     desc: "Open Images - 9M images"
     source: "huggingface"
 
-  # ============================================================
+  # ==========================================================================
   # Audio Datasets
-  # ============================================================
+  # ==========================================================================
+  # Speech and audio data for audio understanding and
+  # speech-to-text capabilities.
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # Clotho Audio Captioning
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Audio captioning dataset with 4,000+ audio clips from
+  #     Freesound, each with multiple descriptive captions.
+  # --------------------------------------------------------------------------
   - name: "dataset听得/Clotho"
     save: "Audio1"
     desc: "Clotho audio captioning"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Libri2Mix
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Speech separation dataset derived from LibriSpeech for
+  #     training speech separation models.
+  # --------------------------------------------------------------------------
   - name: "JorisCos/Libri2Mix"
     save: "Audio2"
     desc: "Libri2Mix speech separation"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # AudioSet Caps
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     AudioSet with captions for audio-text alignment training.
+  # --------------------------------------------------------------------------
   - name: "daper2000/AudioSetCaps"
     save: "Audio3"
     desc: "AudioSet captions"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # LibriSpeech
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     1000 hours of English speech from LibriVox audiobooks.
+  #     Standard benchmark for speech recognition.
+  # --------------------------------------------------------------------------
   - name: "_LIBRISPEECH/LibriSpeech"
     save: "LibriSpeech"
     desc: "LibriSpeech - 1000h English speech"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Common Voice 17
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Mozilla Common Voice dataset with 200K+ hours of
+  #     multilingual speech data.
+  # --------------------------------------------------------------------------
   - name: "mozilla-foundation/common_voice_17_0"
     save: "CommonVoice"
     desc: "Common Voice - 200K+ hours multilingual"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # VoxLingua107
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Spoken language identification dataset covering 107
+  #     languages for multilingual speech processing.
+  # --------------------------------------------------------------------------
   - name: "facebook/voxlingua107"
     save: "VoxLingua"
     desc: "VoxLingua107 - 107 languages"
     source: "huggingface"
 
-  # ============================================================
+  # ==========================================================================
   # Video Datasets
-  # ============================================================
+  # ==========================================================================
+  # Video and caption pairs for video understanding and
+  # video-to-text generation capabilities.
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # WikiVid-10M
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     10 million video-text pairs from Wikipedia for video
+  #     language alignment training.
+  # --------------------------------------------------------------------------
   - name: "Intern-Video/WikiVid-10M"
     save: "WebVid10M"
     desc: "WebVid-10M - 10M video-text pairs"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Ego4D
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     3,670 hours of egocentric video from daily activities.
+  #     Contains first-person view videos with annotations.
+  # --------------------------------------------------------------------------
   - name: "facebook/ego4d"
     save: "Ego4D"
     desc: "Ego4D - 3670h egocentric video"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # HowTo100M
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     136 million instructional videos from YouTube covering
+  #     "how-to" tasks across diverse domains.
+  # --------------------------------------------------------------------------
   - name: "howto100m/howto100m"
     save: "HowTo100M"
     desc: "HowTo100M - 136M instructional videos"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # InternVid
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     234 million video-text pairs from video platforms
+  #     for large-scale video-language training.
+  # --------------------------------------------------------------------------
   - name: "OpenGVLab/InternVid"
     save: "InternVid"
     desc: "InternVid - 234M video-text pairs"
     source: "huggingface"
 
-  # ============================================================
+  # ==========================================================================
   # Agent Datasets
-  # ============================================================
+  # ==========================================================================
+  # Agent instruction and tool-use datasets for developing
+  # autonomous agent capabilities.
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # MSAgent Benchmark
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Multi-agent benchmark dataset for evaluating
+  #     AI agent performance on complex tasks.
+  # --------------------------------------------------------------------------
   - name: " AgentsLm/AgentBench"
     save: "Agent1"
     desc: "MSAgent benchmark"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # MSAgent Multi-Role
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Multi-role agent dataset for training agents that
+  #     can handle different personas and roles.
+  # --------------------------------------------------------------------------
   - name: "AgentsLake/AgentMultiRole"
     save: "Agent2"
     desc: "MSAgent multi-role"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Orca AgentInstruct
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     1 million agent instruction examples from the Orca project.
+  # --------------------------------------------------------------------------
   - name: "Open-Orca/Orca-AgentInstruct"
     save: "Agent3"
     desc: "AgentInstruct 1M"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # MSAgent Pro
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Advanced agent dataset for professional AI agent tasks.
+  # --------------------------------------------------------------------------
   - name: " AgentsLm/AgentPro"
     save: "Agent4"
     desc: "MSAgent Pro"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # MSAgent for AgentFabric
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Agent dataset for AgentFabric framework integration.
+  # --------------------------------------------------------------------------
   - name: " ms-agent-for-agentfabric"
     save: "Agent5"
     desc: "MSAgent for AgentFabric"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # ToolBench
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     120K tool-use instruction dataset for training
+  #     tool-augmented language models.
+  # --------------------------------------------------------------------------
   - name: "THUDM/ToolBench"
     save: "ToolBench"
     desc: "ToolBench - 120K tool-use instructions"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # AgentInstruct
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     1 million agent instruction examples from Microsoft
+  #     for general agent training.
+  # --------------------------------------------------------------------------
   - name: "microsoft/AgentInstruct"
     save: "AgentInstruct"
     desc: "AgentInstruct - 1M agent instructions"
     source: "huggingface"
 
-  # ============================================================
-  # Instruction Tuning
-  # ============================================================
+  # ==========================================================================
+  # Instruction Tuning Datasets
+  # ==========================================================================
+  # High-quality instruction-response pairs for supervised
+  # fine-tuning and alignment training.
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # UltraChat
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     200K multi-turn dialogue examples with detailed,
+  #     informative responses.
+  # --------------------------------------------------------------------------
   - name: "stingning/ultrachat"
     save: "UltraChat"
     desc: "UltraChat 200K - multi-turn dialogue"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Alpaca
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     52K instruction examples generated from Stanford
+  #     Alpaca project.
+  # --------------------------------------------------------------------------
   - name: "tatsu-lab/alpaca"
     save: "Alpaca"
     desc: "Alpaca - 52K instructions"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # WizardLM
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Evolved instruction dataset with complex, challenging
+  #     instructions for advanced language model training.
+  # --------------------------------------------------------------------------
   - name: "WizardLMTeam/WizardLM_evol_instruct_V2_196k"
     save: "WizardLM"
     desc: "WizardLM - complex instructions"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # OASST1
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     161K human-annotated assistant responses from
+  #     OpenAssistant project.
+  # --------------------------------------------------------------------------
   - name: "OpenAssistant/oasst1"
     save: "OASST1"
     desc: "OpenAssistant - 161K human annotations"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # OpenOrca
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     4 million GPT-4 distilled examples with detailed
+  #     reasoning explanations.
+  # --------------------------------------------------------------------------
   - name: "Open-Orca/OpenOrca"
     save: "OpenOrca"
     desc: "OpenOrca - 4M GPT-4 distilled"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # ShareGPT
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     90K+ real ChatGPT/GPT-4 conversations cleaned
+  #     from ShareGPT platform.
+  # --------------------------------------------------------------------------
   - name: "sharegpt/sharegpt_cleaned"
     save: "ShareGPT"
     desc: "ShareGPT - 90K+ real conversations"
     source: "huggingface"
 
-  # ============================================================
-  # Domain Specific
-  # ============================================================
+  # ==========================================================================
+  # Domain-Specific Datasets
+  # ==========================================================================
+  # Specialized datasets for domain-specific training including
+  # medical, legal, financial, and scientific domains.
+  # ==========================================================================
+
+  # --------------------------------------------------------------------------
+  # Medical Meadow (R1 Data)
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Medical reasoning data with chain-of-thought for
+  #     healthcare AI training.
+  # --------------------------------------------------------------------------
   - name: "FreedomPhantom/medical_meadow"
     save: "Medical1"
     desc: "Medical R1 data"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Medical Meadow QA
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Medical question-answer pairs for healthcare
+  #     domain language model training.
+  # --------------------------------------------------------------------------
   - name: "medalpaca/medical_meadow"
     save: "Medical2"
     desc: "Medical Meadow - medical QA"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # DocVQA
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Document Visual Question Answering dataset for
+  #     document understanding tasks.
+  # --------------------------------------------------------------------------
   - name: "jaxoner/DocVQA"
     save: "DocVQA"
     desc: "Document VQA"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # PubLayNet
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Document layout segmentation dataset for structure
+  #     understanding in scientific papers.
+  # --------------------------------------------------------------------------
   - name: "jordvalente/PubLayNet"
     save: "PubLayNet"
     desc: "PubLayNet - document layout"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # CEVAL Exam
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Chinese college entrance exam benchmark dataset
+  #     for evaluating Chinese language model capabilities.
+  # --------------------------------------------------------------------------
   - name: "ceval/ceval-exam"
     save: "Ceval"
     desc: "CEVAL exam benchmark"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # OpenWebText2
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     888K filtered web text examples for open-domain
+  #     language understanding.
+  # --------------------------------------------------------------------------
   - name: "法学LLM/OpenWebText2"
     save: "OpenWeb"
     desc: "OpenWeb 888K"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Financial Phrasebank
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Sentiment classification dataset for financial text.
+  # --------------------------------------------------------------------------
   - name: "TheFinAI/financial_phrasebank"
     save: "FinQA"
     desc: "Financial QA"
     source: "huggingface"
+
+  # --------------------------------------------------------------------------
+  # Financial Challenge 14B
+  # --------------------------------------------------------------------------
+  # DESCRIPTION:
+  #     Financial challenge dataset for banking and
+  #     finance domain training.
+  # --------------------------------------------------------------------------
   - name: "huart125/bs_challenge_financial_14b"
     save: "Financial1"
     desc: "Financial challenge dataset"
     source: "huggingface"
+
+# =============================================================================
+# Dataset Loading and Processing Notes
+# =============================================================================
+#
+# DATASET RESOLUTION PROCESS:
+#     1. Name Resolution:
+#        - Check source_preference order for first available source
+#        - Validate dataset exists on selected platform
+#        - Handle dataset aliases and redirects
+#
+#     2. Download Phase:
+#        - Create local cache directory structure
+#        - Download dataset files from source
+#        - Verify download integrity with checksums
+#        - Extract archives if necessary
+#
+#     3. Storage Phase:
+#        - Rename/copy to 'save' directory name
+#        - Apply post_download_clean if enabled
+#        - Create dataset metadata file
+#
+#     4. Preprocessing Phase:
+#        - Tokenization according to model vocab
+#        - Sequence packing for efficiency
+#        - Quality filtering and deduplication
+#        - Format conversion to training format
+#
+# MEMORY MANAGEMENT:
+#     - Datasets are loaded on-demand, not all at once
+#     - Use max_samples_per_dataset to limit memory
+#     - Streaming mode available for very large datasets
+#
+# ERROR HANDLING:
+#     - Network failures: Retry with exponential backoff
+#     - Source unavailable: Fall back to next source in preference
+#     - Corruption detected: Re-download affected dataset
+#     - Missing dataset: Clear error message with resolution steps
+#
+# =============================================================================

@@ -18,12 +18,64 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+# =============================================================================
+# PiscesL1 Watermarking System Configuration
+# =============================================================================
+#
+# PURPOSE:
+#     This file configures the comprehensive watermarking system for PiscesL1,
+#     enabling traceability and identification of AI-generated content across
+#     text, image, audio, video, and model weight outputs.
+#
+# WATermarking Architecture:
+#     The watermarking system provides multiple layers of protection:
+#     1. Hidden Watermarks: Imperceptible markers embedded in content
+#     2. Visible Watermarks: Obvious markers for content identification
+#     3. Weight Watermarks: Signatures in model parameters
+#     4. Payload System: Rich metadata about generation provenance
+#
+# JURISDICTION COMPLIANCE:
+#     Configuration supports multiple regulatory jurisdictions including
+#     CN (China/GB/T 45225-2024), EU (AI Act 2024), US (NIST AI RMF 1.0),
+#     and others. Each jurisdiction has specific requirements for watermark
+#     strength, retention, and disclosure.
+#
+# =============================================================================
+
+# Framework version placeholder - replaced with actual version during loading
 watermark_system:
   version: "{{VERSION}}"
+
+  # Force watermark embedding regardless of other settings
+  # Type: boolean
+  # Default: true
+  #
+  # DESCRIPTION:
+  #     When enabled, watermarks are forcibly embedded in all generated
+  #     content regardless of other configuration choices. This ensures
+  #     compliance with jurisdictions that mandate watermarking.
+  #
+  # JURISDICTION REQUIREMENTS:
+  #     - CN: Recommended for compliance
+  #     - EU: Required for high-risk AI systems
+  #     - US: Optional but recommended
+  #
   force_enabled: true
-  
+
+  # =============================================================================
+  # Jurisdiction-Specific Configuration
+  # =============================================================================
+  # Each jurisdiction has specific requirements for watermarking parameters.
+  # The system applies the appropriate configuration based on deployment context.
+  # =============================================================================
   jurisdiction:
+    # Default jurisdiction for watermark configuration
+    # Type: string
+    # Options: CN, EU, US, UK, JP, KR, GLOBAL
     default: "CN"
+
+    # List of supported jurisdictions
+    # Type: list of strings
     supported:
       - "CN"
       - "EU"
@@ -32,29 +84,65 @@ watermark_system:
       - "JP"
       - "KR"
       - "GLOBAL"
+
+    # Regulatory standards for each jurisdiction
+    # These define the compliance framework requirements
     standards:
-      CN: "GB/T 45225-2024"
-      EU: "AI Act 2024"
-      US: "NIST AI RMF 1.0"
-      UK: "AI Safety Act 2024"
-      JP: "AI Guidelines 2024"
-      KR: "AI Act 2024"
-      GLOBAL: "ISO/IEC 27090"
+      CN: "GB/T 45225-2024"        # Chinese AI Watermark Standard
+      EU: "AI Act 2024"             # European AI Act
+      US: "NIST AI RMF 1.0"        # US NIST AI Risk Management Framework
+      UK: "AI Safety Act 2024"      # UK AI Safety Act
+      JP: "AI Guidelines 2024"     # Japanese AI Guidelines
+      KR: "AI Act 2024"            # Korean AI Act
+      GLOBAL: "ISO/IEC 27090"      # International AI Watermarking Standard
+
+    # Jurisdiction-specific requirements
     requirements:
+      # --------------------------------------------------------------------------
+      # China (CN) Configuration
+      # --------------------------------------------------------------------------
+      # REGULATORY FRAMEWORK: GB/T 45225-2024
+      # RISK LEVEL: Medium
+      # REQUIREMENTS: Mandatory disclosure, high retention period
       CN:
+        # Require visible disclosure of AI-generated content
         mandatory_disclosure: true
+
+        # Data retention period in days
         retention_days: 365
+
+        # Regulatory risk classification
         risk_level: "medium"
+
+        # Watermark embedding strength (probability per token/element)
         watermark_strength: 1.0e-05
+
+        # Number of redundant watermark copies for robustness
         redundancy_level: 3
+
+        # Enable audit logging for compliance
         audit_enabled: true
+
+      # --------------------------------------------------------------------------
+      # European Union (EU) Configuration
+      # --------------------------------------------------------------------------
+      # REGULATORY FRAMEWORK: AI Act 2024
+      # RISK LEVEL: High
+      # REQUIREMENTS: Mandatory disclosure, very high retention, extensive audit
       EU:
         mandatory_disclosure: true
-        retention_days: 2555
+        retention_days: 2555  # ~7 years for AI Act compliance
         risk_level: "high"
-        watermark_strength: 5.0e-06
+        watermark_strength: 5.0e-06  # Lower strength for higher robustness
         redundancy_level: 3
         audit_enabled: true
+
+      # --------------------------------------------------------------------------
+      # United States (US) Configuration
+      # --------------------------------------------------------------------------
+      # REGULATORY FRAMEWORK: NIST AI RMF 1.0
+      # RISK LEVEL: Medium
+      # REQUIREMENTS: Disclosure optional but recommended
       US:
         mandatory_disclosure: false
         retention_days: 365
@@ -62,6 +150,13 @@ watermark_system:
         watermark_strength: 1.0e-05
         redundancy_level: 2
         audit_enabled: true
+
+      # --------------------------------------------------------------------------
+      # United Kingdom (UK) Configuration
+      # --------------------------------------------------------------------------
+      # REGULATORY FRAMEWORK: AI Safety Act 2024
+      # RISK LEVEL: High
+      # REQUIREMENTS: Mandatory disclosure, extended retention, high redundancy
       UK:
         mandatory_disclosure: true
         retention_days: 730
@@ -69,6 +164,13 @@ watermark_system:
         watermark_strength: 5.0e-06
         redundancy_level: 4
         audit_enabled: true
+
+      # --------------------------------------------------------------------------
+      # Japan (JP) Configuration
+      # --------------------------------------------------------------------------
+      # REGULATORY FRAMEWORK: AI Guidelines 2024
+      # RISK LEVEL: Low
+      # REQUIREMENTS: Disclosure optional, minimal audit
       JP:
         mandatory_disclosure: false
         retention_days: 365
@@ -76,6 +178,13 @@ watermark_system:
         watermark_strength: 1.0e-05
         redundancy_level: 2
         audit_enabled: false
+
+      # --------------------------------------------------------------------------
+      # South Korea (KR) Configuration
+      # --------------------------------------------------------------------------
+      # REGULATORY FRAMEWORK: AI Act 2024
+      # RISK LEVEL: Medium
+      # REQUIREMENTS: Mandatory disclosure with standard retention
       KR:
         mandatory_disclosure: true
         retention_days: 365
@@ -83,6 +192,13 @@ watermark_system:
         watermark_strength: 1.0e-05
         redundancy_level: 3
         audit_enabled: true
+
+      # --------------------------------------------------------------------------
+      # Global/International Configuration
+      # --------------------------------------------------------------------------
+      # REGULATORY FRAMEWORK: ISO/IEC 27090
+      # RISK LEVEL: Medium
+      # REQUIREMENTS: Flexible framework for international deployment
       GLOBAL:
         mandatory_disclosure: false
         retention_days: 365
@@ -91,183 +207,486 @@ watermark_system:
         redundancy_level: 3
         audit_enabled: true
 
+  # =============================================================================
+  # Watermark Protocol Configuration
+  # =============================================================================
+  # Low-level protocol parameters for watermark encoding and decoding
+  # =============================================================================
   protocol:
+    # Synchronization header for watermark detection
+    # Type: hexadecimal string
+    # Default: "0xA5F0A5F0"
+    #
+    # DESCRIPTION:
+    #     A unique sync pattern that precedes watermark data, enabling
+    #     reliable detection even in noisy or compressed content.
     sync_header: "0xA5F0A5F0"
+
+    # Number of bits for synchronization sequence
     sync_bits: 32
+
+    # Number of bits for encoding payload length
     length_bits: 16
+
+    # Number of bits for CRC error detection
     crc_bits: 32
+
+    # Parity bit for additional error checking
     parity_bits: 1
+
+    # Maximum payload size in bytes
     max_payload_size: 4096
+
+    # Encoding scheme for watermark data
+    # Type: string
+    # Options: base64, hex
     encoding: "base64"
+
+    # Error correction coding configuration
     ecc:
+      # ECC type: repeat3 replicates each symbol 3 times
       type: "repeat3"
+      # Bits per symbol for ECC
       symbol_bits: 2
 
+  # =============================================================================
+  # Text Watermarking Configuration
+  # =============================================================================
+  # Parameters for embedding watermarks in text content
+  # =============================================================================
   text:
+    # Enable text watermarking
     enabled: true
-    zero_width:
-      characters:
-        - "\u200B"
-        - "\u200C"
-        - "\u200D"
-        - "\uFEFF"
-        - "\u2060"
-        - "\u2061"
-        - "\u2062"
-        - "\u2063"
-      encoding_bits: 2
-      force_density: 0.33
-      redundancy: 3
-      tamper_proof: true
-      distribution: "pseudo_random"
-    visible_prefix: null
-    payload_layers:
-      - "model_id"
-      - "version"
-      - "timestamp"
-      - "session_id"
-      - "user_hash"
-      - "content_hash"
-      - "trace_chain"
-      - "compliance"
 
+    # Zero-width character watermarking
+    zero_width:
+      # Unicode zero-width characters for imperceptible embedding
+      # These characters are invisible in most text renderers
+      characters:
+        - "\u200B"  # Zero Width Space
+        - "\u200C"  # Zero Width Non-Joiner
+        - "\u200D"  # Zero Width Joiner
+        - "\uFEFF"  # Zero Width No-Break Space (BOM)
+        - "\u2060"  # Word Joiner
+        - "\u2061"  # Function Application
+        - "\u2062"  # Invisible Multiply
+        - "\u2063"  # Invisible Separator
+
+      # Bits per character for encoding
+      encoding_bits: 2
+
+      # Density of watermarked characters (0.33 = 33% of text)
+      force_density: 0.33
+
+      # Redundancy level for error resistance
+      redundancy: 3
+
+      # Enable tamper detection
+      tamper_proof: true
+
+      # Distribution method for watermark placement
+      # Options: pseudo_random, uniform, structured
+      distribution: "pseudo_random"
+
+    # Visible prefix for text (null = no visible marker)
+    visible_prefix: null
+
+    # Payload layers included in text watermark
+    payload_layers:
+      - "model_id"        # Model identifier
+      - "version"         # Framework version
+      - "timestamp"       # Generation timestamp
+      - "session_id"      # Generation session identifier
+      - "user_hash"       # Hashed user identifier
+      - "content_hash"    # Hash of generated content
+      - "trace_chain"     # Blockchain-style trace
+      - "compliance"      # Compliance metadata
+
+  # =============================================================================
+  # Image Watermarking Configuration
+  # =============================================================================
+  # Parameters for embedding watermarks in images
+  # =============================================================================
   image:
+    # Enable image watermarking
     enabled: true
+
+    # Hidden/steganographic watermarking
     hidden:
+      # Watermarking method: DCT (Discrete Cosine Transform)
+      # DCT-based watermarking is robust against JPEG compression
       method: "dct"
+
+      # Block size for DCT watermarking
       block_size: 8
+
+      # Frequency band for embedding: low, mid, high
       embed_band: "mid"
+
+      # Color channels for embedding
+      # Y = Luminance, U/V = Chrominance
       channels:
         - "Y"
         - "U"
         - "V"
+
+      # Watermark strength (0.08 = 8% of DCT coefficient range)
       dct_strength: 0.08
+
+      # Enable pairwise encoding for better robustness
       pairwise_encoding: true
+
+      # Resistance against attacks/transformations
       resistance:
-        - "jpeg"
-        - "crop"
-        - "noise"
-        - "filter"
+        - "jpeg"    # JPEG compression
+        - "crop"    # Cropping
+        - "noise"   # Gaussian noise
+        - "filter"  # Filtering operations
+
+      # Secret key for watermark encoding
       key: "pisces2025_dct"
+
+      # Error correction: repeat3 replicates data 3 times
       ecc: "repeat3"
+
+    # Visible watermark overlay
     visible:
+      # Enable visible watermark
       enabled: true
+
+      # Watermark text
       text: "AI-Generated"
+
+      # Position: top_left, top_right, bottom_left, bottom_right, center
       position: "bottom_right"
+
+      # Opacity: 0.0 (invisible) to 1.0 (fully opaque)
       opacity: 0.8
+
+      # Font size in points
       font_size: 24
+
+      # Text color in RGBA format
       color: "rgba(255,255,255,0.9)"
 
+  # =============================================================================
+  # Video Watermarking Configuration
+  # =============================================================================
+  # Parameters for embedding watermarks in video content
+  # =============================================================================
   video:
+    # Enable video watermarking
     enabled: true
+
+    # Frame interval for watermark insertion (every N frames)
     frame_interval: 5
+
+    # Boost factor for keyframes (more robust embedding)
     keyframe_boost: 2.0
+
+    # Synchronize watermarks with audio track
     audio_sync: true
+
+    # Hidden watermarking configuration
     hidden:
+      # Inherit from image DCT method
       method: "dct"
+
+      # Use image watermarking settings as base
       inherit_from_image: true
+
+    # Visible overlay configuration
     visible_overlay:
       enabled: true
       text: "AI-Generated"
       position: "bottom_right"
-      duration: "full"
+      duration: "full"  # Full video or specific timestamp range
       opacity: 0.7
 
+  # =============================================================================
+  # Audio Watermarking Configuration
+  # =============================================================================
+  # Parameters for embedding watermarks in audio content
+  # =============================================================================
   audio:
+    # Enable audio watermarking
     enabled: true
+
+    # Hidden watermarking configuration
     hidden:
+      # Watermarking method: STFT (Short-Time Fourier Transform)
       method: "stft"
+
+      # Audio sample rate in Hz
       sample_rate: 44100
+
+      # Frequency range for watermark embedding (Hz)
+      # Ultrasonic range to remain inaudible
       frequency_range:
-        - 18000
-        - 20000
+        - 18000  # 18 kHz
+        - 20000  # 20 kHz (upper hearing limit)
+
+      # Watermark amplitude relative to signal
       amplitude: 0.01
+
+      # Spread spectrum for robustness
       spread_spectrum: true
       spread_factor: 10
+
+      # Least Significant Bit depth for embedding
       lsb_bits: 6
+
+      # Secret key for encoding
       key: "pisces2025_audio"
+
+      # Enable frame synchronization
       frame_sync: true
+
+    # Visible audio watermark (null = none)
     visible: null
 
+  # =============================================================================
+  # Model Weight Watermarking Configuration
+  # =============================================================================
+  # Parameters for embedding signatures in model weights
+  # =============================================================================
   weight:
+    # Enable weight watermarking
     enabled: true
+
+    # Watermarking method: regularization-based
     method: "regularization"
+
+    # Owner identifier for the model
     owner_id: "dunimd"
+
+    # Model family identifier
     model_id: "PiscesL1"
+
+    # Random seed for reproducible watermark generation
     seed: 2025
+
+    # Watermark strength for weight perturbation
     strength: 1.0e-05
+
+    # Verification threshold for watermark detection
     verify_threshold: 0.02
+
+    # Layer selection criteria
     layer_selection:
+      # Layer types to watermark
       types:
         - "Linear"
         - "Conv2d"
         - "Embedding"
+
+      # Number of top layers to select
       top_n: 10
+
+      # Minimum layer size (parameters) for watermarking
       min_size: 1024
+
+    # Codebook generation for watermark values
     codebook:
+      # Use cryptographic generation for security
       generation: "cryptographic"
+
+      # Watermark values: -1 and +1 (bipolar)
       values:
         - -1
         - 1
+
+      # L2 normalization for watermark vectors
       normalization: "l2"
+
+    # Synchronize watermark across distributed model shards
     distributed_sync: true
 
+  # =============================================================================
+  # Payload Configuration
+  # =============================================================================
+  # Defines the metadata included in watermark payloads
+  # =============================================================================
   payload:
+    # Mandatory fields that must be present in all watermarks
     mandatory_fields:
-      - "model_id"
-      - "version"
-      - "timestamp"
-      - "session_id"
-      - "user_hash"
-      - "content_hash"
-      - "trace_chain"
-    optional_fields:
-      - "owner_id"
-      - "device_id"
-      - "ip_hash"
-      - "request_id"
-    compliance_fields:
-      - "standard"
-      - "jurisdiction"
-      - "risk_level"
-      - "mandatory_disclosure"
+      - "model_id"        # Unique model identifier
+      - "version"         # Framework version
+      - "timestamp"       # Generation timestamp
+      - "session_id"      # Unique generation session
+      - "user_hash"       # Pseudonymized user identifier
+      - "content_hash"    # Hash of generated content
+      - "trace_chain"     # Audit trail reference
+      - "compliance"      # Jurisdiction compliance info
 
+    # Optional fields that may be included
+    optional_fields:
+      - "owner_id"        # Model owner
+      - "device_id"       # Generation device
+      - "ip_hash"         # Hashed IP address
+      - "request_id"      # API request identifier
+
+    # Fields required for regulatory compliance
+    compliance_fields:
+      - "standard"          # Applied regulatory standard
+      - "jurisdiction"     # Deployment jurisdiction
+      - "risk_level"       # Assigned risk level
+      - "mandatory_disclosure"  # Disclosure requirement
+
+  # =============================================================================
+  # Encryption Configuration
+  # =============================================================================
+  # Security settings for watermark payload encryption
+  # =============================================================================
   encryption:
+    # Enable payload encryption
     enabled: true
+
+    # Encryption algorithm
+    # Options: AES-256-GCM (recommended), ChaCha20-Poly1305
     algorithm: "AES-256-GCM"
+
+    # Key derivation function
     key_derivation: "PBKDF2"
+
+    # Key derivation iterations (higher = more secure but slower)
     iterations: 100000
 
+  # =============================================================================
+  # Detection Configuration
+  # =============================================================================
+  # Parameters for watermark detection and verification
+  # =============================================================================
   detection:
+    # Detection threshold (0.02 = 2% bit error tolerance)
     threshold: 0.02
+
+    # Required confidence level for positive detection
     confidence_level: 0.95
+
+    # Batch size for detection processing
     batch_size: 1000
+
+    # Detection method: local, distributed, api
     method: "local"
+
+    # Maximum response time in milliseconds
     response_time_ms: 100
 
+  # =============================================================================
+  # Audit Configuration
+  # =============================================================================
+  # Logging and compliance audit settings
+  # =============================================================================
   audit:
+    # Enable audit logging
     enabled: true
+
+    # Operations to log
     operations:
-      - "embed"
-      - "extract"
-      - "verify"
+      - "embed"    # Watermark embedding
+      - "extract"  # Watermark extraction
+      - "verify"   # Watermark verification
+
+    # Enable blockchain-style hash chaining for integrity
     hash_chain: true
+
+    # Lock watermark after generation (prevent modification)
     lock_after_generation: true
+
+    # Audit log storage configuration
     storage:
+      # Storage type: file, database, cloud
       type: "file"
+
+      # Storage path for audit logs
       path: "./audit_logs/watermark"
+
+      # Log rotation period in days
       rotation_days: 30
+
+    # Audit report format: json, xml, pdf
     report_format: "json"
 
+  # =============================================================================
+  # Traceability Configuration
+  # =============================================================================
+  # Content provenance and traceability settings
+  # =============================================================================
   traceability:
+    # Enable trace chain tracking
     chain_enabled: true
+
+    # Enable forward tracking (content -> derived works)
     forward_tracking: true
+
+    # Detect modifications to watermarked content
     modification_detection: true
+
+    # Enable regulatory reporting
     regulatory_reporting: true
+
+    # Enable forensic analysis capabilities
     forensic_analysis: true
 
+  # =============================================================================
+  # Performance Configuration
+  # =============================================================================
+  # Performance tuning parameters for watermarking operations
+  # =============================================================================
   performance:
+    # Maximum time for watermark embedding (milliseconds)
     embed_timeout_ms: 500
+
+    # Maximum time for watermark extraction (milliseconds)
     extract_timeout_ms: 200
+
+    # Maximum time for watermark verification (milliseconds)
     verify_timeout_ms: 100
+
+    # Maximum concurrent watermarking operations
     max_concurrent_operations: 100
+
+# =============================================================================
+# Watermarking System Usage Notes
+# =============================================================================
+#
+# EMBEDDING WORKFLOW:
+#     1. Select appropriate jurisdiction configuration
+#     2. Prepare payload with required fields
+#     3. Choose watermarking method for content type
+#     4. Apply error correction coding
+#     5. Encrypt payload (if enabled)
+#     6. Embed watermark in content
+#     7. Log operation to audit system
+#
+# DETECTION WORKFLOW:
+#     1. Receive content for analysis
+#     2. Scan for sync header
+#     3. Extract watermark bits
+#     4. Apply error correction
+#     5. Decrypt payload (if encrypted)
+#     6. Verify payload integrity
+#     7. Return detection result with confidence
+#
+# COMPLIANCE CHECKLIST:
+#     - [ ] Watermark enabled for all content types
+#     - [ ] Jurisdiction set correctly
+#     - [ ] Mandatory disclosure configured
+#     - [ ] Audit logging enabled
+#     - [ ] Retention period set appropriately
+#     - [ ] Encryption enabled for payload
+#
+# SECURITY CONSIDERATIONS:
+#     - Secret keys must be stored securely
+#     - Key derivation should use high iteration count
+#     - Hash chain provides tamper evidence
+#     - Forensic analysis enables dispute resolution
+#
+# PERFORMANCE TUNING:
+#     - Increase timeout for large content
+#     - Adjust batch size for throughput
+#     - Use hardware acceleration for DCT/STFT
+#     - Enable concurrent operations for throughput
+#
+# =============================================================================

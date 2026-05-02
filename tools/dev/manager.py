@@ -350,7 +350,7 @@ class PiscesLxDevModeManager:
             
             self._setup_log_capture()
             
-            _LOG.info("Developer mode UI started with Live display and log capture")
+            _LOG.info("Developer mode UI started with Rich (Vim-style) and log capture")
         except Exception as e:
             _LOG.error("Failed to start UI", error=str(e))
             self._ui = None

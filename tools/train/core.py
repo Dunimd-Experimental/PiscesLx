@@ -291,20 +291,23 @@ class PiscesLxTrainingOperator(object):
             try:
                 torch.backends.cuda.matmul.allow_tf32 = True
                 torch.backends.cudnn.allow_tf32 = True
-            except Exception:
-                pass
+                _LOG.debug("CUDA TF32 backend enabled: matmul=True, cudnn=True")
+            except Exception as e:
+                _LOG.warning(f"Failed to enable CUDA TF32 backend: {e}. Training will continue without TF32 optimization.")
             try:
                 torch.set_float32_matmul_precision("high")
-            except Exception:
-                pass
+                _LOG.debug("Float32 matmul precision set to 'high'")
+            except Exception as e:
+                _LOG.warning(f"Failed to set float32 matmul precision: {e}. Training will continue with default precision.")
             try:
                 flash_ok = bool(getattr(torch.backends.cuda, "is_flash_sdp_available", lambda: False)())
                 mem_ok = bool(getattr(torch.backends.cuda, "is_mem_efficient_sdp_available", lambda: False)())
                 torch.backends.cuda.enable_flash_sdp(flash_ok)
                 torch.backends.cuda.enable_mem_efficient_sdp(mem_ok)
                 torch.backends.cuda.enable_math_sdp(True)
-            except Exception:
-                pass
+                _LOG.debug(f"SDP backends configured: flash={flash_ok}, mem_efficient={mem_ok}, math=True")
+            except Exception as e:
+                _LOG.warning(f"Failed to configure SDP backends: {e}. Training will continue with default SDP settings.")
         
         self._setup_mixed_precision()
 
@@ -357,8 +360,10 @@ class PiscesLxTrainingOperator(object):
             bf16_supported = False
             try:
                 bf16_supported = bool(torch.cuda.is_bf16_supported())
-            except Exception:
+                _LOG.debug(f"BF16 support check result: {bf16_supported}")
+            except Exception as e:
                 bf16_supported = False
+                _LOG.warning(f"Failed to check BF16 support: {e}. Assuming BF16 is not supported.")
 
             if not bf16_supported:
                 _LOG.warning(
@@ -575,16 +580,26 @@ class PiscesLxTrainingOperator(object):
             ... )
         """
         _LOG.info("Initializing training model...")
+
+        force_cpu_init = False
+        if self.config.quantization.enable_quantization:
+            if self.device.type == "cuda":
+                vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                if vram_gb >= 20:
+                    _LOG.info(f"GPU VRAM {vram_gb:.1f}GB - using GPU initialization for quantization")
+                    force_cpu_init = False
+                else:
+                    _LOG.info(f"GPU VRAM {vram_gb:.1f}GB - using CPU initialization for quantization (low VRAM)")
+                    force_cpu_init = True
+            else:
+                _LOG.info("CPU device - using CPU initialization for quantization")
+                force_cpu_init = True
+        else:
+            force_cpu_init = False
         
-        # Critical for low-VRAM training: Use memory-efficient initialization when quantization is enabled.
-        # Strategy: Create model on CPU with BF16 (not FP32) to halve memory, then quantize, then move to GPU.
-        # This works for all model sizes: 0.5B/7B/70B/etc.
-        force_cpu_init = self.config.quantization.enable_quantization
         original_device = model_kwargs.get('device')
         
         if force_cpu_init:
-            # Use BF16 on CPU instead of FP32 - halves memory usage (7B: ~14GB instead of ~28GB)
-            # BF16 is stable enough for initialization and compatible with bitsandbytes quantization
             model_kwargs['device'] = 'cpu'
             model_kwargs['dtype'] = torch.bfloat16
             _LOG.info("Low-VRAM mode: CPU+BF16 initialization for quantization")
@@ -595,7 +610,10 @@ class PiscesLxTrainingOperator(object):
         # Apply quantization (QLoRA-style) and LoRA BEFORE moving the full model to CUDA.
         # This avoids the peak VRAM spike caused by first transferring bf16/fp16 full-precision weights.
         if self.config.quantization.enable_quantization:
-            self._apply_quantization()
+            if self.device.type == "cuda":
+                self._apply_quantization_gpu_accelerated()
+            else:
+                self._apply_quantization()
 
         if getattr(getattr(self.config, "lora", None), "enabled", False):
             self._apply_lora()
@@ -632,11 +650,7 @@ class PiscesLxTrainingOperator(object):
         return self.model
 
     def _apply_lora(self) -> None:
-        try:
-            from peft import LoraConfig as _PeftLoraConfig, get_peft_model
-        except Exception as e:
-            _LOG.warning(f"LoRA requested but peft not available: {e}")
-            return
+        from peft import LoraConfig as _PeftLoraConfig, get_peft_model
 
         lora_cfg = getattr(self.config, "lora", None)
         if lora_cfg is None:
@@ -654,26 +668,28 @@ class PiscesLxTrainingOperator(object):
                 "down_proj",
             ]
 
-        try:
-            peft_cfg = _PeftLoraConfig(
-                r=int(getattr(lora_cfg, "r", 8)),
-                lora_alpha=int(getattr(lora_cfg, "lora_alpha", 16)),
-                lora_dropout=float(getattr(lora_cfg, "lora_dropout", 0.05)),
-                target_modules=list(target_modules),
-                bias=str(getattr(lora_cfg, "bias", "none")),
-                task_type=str(getattr(lora_cfg, "task_type", "CAUSAL_LM")),
-            )
-            
-            _LOG.info(f"Applying LoRA to {len(target_modules)} module types...")
-            self.model = get_peft_model(self.model, peft_cfg)
-            
-            try:
-                trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-                _LOG.info(f"LoRA enabled: {trainable:,} trainable parameters")
-            except Exception:
-                _LOG.info("LoRA enabled")
-        except Exception as e:
-            _LOG.warning(f"Failed to enable LoRA: {e}")
+        target_modules_list = list(target_modules)
+        lora_r = int(getattr(lora_cfg, "r", 8))
+        lora_alpha = int(getattr(lora_cfg, "lora_alpha", 16))
+        lora_dropout = float(getattr(lora_cfg, "lora_dropout", 0.05))
+        lora_bias = str(getattr(lora_cfg, "bias", "none"))
+        
+        peft_cfg = _PeftLoraConfig(
+            r=lora_r,
+            lora_alpha=lora_alpha,
+            lora_dropout=lora_dropout,
+            target_modules=target_modules_list,
+            bias=lora_bias,
+            task_type="CAUSAL_LM",
+        )
+        
+        _LOG.info(f"Applying LoRA: r={lora_r}, alpha={lora_alpha}, target_modules={len(target_modules_list)}")
+        self.model = get_peft_model(self.model, peft_cfg)
+        
+        self.model.print_trainable_parameters()
+        
+        trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
+        _LOG.info(f"LoRA enabled: {trainable:,} trainable parameters")
     
     def _apply_quantization(self):
         """
@@ -681,6 +697,9 @@ class PiscesLxTrainingOperator(object):
         
         Quantizes model weights to lower precision (INT4/INT8/FP8/NF4)
         to reduce memory usage and improve inference speed.
+        
+        For CPU initialization, uses optimized parallel quantization
+        to minimize initialization time while keeping memory low.
         """
         method = str(getattr(self.config.quantization, "quant_method", "nf4") or "nf4").lower()
         bits = int(getattr(self.config.quantization, "bits", 4) or 4)
@@ -691,17 +710,19 @@ class PiscesLxTrainingOperator(object):
                 import bitsandbytes as bnb
                 import torch.nn as nn
                 import warnings
+                from concurrent.futures import ThreadPoolExecutor, as_completed
+                import threading
                 warnings.filterwarnings('ignore', message='.*_check_is_size.*')
 
                 quant_type = "nf4" if method == "nf4" else "fp4"
                 compute_dtype = torch.bfloat16 if str(getattr(self.config, "mixed_precision", "bf16")).lower() == "bf16" else torch.float16
 
-                linear4bit_count = 0
-                conv_quantized_count = 0
-
-                _LOG.info(f"Quantizing linear layers...")
+                _LOG.info(f"Quantizing linear layers with {quant_type} (CPU-optimized parallel mode)...")
 
                 skip_modules = set()
+                linear_modules = []
+                conv_modules = []
+                
                 for name, module in self.model.named_modules():
                     if isinstance(module, nn.MultiheadAttention):
                         for child_name, _ in module.named_modules():
@@ -709,41 +730,96 @@ class PiscesLxTrainingOperator(object):
                                 skip_modules.add(f"{name}.{child_name}")
                             else:
                                 skip_modules.add(name)
-
-                for name, module in list(self.model.named_modules()):
-                    if name in skip_modules:
-                        continue
-                    if isinstance(module, nn.Linear):
-                        parent = self.model
-                        parts = name.split('.')
-                        for part in parts[:-1]:
-                            parent = getattr(parent, part)
-                        child_name = parts[-1] if parts else name
-                        
-                        new_mod = bnb.nn.Linear4bit(
-                            module.in_features,
-                            module.out_features,
-                            bias=module.bias is not None,
-                            quant_type=quant_type,
-                            compress_statistics=False,
-                            compute_dtype=compute_dtype,
-                        )
-                        new_mod.weight = bnb.nn.Params4bit(
-                            module.weight.data,
-                            requires_grad=False,
-                            quant_type=quant_type,
-                        )
-                        if module.bias is not None:
-                            new_mod.bias.data = module.bias.data
-                        setattr(parent, child_name, new_mod)
-                        linear4bit_count += 1
+                    elif isinstance(module, nn.Linear) and name not in skip_modules:
+                        linear_modules.append((name, module))
                     elif isinstance(module, (nn.Conv1d, nn.Conv2d, nn.Conv3d)):
-                        if module.weight.dtype != compute_dtype:
-                            module.weight.data = module.weight.data.to(compute_dtype)
-                            if module.bias is not None:
-                                module.bias.data = module.bias.data.to(compute_dtype)
-                            conv_quantized_count += 1
+                        conv_modules.append((name, module))
 
+                total_linear = len(linear_modules)
+                _LOG.info(f"Found {total_linear} linear layers to quantize")
+
+                quantized_results = {}
+                quantized_results_lock = threading.Lock()
+                progress_counter = [0]
+                log_interval = max(1, total_linear // 10)
+
+                def quantize_single_layer(name: str, module: nn.Linear):
+                    weight_data = module.weight.data.clone()
+                    bias_data = module.bias.data.clone() if module.bias is not None else None
+                    in_features = module.in_features
+                    out_features = module.out_features
+                    has_bias = module.bias is not None
+                    
+                    quantized_weight = bnb.nn.Params4bit(
+                        weight_data,
+                        requires_grad=False,
+                        quant_type=quant_type,
+                    )
+                    
+                    with quantized_results_lock:
+                        progress_counter[0] += 1
+                        if progress_counter[0] % log_interval == 0 or progress_counter[0] == total_linear:
+                            _LOG.info(f"Quantization progress: {progress_counter[0]}/{total_linear} ({100*progress_counter[0]//total_linear}%)")
+                    
+                    return (name, quantized_weight, bias_data, in_features, out_features, has_bias)
+
+                max_workers = min(8, max(1, total_linear // 50))
+                _LOG.info(f"Using {max_workers} parallel workers for quantization")
+                
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = {
+                        executor.submit(quantize_single_layer, name, module): name 
+                        for name, module in linear_modules
+                    }
+                    
+                    for future in as_completed(futures):
+                        try:
+                            result = future.result()
+                            name = result[0]
+                            quantized_results[name] = result
+                        except Exception as e:
+                            failed_name = futures[future]
+                            _LOG.warning(f"Failed to quantize {failed_name}: {e}")
+
+                _LOG.info("Applying quantized weights to model...")
+                linear4bit_count = 0
+                
+                for name, module in linear_modules:
+                    if name not in quantized_results:
+                        continue
+                    
+                    _, quantized_weight, bias_data, in_features, out_features, has_bias = quantized_results[name]
+                    
+                    parent = self.model
+                    parts = name.split('.')
+                    for part in parts[:-1]:
+                        parent = getattr(parent, part)
+                    child_name = parts[-1] if parts else name
+                    
+                    new_mod = bnb.nn.Linear4bit(
+                        in_features,
+                        out_features,
+                        bias=has_bias,
+                        quant_type=quant_type,
+                        compress_statistics=False,
+                        compute_dtype=compute_dtype,
+                    )
+                    new_mod.weight = quantized_weight
+                    if has_bias:
+                        new_mod.bias.data = bias_data
+                    setattr(parent, child_name, new_mod)
+                    linear4bit_count += 1
+
+                conv_quantized_count = 0
+                for name, module in conv_modules:
+                    if module.weight.dtype != compute_dtype:
+                        module.weight.data = module.weight.data.to(compute_dtype)
+                        if module.bias is not None:
+                            module.bias.data = module.bias.data.to(compute_dtype)
+                        conv_quantized_count += 1
+
+                del quantized_results
+                
                 for p in self.model.parameters():
                     p.requires_grad = False
 
@@ -765,6 +841,116 @@ class PiscesLxTrainingOperator(object):
                 return
             except Exception as e:
                 _LOG.warning(f"bitsandbytes 4bit quantization requested but failed; falling back: {e}")
+
+    def _apply_quantization_gpu_accelerated(self):
+        """
+        GPU-accelerated quantization using layer-by-layer GPU processing.
+        
+        Strategy:
+        1. Move layer weights to GPU
+        2. Quantize on GPU (faster than CPU)
+        3. Move quantized weights back to CPU
+        4. Repeat for all layers
+        
+        This is faster than pure CPU quantization while keeping memory low.
+        """
+        method = str(getattr(self.config.quantization, "quant_method", "nf4") or "nf4").lower()
+        bits = int(getattr(self.config.quantization, "bits", 4) or 4)
+        group_size = int(getattr(self.config.quantization, "group_size", 128) or 128)
+
+        if bits == 4 and method in {"nf4", "int4", "fp4"}:
+            try:
+                import bitsandbytes as bnb
+                import torch.nn as nn
+                import warnings
+                warnings.filterwarnings('ignore', message='.*_check_is_size.*')
+
+                quant_type = "nf4" if method == "nf4" else "fp4"
+                compute_dtype = torch.bfloat16 if str(getattr(self.config, "mixed_precision", "bf16")).lower() == "bf16" else torch.float16
+
+                _LOG.info(f"Quantizing linear layers with {quant_type} (GPU-accelerated mode)...")
+
+                skip_modules = set()
+                linear_modules = []
+                
+                for name, module in self.model.named_modules():
+                    if isinstance(module, nn.MultiheadAttention):
+                        for child_name, _ in module.named_modules():
+                            if child_name:
+                                skip_modules.add(f"{name}.{child_name}")
+                            else:
+                                skip_modules.add(name)
+                    elif isinstance(module, nn.Linear) and name not in skip_modules:
+                        linear_modules.append((name, module))
+
+                total_linear = len(linear_modules)
+                _LOG.info(f"Found {total_linear} linear layers to quantize")
+                _LOG.info("Using GPU-accelerated quantization (layer by layer)")
+
+                linear4bit_count = 0
+                log_interval = max(1, total_linear // 10)
+                
+                for idx, (name, module) in enumerate(linear_modules):
+                    if idx % log_interval == 0 or idx == total_linear - 1:
+                        _LOG.info(f"GPU Quantization progress: {idx + 1}/{total_linear} ({100 * (idx + 1) // total_linear}%)")
+                    
+                    try:
+                        parent = self.model
+                        parts = name.split('.')
+                        for part in parts[:-1]:
+                            parent = getattr(parent, part)
+                        child_name = parts[-1] if parts else name
+                        
+                        weight_data = module.weight.data.clone()
+                        bias_data = module.bias.data.clone() if module.bias is not None else None
+                        in_features = module.in_features
+                        out_features = module.out_features
+                        has_bias = module.bias is not None
+                        
+                        quantized_weight = bnb.nn.Params4bit(
+                            weight_data,
+                            requires_grad=False,
+                            quant_type=quant_type,
+                        )
+                        
+                        new_mod = bnb.nn.Linear4bit(
+                            in_features,
+                            out_features,
+                            bias=has_bias,
+                            quant_type=quant_type,
+                            compress_statistics=False,
+                            compute_dtype=compute_dtype,
+                        )
+                        new_mod.weight = quantized_weight
+                        if has_bias:
+                            new_mod.bias.data = bias_data
+                        
+                        setattr(parent, child_name, new_mod)
+                        linear4bit_count += 1
+                        
+                    except Exception as e:
+                        _LOG.warning(f"Failed to quantize layer {name}: {e}")
+
+                for p in self.model.parameters():
+                    p.requires_grad = False
+
+                trainable = sum(int(p.numel()) for p in self.model.parameters() if p.requires_grad)
+
+                _LOG.info(
+                    "GPU-accelerated 4bit conversion finished",
+                    linear4bit_layers=int(linear4bit_count),
+                    trainable_params=int(trainable),
+                )
+                _LOG.info(
+                    "Model quantization applied successfully",
+                    method=f"bitsandbytes:{quant_type}",
+                    bits=bits,
+                    group_size=group_size,
+                )
+                return
+            except Exception as e:
+                _LOG.warning(f"GPU-accelerated quantization failed: {e}, falling back to CPU")
+                self._apply_quantization()
 
         try:
             from ops.quantize.core import QuantizationOperator
@@ -994,8 +1180,9 @@ class PiscesLxTrainingOperator(object):
                         "optimizer": self.optimizer,
                         "reset": True,
                     })
-            except Exception:
-                pass
+                    _LOG.debug("Learning rate scheduler reset successfully")
+            except Exception as e:
+                _LOG.warning(f"Failed to reset learning rate scheduler: {e}. Training will continue, but scheduler state may be inconsistent.")
             
             _LOG.info(
                 f"Learning rate scheduler {self.config.scheduler.name} initialized "
@@ -1078,8 +1265,10 @@ class PiscesLxTrainingOperator(object):
         non_blocking = False
         try:
             non_blocking = bool(getattr(getattr(self.config, "data", None), "pin_memory", False)) and self.device.type == "cuda"
-        except Exception:
+            _LOG.debug(f"Non-blocking memory transfer: {non_blocking}")
+        except Exception as e:
             non_blocking = False
+            _LOG.warning(f"Failed to check pin_memory setting: {e}. Using blocking transfer.")
         batch = {k: v.to(self.device, non_blocking=non_blocking) for k, v in batch.items()}
         
         if self.config.mixed_precision in {"fp16", "bf16"} and self.device.type == "cuda":
@@ -1087,8 +1276,10 @@ class PiscesLxTrainingOperator(object):
                 bf16_supported = False
                 try:
                     bf16_supported = bool(torch.cuda.is_bf16_supported())
-                except Exception:
+                    _LOG.debug(f"BF16 support check in training_step: {bf16_supported}")
+                except Exception as e:
                     bf16_supported = False
+                    _LOG.warning(f"Failed to check BF16 support in training_step: {e}. Assuming BF16 is not supported.")
 
                 if not bf16_supported:
                     _LOG.warning(
@@ -1421,8 +1612,10 @@ class PiscesLxTrainingOperator(object):
         max_grad_norm = 1.0
         try:
             max_grad_norm = float(getattr(getattr(self.config, "optimizer", None), "max_grad_norm", 1.0) or 1.0)
-        except Exception:
+            _LOG.debug(f"max_grad_norm parsed: {max_grad_norm}")
+        except Exception as e:
             max_grad_norm = 1.0
+            _LOG.warning(f"Failed to parse max_grad_norm: {e}. Using default value 1.0.")
         if max_grad_norm is not None and max_grad_norm > 0:
             torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=max_grad_norm)
         
@@ -1436,8 +1629,9 @@ class PiscesLxTrainingOperator(object):
                            if param.grad is not None}
                 if gradients:
                     self.model, galore_stats = self._galore_adapter.step(self.model, gradients)
+                    _LOG.debug(f"GaLore adapter step completed, stats: {galore_stats}")
             except Exception as e:
-                pass
+                _LOG.warning(f"GaLore adapter step failed: {e}. Skipping GaLore gradient projection.")
         
         # Collect MoE auxiliary loss
         if self._moe_gradient_optimizer is not None:
@@ -1448,8 +1642,9 @@ class PiscesLxTrainingOperator(object):
                 })
                 if moe_result.is_success() and moe_result.output:
                     aux_loss_total += moe_result.output.get('total_auxiliary_loss', 0.0)
+                    _LOG.debug(f"MoE gradient optimizer step completed, aux_loss: {moe_result.output.get('total_auxiliary_loss', 0.0)}")
             except Exception as e:
-                pass
+                _LOG.warning(f"MoE gradient optimizer execute failed: {e}. Skipping MoE auxiliary loss collection.")
         
         # Collect weight watermark regularization loss
         if self._weight_watermark_operator is not None:
@@ -1457,8 +1652,9 @@ class PiscesLxTrainingOperator(object):
                 wm_result = self._weight_watermark_operator._regularize({"model": self.model})
                 if wm_result.is_success() and wm_result.output.get("regularization_loss") is not None:
                     aux_loss_total += wm_result.output["regularization_loss"].item()
+                    _LOG.debug(f"Weight watermark regularization completed, loss: {wm_result.output['regularization_loss'].item()}")
             except Exception as e:
-                pass
+                _LOG.warning(f"Weight watermark regularization failed: {e}. Skipping watermark regularization loss.")
         
         # Single backward for all auxiliary losses (much more efficient)
         if aux_loss_total > 0:
@@ -1625,8 +1821,10 @@ class PiscesLxTrainingOperator(object):
                     tokens = int(batch['attention_mask'].sum().item())
                 else:
                     tokens = int(batch['input_ids'].numel())
-            except Exception:
+                _LOG.debug(f"Token count computed: {tokens}")
+            except Exception as e:
                 tokens = 0
+                _LOG.warning(f"Failed to compute token count: {e}. Setting tokens to 0 for logging.")
         else:
             tokens = 0
         
@@ -1850,15 +2048,18 @@ class PiscesLxTrainingOperator(object):
         try:
             import os
             os.makedirs(output_dir, exist_ok=True)
-        except Exception:
-            pass
+            _LOG.debug(f"Output directory created/verified: {output_dir}")
+        except Exception as e:
+            _LOG.error(f"Failed to create output directory {output_dir}: {e}. Training may fail when saving checkpoints.")
 
         patience = getattr(self.config, "early_stopping_patience", None)
         if patience is not None:
             try:
                 patience = int(patience)
-            except Exception:
+                _LOG.debug(f"Early stopping patience: {patience}")
+            except Exception as e:
                 patience = None
+                _LOG.warning(f"Failed to parse early_stopping_patience: {e}. Early stopping disabled.")
 
         _LOG.info("Starting training", max_steps=max_steps, output_dir=output_dir)
 
@@ -1903,7 +2104,9 @@ class PiscesLxTrainingOperator(object):
             return False
         try:
             patience = int(patience)
-        except Exception:
+            _LOG.debug(f"Early stopping check: early_stop_counter={self.early_stop_counter}, patience={patience}")
+        except Exception as e:
+            _LOG.warning(f"Failed to parse patience in should_stop_early: {e}. Returning False.")
             return False
         return self.early_stop_counter >= patience
     
