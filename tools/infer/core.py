@@ -653,7 +653,7 @@ class PiscesLxInferenceEngine(object):
             for name, param in self.model.named_parameters():
                 if param.dim() >= 2 and param.numel() > 1024:
                     quantized, scales = quantizer.quantize_int8(param.data, 128)
-                    dequantized = quantizer.dequantize_int8(quantized, scales, param.shape)
+                    dequantized = quantizer.dequantize_int8(quantized, scales, param.shape, block_size=128)
                     param.data = dequantized
                     quantized_count += 1
             

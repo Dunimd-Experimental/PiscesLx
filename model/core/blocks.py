@@ -1735,7 +1735,15 @@ class YvTransformerBlock(nn.Module):
             Returns:
                 Output from _forward_core.
             """
-            return self._forward_core(xc, mask_arg, kv, use_cache_arg)
+            # Attention residuals mutate instance state across layers, which breaks
+            # checkpoint determinism. Both the forward and recompute calls enter here,
+            # so disabling within _inner keeps them consistent.
+            saved_use_attn_res = self.use_attn_res
+            self.use_attn_res = False
+            try:
+                return self._forward_core(xc, mask_arg, kv, use_cache_arg)
+            finally:
+                self.use_attn_res = saved_use_attn_res
 
         if should_checkpoint and self.training:
             # Set checkpointing flag on MoE gates to disable non-deterministic operations

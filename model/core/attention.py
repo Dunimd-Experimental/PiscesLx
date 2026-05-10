@@ -5217,11 +5217,8 @@ class YvAttention(nn.Module):
                 use_cache=use_cache
             )
             if use_cache:
-                attn_out, present_kv = eg_result
-                return attn_out, present_kv
-            else:
-                attn_out = eg_result
-                return attn_out
+                return eg_result
+            return eg_result[0]
 
         if self.use_duo_attention:
             duo_result = self.duo_attention(
@@ -5231,11 +5228,8 @@ class YvAttention(nn.Module):
                 use_cache=use_cache
             )
             if use_cache:
-                attn_out, present_kv = duo_result
-                return attn_out, present_kv
-            else:
-                attn_out = duo_result
-                return attn_out
+                return duo_result
+            return duo_result[0]
 
         if layer_idx < 8:
             effective_window = min(2048, t)
@@ -5254,11 +5248,8 @@ class YvAttention(nn.Module):
                 cache_manager=cache_manager,
             )
             if use_cache:
-                attn_out, present_kv = h2o_result
-                return attn_out, present_kv
-            else:
-                attn_out = h2o_result
-                return attn_out
+                return h2o_result
+            return h2o_result[0]
 
         if self.use_hisa:
             hisa_result = self.hisa_attention(
@@ -5270,11 +5261,8 @@ class YvAttention(nn.Module):
                 cache_manager=cache_manager,
             )
             if use_cache:
-                attn_out, present_kv = hisa_result
-                return attn_out, present_kv
-            else:
-                attn_out = hisa_result
-                return attn_out
+                return hisa_result
+            return hisa_result[0]
 
         if self.use_attention_sink and self.training:
             x, sink_mask = self.attn_sink(x)

@@ -490,14 +490,16 @@ class POPSSInkOperator(PiscesLxOperatorInterface):
                 self._momentum_int8[name],
                 self._momentum_scales[name],
                 shape,
+                block_size=self.config.momentum_block_size,
             )
         else:
             return self._quantizer.dequantize_int4(
                 self._momentum_int8[name],
                 self._momentum_scales[name],
                 shape,
+                block_size=self.config.momentum_block_size,
             )
-    
+
     def _dequantize_variance(self, name: str, shape: Tuple[int, ...]) -> torch.Tensor:
         """Dequantize variance from INT4/INT8 to FP32."""
         if self.config.variance_bits == 4:
@@ -505,12 +507,14 @@ class POPSSInkOperator(PiscesLxOperatorInterface):
                 self._variance_int4[name],
                 self._variance_scales[name],
                 shape,
+                block_size=self.config.variance_block_size,
             )
         else:
             return self._quantizer.dequantize_int8(
                 self._variance_int4[name],
                 self._variance_scales[name],
                 shape,
+                block_size=self.config.variance_block_size,
             )
     
     def _quantize_and_store_momentum(self, name: str, momentum: torch.Tensor):

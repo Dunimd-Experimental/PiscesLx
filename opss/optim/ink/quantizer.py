@@ -195,29 +195,34 @@ class POPSSInkBlockQuantizer:
         quantized: torch.Tensor,
         scales: torch.Tensor,
         original_shape: Tuple[int, ...],
+        block_size: Optional[int] = None,
     ) -> torch.Tensor:
         """
         Dequantize INT8 tensor back to floating point.
-        
+
         Reconstructs the original tensor from quantized values and scale factors.
-        
+
         Args:
             quantized: INT8 quantized tensor
-            scales: Per-block scale factors
+            scales: Per-block scale factors (one scalar per block)
             original_shape: Original tensor shape for reconstruction
-        
+            block_size: The block size used during quantization.
+                        Required for correct reconstruction when block_size
+                        differs between momentum (128) and variance (256).
+
         Returns:
             Reconstructed floating point tensor
         """
         device = quantized.device
-        block_size = self.momentum_block_size
-        
+
         flat_quantized = quantized.flatten().float()
         num_elements = flat_quantized.numel()
-        
-        num_blocks = (num_elements + block_size - 1) // block_size
+        num_blocks = scales.numel()
+
+        if block_size is None:
+            block_size = (num_elements + num_blocks - 1) // num_blocks
         padded_size = num_blocks * block_size
-        
+
         if padded_size > num_elements:
             padding = torch.zeros(
                 padded_size - num_elements,
@@ -225,16 +230,12 @@ class POPSSInkBlockQuantizer:
                 device=device
             )
             flat_quantized = torch.cat([flat_quantized, padding])
-        
+
         blocks = flat_quantized.view(num_blocks, block_size)
-        
-        if scales.numel() == num_blocks:
-            scaled_blocks = blocks * scales.unsqueeze(-1)
-        else:
-            scaled_blocks = blocks * scales
-        
+        scaled_blocks = blocks * scales.unsqueeze(-1)
+
         result = scaled_blocks.flatten()[:num_elements]
-        
+
         return result.view(original_shape)
     
     def quantize_int4(
@@ -302,31 +303,34 @@ class POPSSInkBlockQuantizer:
         packed: torch.Tensor,
         scales: torch.Tensor,
         original_shape: Tuple[int, ...],
+        block_size: Optional[int] = None,
     ) -> torch.Tensor:
         """
         Dequantize packed INT4 tensor back to floating point.
-        
+
         Unpacks the INT4 values and reconstructs the original tensor.
-        
+
         Args:
             packed: Packed INT4 tensor (two values per INT8)
             scales: Per-block scale factors
             original_shape: Original tensor shape for reconstruction
-        
+            block_size: The block size used during quantization.
+
         Returns:
             Reconstructed floating point tensor
         """
         device = packed.device
-        
+
         unpacked = self._unpack_int4(packed)
-        
+
         num_elements = original_shape.numel() if isinstance(original_shape, tuple) else original_shape
-        
+
         if unpacked.numel() > num_elements:
             unpacked = unpacked[:num_elements]
-        
+
         num_blocks = scales.numel()
-        block_size = (num_elements + num_blocks - 1) // num_blocks
+        if block_size is None:
+            block_size = (num_elements + num_blocks - 1) // num_blocks
         padded_size = num_blocks * block_size
         
         if unpacked.numel() < padded_size:
@@ -434,10 +438,10 @@ class POPSSInkBlockQuantizer:
             Reconstructed momentum tensor
         """
         if self.momentum_bits == 8:
-            return self.dequantize_int8(quantized, scales, original_shape)
+            return self.dequantize_int8(quantized, scales, original_shape, block_size=self.momentum_block_size)
         else:
-            return self.dequantize_int4(quantized, scales, original_shape)
-    
+            return self.dequantize_int4(quantized, scales, original_shape, block_size=self.momentum_block_size)
+
     def quantize_variance(
         self,
         variance: torch.Tensor,
@@ -474,10 +478,10 @@ class POPSSInkBlockQuantizer:
             Reconstructed variance tensor
         """
         if self.variance_bits == 8:
-            return self.dequantize_int8(quantized, scales, original_shape)
+            return self.dequantize_int8(quantized, scales, original_shape, block_size=self.variance_block_size)
         else:
-            return self.dequantize_int4(quantized, scales, original_shape)
-    
+            return self.dequantize_int4(quantized, scales, original_shape, block_size=self.variance_block_size)
+
     def compute_compression_ratio(
         self,
         num_elements: int,

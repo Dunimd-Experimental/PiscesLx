@@ -580,46 +580,126 @@ class PiscesLxTrainingOperator(object):
         """
         _LOG.info("Initializing training model...")
 
-        force_cpu_init = False
-        if self.config.quantization.enable_quantization:
-            if self.device.type == "cuda":
-                vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-                if vram_gb >= 20:
-                    _LOG.info(f"GPU VRAM {vram_gb:.1f}GB - using GPU initialization for quantization")
-                    force_cpu_init = False
-                else:
-                    _LOG.info(f"GPU VRAM {vram_gb:.1f}GB - using CPU initialization for quantization (low VRAM)")
-                    force_cpu_init = True
-            else:
-                _LOG.info("CPU device - using CPU initialization for quantization")
-                force_cpu_init = True
-        else:
-            force_cpu_init = False
-        
-        original_device = model_kwargs.get('device')
-        
-        if force_cpu_init:
-            model_kwargs['device'] = 'cpu'
-            model_kwargs['dtype'] = torch.bfloat16
-            _LOG.info("Low-VRAM mode: CPU+BF16 initialization for quantization")
-        
+        lora_enabled = getattr(getattr(self.config, "lora", None), "enabled", False)
+        quant_enabled = self.config.quantization.enable_quantization
+
+        # Try cache load: state_dict based (avoids pickle issues with bitsandbytes locks)
+        cache_path = None
+        if quant_enabled and lora_enabled:
+            cache_path = self._get_qlora_cache_path()
+            if cache_path.exists():
+                _LOG.info(f"Loading cached QLoRA state_dict from {cache_path}")
+                try:
+                    import gc; gc.collect()
+                    cached_state = torch.load(cache_path, map_location="cpu", weights_only=True)
+                    # Create model skeleton, apply quantization + LoRA for structure,
+                    # then load cached weights (quantized + adapters) instantly.
+                    force_cpu_init = self._resolve_init_device(quant_enabled, model_kwargs)
+                    self.model = model_class(**model_kwargs)
+                    if quant_enabled:
+                        self._apply_quantization_gpu_accelerated() if self.device.type == "cuda" else self._apply_quantization()
+                    self._apply_lora()
+                    missing, unexpected = self.model.load_state_dict(cached_state, strict=False)
+                    if missing:
+                        _LOG.debug(f"Cache state_dict missing keys: {missing}")
+                    if unexpected:
+                        _LOG.debug(f"Cache state_dict unexpected keys: {unexpected}")
+                    del cached_state; gc.collect()
+                    train_device = self._resolve_training_device()
+                    if train_device.type != self.device.type:
+                        _LOG.info(f"Overriding training device: {self.device} → {train_device}")
+                        self.device = train_device
+                    _LOG.info("Cached state_dict loaded, transferring to device...")
+                    self.model = self.model.to(self.device)
+                    self._post_transfer_setup(lora_enabled)
+                    _LOG.info(f"Model initialized from cache: {self.model.__class__.__name__}")
+                    return self.model
+                except Exception as e:
+                    _LOG.warning(f"Cache load failed ({e}), falling back to full init...")
+                    cache_path.unlink(missing_ok=True)
+
+        force_cpu_init = self._resolve_init_device(quant_enabled, model_kwargs)
+
         # Create model instance with provided arguments
         self.model = model_class(**model_kwargs)
 
         # Apply quantization (QLoRA-style) and LoRA BEFORE moving the full model to CUDA.
         # This avoids the peak VRAM spike caused by first transferring bf16/fp16 full-precision weights.
-        if self.config.quantization.enable_quantization:
+        if quant_enabled:
             if self.device.type == "cuda":
                 self._apply_quantization_gpu_accelerated()
             else:
                 self._apply_quantization()
 
-        if getattr(getattr(self.config, "lora", None), "enabled", False):
+        if lora_enabled:
             self._apply_lora()
 
-        # Move model to target device (GPU/CPU) after QLoRA+LoRA.
-        self.model = self.model.to(self.device)
+        # Save state_dict to cache (tensors only, no pickle issues with bnb locks)
+        if cache_path is not None and not cache_path.exists():
+            try:
+                cache_path.parent.mkdir(parents=True, exist_ok=True)
+                torch.save(self.model.state_dict(), cache_path)
+                _LOG.info(f"Cached prepared state_dict to {cache_path}")
+            except Exception as e:
+                _LOG.debug(f"Model caching skipped: {e}")
 
+        # Determine actual training device: prefer GPU even if driver warning fired.
+        # setup_training_device may return CPU when CUDA driver version mismatches
+        # PyTorch's build, but CUDA often still works. Probe it directly.
+        train_device = self._resolve_training_device()
+        if train_device.type != self.device.type:
+            _LOG.info(f"Overriding training device: {self.device} → {train_device}")
+            self.device = train_device
+
+        # Move model to target device (GPU/CPU) after QLoRA+LoRA.
+        _LOG.info(f"Transferring model to {self.device} (this copies quantized weights, may take time)...")
+        self.model = self.model.to(self.device)
+        self._post_transfer_setup(lora_enabled)
+
+        _LOG.info(f"Model initialized: {self.model.__class__.__name__}")
+        return self.model
+
+    def _resolve_init_device(self, quant_enabled: bool, model_kwargs: dict) -> bool:
+        """Determine whether to force CPU init and inject device/dtype into kwargs.
+        Returns True when CPU init was forced."""
+        if not quant_enabled:
+            return False
+        if self.device.type == "cuda":
+            vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+            if vram_gb >= 20:
+                _LOG.info(f"GPU VRAM {vram_gb:.1f}GB - using GPU initialization for quantization")
+                return False
+            else:
+                _LOG.info(f"GPU VRAM {vram_gb:.1f}GB - using CPU initialization for quantization (low VRAM)")
+        else:
+            _LOG.info("CPU device - using CPU initialization for quantization")
+        model_kwargs['device'] = 'cpu'
+        model_kwargs['dtype'] = torch.bfloat16
+        _LOG.info("Low-VRAM mode: CPU+BF16 initialization for quantization")
+        return True
+
+    def _resolve_training_device(self) -> torch.device:
+        """Resolve best available GPU for training, even if setup_training_device chose CPU.
+
+        Probes CUDA directly with a test allocation, since driver version warnings
+        from PyTorch do not always mean CUDA is truly unavailable.
+        """
+        if self.device.type == "cuda":
+            return self.device
+        try:
+            if torch.cuda.device_count() == 0:
+                return self.device
+            # Test allocation — some driver mismatches still allow CUDA to work
+            _test = torch.zeros(1, device="cuda:0")
+            del _test
+            _LOG.info("GPU probe succeeded (despite any driver warnings)")
+            return torch.device("cuda:0")
+        except Exception as e:
+            _LOG.warning(f"GPU probe failed ({e}), training on {self.device}")
+            return self.device
+
+    def _post_transfer_setup(self, lora_was_applied: bool) -> None:
+        """Shared post-GPU-transfer setup: dtype cast, param count, checkpointing, distributed."""
         try:
             if self.device.type == "cuda":
                 mp = str(getattr(self.config, "mixed_precision", "fp32") or "fp32").lower()
@@ -629,24 +709,58 @@ class PiscesLxTrainingOperator(object):
                     self.model = self.model.to(dtype=torch.float16)
         except Exception as e:
             _LOG.warning(f"Failed to cast model to mixed precision dtype: {e}")
-        
-        # Ensure CUDA is fully initialized after model transfer
+
         if self.device.type == 'cuda':
             torch.cuda.synchronize(self.device)
             _LOG.info(f"Model moved to {self.device} and CUDA synchronized")
-        
-        # Enable gradient checkpointing for memory efficiency
+
+        # Single parameter count on GPU (fast)
+        trainable = 0
+        all_params = 0
+        for p in self.model.parameters():
+            n = p.numel()
+            all_params += n
+            if p.requires_grad:
+                trainable += n
+        if lora_was_applied:
+            _LOG.info(
+                f"LoRA enabled: {trainable:,} trainable parameters, "
+                f"{all_params:,} total, "
+                f"trainable%: {100 * trainable / all_params:.4f}"
+            )
+        _LOG.info(f"Model parameters: {all_params:,}")
+
         if self.config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
-        
-        # Setup distributed training if enabled
+
         if self.config.distributed:
             self._setup_distributed_training()
-        
-        _LOG.info(f"Model initialized: {self.model.__class__.__name__}")
-        _LOG.info(f"Model parameters: {sum(p.numel() for p in self.model.parameters()):,}")
-        
-        return self.model
+
+    def _get_qlora_cache_path(self) -> Path:
+        """Build a cache path keyed by model + quant + lora config hash."""
+        import hashlib, json
+        from pathlib import Path
+
+        lora_cfg = getattr(self.config, "lora", None)
+        key_data = {
+            "model": self.config.model_name,
+            "quant_method": str(getattr(self.config.quantization, "quant_method", "nf4")),
+            "bits": int(getattr(self.config.quantization, "bits", 4)),
+            "lora_r": int(getattr(lora_cfg, "r", 8)) if lora_cfg else 0,
+            "lora_alpha": int(getattr(lora_cfg, "lora_alpha", 16)) if lora_cfg else 0,
+            "lora_targets": "_".join(sorted(getattr(lora_cfg, "target_modules", []))) if lora_cfg else "",
+        }
+        key_str = json.dumps(key_data, sort_keys=True)
+        cache_hash = hashlib.md5(key_str.encode()).hexdigest()[:12]
+        output_dir = str(getattr(self.config, "output_dir", ".pisceslx/ckpt") or ".pisceslx/ckpt")
+        return Path(output_dir) / ".qlora_cache" / f"model_{cache_hash}.pt"
+
+    def invalidate_model_cache(self) -> None:
+        """Delete cached model so next init rebuilds from scratch."""
+        cache_path = self._get_qlora_cache_path()
+        if cache_path.exists():
+            cache_path.unlink()
+            _LOG.info(f"Cache invalidated: {cache_path}")
 
     def _apply_lora(self) -> None:
         from peft import LoraConfig as _PeftLoraConfig, get_peft_model
@@ -684,11 +798,7 @@ class PiscesLxTrainingOperator(object):
         
         _LOG.info(f"Applying LoRA: r={lora_r}, alpha={lora_alpha}, target_modules={len(target_modules_list)}")
         self.model = get_peft_model(self.model, peft_cfg)
-        
-        self.model.print_trainable_parameters()
-        
-        trainable = sum(p.numel() for p in self.model.parameters() if p.requires_grad)
-        _LOG.info(f"LoRA enabled: {trainable:,} trainable parameters")
+        _LOG.info("LoRA adapters injected, moving model to target device...")
     
     def _apply_quantization(self):
         """
