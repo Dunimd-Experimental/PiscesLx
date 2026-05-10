@@ -126,33 +126,6 @@ from datetime import datetime
 from utils.dc import PiscesLxLogger, PiscesLxSystemMonitor
 
 from .config import TrainingConfig
-from opss.train.modality_scheduler import (
-    POPSSModalitySchedulerConfig,
-    POPSSModalitySchedulerOperator
-)
-from opss.train.moe_gradient import (
-    POPSSMoEGradientConfig,
-    POPSSMoEGradientOperator
-)
-from opss.train.kfac import (
-    POPSSKFacConfig,
-    POPSSKFacOperator
-)
-from opss.train.multitask_uncertainty import (
-    POPSSMultiTaskConfig,
-    POPSSMultiTaskOperator
-)
-from opss.train.parallel_3d import (
-    POPSSParallel3DConfig,
-    POPSSParallel3DOperator
-)
-from opss.watermark import (
-    POPSSWatermarkConfig,
-    POPSSWeightWatermarkOperator,
-    POPSSComplianceOperator,
-    POPSSAuditOperator,
-    POPSSWatermarkDefaultConfigFactory
-)
 
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=get_log_file("PiscesLx.Tools.Train"), enable_file=True)
@@ -381,6 +354,22 @@ class PiscesLxTrainingOperator(object):
     
     def _setup_advanced_operators(self):
         """Setup advanced training operators for modality-aware scheduling, MoE gradients, K-FAC, and multi-task learning."""
+        from opss.train.modality_scheduler import (
+            POPSSModalitySchedulerConfig,
+            POPSSModalitySchedulerOperator
+        )
+        from opss.train.moe_gradient import (
+            POPSSMoEGradientConfig,
+            POPSSMoEGradientOperator
+        )
+        from opss.train.kfac import (
+            POPSSKFacConfig,
+            POPSSKFacOperator
+        )
+        from opss.train.multitask_uncertainty import (
+            POPSSMultiTaskConfig,
+            POPSSMultiTaskOperator
+        )
         try:
             if hasattr(self.config, 'modality_scheduler') and self.config.modality_scheduler.get('enabled', False):
                 modality_config = POPSSModalitySchedulerConfig(**self.config.modality_scheduler)
@@ -419,6 +408,10 @@ class PiscesLxTrainingOperator(object):
     
     def _setup_parallel_3d_operator(self):
         """Setup 3D parallelism operator for large-scale distributed training."""
+        from opss.train.parallel_3d import (
+            POPSSParallel3DConfig,
+            POPSSParallel3DOperator
+        )
         try:
             if hasattr(self.config, 'parallel_3d') and self.config.parallel_3d.get('enabled', False):
                 parallel_config = POPSSParallel3DConfig(
@@ -440,6 +433,12 @@ class PiscesLxTrainingOperator(object):
     
     def _setup_watermark_operator(self):
         """Setup weight watermark operator for model provenance and ownership verification."""
+        from opss.watermark import (
+            POPSSWatermarkConfig,
+            POPSSWeightWatermarkOperator,
+            POPSSComplianceOperator,
+            POPSSAuditOperator,
+        )
         try:
             if hasattr(self.config, 'watermark') and self.config.watermark.get('enabled', False):
                 self._watermark_config = POPSSWatermarkConfig(

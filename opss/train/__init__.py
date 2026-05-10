@@ -69,142 +69,105 @@ See Also:
 """
 
 import sys
+import importlib
 from pathlib import Path
 
 from configs.version import VERSION, AUTHOR
 
-from .kfac import (
-    POPSSKFacOperator,
-    POPSSKFacConfig,
-    POPSSKFacFacade,
-)
+_LAZY_SYMBOLS = {
+    "POPSSKFacOperator": (".kfac", "POPSSKFacOperator"),
+    "POPSSKFacConfig": (".kfac", "POPSSKFacConfig"),
+    "POPSSKFacFacade": (".kfac", "POPSSKFacFacade"),
+    "POPSSMoEGradientOperator": (".moe_gradient", "POPSSMoEGradientOperator"),
+    "POPSSMoEGradientConfig": (".moe_gradient", "POPSSMoEGradientConfig"),
+    "POPSSExpertGradientClipper": (".moe_gradient", "POPSSExpertGradientClipper"),
+    "POPSSModalitySchedulerOperator": (".modality_scheduler", "POPSSModalitySchedulerOperator"),
+    "POPSSModalitySchedulerConfig": (".modality_scheduler", "POPSSModalitySchedulerConfig"),
+    "POPSSModalityType": (".modality_scheduler", "POPSSModalityType"),
+    "POPSSModalitySchedulerFacade": (".modality_scheduler", "POPSSModalitySchedulerFacade"),
+    "POPSSMultiTaskOperator": (".multitask_uncertainty", "POPSSMultiTaskOperator"),
+    "POPSSMultiTaskConfig": (".multitask_uncertainty", "POPSSMultiTaskConfig"),
+    "POPSSTaskUncertaintyWeighting": (".multitask_uncertainty", "POPSSTaskUncertaintyWeighting"),
+    "POPSSMultiTaskFacade": (".multitask_uncertainty", "POPSSMultiTaskFacade"),
+    "POPSSTaskType": (".multitask_uncertainty", "POPSSTaskType"),
+    "POPSSSFTTrainingOperator": (".sft", "POPSSSFTTrainingOperator"),
+    "POPSSSFTTrainingConfig": (".sft", "POPSSSFTTrainingConfig"),
+    "POPSSSFTDataset": (".sft", "POPSSSFTDataset"),
+    "POPSSDPOTrainingOperator": (".dpo", "POPSSDPOTrainingOperator"),
+    "POPSSDPOTrainingConfig": (".dpo", "POPSSDPOTrainingConfig"),
+    "POPSSDPODataset": (".dpo", "POPSSDPODataset"),
+    "POPSSDPOLoggingCallback": (".dpo", "POPSSDPOLoggingCallback"),
+    "POPSSPreferenceAlignmentOperator": (".pref_align", "POPSSPreferenceAlignmentOperator"),
+    "POPSSDPOConfig": (".pref_align", "POPSSDPOConfig"),
+    "POPSSPPOConfig": (".pref_align", "POPSSPPOConfig"),
+    "POPSSKTOConfig": (".pref_align", "POPSSKTOConfig"),
+    "POPSSBCOConfig": (".pref_align", "POPSSBCOConfig"),
+    "POPSSPreferenceDataProcessor": (".pref_align", "POPSSPreferenceDataProcessor"),
+    "POPSSParallelismType": (".parallel_3d", "POPSSParallelismType"),
+    "POPSSPipelineSchedule": (".parallel_3d", "POPSSPipelineSchedule"),
+    "POPSSParallel3DConfig": (".parallel_3d", "POPSSParallel3DConfig"),
+    "POPSSParallel3DOperator": (".parallel_3d", "POPSSParallel3DOperator"),
+    "POPSSGRPOOperator": (".grpo", "POPSSGRPOOperator"),
+    "POPSSGRPOConfig": (".grpo", "POPSSGRPOConfig"),
+    "POPSSGRPOTrainer": (".grpo", "POPSSGRPOTrainer"),
+    "POPSSRLVROperator": (".rlvr", "POPSSRLVROperator"),
+    "POPSSRLVRConfig": (".rlvr", "POPSSRLVRConfig"),
+    "POPSSRLVRDataset": (".rlvr", "POPSSRLVRDataset"),
+    "POPSSRLVRTrainer": (".rlvr", "POPSSRLVRTrainer"),
+    "POPSSRLVRVerifierType": (".rlvr", "POPSSRLVRVerifierType"),
+    "POPSSSchedulerType": (".lr_scheduler", "POPSSSchedulerType"),
+    "POPSSLRSchedulerConfig": (".lr_scheduler", "POPSSLRSchedulerConfig"),
+    "POPSSLRSchedulerOperator": (".lr_scheduler", "POPSSLRSchedulerOperator"),
+    "POPSSCosineWarmupScheduler": (".lr_scheduler", "POPSSCosineWarmupScheduler"),
+    "POPSSLinearWarmupScheduler": (".lr_scheduler", "POPSSLinearWarmupScheduler"),
+    "POPSSInverseSquareRootScheduler": (".lr_scheduler", "POPSSInverseSquareRootScheduler"),
+    "POPSSTeacherProviderType": (".distill_provider", "POPSSTeacherProviderType"),
+    "POPSSTeacherConfig": (".distill_provider", "POPSSTeacherConfig"),
+    "POPSSTeacherProvider": (".distill_provider", "POPSSTeacherProvider"),
+    "POPSSLocalTeacherProvider": (".distill_provider", "POPSSLocalTeacherProvider"),
+    "POPSSServerTeacherProvider": (".distill_provider", "POPSSServerTeacherProvider"),
+    "POPSSRemoteTeacherProvider": (".distill_provider", "POPSSRemoteTeacherProvider"),
+    "POPSSTeacherProviderFactory": (".distill_provider", "POPSSTeacherProviderFactory"),
+    "POPSSDistillationLossConfig": (".distill_loss", "POPSSDistillationLossConfig"),
+    "POPSSLogitsDistillationLoss": (".distill_loss", "POPSSLogitsDistillationLoss"),
+    "POPSSHiddenStateDistillationLoss": (".distill_loss", "POPSSHiddenStateDistillationLoss"),
+    "POPSSAttentionDistillationLoss": (".distill_loss", "POPSSAttentionDistillationLoss"),
+    "POPSSLayerWiseDistillationLoss": (".distill_loss", "POPSSLayerWiseDistillationLoss"),
+    "POPSSContrastiveDistillationLoss": (".distill_loss", "POPSSContrastiveDistillationLoss"),
+    "POPSSDistillationLoss": (".distill_loss", "POPSSDistillationLoss"),
+    "POPSSDistillationConfig": (".distill", "POPSSDistillationConfig"),
+    "POPSSDistillationDataset": (".distill", "POPSSDistillationDataset"),
+    "POPSSDistillationOperator": (".distill", "POPSSDistillationOperator"),
+    "POPSSGrowthType": (".growth", "POPSSGrowthType"),
+    "POPSSModelGrowthConfig": (".growth", "POPSSModelGrowthConfig"),
+    "POPSSOptimalTransportAligner": (".growth", "POPSSOptimalTransportAligner"),
+    "POPSSDepthGrower": (".growth", "POPSSDepthGrower"),
+    "POPSSWidthGrower": (".growth", "POPSSWidthGrower"),
+    "POPSSExpertGrower": (".growth", "POPSSExpertGrower"),
+    "POPSSModelGrowthOperator": (".growth", "POPSSModelGrowthOperator"),
+    "POPSSW2SMode": (".weak_to_strong", "POPSSW2SMode"),
+    "POPSSWeakToStrongConfig": (".weak_to_strong", "POPSSWeakToStrongConfig"),
+    "POPSSWeakLabelGenerator": (".weak_to_strong", "POPSSWeakLabelGenerator"),
+    "POPSSCurriculumScheduler": (".weak_to_strong", "POPSSCurriculumScheduler"),
+    "POPSSSelfCorrection": (".weak_to_strong", "POPSSSelfCorrection"),
+    "POPSSWeakToStrongOperator": (".weak_to_strong", "POPSSWeakToStrongOperator"),
+    "POPSSIterativeAmplification": (".weak_to_strong", "POPSSIterativeAmplification"),
+    "POPSSEvolutionStage": (".evolution_pipeline", "POPSSEvolutionStage"),
+    "POPSSGrowthStage": (".evolution_pipeline", "POPSSGrowthStage"),
+    "POPSSEvolutionConfig": (".evolution_pipeline", "POPSSEvolutionConfig"),
+    "POPSSEvolutionTracker": (".evolution_pipeline", "POPSSEvolutionTracker"),
+    "POPSSEvolutionPipeline": (".evolution_pipeline", "POPSSEvolutionPipeline"),
+}
 
-from .moe_gradient import (
-    POPSSMoEGradientOperator,
-    POPSSMoEGradientConfig,
-    POPSSExpertGradientClipper,
-)
 
-from .modality_scheduler import (
-    POPSSModalitySchedulerOperator,
-    POPSSModalitySchedulerConfig,
-    POPSSModalityType,
-    POPSSModalitySchedulerFacade,
-)
-
-from .multitask_uncertainty import (
-    POPSSMultiTaskOperator,
-    POPSSMultiTaskConfig,
-    POPSSTaskUncertaintyWeighting,
-    POPSSMultiTaskFacade,
-    POPSSTaskType,
-)
-
-from .sft import (
-    POPSSSFTTrainingOperator,
-    POPSSSFTTrainingConfig,
-    POPSSSFTDataset,
-)
-
-from .dpo import (
-    POPSSDPOTrainingOperator,
-    POPSSDPOTrainingConfig,
-    POPSSDPODataset,
-    POPSSDPOLoggingCallback,
-)
-
-from .pref_align import (
-    POPSSPreferenceAlignmentOperator,
-    POPSSDPOConfig,
-    POPSSPPOConfig,
-    POPSSKTOConfig,
-    POPSSBCOConfig,
-    POPSSPreferenceDataProcessor,
-)
-
-from .parallel_3d import (
-    POPSSParallelismType,
-    POPSSPipelineSchedule,
-    POPSSParallel3DConfig,
-    POPSSParallel3DOperator,
-)
-
-from .grpo import (
-    POPSSGRPOOperator,
-    POPSSGRPOConfig,
-    POPSSGRPOTrainer,
-)
-
-from .rlvr import (
-    POPSSRLVROperator,
-    POPSSRLVRConfig,
-    POPSSRLVRDataset,
-    POPSSRLVRTrainer,
-    POPSSRLVRVerifierType,
-)
-
-from .lr_scheduler import (
-    POPSSSchedulerType,
-    POPSSLRSchedulerConfig,
-    POPSSLRSchedulerOperator,
-    POPSSCosineWarmupScheduler,
-    POPSSLinearWarmupScheduler,
-    POPSSInverseSquareRootScheduler,
-)
-
-from .distill_provider import (
-    TeacherProviderType,
-    TeacherConfig,
-    TeacherProvider,
-    LocalTeacherProvider,
-    ServerTeacherProvider,
-    RemoteTeacherProvider,
-    TeacherProviderFactory,
-)
-
-from .distill_loss import (
-    DistillationLossConfig,
-    LogitsDistillationLoss,
-    HiddenStateDistillationLoss,
-    AttentionDistillationLoss,
-    LayerWiseDistillationLoss,
-    ContrastiveDistillationLoss,
-    DistillationLoss,
-)
-
-from .distill import (
-    POPSSDistillationConfig,
-    POPSSDistillationDataset,
-    POPSSDistillationOperator,
-)
-
-from .growth import (
-    POPSSGrowthType,
-    POPSSModelGrowthConfig,
-    POPSSOptimalTransportAligner,
-    POPSSDepthGrower,
-    POPSSWidthGrower,
-    POPSSExpertGrower,
-    POPSSModelGrowthOperator,
-)
-
-from .weak_to_strong import (
-    POPSSW2SMode,
-    POPSSWeakToStrongConfig,
-    POPSSWeakLabelGenerator,
-    POPSSCurriculumScheduler,
-    POPSSSelfCorrection,
-    POPSSWeakToStrongOperator,
-    POPSSIterativeAmplification,
-)
-
-from .evolution_pipeline import (
-    POPSSEvolutionStage,
-    POPSSGrowthStage,
-    POPSSEvolutionConfig,
-    POPSSEvolutionTracker,
-    POPSSEvolutionPipeline,
-)
+def __getattr__(name):
+    if name in _LAZY_SYMBOLS:
+        submod, attr = _LAZY_SYMBOLS[name]
+        module = importlib.import_module(submod, __name__)
+        val = getattr(module, attr)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __version__ = VERSION
 __author__ = AUTHOR
@@ -256,20 +219,20 @@ __all__ = [
     "POPSSCosineWarmupScheduler",
     "POPSSLinearWarmupScheduler",
     "POPSSInverseSquareRootScheduler",
-    "TeacherProviderType",
-    "TeacherConfig",
-    "TeacherProvider",
-    "LocalTeacherProvider",
-    "ServerTeacherProvider",
-    "RemoteTeacherProvider",
-    "TeacherProviderFactory",
-    "DistillationLossConfig",
-    "LogitsDistillationLoss",
-    "HiddenStateDistillationLoss",
-    "AttentionDistillationLoss",
-    "LayerWiseDistillationLoss",
-    "ContrastiveDistillationLoss",
-    "DistillationLoss",
+    "POPSSTeacherProviderType",
+    "POPSSTeacherConfig",
+    "POPSSTeacherProvider",
+    "POPSSLocalTeacherProvider",
+    "POPSSServerTeacherProvider",
+    "POPSSRemoteTeacherProvider",
+    "POPSSTeacherProviderFactory",
+    "POPSSDistillationLossConfig",
+    "POPSSLogitsDistillationLoss",
+    "POPSSHiddenStateDistillationLoss",
+    "POPSSAttentionDistillationLoss",
+    "POPSSLayerWiseDistillationLoss",
+    "POPSSContrastiveDistillationLoss",
+    "POPSSDistillationLoss",
     "POPSSDistillationConfig",
     "POPSSDistillationDataset",
     "POPSSDistillationOperator",

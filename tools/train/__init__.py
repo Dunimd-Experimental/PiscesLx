@@ -151,12 +151,28 @@ Version History:
     - 1.0.0: Initial release with core training, optimization, and monitoring
 """
 
-from .core import PiscesLxTrainingOperator
-from .config import TrainingConfig, EvolutionConfig
-from .orchestrator import PiscesLxTrainOrchestrator
-from .watermark import TrainingWatermarkIntegrationOperator, TrainingPipelineWatermarkOperator
+import importlib
 
 from configs.version import VERSION, AUTHOR
+
+_LAZY_SYMBOLS = {
+    "PiscesLxTrainingOperator": (".core", "PiscesLxTrainingOperator"),
+    "TrainingConfig": (".config", "TrainingConfig"),
+    "EvolutionConfig": (".config", "EvolutionConfig"),
+    "PiscesLxTrainOrchestrator": (".orchestrator", "PiscesLxTrainOrchestrator"),
+    "TrainingWatermarkIntegrationOperator": (".watermark", "TrainingWatermarkIntegrationOperator"),
+    "TrainingPipelineWatermarkOperator": (".watermark", "TrainingPipelineWatermarkOperator"),
+}
+
+
+def __getattr__(name):
+    if name in _LAZY_SYMBOLS:
+        submod, attr = _LAZY_SYMBOLS[name]
+        module = importlib.import_module(submod, __name__)
+        val = getattr(module, attr)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __version__ = VERSION
 __author__ = AUTHOR

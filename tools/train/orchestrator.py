@@ -76,7 +76,6 @@ Usage Examples:
 """
 
 import torch
-import torch.nn as nn
 from typing import Dict, Any, Optional, List, Callable, Union
 from pathlib import Path
 import time

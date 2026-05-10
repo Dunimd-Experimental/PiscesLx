@@ -48,16 +48,16 @@ Usage:
         POPSSDistillationOperator,
     )
     from opss.train.distill_provider import (
-        TeacherProviderFactory,
-        TeacherConfig,
+        POPSSTeacherProviderFactory,
+        POPSSTeacherConfig,
     )
     
     # User creates and configures the teacher provider
-    teacher_config = TeacherConfig(
+    teacher_config = POPSSTeacherConfig(
         provider_type="local",
         model_path="./models/teacher-7b"
     )
-    teacher_provider = TeacherProviderFactory.create(teacher_config)
+    teacher_provider = POPSSTeacherProviderFactory.create(teacher_config)
     
     # Training engine injects teacher to distillation operator
     config = POPSSDistillationConfig(
@@ -96,10 +96,10 @@ from utils.paths import get_log_file, get_work_dir
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
-from .distill_provider import TeacherProvider
+from .distill_provider import POPSSTeacherProvider
 from .distill_loss import (
-    DistillationLossConfig,
-    DistillationLoss,
+    POPSSDistillationLossConfig,
+    POPSSDistillationLoss,
 )
 
 
@@ -307,7 +307,7 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
             enable_file=True,
         )
         
-        self.teacher_provider: Optional[TeacherProvider] = None
+        self.teacher_provider: Optional[POPSSTeacherProvider] = None
         self.student_model: Optional[nn.Module] = None
         self.tokenizer: Optional[Any] = None
         self.optimizer: Optional[Optimizer] = None
@@ -321,7 +321,7 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
     def initialize(
         self,
         config: POPSSDistillationConfig,
-        teacher_provider: TeacherProvider,
+        teacher_provider: POPSSTeacherProvider,
     ) -> None:
         """Initialize distillation training components.
         
@@ -419,7 +419,7 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
     
     def _init_loss(self) -> None:
         """Initialize distillation loss."""
-        loss_config = DistillationLossConfig(
+        loss_config = POPSSDistillationLossConfig(
             temperature=self.config.temperature,
             alpha=self.config.alpha,
             beta=self.config.beta,
@@ -428,7 +428,7 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
             epsilon=self.config.epsilon,
             ignore_index=self.config.ignore_index,
         )
-        self.distill_loss = DistillationLoss(loss_config)
+        self.distill_loss = POPSSDistillationLoss(loss_config)
     
     def train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """Execute single training step."""
@@ -505,7 +505,7 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
         Args:
             params: Dictionary containing:
                 - config: POPSSDistillationConfig
-                - teacher_provider: TeacherProvider (injected by training engine)
+                - teacher_provider: POPSSTeacherProvider (injected by training engine)
                 
         Returns:
             Training result.
@@ -606,13 +606,13 @@ class POPSSDistillationOperator:
     
     Example:
         # User creates teacher provider
-        from opss.train.distill_provider import TeacherProviderFactory, TeacherConfig
+        from opss.train.distill_provider import POPSSTeacherProviderFactory, POPSSTeacherConfig
         
-        teacher_config = TeacherConfig(
+        teacher_config = POPSSTeacherConfig(
             provider_type="local",
             model_path="./models/deepseek-r1-7b"
         )
-        teacher = TeacherProviderFactory.create(teacher_config)
+        teacher = POPSSTeacherProviderFactory.create(teacher_config)
         
         # Training engine injects teacher to operator
         config = POPSSDistillationConfig(student_model_path="./models/student")
@@ -630,7 +630,7 @@ class POPSSDistillationOperator:
         """Execute distillation training with injected teacher.
         
         Args:
-            params: Must contain 'teacher_provider' key with TeacherProvider instance.
+            params: Must contain 'teacher_provider' key with POPSSTeacherProvider instance.
         """
         return self._impl.execute(params)
     

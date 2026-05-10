@@ -68,62 +68,52 @@ Usage Examples:
 """
 
 import sys
+import importlib
 from pathlib import Path
 
 from configs.version import VERSION, AUTHOR
 
-from .config import (
-    POPSSWatermarkJurisdiction,
-    POPSSComplianceStandard,
-    POPSSWatermarkRiskLevel,
-    POPSSWatermarkContentType,
-    POPSSWatermarkConfig,
-    POPSSWatermarkPayload,
-    POPSSWatermarkAuditRecord,
-    POPSSWatermarkDefaultConfigFactory,
-    POPSSWatermarkComplianceValidator,
-    get_default_config,
-    validate_compliance
-)
+_LAZY_SYMBOLS = {
+    "POPSSWatermarkJurisdiction": (".config", "POPSSWatermarkJurisdiction"),
+    "POPSSComplianceStandard": (".config", "POPSSComplianceStandard"),
+    "POPSSWatermarkRiskLevel": (".config", "POPSSWatermarkRiskLevel"),
+    "POPSSWatermarkContentType": (".config", "POPSSWatermarkContentType"),
+    "POPSSWatermarkConfig": (".config", "POPSSWatermarkConfig"),
+    "POPSSWatermarkPayload": (".config", "POPSSWatermarkPayload"),
+    "POPSSWatermarkAuditRecord": (".config", "POPSSWatermarkAuditRecord"),
+    "POPSSWatermarkDefaultConfigFactory": (".config", "POPSSWatermarkDefaultConfigFactory"),
+    "POPSSWatermarkComplianceValidator": (".config", "POPSSWatermarkComplianceValidator"),
+    "get_default_config": (".config", "get_default_config"),
+    "validate_compliance": (".config", "validate_compliance"),
+    "POPSSWatermarkProtocolOperator": (".protocol_operator", "POPSSWatermarkProtocolOperator"),
+    "POPSSFrameInfo": (".protocol_operator", "POPSSFrameInfo"),
+    "create_protocol_operator": (".protocol_operator", "create_protocol_operator"),
+    "POPSSWatermarkDCTOperator": (".dct_operator", "POPSSWatermarkDCTOperator"),
+    "POPSSWatermarkContentOperator": (".content_watermark_operator", "POPSSWatermarkContentOperator"),
+    "POPSSContentWatermarkOperator": (".content_watermark_operator", "POPSSContentWatermarkOperator"),
+    "create_content_watermark_operator": (".content_watermark_operator", "create_content_watermark_operator"),
+    "POPSSWatermarkWeightOperator": (".weight_watermark_operator", "POPSSWatermarkWeightOperator"),
+    "POPSSWeightWatermarkOperator": (".weight_watermark_operator", "POPSSWeightWatermarkOperator"),
+    "create_weight_watermark_operator": (".weight_watermark_operator", "create_weight_watermark_operator"),
+    "POPSSWatermarkComplianceOperator": (".compliance_operator", "POPSSWatermarkComplianceOperator"),
+    "POPSSComplianceOperator": (".compliance_operator", "POPSSComplianceOperator"),
+    "create_compliance_operator": (".compliance_operator", "create_compliance_operator"),
+    "POPSSWatermarkAuditOperator": (".audit_operator", "POPSSWatermarkAuditOperator"),
+    "POPSSAuditOperator": (".audit_operator", "POPSSAuditOperator"),
+    "create_audit_operator": (".audit_operator", "create_audit_operator"),
+    "POPSSWatermarkOrchestrator": (".orchestrator", "POPSSWatermarkOrchestrator"),
+    "create_watermark_orchestrator": (".orchestrator", "create_watermark_orchestrator"),
+}
 
-from .protocol_operator import (
-    POPSSWatermarkProtocolOperator,
-    POPSSFrameInfo,
-    create_protocol_operator
-)
 
-from .dct_operator import (
-    POPSSWatermarkDCTOperator
-)
-
-from .content_watermark_operator import (
-    POPSSWatermarkContentOperator,
-    POPSSContentWatermarkOperator,
-    create_content_watermark_operator
-)
-
-from .weight_watermark_operator import (
-    POPSSWatermarkWeightOperator,
-    POPSSWeightWatermarkOperator,
-    create_weight_watermark_operator
-)
-
-from .compliance_operator import (
-    POPSSWatermarkComplianceOperator,
-    POPSSComplianceOperator,
-    create_compliance_operator
-)
-
-from .audit_operator import (
-    POPSSWatermarkAuditOperator,
-    POPSSAuditOperator,
-    create_audit_operator
-)
-
-from .orchestrator import (
-    POPSSWatermarkOrchestrator,
-    create_watermark_orchestrator
-)
+def __getattr__(name):
+    if name in _LAZY_SYMBOLS:
+        submod, attr = _LAZY_SYMBOLS[name]
+        module = importlib.import_module(submod, __name__)
+        val = getattr(module, attr)
+        globals()[name] = val
+        return val
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
     "POPSSWatermarkJurisdiction",

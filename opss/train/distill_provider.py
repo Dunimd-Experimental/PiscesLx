@@ -43,16 +43,16 @@ Architecture:
 
 Usage:
     from opss.train.distill_provider import (
-        TeacherProviderFactory,
-        TeacherConfig,
-        TeacherProviderType,
+        POPSSTeacherProviderFactory,
+        POPSSTeacherConfig,
+        POPSSTeacherProviderType,
     )
 
-    config = TeacherConfig(
-        provider_type=TeacherProviderType.LOCAL,
+    config = POPSSTeacherConfig(
+        provider_type=POPSSTeacherProviderType.LOCAL,
         model_path="./models/teacher-7b"
     )
-    teacher = TeacherProviderFactory.create(config)
+    teacher = POPSSTeacherProviderFactory.create(config)
     outputs = teacher.get_all_outputs(input_ids)
 """
 
@@ -81,6 +81,8 @@ class POPSSTeacherProviderType(Enum):
     LOCAL = "local"
     SERVER = "server"
     REMOTE = "remote"
+
+
 
 
 @dataclass

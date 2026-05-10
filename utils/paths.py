@@ -313,6 +313,18 @@ def get_work_dir(name: str) -> str:
     return get_cache_dir(name)
 
 
+def get_checkpoint_dir(name: str) -> str:
+    """Get or create a checkpoint directory.
+
+    Args:
+        name: The checkpoint group name (e.g., "evolution", "training").
+
+    Returns:
+        str: The checkpoint directory path.
+    """
+    return get_cache_dir(f"checkpoints/{name}")
+
+
 def get_log_file(module_name: str) -> str:
     """
     Get the log file path for a module.

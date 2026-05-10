@@ -42,16 +42,16 @@ Key Features:
 
 Usage:
     from opss.train.distill_loss import (
-        DistillationLossConfig,
-        DistillationLoss,
+        POPSSDistillationLossConfig,
+        POPSSDistillationLoss,
     )
     
-    config = DistillationLossConfig(
+    config = POPSSDistillationLossConfig(
         temperature=2.0,
         alpha=1.0,
         beta=0.5,
     )
-    loss_fn = DistillationLoss(config)
+    loss_fn = POPSSDistillationLoss(config)
     loss = loss_fn(teacher_outputs, student_outputs, labels)
 """
 
@@ -69,7 +69,7 @@ from utils.paths import get_log_file
 
 
 @dataclass
-class DistillationLossConfig:
+class POPSSDistillationLossConfig:
     """Configuration for distillation loss computation.
     
     Attributes:
@@ -104,7 +104,7 @@ class DistillationLossConfig:
     attention_heads: Optional[int] = None
 
 
-class LogitsDistillationLoss(nn.Module):
+class POPSSLogitsDistillationLoss(nn.Module):
     """Logits-level knowledge distillation loss.
     
     Computes KL divergence between teacher and student output distributions
@@ -167,7 +167,7 @@ class LogitsDistillationLoss(nn.Module):
         return loss
 
 
-class HiddenStateDistillationLoss(nn.Module):
+class POPSSHiddenStateDistillationLoss(nn.Module):
     """Hidden state knowledge distillation loss.
     
     Computes MSE loss between teacher and student hidden states,
@@ -214,7 +214,7 @@ class HiddenStateDistillationLoss(nn.Module):
         return loss
 
 
-class AttentionDistillationLoss(nn.Module):
+class POPSSAttentionDistillationLoss(nn.Module):
     """Attention pattern knowledge distillation loss.
     
     Computes MSE loss between teacher and student attention weights,
@@ -308,7 +308,7 @@ class AttentionDistillationLoss(nn.Module):
         return loss
 
 
-class LayerWiseDistillationLoss(nn.Module):
+class POPSSLayerWiseDistillationLoss(nn.Module):
     """Layer-wise progressive knowledge distillation loss.
     
     Computes distillation loss at each layer, allowing progressive
@@ -325,7 +325,7 @@ class LayerWiseDistillationLoss(nn.Module):
         super().__init__()
         self.layer_mapping = layer_mapping
         self.normalize = normalize
-        self.hidden_loss = HiddenStateDistillationLoss(
+        self.hidden_loss = POPSSHiddenStateDistillationLoss(
             teacher_dim=teacher_dim,
             student_dim=student_dim,
             normalize=normalize,
@@ -381,7 +381,7 @@ class LayerWiseDistillationLoss(nn.Module):
         return total_loss
 
 
-class ContrastiveDistillationLoss(nn.Module):
+class POPSSContrastiveDistillationLoss(nn.Module):
     """Contrastive distillation loss for remote API teachers.
     
     When only teacher-generated text is available (no logits),
@@ -427,7 +427,7 @@ class ContrastiveDistillationLoss(nn.Module):
         return loss
 
 
-class DistillationLoss(nn.Module):
+class POPSSDistillationLoss(nn.Module):
     """Comprehensive knowledge distillation loss.
     
     Combines multiple distillation loss types with configurable weights:
@@ -438,7 +438,7 @@ class DistillationLoss(nn.Module):
     - Task-specific loss (cross-entropy)
     """
     
-    def __init__(self, config: DistillationLossConfig):
+    def __init__(self, config: POPSSDistillationLossConfig):
         super().__init__()
         self.config = config
         self._LOG = PiscesLxLogger(
@@ -447,26 +447,26 @@ class DistillationLoss(nn.Module):
             enable_file=True,
         )
         
-        self.logits_loss = LogitsDistillationLoss(
+        self.logits_loss = POPSSLogitsDistillationLoss(
             temperature=config.temperature,
             ignore_index=config.ignore_index,
         )
         
-        self.hidden_loss = HiddenStateDistillationLoss(
+        self.hidden_loss = POPSSHiddenStateDistillationLoss(
             normalize=config.normalize_hidden,
         )
         
-        self.attn_loss = AttentionDistillationLoss(
+        self.attn_loss = POPSSAttentionDistillationLoss(
             teacher_heads=config.attention_heads,
             student_heads=config.attention_heads,
         )
         
-        self.layer_loss = LayerWiseDistillationLoss(
+        self.layer_loss = POPSSLayerWiseDistillationLoss(
             layer_mapping=config.layer_mapping,
             normalize=config.normalize_hidden,
         )
         
-        self.contrastive_loss = ContrastiveDistillationLoss(
+        self.contrastive_loss = POPSSContrastiveDistillationLoss(
             temperature=config.temperature,
             ignore_index=config.ignore_index,
         )
@@ -547,11 +547,11 @@ class DistillationLoss(nn.Module):
 
 
 __all__ = [
-    "DistillationLossConfig",
-    "LogitsDistillationLoss",
-    "HiddenStateDistillationLoss",
-    "AttentionDistillationLoss",
-    "LayerWiseDistillationLoss",
-    "ContrastiveDistillationLoss",
-    "DistillationLoss",
+    "POPSSDistillationLossConfig",
+    "POPSSLogitsDistillationLoss",
+    "POPSSHiddenStateDistillationLoss",
+    "POPSSAttentionDistillationLoss",
+    "POPSSLayerWiseDistillationLoss",
+    "POPSSContrastiveDistillationLoss",
+    "POPSSDistillationLoss",
 ]
