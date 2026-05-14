@@ -422,7 +422,6 @@ class POPSSMoEGradientOperator(PiscesLxOperatorInterface):
             self._logger.error("Model has no parameters")
             return False
         
-        self._logger.debug("Input validation passed")
         return True
     
     def _detect_expert_parameter(
@@ -766,9 +765,11 @@ class POPSSMoEGradientOperator(PiscesLxOperatorInterface):
             self.step_count += 1
             
             if current_step < self.config.warmup_steps:
-                self._logger.debug(
-                    f"Warmup: skipping MoE optimization at step {current_step}"
-                )
+                # Only log once at warmup start
+                if current_step == 0:
+                    self._logger.info(
+                        f"Warmup: skipping MoE optimization for first {self.config.warmup_steps} steps"
+                    )
                 return PiscesLxOperatorResult(
                     operator_name=self.name,
                     status=PiscesLxOperatorStatus.SUCCESS,

@@ -1374,7 +1374,6 @@ class PiscesLxTrainingOperator(object):
         non_blocking = False
         try:
             non_blocking = bool(getattr(getattr(self.config, "data", None), "pin_memory", False)) and self.device.type == "cuda"
-            _LOG.debug(f"Non-blocking memory transfer: {non_blocking}")
         except Exception as e:
             non_blocking = False
             _LOG.warning(f"Failed to check pin_memory setting: {e}. Using blocking transfer.")
@@ -1385,7 +1384,6 @@ class PiscesLxTrainingOperator(object):
                 bf16_supported = False
                 try:
                     bf16_supported = bool(torch.cuda.is_bf16_supported())
-                    _LOG.debug(f"BF16 support check in training_step: {bf16_supported}")
                 except Exception as e:
                     bf16_supported = False
                     _LOG.warning(f"Failed to check BF16 support in training_step: {e}. Assuming BF16 is not supported.")
@@ -1721,7 +1719,6 @@ class PiscesLxTrainingOperator(object):
         max_grad_norm = 1.0
         try:
             max_grad_norm = float(getattr(getattr(self.config, "optimizer", None), "max_grad_norm", 1.0) or 1.0)
-            _LOG.debug(f"max_grad_norm parsed: {max_grad_norm}")
         except Exception as e:
             max_grad_norm = 1.0
             _LOG.warning(f"Failed to parse max_grad_norm: {e}. Using default value 1.0.")
@@ -1750,8 +1747,10 @@ class PiscesLxTrainingOperator(object):
                     "step": self.global_step
                 })
                 if moe_result.is_success() and moe_result.output:
-                    aux_loss_total += moe_result.output.get('total_auxiliary_loss', 0.0)
-                    _LOG.debug(f"MoE gradient optimizer step completed, aux_loss: {moe_result.output.get('total_auxiliary_loss', 0.0)}")
+                    aux_val = moe_result.output.get('total_auxiliary_loss', 0.0)
+                    aux_loss_total += aux_val
+                    if aux_val != 0.0:
+                        _LOG.debug(f"MoE gradient optimizer step completed, aux_loss: {aux_val}")
             except Exception as e:
                 _LOG.warning(f"MoE gradient optimizer execute failed: {e}. Skipping MoE auxiliary loss collection.")
         
@@ -1919,36 +1918,30 @@ class PiscesLxTrainingOperator(object):
         # Calculate throughput (use CPU time for async execution, GPU time available via events)
         step_time = time.time() - start_time
         
-        # Optimized: Defer GPU-CPU sync to logging interval
-        # Only compute token count when needed for logging (every log_steps)
-        log_steps = int(getattr(self.config, 'log_steps', 100) or 100)
-        should_log = (self.global_step % log_steps == 0)
-        
-        if should_log and 'input_ids' in batch:
+        # Always compute token count and loss for accurate logging / epoch stats
+        if 'input_ids' in batch:
             try:
                 if 'attention_mask' in batch:
                     tokens = int(batch['attention_mask'].sum().item())
                 else:
                     tokens = int(batch['input_ids'].numel())
-                _LOG.debug(f"Token count computed: {tokens}")
             except Exception as e:
                 tokens = 0
-                _LOG.warning(f"Failed to compute token count: {e}. Setting tokens to 0 for logging.")
+                _LOG.warning(f"Failed to compute token count: {e}. Setting tokens to 0.")
         else:
             tokens = 0
-        
+
         throughput = batch['input_ids'].size(0) / step_time if ('input_ids' in batch and step_time > 0) else 0.0
         token_throughput = float(tokens) / step_time if (tokens and step_time > 0) else 0.0
-        
-        # Optimized: Only sync GPU for loss value when logging
-        if should_log:
-            loss_scalar = float(loss.detach().item())
-            if grad_accum_steps > 1:
-                loss_scalar = loss_scalar * grad_accum_steps
+
+        loss_scalar = float(loss.detach().item())
+        if grad_accum_steps > 1:
+            loss_scalar = loss_scalar * grad_accum_steps
+
+        # Record detailed stats only on logging boundaries (avoids inflating history buffer)
+        log_steps = int(getattr(self.config, 'log_steps', 100) or 100)
+        if self.global_step % log_steps == 0:
             self._record_training_stats(loss_scalar, grad_norm, throughput)
-        else:
-            # Keep loss as tensor for gradient computation, use detached value for stats
-            loss_scalar = 0.0  # Placeholder, will be updated on next log
 
         return {
             'loss': loss_scalar,

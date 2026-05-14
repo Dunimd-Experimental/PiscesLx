@@ -1527,15 +1527,18 @@ class YvMoELayer(nn.Module):
                 if expert_mask.any():
                     selected_tokens = token_indices[expert_mask]
                     selected_scores = flat_scores[expert_mask]
-                    
-                    # Batched expert computation
-                    h_batch = h[selected_tokens]
-                    expert_out = self.experts[expert_id](h_batch)
-                    
-                    # Scatter outputs back using scatter_add for efficiency
-                    y.scatter_add_(0, selected_tokens.unsqueeze(1).expand(-1, d), 
-                                   selected_scores.unsqueeze(1) * expert_out)
-            
+
+                    # Clamp indices to valid range
+                    valid_mask = selected_tokens < h.size(0)
+                    selected_tokens = selected_tokens[valid_mask]
+                    selected_scores = selected_scores[valid_mask]
+
+                    if len(selected_tokens) > 0:
+                        h_batch = h[selected_tokens]
+                        expert_out = self.experts[expert_id](h_batch)
+                        y.scatter_add_(0, selected_tokens.unsqueeze(1).expand(-1, d),
+                                       selected_scores.unsqueeze(1) * expert_out)
+
             return y.view(b, t, d), aux_loss
         elif isinstance(self.gate, YvStableMoEGate):
             scores, idx, aux_loss = self.gate(x)
@@ -1605,15 +1608,18 @@ class YvMoELayer(nn.Module):
                 if expert_mask.any():
                     selected_tokens = token_indices[expert_mask]
                     selected_scores = flat_scores[expert_mask]
-                    
-                    # Batched expert computation
-                    h_batch = h[selected_tokens]
-                    expert_out = self.experts[expert_id](h_batch)
-                    
-                    # Scatter outputs back
-                    y.scatter_add_(0, selected_tokens.unsqueeze(1).expand(-1, d),
-                                   selected_scores.unsqueeze(1) * expert_out)
-            
+
+                    # Clamp indices to valid range
+                    valid_mask = selected_tokens < h.size(0)
+                    selected_tokens = selected_tokens[valid_mask]
+                    selected_scores = selected_scores[valid_mask]
+
+                    if len(selected_tokens) > 0:
+                        h_batch = h[selected_tokens]
+                        expert_out = self.experts[expert_id](h_batch)
+                        y.scatter_add_(0, selected_tokens.unsqueeze(1).expand(-1, d),
+                                       selected_scores.unsqueeze(1) * expert_out)
+
             self._monitor_expert_balance(idx)
             self._step += 1
             return y.view(b, t, d), aux_loss

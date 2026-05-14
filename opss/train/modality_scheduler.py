@@ -376,9 +376,8 @@ class POPSSModalitySchedulerOperator(PiscesLxOperatorInterface):
                 )
                 return False
         
-        self._logger.debug("Input validation passed")
         return True
-    
+
     def _detect_modality(self, param_name: str) -> POPSSModalityType:
         """
         Detect modality type from parameter name using pattern matching.
