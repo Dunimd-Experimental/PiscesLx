@@ -19,6 +19,8 @@
 # Non-compliance may result in service termination or legal liability.
 
 # IDE and Editor Files
+CLAUDE.md
+.claude/
 .qoder/
 .trae/
 .windsurf/

@@ -954,7 +954,9 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 pass
 
         tokenizer = YvTokenizer()
+        self._tokenizer = tokenizer
         pad_id = int(getattr(tokenizer, "pad_token_id", 0))
+        use_packing = bool(getattr(self.train_config, "packing", False))
 
         def collate(batch):
             if not batch:
@@ -965,16 +967,37 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 if ids is None:
                     ids = torch.tensor([pad_id], dtype=torch.long)
                 ids_list.append(ids.long().view(-1))
-            max_len = min(seq_len, max(int(x.numel()) for x in ids_list))
-            input_ids = torch.full((len(ids_list), max_len), pad_id, dtype=torch.long)
-            labels = torch.full((len(ids_list), max_len), -100, dtype=torch.long)
-            attention_mask = torch.zeros((len(ids_list), max_len), dtype=torch.long)
-            for i, ids in enumerate(ids_list):
-                ids = ids[:max_len]
-                n = int(ids.numel())
-                input_ids[i, :n] = ids
-                labels[i, :n] = ids
-                attention_mask[i, :n] = 1
+
+            if use_packing:
+                # Pack short samples together into seq_len-length sequences
+                flat_ids = torch.cat(ids_list)
+                if flat_ids.numel() == 0:
+                    flat_ids = torch.tensor([pad_id], dtype=torch.long)
+                packed_ids = []
+                offset = 0
+                while offset < flat_ids.numel():
+                    chunk = flat_ids[offset:offset + seq_len]
+                    if len(chunk) < seq_len:
+                        chunk = torch.cat([chunk, torch.full((seq_len - len(chunk),), pad_id, dtype=torch.long)])
+                    packed_ids.append(chunk)
+                    offset += seq_len
+                bs = len(packed_ids)
+                input_ids = torch.stack(packed_ids)
+                attention_mask = (input_ids != pad_id).long()
+                labels = input_ids.clone()
+                labels[labels == pad_id] = -100
+            else:
+                # Pad all samples to seq_len for consistent batch shapes
+                input_ids = torch.full((len(ids_list), seq_len), pad_id, dtype=torch.long)
+                labels = torch.full((len(ids_list), seq_len), -100, dtype=torch.long)
+                attention_mask = torch.zeros((len(ids_list), seq_len), dtype=torch.long)
+                for i, ids in enumerate(ids_list):
+                    ids = ids[:seq_len]
+                    n = int(ids.numel())
+                    input_ids[i, :n] = ids
+                    labels[i, :n] = ids
+                    attention_mask[i, :n] = 1
+
             return {"input_ids": input_ids, "labels": labels, "attention_mask": attention_mask}
 
         dm = PiscesLxToolsDataDatasetManager()
@@ -1028,6 +1051,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         for idx, ds_name in enumerate(dataset_list):
             train_ds = dm.load(name=str(ds_name), subset=str(ds_name), split="train", max_samples=None, config=model_cfg)
             train_loader = DataLoader(train_ds, **dl_kwargs)
+            self._current_train_loader = train_loader
 
             if idx == 0:
                 self.initialize_training(
@@ -1412,7 +1436,10 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                     provider_config.model_name = teacher_name
                 if teacher_api_key:
                     provider_config.api_key = teacher_api_key
-                self._teacher_provider = POPSSRemoteTeacherProvider(provider_config)
+                self._teacher_provider = POPSSRemoteTeacherProvider(
+                    provider_config,
+                    tokenizer=getattr(self, "_tokenizer", None),
+                )
                 _LOG.info(f"Remote API teacher provider created: base_url={teacher_path}, model={teacher_name}")
             
             else:
@@ -1590,10 +1617,27 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             use_gradient_checkpointing=True,
         )
 
+        student_model = getattr(self.trainer, "model", None) if self.trainer else None
+        tokenizer = getattr(self, "_tokenizer", None)
+
+        if student_model is None:
+            _LOG.warning(
+                "Pre-initialized student model is None. "
+                "Distillation operator will attempt to load from checkpoint. "
+                f"trainer={self.trainer is not None} "
+                f"trainer.model={'exists' if self.trainer and hasattr(self.trainer, 'model') and self.trainer.model is not None else 'missing'}"
+            )
+        else:
+            _LOG.info(f"Passing pre-initialized student model: {student_model.__class__.__name__}")
+
         distill_operator = POPSSDistillationOperator()
+        train_dataloader = getattr(self, "_current_train_loader", None)
         result = distill_operator.execute({
             "config": distill_cfg,
             "teacher_provider": teacher_provider,
+            "student_model": student_model,
+            "tokenizer": tokenizer,
+            "dataloader": train_dataloader,
         })
 
         self.training_history['results'] = result.data

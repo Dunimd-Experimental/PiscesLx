@@ -306,38 +306,90 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
             file_path=get_log_file("PiscesLx.Distill.Operator"),
             enable_file=True,
         )
-        
+
         self.teacher_provider: Optional[POPSSTeacherProvider] = None
         self.student_model: Optional[nn.Module] = None
         self.tokenizer: Optional[Any] = None
         self.optimizer: Optional[Optimizer] = None
         self.scheduler: Optional[LRScheduler] = None
         self.scaler: Optional[GradScaler] = None
-        
+
         self.config: Optional[POPSSDistillationConfig] = None
         self.global_step: int = 0
         self.best_loss: float = float('inf')
-    
+
+    @property
+    def name(self) -> str:
+        return self._name
+
+    @property
+    def version(self) -> str:
+        return self._version
+
+    @property
+    def description(self) -> str:
+        return "Knowledge distillation training operator for transferring teacher model knowledge to a student model."
+
+    @property
+    def input_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "required": ["config", "teacher_provider"],
+            "properties": {
+                "config": {"type": "object", "description": "POPSSDistillationConfig"},
+                "teacher_provider": {"type": "object", "description": "POPSSTeacherProvider instance"},
+            },
+        }
+
+    @property
+    def output_schema(self) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "final_step": {"type": "integer"},
+                "training_time": {"type": "number"},
+                "output_path": {"type": "string"},
+            },
+        }
+
+    def validate_inputs(self, inputs: Dict[str, Any]) -> bool:
+        if "config" not in inputs and "teacher_provider" not in inputs:
+            return False
+        if "teacher_provider" in inputs and not isinstance(inputs["teacher_provider"], POPSSTeacherProvider):
+            return False
+        return True
+
     def initialize(
         self,
         config: POPSSDistillationConfig,
         teacher_provider: POPSSTeacherProvider,
+        student_model: Optional[Any] = None,
+        tokenizer: Optional[Any] = None,
     ) -> None:
         """Initialize distillation training components.
-        
+
         Args:
             config: Distillation configuration.
             teacher_provider: Teacher model provider injected by training engine.
                              User decides which teacher to use.
+            student_model: Optional pre-initialized student model (e.g. QLoRA from training engine).
+            tokenizer: Optional pre-initialized tokenizer.
         """
         self.config = config
         self.teacher_provider = teacher_provider
-        
+
         self._LOG.info("Initializing distillation training...")
         self._LOG.info("Teacher provider injected by training engine")
-        
-        self._init_student()
-        self._init_tokenizer()
+
+        self._init_student(student_model)
+        self._device = next(self.student_model.parameters()).device
+        # Get model vocab size from embedding layer for token clamping.
+        # YvModel stores embedding as self.embed (not HF get_input_embeddings).
+        embed_attr = getattr(self.student_model, 'embed', None)
+        if embed_attr is None:
+            embed_attr = self.student_model.get_input_embeddings()
+        self._model_vocab_size = embed_attr.weight.shape[0]
+        self._init_tokenizer(tokenizer)
         self._init_optimizer()
         self._init_loss()
         
@@ -346,50 +398,158 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
         
         self._LOG.info("Distillation training initialized successfully")
     
-    def _init_student(self) -> None:
-        """Initialize student model."""
-        self._LOG.info(f"Loading student model from {self.config.student_model_path}")
-        
-        try:
-            from transformers import AutoModelForCausalLM, AutoTokenizer
-            
-            dtype = torch.bfloat16 if self.config.use_bf16 else torch.float16
-            
-            self.student_model = AutoModelForCausalLM.from_pretrained(
-                self.config.student_model_path,
-                torch_dtype=dtype,
-                trust_remote_code=True,
-            )
-            
+    def _init_student(self, student_model=None) -> None:
+        """Initialize student model.
+
+        Args:
+            student_model: Optional pre-initialized model (e.g. QLoRA from training engine).
+                           If provided, skips AutoModel loading and uses this model directly.
+        """
+        if student_model is not None:
+            self._LOG.info("Using pre-initialized student model from training engine")
+            self.student_model = student_model
             device = torch.device(f"cuda:{self.config.local_rank}" if torch.cuda.is_available() else "cpu")
             self.student_model = self.student_model.to(device)
-            
             if self.config.use_gradient_checkpointing:
-                self.student_model.gradient_checkpointing_enable()
-            
+                self._enable_gradient_checkpointing(self.student_model)
             self.student_model.train()
-            
-        except ImportError:
-            raise ImportError("transformers library required for student model loading")
-        
-        self._LOG.info("Student model loaded successfully")
-    
-    def _init_tokenizer(self) -> None:
-        """Initialize tokenizer."""
+            self._LOG.info("Student model attached successfully")
+            return
+
+        self._LOG.info(f"Loading student model from {self.config.student_model_path}")
+
         try:
+            import yaml
+            from types import SimpleNamespace
+            from model.core.model import YvModelForCausalLM
+
+            model_cfg_path = os.path.join(self.config.student_model_path, "config.yaml")
+            if not os.path.isfile(model_cfg_path):
+                for name in ("1.5B.yaml", "0.5B.yaml", "7B.yaml"):
+                    candidate = os.path.join("configs", "model", name)
+                    if os.path.isfile(candidate):
+                        model_cfg_path = candidate
+                        break
+
+            if os.path.isfile(model_cfg_path):
+                with open(model_cfg_path, "r") as f:
+                    model_cfg = yaml.safe_load(f)
+            else:
+                raise FileNotFoundError("No model config YAML found")
+
+            # YAML-loaded config is a dict, but YvModelForCausalLM uses
+            # hasattr/getattr/setattr which fail on dicts. Convert via
+            # SimpleNamespace for attribute-style access.
+            if isinstance(model_cfg, dict):
+                model_cfg = SimpleNamespace(**model_cfg)
+
+            self.student_model = YvModelForCausalLM(model_cfg)
+
+            ckpt_path = self.config.student_model_path
+            if os.path.isfile(os.path.join(ckpt_path, "model.pt")):
+                state = torch.load(os.path.join(ckpt_path, "model.pt"), map_location="cpu")
+                self.student_model.load_state_dict(state, strict=False)
+            elif os.path.isfile(os.path.join(ckpt_path, "pytorch_model.bin")):
+                state = torch.load(os.path.join(ckpt_path, "pytorch_model.bin"), map_location="cpu")
+                self.student_model.load_state_dict(state, strict=False)
+
+            device = torch.device(f"cuda:{self.config.local_rank}" if torch.cuda.is_available() else "cpu")
+            self.student_model = self.student_model.to(device)
+
+            if self.config.use_gradient_checkpointing:
+                self._enable_gradient_checkpointing(self.student_model)
+
+            self.student_model.train()
+
+        except Exception as e:
+            self._LOG.warning(f"Failed to load YvModel directly: {e}. Falling back to AutoModelForCausalLM.")
+            try:
+                from transformers import AutoModelForCausalLM
+
+                # Check if checkpoint directory has a valid HuggingFace config
+                hf_config_path = os.path.join(self.config.student_model_path, "config.json")
+                if not os.path.isfile(hf_config_path):
+                    raise FileNotFoundError(
+                        f"No config.json found in {self.config.student_model_path}. "
+                        f"Cannot load with AutoModelForCausalLM. "
+                        f"Ensure the checkpoint directory has a valid HuggingFace config, "
+                        f"or pass a pre-initialized student_model directly."
+                    )
+
+                dtype = torch.bfloat16 if self.config.use_bf16 else torch.float16
+
+                self.student_model = AutoModelForCausalLM.from_pretrained(
+                    self.config.student_model_path,
+                    torch_dtype=dtype,
+                    trust_remote_code=True,
+                )
+
+                device = torch.device(f"cuda:{self.config.local_rank}" if torch.cuda.is_available() else "cpu")
+                self.student_model = self.student_model.to(device)
+
+                if self.config.use_gradient_checkpointing:
+                    self._enable_gradient_checkpointing(self.student_model)
+
+                self.student_model.train()
+
+            except ImportError:
+                raise ImportError("transformers library required for student model loading")
+            except Exception as fallback_err:
+                raise RuntimeError(
+                    f"Failed to load student model via both YvModelForCausalLM "
+                    f"and AutoModelForCausalLM. Original error: {e}. "
+                    f"Fallback error: {fallback_err}. "
+                    f"Check that the student model path is correct and contains valid model files."
+                ) from fallback_err
+
+        self._LOG.info("Student model loaded successfully")
+
+    @staticmethod
+    def _enable_gradient_checkpointing(model) -> None:
+        """Enable gradient checkpointing with cross-framework support.
+
+        Handles HuggingFace models (gradient_checkpointing_enable),
+        custom YvModel (set_gradient_checkpointing), and PEFT wrappers
+        (delegates to base model).
+        """
+        if hasattr(model, 'gradient_checkpointing_enable'):
+            model.gradient_checkpointing_enable()
+        elif hasattr(model, 'set_gradient_checkpointing'):
+            model.set_gradient_checkpointing(True)
+        else:
+            _LOG.debug("Gradient checkpointing not available on model, skipping")
+    
+    def _init_tokenizer(self, tokenizer=None) -> None:
+        """Initialize tokenizer.
+
+        Args:
+            tokenizer: Optional pre-initialized tokenizer.
+        """
+        if tokenizer is not None:
+            self._LOG.info("Using pre-initialized tokenizer from training engine")
+            self.tokenizer = tokenizer
+            if not hasattr(self.tokenizer, 'pad_token') or self.tokenizer.pad_token is None:
+                if hasattr(self.tokenizer, 'eos_token'):
+                    self.tokenizer.pad_token = self.tokenizer.eos_token
+            return
+
+        try:
+            from model.tokenizer import YvTokenizer
+
+            self.tokenizer = YvTokenizer()
+            self._LOG.info("Loaded YvTokenizer for distillation")
+        except Exception:
             from transformers import AutoTokenizer
-            
+
             self.tokenizer = AutoTokenizer.from_pretrained(
                 self.config.student_model_path,
                 trust_remote_code=True,
             )
-            
-            if self.tokenizer.pad_token is None:
+
+        if not hasattr(self.tokenizer, 'pad_token') or self.tokenizer.pad_token is None:
+            if hasattr(self.tokenizer, 'eos_token'):
                 self.tokenizer.pad_token = self.tokenizer.eos_token
-            
-        except ImportError:
-            raise ImportError("transformers library required for tokenizer")
-    
+
     def _init_optimizer(self) -> None:
         """Initialize optimizer and scheduler."""
         self.optimizer = torch.optim.AdamW(
@@ -432,26 +592,76 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
     
     def train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, float]:
         """Execute single training step."""
-        input_ids = batch["input_ids"].to(self.student_model.device)
-        labels = batch["labels"].to(self.student_model.device)
-        
+        device = self._device
+        # Clamp token IDs to model vocab size to prevent CUDA OOB in embedding lookup.
+        # Tokenizer vocab (154885) may exceed model vocab (151646).
+        max_id = self._model_vocab_size - 1
+        input_ids_raw = batch["input_ids"].to(device)
+        labels_raw = batch["labels"].to(device)
+        ignore_mask = labels_raw == self.config.ignore_index
+        input_ids = input_ids_raw.clamp(0, max_id)
+        labels = labels_raw.clamp(0, max_id)
+        labels[ignore_mask] = self.config.ignore_index
+
         with torch.no_grad():
             teacher_outputs = self.teacher_provider.get_all_outputs(input_ids)
-        
-        with autocast(enabled=self.config.use_fp16 or self.config.use_bf16, dtype=torch.bfloat16 if self.config.use_bf16 else torch.float16):
-            student_outputs = self.student_model(
-                input_ids,
-                output_hidden_states=self.config.output_hidden_states,
-                output_attentions=self.config.output_attentions,
-            )
-            
-            student_outputs_dict = {
-                "logits": student_outputs.logits,
-                "hidden_states": student_outputs.hidden_states if hasattr(student_outputs, 'hidden_states') else None,
-                "attentions": student_outputs.attentions if hasattr(student_outputs, 'attentions') else None,
+
+        # Align teacher logits vocab size to student model vocab size
+        teacher_logits = teacher_outputs.get("logits")
+        if teacher_logits is not None and teacher_logits.shape[-1] != self._model_vocab_size:
+            tv = teacher_logits.shape[-1]
+            if tv > self._model_vocab_size:
+                teacher_logits = teacher_logits[..., :self._model_vocab_size]
+            else:
+                pad = torch.zeros(*teacher_logits.shape[:-1], self._model_vocab_size - tv,
+                                  device=device, dtype=teacher_logits.dtype)
+                teacher_logits = torch.cat([teacher_logits, pad], dim=-1)
+            teacher_outputs = {**teacher_outputs, "logits": teacher_logits}
+
+        # Temporarily replace reasoner with no-op to bypass NF4 shape mismatch.
+        # Logits are computed BEFORE reasoner in YvModel.forward (:1714), so
+        # skipping reasoner does not affect distillation loss computation.
+        _base_model = self.student_model
+        if hasattr(_base_model, 'base_model'):
+            _base_model = _base_model.base_model
+        if hasattr(_base_model, 'model'):
+            _base_model = _base_model.model
+        _reasoner_backup = None
+        _reasoner_patched = False
+        if hasattr(_base_model, 'reasoner'):
+            _reasoner_backup = _base_model.reasoner
+            _base_model.reasoner = lambda x, input_ids, labels: {
+                "loss": torch.tensor(0.0, device=device, requires_grad=True),
+                "logits": None,
             }
-            
-            losses = self.distill_loss(teacher_outputs, student_outputs_dict, labels)
+            _reasoner_patched = True
+
+        try:
+            with torch.amp.autocast("cuda", enabled=self.config.use_fp16 or self.config.use_bf16, dtype=torch.bfloat16 if self.config.use_bf16 else torch.float16):
+                student_outputs = self.student_model(
+                    input_ids,
+                    output_hidden_states=self.config.output_hidden_states,
+                    output_attentions=self.config.output_attentions,
+                )
+        finally:
+            if _reasoner_patched:
+                _base_model.reasoner = _reasoner_backup
+
+        # YvModel returns a dict; HuggingFace models return objects with .logits etc.
+        if isinstance(student_outputs, dict):
+            student_outputs_dict = {
+                "logits": student_outputs.get("logits"),
+                "hidden_states": student_outputs.get("hidden_states"),
+                "attentions": student_outputs.get("attentions"),
+            }
+        else:
+            student_outputs_dict = {
+                "logits": getattr(student_outputs, "logits", None),
+                "hidden_states": getattr(student_outputs, "hidden_states", None),
+                "attentions": getattr(student_outputs, "attentions", None),
+            }
+
+        losses = self.distill_loss(teacher_outputs, student_outputs_dict, labels)
         
         loss = losses['total']
         
@@ -480,9 +690,14 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
     def save_checkpoint(self, path: str) -> None:
         """Save training checkpoint."""
         os.makedirs(path, exist_ok=True)
-        
-        self.student_model.save_pretrained(path)
-        self.tokenizer.save_pretrained(path)
+
+        if hasattr(self.student_model, 'save_pretrained'):
+            self.student_model.save_pretrained(path)
+        else:
+            torch.save(self.student_model.state_dict(), os.path.join(path, "model.pt"))
+
+        if hasattr(self.tokenizer, 'save_pretrained'):
+            self.tokenizer.save_pretrained(path)
         
         checkpoint = {
             "global_step": self.global_step,
@@ -499,19 +714,19 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
         
         self._LOG.info(f"Checkpoint saved to {path}")
     
-    def execute(self, params: Dict[str, Any]) -> PiscesLxOperatorResult:
+    def execute(self, inputs: Dict[str, Any], **kwargs) -> PiscesLxOperatorResult:
         """Execute distillation training.
-        
+
         Args:
-            params: Dictionary containing:
+            inputs: Dictionary containing:
                 - config: POPSSDistillationConfig
                 - teacher_provider: POPSSTeacherProvider (injected by training engine)
-                
+
         Returns:
             Training result.
         """
-        config = params.get("config")
-        teacher_provider = params.get("teacher_provider")
+        config = inputs.get("config")
+        teacher_provider = inputs.get("teacher_provider")
         
         if config is None:
             config = POPSSDistillationConfig()
@@ -525,23 +740,37 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
                 "The training engine must inject the teacher provider. "
                 "Example: operator.execute({'config': config, 'teacher_provider': my_teacher})"
             )
-        
-        self.initialize(config, teacher_provider)
-        
-        dataset = POPSSDistillationDataset(
-            config.train_data,
-            self.tokenizer,
-            config.max_seq_length,
-            config.ignore_index,
+
+        self.initialize(
+            config,
+            teacher_provider,
+            student_model=inputs.get("student_model"),
+            tokenizer=inputs.get("tokenizer"),
         )
-        
-        dataloader = DataLoader(
-            dataset,
-            batch_size=config.micro_batch_size,
-            shuffle=True,
-            num_workers=4,
-            pin_memory=True,
-        )
+
+        dataloader = inputs.get("dataloader")
+        if dataloader is None:
+            dataset = POPSSDistillationDataset(
+                config.train_data,
+                self.tokenizer,
+                config.max_seq_length,
+                config.ignore_index,
+            )
+
+            if len(dataset) == 0:
+                raise ValueError(
+                    f"No samples found in {config.train_data}. "
+                    f"Ensure the data file exists and contains valid JSONL samples, "
+                    f"or pass a pre-built dataloader via the 'dataloader' input key."
+                )
+
+            dataloader = DataLoader(
+                dataset,
+                batch_size=config.micro_batch_size,
+                shuffle=True,
+                num_workers=4,
+                pin_memory=True,
+            )
         
         self._LOG.info(f"Starting distillation training for {config.max_steps} steps")
         
@@ -589,8 +818,9 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
             self.teacher_provider.close()
         
         return PiscesLxOperatorResult(
+            operator_name=self.name,
             status=PiscesLxOperatorStatus.SUCCESS,
-            data={
+            output={
                 "final_step": self.global_step,
                 "training_time": total_time,
                 "output_path": final_checkpoint_path,
