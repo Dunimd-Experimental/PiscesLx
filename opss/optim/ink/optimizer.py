@@ -338,23 +338,24 @@ class POPSSInkOptimizer(Optimizer):
             end_idx = min(start_idx + block_size, len(params_list))
             
             block_params = params_list[start_idx:end_idx]
-            
+            block_param_ids = {id(p) for p in block_params}
+
             for param in params_list:
                 if param.grad is None:
                     continue
-                
+
                 grad = param.grad
                 if grad.is_sparse:
                     grad = grad.to_dense()
-                
+
                 name = self._param_names.get(id(param))
                 if name is None:
                     continue
-                
+
                 if maximize:
                     grad = -grad
-                
-                if param in block_params:
+
+                if id(param) in block_param_ids:
                     sparse_grad, mask = self._sparse_selector.select(grad, name)
 
                     galore_state = self._integrator.get_galore_state(name)

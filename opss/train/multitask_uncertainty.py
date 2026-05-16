@@ -406,9 +406,8 @@ class POPSSMultiTaskOperator(PiscesLxOperatorInterface):
                 )
                 return False
         
-        self._logger.debug("Input validation passed")
         return True
-    
+
     def _initialize_uncertainty(self, num_tasks: int, device: torch.device) -> None:
         """
         Initialize learnable log-uncertainty parameters.

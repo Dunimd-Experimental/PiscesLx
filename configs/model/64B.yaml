@@ -120,8 +120,8 @@ training_config:
   learning_rate: 1.0e-5
   weight_decay: 0.01
   batch_size: 1
-  sequence_length: 192
-  gradient_accumulation_steps: 64
+  sequence_length: 2048
+  gradient_accumulation_steps: 16
   max_steps: 100000
   warmup_ratio: 0.1
   warmup_steps: 100

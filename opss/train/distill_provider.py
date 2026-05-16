@@ -530,6 +530,8 @@ class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
                 if hasattr(self.config, 'base_url') and self.config.base_url:
                     base_url = self.config.base_url
                     base_url = _normalize_base_url(base_url)
+                if isinstance(base_url, str) and "deepseek.com" in base_url and not base_url.endswith("/beta"):
+                    base_url = base_url.rstrip("/") + "/beta"
                 self.client = OpenAI(
                     api_key=self.config.api_key,
                     base_url=base_url,

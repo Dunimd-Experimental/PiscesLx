@@ -422,9 +422,8 @@ class POPSSKFacOperator(PiscesLxOperatorInterface):
             self._logger.error("Model has no parameters")
             return False
         
-        self._logger.debug("Input validation passed")
         return True
-    
+
     def _detect_layer_type(
         self,
         module: nn.Module
