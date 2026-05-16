@@ -1382,13 +1382,22 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             return
         
         try:
-            from opss.train.distill_provider import (
-                POPSSTeacherProviderFactory,
-                POPSSTeacherConfig,
-                POPSSLocalTeacherProvider,
-                POPSSServerTeacherProvider,
-                POPSSRemoteTeacherProvider,
-            )
+            try:
+                from opss.train.distill_provider import (
+                    POPSSTeacherProviderFactory,
+                    POPSSTeacherConfig,
+                    POPSSLocalTeacherProvider,
+                    POPSSServerTeacherProvider,
+                    POPSSRemoteTeacherProvider,
+                )
+            except ImportError:
+                from opss.train import (
+                    POPSSTeacherProviderFactory,
+                    POPSSTeacherConfig,
+                    POPSSLocalTeacherProvider,
+                    POPSSServerTeacherProvider,
+                    POPSSRemoteTeacherProvider,
+                )
             
             provider_config = POPSSTeacherConfig(
                 provider_type=teacher_type,
@@ -1568,10 +1577,27 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 "Please ensure _setup_distillation() was called before start_training()."
             )
 
-        from opss.train.distill import (
-            POPSSDistillationConfig,
-            POPSSDistillationOperator,
-        )
+        _e_direct = None
+        _e_lazy = None
+        try:
+            from opss.train.distill import (
+                POPSSDistillationConfig,
+                POPSSDistillationOperator,
+            )
+        except ImportError as _e:
+            _e_direct = _e
+            try:
+                from opss.train import (
+                    POPSSDistillationConfig,
+                    POPSSDistillationOperator,
+                )
+            except ImportError as _e2:
+                _e_lazy = _e2
+                raise ImportError(
+                    "POPSSDistillationConfig and POPSSDistillationOperator not found. "
+                    "Ensure opss/train/distill.py and opss/train/__init__.py are deployed. "
+                    f"Direct import error: {_e_direct}. Lazy import error: {_e_lazy}."
+                )
 
         distill_cfg = POPSSDistillationConfig(
             student_model_path=str(resume_from) if resume_from else ".pisceslx/ckpt",

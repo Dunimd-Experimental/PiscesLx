@@ -76,6 +76,24 @@ from utils.paths import get_log_file
 from configs.version import VERSION
 
 
+def _normalize_base_url(base_url: str) -> str:
+    """Normalize base URL by stripping common endpoint suffixes.
+    
+    Users may accidentally pass the chat completions endpoint
+    (e.g. https://api.deepseek.com/chat/completions) instead of the
+    API base URL. The OpenAI client auto-appends /chat/completions,
+    /models etc., so endpoint URLs as base would produce malformed requests.
+    """
+    import re
+    base_url = base_url.rstrip().rstrip('/').rstrip(',')
+    base_url = re.sub(r'(/v\d+)?/chat/completions$', '', base_url)
+    base_url = re.sub(r'(/v\d+)?/completions$', '', base_url)
+    base_url = re.sub(r'(/v\d+)?/models$', '', base_url)
+    if not base_url.endswith('/v1'):
+        base_url = base_url.rstrip('/')
+    return base_url
+
+
 class POPSSTeacherProviderType(Enum):
     """Teacher provider type enumeration."""
     LOCAL = "local"
@@ -511,6 +529,7 @@ class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
                 base_url = None
                 if hasattr(self.config, 'base_url') and self.config.base_url:
                     base_url = self.config.base_url
+                    base_url = _normalize_base_url(base_url)
                 self.client = OpenAI(
                     api_key=self.config.api_key,
                     base_url=base_url,
@@ -631,19 +650,28 @@ class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
         return results
     
     def is_available(self) -> bool:
-        """Check API availability."""
-        try:
-            if self._client_type == "anthropic":
-                self.client.messages.create(
-                    model=self.config.model_name or "claude-3-haiku-20240307",
-                    max_tokens=1,
-                    messages=[{"role": "user", "content": "test"}],
-                )
-            else:
-                self.client.models.list()
-            return True
-        except Exception:
+        """Check API availability via client state and essential config.
+        
+        No live API request is made here to avoid transient network/auth failures
+        during initialization. Real API errors are caught during training steps.
+        """
+        if self.client is None:
+            self._LOG.error("Remote teacher provider: API client is not initialized")
             return False
+        
+        if self._client_type == "anthropic":
+            if not self.config.api_key:
+                self._LOG.warning("Remote teacher provider: no api_key configured for Anthropic")
+                return False
+            return True
+        
+        if not self.config.model_name:
+            self._LOG.warning("Remote teacher provider: no model_name configured")
+            return False
+        if not self.config.api_key:
+            self._LOG.warning("Remote teacher provider: no api_key configured")
+            return False
+        return True
 
 
 class POPSSTeacherProviderFactory:
