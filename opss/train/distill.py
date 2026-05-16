@@ -289,6 +289,21 @@ class POPSSDistillationDataset(Dataset):
         }
 
 
+class _NoOpReasoner(nn.Module):
+    """No-op reasoner that bypasses the model's reasoner during distillation.
+
+    Logits are computed BEFORE the reasoner in YvModel.forward, so skipping
+    reasoner does not affect distillation loss computation. This avoids
+    NF4 shape mismatches and other compatibility issues.
+    """
+
+    def forward(self, x, input_ids, labels):
+        return {
+            "loss": torch.tensor(0.0, device=x.device, requires_grad=True),
+            "logits": None,
+        }
+
+
 class _DistillationOperatorImpl(PiscesLxOperatorInterface):
     """Knowledge distillation training operator implementation.
     
@@ -630,10 +645,7 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
         _reasoner_patched = False
         if hasattr(_base_model, 'reasoner'):
             _reasoner_backup = _base_model.reasoner
-            _base_model.reasoner = lambda x, input_ids, labels: {
-                "loss": torch.tensor(0.0, device=device, requires_grad=True),
-                "logits": None,
-            }
+            _base_model.reasoner = _NoOpReasoner()
             _reasoner_patched = True
 
         try:

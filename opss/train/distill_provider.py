@@ -562,7 +562,6 @@ class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
                 prompt=text,
                 max_tokens=0,
                 logprobs=5,
-                echo=True,
             )
             
             vocab_size = len(self.tokenizer) if self.tokenizer else 50000
