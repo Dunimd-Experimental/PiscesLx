@@ -386,8 +386,7 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
         Args:
             config: Distillation configuration.
             teacher_provider: Teacher model provider injected by training engine.
-                             User decides which teacher to use.
-            student_model: Optional pre-initialized student model (e.g. QLoRA from training engine).
+            student_model: Optional pre-initialized student model.
             tokenizer: Optional pre-initialized tokenizer.
         """
         self.config = config
@@ -398,14 +397,11 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
 
         self._init_student(student_model)
         self._device = next(self.student_model.parameters()).device
-        # Get model vocab size from embedding layer for token clamping.
-        # YvModel stores embedding as self.embed (not HF get_input_embeddings).
         embed_attr = getattr(self.student_model, 'embed', None)
         if embed_attr is None:
             embed_attr = self.student_model.get_input_embeddings()
         self._model_vocab_size = embed_attr.weight.shape[0]
         self._init_tokenizer(tokenizer)
-        self._init_optimizer()
         self._init_loss()
         
         if not self.teacher_provider.is_available():
@@ -565,8 +561,28 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
             if hasattr(self.tokenizer, 'eos_token'):
                 self.tokenizer.pad_token = self.tokenizer.eos_token
 
-    def _init_optimizer(self) -> None:
-        """Initialize optimizer and scheduler."""
+    def _init_optimizer(self, optimizer=None, scheduler=None) -> None:
+        """Initialize optimizer and scheduler.
+
+        Args:
+            optimizer: Optional pre-built optimizer from training engine (e.g. Ink).
+            scheduler: Optional pre-built LR scheduler from training engine.
+        """
+        if optimizer is not None:
+            self._LOG.info("Using pre-initialized optimizer from training engine")
+            self.optimizer = optimizer
+            if scheduler is not None:
+                self.scheduler = scheduler
+                self._LOG.info("Using pre-initialized scheduler from training engine")
+            else:
+                self.scheduler = torch.optim.lr_scheduler.LambdaLR(
+                    self.optimizer,
+                    lambda step: 1.0,
+                )
+            if self.config.use_fp16:
+                self.scaler = GradScaler()
+            return
+
         self.optimizer = torch.optim.AdamW(
             self.student_model.parameters(),
             lr=self.config.learning_rate,
@@ -760,82 +776,19 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
             tokenizer=inputs.get("tokenizer"),
         )
 
-        dataloader = inputs.get("dataloader")
-        if dataloader is None:
-            dataset = POPSSDistillationDataset(
-                config.train_data,
-                self.tokenizer,
-                config.max_seq_length,
-                config.ignore_index,
-            )
+        self._LOG.info(
+            "Distillation operator initialized. "
+            "Training loop is driven by PiscesLxTrainingEngine via pipeline.fit(). "
+            "The training engine handles optimizer, scheduler, mixed precision, "
+            "gradient accumulation, MoE ops, logging, and checkpointing."
+        )
 
-            if len(dataset) == 0:
-                raise ValueError(
-                    f"No samples found in {config.train_data}. "
-                    f"Ensure the data file exists and contains valid JSONL samples, "
-                    f"or pass a pre-built dataloader via the 'dataloader' input key."
-                )
-
-            dataloader = DataLoader(
-                dataset,
-                batch_size=config.micro_batch_size,
-                shuffle=True,
-                num_workers=4,
-                pin_memory=True,
-            )
-        
-        self._LOG.info(f"Starting distillation training for {config.max_steps} steps")
-        
-        start_time = time.time()
-        accumulated_loss = 0.0
-        
-        while self.global_step < config.max_steps:
-            for batch in dataloader:
-                if self.global_step >= config.max_steps:
-                    break
-                
-                losses = self.train_step(batch)
-                accumulated_loss += losses['total']
-                
-                self.global_step += 1
-                
-                if self.global_step % config.log_interval == 0:
-                    avg_loss = accumulated_loss / config.log_interval
-                    elapsed = time.time() - start_time
-                    steps_per_sec = self.global_step / elapsed
-                    
-                    self._LOG.info(
-                        f"Step {self.global_step}/{config.max_steps} | "
-                        f"Loss: {avg_loss:.4f} | "
-                        f"Speed: {steps_per_sec:.2f} steps/s | "
-                        f"LR: {self.scheduler.get_last_lr()[0]:.2e}"
-                    )
-                    accumulated_loss = 0.0
-                
-                if self.global_step % config.checkpoint_interval == 0:
-                    checkpoint_path = os.path.join(
-                        config.output_dir,
-                        f"checkpoint-{self.global_step}"
-                    )
-                    self.save_checkpoint(checkpoint_path)
-        
-        final_checkpoint_path = os.path.join(config.output_dir, "final")
-        self.save_checkpoint(final_checkpoint_path)
-        
-        total_time = time.time() - start_time
-        
-        self._LOG.info(f"Distillation training completed in {total_time:.2f} seconds")
-        
-        if self.teacher_provider is not None:
-            self.teacher_provider.close()
-        
         return PiscesLxOperatorResult(
             operator_name=self.name,
             status=PiscesLxOperatorStatus.SUCCESS,
             output={
-                "final_step": self.global_step,
-                "training_time": total_time,
-                "output_path": final_checkpoint_path,
+                "message": "Distillation context ready. Delegate training loop to pipeline.fit().",
+                "global_step": self.global_step,
             }
         )
 

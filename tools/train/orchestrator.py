@@ -1607,21 +1607,15 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         _e_direct = None
         _e_lazy = None
         try:
-            from opss.train.distill import (
-                POPSSDistillationConfig,
-                POPSSDistillationOperator,
-            )
+            from opss.train.distill import POPSSDistillationConfig
         except ImportError as _e:
             _e_direct = _e
             try:
-                from opss.train import (
-                    POPSSDistillationConfig,
-                    POPSSDistillationOperator,
-                )
+                from opss.train import POPSSDistillationConfig
             except ImportError as _e2:
                 _e_lazy = _e2
                 raise ImportError(
-                    "POPSSDistillationConfig and POPSSDistillationOperator not found. "
+                    "POPSSDistillationConfig not found. "
                     "Ensure opss/train/distill.py and opss/train/__init__.py are deployed. "
                     f"Direct import error: {_e_direct}. Lazy import error: {_e_lazy}."
                 )
@@ -1643,36 +1637,48 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             use_gradient_checkpointing=True,
         )
 
-        student_model = getattr(self.trainer, "model", None) if self.trainer else None
-        tokenizer = getattr(self, "_tokenizer", None)
+        from opss.train.distill_loss import POPSSDistillationLossConfig, POPSSDistillationLoss
 
+        student_model = self.trainer.model if self.trainer else None
         if student_model is None:
-            _LOG.warning(
-                "Pre-initialized student model is None. "
-                "Distillation operator will attempt to load from checkpoint. "
-                f"trainer={self.trainer is not None} "
-                f"trainer.model={'exists' if self.trainer and hasattr(self.trainer, 'model') and self.trainer.model is not None else 'missing'}"
-            )
-        else:
-            _LOG.info(f"Passing pre-initialized student model: {student_model.__class__.__name__}")
+            raise RuntimeError("Training engine model is not initialized. Cannot start distillation.")
 
-        distill_operator = POPSSDistillationOperator()
-        train_dataloader = getattr(self, "_current_train_loader", None)
-        result = distill_operator.execute({
-            "config": distill_cfg,
-            "teacher_provider": teacher_provider,
-            "student_model": student_model,
-            "tokenizer": tokenizer,
-            "dataloader": train_dataloader,
-        })
+        embed_attr = getattr(student_model, 'embed', None)
+        if embed_attr is None:
+            embed_attr = student_model.get_input_embeddings()
+        model_vocab_size = embed_attr.weight.shape[0]
 
-        self.training_history['results'] = result.data
+        loss_config = POPSSDistillationLossConfig(
+            temperature=distill_cfg.temperature,
+            alpha=distill_cfg.alpha,
+            beta=distill_cfg.beta,
+            gamma=distill_cfg.gamma,
+            delta=distill_cfg.delta,
+            epsilon=distill_cfg.epsilon,
+            ignore_index=distill_cfg.ignore_index,
+        )
+        distill_loss_fn = POPSSDistillationLoss(loss_config)
+
+        self.trainer.set_distill_context(distill_loss_fn, model_vocab_size)
+        _LOG.info("Distillation context injected into training engine")
+
+        train_loader = self._get_train_dataloader()
+        val_loader = self._get_val_dataloader()
+
+        training_results = self.pipeline.fit(
+            train_dataloader=train_loader,
+            val_dataloader=val_loader,
+            epochs=epochs,
+            resume_from=resume_from,
+        )
+
+        self.training_history['results'] = training_results
         self.training_history['timestamps']['end'] = datetime.now().isoformat()
         self.current_phase = "completed"
         self._detach_dev_mode()
 
         _LOG.info("Distillation training completed successfully")
-        return result.data
+        return training_results
     
     def _get_train_dataloader(self):
         """Get training dataloader."""

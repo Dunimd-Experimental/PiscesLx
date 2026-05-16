@@ -1845,14 +1845,6 @@ class YvTransformerBlock(nn.Module):
                 use_cache=True,
                 cache_manager=self.cache_manager
             )
-            if self.cache_manager is not None and self.layer_idx >= 0 and present_kv is not None:
-                self.cache_manager.update_kv_cache(
-                    self.layer_idx,
-                    present_kv[0],
-                    present_kv[1],
-                    current_pos=x_norm.shape[1],
-                    use_h2o=getattr(self.attn, 'use_h2o', False)
-                )
             attn_cache = present_kv
         else:
             attn_out = self.attn(
@@ -1919,6 +1911,9 @@ class YvTransformerBlock(nn.Module):
         
         if self.use_attn_res:
             self._update_attn_res_block(x_out)
+
+        if use_cache and self.cache_manager is not None and self.layer_idx >= 0:
+            self.cache_manager.compute_pending_prediction(self.layer_idx, x_out)
 
         if use_cache:
             return x_out, aux_loss, attn_cache

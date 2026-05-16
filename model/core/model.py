@@ -1665,6 +1665,10 @@ class YvModel(nn.Module):
                                     tensor.to(torch.float16) if tensor is not None else None
                                     for tensor in cache
                                 )
+
+                        if hasattr(self, 'cache_manager') and self.cache_manager is not None:
+                            self.cache_manager.compute_pending_prediction(layer_idx, h)
+
                         new_caches.append(cache)
                     else:
                         if hasattr(layer, 'set_sequence_length'):

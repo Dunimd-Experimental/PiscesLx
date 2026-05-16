@@ -556,17 +556,18 @@ class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
     
     def _get_openai_logits(self, text: str, input_ids: Tensor) -> Tensor:
         """Get logits from OpenAI-compatible API."""
+        target_device = input_ids.device
         try:
             response = self.client.completions.create(
                 model=self.config.model_name,
                 prompt=text,
-                max_tokens=0,
+                max_tokens=1,
                 logprobs=5,
             )
             
             vocab_size = len(self.tokenizer) if self.tokenizer else 50000
             seq_len = input_ids.shape[1]
-            logits = torch.full((1, seq_len, vocab_size), -100.0)
+            logits = torch.full((1, seq_len, vocab_size), -100.0, device=target_device)
             
             if response.choices and response.choices[0].logprobs:
                 logprobs_data = response.choices[0].logprobs
@@ -584,10 +585,11 @@ class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
         except Exception as e:
             self._LOG.error(f"Failed to get OpenAI logits: {e}")
             vocab_size = len(self.tokenizer) if self.tokenizer else 50000
-            return torch.zeros(1, input_ids.shape[1], vocab_size)
+            return torch.zeros(1, input_ids.shape[1], vocab_size, device=target_device)
     
     def _get_anthropic_logits(self, text: str, input_ids: Tensor) -> Tensor:
         """Get logits from Anthropic API."""
+        target_device = input_ids.device
         try:
             response = self.client.completions.create(
                 model=self.config.model_name,
@@ -596,11 +598,11 @@ class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
             )
             
             vocab_size = len(self.tokenizer) if self.tokenizer else 50000
-            return torch.zeros(1, input_ids.shape[1], vocab_size)
+            return torch.zeros(1, input_ids.shape[1], vocab_size, device=target_device)
         except Exception as e:
             self._LOG.error(f"Failed to get Anthropic logits: {e}")
             vocab_size = len(self.tokenizer) if self.tokenizer else 50000
-            return torch.zeros(1, input_ids.shape[1], vocab_size)
+            return torch.zeros(1, input_ids.shape[1], vocab_size, device=target_device)
     
     def get_hidden_states(self, input_ids: Tensor) -> Optional[List[Tensor]]:
         """Remote API does not support hidden states."""

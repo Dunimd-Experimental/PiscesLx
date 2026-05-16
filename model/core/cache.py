@@ -164,6 +164,9 @@ from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.Core", file_path=get_log_file("Yv.Core"), enable_file=True)
 
+from .plt_trie import YvPLTTrieIndex
+from .predictive_delta import YvPredictiveDeltaCoder, YvDeltaCacheEntry
+
 class YvCacheType(Enum):
     """Enumeration of available cache types for transformer inference.
     
@@ -328,6 +331,15 @@ class YvCacheConfig:
     device: str = "cuda"
 
     cache_type: YvCacheType = YvCacheType.HYBRID
+
+    use_predictive_delta: bool = False
+    predictive_delta_bits: int = 2
+    predictive_delta_bottleneck: Optional[int] = None
+    kv_lora_rank: int = 512
+
+    use_plt_trie: bool = False
+    plt_trie_distance_threshold: float = 8.0
+    plt_trie_max_nodes: int = 100000
 
     def __post_init__(self):
         if isinstance(self.eviction_policy, str):
@@ -1721,6 +1733,8 @@ class YvUnifiedCacheManager:
                 block_size=getattr(config, 'kv_cache_block_size', 512),
             )
 
+        self._lock = threading.Lock()
+
         self.kv_cache: Dict[int, Dict[str, Any]] = {}
         self.generation_cache: Dict[str, Any] = {}
         self.speculative_cache: Dict[str, Any] = {}
@@ -1731,6 +1745,32 @@ class YvUnifiedCacheManager:
         self.speculative_manager: Optional[YvSpeculativeCacheManager] = None
         self.multimodal_manager: Optional[YvMultimodalCacheManager] = None
         self.compressor: Optional[YvCacheCompressor] = None
+
+        self.predictive_delta: Optional[YvPredictiveDeltaCoder] = None
+        self.plt_trie: Optional[YvPLTTrieIndex] = None
+
+        if self.config.use_predictive_delta:
+            _LOG.info(f"YvUnifiedCacheManager: Enabling Predictive Delta Coding "
+                       f"(bits={self.config.predictive_delta_bits}, "
+                       f"kv_lora_rank={self.config.kv_lora_rank})")
+            self.predictive_delta = YvPredictiveDeltaCoder(
+                hidden_size=getattr(config, 'hidden_size', 4096),
+                kv_lora_rank=self.config.kv_lora_rank,
+                num_layers=self.config.n_layers,
+                predictor_bottleneck=self.config.predictive_delta_bottleneck,
+                delta_bits=self.config.predictive_delta_bits,
+                use_layer_specific_predictors=True,
+                dtype=self.config.dtype,
+                device=self.config.device,
+            )
+
+        if self.config.use_plt_trie:
+            _LOG.info(f"YvUnifiedCacheManager: Enabling PLT Trie prefix deduplication "
+                       f"(threshold={self.config.plt_trie_distance_threshold} bits)")
+            self.plt_trie = YvPLTTrieIndex(
+                distance_threshold_bits=self.config.plt_trie_distance_threshold,
+                max_nodes=self.config.plt_trie_max_nodes,
+            )
 
         if self.config.cache_type in [YvCacheType.PAGED, YvCacheType.HYBRID]:
             self.paged_manager = YvPagedCacheManager(self.config)
@@ -1756,6 +1796,21 @@ class YvUnifiedCacheManager:
     def _get_layer_lock(self, layer_idx: int) -> threading.Lock:
         """Get lock for a specific layer using modulo hashing."""
         return self._layer_locks[layer_idx % self._num_layer_locks]
+
+    def compute_pending_prediction(self, layer_idx: int, hidden_states: torch.Tensor):
+        """Compute and store the predicted KV for the next token step.
+
+        Uses the layer's output hidden state to predict what the KV latent
+        will be for the next token. This prediction is consumed when the
+        next token's KV is stored via update_kv_cache.
+
+        Args:
+            layer_idx: Layer index.
+            hidden_states: Layer output hidden state at the current position.
+                Shape [batch, hidden_size] or [batch, seq_len, hidden_size].
+        """
+        if self.predictive_delta is not None:
+            self.predictive_delta.compute_pending_prediction(layer_idx, hidden_states)
 
     def get_kv_cache(self, layer_idx: int, past_key_values: Optional[Tuple[torch.Tensor]] = None):
         with self._get_layer_lock(layer_idx):
@@ -1801,25 +1856,41 @@ class YvUnifiedCacheManager:
                     e = min(delta, (i + 1) * bs)
                     kb = tail_k[:, :, s:e, :]
                     vb = tail_v[:, :, s:e, :]
+                    block_tokens = e - s
 
-                    if self.config.cache_quantization and kb.shape[2] >= min(bs, 256):
+                    use_delta = (
+                        self.predictive_delta is not None
+                        and block_tokens == 1
+                        and self.predictive_delta._enable_delta
+                    )
+
+                    if use_delta:
+                        kb, vb = self._delta_encode_block(kb, vb, layer_idx)
+
+                    if self.config.cache_quantization and kb.shape[2] >= min(bs, 256) and not use_delta:
                         kb, vb = self._quantize_cache(kb, vb)
 
                     entry['blocks'].append((kb, vb))
-                    entry['total_len'] += (e - s)
+                    entry['total_len'] += block_tokens
 
             soft_cap = int(self.config.max_cache_size * 1.5)
             while entry['total_len'] > soft_cap and entry['blocks']:
-                kb, vb = entry['blocks'].pop(0)
-                entry['total_len'] -= kb.shape[2]
+                block = entry['blocks'].pop(0)
+                if isinstance(block, YvDeltaCacheEntry):
+                    entry['total_len'] -= block.num_tokens
+                else:
+                    entry['total_len'] -= block[0].shape[2]
                 self.cache_evictions += 1
 
             if entry['total_len'] > self.config.max_cache_size and len(entry['blocks']) >= 1:
                 self._compact_blocks(entry)
 
             while entry['total_len'] > self.config.max_cache_size and entry['blocks']:
-                kb, vb = entry['blocks'].pop(0)
-                entry['total_len'] -= kb.shape[2]
+                block = entry['blocks'].pop(0)
+                if isinstance(block, YvDeltaCacheEntry):
+                    entry['total_len'] -= block.num_tokens
+                else:
+                    entry['total_len'] -= block[0].shape[2]
                 self.cache_evictions += 1
 
             return self._concat_recent(layer_idx)
@@ -1828,8 +1899,16 @@ class YvUnifiedCacheManager:
         entry = self.kv_cache.get(layer_idx, None)
         if entry is None or not entry['blocks']:
             return None
-        ks = [b[0] for b in entry['blocks']]
-        vs = [b[1] for b in entry['blocks']]
+        ks = []
+        vs = []
+        for b in entry['blocks']:
+            if isinstance(b, YvDeltaCacheEntry):
+                dk, dv = self._delta_decode_block(b)
+                ks.append(dk)
+                vs.append(dv)
+            else:
+                ks.append(b[0])
+                vs.append(b[1])
         k = torch.cat(ks, dim=2)
         v = torch.cat(vs, dim=2)
         return (k, v)
@@ -1843,7 +1922,11 @@ class YvUnifiedCacheManager:
             idx = 0
 
             while entry['total_len'] > target_total and idx < len(entry['blocks']):
-                kb, vb = entry['blocks'][idx]
+                block = entry['blocks'][idx]
+                if isinstance(block, YvDeltaCacheEntry):
+                    idx += 1
+                    continue
+                kb, vb = block
                 B, H, T, D = kb.shape
 
                 if T < 64:
@@ -1893,6 +1976,64 @@ class YvUnifiedCacheManager:
                 idx += 1
         except Exception as e:
             _LOG.debug(f"Cache block compaction failed: {e}")
+
+    def _delta_encode_block(
+        self,
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        layer_idx: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Delta-encode a single-token KV block using predictive delta coding.
+
+        Computes the residual between the actual KV and the predicted KV,
+        quantizes the residual, and wraps it in a YvDeltaCacheEntry.
+
+        Args:
+            keys: Key tensor [1, n_heads, 1, head_dim].
+            values: Value tensor [1, n_heads, 1, head_dim].
+            layer_idx: Layer index for the predictor.
+
+        Returns:
+            A YvDeltaCacheEntry that can be stored in the block list.
+            The entry appears as a (rk, rv) tuple when accessed via _delta_decode_block.
+        """
+        rk, scale_k, pred_k = self.predictive_delta.encode_residual(keys, layer_idx)
+        rv, scale_v, pred_v = self.predictive_delta.encode_residual(values, layer_idx)
+
+        delta_entry = YvDeltaCacheEntry(
+            residual_k=rk,
+            residual_v=rv,
+            scale_k=scale_k,
+            scale_v=scale_v,
+            pred_k=pred_k,
+            pred_v=pred_v,
+        )
+
+        # As a YvDeltaCacheEntry, this will be stored in the blocks list directly.
+        # We also return reconstructed (k, v) for the caller to display length info.
+        decoded_k = self.predictive_delta.decode_residual(rk, scale_k, pred_k)
+        decoded_v = self.predictive_delta.decode_residual(rv, scale_v, pred_v)
+        return delta_entry, (decoded_k, decoded_v)
+
+    def _delta_decode_block(
+        self,
+        delta_entry: YvDeltaCacheEntry,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Decode a delta-encoded cache block back to full KV tensors.
+
+        Args:
+            delta_entry: The YvDeltaCacheEntry stored in the cache.
+
+        Returns:
+            Tuple of (key_tensor, value_tensor) reconstructed from residuals.
+        """
+        k = self.predictive_delta.decode_residual(
+            delta_entry.residual_k, delta_entry.scale_k, delta_entry.pred_k
+        )
+        v = self.predictive_delta.decode_residual(
+            delta_entry.residual_v, delta_entry.scale_v, delta_entry.pred_v
+        )
+        return k, v
 
     def get_generation_cache(self, modality: str):
         return self.generation_cache.get(modality, None)
@@ -2091,6 +2232,77 @@ class YvUnifiedCacheManager:
             return self.compressor.compress_importance_based(keys, values, target_ratio)
         return keys, values
 
+    def find_plt_prefix_match(
+        self,
+        token_ids: List[int],
+        log_probs: Optional[List[float]] = None,
+    ) -> Optional[Tuple[List[int], int]]:
+        """Find the longest matching prefix in the PLT trie for KV cache sharing.
+
+        Uses the PLT trie metric to identify semantically equivalent shared
+        prefixes across sessions, enabling KV cache block sharing beyond
+        exact token sequence matching.
+
+        Args:
+            token_ids: Query token sequence.
+            log_probs: Per-token log-probabilities from the model.
+
+        Returns:
+            If a match within the distance threshold is found, returns
+            (shared_block_ids, divergence_position). The divergence_position
+            is the index where the new sequence diverges from the cached prefix.
+            Returns None if no match.
+
+        Reference:
+            Magarshak, arXiv:2604.15356, 2026, Section 4.
+        """
+        if self.plt_trie is None:
+            return None
+        return self.plt_trie.find_longest_match(token_ids, log_probs)
+
+    def insert_plt_prefix(
+        self,
+        token_ids: List[int],
+        log_probs: Optional[List[float]] = None,
+        block_ids: Optional[List[int]] = None,
+    ):
+        """Insert a token prefix into the PLT trie for future sharing.
+
+        Should be called after a sequence's KV cache blocks have been
+        allocated and populated in the paged cache manager.
+
+        Args:
+            token_ids: Token sequence prefix.
+            log_probs: Per-token log-probabilities.
+            block_ids: Paged cache block IDs for this prefix.
+        """
+        if self.plt_trie is not None:
+            self.plt_trie.insert(token_ids, log_probs, block_ids)
+
+    def compute_plt_trie_distance(
+        self,
+        seq_a: List[int],
+        seq_b: List[int],
+        log_probs_a: Optional[List[float]] = None,
+        log_probs_b: Optional[List[float]] = None,
+    ) -> float:
+        """Compute the PLT trie distance between two token sequences.
+
+        d_T(a, b) = -log2 P_M(a ^ b)
+
+        Args:
+            seq_a: First token sequence.
+            seq_b: Second token sequence.
+            log_probs_a: Per-token log-probabilities of seq_a.
+            log_probs_b: Per-token log-probabilities of seq_b.
+
+        Returns:
+            Trie distance in bits.
+        """
+        if self.plt_trie is not None:
+            return self.plt_trie.trie_distance(seq_a, seq_b, log_probs_a, log_probs_b)
+        return float('inf')
+
     def clear_cache(self):
         with self._lock:
             self.kv_cache.clear()
@@ -2100,6 +2312,11 @@ class YvUnifiedCacheManager:
             self.cache_hits = 0
             self.cache_misses = 0
             self.cache_evictions = 0
+            if self.plt_trie is not None:
+                self.plt_trie.clear()
+            if self.predictive_delta is not None:
+                self.predictive_delta.reset_stats()
+                self.predictive_delta._pending_predictions.clear()
 
     def get_cache_stats(self) -> Dict[str, Any]:
         total_requests = self.cache_hits + self.cache_misses
@@ -2139,6 +2356,15 @@ class YvUnifiedCacheManager:
         if self.ssm_manager is not None:
             stats['ssm_cached_layers'] = len(self.ssm_manager.state_cache)
 
+        if self.predictive_delta is not None:
+            stats.update({
+                'predictive_delta_' + k: v
+                for k, v in self.predictive_delta.get_stats().items()
+            })
+
+        if self.plt_trie is not None:
+            stats['plt_trie_nodes'] = self.plt_trie.get_stats().get('node_count', 0)
+
         return stats
 
     def create_checkpoint(self) -> Dict[str, Any]:
@@ -2150,8 +2376,14 @@ class YvUnifiedCacheManager:
 
         for layer_idx, entry in self.kv_cache.items():
             if entry and 'blocks' in entry:
+                blocks_data = []
+                for b in entry['blocks']:
+                    if isinstance(b, YvDeltaCacheEntry):
+                        blocks_data.append(b.clone())
+                    else:
+                        blocks_data.append((b[0].clone(), b[1].clone()))
                 checkpoint['kv_cache'][layer_idx] = {
-                    'blocks': [(b[0].clone(), b[1].clone()) for b in entry['blocks']],
+                    'blocks': blocks_data,
                     'total_len': entry['total_len']
                 }
 
@@ -2162,7 +2394,13 @@ class YvUnifiedCacheManager:
             self.kv_cache.clear()
 
             for layer_idx, entry in checkpoint.get('kv_cache', {}).items():
+                blocks_data = []
+                for b in entry['blocks']:
+                    if isinstance(b, YvDeltaCacheEntry):
+                        blocks_data.append(b.clone())
+                    else:
+                        blocks_data.append((b[0].clone(), b[1].clone()))
                 self.kv_cache[int(layer_idx)] = {
-                    'blocks': [(b[0].clone(), b[1].clone()) for b in entry['blocks']],
+                    'blocks': blocks_data,
                     'total_len': entry['total_len']
                 }

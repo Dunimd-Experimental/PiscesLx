@@ -245,6 +245,8 @@ class PiscesLxTrainingOperator(object):
         self.response_only_loss = getattr(config, 'response_only_loss', False)
         self._reference_model = None
         self._teacher_provider = None
+        self._distill_loss_fn = None
+        self._distill_model_vocab_size = 0
 
         self.device = setup_training_device(
             local_rank=getattr(config, 'local_rank', -1),
@@ -1416,6 +1418,9 @@ class PiscesLxTrainingOperator(object):
         """
         from .config import TrainingStage
         
+        if self._teacher_provider is not None and self._distill_loss_fn is not None:
+            return self._compute_distill_forward(batch)
+        
         if self.stage == TrainingStage.ALIGNMENT_DPO:
             return self._compute_dpo_forward(batch)
         elif self.stage == TrainingStage.ALIGNMENT_PPO:
@@ -1430,6 +1435,75 @@ class PiscesLxTrainingOperator(object):
                 outputs['loss'] = self._apply_response_mask_loss(outputs, batch)
             return outputs
     
+    def _compute_distill_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+        """
+        Distillation forward pass using teacher logits.
+
+        Runs teacher inference (no_grad), student forward, and computes
+        multi-part distillation loss via POPSSDistillationLoss.
+        """
+        device = self.device
+        mv = self._distill_model_vocab_size
+        input_ids = batch["input_ids"].clamp(0, mv - 1) if mv > 0 else batch["input_ids"]
+        labels = batch["labels"]
+
+        with torch.no_grad():
+            teacher_outputs = self._teacher_provider.get_all_outputs(input_ids)
+
+        teacher_logits = teacher_outputs.get("logits")
+        if teacher_logits is not None and mv > 0 and teacher_logits.shape[-1] != mv:
+            tv = teacher_logits.shape[-1]
+            if tv > mv:
+                teacher_logits = teacher_logits[..., :mv]
+            else:
+                pad = torch.zeros(*teacher_logits.shape[:-1], mv - tv,
+                                  device=device, dtype=teacher_logits.dtype)
+                teacher_logits = torch.cat([teacher_logits, pad], dim=-1)
+            teacher_outputs = {**teacher_outputs, "logits": teacher_logits}
+
+        _base_model = self.model
+        if hasattr(_base_model, 'base_model'):
+            _base_model = _base_model.base_model
+        if hasattr(_base_model, 'model'):
+            _base_model = _base_model.model
+        _reasoner_backup = None
+        if hasattr(_base_model, 'reasoner'):
+            from opss.train.distill import _NoOpReasoner
+            _reasoner_backup = _base_model.reasoner
+            _base_model.reasoner = _NoOpReasoner()
+
+        try:
+            student_out = self.model(
+                input_ids=input_ids,
+                output_hidden_states=True,
+                output_attentions=True,
+            )
+        finally:
+            if _reasoner_backup is not None:
+                _base_model.reasoner = _reasoner_backup
+
+        if isinstance(student_out, dict):
+            student_outputs = {
+                "logits": student_out.get("logits"),
+                "hidden_states": student_out.get("hidden_states"),
+                "attentions": student_out.get("attentions"),
+            }
+        else:
+            student_outputs = {
+                "logits": getattr(student_out, "logits", None),
+                "hidden_states": getattr(student_out, "hidden_states", None),
+                "attentions": getattr(student_out, "attentions", None),
+            }
+
+        losses = self._distill_loss_fn(teacher_outputs, student_outputs, labels)
+        return {
+            "loss": losses["total"],
+            "logits": student_outputs.get("logits"),
+            "distill_logits_loss": losses.get("logits"),
+            "distill_hidden_loss": losses.get("hidden"),
+            "distill_attention_loss": losses.get("attention"),
+        }
+
     def _compute_sft_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """
         SFT forward pass with response-only loss masking.
@@ -1686,6 +1760,18 @@ class PiscesLxTrainingOperator(object):
         """
         return self._teacher_provider
     
+    def set_distill_context(self, distill_loss_fn, model_vocab_size: int):
+        """
+        Set distillation loss function and model vocab size.
+        
+        Args:
+            distill_loss_fn: POPSSDistillationLoss instance.
+            model_vocab_size: Student model vocab size for token ID clamping.
+        """
+        self._distill_loss_fn = distill_loss_fn
+        self._distill_model_vocab_size = model_vocab_size
+        _LOG.info("Distillation context set on training engine")
+
     def is_distillation_enabled(self):
         """
         Check if distillation is enabled.
