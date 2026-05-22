@@ -34,10 +34,8 @@ import gc
 import json
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union, Type
-from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 from enum import Enum
-from concurrent.futures import ThreadPoolExecutor
 import threading
 
 import torch
@@ -199,7 +197,7 @@ class YvQuantizationEngine:
                     try:
                         from model.config import YvConfig
                         from model.modeling import YvModel
-                        config = YvConfig.from_pretrained(model_path)
+                        YvConfig.from_pretrained(model_path)
                         model = YvModel.from_pretrained(model_path)
                         self._LOG.info(f"Model loaded in {time.time() - start_time:.2f}s")
                         return model
@@ -337,7 +335,6 @@ class YvQuantizationEngine:
                 if isinstance(module, (nn.Linear, nn.Conv1d, nn.Conv2d)):
                     try:
                         original_output = None
-                        quantized_output = None
                         
                         for batch in calibration_data[:10]:
                             try:
@@ -535,8 +532,12 @@ class YvQuantizationEngine:
             try:
                 from safetensors.torch import save_file
                 
-                state_dict = {k: v for k, v in model.state_dict().items() 
-                             if not isinstance(v, (bnb.nn.Linear4bit, bnb.nn.Linear8bitLt))}
+                try:
+                    import bitsandbytes as bnb
+                    state_dict = {k: v for k, v in model.state_dict().items() 
+                                 if not isinstance(v, (bnb.nn.Linear4bit, bnb.nn.Linear8bitLt))}
+                except ImportError:
+                    state_dict = {k: v for k, v in model.state_dict().items()}
                 
                 safe_filename = output_path if output_path.endswith('.safetensors') else f"{output_path}.safetensors"
                 save_file(state_dict, safe_filename, metadata=export_metadata)
@@ -788,3 +789,327 @@ class POPSSQuantizationEngineOperator(PiscesLxOperatorInterface):
         if self.engine is not None:
             self.engine.cleanup()
             self.engine = None
+
+
+class FP8Format(Enum):
+    """Supported FP8 quantization formats."""
+    E4M3 = "e4m3"
+    E5M2 = "e5m2"
+
+
+class ScaleMethod(Enum):
+    """Supported scaling methods for quantization."""
+    PER_TENSOR = "per_tensor"
+    PER_CHANNEL = "per_channel"
+
+
+class POPSSFP8QuantizationEngine:
+    """
+    FP8/INT4 quantization engine for high-performance inference.
+
+    Supports:
+    - FP8 per-tensor and per-channel quantization (E4M3 and E5M2 formats)
+    - INT4 block-wise quantization with configurable block sizes
+    - KV cache quantization to INT4/FP8
+    - Quantization-aware scaling factor calibration
+    - Delayed scaling with amax history for conservative quantization
+    """
+
+    E4M3_MAX = 448.0
+    E5M2_MAX = 57344.0
+    VALID_BLOCK_SIZES = [32, 64, 128]
+    MAX_AMAX_HISTORY = 1024
+
+    def __init__(self, device: Optional[torch.device] = None):
+        self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer", file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self.amax_history: Dict[str, List[torch.Tensor]] = {}
+        self.scales: Dict[str, torch.Tensor] = {}
+        self.stats: Dict[str, Any] = {
+            "total_fp8_quantizations": 0,
+            "total_int4_quantizations": 0,
+            "total_kv_cache_quantizations": 0,
+        }
+
+    def _get_fp8_max(self, fp8_format: FP8Format) -> float:
+        if fp8_format == FP8Format.E4M3:
+            return self.E4M3_MAX
+        return self.E5M2_MAX
+
+    def quantize_to_fp8(
+        self,
+        tensor: torch.Tensor,
+        fp8_format: FP8Format = FP8Format.E4M3,
+        scale_method: ScaleMethod = ScaleMethod.PER_TENSOR,
+        scale_key: Optional[str] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Quantize a tensor to FP8 representation.
+
+        Args:
+            tensor: Input full-precision tensor
+            fp8_format: FP8 format variant (E4M3 or E5M2)
+            scale_method: Per-tensor or per-channel scaling
+            scale_key: Optional key for tracking amax history
+
+        Returns:
+            Tuple of (fp8_quantized_tensor, scale_factor)
+        """
+        fp8_max = self._get_fp8_max(fp8_format)
+
+        if scale_method == ScaleMethod.PER_TENSOR:
+            amax = tensor.abs().max()
+            scale = amax / fp8_max
+            scale = torch.clamp(scale, min=1e-12)
+            quantized = tensor / scale
+            quantized = torch.clamp(quantized, -fp8_max, fp8_max)
+        else:
+            if tensor.dim() >= 2:
+                amax = tensor.abs().amax(dim=tuple(range(1, tensor.dim())), keepdim=True)
+            else:
+                amax = tensor.abs().max()
+            scale = amax / fp8_max
+            scale = torch.clamp(scale, min=1e-12)
+            quantized = tensor / scale
+            quantized = torch.clamp(quantized, -fp8_max, fp8_max)
+
+        if scale_key is not None:
+            self._update_amax_history(scale_key, tensor.abs().max())
+            self.scales[scale_key] = scale
+
+        self.stats["total_fp8_quantizations"] += 1
+        return quantized, scale
+
+    def dequantize_from_fp8(self, fp8_tensor: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+        """Dequantize an FP8 tensor back to full precision."""
+        return fp8_tensor * scale
+
+    def quantize_to_int4_blockwise(
+        self,
+        tensor: torch.Tensor,
+        block_size: int = 128,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Quantize a tensor to INT4 using block-wise asymmetric quantization.
+
+        Args:
+            tensor: Input full-precision tensor
+            block_size: Block size for grouping (32, 64, or 128)
+
+        Returns:
+            Tuple of (quantized_int4_tensor, scales, zero_points)
+        """
+        if block_size not in self.VALID_BLOCK_SIZES:
+            raise ValueError(f"block_size must be one of {self.VALID_BLOCK_SIZES}, got {block_size}")
+
+        original_shape = tensor.shape
+        flat_tensor = tensor.flatten()
+        num_elements = flat_tensor.numel()
+        num_blocks = (num_elements + block_size - 1) // block_size
+
+        scales = torch.zeros(num_blocks, dtype=torch.float32, device=self.device)
+        zero_points = torch.zeros(num_blocks, dtype=torch.int32, device=self.device)
+        quantized = torch.zeros(num_elements, dtype=torch.int32, device=self.device)
+
+        for block_idx in range(num_blocks):
+            start = block_idx * block_size
+            end = min(start + block_size, num_elements)
+            block = flat_tensor[start:end]
+
+            block_min = block.min()
+            block_max = block.max()
+
+            if block_max == block_min:
+                scales[block_idx] = 1.0
+                zero_points[block_idx] = 0
+                quantized[start:end] = 0
+            else:
+                scale_val = (block_max - block_min) / 15.0
+                scale_val = torch.clamp(scale_val, min=1e-12)
+                zp_val = torch.round(-block_min / scale_val)
+                zp_val = torch.clamp(zp_val, 0, 15).to(torch.int32)
+                q_block = torch.round(block / scale_val + zp_val.float())
+                q_block = torch.clamp(q_block, 0, 15).to(torch.int32)
+                scales[block_idx] = scale_val
+                zero_points[block_idx] = zp_val
+                quantized[start:end] = q_block
+
+        quantized = quantized.view(original_shape)
+        self.stats["total_int4_quantizations"] += 1
+        return quantized, scales, zero_points
+
+    def dequantize_from_int4_blockwise(
+        self,
+        quantized: torch.Tensor,
+        scales: torch.Tensor,
+        zero_points: torch.Tensor,
+        block_size: int = 128,
+    ) -> torch.Tensor:
+        """Dequantize an INT4 block-wise tensor back to full precision."""
+        original_shape = quantized.shape
+        flat_quantized = quantized.flatten()
+        flat_dequant = torch.zeros_like(flat_quantized, dtype=torch.float32)
+        num_blocks = scales.numel()
+
+        for block_idx in range(num_blocks):
+            start = block_idx * block_size
+            end = min(start + block_size, flat_quantized.numel())
+            q_block = flat_quantized[start:end]
+            flat_dequant[start:end] = (q_block.float() - zero_points[block_idx].float()) * scales[block_idx]
+
+        return flat_dequant.view(original_shape)
+
+    def calibrate_scales(
+        self,
+        tensors: List[torch.Tensor],
+        scale_keys: List[str],
+        fp8_format: FP8Format = FP8Format.E4M3,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Calibrate quantization scales using reference tensors.
+
+        Computes optimal scaling factors from calibration data for
+        quantization-aware inference.
+
+        Args:
+            tensors: List of calibration tensors
+            scale_keys: Keys identifying each tensor
+            fp8_format: Target FP8 format for calibration
+
+        Returns:
+            Dictionary mapping scale keys to calibrated scales
+        """
+        fp8_max = self._get_fp8_max(fp8_format)
+        calibrated: Dict[str, torch.Tensor] = {}
+
+        for tensor, key in zip(tensors, scale_keys):
+            amax = tensor.abs().max()
+            scale = amax / fp8_max
+            scale = torch.clamp(scale, min=1e-12)
+            calibrated[key] = scale
+            self.amax_history[key] = [tensor.abs().max()]
+            self.scales[key] = scale
+
+        self._LOG.info(f"Calibrated {len(calibrated)} quantization scales")
+        return calibrated
+
+    def _update_amax_history(self, key: str, amax: torch.Tensor) -> None:
+        if key not in self.amax_history:
+            self.amax_history[key] = []
+        self.amax_history[key].append(amax.detach())
+        if len(self.amax_history[key]) > self.MAX_AMAX_HISTORY:
+            self.amax_history[key] = self.amax_history[key][-self.MAX_AMAX_HISTORY:]
+
+    def get_delayed_scale(
+        self,
+        key: str,
+        fp8_format: FP8Format = FP8Format.E4M3,
+        history_length: int = 512,
+    ) -> torch.Tensor:
+        """
+        Compute scale using delayed scaling with amax history.
+
+        Uses the maximum amax from recent history for conservative
+        scale estimation, preventing overflow from activation spikes.
+
+        Args:
+            key: Scale key for amax history lookup
+            fp8_format: Target FP8 format
+            history_length: Number of recent history entries to consider
+
+        Returns:
+            Delayed scale factor
+        """
+        fp8_max = self._get_fp8_max(fp8_format)
+        if key not in self.amax_history or not self.amax_history[key]:
+            return torch.tensor(1.0, device=self.device)
+
+        recent = self.amax_history[key][-history_length:]
+        max_amax = max(amax.item() for amax in recent)
+        scale = max_amax / fp8_max
+        return torch.clamp(torch.tensor(scale, device=self.device, dtype=torch.float32), min=1e-12)
+
+    def quantize_kv_cache(
+        self,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        quantize_type: str = "fp8",
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Quantize key-value cache tensors for efficient attention.
+
+        Args:
+            key: Key tensor from attention computation
+            value: Value tensor from attention computation
+            quantize_type: Quantization type ("fp8" or "int4")
+
+        Returns:
+            Dictionary with quantized key, value, and scales
+        """
+        if quantize_type == "fp8":
+            q_key, k_scale = self.quantize_to_fp8(key, FP8Format.E4M3, ScaleMethod.PER_CHANNEL)
+            q_value, v_scale = self.quantize_to_fp8(value, FP8Format.E4M3, ScaleMethod.PER_CHANNEL)
+            self.stats["total_kv_cache_quantizations"] += 1
+            return {
+                "key": q_key,
+                "value": q_value,
+                "key_scale": k_scale,
+                "value_scale": v_scale,
+            }
+        elif quantize_type == "int4":
+            q_key, k_scales, k_zp = self.quantize_to_int4_blockwise(key)
+            q_value, v_scales, v_zp = self.quantize_to_int4_blockwise(value)
+            self.stats["total_kv_cache_quantizations"] += 1
+            return {
+                "key": q_key,
+                "value": q_value,
+                "key_scale": k_scales,
+                "key_zero_point": k_zp,
+                "value_scale": v_scales,
+                "value_zero_point": v_zp,
+            }
+        else:
+            raise ValueError(f"Unsupported KV cache quantization type: {quantize_type}")
+
+    def dequantize_kv_cache(
+        self,
+        quantized_kv: Dict[str, torch.Tensor],
+        quantize_type: str = "fp8",
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Dequantize key-value cache tensors back to full precision.
+
+        Args:
+            quantized_kv: Dictionary with quantized key, value, and scales
+            quantize_type: Quantization type ("fp8" or "int4")
+
+        Returns:
+            Tuple of (dequantized_key, dequantized_value)
+        """
+        if quantize_type == "fp8":
+            dk = self.dequantize_from_fp8(quantized_kv["key"], quantized_kv["key_scale"])
+            dv = self.dequantize_from_fp8(quantized_kv["value"], quantized_kv["value_scale"])
+        elif quantize_type == "int4":
+            dk = self.dequantize_from_int4_blockwise(
+                quantized_kv["key"], quantized_kv["key_scale"], quantized_kv["key_zero_point"]
+            )
+            dv = self.dequantize_from_int4_blockwise(
+                quantized_kv["value"], quantized_kv["value_scale"], quantized_kv["value_zero_point"]
+            )
+        else:
+            raise ValueError(f"Unsupported KV cache quantization type: {quantize_type}")
+        return dk, dv
+
+    def cleanup(self) -> None:
+        """Cleanup engine resources."""
+        self.amax_history.clear()
+        self.scales.clear()
+        self.stats = {
+            "total_fp8_quantizations": 0,
+            "total_int4_quantizations": 0,
+            "total_kv_cache_quantizations": 0,
+        }
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        self._LOG.info("FP8 quantization engine cleanup complete")

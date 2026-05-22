@@ -71,25 +71,21 @@ Usage:
 """
 
 import os
-import sys
 import json
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
-from pathlib import Path
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda.amp import GradScaler, autocast
+import transformer_engine.pytorch as te
+from transformer_engine.common.recipe import Format, DelayedScaling
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_work_dir
+from utils.paths import get_log_file
 
 from configs.version import VERSION
 
@@ -164,6 +160,8 @@ class POPSSDPOTrainingConfig:
     use_fp16: bool = False
     use_bf16: bool = True
     
+    use_fp8: bool = False
+    
     use_gradient_checkpointing: bool = True
     checkpoint_interval: int = 500
     eval_interval: int = 250
@@ -182,6 +180,62 @@ class POPSSDPOTrainingConfig:
         # Ensure only one mixed precision format is used
         if self.use_fp16 and self.use_bf16:
             self.use_bf16 = False
+
+
+@dataclass
+class POPSSOPDConfig:
+    """
+    On-Policy Distillation (OPD) Configuration.
+
+    OPD enables knowledge distillation from a teacher model to a student model
+    using on-policy rollouts. The teacher generates outputs, and the student
+    learns from the teacher's logits via KL divergence and cross-entropy.
+
+    Attributes:
+        teacher_model_path: Path to the teacher model checkpoint
+        student_model_path: Path to the student model checkpoint
+        opd_temperature: Distillation temperature for softening distributions
+        opd_kl_weight: KL divergence weight in the combined loss
+        opd_ce_weight: Cross-entropy weight in the combined loss
+        opd_online: Whether teacher generates on-policy (vs using cached outputs)
+        num_rollouts: Number of rollouts per prompt for advantage estimation
+    """
+    teacher_model_path: str = ""
+    student_model_path: str = ""
+    opd_temperature: float = 1.0
+    opd_kl_weight: float = 0.5
+    opd_ce_weight: float = 0.5
+    opd_online: bool = True
+    num_rollouts: int = 4
+
+    def __post_init__(self):
+        if self.opd_kl_weight < 0 or self.opd_ce_weight < 0:
+            raise ValueError("KL and CE weights must be non-negative")
+        if self.opd_temperature <= 0:
+            raise ValueError("Distillation temperature must be positive")
+
+
+@dataclass
+class POPSSGRMConfig:
+    """
+    Generative Reward Model (GRM) Configuration.
+
+    GRM wraps the base language model with a reward head that outputs scalar
+    reward scores. It can be trained via preference pairs or used implicitly
+    through DPO policy log-probability ratios.
+
+    Attributes:
+        grm_model_path: Path to the GRM model checkpoint
+        grm_learning_rate: Learning rate for GRM training
+        grm_hidden_size: Hidden size of the reward head MLP
+        grm_num_layers: Number of MLP layers in the reward head
+        grm_use_implicit_reward: Whether to use implicit reward from DPO policy
+    """
+    grm_model_path: str = ""
+    grm_learning_rate: float = 1e-6
+    grm_hidden_size: int = 4096
+    grm_num_layers: int = 2
+    grm_use_implicit_reward: bool = True
 
 
 class POPSSDPODataset(Dataset):
@@ -360,6 +414,74 @@ def pad_to_length(tensor: torch.Tensor, length: int, pad_value: int, dim: int = 
         pad_size = list(tensor.shape)
         pad_size[dim] = length - tensor.size(dim)
         return torch.cat([tensor, pad_value * torch.ones(*pad_size, dtype=tensor.dtype)], dim=dim)
+
+
+def opd_loss(
+    teacher_logits: torch.Tensor,
+    student_logits: torch.Tensor,
+    teacher_log_probs: torch.Tensor,
+    student_log_probs: torch.Tensor,
+    config: POPSSOPDConfig,
+    advantages: Optional[torch.Tensor] = None,
+) -> Tuple[torch.Tensor, Dict[str, float]]:
+    """
+    Compute On-Policy Distillation (OPD) loss combining KL divergence and cross-entropy.
+
+    The OPD loss enables knowledge transfer from a teacher model to a student model
+    by minimizing the divergence between their output distributions, optionally weighted
+    by advantage estimates from a reward model.
+
+    Args:
+        teacher_logits: Logits from the teacher model [batch, seq_len, vocab]
+        student_logits: Logits from the student model [batch, seq_len, vocab]
+        teacher_log_probs: Log probabilities from teacher [batch]
+        student_log_probs: Log probabilities from student [batch]
+        config: OPD configuration
+        advantages: Optional advantage weights for each sample [batch]
+
+    Returns:
+        Tuple of (total_loss, metrics_dict)
+    """
+    temp = config.opd_temperature
+
+    teacher_soft = F.log_softmax(teacher_logits / temp, dim=-1)
+    student_soft = F.softmax(student_logits / temp, dim=-1)
+
+    kl_div = F.kl_div(
+        teacher_soft,
+        student_soft,
+        log_target=False,
+        reduction="batchmean",
+    ) * (temp ** 2)
+
+    ce_loss = -(teacher_log_probs * student_log_probs).mean()
+
+    loss = config.opd_kl_weight * kl_div + config.opd_ce_weight * ce_loss
+
+    if advantages is not None:
+        advantages = advantages.detach()
+        advantage_weight = advantages - advantages.mean()
+        advantage_weight = advantage_weight / (advantage_weight.std() + 1e-8)
+        advantage_weight = torch.sigmoid(advantage_weight / temp)
+        weighted_kl = (
+            F.kl_div(
+                teacher_soft,
+                student_soft,
+                log_target=False,
+                reduction="none",
+            ).sum(dim=-1).mean(dim=-1)
+            * advantage_weight
+        ).mean() * (temp ** 2)
+        weighted_ce = -(teacher_log_probs * student_log_probs * advantage_weight).mean()
+        loss = config.opd_kl_weight * weighted_kl + config.opd_ce_weight * weighted_ce
+
+    metrics = {
+        "opd_loss": loss.item(),
+        "kl_div": kl_div.item(),
+        "ce_loss": ce_loss.item(),
+    }
+
+    return loss, metrics
 
 
 class POPSSDPOLoggingCallback:
@@ -697,7 +819,6 @@ class POPSSDPOTrainingOperator(PiscesLxOperatorInterface):
             ref_model = inputs["ref_model"].to(self.device)
             tokenizer = inputs["tokenizer"]
             train_data_path = inputs["train_data_path"]
-            val_data_path = inputs.get("val_data_path")
             
             # Freeze reference model
             for param in ref_model.parameters():
@@ -762,7 +883,13 @@ class POPSSDPOTrainingOperator(PiscesLxOperatorInterface):
                     rejected_labels = batch["rejected_labels"].to(self.device)
                     
                     # Compute policy log probabilities
-                    with torch.cuda.amp.autocast(enabled=self.config.use_fp16 or self.config.use_bf16):
+                    fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=DelayedScaling(
+                        margin=0, interval=1, fp8_format=Format.HYBRID, amax_history_len=1024, amax_compute_algo="max",
+                    )) if self.config.use_fp8 else autocast(
+                        enabled=self.config.use_fp16 or self.config.use_bf16
+                    )
+                    
+                    with fp8_context:
                         policy_chosen_logps = self._get_batch_logps(
                             model, chosen_input_ids, chosen_attention_mask, chosen_labels
                         )
@@ -854,9 +981,511 @@ class POPSSDPOTrainingOperator(PiscesLxOperatorInterface):
                 execution_time=time.time() - start_time
             )
 
+
+class POPSSOPDTrainer:
+    """
+    On-Policy Distillation (OPD) Trainer.
+
+    Implements knowledge distillation from a teacher model to a student model
+    using on-policy rollouts. The teacher generates outputs, and the student
+    learns from the teacher's logits via KL divergence, optionally weighted
+    by advantage estimates from a reward model (GRM).
+
+    Key Features:
+        - Teacher generates on-policy rollouts for distillation
+        - KL divergence + cross-entropy combined loss
+        - Advantage-weighted distillation using GRM scores
+        - Supports both online (teacher generates) and offline (cached) modes
+
+    Example:
+        >>> config = POPSSOPDConfig(
+        ...     teacher_model_path=".pisceslx/teacher/ckpt",
+        ...     student_model_path=".pisceslx/student/ckpt",
+        ...     opd_temperature=2.0,
+        ...     opd_kl_weight=0.7,
+        ...     opd_ce_weight=0.3,
+        ... )
+        >>> trainer = POPSSOPDTrainer(
+        ...     teacher_model=teacher,
+        ...     student_model=student,
+        ...     config=config,
+        ... )
+        >>> result = trainer.train(prompts=train_prompts, num_epochs=10)
+    """
+
+    def __init__(
+        self,
+        teacher_model: nn.Module,
+        student_model: nn.Module,
+        config: Optional[POPSSOPDConfig] = None,
+        teacher_optimizer: Optional[torch.optim.Optimizer] = None,
+        student_optimizer: Optional[torch.optim.Optimizer] = None,
+        tokenizer=None,
+        grm_model: Optional["POPSSGenerativeRewardModel"] = None,
+    ):
+        self.teacher_model = teacher_model
+        self.student_model = student_model
+        self.config = config or POPSSOPDConfig()
+        self.tokenizer = tokenizer
+        self.grm_model = grm_model
+
+        if student_optimizer is None:
+            self.student_optimizer = torch.optim.AdamW(
+                student_model.parameters(),
+                lr=1e-6,
+                weight_decay=0.01,
+            )
+        else:
+            self.student_optimizer = student_optimizer
+
+        self.teacher_optimizer = teacher_optimizer
+        self.training_history = []
+
+    def _generate_teacher_rollouts(
+        self,
+        prompt: str,
+        num_rollouts: int,
+    ) -> List[Dict[str, Any]]:
+        """
+        Generate on-policy rollouts using the teacher model.
+
+        Args:
+            prompt: Input prompt for generation
+            num_rollouts: Number of rollouts to generate
+
+        Returns:
+            List of rollout dictionaries with logits, log_probs, and text
+        """
+        device = next(self.teacher_model.parameters()).device
+        rollouts = []
+
+        self.teacher_model.eval()
+        with torch.no_grad():
+            for _ in range(num_rollouts):
+                if self.tokenizer:
+                    input_ids = self.tokenizer.encode(prompt, return_tensors="pt").to(device)
+                else:
+                    input_ids = torch.tensor([[ord(c) for c in prompt]], dtype=torch.long, device=device)
+
+                all_logits = []
+                generated_ids = input_ids.clone()
+                past_key_values = None
+
+                max_gen_tokens = 512
+                for _ in range(max_gen_tokens):
+                    if generated_ids.shape[1] > 1:
+                        model_input = generated_ids[:, -1:]
+                    else:
+                        model_input = generated_ids
+
+                    if hasattr(self.teacher_model, 'forward'):
+                        outputs = self.teacher_model(
+                            input_ids=model_input,
+                            past_key_values=past_key_values,
+                            use_cache=True,
+                        )
+                    else:
+                        outputs = self.teacher_model(generated_ids)
+
+                    logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
+                    past_key_values = outputs.past_key_values if hasattr(outputs, 'past_key_values') else None
+
+                    all_logits.append(logits[:, -1:, :])
+                    next_token_logits = logits[:, -1, :] / max(self.config.opd_temperature, 1.0)
+                    probs = F.softmax(next_token_logits, dim=-1)
+                    next_token = torch.multinomial(probs, num_samples=1)
+                    generated_ids = torch.cat([generated_ids, next_token], dim=-1)
+
+                    if self.tokenizer and next_token.item() == self.tokenizer.eos_token_id:
+                        break
+
+                if all_logits:
+                    teacher_logits = torch.cat(all_logits, dim=1)
+                else:
+                    teacher_logits = torch.zeros(1, 1, 1, device=device)
+
+                if self.tokenizer:
+                    response_text = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+                else:
+                    response_text = "".join(chr(c) for c in generated_ids[0].tolist())
+
+                full_text = prompt + response_text
+                if self.tokenizer:
+                    full_ids = self.tokenizer.encode(full_text, return_tensors="pt").to(device)
+                else:
+                    full_ids = torch.tensor([[ord(c) for c in full_text]], dtype=torch.long, device=device)
+
+                with torch.no_grad():
+                    full_outputs = self.teacher_model(full_ids)
+                    teacher_logits_full = full_outputs.logits if hasattr(full_outputs, 'logits') else full_outputs[0]
+                    teacher_log_probs_full = F.log_softmax(teacher_logits_full, dim=-1)
+                    teacher_token_lps = teacher_log_probs_full[:, :-1, :].gather(2, full_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+                    teacher_lp = teacher_token_lps.sum()
+
+                rollout = {
+                    "prompt": prompt,
+                    "response": response_text,
+                    "teacher_logits": teacher_logits,
+                    "teacher_log_prob": teacher_lp,
+                    "full_text": full_text,
+                }
+
+                if self.grm_model is not None:
+                    reward = self.grm_model.compute_grm_reward(prompt, response_text)
+                    rollout["grm_reward"] = reward
+
+                rollouts.append(rollout)
+
+        return rollouts
+
+    def _compute_student_log_probs(
+        self,
+        full_text: str,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Compute student model logits and log probabilities for a given text.
+
+        Args:
+            full_text: Full prompt + response text
+
+        Returns:
+            Tuple of (student_logits, student_log_prob)
+        """
+        device = next(self.student_model.parameters()).device
+
+        if self.tokenizer:
+            input_ids = self.tokenizer.encode(full_text, return_tensors="pt").to(device)
+        else:
+            input_ids = torch.tensor([[ord(c) for c in full_text]], dtype=torch.long, device=device)
+
+        self.student_model.eval()
+        with torch.no_grad():
+            outputs = self.student_model(input_ids)
+            student_logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
+            student_log_probs = F.log_softmax(student_logits, dim=-1)
+            student_token_lps = student_log_probs[:, :-1, :].gather(2, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+            student_lp = student_token_lps.sum()
+
+        return student_logits, student_lp
+
+    def train(
+        self,
+        prompts: List[str],
+        num_epochs: int = 1,
+        save_dir: Optional[str] = None,
+        save_every: int = 100,
+    ) -> Dict[str, Any]:
+        """
+        Train the student model using on-policy distillation from the teacher.
+
+        Args:
+            prompts: List of training prompts
+            num_epochs: Number of training epochs
+            save_dir: Directory to save checkpoints
+            save_every: Save checkpoint every N steps
+
+        Returns:
+            Training statistics dictionary
+        """
+        all_stats = {
+            "opd_losses": [],
+            "kl_divergences": [],
+            "ce_losses": [],
+        }
+
+        step = 0
+        for epoch in range(num_epochs):
+            for prompt in prompts:
+                rollouts = self._generate_teacher_rollouts(prompt, self.config.num_rollouts)
+
+                advantages = None
+                if self.grm_model is not None and rollouts[0].get("grm_reward") is not None:
+                    rewards = torch.tensor([r["grm_reward"] for r in rollouts], dtype=torch.float32)
+                    if rewards.numel() > 1:
+                        advantages = (rewards - rewards.mean()) / (rewards.std() + 1e-8)
+
+                student_logits_list = []
+                student_lp_list = []
+                teacher_logits_list = []
+                teacher_lp_list = []
+
+                for rollout in rollouts:
+                    s_logits, s_lp = self._compute_student_log_probs(rollout["full_text"])
+                    student_logits_list.append(s_logits)
+                    student_lp_list.append(s_lp)
+                    teacher_logits_list.append(rollout["teacher_logits"])
+                    teacher_lp_list.append(rollout["teacher_log_prob"])
+
+                max_seq_len = max(logit.shape[1] for logit in student_logits_list)
+                vocab_size = student_logits_list[0].shape[-1]
+
+                padded_student_logits = []
+                padded_teacher_logits = []
+                for s_logits, t_logits in zip(student_logits_list, teacher_logits_list):
+                    if s_logits.shape[1] < max_seq_len:
+                        pad_len = max_seq_len - s_logits.shape[1]
+                        s_pad = torch.zeros(1, pad_len, vocab_size, device=s_logits.device)
+                        t_pad = torch.zeros(1, pad_len, vocab_size, device=t_logits.device)
+                        padded_student_logits.append(torch.cat([s_logits, s_pad], dim=1))
+                        padded_teacher_logits.append(torch.cat([t_logits, t_pad], dim=1))
+                    else:
+                        padded_student_logits.append(s_logits[:, :max_seq_len, :])
+                        padded_teacher_logits.append(t_logits[:, :max_seq_len, :])
+
+                stacked_student_logits = torch.cat(padded_student_logits, dim=0)
+                stacked_teacher_logits = torch.cat(padded_teacher_logits, dim=0)
+                stacked_student_lp = torch.stack(student_lp_list)
+                stacked_teacher_lp = torch.stack(teacher_lp_list)
+
+                adv_tensor = advantages.to(stacked_student_logits.device) if advantages is not None else None
+
+                loss, metrics = opd_loss(
+                    teacher_logits=stacked_teacher_logits,
+                    student_logits=stacked_student_logits,
+                    teacher_log_probs=stacked_teacher_lp,
+                    student_log_probs=stacked_student_lp,
+                    config=self.config,
+                    advantages=adv_tensor,
+                )
+
+                self.student_optimizer.zero_grad()
+                if loss.requires_grad:
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.student_model.parameters(), 1.0)
+                    self.student_optimizer.step()
+
+                all_stats["opd_losses"].append(metrics["opd_loss"])
+                all_stats["kl_divergences"].append(metrics["kl_div"])
+                all_stats["ce_losses"].append(metrics["ce_loss"])
+
+                step += 1
+
+                if save_dir and step % save_every == 0:
+                    self._save_checkpoint(save_dir, step)
+
+        self.training_history.append(all_stats)
+
+        return {
+            "mean_opd_loss": sum(all_stats["opd_losses"]) / len(all_stats["opd_losses"]) if all_stats["opd_losses"] else 0,
+            "mean_kl": sum(all_stats["kl_divergences"]) / len(all_stats["kl_divergences"]) if all_stats["kl_divergences"] else 0,
+            "mean_ce": sum(all_stats["ce_losses"]) / len(all_stats["ce_losses"]) if all_stats["ce_losses"] else 0,
+            "total_steps": step,
+        }
+
+    def _save_checkpoint(self, save_dir: str, step: int):
+        """Save a training checkpoint."""
+        import os
+        os.makedirs(save_dir, exist_ok=True)
+
+        checkpoint = {
+            "step": step,
+            "student_state_dict": self.student_model.state_dict(),
+            "student_optimizer_state_dict": self.student_optimizer.state_dict(),
+            "config": self.config.__dict__,
+        }
+
+        path = os.path.join(save_dir, f"opd_checkpoint_{step}.pt")
+        torch.save(checkpoint, path)
+
+    def load_checkpoint(self, path: str):
+        """Load a training checkpoint."""
+        checkpoint = torch.load(path, map_location="cpu")
+
+        self.student_model.load_state_dict(checkpoint["student_state_dict"])
+        self.student_optimizer.load_state_dict(checkpoint["student_optimizer_state_dict"])
+
+        return checkpoint["step"]
+
+
+class POPSSGenerativeRewardModel(nn.Module):
+    """
+    Generative Reward Model (GRM) wrapping a base LM with a reward head.
+
+    The GRM extends a language model with a learned reward head that outputs
+    scalar reward scores for any input/output pair. It can be trained via
+    preference pairs (like DPO but as a reward model) or used implicitly
+    through DPO policy log-probability ratios.
+
+    Key Features:
+        - LM backbone with a learned MLP reward head
+        - Outputs scalar reward scores for response evaluation
+        - Supports both explicit training (preference pairs) and implicit rewards
+        - Can be used as a reward signal for GRPO/OPD training
+
+    Architecture:
+        Base LM → Hidden States → [Reward Head MLP] → Scalar Reward
+
+    Example:
+        >>> grm = POPSSGenerativeRewardModel(
+        ...     base_model=language_model,
+        ...     config=POPSSGRMConfig(grm_hidden_size=4096, grm_num_layers=2),
+        ... )
+        >>> reward = grm.compute_grm_reward(prompt="Hello", response="Hi there!")
+    """
+
+    def __init__(
+        self,
+        base_model: nn.Module,
+        config: Optional[POPSSGRMConfig] = None,
+    ):
+        super().__init__()
+        self.config = config or POPSSGRMConfig()
+        self.base_model = base_model
+        self.hidden_size = self.config.grm_hidden_size
+
+        reward_layers = []
+        input_dim = self.hidden_size
+        for i in range(self.config.grm_num_layers):
+            output_dim = self.hidden_size if i < self.config.grm_num_layers - 1 else 1
+            reward_layers.append(nn.Linear(input_dim, output_dim))
+            if i < self.config.grm_num_layers - 1:
+                reward_layers.append(nn.GELU())
+                reward_layers.append(nn.Dropout(0.1))
+            input_dim = output_dim
+
+        self.reward_head = nn.Sequential(*reward_layers)
+
+        self._reward_optimizer: Optional[torch.optim.Optimizer] = None
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Forward pass through the base model and reward head.
+
+        Args:
+            input_ids: Input token IDs [batch, seq_len]
+            attention_mask: Optional attention mask [batch, seq_len]
+
+        Returns:
+            Reward scores [batch, 1]
+        """
+        outputs = self.base_model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            output_hidden_states=True,
+        )
+
+        if hasattr(outputs, 'hidden_states') and outputs.hidden_states is not None:
+            hidden = outputs.hidden_states[-1]
+        elif isinstance(outputs, dict) and "hidden_states" in outputs:
+            hidden = outputs["hidden_states"][-1]
+        else:
+            last_hidden = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
+            hidden = last_hidden
+
+        if attention_mask is not None:
+            mask_expanded = attention_mask.unsqueeze(-1).float()
+            hidden = (hidden * mask_expanded).sum(dim=1) / mask_expanded.sum(dim=1).clamp(min=1)
+        else:
+            hidden = hidden.mean(dim=1)
+
+        reward = self.reward_head(hidden)
+        return reward
+
+    def compute_grm_reward(
+        self,
+        prompt: str,
+        response: str,
+        tokenizer=None,
+    ) -> float:
+        """
+        Compute scalar reward for a prompt-response pair.
+
+        Args:
+            prompt: Input prompt text
+            response: Generated response text
+            tokenizer: Tokenizer for encoding
+
+        Returns:
+            Scalar reward score
+        """
+        self.eval()
+        device = next(self.parameters()).device
+
+        full_text = prompt + response
+        if tokenizer:
+            inputs = tokenizer(
+                full_text,
+                return_tensors="pt",
+                padding=True,
+                truncation=True,
+                max_length=2048,
+            )
+            input_ids = inputs["input_ids"].to(device)
+            attention_mask = inputs["attention_mask"].to(device)
+        else:
+            input_ids = torch.tensor([[ord(c) for c in full_text]], dtype=torch.long, device=device)
+            attention_mask = torch.ones_like(input_ids)
+
+        with torch.no_grad():
+            reward = self.forward(input_ids=input_ids, attention_mask=attention_mask)
+
+        return reward.squeeze().item()
+
+    def train_reward_model(
+        self,
+        chosen_input_ids: torch.Tensor,
+        rejected_input_ids: torch.Tensor,
+        chosen_attention_mask: Optional[torch.Tensor] = None,
+        rejected_attention_mask: Optional[torch.Tensor] = None,
+    ) -> Dict[str, float]:
+        """
+        Train the reward model on preference pairs using a ranking loss.
+
+        The loss encourages higher rewards for chosen responses than rejected ones.
+
+        Args:
+            chosen_input_ids: Token IDs for chosen responses [batch, seq_len]
+            rejected_input_ids: Token IDs for rejected responses [batch, seq_len]
+            chosen_attention_mask: Attention mask for chosen [batch, seq_len]
+            rejected_attention_mask: Attention mask for rejected [batch, seq_len]
+
+        Returns:
+            Dictionary of training metrics
+        """
+        chosen_rewards = self.forward(
+            input_ids=chosen_input_ids,
+            attention_mask=chosen_attention_mask,
+        )
+        rejected_rewards = self.forward(
+            input_ids=rejected_input_ids,
+            attention_mask=rejected_attention_mask,
+        )
+
+        loss = -F.logsigmoid(chosen_rewards - rejected_rewards).mean()
+
+        if self._reward_optimizer is None:
+            self._reward_optimizer = torch.optim.AdamW(
+                self.reward_head.parameters(),
+                lr=self.config.grm_learning_rate,
+            )
+
+        self._reward_optimizer.zero_grad()
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(self.reward_head.parameters(), 1.0)
+        self._reward_optimizer.step()
+
+        accuracy = (chosen_rewards > rejected_rewards).float().mean()
+
+        return {
+            "grm_loss": loss.item(),
+            "grm_accuracy": accuracy.item(),
+            "mean_chosen_reward": chosen_rewards.mean().item(),
+            "mean_rejected_reward": rejected_rewards.mean().item(),
+        }
+
+
 __all__ = [
     "POPSSDPOTrainingConfig",
     "POPSSDPODataset",
     "POPSSDPOTrainingOperator",
-    "POPSSDPOLoggingCallback"
+    "POPSSDPOLoggingCallback",
+    "POPSSOPDConfig",
+    "POPSSOPDTrainer",
+    "POPSSGRMConfig",
+    "POPSSGenerativeRewardModel",
+    "opd_loss",
 ]

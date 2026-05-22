@@ -32,18 +32,16 @@ import os
 import sys
 import json
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Dict, List
 from pathlib import Path
 
 import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
-from torch.optim import Optimizer
-from torch.optim.lr_scheduler import LRScheduler
-import torch.distributed as dist
-from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda.amp import GradScaler, autocast
+import transformer_engine.pytorch as te
+from transformer_engine.common.recipe import Format, DelayedScaling
 
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file, get_work_dir
@@ -74,6 +72,10 @@ class POPSSSFTTrainingConfig:
     
     use_fp16: bool = False
     use_bf16: bool = True
+    
+    use_fp8: bool = False
+    fp8_amax_history_length: int = 1024
+    fp8_amax_compute_algo: str = "max"
     
     use_gradient_checkpointing: bool = True
     checkpoint_interval: int = 1000
@@ -407,9 +409,9 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 
                 if model_config and getattr(model_config, 'use_int4_projection', False):
                     try:
-                        from opss.optim.galore import POPSSGaLoreConfig, POPSSGaLoreOperator
+                        from opss.optim.galore import POPSSGaLoreConfig
                         
-                        galore_config = POPSSGaLoreConfig(
+                        POPSSGaLoreConfig(
                             rank=getattr(model_config, 'galore_rank', 128),
                             update_proj_gap=getattr(model_config, 'galore_update_proj_gap', 50),
                             scale=getattr(model_config, 'galore_scale', 1.0),
@@ -461,6 +463,19 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 return scheduler
         
         return SFTTrainer(config, model, tokenizer, custom_optimizer, custom_scheduler)
+    
+    def _create_fp8_recipe(self, config):
+        """Create FP8 scaling recipe for transformer engine."""
+        if not config.use_fp8:
+            return None
+        format_type = Format.HYBRID
+        return DelayedScaling(
+            margin=0,
+            interval=1,
+            fp8_format=format_type,
+            amax_history_len=config.fp8_amax_history_length,
+            amax_compute_algo=config.fp8_amax_compute_algo,
+        )
     
     def _run_training(self, trainer, train_dataset, val_dataset, config, device):
         """Execute the main training loop."""
@@ -570,10 +585,12 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 
                 batch = {k: v.to(device) for k, v in batch.items()}
                 
-                with autocast(
+                fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=self._create_fp8_recipe(config)) if config.use_fp8 else autocast(
                     enabled=(config.use_fp16 or config.use_bf16),
                     dtype=torch.bfloat16 if config.use_bf16 else torch.float16,
-                ):
+                )
+                
+                with fp8_context:
                     outputs = trainer.model(**batch)
                     loss = outputs.get("loss", outputs[0] if isinstance(outputs, tuple) else outputs)
                     
@@ -593,7 +610,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                     if trainer.scaler is not None:
                         trainer.scaler.unscale_(trainer.optimizer)
                     
-                    grad_norm = torch.nn.utils.clip_grad_norm_(
+                    torch.nn.utils.clip_grad_norm_(
                         trainer.model.parameters(),
                         config.max_grad_norm,
                     )
@@ -672,10 +689,12 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             for batch in val_loader:
                 batch = {k: v.to(device) for k, v in batch.items()}
                 
-                with autocast(
+                fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=self._create_fp8_recipe(config)) if config.use_fp8 else autocast(
                     enabled=(config.use_fp16 or config.use_bf16),
                     dtype=torch.bfloat16 if config.use_bf16 else torch.float16,
-                ):
+                )
+                
+                with fp8_context:
                     outputs = trainer.model(**batch)
                     loss = outputs.get("loss", outputs[0] if isinstance(outputs, tuple) else outputs)
                     

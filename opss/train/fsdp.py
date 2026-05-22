@@ -29,19 +29,14 @@ parameter sharding for large-scale distributed training.
 """
 
 import os
-import sys
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
-from pathlib import Path
+from dataclasses import dataclass
+from typing import Any, Dict, List
 
 import torch
-import torch.nn as nn
 import torch.distributed as dist
-import torch.multiprocessing as mp
 from torch.distributed.fsdp import (
     FullyShardedDataParallel as FSDP,
-    ShardingStrategy,
     MixedPrecision,
     CPUOffload,
     BackwardPrefetch,
@@ -51,7 +46,7 @@ from torch.distributed.fsdp import (
 )
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_work_dir
+from utils.paths import get_log_file
 
 from configs.version import VERSION
 
@@ -75,9 +70,12 @@ class FSDPTrainingConfig:
     limit_all_gathers: bool = True
     
     # Mixed precision settings
-    param_dtype: str = "bf16"  # fp32, fp16, bf16
+    param_dtype: str = "bf16"  # fp32, fp16, bf16, fp8
     reduce_dtype: str = "fp32"  # fp32, fp16, bf16
     buffer_dtype: str = "fp32"  # fp32, fp16, bf16
+    
+    use_fp8: bool = False
+    fp8_param_dtype: str = "fp8"
     
     # Memory optimization
     cpu_offload: bool = False
@@ -129,7 +127,7 @@ class FSDPDataset(torch.utils.data.Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.samples = self._load_data(data_path)
-        self._LOG = PiscesLxCoreLog("pisceslx.ops.train.fsdp.dataset")
+        self._LOG = PiscesLxLogger("pisceslx.ops.train.fsdp.dataset", file_path=get_log_file("pisceslx.ops.train.fsdp"), enable_file=True)
         
     def _load_data(self, data_path: str) -> List[Dict[str, Any]]:
         """Load training data."""
@@ -140,7 +138,7 @@ class FSDPDataset(torch.utils.data.Dataset):
                 for line in f:
                     try:
                         samples.append(json.loads(line.strip()))
-                    except:
+                    except json.JSONDecodeError:
                         continue
         return samples
     
@@ -347,7 +345,8 @@ class POPSSFSDPTrainingOperator(PiscesLxOperatorInterface):
     
     def _setup_mixed_precision(self, config):
         """Setup mixed precision configuration."""
-        param_dtype = getattr(torch, config.param_dtype, torch.bfloat16)
+        param_dtype_str = config.fp8_param_dtype if config.use_fp8 else config.param_dtype
+        param_dtype = getattr(torch, param_dtype_str, torch.bfloat16) if param_dtype_str != "fp8" else torch.bfloat16
         reduce_dtype = getattr(torch, config.reduce_dtype, torch.float32)
         buffer_dtype = getattr(torch, config.buffer_dtype, torch.float32)
         

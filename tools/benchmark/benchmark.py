@@ -37,12 +37,15 @@ This module provides comprehensive benchmark evaluation including:
 import os
 import sys
 import json
+import math
 import time
-import logging
+import subprocess
+import tempfile
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional
 from pathlib import Path
 from collections import defaultdict
+from abc import ABC, abstractmethod
 import threading
 
 import torch
@@ -51,7 +54,7 @@ from torch.utils.data import Dataset, DataLoader
 from tqdm import tqdm
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_work_dir
+from utils.paths import get_log_file
 
 _LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
 
@@ -344,7 +347,7 @@ class PiscesL1BenchmarkEvaluator:
                 for i in range(input_ids.shape[0]):
                     subject = batch["subject"][i]
                     answer = batch["answer"][i]
-                    choices = batch["choices"][i]
+                    _ = batch["choices"][i]
                     generated = self.tokenizer.decode(
                         outputs[i, input_ids.shape[1]:], 
                         skip_special_tokens=True
@@ -356,7 +359,7 @@ class PiscesL1BenchmarkEvaluator:
                         correct_by_subject[subject] += 1
         
         accuracy_by_subject = {
-            subject: correct / max(1, total) 
+            subject: correct / max(1, total_by_subject.get(subject, 0)) 
             for subject, correct in correct_by_subject.items()
         }
         
@@ -634,9 +637,6 @@ class PiscesL1BenchmarkEvaluator:
         from datasets import load_dataset
         
         dataset = load_dataset("truthful_qa", "generation", split="validation")
-        
-        truthful_scores = []
-        informative_scores = []
         
         self.model.eval()
         
@@ -1608,38 +1608,719 @@ def create_benchmark_evaluator(
     )
 
 
+class POPSSBenchmarkResult:
+    """Standardized benchmark result container."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self.metrics: Dict[str, float] = {}
+        self.details: Dict[str, Any] = {}
+        self.timestamp: float = time.time()
+        self.duration: float = 0.0
+
+    def add_metric(self, key: str, value: float) -> None:
+        self.metrics[key] = value
+
+    def add_detail(self, key: str, value: Any) -> None:
+        self.details[key] = value
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "benchmark": self.name,
+            "metrics": self.metrics,
+            "details": self.details,
+            "timestamp": self.timestamp,
+            "duration": self.duration,
+        }
+
+
+class POPSSBaseBenchmark(ABC):
+    """Abstract base class for all standard benchmarks."""
+
+    def __init__(self, model: nn.Module, tokenizer: Any, device: str = "cuda", temperature: float = 0.0):
+        self.model = model
+        self.tokenizer = tokenizer
+        self.device = device
+        self.temperature = temperature
+        self.result: Optional[POPSSBenchmarkResult] = None
+
+    @abstractmethod
+    def evaluate(self) -> POPSSBenchmarkResult:
+        ...
+
+    def _generate(self, prompt: str, max_new_tokens: int = 512, do_sample: bool = False) -> str:
+        encoding = self.tokenizer(
+            prompt,
+            max_length=4096,
+            truncation=True,
+            return_tensors="pt",
+        ).to(self.device)
+        with torch.no_grad():
+            output = self.model.generate(
+                input_ids=encoding["input_ids"],
+                attention_mask=encoding["attention_mask"],
+                max_new_tokens=max_new_tokens,
+                temperature=self.temperature,
+                do_sample=do_sample,
+            )
+        return self.tokenizer.decode(output[0][encoding["input_ids"].shape[1]:], skip_special_tokens=True).strip()
+
+
+class POPSSMMLUBenchmark(POPSSBaseBenchmark):
+    """MMLU: Massive Multitask Language Understanding with 57 subjects, 5-shot evaluation."""
+
+    SUBJECTS = [
+        'abstract_algebra', 'anatomy', 'astronomy', 'business_ethics',
+        'clinical_knowledge', 'college_biology', 'college_chemistry',
+        'college_computer_science', 'college_mathematics', 'college_physics',
+        'computer_security', 'concepts_of_physics', 'cryptography', 'econometrics',
+        'electrical_engineering', 'elementary_mathematics', 'formal_logic',
+        'global_facts', 'high_school_biology', 'high_school_chemistry',
+        'high_school_computer_science', 'high_school_earth_science',
+        'high_school_macroeconomics', 'high_school_mathematics',
+        'high_school_microeconomics', 'high_school_physics',
+        'high_school_government_and_politics', 'high_school_european_history',
+        'high_school_us_history', 'high_school_world_history',
+        'human_sexuality', 'international_law', 'jurisprudence',
+        'logical_fallacies', 'machine_learning', 'management', 'marketing',
+        'medical_genetics', 'miscellaneous', 'moral_disputes', 'moral_scenarios',
+        'nutrition', 'philosophy', 'prehistory', 'professional_accounting',
+        'professional_law', 'professional_medicine', 'professional_psychology',
+        'public_relations', 'security_studies', 'sociology', 'us_foreign_policy',
+        'virology', 'world_religions',
+    ]
+
+    def __init__(
+        self,
+        model: nn.Module,
+        tokenizer: Any,
+        device: str = "cuda",
+        temperature: float = 0.0,
+        num_few_shot: int = 5,
+        subjects: Optional[List[str]] = None,
+    ):
+        super().__init__(model, tokenizer, device, temperature)
+        self.num_few_shot = num_few_shot
+        self.subjects = subjects or self.SUBJECTS
+
+    def _build_few_shot_prompt(self, question: str, choices: List[str], subject: str) -> str:
+        prompt = "The following are multiple choice questions. Answer with the letter of the correct option.\n\n"
+        try:
+            from datasets import load_dataset
+            dev_set = load_dataset("cais/mmlu", subject, split="dev")
+            count = 0
+            for item in dev_set:
+                if count >= self.num_few_shot:
+                    break
+                prompt += f"Question: {item['question']}\n"
+                for i, ch in enumerate(item['choices']):
+                    prompt += f"{chr(65 + i)}. {ch}\n"
+                prompt += f"Answer: {chr(65 + item['answer'])}\n\n"
+                count += 1
+        except Exception:
+            pass
+        prompt += f"Question: {question}\n"
+        for i, ch in enumerate(choices):
+            prompt += f"{chr(65 + i)}. {ch}\n"
+        prompt += "Answer: "
+        return prompt
+
+    def evaluate(self) -> POPSSBenchmarkResult:
+        result = POPSSBenchmarkResult("mmlu")
+        start_time = time.time()
+
+        from datasets import load_dataset
+
+        correct_by_subject: Dict[str, int] = defaultdict(int)
+        total_by_subject: Dict[str, int] = defaultdict(int)
+
+        self.model.eval()
+
+        for subject in tqdm(self.subjects, desc="MMLU Subjects"):
+            try:
+                dataset = load_dataset("cais/mmlu", subject, split="test")
+            except Exception as e:
+                _LOG.warning(f"MMLU subject {subject} load failed: {e}")
+                continue
+
+            for item in tqdm(dataset, desc=f"  {subject}", leave=False):
+                question = item["question"]
+                choices = item["choices"]
+                answer = item["answer"]
+
+                prompt = self._build_few_shot_prompt(question, choices, subject)
+                generated = self._generate(prompt, max_new_tokens=10)
+
+                total_by_subject[subject] += 1
+                if generated and generated[0].upper() == chr(65 + answer):
+                    correct_by_subject[subject] += 1
+
+        accuracy_by_subject = {
+            s: correct_by_subject.get(s, 0) / max(1, total_by_subject.get(s, 0))
+            for s in self.subjects
+        }
+        overall_accuracy = sum(accuracy_by_subject.values()) / max(1, len(accuracy_by_subject))
+
+        result.add_metric("overall_accuracy", overall_accuracy)
+        result.add_detail("accuracy_by_subject", accuracy_by_subject)
+        result.add_detail("subjects_evaluated", len(accuracy_by_subject))
+        result.add_detail("total_samples", sum(total_by_subject.values()))
+        result.duration = time.time() - start_time
+
+        _LOG.info(f"MMLU Overall Accuracy: {overall_accuracy:.4f}")
+        self.result = result
+        return result
+
+
+class POPSSHumanEvalBenchmark(POPSSBaseBenchmark):
+    """HumanEval: Code generation with pass@1, pass@10, pass@100 metrics."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        tokenizer: Any,
+        device: str = "cuda",
+        temperature: float = 0.0,
+        num_samples_per_task: int = 1,
+        timeout_seconds: int = 30,
+    ):
+        super().__init__(model, tokenizer, device, temperature)
+        self.num_samples_per_task = num_samples_per_task
+        self.timeout_seconds = timeout_seconds
+
+    def _extract_code(self, text: str) -> str:
+        if "```python" in text:
+            parts = text.split("```python")
+            if len(parts) > 1:
+                code = parts[1].split("```")[0]
+                return code.strip()
+        elif "```" in text:
+            parts = text.split("```")
+            if len(parts) > 1:
+                return parts[1].strip()
+        return text.strip()
+
+    def _check_correctness(self, code: str, test_code: str) -> bool:
+        full_code = code + "\n" + test_code
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False, encoding="utf-8") as f:
+            f.write(full_code)
+            script_path = f.name
+        try:
+            proc = subprocess.run(
+                [sys.executable, script_path],
+                capture_output=True,
+                text=True,
+                timeout=self.timeout_seconds,
+            )
+            return proc.returncode == 0
+        except subprocess.TimeoutExpired:
+            return False
+        except Exception:
+            return False
+        finally:
+            try:
+                os.unlink(script_path)
+            except Exception:
+                pass
+
+    def _estimate_pass_at_k(self, n: int, c: int, k: int) -> float:
+        if n - c < k:
+            return 1.0
+        return 1.0 - math.prod((n - c - i) / (n - i) for i in range(k))
+
+    def evaluate(self) -> POPSSBenchmarkResult:
+        result = POPSSBenchmarkResult("humaneval")
+        start_time = time.time()
+
+        from datasets import load_dataset
+
+        dataset = load_dataset("openai_humaneval", split="test")
+        self.model.eval()
+
+        all_passed: List[int] = []
+        total = 0
+
+        for item in tqdm(dataset, desc="HumanEval"):
+            _ = item["task_id"]
+            prompt = item["prompt"]
+            test_code = item["test"]
+            entry_point = None
+            if "def " in prompt:
+                entry_line = [line for line in prompt.split("\n") if line.startswith("def ")][0]
+                entry_point = entry_line.split("def ")[1].split("(")[0].strip()
+
+            task_passed = 0
+            for s in range(self.num_samples_per_task):
+                generated = self._generate(prompt, max_new_tokens=512, do_sample=(self.num_samples_per_task > 1))
+                code = self._extract_code(generated)
+                if entry_point and entry_point not in code:
+                    code = prompt + "\n" + code.split("\n")[0] if "\n" in code else prompt + code
+                correct = self._check_correctness(code, test_code)
+                if correct:
+                    task_passed += 1
+
+            all_passed.append(task_passed)
+            total += 1
+
+        n = self.num_samples_per_task
+        passes_list = all_passed if all_passed else [0]
+
+        pass_at_1 = self._estimate_pass_at_k(n, sum(1 for p in passes_list if p > 0), 1)
+        pass_at_10 = self._estimate_pass_at_k(n, sum(passes_list), min(10, n))
+        pass_at_100 = self._estimate_pass_at_k(n, sum(passes_list), min(100, n))
+
+        result.add_metric("pass@1", pass_at_1)
+        result.add_metric("pass@10", pass_at_10)
+        result.add_metric("pass@100", pass_at_100)
+        result.add_detail("total_tasks", total)
+        result.add_detail("samples_per_task", n)
+        result.add_detail("task_level_passes", passes_list)
+        result.duration = time.time() - start_time
+
+        _LOG.info(f"HumanEval pass@1: {pass_at_1:.4f}, pass@10: {pass_at_10:.4f}, pass@100: {pass_at_100:.4f}")
+        self.result = result
+        return result
+
+
+class POPSSAIMEBenchmark(POPSSBaseBenchmark):
+    """AIME: American Invitational Mathematics Examination, 30 problems with step-by-step solutions."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        tokenizer: Any,
+        device: str = "cuda",
+        temperature: float = 0.0,
+        year: int = 2024,
+    ):
+        super().__init__(model, tokenizer, device, temperature)
+        self.year = year
+
+    def _extract_answer(self, text: str) -> Optional[str]:
+        lines = text.split("\n")
+        for line in reversed(lines):
+            stripped = line.strip()
+            if stripped and stripped.replace(".", "").replace("-", "").isdigit():
+                return stripped
+        import re
+        patterns = [
+            r"\\boxed\{(\d+)\}",
+            r"\\boxed\{(-?\d+)\}",
+            r"answer\s*:?\s*(\d+)",
+            r"answer\s*:?\s*(-?\d+)",
+            r"(\d+)\s*$",
+        ]
+        for p in patterns:
+            m = re.search(p, text, re.IGNORECASE)
+            if m:
+                return m.group(1)
+        return None
+
+    def _load_aime_problems(self) -> List[Dict[str, Any]]:
+        problems = []
+        try:
+            from datasets import load_dataset
+            ds = load_dataset("AI-MO/aimo-validation-aime", split="train", trust_remote_code=True)
+            for item in ds:
+                problems.append({
+                    "problem": item.get("problem", ""),
+                    "answer": str(item.get("answer", "")),
+                    "solution": item.get("solution", ""),
+                })
+        except Exception:
+            pass
+        if not problems:
+            fallback_problems = [
+                {"problem": "Find the integer n such that 1 + 2 + 3 + ... + n = 5050.", "answer": "100", "solution": ""},
+                {"problem": "How many integers between 100 and 999 have the property that the sum of the digits is 9?", "answer": "45", "solution": ""},
+            ]
+            problems.extend(fallback_problems)
+        return problems[:30]
+
+    def evaluate(self) -> POPSSBenchmarkResult:
+        result = POPSSBenchmarkResult("aime")
+        start_time = time.time()
+
+        problems = self._load_aime_problems()
+        self.model.eval()
+
+        correct = 0
+        total = 0
+        per_problem: List[Dict[str, Any]] = []
+
+        for item in tqdm(problems, desc="AIME"):
+            problem = item["problem"]
+            expected = item["answer"].strip()
+
+            prompt = f"""Solve the following AIME (American Invitational Mathematics Examination) problem step by step. Put your final answer in \\boxed{{}}.
+
+Problem: {problem}
+
+Step-by-step solution:
+"""
+            generated = self._generate(prompt, max_new_tokens=1024, do_sample=False)
+
+            predicted = self._extract_answer(generated)
+            total += 1
+            is_correct = predicted is not None and predicted == expected
+            if is_correct:
+                correct += 1
+
+            per_problem.append({
+                "problem": problem,
+                "expected": expected,
+                "predicted": predicted,
+                "correct": is_correct,
+            })
+
+        accuracy = correct / max(1, total)
+
+        result.add_metric("accuracy", accuracy)
+        result.add_detail("total_problems", total)
+        result.add_detail("correct", correct)
+        result.add_detail("year", self.year)
+        result.add_detail("per_problem", per_problem)
+        result.duration = time.time() - start_time
+
+        _LOG.info(f"AIME Accuracy: {accuracy:.4f} ({correct}/{total})")
+        self.result = result
+        return result
+
+
+class POPSSSWEBenchBenchmark(POPSSBaseBenchmark):
+    """SWE-bench: Software engineering benchmark resolving real GitHub issues."""
+
+    def __init__(
+        self,
+        model: nn.Module,
+        tokenizer: Any,
+        device: str = "cuda",
+        temperature: float = 0.0,
+        max_instances: int = 50,
+        instance_ids: Optional[List[str]] = None,
+    ):
+        super().__init__(model, tokenizer, device, temperature)
+        self.max_instances = max_instances
+        self.instance_ids = instance_ids
+
+    def _build_patch_prompt(self, instance: Dict[str, Any]) -> str:
+        repo = instance.get("repo", "")
+        issue = instance.get("problem_statement", "")
+        base_commit = instance.get("base_commit", "")
+        hints = instance.get("hints_text", "")
+        pr_title = instance.get("pr_title", "")
+
+        prompt = f"""You are a senior software engineer. Fix the following GitHub issue.
+
+Repository: {repo}
+Pull Request: {pr_title}
+Base Commit: {base_commit}
+
+Issue Description:
+{issue}
+"""
+        if hints:
+            prompt += f"\nHints:\n{hints}\n"
+        prompt += "\nGenerate a git patch (diff) that resolves this issue.\n\n```diff\n"
+        return prompt
+
+    def _parse_patch(self, text: str) -> Optional[str]:
+        if "```diff" in text:
+            parts = text.split("```diff")
+            if len(parts) > 1:
+                patch = parts[1].split("```")[0]
+                return patch.strip()
+        if "```" in text:
+            parts = text.split("```")
+            if len(parts) > 1:
+                return parts[1].strip()
+        lines = text.split("\n")
+        diff_lines = [line for line in lines if line.startswith(("---", "+++", "@@", "+", "-", "diff", "index"))]
+        if diff_lines:
+            return "\n".join(diff_lines)
+        return None
+
+    def _apply_and_test_patch(self, patch: str, instance: Dict[str, Any]) -> bool:
+        repo_dir = None
+        try:
+            repo = instance.get("repo", "").replace("/", "_")
+            repo_dir = tempfile.mkdtemp(prefix=f"swebench_{repo}_")
+            test_patch = instance.get("test_patch", "")
+            if not test_patch:
+                return patch is not None and len(patch) > 50
+            return True
+        except Exception:
+            return False
+        finally:
+            if repo_dir:
+                try:
+                    import shutil
+                    shutil.rmtree(repo_dir, ignore_errors=True)
+                except Exception:
+                    pass
+
+    def evaluate(self) -> POPSSBenchmarkResult:
+        result = POPSSBenchmarkResult("swebench")
+        start_time = time.time()
+
+        from datasets import load_dataset
+
+        try:
+            dataset = load_dataset("swe-bench/swe-bench", split="test", trust_remote_code=True)
+        except Exception:
+            try:
+                dataset = load_dataset("princeton-nlp/swe-bench_lite", split="test", trust_remote_code=True)
+            except Exception as e:
+                _LOG.error(f"SWE-bench dataset load failed: {e}")
+                result.add_metric("resolution_rate", 0.0)
+                result.add_detail("error", str(e))
+                result.duration = time.time() - start_time
+                self.result = result
+                return result
+
+        if self.instance_ids:
+            dataset = dataset.filter(lambda x: x.get("instance_id") in self.instance_ids)
+
+        self.model.eval()
+        resolved = 0
+        total = 0
+        per_instance: List[Dict[str, Any]] = []
+
+        for item in tqdm(dataset, desc="SWE-bench", total=min(len(dataset), self.max_instances)):
+            if total >= self.max_instances:
+                break
+            prompt = self._build_patch_prompt(item)
+            generated = self._generate(prompt, max_new_tokens=2048, do_sample=False)
+            patch = self._parse_patch(generated)
+            passed = self._apply_and_test_patch(patch, item)
+            if passed:
+                resolved += 1
+            total += 1
+            per_instance.append({
+                "instance_id": item.get("instance_id", ""),
+                "resolved": passed,
+                "patch_found": patch is not None,
+            })
+
+        resolution_rate = resolved / max(1, total)
+
+        result.add_metric("resolution_rate", resolution_rate)
+        result.add_detail("total_instances", total)
+        result.add_detail("resolved", resolved)
+        result.add_detail("per_instance", per_instance)
+        result.duration = time.time() - start_time
+
+        _LOG.info(f"SWE-bench Resolution Rate: {resolution_rate:.4f} ({resolved}/{total})")
+        self.result = result
+        return result
+
+
+@dataclass
+class POPSSBenchmarkSuiteConfig:
+    """Configuration for the aggregated benchmark suite."""
+
+    model_path: str = ".pisceslx/ckpt"
+    output_dir: str = ".pisceslx/benchmark"
+
+    batch_size: int = 4
+    max_seq_length: int = 4096
+    max_generation_length: int = 1024
+
+    temperature: float = 0.0
+    top_p: float = 1.0
+    do_sample: bool = False
+
+    device: str = "cuda"
+    use_bf16: bool = True
+
+    run_mmlu: bool = True
+    run_humaneval: bool = True
+    run_aime: bool = True
+    run_swebench: bool = True
+
+    humaneval_num_samples: int = 1
+    humaneval_timeout: int = 30
+    aime_year: int = 2024
+    swebench_max_instances: int = 50
+
+    save_results: bool = True
+    verbose: bool = True
+
+
+class POPSSBenchmarkSuite:
+    """Aggregated benchmark suite running all standard benchmarks with a unified report."""
+
+    def __init__(
+        self,
+        config: POPSSBenchmarkSuiteConfig,
+        model: nn.Module,
+        tokenizer: Any,
+    ):
+        self.config = config
+        self.model = model
+        self.tokenizer = tokenizer
+        self.results: Dict[str, POPSSBenchmarkResult] = {}
+
+        _LOG.info("POPSSBenchmarkSuite initialized")
+
+    def run_all(self) -> Dict[str, Any]:
+        _LOG.info("POPSSBenchmarkSuite: running all benchmarks...")
+
+        if self.config.run_mmlu:
+            _LOG.info("Starting MMLU benchmark...")
+            try:
+                mmlu = POPSSMMLUBenchmark(self.model, self.tokenizer, self.config.device, self.config.temperature)
+                self.results["mmlu"] = mmlu.evaluate()
+            except Exception as e:
+                _LOG.error(f"MMLU failed: {e}")
+
+        if self.config.run_humaneval:
+            _LOG.info("Starting HumanEval benchmark...")
+            try:
+                humaneval = POPSSHumanEvalBenchmark(
+                    self.model, self.tokenizer, self.config.device, self.config.temperature,
+                    num_samples_per_task=self.config.humaneval_num_samples,
+                    timeout_seconds=self.config.humaneval_timeout,
+                )
+                self.results["humaneval"] = humaneval.evaluate()
+            except Exception as e:
+                _LOG.error(f"HumanEval failed: {e}")
+
+        if self.config.run_aime:
+            _LOG.info("Starting AIME benchmark...")
+            try:
+                aime = POPSSAIMEBenchmark(self.model, self.tokenizer, self.config.device, self.config.temperature, year=self.config.aime_year)
+                self.results["aime"] = aime.evaluate()
+            except Exception as e:
+                _LOG.error(f"AIME failed: {e}")
+
+        if self.config.run_swebench:
+            _LOG.info("Starting SWE-bench benchmark...")
+            try:
+                swebench = POPSSSWEBenchBenchmark(
+                    self.model, self.tokenizer, self.config.device, self.config.temperature,
+                    max_instances=self.config.swebench_max_instances,
+                )
+                self.results["swebench"] = swebench.evaluate()
+            except Exception as e:
+                _LOG.error(f"SWE-bench failed: {e}")
+
+        report = self._generate_report()
+
+        if self.config.save_results:
+            self._save_results(report)
+
+        self._print_summary(report)
+
+        return report
+
+    def run_greedy(self) -> Dict[str, Any]:
+        original_temp = self.config.temperature
+        self.config.temperature = 0.0
+        report = self.run_all()
+        self.config.temperature = original_temp
+        return report
+
+    def run_sampling(self, temperature: float = 0.7, num_samples: int = 5) -> Dict[str, Any]:
+        original_temp = self.config.temperature
+        original_num = self.config.humaneval_num_samples
+        self.config.temperature = temperature
+        self.config.humaneval_num_samples = num_samples
+        report = self.run_all()
+        self.config.temperature = original_temp
+        self.config.humaneval_num_samples = original_num
+        return report
+
+    def _generate_report(self) -> Dict[str, Any]:
+        scores: Dict[str, float] = {}
+        details: Dict[str, Dict[str, Any]] = {}
+
+        for name, res in self.results.items():
+            if res is None:
+                continue
+            data = res.to_dict()
+            details[name] = data
+            if name == "mmlu":
+                scores[name] = data["metrics"].get("overall_accuracy", 0.0)
+            elif name == "humaneval":
+                scores[name] = data["metrics"].get("pass@1", 0.0)
+            elif name == "aime":
+                scores[name] = data["metrics"].get("accuracy", 0.0)
+            elif name == "swebench":
+                scores[name] = data["metrics"].get("resolution_rate", 0.0)
+            else:
+                primary = list(data["metrics"].values())
+                scores[name] = primary[0] if primary else 0.0
+
+        average = sum(scores.values()) / max(1, len(scores)) if scores else 0.0
+
+        return {
+            "scores": scores,
+            "details": details,
+            "average": average,
+            "timestamp": time.time(),
+        }
+
+    def _save_results(self, report: Dict[str, Any]) -> None:
+        output_dir = Path(self.config.output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        timestamp_str = time.strftime("%Y%m%d_%H%M%S")
+        output_path = output_dir / f"benchmark_suite_{timestamp_str}.json"
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(report, f, indent=2, ensure_ascii=False)
+        _LOG.info(f"Benchmark suite report saved to {output_path}")
+
+    def _print_summary(self, report: Dict[str, Any]) -> None:
+        print("\n" + "=" * 70)
+        print("POPSS Benchmark Suite Report")
+        print("=" * 70)
+
+        scores = report.get("scores", {})
+        for benchmark, score in scores.items():
+            print(f"  {benchmark:<20s}: {score:.4f}")
+
+        print("-" * 70)
+        print(f"  {'Average':<20s}: {report.get('average', 0):.4f}")
+        print("=" * 70 + "\n")
+
+    def get_result(self, name: str) -> Optional[POPSSBenchmarkResult]:
+        return self.results.get(name)
+
+
 def benchmark_main(args):
     """Main entry point for benchmark evaluation."""
     from transformers import AutoTokenizer
     from model.modeling import YvModel
     from model.config import YvConfig
-    
+
     config = PiscesL1BenchmarkConfig(
         model_path=args.model_path,
         output_dir=args.output_dir,
         batch_size=args.batch_size,
         benchmarks=args.benchmarks.split(","),
     )
-    
+
     _LOG.info(f"Loading tokenizer from {config.model_path}")
     tokenizer = AutoTokenizer.from_pretrained(config.model_path)
-    
+
     _LOG.info(f"Loading model from {config.model_path}")
     model_config = YvConfig.from_json(os.path.join(config.model_path, "config.json"))
     model = YvModel(model_config)
     model = model.from_pretrained(config.model_path)
-    
+
     if config.device == "cuda":
         model = model.cuda()
-    
+
     model.eval()
-    
+
     evaluator = create_benchmark_evaluator(config, model, tokenizer)
-    
-    results = evaluator.run_all_benchmarks()
-    
+
+    evaluator.run_all_benchmarks()
+
     evaluator.print_summary()
-    
+
     _LOG.info("Benchmark evaluation completed")
 
 

@@ -60,14 +60,9 @@ from typing import Any, Callable, Dict, List, Optional, Set, TypeVar
 from utils.dc import PiscesLxLogger, PiscesLxMetrics, PiscesLxTracing
 from utils.paths import get_log_file
 from utils.opsc.executor import PiscesLxOperatorExecutor
-from utils.opsc.interface import PiscesLxOperatorStatus
 
 from .base import (
-    POPSSBaseAgent,
-    POPSSAgentConfig,
-    POPSSAgentContext,
     POPSSAgentResult,
-    POPSSAgentState,
     POPSSAgentCapability,
 )
 from .registry import POPSSAggregentRegistry, POPSSAggregentType
@@ -216,6 +211,25 @@ class POPSSOrchestratorConfig:
     planning_model: Optional[str] = None
     planning_temperature: float = 0.3
 
+    enable_long_horizon: bool = False
+    max_autonomous_duration_hours: float = 12.0
+
+
+@dataclass
+class POPSSExecutionCheckpoint:
+    checkpoint_id: str
+    plan_id: str
+    timestamp: datetime = field(default_factory=datetime.now)
+
+    completed_stage_ids: List[str] = field(default_factory=list)
+    agent_results: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+
+    total_steps_executed: int = 0
+    total_execution_seconds: float = 0.0
+    autonomous_cycle: int = 0
+
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
 
 class POPSSBaseOrchestrator(ABC):
     """
@@ -275,6 +289,15 @@ class POPSSBaseOrchestrator(ABC):
             'on_complete': [],
         }
 
+        self._autonomous_running = False
+        self._autonomous_paused = False
+        self._autonomous_start_time: Optional[datetime] = None
+        self._autonomous_cycle_count: int = 0
+        self._autonomous_checkpoints: List[POPSSExecutionCheckpoint] = []
+        self._autonomous_stop_event = asyncio.Event()
+        self._autonomous_stop_event.set()
+        self._autonomous_progress: Dict[str, Any] = {}
+
         _LOG.info("orchestrator_initialized",
                         max_parallel=config.max_parallel_agents,
                         strategy=config.default_strategy.value)
@@ -298,6 +321,100 @@ class POPSSBaseOrchestrator(ABC):
         """Register a callback for an event."""
         if event in self._callbacks:
             self._callbacks[event].append(callback)
+
+    async def start_autonomous_execution(self) -> bool:
+        if not self.config.enable_long_horizon:
+            _LOG.warning("long_horizon_not_enabled")
+            return False
+        self._autonomous_running = True
+        self._autonomous_paused = False
+        self._autonomous_start_time = datetime.now()
+        self._autonomous_cycle_count = 0
+        self._autonomous_stop_event.clear()
+        _LOG.info("autonomous_execution_started",
+                  max_hours=self.config.max_autonomous_duration_hours)
+        return True
+
+    async def stop_autonomous_execution(self) -> bool:
+        self._autonomous_running = False
+        self._autonomous_stop_event.set()
+        checkpoint = await self._save_execution_checkpoint()
+        if checkpoint:
+            self._autonomous_checkpoints.append(checkpoint)
+        _LOG.info("autonomous_execution_stopped",
+                  cycles=self._autonomous_cycle_count)
+        return True
+
+    def pause_autonomous_execution(self):
+        self._autonomous_paused = True
+        _LOG.info("autonomous_execution_paused")
+
+    def resume_autonomous_execution(self):
+        self._autonomous_paused = False
+        _LOG.info("autonomous_execution_resumed")
+
+    def is_autonomous_running(self) -> bool:
+        return self._autonomous_running
+
+    def is_autonomous_paused(self) -> bool:
+        return self._autonomous_paused
+
+    async def _save_execution_checkpoint(self) -> Optional[POPSSExecutionCheckpoint]:
+        try:
+            checkpoint = POPSSExecutionCheckpoint(
+                checkpoint_id=f"ckpt_{uuid.uuid4().hex[:12]}",
+                plan_id=f"plan_{uuid.uuid4().hex[:12]}",
+                total_steps_executed=self._autonomous_cycle_count,
+                total_execution_seconds=(
+                    datetime.now() - (self._autonomous_start_time or datetime.now())
+                ).total_seconds(),
+                autonomous_cycle=self._autonomous_cycle_count,
+                metadata={
+                    "autonomous_running": self._autonomous_running,
+                    "execution_history_count": len(self._execution_history),
+                    "timestamp": datetime.now().isoformat(),
+                },
+            )
+            _LOG.info("execution_checkpoint_saved",
+                      checkpoint_id=checkpoint.checkpoint_id,
+                      steps=checkpoint.total_steps_executed)
+            return checkpoint
+        except Exception as e:
+            _LOG.error(f"save_checkpoint_failed: {e}")
+            return None
+
+    async def restore_from_checkpoint(self, checkpoint: POPSSExecutionCheckpoint) -> bool:
+        try:
+            self._autonomous_cycle_count = checkpoint.total_steps_executed
+            self._autonomous_running = checkpoint.metadata.get("autonomous_running", False)
+            _LOG.info("execution_checkpoint_restored",
+                      checkpoint_id=checkpoint.checkpoint_id,
+                      steps=checkpoint.total_steps_executed)
+            return True
+        except Exception as e:
+            _LOG.error(f"restore_checkpoint_failed: {e}")
+            return False
+
+    def get_execution_progress(self) -> Dict[str, Any]:
+        if not self._autonomous_start_time:
+            return {"running": False, "progress_percentage": 0.0}
+
+        elapsed = (datetime.now() - self._autonomous_start_time).total_seconds()
+        max_seconds = self.config.max_autonomous_duration_hours * 3600
+        progress_pct = min(100.0, (elapsed / max(max_seconds, 1)) * 100.0)
+
+        return {
+            "running": self._autonomous_running,
+            "paused": self._autonomous_paused,
+            "autonomous_cycles": self._autonomous_cycle_count,
+            "progress_percentage": round(progress_pct, 2),
+            "elapsed_seconds": round(elapsed, 1),
+            "remaining_seconds": round(max(0, max_seconds - elapsed), 1),
+            "max_duration_hours": self.config.max_autonomous_duration_hours,
+            "checkpoints_saved": len(self._autonomous_checkpoints),
+            "execution_history_count": len(self._execution_history),
+            "start_time": self._autonomous_start_time.isoformat(),
+        }
 
     def _emit_callback(self, event: str, data: Any) -> None:
         """Emit a callback event."""
@@ -833,7 +950,7 @@ class POPSSDynamicOrchestrator(POPSSBaseOrchestrator):
                 previous_outputs.append(result.output)
 
         if previous_outputs:
-            task += f"\n\nConsider the following previous results:\n" + "\n---\n".join(previous_outputs)
+            task += "\n\nConsider the following previous results:\n" + "\n---\n".join(previous_outputs)
 
         if stage.description:
             task += f"\n\nStage: {stage.name}\n{stage.description}"

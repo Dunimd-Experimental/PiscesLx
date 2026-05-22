@@ -117,7 +117,7 @@ Note:
     Memory system supports both FAISS and NumPy backends.
 """
 
-from .vision import YvVisionEncoder, YvSpatioTemporalRoPE3D
+from .vision import YvVisionEncoder, YvSpatioTemporalRoPE3D, YvSigLIPVisionEncoder
 from .video import YvVideoEncoder
 from .audio import YvAudioEncoder
 from .doc import YvDocEncoder
@@ -146,6 +146,7 @@ from .memory import YvMemory, YvMemoryConfig
 __all__ = [
     "YvVisionEncoder",
     "YvSpatioTemporalRoPE3D",
+    "YvSigLIPVisionEncoder",
     "YvVideoEncoder",
     "YvAudioEncoder",
     "YvDocEncoder",

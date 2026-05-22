@@ -56,7 +56,7 @@ Usage:
     quantized_model = result.output["model"]
 """
 
-from .methods import POPSSQuantizationConfig, POPSSQuantizationOperatorFactory
+from .methods import POPSSQuantizationConfig, POPSSQuantizationOperatorFactory, POPSSBlockWiseINT4Quantizer, POPSSKVCacheQuantizer
 from .calibration import (
     POPSSCalibrationConfig,
     POPSSCalibrationDataLoaderOperator,
@@ -64,7 +64,7 @@ from .calibration import (
 )
 from .advanced import POPSSAdvancedQuantizationConfig, POPSSSensitivityAnalysisOperator, POPSSAdaptiveBitAllocationOperator
 from .pipeline import POPSSQuantizationPipelineConfig, POPSSQuantizationPipelineOperator
-from .engine import POPSSQuantizationEngineConfig, POPSSQuantizationEngineOperator
+from .engine import POPSSQuantizationEngineConfig, POPSSQuantizationEngineOperator, FP8Format, ScaleMethod, POPSSFP8QuantizationEngine
 
 __all__ = [
     "POPSSQuantizationConfig",
@@ -79,4 +79,9 @@ __all__ = [
     "POPSSQuantizationPipelineOperator",
     "POPSSQuantizationEngineConfig",
     "POPSSQuantizationEngineOperator",
+    "FP8Format",
+    "ScaleMethod",
+    "POPSSFP8QuantizationEngine",
+    "POPSSBlockWiseINT4Quantizer",
+    "POPSSKVCacheQuantizer",
 ]

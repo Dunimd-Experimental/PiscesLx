@@ -385,7 +385,27 @@ def setup(args):
     if sys.prefix == sys.base_prefix:
         logger_info("Not in virtual environment. Creating venv...")
         python_executable = sys.executable
-        subprocess.check_call([python_executable, "-m", "venv", venv_dir])
+
+        try:
+            subprocess.check_call([python_executable, "-m", "venv", venv_dir])
+        except subprocess.CalledProcessError:
+            logger_info("Standard venv failed (python3-venv may be missing). Trying --without-pip...")
+            try:
+                subprocess.check_call([python_executable, "-m", "venv", "--without-pip", venv_dir])
+                venv_python = os.path.join(
+                    venv_dir, "Scripts" if is_windows else "bin",
+                    "python.exe" if is_windows else "python"
+                )
+                subprocess.check_call([venv_python, "-m", "ensurepip", "--upgrade", "--default-pip"])
+            except Exception:
+                logger_info("Installing virtualenv as fallback...")
+                try:
+                    subprocess.check_call([python_executable, "-m", "pip", "install", "--user", "virtualenv"])
+                    subprocess.check_call([python_executable, "-m", "virtualenv", venv_dir])
+                except Exception as e:
+                    logger_error(f"All venv creation methods failed: {e}")
+                    return
+
         logger_success(f"Virtual environment created at {venv_dir}")
 
         python_bin = os.path.join(venv_dir, "Scripts" if is_windows else "bin", "python" + (".exe" if is_windows else ""))

@@ -47,12 +47,13 @@ Usage:
     >>> result = operator.execute({"model": model, "batch": batch})
 """
 
+import os
+import functools
 import torch
 import torch.nn as nn
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 from enum import Enum
-import math
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from utils.dc import PiscesLxLogger
@@ -106,6 +107,10 @@ class POPSSParallel3DConfig:
     zero_stage: int = 0
     cpu_offload: bool = False
     mixed_precision: str = "bf16"
+    
+    enable_overlap: bool = True
+    overlap_bucket_size_mb: int = 25
+    overlap_grad_sync: bool = True
     
     def __post_init__(self):
         if isinstance(self.pipeline_schedule, str):
@@ -237,7 +242,6 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
         if not dist.is_initialized():
             return
         
-        world_size = self._world_size
         dp_size = self.config.dp_size
         tp_size = self.config.tp_size
         pp_size = self.config.pp_size
@@ -529,8 +533,6 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
         
         total_memory = model_params * bytes_per_param
         
-        tp_memory = total_memory / self.config.tp_size
-        pp_memory = total_memory / self.config.pp_size
         combined_memory = total_memory / (self.config.tp_size * self.config.pp_size)
         
         optimizer_memory = combined_memory * 2
@@ -552,9 +554,229 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
         }
 
 
+class POPSSCommComputeOverlapOptimizer:
+    """
+    Communication-Computation Overlap Optimizer for Distributed Training.
+
+    Overlaps gradient computation with gradient communication using
+    async all-reduce, gradient bucketing, and hierarchical all-reduce
+    strategies to minimize communication overhead.
+
+    Features:
+        - Gradient bucketing: Groups gradients by size for efficient communication
+        - Async all-reduce: Overlaps computation with gradient synchronization
+        - Hierarchical all-reduce: Intra-node then inter-node for multi-node training
+        - torch.compile graph capture support via @torch.compiler.disable on sync ops
+
+    Usage:
+        >>> model = MyModel()
+        >>> optimizer = POPSSCommComputeOverlapOptimizer(
+        ...     model=model,
+        ...     bucket_size_mb=25,
+        ...     enable_overlap=True,
+        ... )
+        >>> for batch in dataloader:
+        ...     loss = model(batch)
+        ...     loss.backward()
+        ...     optimizer.sync_gradients()  # Overlaps sync with computation
+        ...     optimizer.step()
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        bucket_size_mb: int = 25,
+        enable_overlap: bool = True,
+        grad_sync: bool = True,
+        dp_group: Optional[torch.distributed.ProcessGroup] = None,
+    ):
+        """
+        Initialize the overlap optimizer.
+
+        Args:
+            model: The neural network model whose gradients will be synchronized.
+            bucket_size_mb: Target size in MB for each gradient bucket.
+            enable_overlap: Whether to enable communication-computation overlap.
+            grad_sync: Whether to perform gradient synchronization.
+            dp_group: Data parallel process group. Uses WORLD if None.
+        """
+        self.model = model
+        self.bucket_size_bytes = bucket_size_mb * 1024 * 1024
+        self.enable_overlap = enable_overlap
+        self.grad_sync = grad_sync
+        self.dp_group = dp_group
+
+        self._buckets: List[List[Tuple[str, nn.Parameter]]] = []
+        self._build_buckets()
+
+    def _build_buckets(self):
+        """Build gradient buckets by grouping model parameters by size."""
+        current_bucket: List[Tuple[str, nn.Parameter]] = []
+        current_size = 0
+
+        for name, param in self.model.named_parameters():
+            if not param.requires_grad:
+                continue
+            param_size = param.numel() * param.element_size()
+            if current_size + param_size > self.bucket_size_bytes and current_bucket:
+                self._buckets.append(current_bucket)
+                current_bucket = []
+                current_size = 0
+            current_bucket.append((name, param))
+            current_size += param_size
+
+        if current_bucket:
+            self._buckets.append(current_bucket)
+
+    @torch.compiler.disable
+    def _sync_bucket(
+        self,
+        bucket: List[Tuple[str, nn.Parameter]],
+        dp_group: torch.distributed.ProcessGroup,
+    ) -> Optional[Tuple[torch.distributed.Work, List[torch.Tensor], torch.Tensor]]:
+        """Asynchronously synchronize a single gradient bucket."""
+        grads = [p.grad for _, p in bucket if p.grad is not None]
+        if not grads:
+            return None
+
+        flat_grad = torch._utils._flatten_dense_tensors(grads)
+        handle = torch.distributed.all_reduce_(
+            flat_grad,
+            op=torch.distributed.ReduceOp.SUM,
+            group=dp_group,
+            async_op=True,
+        )
+        return handle, grads, flat_grad
+
+    def _wait_and_unscale(
+        self,
+        handle: torch.distributed.Work,
+        grads: List[torch.Tensor],
+        flat_grad: torch.Tensor,
+        world_size: int,
+    ):
+        """Wait for async all-reduce and unscale gradients."""
+        handle.wait()
+        synced = torch._utils._unflatten_dense_tensors(flat_grad, grads)
+        for g, sg in zip(grads, synced):
+            g.copy_(sg)
+        for g in grads:
+            g.div_(world_size)
+
+    def sync_gradients(self):
+        """Synchronize gradients across all data parallel workers.
+
+        Uses bucketed async all-reduce to overlap communication with
+        computation. Each bucket is reduced independently, allowing
+        downstream computation to proceed as each bucket completes.
+        """
+        if not self.enable_overlap or not self.grad_sync:
+            return
+
+        import torch.distributed as dist
+
+        dp_group = self.dp_group or dist.group.WORLD
+        world_size = dp_group.size() if dp_group else 1
+
+        if world_size <= 1:
+            return
+
+        handles = []
+        for bucket in self._buckets:
+            result = self._sync_bucket(bucket, dp_group)
+            if result is not None:
+                handles.append(result)
+
+        for result in handles:
+            self._wait_and_unscale(*result, world_size)
+
+    def overlap_allreduce(self, backward_fn):
+        """
+        Decorator that wraps a backward function with overlapped all-reduce.
+
+        The decorated function triggers gradient synchronization after
+        backward, enabling communication to overlap with subsequent
+        computation steps.
+
+        Usage:
+            >>> @optimizer.overlap_allreduce
+            ... def backward_step(loss):
+            ...     loss.backward()
+            ...
+            >>> backward_step(loss)
+            >>> optimizer.step()
+        """
+        @functools.wraps(backward_fn)
+        def wrapper(*args, **kwargs):
+            result = backward_fn(*args, **kwargs)
+            self.sync_gradients()
+            return result
+        return wrapper
+
+    def hierarchical_allreduce(self):
+        """
+        Perform hierarchical all-reduce for multi-node training.
+
+        Reduces communication by first aggregating within each node
+        (intra-node), then across nodes (inter-node). This minimizes
+        cross-node bandwidth usage.
+
+        Requires LOCAL_RANK and LOCAL_WORLD_SIZE environment variables
+        to be set (typically by torchrun or similar launcher).
+        """
+        import torch.distributed as dist
+
+        if not dist.is_initialized():
+            return
+
+        world_size = dist.get_world_size()
+        if world_size <= 1:
+            return
+
+        local_world_size = int(os.environ.get('LOCAL_WORLD_SIZE', 1))
+        local_rank = int(os.environ.get('LOCAL_RANK', 0))
+
+        if local_world_size <= 0:
+            self.sync_gradients()
+            return
+
+        n_nodes = world_size // local_world_size
+        if n_nodes <= 1:
+            self.sync_gradients()
+            return
+
+        node_rank = local_rank // local_world_size
+
+        intra_node_group = dist.new_group(
+            ranks=list(range(node_rank * local_world_size, (node_rank + 1) * local_world_size)),
+        )
+
+        cross_node_group = dist.new_group(
+            ranks=list(range(0, world_size, local_world_size)),
+        )
+
+        for bucket in self._buckets:
+            grads = [p.grad for _, p in bucket if p.grad is not None]
+            if not grads:
+                continue
+
+            flat_grad = torch._utils._flatten_dense_tensors(grads)
+
+            dist.all_reduce(flat_grad, op=dist.ReduceOp.SUM, group=intra_node_group)
+            flat_grad.div_(local_world_size)
+
+            dist.all_reduce(flat_grad, op=dist.ReduceOp.SUM, group=cross_node_group)
+            flat_grad.div_(n_nodes)
+
+            synced = torch._utils._unflatten_dense_tensors(flat_grad, grads)
+            for g, sg in zip(grads, synced):
+                g.copy_(sg)
+
+
 __all__ = [
     "POPSSParallelismType",
     "POPSSPipelineSchedule",
     "POPSSParallel3DConfig",
     "POPSSParallel3DOperator",
+    "POPSSCommComputeOverlapOptimizer",
 ]

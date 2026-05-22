@@ -21,13 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-import asyncio
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set
 from concurrent.futures import ThreadPoolExecutor
+from collections import defaultdict
 
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
@@ -378,7 +378,6 @@ class POPSSTaskDecomposer:
         return subtasks
     
     def _prune_subtasks(self, subtasks: List[POPSSSubtask]) -> List[POPSSSubtask]:
-        max_subtasks = self.config.max_subtask_complexity.value * 2
         if len(subtasks) > self.config.max_subtasks:
             subtasks = subtasks[:self.config.max_subtasks]
         
@@ -459,3 +458,218 @@ class POPSSTaskDecomposer:
     def shutdown(self):
         self._async_executor.shutdown(wait=True)
         self._LOG.info("POPSSTaskDecomposer shutdown")
+
+
+@dataclass
+class POPSSHierarchicalDecompositionNode:
+    node_id: str
+    name: str
+    description: str
+    depth: int = 0
+    parent_id: Optional[str] = None
+    child_ids: List[str] = field(default_factory=list)
+    complexity: POPSSTaskComplexity = POPSSTaskComplexity.MEDIUM
+    priority: int = 5
+    estimated_effort: float = 1.0
+    critical_path_weight: float = 0.0
+    dependencies: List[str] = field(default_factory=list)
+    status: str = "pending"
+    input_data: Dict[str, Any] = field(default_factory=dict)
+    output_data: Dict[str, Any] = field(default_factory=dict)
+    created_at: datetime = field(default_factory=datetime.now)
+
+
+@dataclass
+class POPSSHierarchicalDecompositionResult:
+    root_id: str
+    all_nodes: Dict[str, POPSSHierarchicalDecompositionNode] = field(default_factory=dict)
+    topological_order: List[str] = field(default_factory=list)
+    critical_path: List[str] = field(default_factory=list)
+    parallel_groups: List[List[str]] = field(default_factory=list)
+    depth_groups: Dict[int, List[str]] = field(default_factory=dict)
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+class POPSSHierarchicalTaskDecomposer:
+    def __init__(self, config: Optional[POPSSTaskDecomposerConfig] = None):
+        self.config = config or POPSSTaskDecomposerConfig()
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Agents", file_path=get_log_file("PiscesLx.Opss.Agents"), enable_file=True)
+        self._async_executor = ThreadPoolExecutor(max_workers=2, thread_name_prefix="piscesl1_hierarchical_decomposer")
+        self._LOG.info("POPSSHierarchicalTaskDecomposer initialized")
+
+    async def decompose_recursive(
+        self,
+        task_description: str,
+        max_depth: int = 5,
+        max_branching: int = 10,
+        context: Optional[Dict[str, Any]] = None
+    ) -> POPSSHierarchicalDecompositionResult:
+        root_id = f"hr_{uuid.uuid4().hex[:12]}"
+        root = POPSSHierarchicalDecompositionNode(
+            node_id=root_id,
+            name="Root",
+            description=task_description,
+            depth=0,
+        )
+        all_nodes: Dict[str, POPSSHierarchicalDecompositionNode] = {root_id: root}
+
+        await self._decompose_node(root, all_nodes, max_depth, max_branching, context or {})
+
+        topological_order = self._topological_sort(all_nodes)
+        critical_path = self._critical_path_analysis(all_nodes, topological_order)
+        parallel_groups = self._identify_parallel_groups(all_nodes, topological_order)
+        depth_groups = self._group_by_depth(all_nodes)
+
+        result = POPSSHierarchicalDecompositionResult(
+            root_id=root_id,
+            all_nodes=all_nodes,
+            topological_order=topological_order,
+            critical_path=critical_path,
+            parallel_groups=parallel_groups,
+            depth_groups=depth_groups,
+            metadata={
+                "total_nodes": len(all_nodes),
+                "max_depth": max_depth,
+                "max_branching": max_branching,
+                "critical_path_length": len(critical_path),
+                "parallel_group_count": len(parallel_groups),
+            },
+        )
+        self._LOG.info("hierarchical_decomposition_completed", nodes=len(all_nodes), depth=max_depth)
+        return result
+
+    async def _decompose_node(
+        self,
+        node: POPSSHierarchicalDecompositionNode,
+        all_nodes: Dict[str, POPSSHierarchicalDecompositionNode],
+        max_depth: int,
+        max_branching: int,
+        context: Dict[str, Any]
+    ):
+        if node.depth >= max_depth:
+            return
+
+        branching = min(max_branching, max(2, self.config.max_subtasks // (node.depth + 1)))
+        for i in range(branching):
+            child_id = f"hr_{uuid.uuid4().hex[:12]}"
+            child = POPSSHierarchicalDecompositionNode(
+                node_id=child_id,
+                name=f"{node.name}_sub_{i + 1}",
+                description=f"{node.description} - part {i + 1}",
+                depth=node.depth + 1,
+                parent_id=node.node_id,
+                dependencies=[node.node_id],
+                priority=node.priority,
+                input_data={**node.input_data, "sub_index": i, "total_siblings": branching},
+            )
+            all_nodes[child_id] = child
+            node.child_ids.append(child_id)
+            await self._decompose_node(child, all_nodes, max_depth, max_branching, context)
+
+    def _topological_sort(self, all_nodes: Dict[str, POPSSHierarchicalDecompositionNode]) -> List[str]:
+        in_degree: Dict[str, int] = {nid: 0 for nid in all_nodes}
+        adjacency: Dict[str, List[str]] = {nid: [] for nid in all_nodes}
+        for nid, node in all_nodes.items():
+            for dep_id in node.dependencies:
+                if dep_id in adjacency:
+                    adjacency[dep_id].append(nid)
+                    in_degree[nid] += 1
+        queue = [nid for nid in all_nodes if in_degree[nid] == 0]
+        result: List[str] = []
+        while queue:
+            queue.sort(key=lambda nid: all_nodes[nid].priority, reverse=True)
+            current = queue.pop(0)
+            result.append(current)
+            for neighbor in adjacency[current]:
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+        return result
+
+    def _critical_path_analysis(
+        self,
+        all_nodes: Dict[str, POPSSHierarchicalDecompositionNode],
+        topological_order: List[str]
+    ) -> List[str]:
+        node_weights: Dict[str, float] = {}
+        for nid in topological_order:
+            node = all_nodes[nid]
+            weight = node.estimated_effort
+            if node.dependencies:
+                weight += max(node_weights.get(dep, 0.0) for dep in node.dependencies)
+            node_weights[nid] = weight
+            node.critical_path_weight = weight
+
+        max_weight = 0.0
+        critical_end = topological_order[0] if topological_order else ""
+        for nid in topological_order:
+            if node_weights.get(nid, 0.0) > max_weight:
+                max_weight = node_weights[nid]
+                critical_end = nid
+
+        critical_path: List[str] = []
+        current = critical_end
+        while current:
+            critical_path.insert(0, current)
+            node = all_nodes[current]
+            if node.dependencies:
+                current = max(node.dependencies, key=lambda d: node_weights.get(d, 0.0))
+            else:
+                current = ""
+        return critical_path
+
+    def _identify_parallel_groups(
+        self,
+        all_nodes: Dict[str, POPSSHierarchicalDecompositionNode],
+        topological_order: List[str]
+    ) -> List[List[str]]:
+        groups: List[List[str]] = []
+        used: Set[str] = set()
+        for nid in topological_order:
+            if nid in used:
+                continue
+            node = all_nodes[nid]
+            if not node.dependencies:
+                group = [nid]
+                used.add(nid)
+                for other_id in topological_order:
+                    if other_id not in used and not all_nodes[other_id].dependencies:
+                        group.append(other_id)
+                        used.add(other_id)
+                if len(group) > 1:
+                    groups.append(group)
+        return groups
+
+    def _group_by_depth(self, all_nodes: Dict[str, POPSSHierarchicalDecompositionNode]) -> Dict[int, List[str]]:
+        groups: Dict[int, List[str]] = defaultdict(list)
+        for nid, node in all_nodes.items():
+            groups[node.depth].append(nid)
+        return dict(groups)
+
+    def get_scheduling_plan(self, result: POPSSHierarchicalDecompositionResult) -> Dict[str, Any]:
+        total_effort = sum(n.estimated_effort for n in result.all_nodes.values())
+        parallelizable_effort = sum(
+            result.all_nodes[nid].estimated_effort
+            for group in result.parallel_groups
+            for nid in group
+        )
+        critical_path_effort = sum(
+            result.all_nodes[nid].estimated_effort for nid in result.critical_path
+        )
+        estimated_parallel_speedup = total_effort / max(critical_path_effort, 1.0)
+
+        return {
+            "total_nodes": len(result.all_nodes),
+            "total_estimated_effort": round(total_effort, 2),
+            "critical_path_effort": round(critical_path_effort, 2),
+            "parallelizable_effort": round(parallelizable_effort, 2),
+            "estimated_parallel_speedup": round(estimated_parallel_speedup, 2),
+            "parallel_groups": len(result.parallel_groups),
+            "critical_path_nodes": result.critical_path,
+            "topological_order": result.topological_order,
+            "depth_distribution": {str(k): len(v) for k, v in result.depth_groups.items()},
+        }
+
+    def shutdown(self):
+        self._async_executor.shutdown(wait=True)
+        self._LOG.info("POPSSHierarchicalTaskDecomposer shutdown")

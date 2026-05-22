@@ -29,25 +29,21 @@ optimized CUDA kernels, Multi-LoRA, Prefix Caching, and Chunked Pre-Fill
 for maximum throughput with advanced optimization capabilities.
 """
 
-import os
-import sys
 import time
 import hashlib
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union, Set
-from pathlib import Path
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Tuple
 from collections import OrderedDict
 from threading import Lock
 
 import torch
-import torch.nn as nn
 
 from vllm import LLM, SamplingParams
 from vllm.outputs import RequestOutput
 from vllm.lora.request import LoRARequest
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_work_dir
+from utils.paths import get_log_file
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
 from configs.version import VERSION
@@ -79,6 +75,8 @@ class POPSSVLLMConfig:
     quantization: Optional[str] = None
     kv_cache_dtype: str = "auto"
     attention_backend: str = "FLASH_ATTN"
+    kv_cache_quantization: Optional[str] = None
+    kv_cache_quantization_block_size: int = 32
 
 
 @dataclass
@@ -306,7 +304,7 @@ class ChunkedPrefillScheduler:
         self.overlap_chunks = overlap_chunks
         self.overlap_size = overlap_size
         self.memory_budget_bytes = memory_budget_bytes
-        self._LOG = PiscesLxCoreLog("poopss.ops.infer.chunked_prefill")
+        self._LOG = PiscesLxLogger("poopss.ops.infer.chunked_prefill", file_path=get_log_file("poopss.ops.infer"), enable_file=True)
         
         self.stats = {
             "total_requests": 0,
@@ -1028,7 +1026,8 @@ class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
             "max_num_prefill_tokens": config.max_num_prefill_tokens,
             "quantization": config.quantization,
             "kv_cache_dtype": config.kv_cache_dtype,
-            "attention_backend": config.attention_backend
+            "attention_backend": config.attention_backend,
+            "kv_cache_quantization": config.kv_cache_quantization,
         }
         
         engine_args = {k: v for k, v in engine_args.items() if v is not None}
@@ -1124,7 +1123,7 @@ class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
         try:
             import vllm
             return getattr(vllm, '__version__', 'unknown')
-        except:
+        except Exception:
             return 'unknown'
     
     def _fallback_inference(self, model_path: str, prompts: List[str], 
@@ -1134,7 +1133,7 @@ class POPSSVLLMInferenceOperator(PiscesLxOperatorInterface):
         self._LOG.warning("Falling back to native inference due to vLLM unavailability")
         
         try:
-            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             
             generated_texts = [f"Generated response for: {prompt[:20]}..." for prompt in prompts]
             

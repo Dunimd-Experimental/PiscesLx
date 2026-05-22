@@ -31,14 +31,12 @@ high-performance neural network quantization with accuracy preservation.
 import time
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, List, Tuple, Union
-from pathlib import Path
+from typing import Any, Dict, Optional, List, Tuple
 
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
-from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorConfig
+from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorConfig, PiscesLxOperatorStatus
 
 from configs.version import VERSION
 
@@ -217,7 +215,6 @@ class GPTQQuantizer:
             Tuple of (quantized_layer, quantization_info)
         """
         weight = layer.weight.data
-        bias = layer.bias.data if layer.bias is not None else None
         
         if hessian_inv is None:
             hessian_inv = torch.eye(weight.shape[0], device=self.device, dtype=weight.dtype)
@@ -246,7 +243,7 @@ class GPTQQuantizer:
             eigvals = torch.linalg.eigvalsh(group_hessian)
             eig_min = eigvals[0].clamp(min=damp)
             hessian_damped = group_hessian + torch.eye(group_hessian.shape[-1], device=self.device) * (eig_min - eigvals[0])
-            hessian_inv_group = torch.inverse(hessian_damped)
+            torch.inverse(hessian_damped)
             
             scales = group_weight.abs().max(dim=-1,)[0] / ((1 << self.bits) - 1)
             scales = scales.clamp(min=1e-8).unsqueeze(-1)
@@ -844,6 +841,333 @@ class SmoothQuantizer:
             target.smoothing_scale = quant_info.get("smoothing_scale")
 
 
+class POPSSBlockWiseINT4Quantizer:
+    """
+    Block-wise INT4 quantizer with configurable block size.
+
+    Implements:
+    - Block-wise quantization with configurable block size (32/64/128)
+    - Asymmetric per-block quantization with scale and zero point
+    - Efficient dequantization for inference integration
+    """
+
+    VALID_BLOCK_SIZES = [32, 64, 128]
+
+    def __init__(
+        self,
+        block_size: int = 128,
+        device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+    ):
+        if block_size not in self.VALID_BLOCK_SIZES:
+            raise ValueError(f"block_size must be one of {self.VALID_BLOCK_SIZES}, got {block_size}")
+        self.block_size = block_size
+        self.device = device
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer", file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self.quantized_state: Dict[str, Any] = {}
+
+    def quantize(self, tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """
+        Quantize a tensor using block-wise asymmetric INT4 quantization.
+
+        Each block computes its own scale and zero point for optimal
+        representation of local value ranges.
+
+        Args:
+            tensor: Input full-precision tensor
+
+        Returns:
+            Dictionary containing quantized tensor, scales, zero_points, and metadata
+        """
+        original_shape = tensor.shape
+        flat = tensor.flatten()
+        n = flat.numel()
+        num_blocks = (n + self.block_size - 1) // self.block_size
+
+        scales = torch.zeros(num_blocks, dtype=torch.float32, device=self.device)
+        zero_points = torch.zeros(num_blocks, dtype=torch.int32, device=self.device)
+        quantized = torch.zeros(n, dtype=torch.int32, device=self.device)
+
+        for i in range(num_blocks):
+            s = i * self.block_size
+            e = min(s + self.block_size, n)
+            block = flat[s:e]
+            bmin = block.min()
+            bmax = block.max()
+
+            if bmax == bmin:
+                scales[i] = 1.0
+                zero_points[i] = 0
+                quantized[s:e] = 0
+            else:
+                scale_val = (bmax - bmin) / 15.0
+                scale_val = torch.clamp(scale_val, min=1e-12)
+                zp_val = torch.round(-bmin / scale_val)
+                zp_val = torch.clamp(zp_val, 0, 15).to(torch.int32)
+                q_block = torch.round(block / scale_val + zp_val.float())
+                q_block = torch.clamp(q_block, 0, 15).to(torch.int32)
+                scales[i] = scale_val
+                zero_points[i] = zp_val
+                quantized[s:e] = q_block
+
+        self.quantized_state = {
+            "quantized": quantized.view(original_shape),
+            "scales": scales,
+            "zero_points": zero_points,
+            "original_shape": original_shape,
+            "block_size": self.block_size,
+        }
+        return self.quantized_state
+
+    def dequantize(self, state: Optional[Dict[str, torch.Tensor]] = None) -> torch.Tensor:
+        """
+        Dequantize an INT4 block-wise tensor back to full precision.
+
+        Args:
+            state: Quantization state dictionary. Uses internal state if None.
+
+        Returns:
+            Dequantized full-precision tensor
+        """
+        if state is None:
+            state = self.quantized_state
+        if not state:
+            raise RuntimeError("No quantized state available for dequantization")
+
+        quantized = state["quantized"].flatten()
+        scales = state["scales"]
+        zero_points = state["zero_points"]
+        bs = state.get("block_size", self.block_size)
+        original_shape = state["original_shape"]
+        n = quantized.numel()
+
+        dequant = torch.zeros(n, dtype=torch.float32, device=self.device)
+        num_blocks = scales.numel()
+
+        for i in range(num_blocks):
+            s = i * bs
+            e = min(s + bs, n)
+            dequant[s:e] = (quantized[s:e].float() - zero_points[i].float()) * scales[i]
+
+        return dequant.view(original_shape)
+
+    def get_state(self) -> Dict[str, Any]:
+        """Get a copy of the current quantization state."""
+        return dict(self.quantized_state)
+
+    def reset_state(self) -> None:
+        """Reset the internal quantization state."""
+        self.quantized_state = {}
+
+
+class POPSSKVCacheQuantizer:
+    """
+    KV cache quantizer for INT4/FP8 quantization during attention.
+
+    Features:
+    - Per-channel INT4/FP8 KV cache quantization
+    - Key and value separate quantization policies
+    - On-the-fly quantization/dequantization during attention
+    - Cached quantization state for repeated access patterns
+    """
+
+    FP8_MAX = 448.0
+
+    def __init__(
+        self,
+        key_quant_type: str = "fp8",
+        value_quant_type: str = "fp8",
+        block_size: int = 128,
+        device: torch.device = torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+    ):
+        if key_quant_type not in ("fp8", "int4"):
+            raise ValueError(f"key_quant_type must be 'fp8' or 'int4', got {key_quant_type}")
+        if value_quant_type not in ("fp8", "int4"):
+            raise ValueError(f"value_quant_type must be 'fp8' or 'int4', got {value_quant_type}")
+        self.key_quant_type = key_quant_type
+        self.value_quant_type = value_quant_type
+        self.block_size = block_size
+        self.device = device
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer", file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self.int4_quantizer = POPSSBlockWiseINT4Quantizer(block_size, device)
+        self.cache_state: Dict[str, Dict[str, torch.Tensor]] = {}
+
+    def _quantize_fp8_per_channel(self, tensor: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Quantize tensor to FP8 with per-channel scaling."""
+        if tensor.dim() >= 2:
+            amax = tensor.abs().amax(dim=tuple(range(1, tensor.dim())), keepdim=True)
+        else:
+            amax = tensor.abs().max()
+        scale = torch.clamp(amax / self.FP8_MAX, min=1e-12)
+        quantized = torch.clamp(tensor / scale, -self.FP8_MAX, self.FP8_MAX)
+        return quantized, scale
+
+    def _dequantize_fp8(self, quantized: torch.Tensor, scale: torch.Tensor) -> torch.Tensor:
+        """Dequantize FP8 tensor back to full precision."""
+        return quantized * scale
+
+    def quantize_key(self, key: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Quantize key tensor for KV cache.
+
+        Args:
+            key: Key tensor from attention, shape: (batch, heads, seq_len, dim)
+
+        Returns:
+            Tuple of (quantized_key, scale, optional_zero_point)
+        """
+        if self.key_quant_type == "fp8":
+            q, s = self._quantize_fp8_per_channel(key)
+            return q, s, None
+        else:
+            state = self.int4_quantizer.quantize(key)
+            return state["quantized"], state["scales"], state["zero_points"]
+
+    def quantize_value(self, value: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
+        """
+        Quantize value tensor for KV cache.
+
+        Args:
+            value: Value tensor from attention, shape: (batch, heads, seq_len, dim)
+
+        Returns:
+            Tuple of (quantized_value, scale, optional_zero_point)
+        """
+        if self.value_quant_type == "fp8":
+            q, s = self._quantize_fp8_per_channel(value)
+            return q, s, None
+        else:
+            state = self.int4_quantizer.quantize(value)
+            return state["quantized"], state["scales"], state["zero_points"]
+
+    def quantize(
+        self,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        cache_key: Optional[str] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """
+        Quantize both key and value tensors for KV cache.
+
+        Args:
+            key: Key tensor from attention
+            value: Value tensor from attention
+            cache_key: Optional key to cache the quantization state
+
+        Returns:
+            Dictionary with quantized key, value, scales, and zero points
+        """
+        q_key, k_scale, k_zp = self.quantize_key(key)
+        q_value, v_scale, v_zp = self.quantize_value(value)
+
+        result: Dict[str, torch.Tensor] = {
+            "key": q_key,
+            "value": q_value,
+            "key_scale": k_scale,
+            "value_scale": v_scale,
+        }
+
+        if k_zp is not None:
+            result["key_zero_point"] = k_zp
+        if v_zp is not None:
+            result["value_zero_point"] = v_zp
+
+        if cache_key is not None:
+            self.cache_state[cache_key] = result
+
+        return result
+
+    def dequantize_key(
+        self,
+        quantized_key: torch.Tensor,
+        scale: torch.Tensor,
+        zero_point: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Dequantize key tensor from KV cache.
+
+        Args:
+            quantized_key: Quantized key tensor
+            scale: Scale factor
+            zero_point: Zero point for INT4 (None for FP8)
+
+        Returns:
+            Dequantized key tensor
+        """
+        if self.key_quant_type == "fp8":
+            return self._dequantize_fp8(quantized_key, scale)
+        else:
+            return self.int4_quantizer.dequantize({
+                "quantized": quantized_key,
+                "scales": scale,
+                "zero_points": zero_point if zero_point is not None else torch.zeros(scale.numel(), dtype=torch.int32, device=self.device),
+                "original_shape": quantized_key.shape,
+                "block_size": self.block_size,
+            })
+
+    def dequantize_value(
+        self,
+        quantized_value: torch.Tensor,
+        scale: torch.Tensor,
+        zero_point: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Dequantize value tensor from KV cache.
+
+        Args:
+            quantized_value: Quantized value tensor
+            scale: Scale factor
+            zero_point: Zero point for INT4 (None for FP8)
+
+        Returns:
+            Dequantized value tensor
+        """
+        if self.value_quant_type == "fp8":
+            return self._dequantize_fp8(quantized_value, scale)
+        else:
+            return self.int4_quantizer.dequantize({
+                "quantized": quantized_value,
+                "scales": scale,
+                "zero_points": zero_point if zero_point is not None else torch.zeros(scale.numel(), dtype=torch.int32, device=self.device),
+                "original_shape": quantized_value.shape,
+                "block_size": self.block_size,
+            })
+
+    def dequantize(
+        self,
+        quantized_key: torch.Tensor,
+        quantized_value: torch.Tensor,
+        key_scale: torch.Tensor,
+        value_scale: torch.Tensor,
+        key_zero_point: Optional[torch.Tensor] = None,
+        value_zero_point: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Dequantize both key and value tensors from KV cache.
+
+        Args:
+            quantized_key: Quantized key tensor
+            quantized_value: Quantized value tensor
+            key_scale: Key scale factor
+            value_scale: Value scale factor
+            key_zero_point: Key zero point for INT4
+            value_zero_point: Value zero point for INT4
+
+        Returns:
+            Tuple of (dequantized_key, dequantized_value)
+        """
+        dk = self.dequantize_key(quantized_key, key_scale, key_zero_point)
+        dv = self.dequantize_value(quantized_value, value_scale, value_zero_point)
+        return dk, dv
+
+    def get_cached(self, cache_key: str) -> Optional[Dict[str, torch.Tensor]]:
+        """Get cached quantization state by key."""
+        return self.cache_state.get(cache_key)
+
+    def clear_cache(self) -> None:
+        """Clear all cached quantization states."""
+        self.cache_state.clear()
+
+
 class POPSSGPTQOperator(PiscesLxOperatorInterface):
     """GPTQ quantization operator."""
     
@@ -1023,10 +1347,10 @@ class QuantizationOperatorFactory:
     def create_operator(method: str) -> PiscesLxOperatorInterface:
         """Create quantization operator by method name."""
         method_map = {
-            "gptq": GPTQOperator,
+            "gptq": POPSSGPTQOperator,
             "awq": AWQOperator,
-            "smoothquant": SmoothQuantOperator,
-            "smooth_quant": SmoothQuantOperator,
+            "smoothquant": POPSSSmoothQuantOperator,
+            "smooth_quant": POPSSSmoothQuantOperator,
         }
         
         method_lower = method.lower().replace("-", "").replace("_", "")

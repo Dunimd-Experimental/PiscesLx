@@ -91,32 +91,20 @@ import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Type
+from typing import Any, Callable, Dict, List, Optional, Set
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+
+from .base import (
+    POPSSBaseAgent,
+    POPSSAgentCapability,
+)
+from .registry import POPSSAggregentRegistry, POPSSAggregentType
 
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 
-_LOG =_LOG = PiscesLxLogger("PiscesLx.Opss.Agents",file_path=get_log_file("PiscesLx.Opss.Agents"), enable_file=True)
-
-from .base import (
-    POPSSBaseAgent,
-    POPSSAgentConfig,
-    POPSSAgentContext,
-    POPSSAgentResult,
-    POPSSAgentState,
-    POPSSAgentCapability,
-)
-from .registry import POPSSAggregentRegistry, POPSSAggregentType
-from .orchestrator import (
-    POPSSBaseOrchestrator,
-    POPSSOrchestratorConfig,
-    POPSSOrchestrationPlan,
-    POPSSOrchestrationResult,
-    POPSSOrchestrationStrategy,
-    POPSSOrchestrationStage,
-)
+_LOG = PiscesLxLogger("PiscesLx.Opss.Agents",file_path=get_log_file("PiscesLx.Opss.Agents"), enable_file=True)
 
 class POPSSSwarmTopology(Enum):
     """
@@ -356,6 +344,447 @@ class POPSSSwarmConfig:
     
     message_queue_size: int = 1000
 
+    max_sub_agents: int = 300
+    max_autonomous_steps: int = 4000
+    max_autonomous_hours: int = 12
+
+    checkpoint_interval_seconds: float = 300.0
+    progress_report_interval: float = 60.0
+    heartbeat_interval_long_running: float = 15.0
+
+
+@dataclass
+class POPSSSwarmAgentTask:
+    task_id: str
+    parent_task_id: Optional[str] = None
+    task_type: str = "sub_agent"
+    description: str = ""
+    assigned_agent: Optional[str] = None
+    status: str = "pending"
+    priority: int = 0
+    depth: int = 0
+    dependencies: List[str] = field(default_factory=list)
+    subtask_ids: List[str] = field(default_factory=list)
+    input_data: Dict[str, Any] = field(default_factory=dict)
+    output_data: Dict[str, Any] = field(default_factory=dict)
+    confidence: float = 0.0
+    created_at: datetime = field(default_factory=datetime.now)
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class POPSSAutonomousExecutionManager:
+
+    def __init__(self, coordinator: 'POPSSSwarmCoordinator'):
+        self._coordinator = coordinator
+        self._config = coordinator.config
+        self._registry = coordinator.registry
+        self._running = False
+        self._paused = False
+        self._plan: Optional[Dict[str, Any]] = None
+        self._agent_tasks: Dict[str, POPSSSwarmAgentTask] = {}
+        self._task_results: Dict[str, Any] = {}
+        self._execution_progress: Dict[str, Any] = {}
+        self._checkpoint_path: Optional[str] = None
+        self._last_checkpoint_time: Optional[datetime] = None
+        self._last_heartbeat_time: Optional[datetime] = None
+        self._total_steps_executed: int = 0
+        self._total_execution_seconds: float = 0.0
+        self._start_time: Optional[datetime] = None
+        self._step_counts_per_agent: Dict[str, int] = defaultdict(int)
+        self._agent_failure_counts: Dict[str, int] = defaultdict(int)
+        self._consensus_threshold: float = 0.6
+        self._conflict_resolution_strategy: str = "majority_vote"
+        self._stop_event = asyncio.Event()
+        self._stop_event.set()
+        _LOG.info("POPSSAutonomousExecutionManager initialized")
+
+    async def start_execution(self, plan: Dict[str, Any]) -> bool:
+        self._running = True
+        self._paused = False
+        self._start_time = datetime.now()
+        self._plan = plan
+        self._stop_event.clear()
+        _LOG.info("autonomous_execution_started", plan_id=plan.get("plan_id", "unknown"))
+        asyncio.create_task(self._heartbeat_loop())
+        asyncio.create_task(self._progress_report_loop())
+        asyncio.create_task(self._checkpoint_loop())
+        return True
+
+    async def stop_execution(self) -> bool:
+        self._running = False
+        self._stop_event.set()
+        await self._save_checkpoint()
+        _LOG.info("autonomous_execution_stopped", total_steps=self._total_steps_executed)
+        return True
+
+    def pause_execution(self):
+        self._paused = True
+        _LOG.info("autonomous_execution_paused")
+
+    def resume_execution(self):
+        self._paused = False
+        _LOG.info("autonomous_execution_resumed")
+
+    def is_running(self) -> bool:
+        return self._running
+
+    def is_paused(self) -> bool:
+        return self._paused
+
+    async def submit_agent_task(self, task: POPSSSwarmAgentTask) -> str:
+        task_id = task.task_id or f"agt_{uuid.uuid4().hex[:12]}"
+        task.task_id = task_id
+        self._agent_tasks[task_id] = task
+        return task_id
+
+    async def execute_recursive_decomposition(
+        self,
+        task_description: str,
+        max_depth: int = 5,
+        input_data: Optional[Dict[str, Any]] = None
+    ) -> List[POPSSSwarmAgentTask]:
+        root_task = POPSSSwarmAgentTask(
+            task_id=f"root_{uuid.uuid4().hex[:12]}",
+            description=task_description,
+            priority=5,
+            depth=0,
+            input_data=input_data or {},
+        )
+        self._agent_tasks[root_task.task_id] = root_task
+        leaf_tasks: List[POPSSSwarmAgentTask] = []
+        await self._decompose_recursive(root_task, max_depth, leaf_tasks)
+        return leaf_tasks
+
+    async def _decompose_recursive(
+        self,
+        parent: POPSSSwarmAgentTask,
+        max_depth: int,
+        leaf_tasks: List[POPSSSwarmAgentTask]
+    ):
+        if parent.depth >= max_depth:
+            leaf_tasks.append(parent)
+            return
+        num_subtasks = min(10, self._config.max_sub_agents // (parent.depth + 1))
+        subtask_ids: List[str] = []
+        for i in range(num_subtasks):
+            subtask = POPSSSwarmAgentTask(
+                task_id=f"agt_{uuid.uuid4().hex[:12]}",
+                parent_task_id=parent.task_id,
+                task_type=parent.task_type,
+                description=f"{parent.description} - subtask {i + 1}",
+                depth=parent.depth + 1,
+                priority=parent.priority,
+                dependencies=[],
+                input_data={**parent.input_data, "subtask_index": i, "total_subtasks": num_subtasks},
+            )
+            self._agent_tasks[subtask.task_id] = subtask
+            subtask_ids.append(subtask.task_id)
+            if subtask.depth < max_depth:
+                await self._decompose_recursive(subtask, max_depth, leaf_tasks)
+            else:
+                leaf_tasks.append(subtask)
+        parent.subtask_ids = subtask_ids
+
+    def _topological_sort_agent_tasks(self) -> List[str]:
+        task_ids = list(self._agent_tasks.keys())
+        in_degree: Dict[str, int] = {tid: 0 for tid in task_ids}
+        adjacency: Dict[str, List[str]] = {tid: [] for tid in task_ids}
+        for tid, task in self._agent_tasks.items():
+            for dep_id in task.dependencies:
+                if dep_id in adjacency:
+                    adjacency[dep_id].append(tid)
+                    in_degree[tid] += 1
+        queue = [tid for tid in task_ids if in_degree[tid] == 0]
+        sorted_tasks: List[str] = []
+        while queue:
+            queue.sort(key=lambda tid: self._agent_tasks[tid].priority, reverse=True)
+            current = queue.pop(0)
+            sorted_tasks.append(current)
+            for neighbor in adjacency[current]:
+                in_degree[neighbor] -= 1
+                if in_degree[neighbor] == 0:
+                    queue.append(neighbor)
+        return sorted_tasks
+
+    async def execute_parallel_agent_tasks(
+        self,
+        task_ids: List[str],
+        batch_size: int = 50
+    ) -> Dict[str, Any]:
+        results: Dict[str, Any] = {}
+        sorted_ids = self._topological_sort_agent_tasks()
+
+        def task_ready(tid: str) -> bool:
+            task = self._agent_tasks.get(tid)
+            if not task or task.status != "pending":
+                return False
+            return all(
+                results.get(dep_id) is not None
+                for dep_id in task.dependencies
+            )
+
+        remaining = set(tid for tid in sorted_ids if tid in self._agent_tasks)
+        max_iterations = self._config.max_autonomous_steps
+        iteration = 0
+
+        while remaining and iteration < max_iterations:
+            if self._paused:
+                await asyncio.sleep(1.0)
+                continue
+            if not self._running:
+                break
+
+            ready_ids = [tid for tid in remaining if task_ready(tid)]
+            if not ready_ids:
+                remaining_ids = list(remaining)
+                if remaining_ids:
+                    first = remaining_ids[0]
+                    self._agent_tasks[first].dependencies = []
+                    ready_ids = [first]
+                else:
+                    break
+
+            current_batch = ready_ids[:batch_size]
+            remaining -= set(current_batch)
+
+            for tid in current_batch:
+                self._agent_tasks[tid].status = "in_progress"
+                self._agent_tasks[tid].started_at = datetime.now()
+
+            batch_results = await self._execute_task_batch(current_batch)
+            results.update(batch_results)
+
+            for tid in current_batch:
+                if tid in batch_results:
+                    self._agent_tasks[tid].status = "completed"
+                    self._agent_tasks[tid].completed_at = datetime.now()
+                    self._agent_tasks[tid].output_data = batch_results[tid]
+                else:
+                    self._agent_tasks[tid].status = "failed"
+                    self._agent_tasks[tid].completed_at = datetime.now()
+
+            self._total_steps_executed += len(current_batch)
+            iteration += 1
+            for tid in current_batch:
+                self._step_counts_per_agent[self._agent_tasks[tid].assigned_agent or "unknown"] += 1
+
+        aggregated = await self._aggregate_agent_results(results)
+        return aggregated
+
+    async def _execute_task_batch(self, task_ids: List[str]) -> Dict[str, Any]:
+        semaphore = asyncio.Semaphore(min(len(task_ids), 50))
+        results: Dict[str, Any] = {}
+
+        async def execute_single(tid: str):
+            async with semaphore:
+                task = self._agent_tasks.get(tid)
+                if not task:
+                    return
+                agent_id = task.assigned_agent
+                if not agent_id:
+                    candidates = self._coordinator._select_agents_for_task(
+                        POPSSSwarmTask(
+                            task_id=tid,
+                            task_type=task.task_type,
+                            description=task.description,
+                            input_data=task.input_data,
+                        )
+                    )
+                    if candidates:
+                        agent_id = candidates[0]
+                        task.assigned_agent = agent_id
+                if agent_id:
+                    await self._coordinator._notify_agents(
+                        [agent_id],
+                        POPSSSwarmMessageType.TASK_ASSIGNMENT,
+                        {
+                            "task_id": tid,
+                            "description": task.description,
+                            "input_data": task.input_data,
+                            "depth": task.depth,
+                        },
+                    )
+                    results[tid] = {"status": "executed", "agent_id": agent_id}
+                else:
+                    results[tid] = {"status": "no_agent", "error": "No available agent"}
+
+        batch_tasks = [execute_single(tid) for tid in task_ids]
+        await asyncio.gather(*batch_tasks, return_exceptions=True)
+        return results
+
+    async def _aggregate_agent_results(self, results: Dict[str, Any]) -> Dict[str, Any]:
+        agent_outputs: Dict[str, List[Any]] = {}
+        for tid, result in results.items():
+            task = self._agent_tasks.get(tid)
+            if task and task.assigned_agent:
+                agent_id = task.assigned_agent
+                if agent_id not in agent_outputs:
+                    agent_outputs[agent_id] = []
+                agent_outputs[agent_id].append(result)
+        return {
+            "total_tasks": len(results),
+            "successful_tasks": sum(1 for r in results.values() if r.get("status") == "executed"),
+            "failed_tasks": sum(1 for r in results.values() if r.get("status") != "executed"),
+            "agents_used": len(agent_outputs),
+            "agent_outputs": agent_outputs,
+            "consensus_result": await self._resolve_consensus(results),
+            "aggregated_output": str(results),
+            "total_steps": self._total_steps_executed,
+        }
+
+    async def _resolve_consensus(self, results: Dict[str, Any]) -> Dict[str, Any]:
+        status_counts: Dict[str, int] = {}
+        for r in results.values():
+            s = r.get("status", "unknown")
+            status_counts[s] = status_counts.get(s, 0) + 1
+        total = len(results) or 1
+        agreement_ratios = {k: v / total for k, v in status_counts.items()}
+        majority_status = max(status_counts, key=status_counts.get) if status_counts else "unknown"
+        return {
+            "majority_status": majority_status,
+            "agreement_ratios": agreement_ratios,
+            "consensus_reached": agreement_ratios.get(majority_status, 0) >= self._consensus_threshold,
+            "total_participants": total,
+        }
+
+    async def execute_autonomous_loop(self, plan: Dict[str, Any]) -> Dict[str, Any]:
+        await self.start_execution(plan)
+        max_steps = self._config.max_autonomous_steps
+        max_seconds = self._config.max_autonomous_hours * 3600
+        all_results: Dict[str, Any] = {}
+        cycle = 0
+
+        for cycle in range(max_steps):
+            if not self._running:
+                break
+            if self._paused:
+                await asyncio.sleep(1.0)
+                continue
+
+            elapsed = (datetime.now() - (self._start_time or datetime.now())).total_seconds()
+            if elapsed >= max_seconds:
+                _LOG.info("autonomous_execution_time_limit_reached", hours=elapsed / 3600)
+                break
+
+            step_plan = plan.get("steps", [])
+            if cycle < len(step_plan):
+                step = step_plan[cycle]
+                leaf_tasks = await self.execute_recursive_decomposition(
+                    step.get("description", f"autonomous_step_{cycle}"),
+                    max_depth=step.get("max_depth", 3),
+                )
+                step_results = await self.execute_parallel_agent_tasks(
+                    [t.task_id for t in leaf_tasks],
+                    batch_size=50,
+                )
+                all_results[f"cycle_{cycle}"] = step_results
+
+            self._total_execution_seconds = elapsed
+            await asyncio.sleep(0.1)
+
+        final_result = await self._aggregate_agent_results(all_results)
+        final_result["total_cycles"] = cycle + 1
+        final_result["total_execution_seconds"] = self._total_execution_seconds
+        await self.stop_execution()
+        return final_result
+
+    async def _checkpoint_loop(self):
+        while self._running:
+            try:
+                await asyncio.sleep(self._config.checkpoint_interval_seconds)
+                if self._running:
+                    await self._save_checkpoint()
+            except Exception as e:
+                _LOG.error(f"checkpoint_loop_error: {e}")
+
+    async def _heartbeat_loop(self):
+        while self._running:
+            try:
+                self._last_heartbeat_time = datetime.now()
+                for agent_id in list(self._coordinator._members.keys()):
+                    member = self._coordinator._members.get(agent_id)
+                    if member:
+                        member.last_heartbeat = datetime.now()
+                await asyncio.sleep(self._config.heartbeat_interval_long_running)
+            except Exception as e:
+                _LOG.error(f"heartbeat_loop_error: {e}")
+
+    async def _progress_report_loop(self):
+        while self._running:
+            try:
+                await asyncio.sleep(self._config.progress_report_interval)
+                if self._running:
+                    progress = self.get_progress_report()
+                    _LOG.info("autonomous_progress", progress=progress)
+            except Exception as e:
+                _LOG.error(f"progress_report_loop_error: {e}")
+
+    async def _save_checkpoint(self):
+        checkpoint = {
+            "timestamp": datetime.now().isoformat(),
+            "running": self._running,
+            "total_steps_executed": self._total_steps_executed,
+            "total_execution_seconds": self._total_execution_seconds,
+            "start_time": self._start_time.isoformat() if self._start_time else None,
+            "last_heartbeat_time": self._last_heartbeat_time.isoformat() if self._last_heartbeat_time else None,
+            "plan": self._plan,
+            "agent_task_count": len(self._agent_tasks),
+            "step_counts_per_agent": dict(self._step_counts_per_agent),
+            "agent_failure_counts": dict(self._agent_failure_counts),
+        }
+        self._last_checkpoint_time = datetime.now()
+        _LOG.info("checkpoint_saved", checkpoint=checkpoint)
+
+    async def restore_from_checkpoint(self, checkpoint: Dict[str, Any]) -> bool:
+        try:
+            self._running = checkpoint.get("running", False)
+            self._total_steps_executed = checkpoint.get("total_steps_executed", 0)
+            self._total_execution_seconds = checkpoint.get("total_execution_seconds", 0.0)
+            start_time_str = checkpoint.get("start_time")
+            if start_time_str:
+                self._start_time = datetime.fromisoformat(start_time_str)
+            self._plan = checkpoint.get("plan")
+            self._step_counts_per_agent = defaultdict(int, checkpoint.get("step_counts_per_agent", {}))
+            self._agent_failure_counts = defaultdict(int, checkpoint.get("agent_failure_counts", {}))
+            _LOG.info("checkpoint_restored", steps=self._total_steps_executed)
+            return True
+        except Exception as e:
+            _LOG.error(f"checkpoint_restore_failed: {e}")
+            return False
+
+    def get_progress_report(self) -> Dict[str, Any]:
+        elapsed = self._total_execution_seconds
+        max_seconds = self._config.max_autonomous_hours * 3600
+        progress_pct = min(100.0, (elapsed / max(max_seconds, 1)) * 100.0)
+        pending = sum(1 for t in self._agent_tasks.values() if t.status == "pending")
+        running_count = sum(1 for t in self._agent_tasks.values() if t.status == "in_progress")
+        completed = sum(1 for t in self._agent_tasks.values() if t.status == "completed")
+        failed = sum(1 for t in self._agent_tasks.values() if t.status == "failed")
+        return {
+            "running": self._running,
+            "paused": self._paused,
+            "progress_percentage": round(progress_pct, 2),
+            "elapsed_seconds": round(elapsed, 1),
+            "remaining_seconds": round(max(0, max_seconds - elapsed), 1),
+            "total_steps_executed": self._total_steps_executed,
+            "max_allowed_steps": self._config.max_autonomous_steps,
+            "agent_tasks_pending": pending,
+            "agent_tasks_running": running_count,
+            "agent_tasks_completed": completed,
+            "agent_tasks_failed": failed,
+            "agent_tasks_total": len(self._agent_tasks),
+            "agents_active": len(self._step_counts_per_agent),
+            "last_heartbeat": self._last_heartbeat_time.isoformat() if self._last_heartbeat_time else None,
+            "last_checkpoint": self._last_checkpoint_time.isoformat() if self._last_checkpoint_time else None,
+        }
+
+    def shutdown(self):
+        self._running = False
+        self._stop_event.set()
+        _LOG.info("POPSSAutonomousExecutionManager shutdown")
+
+
 class POPSSSwarmCoordinator:
     """
     Main coordinator class for managing multi-agent swarms.
@@ -443,6 +872,9 @@ class POPSSSwarmCoordinator:
         
         # Result caching
         self._result_cache: Dict[str, Any] = {}
+        
+        # Autonomous execution manager
+        self._autonomous_manager: POPSSAutonomousExecutionManager = POPSSAutonomousExecutionManager(self)
         
         # Coordinator agent reference
         self._coordinator: Optional[POPSSBaseAgent] = None
@@ -1167,6 +1599,7 @@ class POPSSSwarmCoordinator:
         for member in self._members.values():
             member.status = "terminated"
         
+        self._autonomous_manager.shutdown()
         self._async_executor.shutdown(wait=True)
         
         _LOG.info("Swarm coordinator shutdown")

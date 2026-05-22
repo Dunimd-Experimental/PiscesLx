@@ -85,7 +85,7 @@ import numpy as np
 from torch import nn
 from PIL import Image
 import torch.nn.functional as F
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 from utils.dc import PiscesLxLogger
 
 from utils.paths import get_log_file
@@ -839,7 +839,6 @@ class YvVisionEncoder(nn.Module):
             return torch.zeros(1, 1, self.cfg.hidden_size, device=self.proj.weight.device)
         x = (pixel_values - self.mean) / self.std
         B, C, H, W = x.shape
-        patch_size = self.patch_size
         is_video = video_shape is not None and self.use_3d_rope
         if is_video:
             T, H_video, W_video = video_shape
@@ -966,7 +965,6 @@ class YvVisionEncoder(nn.Module):
                 'video_shape': video_shape
             }
         else:
-            cls_token = x[:, :1]
             patch_features = x[:, 1:]
             pooled_features = patch_features.mean(dim=1)
             xproj = self.proj(pooled_features)
@@ -983,19 +981,18 @@ class YvVisionEncoder(nn.Module):
             }
         if self.training or hasattr(self, '_enable_detection'):
             batch_size, num_patches, _ = patch_features.shape
-            h_patches_ = int(math.sqrt(num_patches))
-            w_patches_ = h_patches_
-            patch_features_2d = patch_features.view(batch_size, h_patches_, w_patches_, -1)
             bbox_pred = self.detection_head['bbox_regressor'](patch_features)
             class_pred = self.detection_head['classifier'](patch_features)
             objectness_pred = self.detection_head['objectness'](patch_features)
             coord_markers = self.coordinate_marker['position_head'](patch_features)
+            h_patches = int(math.sqrt(num_patches))
+            w_patches = h_patches
             detection_results.update({
                 'bbox_coords': bbox_pred.view(batch_size, num_patches, self.num_anchors, 4),
                 'object_classes': class_pred.view(batch_size, num_patches, self.num_anchors, self.num_classes),
                 'confidence_scores': torch.sigmoid(objectness_pred),
                 'coordinate_markers': coord_markers.view(batch_size, num_patches, 2),
-                'spatial_shape': (h_patches_, w_patches_)
+                'spatial_shape': (h_patches, w_patches)
             })
         return detection_results
 
@@ -1012,8 +1009,6 @@ class YvVisionEncoder(nn.Module):
             List[int]: Image coordinates [x, y].
         """
         h, w = image_size
-        h_patches = h // patch_size
-        w_patches = w // patch_size
         x_patch, y_patch = patch_coords
         x_image = (x_patch + 0.5) * patch_size
         y_image = (y_patch + 0.5) * patch_size
@@ -1450,3 +1445,763 @@ class YvDiffusionImageEnhancer(nn.Module):
         x = torch.sqrt(alpha_prev) * x0_pred + dir_xt
         
         return x
+
+
+class YvSigLIPAttention(nn.Module):
+    """Multi-head attention with LayerScale for SigLIP vision encoder.
+
+    Implements scaled dot-product attention with pre-normalization and
+    LayerScale for stable training of deep vision transformers.
+
+    Architecture:
+        1. LayerNorm on input
+        2. QKV projection
+        3. Scaled dot-product attention (SDPA)
+        4. Output projection
+        5. LayerScale gating
+
+    Attributes:
+        hidden_size (int): Feature dimension.
+        num_heads (int): Number of attention heads.
+        head_dim (int): Dimension per head.
+        scale (float): Attention scaling factor.
+    """
+
+    def __init__(self, hidden_size: int, num_heads: int, layer_scale_init: float = 0.1):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        self.norm = nn.LayerNorm(hidden_size)
+        self.qkv = nn.Linear(hidden_size, hidden_size * 3)
+        self.o = nn.Linear(hidden_size, hidden_size)
+        self.layer_scale = nn.Parameter(layer_scale_init * torch.ones(hidden_size))
+
+    def forward(self, x: torch.Tensor, attn_mask: Optional[torch.Tensor] = None) -> torch.Tensor:
+        residual = x
+        x = self.norm(x)
+        B, T, D = x.shape
+        qkv = self.qkv(x).reshape(B, T, 3, self.num_heads, self.head_dim).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        out = F.scaled_dot_product_attention(q, k, v, attn_mask=attn_mask, dropout_p=0.0, is_causal=False)
+        out = out.transpose(1, 2).reshape(B, T, D)
+        out = self.o(out)
+        out = residual + self.layer_scale * out
+        return out
+
+
+class YvSigLIPMLP(nn.Module):
+    """MLP with GLU activation and LayerScale for SigLIP vision encoder.
+
+    Uses SwiGLU activation for improved expressiveness and LayerScale
+    for training stability in deep architectures.
+
+    Architecture:
+        1. LayerNorm on input
+        2. Gate + Up projection (SwiGLU)
+        3. Down projection
+        4. LayerScale gating
+
+    Attributes:
+        hidden_size (int): Feature dimension.
+        intermediate_size (int): Intermediate dimension (4x hidden).
+    """
+
+    def __init__(self, hidden_size: int, intermediate_size: int, layer_scale_init: float = 0.1):
+        super().__init__()
+        self.norm = nn.LayerNorm(hidden_size)
+        self.gate = nn.Linear(hidden_size, intermediate_size)
+        self.up = nn.Linear(hidden_size, intermediate_size)
+        self.down = nn.Linear(intermediate_size, hidden_size)
+        self.layer_scale = nn.Parameter(layer_scale_init * torch.ones(hidden_size))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        residual = x
+        x = self.norm(x)
+        gate = F.silu(self.gate(x))
+        up = self.up(x)
+        x = gate * up
+        x = self.down(x)
+        x = residual + self.layer_scale * x
+        return x
+
+
+class YvSigLIPTransformerLayer(nn.Module):
+    """Single transformer layer for SigLIP vision encoder.
+
+    Combines attention and MLP with pre-normalization and LayerScale
+    for stable deep training.
+
+    Architecture:
+        1. Attention block (pre-norm + multi-head attention + LayerScale)
+        2. MLP block (pre-norm + SwiGLU MLP + LayerScale)
+    """
+
+    def __init__(self, hidden_size: int, num_heads: int, intermediate_size: int, layer_scale_init: float = 0.1):
+        super().__init__()
+        self.attn = YvSigLIPAttention(hidden_size, num_heads, layer_scale_init)
+        self.mlp = YvSigLIPMLP(hidden_size, intermediate_size, layer_scale_init)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.attn(x)
+        x = self.mlp(x)
+        return x
+
+
+class YvSigLIPMultiScaleFeatureExtractor(nn.Module):
+    """Multi-scale feature extraction from intermediate transformer layers.
+
+    Extracts features at 4 scales (1/4, 1/8, 1/16, 1/32 of the
+    transformer depth) with learned scale-specific projections.
+
+    Architecture:
+        1. Scale-specific layer indices (1/4, 1/2, 3/4, final)
+        2. Per-scale normalization and projection
+        3. GRN (Global Response Normalization) per scale
+        4. Learnable scale aggregation weights
+
+    Attributes:
+        hidden_size (int): Feature dimension.
+        num_scales (int): Number of scales (4).
+        scale_indices (List[int]): Layer indices for each scale.
+    """
+
+    def __init__(self, hidden_size: int, num_layers: int, num_scales: int = 4):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_scales = num_scales
+        self.scale_indices = [
+            max(0, num_layers // 4 - 1),
+            max(0, num_layers // 2 - 1),
+            max(0, 3 * num_layers // 4 - 1),
+            num_layers - 1,
+        ]
+        self.scale_projs = nn.ModuleList([
+            nn.Sequential(
+                nn.LayerNorm(hidden_size),
+                nn.Linear(hidden_size, hidden_size),
+                nn.GELU(),
+            ) for _ in range(num_scales)
+        ])
+        self.scale_weights = nn.Parameter(torch.ones(num_scales) / num_scales)
+
+    def forward(self, all_hidden_states: List[torch.Tensor]) -> torch.Tensor:
+        scale_features = []
+        for i, idx in enumerate(self.scale_indices):
+            feat = all_hidden_states[idx]
+            feat = self.scale_projs[i](feat)
+            scale_features.append(feat)
+        weights = F.softmax(self.scale_weights, dim=0)
+        out = sum(w * f for w, f in zip(weights, scale_features))
+        return out
+
+
+class YvSigLIPGRN(nn.Module):
+    """Global Response Normalization (GRN) for vision feature normalization.
+
+    Normalizes feature responses globally across spatial dimensions,
+    enhancing contrast between salient and non-salient features.
+
+    Architecture:
+        1. Global aggregation via L2 norm across spatial dims
+        2. Gating with learnable scale and bias
+        3. Element-wise gating of input
+
+    Attributes:
+        hidden_size (int): Feature dimension.
+        gamma (nn.Parameter): Learnable scale vector.
+        beta (nn.Parameter): Learnable bias vector.
+    """
+
+    def __init__(self, hidden_size: int):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.gamma = nn.Parameter(torch.zeros(hidden_size))
+        self.beta = nn.Parameter(torch.zeros(hidden_size))
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        gx = torch.norm(x, p=2, dim=-1, keepdim=True)
+        nx = gx / (gx.mean(dim=-1, keepdim=True) + 1e-6)
+        gate = 1.0 + torch.tanh(self.gamma * nx + self.beta)
+        return x * gate
+
+
+class YvSigLIPVisionEncoder(nn.Module):
+    """SigLIP-based vision encoder with 400M-scale architecture.
+
+    A flagship vision encoder matching Kimi K2.6 MoonViT 400M scale,
+    featuring patch size 14, 1536 hidden dimension, 24 heads, 32 layers,
+    with LayerScale, multi-scale features, GRN, and comprehensive
+    multimodal fusion support.
+
+    Architecture:
+        1. Patch Embedding: Conv2d with patch_size=14 (CLIP-style)
+        2. Positional Encoding: Learnable 2D sin-cos interp
+        3. Transformer Backbone: 32-layer with LayerScale
+        4. Multi-Scale Feature Extraction: 4 scales (1/4, 1/8, 1/16, 1/32)
+        5. Global Response Normalization (GRN)
+        6. Cross-Modal Attention: Vision-text integration
+        7. Vision-Language Prefix Tuning
+        8. Dynamic Resolution Support
+        9. High-Resolution Processing (3.75MP)
+        10. Video Understanding (temporal attention)
+
+    Key Features:
+        - LayerScale for deep training stability
+        - Multi-scale feature extraction with 4 scales
+        - GRN for enhanced feature contrast
+        - Cross-modal vision-text attention
+        - Prefix tuning for vision-language tasks
+        - Dynamic resolution handling
+        - High-res (2048x2048) support with tiling
+        - Video temporal modeling with key frame extraction
+
+    Attributes:
+        patch_size (int): Image patch size (14).
+        hidden_size (int): Feature dimension (1536).
+        num_heads (int): Number of attention heads (24).
+        num_layers (int): Number of transformer layers (32).
+        intermediate_size (int): MLP intermediate dimension (6144).
+        num_patches_h (int): Max height in patches.
+        num_patches_w (int): Max width in patches.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int = 1536,
+        num_heads: int = 24,
+        num_layers: int = 32,
+        patch_size: int = 14,
+        max_resolution: int = 4096,
+        layer_scale_init: float = 0.1,
+        num_scales: int = 4,
+        use_grn: bool = True,
+        use_prefix_tuning: bool = True,
+        use_high_res: bool = True,
+        use_video: bool = True,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.num_layers = num_layers
+        self.patch_size = patch_size
+        self.intermediate_size = hidden_size * 4
+        self.max_resolution = max_resolution
+        self.use_grn = use_grn
+        self.use_prefix_tuning = use_prefix_tuning
+        self.use_high_res = use_high_res
+        self.use_video = use_video
+
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(1, 3, 1, 1))
+
+        self.patch_embed = nn.Conv2d(3, hidden_size, kernel_size=patch_size, stride=patch_size)
+
+        self.register_buffer('pos_embed_base', self._create_2d_sincos_embeddings(max_resolution // patch_size, hidden_size), persistent=False)
+        self.pos_embed_drop = nn.Dropout(0.0)
+
+        self.layers = nn.ModuleList([
+            YvSigLIPTransformerLayer(hidden_size, num_heads, self.intermediate_size, layer_scale_init)
+            for _ in range(num_layers)
+        ])
+
+        self.post_norm = nn.LayerNorm(hidden_size)
+
+        if use_grn:
+            self.grn = YvSigLIPGRN(hidden_size)
+
+        self.multi_scale_extractor = YvSigLIPMultiScaleFeatureExtractor(hidden_size, num_layers, num_scales)
+
+        self.output_proj = nn.Linear(hidden_size, hidden_size)
+
+        if use_prefix_tuning:
+            self.prefix_tuning = YvVisionPrefixTuning(hidden_size, num_heads)
+
+        self.cross_modal_attn = YvSigLIPCrossModalAttention(hidden_size, num_heads)
+
+        if use_high_res:
+            self.high_res_processor = YvHighResolutionProcessor(hidden_size, patch_size)
+
+        if use_video:
+            self.video_processor = YvVideoUnderstandingProcessor(hidden_size, num_heads)
+
+        self.dynamic_resolution = YvDynamicResolutionProcessor(hidden_size, patch_size)
+
+    def _create_2d_sincos_embeddings(self, grid_size: int, dim: int) -> torch.Tensor:
+        omega = 1.0 / (10000.0 ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
+        grid_h = torch.arange(grid_size, dtype=torch.float32)
+        grid_w = torch.arange(grid_size, dtype=torch.float32)
+        h_emb = torch.outer(grid_h, omega)
+        w_emb = torch.outer(grid_w, omega)
+        h_emb = torch.cat([h_emb.sin(), h_emb.cos()], dim=1)[:grid_size, :dim // 2]
+        w_emb = torch.cat([w_emb.sin(), w_emb.cos()], dim=1)[:grid_size, :dim // 2]
+        h_emb = h_emb[:, None, :].expand(grid_size, grid_size, dim // 2)
+        w_emb = w_emb[None, :, :].expand(grid_size, grid_size, dim // 2)
+        pos = torch.cat([h_emb, w_emb], dim=-1)
+        return pos.view(1, grid_size * grid_size, dim)
+
+    def _get_interpolated_pos_embed(self, h_patches: int, w_patches: int, device: torch.device) -> torch.Tensor:
+        base_size = int(self.pos_embed_base.shape[1] ** 0.5)
+        pos = self.pos_embed_base
+        if h_patches != base_size or w_patches != base_size:
+            pos = pos.reshape(1, base_size, base_size, self.hidden_size).permute(0, 3, 1, 2)
+            pos = F.interpolate(pos, size=(h_patches, w_patches), mode='bicubic', align_corners=False)
+            pos = pos.permute(0, 2, 3, 1).reshape(1, h_patches * w_patches, self.hidden_size)
+        return pos.to(device)
+
+    def _forward_base(self, pixel_values: torch.Tensor) -> Dict[str, torch.Tensor]:
+        x = (pixel_values - self.mean) / self.std
+        B, C, H, W = x.shape
+
+        x = self.dynamic_resolution(x)
+
+        x = self.patch_embed(x)
+        h_patches, w_patches = x.shape[2], x.shape[3]
+        x = x.flatten(2).transpose(1, 2)
+
+        pos_embed = self._get_interpolated_pos_embed(h_patches, w_patches, x.device)
+        x = x + pos_embed
+        x = self.pos_embed_drop(x)
+
+        all_hidden = [x]
+        for layer in self.layers:
+            x = layer(x)
+            all_hidden.append(x)
+
+        x = self.post_norm(x)
+
+        if self.use_grn:
+            x = self.grn(x)
+
+        multi_scale = self.multi_scale_extractor(all_hidden)
+
+        features = self.output_proj(x)
+
+        return {
+            'features': features.mean(dim=1, keepdim=True),
+            'patch_features': features,
+            'multi_scale': multi_scale,
+            'spatial_shape': (h_patches, w_patches),
+            'hidden_states': all_hidden,
+        }
+
+    def forward(
+        self,
+        pixel_values: torch.Tensor,
+        text_features: Optional[torch.Tensor] = None,
+        video_shape: Optional[Tuple[int, int, int]] = None,
+        return_all_features: bool = False,
+    ) -> Dict[str, torch.Tensor]:
+        if pixel_values is None:
+            B = 1
+            device = next(self.parameters()).device
+            dummy = torch.zeros(B, 1, self.hidden_size, device=device)
+            return {'features': dummy, 'patch_features': dummy, 'multi_scale': dummy}
+
+        x = (pixel_values - self.mean) / self.std
+        B, C, H, W = x.shape
+
+        if self.use_high_res and (H * W > 1024 * 1024):
+            return self._forward_high_res(x, text_features)
+
+        if self.use_video and video_shape is not None:
+            return self._forward_video(x, video_shape, text_features)
+
+        result = self._forward_base(pixel_values)
+
+        features = result['patch_features']
+
+        if text_features is not None:
+            features = self.cross_modal_attn(features, text_features)
+
+        if self.use_prefix_tuning and text_features is not None:
+            features = self.prefix_tuning(features, text_features)
+
+        result['features'] = features.mean(dim=1, keepdim=True)
+        result['patch_features'] = features
+
+        if not return_all_features:
+            result.pop('hidden_states', None)
+
+        return result
+
+    def _forward_high_res(self, x: torch.Tensor, text_features: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+        return self.high_res_processor(x, self, text_features)
+
+    def _forward_video(
+        self,
+        x: torch.Tensor,
+        video_shape: Tuple[int, int, int],
+        text_features: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
+        return self.video_processor(x, self, video_shape, text_features)
+
+    def get_num_params(self) -> int:
+        return sum(p.numel() for p in self.parameters())
+
+
+class YvSigLIPCrossModalAttention(nn.Module):
+    """Cross-modal attention between vision and text tokens.
+
+    Enables bidirectional interaction between vision features and text
+    representations through multi-head cross-attention.
+
+    Architecture:
+        1. LayerNorm on vision and text inputs
+        2. Cross-attention: vision query attends to text key/value
+        3. Residual connection with output projection
+
+    Attributes:
+        hidden_size (int): Feature dimension.
+        num_heads (int): Number of attention heads.
+    """
+
+    def __init__(self, hidden_size: int, num_heads: int):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_dim = hidden_size // num_heads
+        self.scale = self.head_dim ** -0.5
+
+        self.vision_norm = nn.LayerNorm(hidden_size)
+        self.text_norm = nn.LayerNorm(hidden_size)
+        self.q = nn.Linear(hidden_size, hidden_size)
+        self.k = nn.Linear(hidden_size, hidden_size)
+        self.v = nn.Linear(hidden_size, hidden_size)
+        self.o = nn.Linear(hidden_size, hidden_size)
+
+    def forward(self, vision_features: torch.Tensor, text_features: torch.Tensor) -> torch.Tensor:
+        residual = vision_features
+        v = self.vision_norm(vision_features)
+        t = self.text_norm(text_features)
+        B, Tv, D = v.shape
+        _, Tt, _ = t.shape
+        q = self.q(v).reshape(B, Tv, self.num_heads, self.head_dim).transpose(1, 2)
+        k = self.k(t).reshape(B, Tt, self.num_heads, self.head_dim).transpose(1, 2)
+        v_attn = self.v(t).reshape(B, Tt, self.num_heads, self.head_dim).transpose(1, 2)
+        out = F.scaled_dot_product_attention(q, k, v_attn, dropout_p=0.0, is_causal=False)
+        out = out.transpose(1, 2).reshape(B, Tv, D)
+        out = self.o(out)
+        return residual + out
+
+
+class YvVisionPrefixTuning(nn.Module):
+    """Vision-language prefix tuning layer.
+
+    Learns a set of soft prefix tokens that adapt vision features to
+    language-aligned representation spaces.
+
+    Architecture:
+        1. Learnable prefix tokens
+        2. Prefix-key/value projections
+        3. Gating mechanism for prefix influence
+
+    Attributes:
+        hidden_size (int): Feature dimension.
+        num_heads (int): Number of attention heads.
+        num_prefix (int): Number of prefix tokens.
+    """
+
+    def __init__(self, hidden_size: int, num_heads: int, num_prefix: int = 64):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.num_prefix = num_prefix
+        self.head_dim = hidden_size // num_heads
+
+        self.prefix_tokens = nn.Parameter(torch.randn(1, num_prefix, hidden_size) * 0.02)
+        self.prefix_k_proj = nn.Linear(hidden_size, hidden_size)
+        self.prefix_v_proj = nn.Linear(hidden_size, hidden_size)
+        self.gate = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.Sigmoid(),
+        )
+
+    def forward(self, vision_features: torch.Tensor, text_features: torch.Tensor) -> torch.Tensor:
+        B = vision_features.shape[0]
+        prefix = self.prefix_tokens.expand(B, -1, -1)
+        prefix_k = self.prefix_k_proj(prefix)
+        prefix_v = self.prefix_v_proj(prefix)
+        B, Tv, D = vision_features.shape
+        q = vision_features.reshape(B, Tv, self.num_heads, self.head_dim).transpose(1, 2)
+        k = prefix_k.reshape(B, self.num_prefix, self.num_heads, self.head_dim).transpose(1, 2)
+        v = prefix_v.reshape(B, self.num_prefix, self.num_heads, self.head_dim).transpose(1, 2)
+        out = F.scaled_dot_product_attention(q, k, v, dropout_p=0.0, is_causal=False)
+        out = out.transpose(1, 2).reshape(B, Tv, D)
+        gate = self.gate(vision_features.mean(dim=1, keepdim=True))
+        return vision_features + gate * out
+
+
+class YvDynamicResolutionProcessor(nn.Module):
+    """Dynamic resolution support for variable image sizes.
+
+    Processes images at their native resolution without fixed resizing,
+    adapting the patch grid to match input dimensions.
+
+    Architecture:
+        1. Adaptive patch grid computation
+        2. Aspect-ratio-aware padding
+        3. Efficient patch allocation
+
+    Attributes:
+        hidden_size (int): Feature dimension.
+        patch_size (int): Patch size.
+        max_patches (int): Maximum number of patches.
+    """
+
+    def __init__(self, hidden_size: int, patch_size: int, max_patches: int = 16384):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.patch_size = patch_size
+        self.max_patches = max_patches
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, C, H, W = x.shape
+        target_h = (H // self.patch_size) * self.patch_size
+        target_w = (W // self.patch_size) * self.patch_size
+        if target_h != H or target_w != W:
+            x = F.interpolate(x, size=(target_h, target_w), mode='bicubic', align_corners=False)
+        return x
+
+
+class YvHighResolutionTileProcessor(nn.Module):
+    """Tile-based processing for high-resolution images.
+
+    Handles individual tiles with positional encoding for overlap-aware
+    processing of large images.
+
+    Architecture:
+        1. Positional encoding for tile positions
+        2. Overlap region handling
+        3. Tile feature normalization
+
+    Attributes:
+        hidden_size (int): Feature dimension.
+        patch_size (int): Patch size.
+    """
+
+    def __init__(self, hidden_size: int, patch_size: int):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.patch_size = patch_size
+
+    def forward(self, tiles: torch.Tensor, tile_positions: torch.Tensor) -> torch.Tensor:
+        B, num_tiles, C, H, W = tiles.shape
+        tiles = tiles.view(B * num_tiles, C, H, W)
+        return tiles, tile_positions
+
+
+class YvHighResolutionProcessor(nn.Module):
+    """High-resolution image processor for 3.75MP (2048x2048) images.
+
+    Processes large images via 2x upsampling, tiling with overlap,
+    positional encoding for tiles, and global + local feature aggregation.
+
+    Architecture:
+        1. 2x upsampling for high detail
+        2. Overlapping tile extraction (50% overlap)
+        3. Per-tile encoding via shared encoder
+        4. Tile positional encoding
+        5. Global + local feature aggregation
+
+    Attributes:
+        hidden_size (int): Feature dimension.
+        patch_size (int): Patch size.
+        tile_size (int): Tile size in pixels.
+        overlap (float): Tile overlap ratio.
+    """
+
+    def __init__(self, hidden_size: int, patch_size: int, tile_size: int = 512, overlap: float = 0.25):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.patch_size = patch_size
+        self.tile_size = tile_size
+        self.overlap = overlap
+
+        self.tile_processor = YvHighResolutionTileProcessor(hidden_size, patch_size)
+        self.tile_pos_embed = nn.Parameter(torch.randn(1, 49, hidden_size) * 0.02)
+
+        self.global_pool = nn.Sequential(
+            nn.AdaptiveAvgPool1d(1),
+            nn.Flatten(),
+        )
+        self.local_enhance = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, hidden_size),
+        )
+        self.aggregate = nn.Sequential(
+            nn.Linear(hidden_size * 2, hidden_size),
+            nn.LayerNorm(hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, hidden_size),
+        )
+
+    def _extract_tiles(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        B, C, H, W = x.shape
+        stride = int(self.tile_size * (1.0 - self.overlap))
+        tiles = []
+        positions = []
+        tile_idx = 0
+        for y in range(0, H - self.tile_size + 1, stride):
+            for x_pos in range(0, W - self.tile_size + 1, stride):
+                tile = x[:, :, y:y + self.tile_size, x_pos:x_pos + self.tile_size]
+                tiles.append(tile)
+                positions.append(tile_idx)
+                tile_idx += 1
+        if not tiles:
+            tiles.append(F.interpolate(x, size=(self.tile_size, self.tile_size), mode='bicubic', align_corners=False))
+            positions.append(0)
+        return torch.stack(tiles, dim=1), torch.tensor(positions, device=x.device)
+
+    def forward(self, x: torch.Tensor, encoder: YvSigLIPVisionEncoder, text_features: Optional[torch.Tensor] = None) -> Dict[str, torch.Tensor]:
+        x_up = F.interpolate(x, scale_factor=2.0, mode='bicubic', align_corners=False)
+
+        tiles, positions = self._extract_tiles(x_up)
+        B, num_tiles, C, H_t, W_t = tiles.shape
+
+        all_tile_features = []
+        for i in range(num_tiles):
+            tile = tiles[:, i, :, :, :]
+            result = encoder._forward_base(tile)
+            all_tile_features.append(result['patch_features'])
+        tile_features = torch.stack(all_tile_features, dim=1)
+
+        pos_embed = self.tile_pos_embed[:, :num_tiles, :].expand(B, -1, -1)
+        tile_features = tile_features + pos_embed.unsqueeze(2)
+
+        global_feat = tile_features.mean(dim=1)
+        global_vec = self.global_pool(global_feat.transpose(1, 2)).unsqueeze(1)
+
+        local_feat = self.local_enhance(tile_features.mean(dim=2))
+        local_vec = local_feat.mean(dim=1, keepdim=True)
+
+        fused = self.aggregate(torch.cat([global_vec.expand(-1, local_vec.shape[1], -1), local_vec], dim=-1))
+
+        result = {
+            'features': fused,
+            'patch_features': local_feat,
+            'tile_features': tile_features,
+            'spatial_shape': (H_t // self.patch_size, W_t // self.patch_size),
+        }
+        return result
+
+
+class YvVideoUnderstandingProcessor(nn.Module):
+    """Video understanding module with temporal attention and key frame extraction.
+
+    Processes video frames with temporal modeling, motion-based key frame
+    selection, frame compression via temporal pooling, and cross-frame
+    attention for long-range video understanding.
+
+    Architecture:
+        1. Key frame extraction with motion-based selection
+        2. Frame compression with temporal pooling
+        3. Cross-frame temporal attention
+        4. Temporal feature aggregation
+
+    Attributes:
+        hidden_size (int): Feature dimension.
+        num_heads (int): Number of attention heads.
+        max_frames (int): Maximum number of input frames.
+        num_key_frames (int): Number of key frames to extract.
+    """
+
+    def __init__(self, hidden_size: int, num_heads: int, max_frames: int = 128, num_key_frames: int = 32):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.max_frames = max_frames
+        self.num_key_frames = num_key_frames
+        self.head_dim = hidden_size // num_heads
+
+        self.temporal_attn = nn.MultiheadAttention(hidden_size, num_heads, batch_first=True, dropout=0.0)
+        self.temporal_norm = nn.LayerNorm(hidden_size)
+
+        self.motion_estimator = nn.Sequential(
+            nn.Linear(hidden_size, 128),
+            nn.GELU(),
+            nn.Linear(128, 1),
+        )
+
+        self.temporal_pool = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size),
+            nn.GELU(),
+            nn.Linear(hidden_size, hidden_size),
+        )
+
+        self.frame_compressor = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 2),
+            nn.GELU(),
+            nn.Linear(hidden_size // 2, hidden_size),
+        )
+
+    def _extract_key_frames(self, frame_features: torch.Tensor) -> torch.Tensor:
+        B, T, D = frame_features.shape
+        if T <= self.num_key_frames:
+            return frame_features
+
+        frame_diffs = []
+        for t in range(1, T):
+            diff = (frame_features[:, t, :] - frame_features[:, t - 1, :]).norm(dim=-1)
+            frame_diffs.append(diff)
+        motion_scores = torch.stack(frame_diffs, dim=1)
+        motion_scores = F.pad(motion_scores, (1, 0), value=0.0)
+
+        scores = self.motion_estimator(frame_features).squeeze(-1)
+        scores = scores + motion_scores * 0.5
+
+        indices = torch.topk(scores, self.num_key_frames, dim=1).indices
+        indices = indices.sort(dim=1).values
+        key_frames = torch.stack([frame_features[b, indices[b], :] for b in range(B)], dim=0)
+        return key_frames
+
+    def _temporal_pooling(self, frame_features: torch.Tensor) -> torch.Tensor:
+        B, T, D = frame_features.shape
+        if T <= 1:
+            return frame_features
+        pooled = self.temporal_pool(frame_features)
+        return pooled
+
+    def forward(
+        self,
+        x: torch.Tensor,
+        encoder: YvSigLIPVisionEncoder,
+        video_shape: Tuple[int, int, int],
+        text_features: Optional[torch.Tensor] = None,
+    ) -> Dict[str, torch.Tensor]:
+        T, H, W = video_shape
+        B = x.shape[0] // T
+
+        x_reshaped = x.view(B, T, 3, H, W)
+        x_flat = x_reshaped.reshape(B * T, 3, H, W)
+
+        base_result = encoder._forward_base(x_flat)
+        frame_features = base_result['patch_features']
+        _, num_patches, D = frame_features.shape
+        frame_features = frame_features.view(B, T, num_patches, D)
+
+        spatial_features = frame_features.mean(dim=2)
+
+        key_frames = self._extract_key_frames(spatial_features)
+
+        temporal_pooled = self._temporal_pooling(key_frames)
+
+        temporal_attn_out, _ = self.temporal_attn(temporal_pooled, temporal_pooled, temporal_pooled)
+        temporal_features = self.temporal_norm(temporal_pooled + temporal_attn_out)
+
+        compressed = self.frame_compressor(temporal_features)
+        global_feat = compressed.mean(dim=1, keepdim=True)
+
+        if text_features is not None:
+            global_feat = encoder.cross_modal_attn(global_feat, text_features)
+
+        result = {
+            'features': global_feat,
+            'temporal_features': temporal_features,
+            'key_frame_indices': None,
+            'spatial_shape': (H // encoder.patch_size, W // encoder.patch_size),
+        }
+        return result

@@ -78,12 +78,27 @@ from .visualization import (
     create_report_generator,
 )
 
+# Visual comparison
+
 from .comparison import (
     PiscesLxToolsComparisonConfig,
     PiscesLxToolsFlagshipComparator,
     FLAGSHIP_MODELS,
     compare_with_flagships,
     get_flagship_benchmark_data,
+)
+
+# Standard benchmark interfaces (POPSS namespace)
+
+from .benchmark import (
+    POPSSBenchmarkResult,
+    POPSSBaseBenchmark,
+    POPSSMMLUBenchmark,
+    POPSSHumanEvalBenchmark,
+    POPSSAIMEBenchmark,
+    POPSSSWEBenchBenchmark,
+    POPSSBenchmarkSuiteConfig,
+    POPSSBenchmarkSuite,
 )
 
 from .performance import (
@@ -140,4 +155,12 @@ __all__ = [
     "PiscesLxToolsPerformanceMetrics",
     "PiscesLxToolsPerformanceBenchmarkRunner",
     "create_performance_evaluator",
+    "POPSSBenchmarkResult",
+    "POPSSBaseBenchmark",
+    "POPSSMMLUBenchmark",
+    "POPSSHumanEvalBenchmark",
+    "POPSSAIMEBenchmark",
+    "POPSSSWEBenchBenchmark",
+    "POPSSBenchmarkSuiteConfig",
+    "POPSSBenchmarkSuite",
 ]

@@ -57,9 +57,10 @@ Usage:
 """
 
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 import os
 import json
 import time
@@ -159,8 +160,13 @@ class POPSSTeacherProvider(ABC):
     """Abstract base class for teacher model providers.
     
     This class defines the unified interface for accessing teacher models
-    from different sources. Implementations should handle the specific
+    from multiple sources. Implementations should handle the specific
     details of loading, connecting, or calling the teacher model.
+    
+    Resource Management:
+        All implementations MUST implement close() to properly release
+        resources (model memory, network connections, API clients, etc.).
+        Callers should always invoke close() when done with the provider.
     
     All methods should return tensors in a consistent format for the
     distillation loss computation.
@@ -236,8 +242,20 @@ class POPSSTeacherProvider(ABC):
         """Check if teacher provider is available."""
         return True
     
+    @abstractmethod
     def close(self):
-        """Release resources."""
+        """Release all resources held by this provider.
+        
+        This method must be called when the provider is no longer needed.
+        Implementations MUST properly release:
+            - Model memory (for local providers)
+            - Network connections (for server providers)
+            - API clients (for remote providers)
+            - Internal caches or state
+        
+        This method MUST be idempotent — calling it multiple times
+        must not cause errors or resource leaks.
+        """
         pass
 
 
@@ -512,6 +530,8 @@ class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
         self.tokenizer = tokenizer
         self.client = None
         self._client_type = "openai"
+        self._warned_hidden_states = False
+        self._warned_attentions = False
         self._init_client()
     
     def _init_client(self):
@@ -606,12 +626,16 @@ class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
     
     def get_hidden_states(self, input_ids: Tensor) -> Optional[List[Tensor]]:
         """Remote API does not support hidden states."""
-        self._LOG.warning("Remote API does not support hidden states")
+        if not self._warned_hidden_states:
+            self._LOG.warning("Remote API does not support hidden states")
+            self._warned_hidden_states = True
         return None
-    
+
     def get_attentions(self, input_ids: Tensor) -> Optional[List[Tensor]]:
         """Remote API does not support attentions."""
-        self._LOG.warning("Remote API does not support attentions")
+        if not self._warned_attentions:
+            self._LOG.warning("Remote API does not support attentions")
+            self._warned_attentions = True
         return None
     
     def generate_for_distillation(
@@ -651,6 +675,26 @@ class POPSSRemoteTeacherProvider(POPSSTeacherProvider):
                 results.append("")
         
         return results
+    
+    def close(self):
+        """Release API client resources.
+        
+        Properly cleanup the OpenAI/Anthropic client to prevent resource leaks.
+        This includes closing HTTP connections and releasing network resources.
+        This method is idempotent — calling it multiple times is safe.
+        """
+        if self.client is not None:
+            try:
+                if self._client_type == "anthropic":
+                    if hasattr(self.client, 'close'):
+                        self.client.close()
+                else:
+                    if hasattr(self.client, 'close'):
+                        self.client.close()
+                self.client = None
+            except Exception as e:
+                self._LOG.warning(f"Error closing remote API client: {e}")
+                self.client = None
     
     def is_available(self) -> bool:
         """Check API availability via client state and essential config.
@@ -733,6 +777,49 @@ class POPSSTeacherProviderFactory:
             provider_class: Provider class.
         """
         cls._registry[name] = provider_class
+    
+    @classmethod
+    @contextmanager
+    def create_with_cleanup(
+        cls,
+        config: POPSSTeacherConfig,
+        model_class=None,
+        tokenizer=None,
+    ) -> Iterator[POPSSTeacherProvider]:
+        """Create a teacher provider with automatic resource cleanup.
+        
+        This context manager ensures the provider's resources are properly
+        released even if an exception occurs during usage. It is the
+        recommended way to create providers in production code.
+        
+        Args:
+            config: Teacher configuration.
+            model_class: Optional model class for local provider.
+            tokenizer: Optional tokenizer for remote provider.
+            
+        Yields:
+            POPSSTeacherProvider: The created provider instance.
+            
+        Example:
+            >>> config = POPSSTeacherConfig(
+            ...     provider_type=POPSSTeacherProviderType.REMOTE,
+            ...     api_key="...",
+            ...     model_name="gpt-4o"
+            ... )
+            >>> with POPSSTeacherProviderFactory.create_with_cleanup(config) as teacher:
+            ...     outputs = teacher.get_all_outputs(input_ids)
+        """
+        provider = None
+        try:
+            provider = cls.create(
+                config=config,
+                model_class=model_class,
+                tokenizer=tokenizer,
+            )
+            yield provider
+        finally:
+            if provider is not None:
+                provider.close()
 
 
 __all__ = [

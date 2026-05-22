@@ -1865,9 +1865,12 @@ class YvUnifiedCacheManager:
                     )
 
                     if use_delta:
-                        kb, vb = self._delta_encode_block(kb, vb, layer_idx)
+                        delta_entry, (kb, vb) = self._delta_encode_block(kb, vb, layer_idx)
+                        entry['blocks'].append(delta_entry)
+                        entry['total_len'] += block_tokens
+                        continue
 
-                    if self.config.cache_quantization and kb.shape[2] >= min(bs, 256) and not use_delta:
+                    if self.config.cache_quantization and kb.shape[2] >= min(bs, 256):
                         kb, vb = self._quantize_cache(kb, vb)
 
                     entry['blocks'].append((kb, vb))

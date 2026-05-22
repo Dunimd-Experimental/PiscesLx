@@ -44,18 +44,17 @@ Algorithm:
     5. Apply KL penalty to stay close to reference model
 """
 
-import sys
-from pathlib import Path
+import contextlib
 
 import torch
 
 from .dapo import YvDAPO
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Categorical
-from typing import Any, Dict, List, Optional, Tuple, Union
+import transformer_engine.pytorch as te
+from transformer_engine.common.recipe import Format, DelayedScaling
+from typing import Any, Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
-import math
 
 from configs.version import VERSION
 from utils.opsc.interface import (
@@ -106,6 +105,8 @@ class POPSSGRPOConfig(PiscesLxOperatorConfig):
     top_k: int = 50
     repetition_penalty: float = 1.0
 
+    use_fp8: bool = False
+
     ppo_epochs: int = 4
     mini_batch_size: int = 4
 
@@ -124,6 +125,43 @@ class POPSSGRPOConfig(PiscesLxOperatorConfig):
         super().__post_init__()
         if self.group_size < 2:
             raise ValueError("group_size must be at least 2 for GRPO")
+
+
+@dataclass
+class POPSSAgenticRLConfig(PiscesLxOperatorConfig):
+    """
+    Agentic RL Post-Training Configuration.
+
+    Extends GRPO with agent-environment interaction capabilities.
+    Enables multi-step agent rollouts with tool use and task completion rewards.
+
+    Attributes:
+        agent_rollout_steps: Number of agent steps per rollout
+        max_tool_calls: Maximum tool calls per episode
+        tool_call_reward: Reward per successful tool call
+        task_completion_reward: Reward for task completion
+        efficiency_penalty: Penalty per unnecessary step
+        use_agentic_grpo: Whether to enable agentic GRPO training
+        grpo_config: Underlying GRPO configuration for group-based advantage
+    """
+    name: str = "agentic_rl"
+    version: str = VERSION
+
+    agent_rollout_steps: int = 8
+    max_tool_calls: int = 20
+    tool_call_reward: float = 0.1
+    task_completion_reward: float = 1.0
+    efficiency_penalty: float = -0.01
+    use_agentic_grpo: bool = False
+
+    grpo_config: POPSSGRPOConfig = field(default_factory=POPSSGRPOConfig)
+
+    def __post_init__(self):
+        super().__post_init__()
+        if self.agent_rollout_steps < 1:
+            raise ValueError("agent_rollout_steps must be at least 1")
+        if self.max_tool_calls < 1:
+            raise ValueError("max_tool_calls must be at least 1")
 
 
 class POPSSGRPOOperator(PiscesLxOperatorInterface):
@@ -335,6 +373,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
                 prompt=prompt,
                 responses=final_responses,
                 tokenizer=tokenizer,
+                config=config,
             )
         else:
             ref_log_probs = torch.zeros_like(log_probs)
@@ -348,7 +387,12 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
                 else:
                     input_ids = torch.tensor([[ord(c) for c in prompt + response]], dtype=torch.long, device=next(model.parameters()).device)
 
-                outputs = model(input_ids)
+                fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=DelayedScaling(
+                    margin=0, interval=1, fp8_format=Format.HYBRID, amax_history_len=1024, amax_compute_algo="max",
+                )) if config and config.use_fp8 else contextlib.nullcontext()
+
+                with fp8_context:
+                    outputs = model(input_ids)
                 logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
                 log_probs_response = F.log_softmax(logits, dim=-1)
                 token_log_probs = log_probs_response[:, :-1, :].gather(2, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
@@ -467,45 +511,50 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         log_probs_sum = torch.tensor(0.0, device=device)
         generated_ids = input_ids
 
-        for _ in range(config.max_new_tokens):
-            outputs = model(
-                input_ids=generated_ids[:, -1:] if generated_ids.shape[1] > 1 else generated_ids,
-                past_key_values=past_key_values,
-                use_cache=True
-            ) if hasattr(model, 'forward') else model(generated_ids)
+        fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=DelayedScaling(
+            margin=0, interval=1, fp8_format=Format.HYBRID, amax_history_len=1024, amax_compute_algo="max",
+        )) if config and config.use_fp8 else torch.no_grad()
 
-            logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
-            past_key_values = outputs.past_key_values if hasattr(outputs, 'past_key_values') else None
+        with fp8_context:
+            for _ in range(config.max_new_tokens):
+                outputs = model(
+                    input_ids=generated_ids[:, -1:] if generated_ids.shape[1] > 1 else generated_ids,
+                    past_key_values=past_key_values,
+                    use_cache=True
+                ) if hasattr(model, 'forward') else model(generated_ids)
 
-            next_token_logits = logits[:, -1, :] / config.temperature if config.temperature > 0 else logits[:, -1, :]
+                logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
+                past_key_values = outputs.past_key_values if hasattr(outputs, 'past_key_values') else None
 
-            if config.top_k > 0:
-                indices_to_remove = next_token_logits < torch.topk(next_token_logits, config.top_k)[0][..., -1, None]
-                next_token_logits[indices_to_remove] = float('-inf')
+                next_token_logits = logits[:, -1, :] / config.temperature if config.temperature > 0 else logits[:, -1, :]
 
-            if config.top_p < 1.0:
-                sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
-                cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-                sorted_indices_to_remove = cumulative_probs > config.top_p
-                sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-                sorted_indices_to_remove[..., 0] = 0
-                indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-                next_token_logits[indices_to_remove] = float('-inf')
+                if config.top_k > 0:
+                    indices_to_remove = next_token_logits < torch.topk(next_token_logits, config.top_k)[0][..., -1, None]
+                    next_token_logits[indices_to_remove] = float('-inf')
 
-            probs = F.softmax(next_token_logits, dim=-1)
+                if config.top_p < 1.0:
+                    sorted_logits, sorted_indices = torch.sort(next_token_logits, descending=True)
+                    cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+                    sorted_indices_to_remove = cumulative_probs > config.top_p
+                    sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+                    sorted_indices_to_remove[..., 0] = 0
+                    indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
+                    next_token_logits[indices_to_remove] = float('-inf')
 
-            if config.temperature > 0:
-                next_token = torch.multinomial(probs, num_samples=1)
-            else:
-                next_token = torch.argmax(probs, dim=-1, keepdim=True)
+                probs = F.softmax(next_token_logits, dim=-1)
 
-            token_log_prob = torch.log(probs.gather(1, next_token) + 1e-10)
-            log_probs_sum = log_probs_sum + token_log_prob.squeeze()
+                if config.temperature > 0:
+                    next_token = torch.multinomial(probs, num_samples=1)
+                else:
+                    next_token = torch.argmax(probs, dim=-1, keepdim=True)
 
-            generated_ids = torch.cat([generated_ids, next_token], dim=-1)
+                token_log_prob = torch.log(probs.gather(1, next_token) + 1e-10)
+                log_probs_sum = log_probs_sum + token_log_prob.squeeze()
 
-            if tokenizer and next_token.item() == tokenizer.eos_token_id:
-                break
+                generated_ids = torch.cat([generated_ids, next_token], dim=-1)
+
+                if tokenizer and next_token.item() == tokenizer.eos_token_id:
+                    break
 
         if tokenizer:
             response = tokenizer.decode(generated_ids[0], skip_special_tokens=True)
@@ -656,6 +705,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         prompt: str,
         responses: List[str],
         tokenizer,
+        config: Optional[POPSSGRPOConfig] = None,
     ) -> torch.Tensor:
         """Compute log probabilities under reference model."""
         device = next(reference_model.parameters()).device
@@ -670,7 +720,12 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
                 else:
                     input_ids = torch.tensor([[ord(c) for c in prompt + response]], dtype=torch.long, device=device)
                 
-                outputs = reference_model(input_ids)
+                fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=DelayedScaling(
+                    margin=0, interval=1, fp8_format=Format.HYBRID, amax_history_len=1024, amax_compute_algo="max",
+                )) if config and config.use_fp8 else torch.no_grad()
+                
+                with fp8_context:
+                    outputs = reference_model(input_ids)
                 logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
                 
                 log_probs = F.log_softmax(logits, dim=-1)
@@ -910,4 +965,392 @@ class POPSSGRPOTrainer:
         self.model.load_state_dict(checkpoint["model_state_dict"])
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
         
+        return checkpoint["step"]
+
+
+class POPSSAgenticRLTrainer:
+    """
+    Agentic RL Post-Training Trainer.
+
+    Extends GRPO with agent-environment interaction for training LMs as agents.
+    Collects multi-step agent trajectories, computes tool/task/efficiency rewards,
+    and uses group-relative advantage estimation for policy updates.
+
+    Key Features:
+        - Multi-step agent rollouts with tool call environment
+        - Agent-specific reward computation (tool success, task completion, efficiency)
+        - Group-relative advantage based on trajectory quality
+        - Agent-specific PPO-style policy updates
+
+    Example:
+        >>> config = POPSSAgenticRLConfig(agent_rollout_steps=8, max_tool_calls=20)
+        >>> trainer = POPSSAgenticRLTrainer(
+        ...     model=policy_model,
+        ...     reference_model=ref_model,
+        ...     env_reward_function=reward_fn,
+        ...     config=config,
+        ... )
+        >>> result = trainer.train(prompts=train_prompts, num_epochs=10)
+    """
+
+    def __init__(
+        self,
+        model: nn.Module,
+        reference_model: Optional[nn.Module] = None,
+        env_reward_function=None,
+        config: Optional[POPSSAgenticRLConfig] = None,
+        optimizer: Optional[torch.optim.Optimizer] = None,
+        tokenizer=None,
+        tool_executor=None,
+    ):
+        self.model = model
+        self.reference_model = reference_model
+        self.env_reward_function = env_reward_function
+        self.config = config or POPSSAgenticRLConfig()
+        self.tokenizer = tokenizer
+        self.tool_executor = tool_executor
+
+        if optimizer is None:
+            self.optimizer = torch.optim.AdamW(
+                model.parameters(),
+                lr=1e-5,
+                weight_decay=0.01,
+            )
+        else:
+            self.optimizer = optimizer
+
+        self.grpo_operator = POPSSGRPOOperator()
+        self.training_history = []
+
+    def _collect_agent_trajectory(
+        self,
+        prompt: str,
+    ) -> Dict[str, Any]:
+        """
+        Collect a single agent trajectory with multiple steps.
+
+        The agent interacts with an environment by generating actions (tool calls),
+        receiving observations, and accumulating rewards. The trajectory is treated
+        as a "response group" for GRPO-style advantage computation.
+
+        Args:
+            prompt: Initial prompt for the agent
+
+        Returns:
+            Dictionary containing trajectory data
+        """
+        trajectory = {
+            "prompt": prompt,
+            "steps": [],
+            "tool_calls": 0,
+            "tool_successes": 0,
+            "task_completed": False,
+            "total_reward": 0.0,
+            "step_rewards": [],
+            "log_probs": [],
+            "responses": [],
+        }
+
+        current_context = prompt
+        total_tool_calls = 0
+        task_completed = False
+
+        for step in range(self.config.agent_rollout_steps):
+            response, log_prob = self._generate_agent_step(current_context)
+
+            trajectory["responses"].append(response)
+            trajectory["log_probs"].append(log_prob)
+
+            tool_call_count = response.count("```tool")
+            tool_success = 0
+            if tool_call_count > 0 and self.tool_executor is not None:
+                for _ in range(tool_call_count):
+                    try:
+                        self.tool_executor(response)
+                        tool_success += 1
+                    except Exception:
+                        pass
+                total_tool_calls += tool_call_count
+                trajectory["tool_successes"] += tool_success
+
+            trajectory["tool_calls"] = total_tool_calls
+
+            step_reward = 0.0
+            if tool_success > 0:
+                step_reward += self.config.tool_call_reward * tool_success
+            if total_tool_calls > self.config.max_tool_calls:
+                break
+            if self.env_reward_function is not None:
+                try:
+                    env_reward = self.env_reward_function(current_context, response)
+                    if env_reward >= self.config.task_completion_reward * 0.9:
+                        task_completed = True
+                        trajectory["task_completed"] = True
+                        step_reward += self.config.task_completion_reward
+                    step_reward += env_reward * 0.1
+                except Exception:
+                    pass
+
+            step_penalty = self.config.efficiency_penalty * max(0, step - 2)
+            step_reward += step_penalty
+            trajectory["step_rewards"].append(step_reward)
+
+            current_context = current_context + "\n" + response
+            if task_completed:
+                break
+
+        trajectory["total_reward"] = sum(trajectory["step_rewards"])
+        return trajectory
+
+    def _generate_agent_step(
+        self,
+        context: str,
+    ) -> Tuple[str, torch.Tensor]:
+        """Generate a single agent step response."""
+        device = next(self.model.parameters()).device
+
+        if self.tokenizer:
+            input_ids = self.tokenizer.encode(context, return_tensors="pt").to(device)
+        else:
+            input_ids = torch.tensor([[ord(c) for c in context]], dtype=torch.long, device=device)
+
+        past_key_values = None
+        log_probs_sum = torch.tensor(0.0, device=device)
+        generated_ids = input_ids
+
+        max_gen_tokens = min(self.config.grpo_config.max_new_tokens, 256)
+
+        for _ in range(max_gen_tokens):
+            if generated_ids.shape[1] > 1:
+                model_input = generated_ids[:, -1:]
+            else:
+                model_input = generated_ids
+
+            if hasattr(self.model, 'forward'):
+                outputs = self.model(
+                    input_ids=model_input,
+                    past_key_values=past_key_values,
+                    use_cache=True,
+                )
+            else:
+                outputs = self.model(generated_ids)
+
+            logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
+            past_key_values = outputs.past_key_values if hasattr(outputs, 'past_key_values') else None
+
+            next_token_logits = logits[:, -1, :]
+            temp = self.config.grpo_config.temperature
+            if temp > 0:
+                next_token_logits = next_token_logits / temp
+
+            probs = F.softmax(next_token_logits, dim=-1)
+
+            if temp > 0:
+                next_token = torch.multinomial(probs, num_samples=1)
+            else:
+                next_token = torch.argmax(probs, dim=-1, keepdim=True)
+
+            token_log_prob = torch.log(probs.gather(1, next_token) + 1e-10)
+            log_probs_sum = log_probs_sum + token_log_prob.squeeze()
+
+            generated_ids = torch.cat([generated_ids, next_token], dim=-1)
+
+            if self.tokenizer and next_token.item() == self.tokenizer.eos_token_id:
+                break
+
+        if self.tokenizer:
+            response = self.tokenizer.decode(generated_ids[0], skip_special_tokens=True)
+        else:
+            response = "".join(chr(c) for c in generated_ids[0].tolist())
+
+        return response, log_probs_sum
+
+    def _compute_agent_advantages(
+        self,
+        trajectories: List[Dict[str, Any]],
+    ) -> torch.Tensor:
+        """
+        Compute group-relative advantages based on agent trajectory quality.
+
+        Args:
+            trajectories: List of agent trajectory dictionaries
+
+        Returns:
+            Tensor of advantages, one per trajectory
+        """
+        rewards = torch.tensor([t["total_reward"] for t in trajectories], dtype=torch.float32)
+        group_size = len(trajectories)
+
+        return self.grpo_operator.compute_group_advantages(
+            rewards=rewards,
+            group_size=group_size,
+            normalize=True,
+            min_std=1e-8,
+        )
+
+    def agentic_rl_update(
+        self,
+        trajectories: List[Dict[str, Any]],
+    ) -> Dict[str, float]:
+        """
+        Perform agent-specific PPO-style policy update using trajectory data.
+
+        This method implements the core agentic RL update, using trajectory-level
+        log probabilities and group-relative advantages computed from agent rewards.
+
+        Args:
+            trajectories: List of agent trajectory dictionaries
+
+        Returns:
+            Dictionary of training statistics
+        """
+        advantages = self._compute_agent_advantages(trajectories)
+
+        trajectory_log_probs = []
+        for traj in trajectories:
+            combined_log_prob = torch.stack(traj["log_probs"]).sum() if traj["log_probs"] else torch.tensor(0.0)
+            trajectory_log_probs.append(combined_log_prob)
+
+        log_probs_tensor = torch.stack([lp.to(advantages.device) if lp.device != advantages.device else lp for lp in trajectory_log_probs])
+        old_log_probs = log_probs_tensor.detach().clone()
+
+        if self.reference_model is not None and self.config.grpo_config.use_reference_model:
+            ref_log_probs_list = []
+            self.reference_model.eval()
+            with torch.no_grad():
+                for traj in trajectories:
+                    full_text = traj["prompt"] + " ".join(traj["responses"])
+                    device = next(self.reference_model.parameters()).device
+                    if self.tokenizer:
+                        input_ids = self.tokenizer.encode(full_text, return_tensors="pt").to(device)
+                    else:
+                        input_ids = torch.tensor([[ord(c) for c in full_text]], dtype=torch.long, device=device)
+                    outputs = self.reference_model(input_ids)
+                    logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
+                    log_probs = F.log_softmax(logits, dim=-1)
+                    token_log_probs = log_probs[:, :-1, :].gather(2, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+                    ref_log_probs_list.append(token_log_probs.sum())
+            ref_log_probs = torch.stack(ref_log_probs_list)
+        else:
+            ref_log_probs = torch.zeros_like(log_probs_tensor)
+
+        grpo_config = self.config.grpo_config
+        ratio = torch.exp(log_probs_tensor - old_log_probs)
+
+        surr1 = ratio * advantages
+        surr2 = torch.clamp(ratio, 1.0 - grpo_config.clip_ratio, 1.0 + grpo_config.clip_ratio) * advantages
+        policy_loss = -torch.min(surr1, surr2).mean()
+
+        kl_div = (log_probs_tensor - ref_log_probs).mean()
+        entropy = -log_probs_tensor.mean()
+
+        total_loss = (
+            policy_loss
+            + grpo_config.kl_coef * kl_div
+            - grpo_config.entropy_coef * entropy
+        )
+
+        self.optimizer.zero_grad()
+        if total_loss.requires_grad:
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.model.parameters(), grpo_config.max_grad_norm)
+            self.optimizer.step()
+
+        clip_fraction = ((ratio - 1.0).abs() > grpo_config.clip_ratio).float().mean()
+        approx_kl = (old_log_probs - log_probs_tensor).mean().abs()
+
+        return {
+            "policy_loss": policy_loss.item(),
+            "kl_divergence": kl_div.item(),
+            "entropy": entropy.item(),
+            "mean_advantage": advantages.mean().item(),
+            "clip_fraction": clip_fraction.item(),
+            "approx_kl": approx_kl.item(),
+            "total_loss": total_loss.item(),
+        }
+
+    def train(
+        self,
+        prompts: List[str],
+        num_epochs: int = 1,
+        num_trajectories_per_prompt: int = 4,
+        save_dir: Optional[str] = None,
+        save_every: int = 100,
+    ) -> Dict[str, Any]:
+        """
+        Train the model with Agentic RL.
+
+        Args:
+            prompts: List of training prompts
+            num_epochs: Number of training epochs
+            num_trajectories_per_prompt: Number of trajectories per prompt (group size)
+            save_dir: Directory to save checkpoints
+            save_every: Save checkpoint every N steps
+
+        Returns:
+            Training statistics dictionary
+        """
+        all_stats = {
+            "policy_losses": [],
+            "kl_divergences": [],
+            "rewards": [],
+            "task_completion_rate": [],
+        }
+
+        step = 0
+        for epoch in range(num_epochs):
+            for prompt in prompts:
+                trajectories = []
+                for _ in range(num_trajectories_per_prompt):
+                    traj = self._collect_agent_trajectory(prompt)
+                    trajectories.append(traj)
+
+                stats = self.agentic_rl_update(trajectories)
+
+                all_stats["policy_losses"].append(stats["policy_loss"])
+                all_stats["kl_divergences"].append(stats["kl_divergence"])
+
+                mean_reward = sum(t["total_reward"] for t in trajectories) / max(len(trajectories), 1)
+                all_stats["rewards"].append(mean_reward)
+
+                completion_rate = sum(1 for t in trajectories if t["task_completed"]) / max(len(trajectories), 1)
+                all_stats["task_completion_rate"].append(completion_rate)
+
+                step += 1
+
+                if save_dir and step % save_every == 0:
+                    self._save_checkpoint(save_dir, step)
+
+        self.training_history.append(all_stats)
+
+        return {
+            "mean_policy_loss": sum(all_stats["policy_losses"]) / len(all_stats["policy_losses"]) if all_stats["policy_losses"] else 0,
+            "mean_kl": sum(all_stats["kl_divergences"]) / len(all_stats["kl_divergences"]) if all_stats["kl_divergences"] else 0,
+            "mean_reward": sum(all_stats["rewards"]) / len(all_stats["rewards"]) if all_stats["rewards"] else 0,
+            "task_completion_rate": sum(all_stats["task_completion_rate"]) / len(all_stats["task_completion_rate"]) if all_stats["task_completion_rate"] else 0,
+            "total_steps": step,
+        }
+
+    def _save_checkpoint(self, save_dir: str, step: int):
+        """Save a training checkpoint."""
+        import os
+        os.makedirs(save_dir, exist_ok=True)
+
+        checkpoint = {
+            "step": step,
+            "model_state_dict": self.model.state_dict(),
+            "optimizer_state_dict": self.optimizer.state_dict(),
+            "config": self.config.__dict__,
+        }
+
+        path = os.path.join(save_dir, f"agentic_checkpoint_{step}.pt")
+        torch.save(checkpoint, path)
+
+    def load_checkpoint(self, path: str):
+        """Load a training checkpoint."""
+        checkpoint = torch.load(path, map_location="cpu")
+
+        self.model.load_state_dict(checkpoint["model_state_dict"])
+        self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
+
         return checkpoint["step"]
