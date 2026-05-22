@@ -156,29 +156,36 @@ class YvMultiPathMetaLearner:
         Minimum 20 high-confidence experiences for pattern mining.
     """
     
-    def __init__(self, model: nn.Module, learning_rate: float = 1e-5) -> None:
+    def __init__(self, model: nn.Module, learning_rate: float = 1e-5, hidden_size: int = None) -> None:
         """Initialize the meta-learner with a base reasoning model.
-        
+
         Args:
             model (nn.Module): Underlying model used during meta-learning routines.
                 Must be compatible with the reasoning system.
             learning_rate (float): Learning rate governing adaptive updates.
                 Default: 1e-5.
-        
+            hidden_size (int, optional): Hidden dimension for pattern extractor.
+                If ``None``, derived from model config. Defaults to ``None``.
+
         Note:
             The reasoning_memory is initialized as an empty list.
-            The pattern_extractor is a 3-layer MLP (768 -> 512 -> 256 -> 128).
+            The pattern_extractor is a configurable MLP (hidden -> 512 -> 256 -> 128).
         """
         self.model = model
         self.learning_rate = learning_rate
         self.reasoning_memory = []
+        if hidden_size is None:
+            self.hidden_size = getattr(getattr(model, 'cfg', None), 'hidden_size', 768)
+        else:
+            self.hidden_size = hidden_size
         self.pattern_extractor = self._build_pattern_extractor()
 
     def _build_pattern_extractor(self) -> nn.Sequential:
         """Construct the neural network used to encode reasoning patterns."""
+        h = self.hidden_size
         return nn.Sequential(
             # First linear layer reduces feature dimensionality.
-            nn.Linear(768, 512),
+            nn.Linear(h, 512),
             # Non-linear activation for expressive capacity.
             nn.ReLU(),
             # Dropout regularization to mitigate overfitting.
@@ -239,7 +246,7 @@ class YvMultiPathMetaLearner:
             # Seed torch RNG to obtain repeatable pseudo-random embeddings.
             torch.manual_seed(query_hash % 2147483647)
             # Create a base embedding following a normal distribution.
-            base_embedding = torch.randn(768)
+            base_embedding = torch.randn(self.hidden_size)
             # Length factor reflects query verbosity.
             length_factor = min(len(query) / 100, 1.0)
             # Complexity captures diversity of unique tokens.

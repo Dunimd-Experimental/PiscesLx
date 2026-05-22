@@ -1143,7 +1143,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         cfg = self._apply_training_moe_overrides_to_model_config(cfg)
         model = YvModel(cfg)
         try:
-            raw = torch.load(ckpt_path, map_location="cpu")
+            raw = torch.load(ckpt_path, map_location="cpu", weights_only=True)
             if isinstance(raw, dict):
                 sd = raw.get("model_state_dict") or raw.get("model") or raw.get("state_dict") or raw
             else:
@@ -1280,7 +1280,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         model = YvModel(cfg)
 
         try:
-            raw = torch.load(ckpt_path, map_location="cpu")
+            raw = torch.load(ckpt_path, map_location="cpu", weights_only=True)
             if isinstance(raw, dict):
                 sd = raw.get("model_state_dict") or raw.get("model") or raw.get("state_dict") or raw
             else:

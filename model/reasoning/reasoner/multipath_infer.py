@@ -464,7 +464,7 @@ class YvMultiPathInferenceEngine:
             with torch.no_grad():
                 outputs = model(**inputs)
                 embeddings = outputs.last_hidden_state.mean(dim=1)
-            consistency_score = torch.sigmoid(torch.nn.Linear(768, 1)(embeddings)).item()
+            consistency_score = torch.sigmoid(torch.nn.Linear(embeddings.size(-1), 1)(embeddings)).item()
             return max(0.0, min(1.0, consistency_score))
         except Exception:
             logical_markers = {

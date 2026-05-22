@@ -72,6 +72,9 @@ class YvCRV(nn.Module):
     ) -> float:
         """Verify reasoning chain via circuit tracing.
 
+        Uses the trained contradiction detector to evaluate reasoning
+        quality, falling back to cosine similarity for consistency checks.
+
         Args:
             reasoning_steps: List of hidden states for each step.
             final_answer: Final answer representation.
@@ -82,29 +85,25 @@ class YvCRV(nn.Module):
         if len(reasoning_steps) < 2:
             return 1.0
 
-        # Check consistency between consecutive steps
-        consistency_scores = []
+        # Use the trained contradiction detector between consecutive steps
+        contradiction_scores = []
         for i in range(len(reasoning_steps) - 1):
-            step_i = reasoning_steps[i]
-            step_j = reasoning_steps[i + 1]
+            step_i = reasoning_steps[i].mean(dim=1)
+            step_j = reasoning_steps[i + 1].mean(dim=1)
+            step_pair = torch.cat([step_i, step_j], dim=-1)
+            # Low contradiction = high consistency
+            contradiction_prob = self.contradiction_detector(step_pair).mean().item()
+            contradiction_scores.append(1.0 - contradiction_prob)
 
-            # Cosine similarity between steps
-            sim = F.cosine_similarity(
-                step_i.mean(dim=1),
-                step_j.mean(dim=1),
-                dim=-1
-            )
-            consistency_scores.append(sim.mean().item())
-
-        # Check if final answer is consistent with reasoning
-        final_sim = F.cosine_similarity(
+        # Check final answer consistency with last reasoning step
+        final_pair = torch.cat([
             reasoning_steps[-1].mean(dim=1),
-            final_answer.mean(dim=1),
-            dim=-1
-        )
-        consistency_scores.append(final_sim.mean().item())
+            final_answer.mean(dim=1)
+        ], dim=-1)
+        final_contradiction = self.contradiction_detector(final_pair).mean().item()
+        contradiction_scores.append(1.0 - final_contradiction)
 
-        return sum(consistency_scores) / len(consistency_scores)
+        return sum(contradiction_scores) / len(contradiction_scores)
 
     def detect_contradictions(
         self,

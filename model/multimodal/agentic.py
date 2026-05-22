@@ -830,7 +830,7 @@ class YvAgentic(nn.Module):
         
         elif observation.modality == "audio":
             if isinstance(observation.content, str):  # Audio path
-                audio_tensor = self.audio_encoder.process_audio(observation.content)
+                audio_tensor = YvAudioEncoder.load_audio(observation.content) if hasattr(YvAudioEncoder, 'load_audio') else None
                 if audio_tensor is not None:
                     return self.audio_encoder(audio_tensor)
             elif torch.is_tensor(observation.content):
@@ -930,10 +930,35 @@ class YvAgentic(nn.Module):
                 action_probs = torch.softmax(action_logits, dim=-1)
                 action_type_idx = torch.argmax(action_probs, dim=-1).item()
                 
-                # Blend base and reflection confidences when available.
-                base_confidence = torch.sigmoid(self.confidence_head(thinking_logits[:, -1])).item()
-                reflection_confidence = torch.sigmoid(reflection_logits[:, -1]).item() if reflection_logits is not None else base_confidence
-                confidence = (base_confidence + reflection_confidence) / 2
+                # Fuse swarm agent outputs if swarm mode is active
+            if swarm_mode and len(agent_outputs) > 0 and hasattr(self, 'agent_coordinator'):
+                try:
+                    agent_hidden = torch.cat(list(agent_outputs.values()), dim=-1)
+                    fused_hidden = self.agent_coordinator(agent_hidden)
+
+                    weights = torch.softmax(self.agent_fusion_weights, dim=0)
+                    agent_confidences = {}
+                    for i, (agent_name, agent_out) in enumerate(agent_outputs.items()):
+                        if agent_out.dim() >= 2:
+                            agent_conf = torch.sigmoid(self.confidence_head(agent_out[:, -1])).item()
+                        else:
+                            agent_conf = torch.sigmoid(self.confidence_head(agent_out.unsqueeze(0))).item()
+                        agent_confidences[agent_name] = agent_conf
+
+                    swarm_confidence = sum(
+                        weights[i].item() * agent_confidences.get(name, 0.5)
+                        for i, name in enumerate(agent_outputs.keys())
+                    )
+                except Exception:
+                    swarm_confidence = None
+
+            # Blend base and reflection confidences when available.
+            base_confidence = torch.sigmoid(self.confidence_head(thinking_logits[:, -1])).item()
+            reflection_confidence = torch.sigmoid(reflection_logits[:, -1]).item() if reflection_logits is not None else base_confidence
+            confidence = (base_confidence + reflection_confidence) / 2
+            # Fold in swarm confidence when available
+            if swarm_mode and swarm_confidence is not None:
+                confidence = (confidence + swarm_confidence) / 2
                 
                 # Estimate difficulty tier for downstream parameter decoding.
                 if difficulty_logits is not None:
@@ -987,24 +1012,6 @@ class YvAgentic(nn.Module):
                 confidence=confidence,
                 reasoning=reasoning_trace
             )
-        
-        if swarm_mode and len(agent_outputs) > 0 and hasattr(self, 'agent_coordinator'):
-            try:
-                agent_hidden = torch.cat(list(agent_outputs.values()), dim=-1)
-                fused_hidden = self.agent_coordinator(agent_hidden)
-                
-                weights = torch.softmax(self.agent_fusion_weights, dim=0)
-                agent_confidences = {}
-                for i, (agent_name, agent_out) in enumerate(agent_outputs.items()):
-                    agent_conf = torch.sigmoid(self.confidence_head(agent_out[:, -1])).item()
-                    agent_confidences[agent_name] = agent_conf
-                
-                confidence = sum(
-                    weights[i].item() * agent_confidences.get(name, 0.5)
-                    for i, name in enumerate(agent_outputs.keys())
-                )
-            except Exception:
-                pass
 
     def _prepare_reasoning_input(self, context: Dict[str, Any], memory_context: Dict[str, List]) -> Dict[str, Any]:
         """Assemble the minimal payload required by the baseline reasoner.
@@ -1285,10 +1292,10 @@ class YvAgentic(nn.Module):
             with torch.no_grad():
                 detection_results = self.vision_encoder(image_tensor)
             
-            if "detection_results" not in detection_results:
+            if "bbox_coords" not in detection_results:
                 return {"objects": [], "image_size": [0, 0], "num_objects": 0}
-            
-            results = detection_results["detection_results"]
+
+            results = detection_results
             objects = []
             
             # Process bounding boxes and coordinates.

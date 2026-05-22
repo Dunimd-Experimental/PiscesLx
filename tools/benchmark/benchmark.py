@@ -1153,12 +1153,32 @@ Solution:
             total += 1
             try:
                 code = generated.split("```")[0] if "```" in generated else generated
-                exec_globals = {}
-                exec(code, exec_globals)
+                safe_builtins = {
+                    '__builtins__': {
+                        'abs': abs, 'all': all, 'any': any, 'bin': bin,
+                        'bool': bool, 'chr': chr, 'dict': dict, 'divmod': divmod,
+                        'enumerate': enumerate, 'filter': filter, 'float': float,
+                        'format': format, 'frozenset': frozenset,
+                        'hex': hex, 'int': int, 'isinstance': isinstance,
+                        'issubclass': issubclass, 'iter': iter, 'len': len,
+                        'list': list, 'map': map, 'max': max, 'min': min,
+                        'next': next, 'oct': oct, 'ord': ord, 'pow': pow,
+                        'print': print, 'range': range, 'repr': repr,
+                        'reversed': reversed, 'round': round, 'set': set,
+                        'slice': slice, 'sorted': sorted, 'str': str,
+                        'sum': sum, 'tuple': tuple, 'type': type, 'zip': zip,
+                        'True': True, 'False': False, 'None': None,
+                        'abs': abs, 'AssertionError': AssertionError,
+                        'Exception': Exception, 'StopIteration': StopIteration,
+                        'ValueError': ValueError, 'TypeError': TypeError,
+                        'KeyError': KeyError, 'IndexError': IndexError,
+                    }
+                }
+                exec(code, safe_builtins)
                 passed = True
                 for test in test_cases[:1]:
                     try:
-                        exec(test, exec_globals)
+                        exec(test, safe_builtins)
                     except AssertionError:
                         passed = False
                         break

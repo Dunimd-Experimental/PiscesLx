@@ -151,7 +151,7 @@ class YvMCPXMLParser:
             re.DOTALL
         )
     
-    def extract_agentic_calls(self, text: str) -> List[PiscesLxParsedAgenticCall]:
+    def extract_agentic_calls(self, text: str) -> List[YvParsedAgenticCall]:
         agentic_calls = []
         
         for match in self.agent_pattern.finditer(text):
@@ -159,7 +159,7 @@ class YvMCPXMLParser:
             timeout = match.group(2)
             content = match.group(3)
             
-            call = PiscesLxParsedAgenticCall(
+            call = YvParsedAgenticCall(
                 raw_match=match.group(0),
                 start_pos=match.start(),
                 end_pos=match.end(),
@@ -170,7 +170,7 @@ class YvMCPXMLParser:
                 agent_name = agent_match.group(2).strip()
                 agent_context = agent_match.group(1)
                 
-                call.agents.append(PiscesLxAgenticAgentCall(
+                call.agents.append(YvAgenticAgentCall(
                     agent_name=agent_name,
                     raw_match=agent_match.group(0),
                     start_pos=match.start() + agent_match.start(),
@@ -196,7 +196,7 @@ class YvMCPXMLParser:
                     except json.JSONDecodeError:
                         parameters = {"raw": param_text}
                     
-                    call.tools.append(PiscesLxAgenticToolCall(
+                    call.tools.append(YvAgenticToolCall(
                         tool_name=tool_name,
                         parameters=parameters,
                         raw_match=tool_match.group(0),
@@ -213,7 +213,7 @@ class YvMCPXMLParser:
                 for agent_match in self.agent_tag_pattern.finditer(group_content):
                     group_agents.append(agent_match.group(2).strip())
                 
-                call.agent_group = PiscesLxAgenticGroup(
+                call.agent_group = YvAgenticGroup(
                     agents=group_agents,
                     mode=mode,
                     raw_match=ag_group_match.group(0),
@@ -249,18 +249,18 @@ class YvMCPXMLParser:
                     except json.JSONDecodeError:
                         parameters[f"ap{param_index}"] = param_value
                 
-                legacy_call = PiscesLxParsedAgenticCall(
+                legacy_call = YvParsedAgenticCall(
                     raw_match=match.group(0),
                     start_pos=match.start(),
                     end_pos=match.end()
                 )
-                legacy_call.agents = [PiscesLxAgenticAgentCall(
+                legacy_call.agents = [YvAgenticAgentCall(
                     agent_name=tool_name,
                     raw_match=match.group(0),
                     start_pos=match.start(),
                     end_pos=match.end()
                 )]
-                legacy_call.tools = [PiscesLxAgenticToolCall(
+                legacy_call.tools = [YvAgenticToolCall(
                     tool_name=tool_name,
                     parameters=parameters,
                     raw_match=match.group(0),

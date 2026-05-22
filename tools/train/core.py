@@ -2097,7 +2097,7 @@ class PiscesLxTrainingOperator(object):
         Returns:
             Checkpoint information.
         """
-        checkpoint = torch.load(filepath, map_location=self.device)
+        checkpoint = torch.load(filepath, map_location=self.device, weights_only=True)
         
         # Load model weights
         self.model.load_state_dict(checkpoint['model_state_dict'])

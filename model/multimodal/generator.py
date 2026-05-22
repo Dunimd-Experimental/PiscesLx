@@ -674,11 +674,40 @@ class YvSelfDevelopedGenerator(nn.Module):
         return self._decode_video_with_temporal(tokens, num_frames, resolution)
     
     def _encode_text(self, text: str) -> torch.Tensor:
-        """Encode text using our Yv tokenizer and embedding layer."""
-        # This would use your existing tokenizer
-        # For demo purposes, creating random tokens
-        tokens = torch.randint(0, 32000, (1, min(len(text.split()), self.config.max_sequence_length)))
-        return tokens.long()
+        """Encode text using the Yv tokenizer with hash-based fallback."""
+        try:
+            from model.tokenizer import get_tokenizer
+            tokenizer = get_tokenizer()
+            tokens = tokenizer.encode(text, return_tensors="pt")
+            if tokens.dim() == 1:
+                tokens = tokens.unsqueeze(0)
+            max_len = self.config.max_sequence_length
+            if tokens.shape[1] > max_len:
+                tokens = tokens[:, :max_len]
+            return tokens.long()
+        except Exception:
+            pass
+
+        # Fallback: hash-based deterministic encoding (NEVER random)
+        try:
+            from model.tokenizer import YvTokenizer
+            try:
+                vocab_size = YvTokenizer().vocab_size
+            except Exception:
+                vocab_size = 154885
+        except Exception:
+            vocab_size = 154885
+
+        max_len = self.config.max_sequence_length
+        words = text.split()[:max_len]
+        tokens = []
+        for word in words:
+            h = int(hashlib.sha256(word.encode('utf-8')).hexdigest()[:8], 16)
+            tokens.append(h % vocab_size)
+        while len(tokens) < 1:
+            tokens.append(0)
+        result = torch.tensor(tokens, dtype=torch.long).unsqueeze(0)
+        return result[:, :max_len]
     
     async def _ntp_generate(
         self,
@@ -710,7 +739,7 @@ class YvSelfDevelopedGenerator(nn.Module):
         
         for step in range(max_tokens):
             with torch.no_grad():
-                logits = self.backbone(current_tokens)
+                logits = self.backbone(input_ids=current_tokens)
             
             next_logits = logits[:, -1, :] / temperature
             

@@ -328,7 +328,7 @@ class PiscesLxInferenceEngine(object):
             ckpt_path = self.config.model.model_path
             if ckpt_path and Path(ckpt_path).exists():
                 if ckpt_path.endswith('.pt') or ckpt_path.endswith('.bin') or ckpt_path.endswith('.safetensors'):
-                    raw = torch.load(ckpt_path, map_location='cpu')
+                    raw = torch.load(ckpt_path, map_location='cpu', weights_only=True)
                     if isinstance(raw, dict):
                         state = raw.get("model_state_dict") or raw.get("model") or raw.get("state_dict") or raw
                     else:

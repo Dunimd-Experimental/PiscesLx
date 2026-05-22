@@ -61,7 +61,9 @@ class YvLongTermPlanner(nn.Module):
         self.hidden_size = hidden_size
         self.max_steps = max_steps
         self.num_stages = num_stages
-        
+
+        self.char_embedding = nn.Embedding(256, 64)
+
         self.task_graph_encoder = nn.GRU(
             hidden_size, hidden_size, num_layers=2, batch_first=True
         )
@@ -147,18 +149,17 @@ class YvLongTermPlanner(nn.Module):
         )
     
     def _encode_goal(self, goal: str, context: Dict[str, Any]) -> torch.Tensor:
-        goal_tokens = torch.tensor([ord(c) for c in goal[:100]], dtype=torch.float32)
-        goal_tokens = F.normalize(goal_tokens.unsqueeze(0), p=2, dim=-1)
-        
-        padding = torch.zeros(1, max(0, 100 - len(goal_tokens[0])))
-        goal_tokens = torch.cat([goal_tokens, padding], dim=-1)
-        
-        if goal_tokens.shape[-1] < self.hidden_size:
-            repeat = (self.hidden_size // goal_tokens.shape[-1]) + 1
-            goal_tokens = goal_tokens.repeat(1, repeat)[:, :self.hidden_size]
+        char_ids = torch.tensor([min(ord(c), 255) for c in goal[:100]], dtype=torch.long,
+                                device=self.char_embedding.weight.device)
+        if char_ids.numel() == 0:
+            return torch.zeros(1, self.hidden_size, device=self.char_embedding.weight.device)
+        char_embeds = self.char_embedding(char_ids).flatten()
+        if char_embeds.numel() < self.hidden_size:
+            repeat = (self.hidden_size // char_embeds.numel()) + 1
+            char_embeds = char_embeds.repeat(repeat)[:self.hidden_size]
         else:
-            goal_tokens = goal_tokens[:, :self.hidden_size]
-        
+            char_embeds = char_embeds[:self.hidden_size]
+        goal_tokens = F.normalize(char_embeds.unsqueeze(0), p=2, dim=-1)
         return goal_tokens
     
     def _assess_complexity(
@@ -647,7 +648,9 @@ class YvToolOrchestrator(nn.Module):
         super().__init__()
         self.hidden_size = hidden_size
         self.max_tools = max_tools
-        
+
+        self.char_embedding = nn.Embedding(256, 64)
+
         self.tool_descriptor_encoder = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
@@ -712,13 +715,17 @@ class YvToolOrchestrator(nn.Module):
         )
     
     def _encode_goal(self, goal: str) -> torch.Tensor:
-        goal_tokens = torch.tensor([ord(c) for c in goal[:100]], dtype=torch.float32)
-        goal_tokens = F.normalize(goal_tokens.unsqueeze(0), p=2, dim=-1)
-        
-        if goal_tokens.shape[-1] < self.hidden_size:
-            repeat = (self.hidden_size // goal_tokens.shape[-1]) + 1
-            goal_tokens = goal_tokens.repeat(1, repeat)[:, :self.hidden_size]
-        
+        char_ids = torch.tensor([min(ord(c), 255) for c in goal[:100]], dtype=torch.long,
+                                device=self.char_embedding.weight.device)
+        if char_ids.numel() == 0:
+            return torch.zeros(1, self.hidden_size, device=self.char_embedding.weight.device)
+        char_embeds = self.char_embedding(char_ids).flatten()
+        if char_embeds.numel() < self.hidden_size:
+            repeat = (self.hidden_size // char_embeds.numel()) + 1
+            char_embeds = char_embeds.repeat(repeat)[:self.hidden_size]
+        else:
+            char_embeds = char_embeds[:self.hidden_size]
+        goal_tokens = F.normalize(char_embeds.unsqueeze(0), p=2, dim=-1)
         return goal_tokens
     
     def _analyze_required_capabilities(
@@ -1231,7 +1238,9 @@ class YvSelfEvaluator(nn.Module):
     def __init__(self, hidden_size: int = 4096):
         super().__init__()
         self.hidden_size = hidden_size
-        
+
+        self.char_embedding = nn.Embedding(256, 64)
+
         self.correctness_evaluator = nn.Sequential(
             nn.Linear(hidden_size * 2, hidden_size),
             nn.ReLU(),
@@ -1330,13 +1339,17 @@ class YvSelfEvaluator(nn.Module):
         return features.unsqueeze(0)
     
     def _encode_text(self, text: str) -> torch.Tensor:
-        tokens = torch.tensor([ord(c) for c in text[:100]], dtype=torch.float32)
-        tokens = F.normalize(tokens.unsqueeze(0), p=2, dim=-1)
-        
-        if tokens.shape[-1] < self.hidden_size:
-            repeat = (self.hidden_size // tokens.shape[-1]) + 1
-            tokens = tokens.repeat(1, repeat)[:, :self.hidden_size]
-        
+        char_ids = torch.tensor([min(ord(c), 255) for c in text[:100]], dtype=torch.long,
+                                device=self.char_embedding.weight.device)
+        if char_ids.numel() == 0:
+            return torch.zeros(self.hidden_size, device=self.char_embedding.weight.device)
+        char_embeds = self.char_embedding(char_ids).flatten()
+        if char_embeds.numel() < self.hidden_size:
+            repeat = (self.hidden_size // char_embeds.numel()) + 1
+            char_embeds = char_embeds.repeat(repeat)[:self.hidden_size]
+        else:
+            char_embeds = char_embeds[:self.hidden_size]
+        tokens = F.normalize(char_embeds.unsqueeze(0), p=2, dim=-1)
         return tokens.squeeze(0)
     
     def _encode_result(self, result: Dict[str, Any]) -> torch.Tensor:
@@ -1705,7 +1718,9 @@ class YvPersistentMemory(nn.Module):
         self.hidden_size = hidden_size
         self.max_cases = max_cases
         self.embedding_dim = embedding_dim
-        
+
+        self.char_embedding = nn.Embedding(256, 64)
+
         self.memory_encoder = nn.Sequential(
             nn.Linear(hidden_size, hidden_size),
             nn.ReLU(),
@@ -1758,10 +1773,13 @@ class YvPersistentMemory(nn.Module):
         experience: 'YvAgentExperience'
     ) -> torch.Tensor:
         features = []
-        
-        goal_tokens = torch.tensor([ord(c) for c in experience.goal[:50]], dtype=torch.float32)
-        goal_features = F.normalize(goal_tokens.unsqueeze(0), p=2, dim=-1)
-        features.append(goal_features.squeeze(0))
+
+        char_ids = torch.tensor([min(ord(c), 255) for c in experience.goal[:50]], dtype=torch.long,
+                                device=self.char_embedding.weight.device)
+        if char_ids.numel() > 0:
+            goal_features = self.char_embedding(char_ids).flatten()
+            goal_features = F.normalize(goal_features.unsqueeze(0), p=2, dim=-1).squeeze(0)
+            features.append(goal_features)
         
         success_rate = torch.tensor([experience.success_rate])
         features.append(success_rate)
@@ -1845,13 +1863,17 @@ class YvPersistentMemory(nn.Module):
         return sorted(similar_cases, key=lambda x: x.relevance_score, reverse=True)
     
     def _encode_query(self, query: str) -> torch.Tensor:
-        tokens = torch.tensor([ord(c) for c in query[:100]], dtype=torch.float32)
-        tokens = F.normalize(tokens.unsqueeze(0), p=2, dim=-1)
-        
-        if tokens.shape[-1] < self.embedding_dim:
-            repeat = (self.embedding_dim // tokens.shape[-1]) + 1
-            tokens = tokens.repeat(1, repeat)[:, :self.embedding_dim]
-        
+        char_ids = torch.tensor([min(ord(c), 255) for c in query[:100]], dtype=torch.long,
+                                device=self.char_embedding.weight.device)
+        if char_ids.numel() == 0:
+            return torch.zeros(self.embedding_dim, device=self.char_embedding.weight.device)
+        char_embeds = self.char_embedding(char_ids).flatten()
+        if char_embeds.numel() < self.hidden_size:
+            repeat = (self.hidden_size // char_embeds.numel()) + 1
+            char_embeds = char_embeds.repeat(repeat)[:self.hidden_size]
+        else:
+            char_embeds = char_embeds[:self.hidden_size]
+        tokens = F.normalize(char_embeds.unsqueeze(0), p=2, dim=-1)
         return self.query_encoder(tokens).squeeze(0)
     
     def _calculate_relevance(self, case: Dict, query: str) -> float:
