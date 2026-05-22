@@ -206,7 +206,7 @@ class PiscesLxPublishExporter:
             if checkpoint_path.suffix == '.safetensors':
                 state_dict = self._load_safetensors(checkpoint_path)
             else:
-                state_dict = torch.load(checkpoint_path, map_location='cpu')
+                state_dict = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
 
             if self.config.export.quantization:
                 state_dict = self._apply_quantization(state_dict)
@@ -240,7 +240,7 @@ class PiscesLxPublishExporter:
             return load_file(str(path))
         except Exception as e:
             _LOG.warning("Failed to load as safetensors, trying torch.load", error=str(e))
-            return torch.load(str(path), map_location='cpu')
+            return torch.load(str(path), map_location='cpu', weights_only=True)
 
     def _apply_quantization(self, state_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
         """Apply quantization to state dict.

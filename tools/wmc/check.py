@@ -561,7 +561,7 @@ def detect_model_watermark(model_path: str,
     
     try:
         import torch
-        checkpoint = torch.load(model_path, map_location='cpu')
+        checkpoint = torch.load(model_path, map_location='cpu', weights_only=True)
         
         if isinstance(checkpoint, dict):
             if 'state_dict' in checkpoint:

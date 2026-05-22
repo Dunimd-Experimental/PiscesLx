@@ -63,6 +63,45 @@ class YvAgenticEncoder(nn.Module):
         self.enabled = True
         self.cfg = cfg
         self.pisces_agentic = YvAgentic(cfg)
+        h = cfg.hidden_size
+        v = cfg.vocab_size
+
+        # Observation encoders
+        self.obs_text_encoder = nn.Embedding(v, h)
+        self.obs_image_encoder = nn.Sequential(
+            nn.Linear(h, h),
+            nn.LayerNorm(h),
+            nn.ReLU(inplace=True),
+        )
+        self.obs_audio_encoder = nn.Sequential(
+            nn.Linear(h, h),
+            nn.LayerNorm(h),
+            nn.ReLU(inplace=True),
+        )
+
+        # Memory encoders (bi-GRU for each modality)
+        self.memory_encoder = nn.ModuleDict({
+            'obs_memory': nn.GRU(h, h, batch_first=True),
+            'action_memory': nn.GRU(h, h, batch_first=True),
+            'reflection_memory': nn.GRU(h, h, batch_first=True),
+        })
+
+        # State encoder
+        self.state_encoder = nn.Linear(h, h)
+
+        # Self-attention for cross-modal fusion
+        self.agent_attention = nn.MultiheadAttention(h, num_heads=8, batch_first=True)
+
+        # Action prediction heads
+        self.action_type_head = nn.Linear(h, 10)
+        self.action_param_head = nn.Linear(h, h)
+        self.confidence_head = nn.Linear(h, 1)
+
+        # Final projection
+        self.final_proj = nn.Sequential(
+            nn.Linear(h + h + 1, h),
+            nn.LayerNorm(h),
+        )
         
     def forward(self, agent_input):
         """Delegate a raw observation to the underlying Pisces agent.

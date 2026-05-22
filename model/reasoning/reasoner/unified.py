@@ -83,7 +83,7 @@ Note:
 import torch
 from torch import nn
 import torch.nn.functional as F
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from .cot_memory import YvCoTMemoryReasoner
 from .multipath_core import YvMultiPathReasoningEngine
 from ..ttt_e2e import YvTestTimeTrainer
@@ -404,9 +404,18 @@ class YvUnifiedReasoner(nn.Module):
                 confidence_threshold=getattr(self.cfg, 'ttt_confidence_threshold', 0.6),
                 complexity_threshold=getattr(self.cfg, 'ttt_complexity_threshold', 0.7)
             ):
-                # Note: In practice, batch_input should be the actual input batch
-                # This is a placeholder for the adaptation mechanism
-                pass
+                # Perform test-time training on the last N layers
+                hidden_for_ttt = hidden_states.detach()
+                with torch.enable_grad():
+                    self.ttt_trainer.train()
+                    # Use the current hidden states as adaptation signal
+                    adapt_input = hidden_for_ttt.unsqueeze(0) if hidden_for_ttt.dim() == 2 else hidden_for_ttt
+                    adaptation_loss = self.ttt_trainer.adapt_step(
+                        adapt_input,
+                        depth=thinking_depth,
+                        confidence_target=complexity_score
+                    )
+                    self.ttt_trainer.eval()
 
         # If memory_context carries labels, remap accordingly.
         if labels is None and torch.is_tensor(memory_context):
@@ -639,10 +648,164 @@ class YvUnifiedReasoner(nn.Module):
                     break
         
         full_output = tokenizer.decode(generated_tokens, skip_special_tokens=False)
-        
+
         if enable_thinking and think_start in full_output:
             pass
         else:
             full_output = f"{think_start}{full_output}"
-        
+
         return full_output
+
+    def reason_latent(
+        self,
+        hidden_states: torch.Tensor,
+        max_depth: int = 8,
+        confidence_threshold: float = 0.85,
+        enable_self_correction: bool = True,
+        enable_multi_path: bool = False,
+    ) -> Dict[str, Any]:
+        """Perform latent-space chain-of-thought reasoning without token generation.
+
+        This is the core reasoning engine that operates purely in hidden-state space,
+        similar to how frontier models like Claude internally reason before producing
+        text output. It iteratively refines hidden representations through the
+        CoT reasoner, tracking confidence and uncertainty at each step.
+
+        Architecture:
+            1. Initial encoding: pool input to [B, hidden]
+            2. Iterative refinement: feed through CoT reasoner, update state
+            3. Confidence tracking: monitor confidence/difficulty per iteration
+            4. Early stopping: exit when confidence > threshold
+            5. Self-correction: detect confidence drops and backtrack
+            6. Multi-path: optionally explore alternative reasoning paths
+
+        Args:
+            hidden_states: Input hidden states [batch, seq_len, hidden_size].
+            max_depth: Maximum number of reasoning iterations (default: 8).
+            confidence_threshold: Early-stop when confidence exceeds this.
+            enable_self_correction: Enable contradiction detection and backtracking.
+            enable_multi_path: Enable multi-path exploration in latent space.
+
+        Returns:
+            Dictionary with refined_hidden, reasoning_trace, final_confidence,
+            final_difficulty, num_iterations, correction_count, path_scores.
+        """
+        h = self.cfg.hidden_size
+        device = hidden_states.device if hidden_states is not None else next(self.parameters()).device
+        bsz = hidden_states.size(0) if hidden_states is not None else 1
+
+        # Pool the sequence into a compact representation
+        if hidden_states.dim() == 3:
+            pooled = hidden_states.mean(dim=1)
+        else:
+            pooled = hidden_states
+
+        reasoning_state = pooled.clone()
+        reasoning_trace = []
+        correction_count = 0
+        path_scores = []
+
+        # Iterative latent reasoning loop
+        for step in range(max_depth):
+            step_input = reasoning_state.unsqueeze(1)
+
+            cot_out = self.cot_reasoner.forward(
+                input_ids=step_input,
+                attention_mask=torch.ones(bsz, 1, device=device),
+                memory_context=None,
+                thinking_depth=min(step + 1, 5),
+            )
+
+            if isinstance(cot_out, dict):
+                thinking_logits = cot_out.get("thinking_logits", reasoning_state)
+                difficulty_logits = cot_out.get("difficulty_logits", None)
+                reflection_logits = cot_out.get("reflection_logits", None)
+            else:
+                thinking_logits = cot_out
+                difficulty_logits = None
+                reflection_logits = None
+
+            if thinking_logits.dim() == 3:
+                thinking_logits = thinking_logits[:, -1, :]
+
+            thinking_probs = torch.softmax(thinking_logits, dim=-1)
+            confidence = thinking_probs.max(dim=-1).values.mean().item()
+
+            # Estimate difficulty
+            if difficulty_logits is not None:
+                if difficulty_logits.dim() == 3:
+                    difficulty_logits = difficulty_logits[:, -1, :]
+                difficulty = torch.sigmoid(difficulty_logits.mean()).item()
+            else:
+                difficulty = min(1.0, thinking_probs.var(dim=-1).mean().item() * 5.0)
+
+            # Self-correction: detect confidence drops and backtrack
+            if enable_self_correction and len(reasoning_trace) >= 2:
+                prev_conf = reasoning_trace[-1][1]
+                if confidence < prev_conf * 0.5:
+                    correction_count += 1
+                    blend_weight = min(0.7, confidence / max(prev_conf, 1e-6))
+                    reasoning_state = (
+                        blend_weight * reasoning_state
+                        + (1.0 - blend_weight) * pooled
+                    )
+                    reasoning_state = F.normalize(reasoning_state, p=2, dim=-1)
+                    continue
+
+            # Update reasoning state with smooth residual
+            reasoning_state = F.normalize(
+                reasoning_state + reasoning_state * 0.1, p=2, dim=-1
+            )
+
+            # Reflection-based correction
+            if reflection_logits is not None and enable_self_correction:
+                if reflection_logits.dim() == 3:
+                    reflection_logits = reflection_logits[:, -1, :]
+                reflection_score = torch.sigmoid(reflection_logits.mean()).item()
+                if reflection_score < 0.3:
+                    correction_count += 1
+                    reasoning_state = 0.8 * reasoning_state + 0.2 * pooled
+
+            reasoning_trace.append((step, confidence, difficulty))
+
+            if confidence >= confidence_threshold:
+                break
+
+        # Multi-path latent exploration
+        if enable_multi_path and len(reasoning_trace) > 0:
+            for path_idx in range(min(4, getattr(self.cfg, 'n_head', 16))):
+                noise = torch.randn_like(reasoning_state) * 0.01
+                alt_state = reasoning_state + noise
+
+                alt_cot_out = self.cot_reasoner.forward(
+                    input_ids=alt_state.unsqueeze(1),
+                    attention_mask=torch.ones(bsz, 1, device=device),
+                    thinking_depth=3,
+                )
+
+                alt_logits = (
+                    alt_cot_out.get("thinking_logits", alt_state)
+                    if isinstance(alt_cot_out, dict)
+                    else alt_cot_out
+                )
+                if alt_logits.dim() == 3:
+                    alt_logits = alt_logits[:, -1, :]
+                alt_probs = torch.softmax(alt_logits, dim=-1)
+                path_scores.append(alt_probs.max(dim=-1).values.mean().item())
+
+            best_score = max(path_scores) if path_scores else 0.0
+            if best_score > confidence:
+                reasoning_trace.append((max_depth, best_score, difficulty))
+
+        final_confidence = reasoning_trace[-1][1] if reasoning_trace else 0.5
+        final_difficulty = reasoning_trace[-1][2] if reasoning_trace else 0.5
+
+        return {
+            "refined_hidden": reasoning_state,
+            "reasoning_trace": reasoning_trace,
+            "final_confidence": final_confidence,
+            "final_difficulty": final_difficulty,
+            "num_iterations": len(reasoning_trace),
+            "correction_count": correction_count,
+            "path_scores": path_scores,
+        }

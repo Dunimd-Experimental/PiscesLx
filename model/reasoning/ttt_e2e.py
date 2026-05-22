@@ -215,3 +215,63 @@ class YvTestTimeTrainer:
 
         self.model.eval()
         return self.model
+
+    def adapt_step(
+        self,
+        batch_input: torch.Tensor,
+        depth: int = 5,
+        confidence_target: float = 0.7
+    ) -> torch.Tensor:
+        """Single-step test-time adaptation with complexity-aware depth.
+
+        Performs one gradient step of self-supervised learning, adapting
+        to the current input distribution. The depth parameter controls
+        reasoning intensity and confidence_target guides regularization.
+
+        Args:
+            batch_input: Input tensor for adaptation [batch, seq, hidden].
+            depth: Reasoning depth guiding adaptation intensity.
+            confidence_target: Target confidence for entropy regularization.
+
+        Returns:
+            torch.Tensor: The adaptation loss value.
+        """
+        if not self.params_to_update:
+            return torch.tensor(0.0, device=next(self.model.parameters()).device)
+
+        optimizer = torch.optim.SGD(self.params_to_update, lr=self.lr)
+        optimizer.zero_grad()
+
+        self.model.train()
+        # Forward pass on the adaptation batch
+        with torch.set_grad_enabled(True):
+            outputs = self.model(batch_input)
+
+            if hasattr(outputs, "logits") and outputs.logits is not None:
+                logits = outputs.logits
+            else:
+                logits = batch_input if batch_input.size(-1) > 1000 else None
+
+            if hasattr(outputs, "hidden_states") and outputs.hidden_states:
+                hidden_states = outputs.hidden_states[-1]
+            elif isinstance(outputs, torch.Tensor):
+                hidden_states = outputs
+            else:
+                hidden_states = batch_input
+
+            loss = self.compute_self_supervised_loss(hidden_states, logits)
+
+            # Scale loss by depth for intensity control
+            depth_factor = min(depth / 10.0, 1.0)
+            loss = loss * (0.5 + 0.5 * depth_factor)
+
+            if self.ewc_module is not None:
+                ewc_loss = self.ewc_module.compute_ewc_loss(self.model)
+                loss = loss + ewc_loss
+
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(self.params_to_update, max_norm=0.1)
+            optimizer.step()
+
+        self.model.eval()
+        return loss.detach()

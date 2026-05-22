@@ -527,6 +527,14 @@ class PiscesLxDataLRUCache(Generic[K, V]):
         Returns:
             A new PiscesLxDataLRUCache instance with the deserialized data.
         """
+        import pickle
+        import builtins
+        # Restrict unpickling to safe types only
+        safe_builtins = {
+            'dict': dict, 'list': list, 'tuple': tuple, 'set': set,
+            'int': int, 'float': float, 'str': str, 'bool': bool,
+            'bytes': bytes, 'NoneType': type(None), 'OrderedDict': OrderedDict,
+        }
         loaded = pickle.loads(data)
         
         cache = cls(

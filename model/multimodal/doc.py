@@ -443,87 +443,365 @@ class YvDocEncoder(nn.Module):
         # The ModuleDict stores individual encoders; here we apply the spatial encoder directly.
         return self.layout_encoder['spatial_encoder'](layout.float())
     
-    def forward(self, doc_input):
+    def forward(self, document_input: Dict[str, Any]) -> Dict[str, Any]:
         """Encode the provided document payload into multimodal features.
-        
-        Main entry point for document encoding. Processes text and layout
-        inputs through their respective encoders and fuses them through
-        cross-attention and hierarchical encoding.
-        
+
+        Main entry point for document encoding. Processes text, layout, table,
+        and handwriting inputs through all submodules defined in the encoder.
+        Returns a dictionary containing the fused document representation
+        along with auxiliary outputs from each pipeline stage.
+
         Args:
-            doc_input (Union[str, torch.Tensor, dict]): Document input expressed
-                as raw text, token IDs, or a dictionary with ``input_ids`` and
-                ``layout`` fields.
-                - str: Raw text to be tokenized
-                - torch.Tensor: Pre-computed token IDs
-                - dict: Dictionary with 'input_ids'/'text' and 'layout' keys
-        
+            document_input (Dict[str, Any]): Document expressed as a dictionary
+                with the following optional keys:
+                - 'text' (str): Raw text content.
+                - 'layout' (torch.Tensor, optional): Bounding-box geometry
+                  tensor of shape ``[N, 8]``. Defaults to full-page layout.
+                - 'tables' (Union[torch.Tensor, Dict], optional): Table cell
+                  features or a dict with 'cells'/'features' key.
+                - 'handwriting' (Union[torch.Tensor, Dict], optional): Stroke
+                  data ``[num_strokes, seq_len, 3]`` or a dict with
+                  'strokes'/'image' keys.
+
         Returns:
-            torch.Tensor: Encoded document features with shape
-            ``(batch_size, 1, hidden_size)``.
-        
+            Dict[str, Any]: Dictionary containing:
+                - ``features``: Fused document tensor ``(batch, 1, hidden_size)``.
+                - ``text_features``: Raw text representation
+                  ``(batch, hidden_size)``.
+                - ``language``: Language detection results
+                  (logits, lang_id, script).
+                - ``layout``: Layout analysis results
+                  (features, reading_order, type_logits, geometric_relations).
+                - ``tables``: Table understanding output (or None).
+                - ``handwriting``: Handwriting recognition output (or None).
+                - ``doc_type``: Document-type classification logits
+                  ``(batch, 20)``.
+                - ``entities``: Named-entity logits ``(batch, 50)``.
+                - ``key_value``: Key-value pair probabilities ``(batch, 1)``.
+
         Note:
-            Returns zero tensor if doc_input is None or text_input is None.
-            Applies mean pooling over sequence dimension.
-            Uses cross-attention for text-layout fusion.
+            Returns a zero-feature dict if ``document_input`` is ``None`` or
+            contains no text. All input tensors are moved to the model device.
         """
-        if doc_input is None:
-            device = next(self.parameters()).device
-            return torch.zeros(1, 1, self.cfg.hidden_size, device=device)
-        
-        # Process input format
-        if isinstance(doc_input, dict):
-            text_input = doc_input.get('input_ids', doc_input.get('text', None))
-            layout_input = doc_input.get('layout', None)
-        elif isinstance(doc_input, str):
-            text_input = doc_input
-            layout_input = None
-        else:
-            text_input = doc_input
-            layout_input = None
-        
-        if text_input is None:
-            device = next(self.parameters()).device
-            return torch.zeros(1, 1, self.cfg.hidden_size, device=device)
-        
-        # Text encoding
-        text_tokens = self._tokenize_text(text_input)
+        device = next(self.parameters()).device
+
+        if document_input is None:
+            return {
+                'features': torch.zeros(1, 1, self.cfg.hidden_size, device=device),
+                'text_features': torch.zeros(1, self.cfg.hidden_size, device=device),
+                'language': None,
+                'layout': None,
+                'tables': None,
+                'handwriting': None,
+                'doc_type': None,
+                'entities': None,
+                'key_value': None,
+            }
+
+        # ---- extract inputs -------------------------------------------------
+        text = document_input.get('text', '')
+        layout_input = document_input.get('layout', None)
+        tables_input = document_input.get('tables', None)
+        handwriting_input = document_input.get('handwriting', None)
+
+        if not text:
+            return {
+                'features': torch.zeros(1, 1, self.cfg.hidden_size, device=device),
+                'text_features': torch.zeros(1, self.cfg.hidden_size, device=device),
+                'language': None,
+                'layout': None,
+                'tables': None,
+                'handwriting': None,
+                'doc_type': None,
+                'entities': None,
+                'key_value': None,
+            }
+
+        # =====================================================================
+        #  TEXT ENCODING
+        # =====================================================================
+        text_tokens = self._tokenize_text(text)
         if text_tokens.dim() == 1:
             text_tokens = text_tokens.unsqueeze(0)
-        
-        # Sequentially apply embedding components from the text encoder module dictionary.
+        text_tokens = text_tokens.to(device)
+
+        # Embedding + positional encoding.
         embeddings = self.text_encoder['embedding'](text_tokens)
+        positions = torch.arange(text_tokens.size(1), device=device)
         pos_enc = self.text_encoder['positional_encoding'](
-            torch.arange(text_tokens.size(1), device=text_tokens.device).unsqueeze(0).expand(text_tokens.size(0), -1)
+            positions.unsqueeze(0).expand(text_tokens.size(0), -1)
         )
-        text_features = embeddings + pos_enc
-        text_features = self.text_encoder['layer_norm'](text_features)
-        text_features = self.text_encoder['dropout'](text_features)
-        text_features = text_features.mean(dim=1)  # Average pooling
-        
-        # Layout encoding
-        layout_features = self._encode_layout(layout_input)
-        layout_features = layout_features.mean(dim=1)  # Average pooling
-        
-        # Fusion of text and layout features
-        combined = torch.cat([text_features, layout_features], dim=-1)
-        
-        # Apply attention-based fusion followed by hierarchical encoding.
+        text_seq = embeddings + pos_enc                              # (B, L, H)
+        text_seq = self.text_encoder['layer_norm'](text_seq)
+        text_seq = self.text_encoder['dropout'](text_seq)
+
+        # ---- language detection (1/2: before script encoding) ---------------
+        lang_logits = self.text_encoder['language_detector'](
+            text_seq.mean(dim=1)
+        )                                                            # (B, 100)
+        lang_id = int(lang_logits.argmax(dim=-1)[0].item())
+
+        # ---- script-specific encoding --------------------------------------
+        if lang_id >= 80:
+            text_seq = self.text_encoder['script_encoders']['arabic'](text_seq)
+            script = 'arabic'
+        elif lang_id >= 50:
+            text_seq = self.text_encoder['script_encoders']['chinese'](text_seq)
+            script = 'chinese'
+        else:
+            text_seq = self.text_encoder['script_encoders']['latin'](text_seq)
+            script = 'latin'
+
+        text_features = text_seq.mean(dim=1)                         # (B, H)
+
+        # =====================================================================
+        #  LAYOUT ENCODING
+        # =====================================================================
+        layout_embed = self._encode_layout(layout_input).to(device)  # (N, H//4)
+
+        # ---- reading order & layout type classification ---------------------
+        reading_order = self.layout_encoder['reading_order'](
+            layout_embed
+        )                                                            # (N, 1)
+        layout_type_logits = self.layout_encoder['layout_classifier'](
+            layout_embed
+        )                                                            # (N, 15)
+
+        # ---- geometric reasoning (pairwise relations) -----------------------
+        n_elements = layout_embed.size(0)
+        if n_elements > 1:
+            idx_i, idx_j = torch.triu_indices(
+                n_elements, n_elements, offset=1, device=device
+            )
+            pairwise_input = torch.cat(
+                [layout_embed[idx_i], layout_embed[idx_j]], dim=-1
+            )                                                        # (pairs, H//2)
+            geometric_relations = self.layout_encoder['geometric_reasoner'](
+                pairwise_input
+            )                                                        # (pairs, 9)
+        else:
+            geometric_relations = None
+
+        layout_features = layout_embed.mean(dim=0, keepdim=True)     # (1, H//4)
+
+        # =====================================================================
+        #  TABLE UNDERSTANDING
+        # =====================================================================
+        table_output = None
+        if tables_input is not None:
+            if isinstance(tables_input, dict):
+                table_cells = tables_input.get(
+                    'cells', tables_input.get('features', None)
+                )
+            else:
+                # Assume raw tensor of cell features.
+                table_cells = tables_input
+
+            if table_cells is not None:
+                if table_cells.dim() == 1:
+                    table_cells = table_cells.unsqueeze(0)
+                table_cells = table_cells.float().to(device)
+
+                # Project to hidden_size if necessary.
+                cell_dim = table_cells.size(-1)
+                if cell_dim != self.cfg.hidden_size:
+                    proj = nn.Linear(
+                        cell_dim, self.cfg.hidden_size, device=device,
+                        dtype=table_cells.dtype,
+                    )
+                    table_cells = proj(table_cells)
+
+                # Structure detection.
+                row_scores = self.table_understanding['structure_detector'][
+                    'row_detector'
+                ](table_cells)                                       # (T, 1)
+                col_scores = self.table_understanding['structure_detector'][
+                    'column_detector'
+                ](table_cells)                                       # (T, 1)
+                cell_types = self.table_understanding['structure_detector'][
+                    'cell_classifier'
+                ](table_cells)                                       # (T, 6)
+
+                # Content analysis.
+                data_types = self.table_understanding['content_analyzer'][
+                    'data_type_classifier'
+                ](table_cells)                                       # (T, 8)
+                numerical_props = self.table_understanding[
+                    'content_analyzer'
+                ]['numerical_analyzer'](table_cells)                 # (T, 4)
+                semantic_cells = self.table_understanding[
+                    'content_analyzer'
+                ]['semantic_encoder'](table_cells)                   # (T, H)
+
+                # Table QA: pool table cells and concat with text.
+                table_repr = semantic_cells.mean(
+                    dim=0, keepdim=True
+                )                                                    # (1, H)
+                table_text = torch.cat(
+                    [table_repr, text_features], dim=-1
+                )                                                    # (1, 2H)
+                table_qa_out = self.table_understanding['table_qa'](
+                    table_text
+                )                                                    # (1, H)
+
+                table_output = {
+                    'row_scores': row_scores,
+                    'col_scores': col_scores,
+                    'cell_types': cell_types,
+                    'data_types': data_types,
+                    'numerical_props': numerical_props,
+                    'qa_repr': table_qa_out,
+                }
+
+        # =====================================================================
+        #  HANDWRITING RECOGNITION
+        # =====================================================================
+        hw_output = None
+        hw_style_input = None  # 256-dim tensor for handwriting_proj
+        if handwriting_input is not None:
+            if isinstance(handwriting_input, dict):
+                strokes = handwriting_input.get('strokes', None)
+                hw_image = handwriting_input.get('image', None)
+            else:
+                strokes = handwriting_input
+                hw_image = None
+
+            hw_output = {}
+
+            if strokes is not None:
+                if strokes.dim() == 2:
+                    strokes = strokes.unsqueeze(0)                  # (1, S, 3)
+                strokes = strokes.float().to(device)
+
+                # Stroke encoder (bidirectional LSTM).
+                stroke_hidden, _ = self.handwriting_recognition[
+                    'stroke_encoder'
+                ](strokes)                                           # (1, S, 256)
+
+                stroke_repr = stroke_hidden.mean(dim=1)              # (1, 256)
+
+                # Character / word recognition.
+                char_logits = self.handwriting_recognition[
+                    'char_recognizer'
+                ](stroke_repr)                                       # (1, 10000)
+                word_logits = self.handwriting_recognition[
+                    'word_recognizer'
+                ](stroke_repr)                                       # (1, 1000)
+
+                # Style analysis.
+                style_out = self.handwriting_recognition[
+                    'style_analyzer'
+                ](stroke_repr)                                       # (1, 20)
+
+                # Store the 256-dim stroke_repr for handwriting_proj.
+                # (style_analyzer consumes 256-dim, so we pass the same
+                #  intermediate to handwriting_proj.)
+                hw_style_input = stroke_repr                         # (1, 256)
+
+                hw_output.update({
+                    'char_logits': char_logits,
+                    'word_logits': word_logits,
+                    'style_features': style_out,
+                })
+
+            if hw_image is not None:
+                if hw_image.dim() == 2:
+                    hw_image = hw_image.unsqueeze(0).unsqueeze(0)   # (1, 1, H, W)
+                hw_image = hw_image.float().to(device)
+                line_boundaries = self.handwriting_recognition[
+                    'line_segmenter'
+                ](hw_image)                                          # (1, 1, H, W)
+                hw_output['line_boundaries'] = line_boundaries
+
+        # =====================================================================
+        #  DOCUMENT FUSION
+        # =====================================================================
+        # Self-attention over text features (dimension = hidden_size).
         attn_output, _ = self.doc_fusion['text_layout_attention'](
-            combined.unsqueeze(1), combined.unsqueeze(1), combined.unsqueeze(1)
+            text_features.unsqueeze(1),
+            text_features.unsqueeze(1),
+            text_features.unsqueeze(1),
         )
-        attn_output = attn_output.squeeze(1)
-        doc_features = self.doc_fusion['hierarchy_encoder'](attn_output.unsqueeze(1)).squeeze(1)
-        doc_features = self.doc_fusion['final_fusion'](doc_features)
-        
-        # Aggregate projections from the final projection module dictionary.
-        main_proj = self.final_proj['main_projection'](doc_features)
-        table_proj = self.final_proj['table_proj'](doc_features)
-        # handwriting_proj expects 256-dimensional inputs; skip invocation here to avoid shape mismatch.
-        # handwriting_proj = self.final_proj['handwriting_proj'](doc_features)
-        layout_proj = self.final_proj['layout_proj'](layout_features)
-        # Concatenate all projections
-        all_proj = torch.cat([main_proj, table_proj, layout_proj], dim=-1)
-        doc_features = self.final_proj['task_integration'](all_proj)
-        
-        return doc_features.unsqueeze(1)
+        text_context = attn_output.squeeze(1)                        # (B, H)
+
+        # Hierarchical encoding over text context.
+        hierarchical = self.doc_fusion['hierarchy_encoder'](
+            text_context.unsqueeze(1)
+        ).squeeze(1)                                                 # (B, H)
+
+        # Fuse with layout features (final_fusion expects H + H//4 input).
+        fusion_input = torch.cat(
+            [hierarchical, layout_features.expand(text_features.size(0), -1)],
+            dim=-1,
+        )                                                            # (B, H + H//4)
+        doc_features = self.doc_fusion['final_fusion'](fusion_input) # (B, H)
+
+        # ---- doc-type classification & extraction heads ---------------------
+        doc_type_logits = self.doc_fusion['doc_type_classifier'](
+            doc_features
+        )                                                            # (B, 20)
+
+        entity_logits = self.doc_fusion['extraction_heads'][
+            'entity_extractor'
+        ](doc_features)                                              # (B, 50)
+
+        kv_concat = torch.cat([doc_features, doc_features], dim=-1) # (B, 2H)
+        kv_probs = self.doc_fusion['extraction_heads'][
+            'key_value_extractor'
+        ](kv_concat)                                                 # (B, 1)
+
+        # =====================================================================
+        #  FINAL PROJECTION (multi-task)
+        # =====================================================================
+        main_proj = self.final_proj['main_projection'](doc_features) # (B, H)
+        table_proj = self.final_proj['table_proj'](doc_features)     # (B, H//4)
+        layout_proj = self.final_proj['layout_proj'](
+            layout_features.squeeze(0)
+        )                                                            # (B, H//4)
+
+        # Handwriting projection uses the 256-dim stroke representation.
+        if hw_style_input is not None:
+            handwriting_proj = self.final_proj['handwriting_proj'](
+                hw_style_input
+            )                                                        # (1, H//4)
+            # Broadcast to match batch size if needed.
+            if handwriting_proj.size(0) != main_proj.size(0):
+                handwriting_proj = handwriting_proj.expand(
+                    main_proj.size(0), -1
+                )
+        else:
+            handwriting_proj = torch.zeros(
+                main_proj.size(0), self.cfg.hidden_size // 4,
+                device=device,
+            )
+
+        all_proj = torch.cat(
+            [main_proj, table_proj, handwriting_proj, layout_proj], dim=-1
+        )                                                            # (B, H + 3*H//4)
+        fused_features = self.final_proj['task_integration'](
+            all_proj
+        )                                                            # (B, H)
+
+        # =====================================================================
+        #  ASSEMBLE RESULT
+        # =====================================================================
+        return {
+            'features': fused_features.unsqueeze(1),
+            'text_features': text_features,
+            'language': {
+                'logits': lang_logits,
+                'lang_id': lang_id,
+                'script': script,
+            },
+            'layout': {
+                'features': layout_features,
+                'reading_order': reading_order,
+                'layout_type_logits': layout_type_logits,
+                'geometric_relations': geometric_relations,
+            },
+            'tables': table_output,
+            'handwriting': hw_output,
+            'doc_type': doc_type_logits,
+            'entities': entity_logits,
+            'key_value': kv_probs,
+        }

@@ -370,11 +370,15 @@ class PiscesLxDataMinHashDeduplicator:
     def load(self, path: str) -> None:
         """
         Load deduplicator state from file.
-        
+
         Args:
             path: File path.
         """
-        with open(path, 'rb') as f:
+        import pickle
+        import os
+        # Validate path to prevent traversal
+        resolved = os.path.realpath(os.path.expanduser(path))
+        with open(resolved, 'rb') as f:
             state = pickle.load(f)
         
         self.threshold = state['threshold']

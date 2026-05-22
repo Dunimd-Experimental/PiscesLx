@@ -175,6 +175,10 @@ class YvVideoEncoder(nn.Module):
             })
         else:
             # Temporal processing modules for the standard (non-3D RoPE) pathway.
+            # Auxiliary head output sizes:
+            #   event(8) + action(10) + scene(20) + track_corr(1) + track_occ(1) +
+            #   summary_imp(1) + summary_div(32) = 73
+            _AUX_TOTAL = 73  # 8 + 10 + 20 + 1 + 1 + 1 + 32
             self.temporal_processing = nn.ModuleDict({
                 'temporal_proj': nn.Sequential(
                     nn.Linear(cfg.hidden_size, cfg.hidden_size),
@@ -183,7 +187,15 @@ class YvVideoEncoder(nn.Module):
                     nn.Linear(cfg.hidden_size, cfg.hidden_size)
                 ),
                 'temporal_conv': nn.Conv1d(cfg.hidden_size, cfg.hidden_size, kernel_size=3, padding=1),
-                'temporal_attention': nn.MultiheadAttention(cfg.hidden_size, cfg.n_head, batch_first=True)
+                'temporal_attention': nn.MultiheadAttention(cfg.hidden_size, cfg.n_head, batch_first=True),
+                'fusion_proj': nn.Sequential(
+                    nn.Linear(cfg.hidden_size + _AUX_TOTAL, cfg.hidden_size * 2),
+                    nn.LayerNorm(cfg.hidden_size * 2),
+                    nn.SiLU(),
+                    nn.Dropout(0.1),
+                    nn.Linear(cfg.hidden_size * 2, cfg.hidden_size),
+                    nn.LayerNorm(cfg.hidden_size),
+                ),
             })
 
         # Initialize analytic heads that produce auxiliary video descriptors.
@@ -270,28 +282,53 @@ class YvVideoEncoder(nn.Module):
                 feats = frame_features.view(B, T, -1, self.cfg.hidden_size)
                 video_seq = feats.mean(dim=2)  # [B, T, hidden]
 
-            # Perform lightweight event detection to maintain parity with existing interface.
-            seq_ = video_seq.transpose(1, 2)  # [B, hidden, T]
-            _ = self.event_detector(seq_)
+            # ---- Temporal convolution for localised temporal mixing. ----
+            video_seq_t = video_seq.transpose(1, 2)  # [B, hidden, T]
+            video_seq_t = self.temporal_processing['temporal_conv'](video_seq_t)
+            video_seq = video_seq_t.transpose(1, 2)  # [B, T, hidden]
 
-            # Perform action recognition; output is retained for interface completeness.
-            act_logits = self.action_recognition['head'](video_seq.mean(dim=1))
-            _ = act_logits  # Placeholder for interface
+            # ---- Temporal attention to model long-range dependencies. ----
+            video_seq, _ = self.temporal_processing['temporal_attention'](
+                video_seq, video_seq, video_seq
+            )
 
-            # Perform scene understanding to populate auxiliary outputs.
-            _ = self.scene_understanding(video_seq.mean(dim=1))
+            # Mean-pool over the time dimension for a compact video descriptor.
+            pooled = video_seq.mean(dim=1)  # [B, hidden]
 
-            # Perform object tracking and occlusion handling heuristics.
+            # ---- Compute auxiliary analytic features. ----
+            # Event detection: [B, hidden, T] -> [B, 8, T] -> pool over T -> [B, 8]
+            seq_scores = self.event_detector(video_seq.transpose(1, 2))  # [B, 8, T]
+            event_features = seq_scores.mean(dim=-1)  # [B, 8]
+
+            # Action recognition: [B, 10]
+            action_features = self.action_recognition['head'](pooled)  # [B, 10]
+
+            # Scene understanding: [B, 20]
+            scene_features = self.scene_understanding(pooled)  # [B, 20]
+
+            # Object tracking: first-vs-last-frame correlation + occlusion estimate
             pair = torch.cat([video_seq[:, :1, :], video_seq[:, -1:, :]], dim=-1).squeeze(1)  # [B, 2H]
-            _ = self.object_tracker['correlator'](pair)
-            _ = self.object_tracker['occlusion'](video_seq.mean(dim=1))
+            track_corr = self.object_tracker['correlator'](pair)      # [B, 1]
+            track_occ = self.object_tracker['occlusion'](pooled)      # [B, 1]
 
-            # Generate a video summary using importance and diversity heuristics.
-            imp = self.summarizer['importance'](video_seq.mean(dim=1))
-            div = self.summarizer['diversity'](video_seq.mean(dim=1))
-            _ = (imp, div)
+            # Video summarization: importance + diversity heuristics
+            summary_imp = self.summarizer['importance'](pooled)       # [B, 1]
+            summary_div = self.summarizer['diversity'](pooled)        # [B, 32]
 
-            # Apply temporal projection to produce the final pooled features.
-            video_features = self.temporal_processing['temporal_proj'](video_seq.mean(dim=1))
+            # ---- Fuse main features with all auxiliary features. ----
+            # Auxiliary dims: event(8) + action(10) + scene(20) + track_corr(1) +
+            #     track_occ(1) + summary_imp(1) + summary_div(32) = 73
+            combined = torch.cat([
+                pooled,           # [B, hidden]
+                event_features,   # [B, 8]
+                action_features,  # [B, 10]
+                scene_features,   # [B, 20]
+                track_corr,       # [B, 1]
+                track_occ,        # [B, 1]
+                summary_imp,      # [B, 1]
+                summary_div,      # [B, 32]
+            ], dim=-1)  # [B, hidden + 73]
+
+            video_features = self.temporal_processing['fusion_proj'](combined)  # [B, hidden]
 
         return video_features.unsqueeze(1)
