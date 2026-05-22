@@ -728,6 +728,42 @@ class YvConfig:
     rdt_layer_indices: List[int] = field(default_factory=list)
     rdt_loops_per_layer: int = 2
 
+    # ========================================
+    # Memory Separation (Engram-style Lookup-Computation Separation)
+    # Reference: Liang Wenfeng et al., "Engram: Conditional Memory via
+    #   Scalable Lookup", arXiv:2601.07372, 2026.
+    #
+    # Separates static factual knowledge from reasoning/tool-operation
+    # weights. Knowledge is stored in an external mmap-backed FAISS
+    # index and retrieved via deterministic N-gram address lookup with
+    # O(1) complexity. Enables 7B training cost with 1T-level knowledge.
+    #
+    # Memory Router: Projects hidden states to unified 256-dim address
+    #   space, queries FAISS IVF-PQ index for top-K knowledge slots.
+    # Memory CrossAttention: Injects retrieved knowledge embeddings
+    #   into model hidden flow via learnable-gated cross-attention.
+    # Knowledge Builder: Offline 0.5B encoder builds knowledge store
+    #   from raw corpora, independent of main model size.
+    # ========================================
+    use_memory_separation: bool = False
+    memory_read_interval: int = 4
+    memory_top_k: int = 8
+    memory_cache_tokens: int = 4096
+    memory_prefetch_depth: int = 4
+    memory_router_dim: int = 256
+    memory_knowledge_dim: int = 256
+    memory_cross_attn_heads: int = 4
+    memory_gate_init: float = 0.0
+    memory_store_path: str = ""
+    knowledge_encoder_hidden: int = 640
+    knowledge_encoder_layers: int = 16
+    knowledge_encoder_experts: int = 4
+    memory_query_mode: str = "auto"
+    memory_interleave_mode: str = "adaptive"
+    memory_capacity_factor: float = 1.0
+    memory_index_type: str = "ivfpq"
+    memory_knowledge_slots: int = 0
+
     def __post_init__(self):
         """Initialize computed fields after dataclass construction.
         
@@ -754,6 +790,16 @@ class YvConfig:
             self.dsa_sparse_ratio = 0.3 * (0.5 + level)
             self.thinking_intensity = 0.5 * (0.5 + level)
             self.swarm_intensity = 0.5 * (0.5 + level)
+
+        # Auto-calculate knowledge slot count based on model capacity
+        # Formula: knowledge_slots = hidden_size * n_layer * capacity_factor
+        # Scaled by 1000 to provide sufficient addressing space for
+        # U-shaped sparsity allocation per Engram paper (arXiv:2601.07372).
+        # Only computed when use_memory_separation=True and slots not explicitly set.
+        if self.use_memory_separation and self.memory_knowledge_slots == 0:
+            self.memory_knowledge_slots = int(
+                self.hidden_size * self.n_layer * self.memory_capacity_factor * 1000
+            )
 
     @classmethod
     def from_json(cls, path: str) -> 'YvConfig':

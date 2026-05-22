@@ -447,3 +447,16 @@ circulant_threshold: 4096
 use_rdt_layers: true
 rdt_layer_indices: []
 rdt_loops_per_layer: 2
+
+# ========================================
+# Memory Separation (Engram-style Lookup-Computation Separation)
+# 128B: hidden=10240, n_layer=120 -> ~1.84B knowledge slots
+# Real reasoning weights ~128B, knowledge store ~1.84B slots (mmap, ~460GB)
+# ========================================
+use_memory_separation: true
+memory_read_interval: 4
+memory_top_k: 32
+memory_cache_tokens: 8192
+memory_prefetch_depth: 6
+memory_capacity_factor: 1.5
+memory_store_path: ""

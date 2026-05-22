@@ -446,3 +446,16 @@ circulant_threshold: 4096
 use_rdt_layers: true
 rdt_layer_indices: []
 rdt_loops_per_layer: 2
+
+# ========================================
+# Memory Separation (Engram-style Lookup-Computation Separation)
+# Reference: Liang Wenfeng et al., arXiv:2601.07372, 2026
+# 1.5B: Disabled - too small for effective knowledge separation
+# ========================================
+use_memory_separation: false
+memory_read_interval: 4
+memory_top_k: 4
+memory_cache_tokens: 2048
+memory_prefetch_depth: 2
+memory_capacity_factor: 1.0
+memory_store_path: ""

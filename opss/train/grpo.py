@@ -513,7 +513,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
 
         fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=DelayedScaling(
             margin=0, interval=1, fp8_format=Format.HYBRID, amax_history_len=1024, amax_compute_algo="max",
-        )) if config and config.use_fp8 else torch.no_grad()
+        )) if config and config.use_fp8 else contextlib.nullcontext()
 
         with fp8_context:
             for _ in range(config.max_new_tokens):
@@ -722,7 +722,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
                 
                 fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=DelayedScaling(
                     margin=0, interval=1, fp8_format=Format.HYBRID, amax_history_len=1024, amax_compute_algo="max",
-                )) if config and config.use_fp8 else torch.no_grad()
+                )) if config and config.use_fp8 else contextlib.nullcontext()
                 
                 with fp8_context:
                     outputs = reference_model(input_ids)

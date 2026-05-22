@@ -243,7 +243,6 @@ class GPTQQuantizer:
             eigvals = torch.linalg.eigvalsh(group_hessian)
             eig_min = eigvals[0].clamp(min=damp)
             hessian_damped = group_hessian + torch.eye(group_hessian.shape[-1], device=self.device) * (eig_min - eigvals[0])
-            torch.inverse(hessian_damped)
             
             scales = group_weight.abs().max(dim=-1,)[0] / ((1 << self.bits) - 1)
             scales = scales.clamp(min=1e-8).unsqueeze(-1)

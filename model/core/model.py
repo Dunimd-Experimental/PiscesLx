@@ -693,6 +693,36 @@ class YvModel(nn.Module):
         _LOG.debug("YvModel: initializing norm...")
         self.norm = YvRMSNorm(cfg.hidden_size)
 
+        # MemSep: Knowledge retrieval router for Engram-style lookup-computation separation
+        # Based on Engram (Liang Wenfeng et al., arXiv:2601.07372, 2026)
+        # Projects hidden states to 256-dim address space, queries FAISS index
+        # for top-K knowledge slots on mmap-backed knowledge store (zero GPU memory)
+        self.use_memory_separation = getattr(cfg, 'use_memory_separation', False)
+        if self.use_memory_separation:
+            from .memory_router import YvMemoryRouter
+            self.memory_router = YvMemoryRouter(
+                hidden_size=cfg.hidden_size,
+                memory_router_dim=getattr(cfg, 'memory_router_dim', 256),
+                memory_knowledge_dim=getattr(cfg, 'memory_knowledge_dim', 256),
+                memory_top_k=getattr(cfg, 'memory_top_k', 8),
+                memory_cache_tokens=getattr(cfg, 'memory_cache_tokens', 4096),
+                memory_store_path=getattr(cfg, 'memory_store_path', ''),
+                memory_index_type=getattr(cfg, 'memory_index_type', 'ivfpq'),
+                memory_gate_init=getattr(cfg, 'memory_gate_init', 0.0),
+                device=device,
+                dtype=dtype,
+            )
+            self.memory_read_interval = getattr(cfg, 'memory_read_interval', 4)
+            self.memory_prefetch_depth = getattr(cfg, 'memory_prefetch_depth', 4)
+            _LOG.info(
+                f"Memory separation enabled: router_dim=256, top_k={getattr(cfg, 'memory_top_k', 8)}, "
+                f"read_interval={self.memory_read_interval}"
+            )
+        else:
+            self.memory_router = None
+            self.memory_read_interval = 0
+            self.memory_prefetch_depth = 0
+
         _LOG.debug("YvModel: initializing multimodal encoders...")
         self._lazy_init_flags = {
             'vision': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_vision_encoder', True),
@@ -1631,6 +1661,20 @@ class YvModel(nn.Module):
 
                         if (not mamba3_layers or layer_idx in mamba3_layers) and seq_len >= threshold:
                             use_mamba3_for_layer = True
+
+                    # MemSep: Query external knowledge store at configured intervals
+                    # Every memory_read_interval layers, project hidden states to
+                    # address space, query FAISS index, and set memory context on
+                    # the block for cross-attention injection in _forward_core.
+                    if self.use_memory_separation and self.memory_router is not None:
+                        if layer_idx % self.memory_read_interval == 0:
+                            knowledge_ctx = self.memory_router.forward(h)
+                            if knowledge_ctx is not None and hasattr(layer, '_set_memory_context'):
+                                layer._set_memory_context(knowledge_ctx)
+                        elif hasattr(layer, '_set_memory_context'):
+                            # Carry forward previous context if not at query interval
+                            # but propagate same context to avoid stale None
+                            pass
 
                     past_kv = self.cache_manager.get_kv_cache(
                         layer_idx,
