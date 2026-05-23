@@ -1070,27 +1070,34 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             samples = []
             try:
                 with open(file_path, 'rb') as raw:
-                    magic = raw.read(2)
-                is_gzip = magic == b'\x1f\x8b'
-                if is_gzip:
-                    import gzip
-                    raw_file = gzip.open(file_path, 'rt', encoding='utf-8-sig')
-                else:
-                    raw_file = open(file_path, 'r', encoding='utf-8-sig')
-                with raw_file as f:
-                    if file_path.endswith('.jsonl'):
-                        for line in f:
-                            line = line.strip()
-                            if line:
-                                samples.append(json.loads(line))
+                    magic = raw.read(4)
+                    raw.seek(0)
+                    is_gzip = magic[:2] == b'\x1f\x8b'
+                    if is_gzip:
+                        import gzip
+                        raw_file = gzip.open(raw, mode='rt', encoding='utf-8-sig')
                     else:
-                        data = json.load(f)
-                        if isinstance(data, list):
-                            samples = data
-                        elif isinstance(data, dict):
-                            samples = [data]
+                        import io
+                        raw_file = io.TextIOWrapper(raw, encoding='utf-8-sig')
+                    with raw_file as f:
+                        if file_path.endswith('.jsonl'):
+                            for line in f:
+                                line = line.strip()
+                                if line:
+                                    samples.append(json.loads(line))
+                        else:
+                            data = json.load(f)
+                            if isinstance(data, list):
+                                samples = data
+                            elif isinstance(data, dict):
+                                samples = [data]
             except Exception as e:
-                _LOG.error(f"Failed to load {file_path}: {e}")
+                try:
+                    with open(file_path, 'rb') as f_raw:
+                        head = f_raw.read(200)
+                    _LOG.error(f"Failed to load {file_path}: {e} | raw_bytes={head.hex()} | raw_text={head[:120]!r}")
+                except Exception:
+                    _LOG.error(f"Failed to load {file_path}: {e}")
             return samples
 
         def _scan_data_directory(directory):
