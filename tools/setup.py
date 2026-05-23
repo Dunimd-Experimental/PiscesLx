@@ -396,7 +396,26 @@ def setup(args):
                     venv_dir, "Scripts" if is_windows else "bin",
                     "python.exe" if is_windows else "python"
                 )
-                subprocess.check_call([venv_python, "-m", "ensurepip", "--upgrade", "--default-pip"])
+                try:
+                    subprocess.check_call([venv_python, "-m", "ensurepip", "--upgrade", "--default-pip"])
+                except Exception:
+                    logger_info("ensurepip not available. Bootstrapping pip via get-pip.py...")
+                    try:
+                        import urllib.request
+                        get_pip_path = os.path.join(venv_dir, "get-pip.py")
+                        urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", get_pip_path)
+                        subprocess.check_call([venv_python, get_pip_path, "--no-setuptools", "--no-wheel"])
+                        os.unlink(get_pip_path)
+                        logger_success("Pip bootstrapped via get-pip.py")
+                    except Exception as e2:
+                        logger_info(f"get-pip.py failed: {e2}. Trying system pip install into venv...")
+                        try:
+                            subprocess.check_call(
+                                [python_executable, "-m", "pip", "install", "--quiet", "pip"],
+                                env={**os.environ, "PIP_REQUIRE_VIRTUALENV": "false"},
+                            )
+                        except Exception:
+                            logger_info("pip bootstrap skipped. Will use system packages.")
             except Exception:
                 logger_info("Installing virtualenv as fallback...")
                 try:

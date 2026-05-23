@@ -1047,9 +1047,93 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             except Exception:
                 reporter = None
 
+        KAGGLE_PREFIX = "kaggle://"
+
+        class PiscesLxRawTextDataset(torch.utils.data.Dataset):
+            def __init__(self, texts, tokenizer, max_len):
+                self.texts = texts
+                self.tokenizer = tokenizer
+                self.max_len = max_len
+            def __len__(self):
+                return len(self.texts)
+            def __getitem__(self, idx):
+                text = self.texts[idx]
+                ids = self.tokenizer.encode(text, return_tensors="pt", truncation=True, max_length=self.max_len)[0]
+                return {"input_ids": ids}
+
+        def _extract_text(item):
+            return (item.get("text") or item.get("content") or
+                    item.get("instruction", "") + "\n" + item.get("output", "") or
+                    json.dumps(item, ensure_ascii=False))
+
+        def _load_json_samples(file_path):
+            samples = []
+            try:
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    if file_path.endswith('.jsonl'):
+                        for line in f:
+                            line = line.strip()
+                            if line:
+                                samples.append(json.loads(line))
+                    else:
+                        data = json.load(f)
+                        if isinstance(data, list):
+                            samples = data
+                        elif isinstance(data, dict):
+                            samples = [data]
+            except Exception as e:
+                _LOG.error(f"Failed to load {file_path}: {e}")
+            return samples
+
+        def _scan_data_directory(directory):
+            samples = []
+            for root, _dirs, files in os.walk(directory):
+                for fname in sorted(files):
+                    if fname.endswith(('.jsonl', '.json')):
+                        samples.extend(_load_json_samples(os.path.join(root, fname)))
+            return samples
+
+        def _resolve_data_path(data_spec):
+            if data_spec.startswith(KAGGLE_PREFIX):
+                subpath = data_spec[len(KAGGLE_PREFIX):]
+                try:
+                    import kagglehub
+                    parts = subpath.replace("\\", "/").split("/")
+                    if len(parts) < 2:
+                        _LOG.error(f"Invalid kaggle path: {data_spec}")
+                        return []
+                    owner_ds = parts[0] + "/" + parts[1]
+                    sub_path = "/".join(parts[2:]) if len(parts) > 2 else ""
+                    local = kagglehub.dataset_download(owner_ds)
+                    target = os.path.join(str(local), sub_path) if sub_path else str(local)
+                    if os.path.isfile(target):
+                        return _load_json_samples(target)
+                    if os.path.isdir(target):
+                        return _scan_data_directory(target)
+                    _LOG.warning(f"Kaggle download path not found: {target}")
+                    return []
+                except Exception as e:
+                    _LOG.error(f"Failed to load Kaggle dataset {data_spec}: {e}")
+                    return []
+            resolved = os.path.abspath(data_spec)
+            if os.path.isdir(resolved):
+                return _scan_data_directory(resolved)
+            if os.path.isfile(resolved):
+                return _load_json_samples(resolved)
+            return None
+
         results: List[Dict[str, Any]] = []
         for idx, ds_name in enumerate(dataset_list):
-            train_ds = dm.load(name=str(ds_name), subset=str(ds_name), split="train", max_samples=None, config=model_cfg)
+            raw_samples = _resolve_data_path(ds_name)
+            if raw_samples is not None:
+                texts = [_extract_text(s) for s in raw_samples]
+                _LOG.info(f"Loaded {len(texts)} samples from path: {ds_name}")
+                if not texts:
+                    _LOG.warning(f"No samples found in {ds_name}, skipping")
+                    continue
+                train_ds = PiscesLxRawTextDataset(texts, tokenizer, seq_len)
+            else:
+                train_ds = dm.load(name=str(ds_name), subset=str(ds_name), split="train", max_samples=None, config=model_cfg)
             train_loader = DataLoader(train_ds, **dl_kwargs)
             self._current_train_loader = train_loader
 
