@@ -1069,7 +1069,15 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         def _load_json_samples(file_path):
             samples = []
             try:
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, 'rb') as raw:
+                    magic = raw.read(2)
+                is_gzip = magic == b'\x1f\x8b'
+                if is_gzip:
+                    import gzip
+                    raw_file = gzip.open(file_path, 'rt', encoding='utf-8-sig')
+                else:
+                    raw_file = open(file_path, 'r', encoding='utf-8-sig')
+                with raw_file as f:
                     if file_path.endswith('.jsonl'):
                         for line in f:
                             line = line.strip()
