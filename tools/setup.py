@@ -386,6 +386,15 @@ def setup(args):
         logger_info("Not in virtual environment. Creating venv...")
         python_executable = sys.executable
 
+        # Fix Kaggle system sitecustomize missing wrapt (must be installed before venv creation)
+        try:
+            subprocess.check_call(
+                [python_executable, "-m", "pip", "install", "--quiet", "wrapt"],
+                env={**os.environ, "PIP_REQUIRE_VIRTUALENV": "false"},
+            )
+        except Exception:
+            pass
+
         try:
             subprocess.check_call([python_executable, "-m", "venv", venv_dir])
         except subprocess.CalledProcessError:

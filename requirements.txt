@@ -67,6 +67,7 @@
 # =============================================================================
 wheel>=0.45.0
 PyYAML>=6.0
+wrapt>=1.16.0
 pathlib2>=2.3.6;python_version<"3.4"
 addict>=2.4.0
 dmsc==0.1.8
@@ -135,6 +136,7 @@ pyarrow>=18.0.0
 datasets>=3.0.0
 jsonlines>=4.0.0
 ijson>=3.2.0
+kagglehub>=0.3.0
 
 # =============================================================================
 # SECTION 7: Modelscope (Separate from transformers ecosystem)
