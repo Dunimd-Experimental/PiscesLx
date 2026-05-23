@@ -157,6 +157,12 @@ _LAZY_SYMBOLS = {
     "POPSSEvolutionConfig": (".evolution_pipeline", "POPSSEvolutionConfig"),
     "POPSSEvolutionTracker": (".evolution_pipeline", "POPSSEvolutionTracker"),
     "POPSSEvolutionPipeline": (".evolution_pipeline", "POPSSEvolutionPipeline"),
+    "POPSSMemSepTrainer": (".memsep", "POPSSMemSepTrainer"),
+    "POPSSMemSepTrainingConfig": (".memsep", "POPSSMemSepTrainingConfig"),
+    "MemSepPhase": (".memsep", "MemSepPhase"),
+    "MemSepGateScheduler": (".memsep", "MemSepGateScheduler"),
+    "POPSSMemoryAlignmentLoss": (".memsep", "POPSSMemoryAlignmentLoss"),
+    "create_memsep_trainer": (".memsep", "create_memsep_trainer"),
 }
 
 
@@ -255,4 +261,10 @@ __all__ = [
     "POPSSEvolutionConfig",
     "POPSSEvolutionTracker",
     "POPSSEvolutionPipeline",
+    "POPSSMemSepTrainer",
+    "POPSSMemSepTrainingConfig",
+    "MemSepPhase",
+    "MemSepGateScheduler",
+    "POPSSMemoryAlignmentLoss",
+    "create_memsep_trainer",
 ]

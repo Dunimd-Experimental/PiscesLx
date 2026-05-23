@@ -111,3 +111,30 @@ lora:
   target_modules: null
   bias: none
   task_type: CAUSAL_LM
+
+# ========================================
+# Memory Separation Training (Engram-style Lookup-Computation Separation)
+# Reference: Liang Wenfeng et al., arXiv:2601.07372, 2026
+#
+# Three-phase training pipeline:
+#   Phase 1 (core_reasoning): Backbone only, gate=0, no knowledge injection.
+#     Model learns pure reasoning, tool use, language understanding.
+#   Phase 2 (memory_router_training): Router + cross-attn + gate training.
+#     Backbone frozen, gate ramps via sigmoid schedule.
+#     Router learns to query knowledge, cross-attn learns injection.
+#   Phase 3 (knowledge_store_build): Offline. Trained router encodes corpus
+#     via 0.5B encoder, builds FAISS IVF-PQ + mmap knowledge store.
+# ========================================
+memsep:
+  enabled: false
+  phase_1_steps: 5000
+  phase_2_steps: 2000
+  gate_target: 0.5
+  gate_schedule: sigmoid
+  gate_warmup_steps: 500
+  freeze_backbone_phase2: true
+  freeze_router_phase1: true
+  alignment_weight: 0.1
+  router_lr_multiplier: 1.0
+  gate_lr_multiplier: 10.0
+  cross_attn_lr_multiplier: 1.0

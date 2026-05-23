@@ -89,6 +89,23 @@ class POPSSSFTTrainingConfig:
     
     max_seq_length: int = 4096
     ignore_index: int = -100
+
+    # Memory Separation training (Engram-style Lookup-Computation Separation)
+    # When enabled, training follows 3-phase pipeline:
+    #   Phase 1: Train backbone only (reasoning/language/tool), gate=0
+    #   Phase 2: Train router + cross-attention + gate, backbone frozen
+    #   Phase 3: Offline knowledge store build (manual trigger)
+    use_memsep_training: bool = False
+    memsep_phase_1_steps: int = 5000
+    memsep_phase_2_steps: int = 2000
+    memsep_gate_target: float = 0.5
+    memsep_freeze_backbone_phase2: bool = True
+    memsep_freeze_router_phase1: bool = True
+    memsep_reason_data_path: str = ""
+    memsep_mem_data_path: str = ""
+    memsep_alignment_weight: float = 0.1
+    memsep_gate_schedule: str = "sigmoid"
+    memsep_gate_warmup_steps: int = 500
     
     def __post_init__(self):
         if self.use_fp16 and self.use_bf16:
@@ -121,25 +138,89 @@ class POPSSSFTDataset(Dataset):
         self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         self._LOG.info(f"Loaded {len(self.samples)} samples from {data_path}")
     
+    KAGGLE_PREFIX = "kaggle://"
+
     def _load_data(self, data_path: str) -> List[Dict[str, Any]]:
-        """Load training data from JSONL file."""
-        samples = []
-        
-        if not os.path.exists(data_path):
-            self._LOG.warning(f"Data file not found: {data_path}")
-            return samples
-        
-        with open(data_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    sample = json.loads(line)
-                    samples.append(sample)
-                except json.JSONDecodeError:
-                    continue
-        
+        """Load training data from a file, directory, or Kaggle hub.
+
+        Supports three source types:
+            - kaggle://user/dataset     → auto-download via kagglehub,
+              then scan the cached directory for .jsonl/.json files
+            - /path/to/directory        → walk all .jsonl/.json files
+            - /path/to/file.jsonl       → load a single file
+        """
+        if data_path.startswith(self.KAGGLE_PREFIX):
+            return self._load_from_kaggle(data_path[len(self.KAGGLE_PREFIX):])
+
+        resolved = os.path.abspath(data_path)
+
+        if os.path.isdir(resolved):
+            return self._scan_directory(resolved)
+
+        if os.path.isfile(resolved):
+            return self._read_json_file(resolved)
+
+        self._LOG.warning(f"Data path not found: {data_path}")
+        return []
+
+    def _load_from_kaggle(self, kaggle_path: str) -> List[Dict[str, Any]]:
+        try:
+            import kagglehub
+        except ImportError:
+            self._LOG.error("kagglehub not installed. Run: pip install kagglehub")
+            return []
+
+        parts = kaggle_path.split("/", 1)
+        if len(parts) < 2:
+            self._LOG.error(f"Invalid Kaggle ID: {kaggle_path}")
+            return []
+        owner_ds = parts[0] + "/" + parts[1].split("/")[0]
+        sub_path = parts[1][len(owner_ds.split("/")[1]):].lstrip("/") if "/" in parts[1] else ""
+
+        self._LOG.info(f"Downloading Kaggle dataset: {owner_ds} ...")
+        try:
+            local = kagglehub.dataset_download(owner_ds)
+        except Exception as e:
+            self._LOG.error(f"Kaggle download failed: {e}")
+            return []
+
+        cached = str(local)
+        self._LOG.info(f"Kaggle dataset cached: {cached}")
+        target = os.path.join(cached, sub_path) if sub_path else cached
+        if os.path.isfile(target):
+            return self._read_json_file(target)
+        return self._scan_directory(target)
+
+    def _scan_directory(self, directory: str) -> List[Dict[str, Any]]:
+        samples: List[Dict[str, Any]] = []
+        for root, _dirs, files in os.walk(directory):
+            for fname in sorted(files):
+                if fname.endswith(('.jsonl', '.json')):
+                    samples.extend(self._read_json_file(os.path.join(root, fname)))
+        self._LOG.info(f"Directory scan: {len(samples)} samples from {directory}")
+        return samples
+
+    def _read_json_file(self, file_path: str) -> List[Dict[str, Any]]:
+        samples: List[Dict[str, Any]] = []
+        try:
+            with open(file_path, 'r', encoding='utf-8') as f:
+                if file_path.endswith('.jsonl'):
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
+                        try:
+                            samples.append(json.loads(line))
+                        except json.JSONDecodeError:
+                            continue
+                else:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        samples = data
+                    elif isinstance(data, dict):
+                        samples = [data]
+        except Exception as e:
+            self._LOG.warning(f"Failed to read {file_path}: {e}")
         return samples
     
     def _format_sample(self, sample: Dict[str, Any]) -> str:
@@ -285,7 +366,42 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                     val_data=val_data_path or "",
                     output_dir=get_work_dir("ckpt")
                 )
-            
+
+            # MemSep: Initialize memory separation trainer if enabled
+            memsep_trainer = None
+            if config.use_memsep_training:
+                from opss.train.memsep import (
+                    POPSSMemSepTrainingConfig,
+                    POPSSMemSepTrainer,
+                    MemSepPhase,
+                )
+                memsep_config = POPSSMemSepTrainingConfig(
+                    enabled=True,
+                    phase_1_steps=config.memsep_phase_1_steps,
+                    phase_2_steps=config.memsep_phase_2_steps,
+                    gate_target=config.memsep_gate_target,
+                    freeze_backbone_phase2=config.memsep_freeze_backbone_phase2,
+                    freeze_router_phase1=config.memsep_freeze_router_phase1,
+                    reason_data_path=config.memsep_reason_data_path,
+                    mem_data_path=config.memsep_mem_data_path,
+                    mem_alignment_weight=config.memsep_alignment_weight,
+                    gate_schedule=config.memsep_gate_schedule,
+                    gate_warmup_steps=config.memsep_gate_warmup_steps,
+                )
+                memsep_trainer = POPSSMemSepTrainer(
+                    model, memsep_config, base_lr=config.learning_rate
+                )
+                # Override max_steps for 3-phase pipeline
+                total_phase_steps = config.memsep_phase_1_steps + config.memsep_phase_2_steps
+                if total_phase_steps > config.max_steps:
+                    config.max_steps = total_phase_steps
+                self._LOG.info(
+                    f"MemSep training enabled: phase1={config.memsep_phase_1_steps}, "
+                    f"phase2={config.memsep_phase_2_steps}, total_max_steps={config.max_steps}"
+                )
+            else:
+                memsep_trainer = None
+
             self._LOG.info(f"Starting SFT training with config: {config}")
             
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -323,10 +439,11 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             
             trainer = self._create_trainer(
                 config, model, tokenizer, 
-                custom_optimizer, custom_scheduler
+                custom_optimizer, custom_scheduler,
+                memsep_trainer=memsep_trainer,
             )
             
-            metrics = self._run_training(trainer, train_dataset, val_dataset, config, device)
+            metrics = self._run_training(trainer, train_dataset, val_dataset, config, device, memsep_trainer=memsep_trainer)
             
             checkpoint_path = self._save_model(trainer, config)
             
@@ -360,10 +477,10 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 execution_time=time.time() - start_time
             )
     
-    def _create_trainer(self, config, model, tokenizer, custom_optimizer=None, custom_scheduler=None):
+    def _create_trainer(self, config, model, tokenizer, custom_optimizer=None, custom_scheduler=None, memsep_trainer=None):
         """Create SFT trainer with all components."""
         class SFTTrainer:
-            def __init__(self, config, model, tokenizer, custom_optimizer=None, custom_scheduler=None):
+            def __init__(self, config, model, tokenizer, custom_optimizer=None, custom_scheduler=None, memsep_trainer=None):
                 self.config = config
                 self.model = model
                 self.tokenizer = tokenizer
@@ -373,6 +490,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 self.global_step = 0
                 self.total_loss = 0.0
                 self.training_history = []
+                self.memsep_trainer = memsep_trainer
                 self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
                 
                 if config.use_fp16 or config.use_bf16:
@@ -386,6 +504,25 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             
             def _create_optimizer(self):
                 """Create AdamW optimizer with weight decay and extreme memory optimizations."""
+                # MemSep: Use memory separation param groups if enabled
+                if self.memsep_trainer is not None:
+                    memsep_groups = self.memsep_trainer.get_optimizer_param_groups()
+                    # Apply weight decay filter to memsep backbone group
+                    no_decay = ["bias", "LayerNorm.weight", "layernorm.weight", "norm", "gate"]
+                    for group in memsep_groups:
+                        group["weight_decay"] = 0.0
+                        if group.get("name") == "backbone":
+                            group["weight_decay"] = self.config.max_grad_norm
+
+                    optimizer = torch.optim.AdamW(memsep_groups, lr=self.config.learning_rate)
+                    trainable = sum(group["params"][0].numel() * len(group["params"])
+                                    for group in memsep_groups if group["params"])
+                    self._LOG.info(
+                        f"MemSep optimizer created: {len(memsep_groups)} groups, "
+                        f"~{trainable:,} trainable params"
+                    )
+                    return optimizer
+
                 no_decay = ["bias", "LayerNorm.weight", "layernorm.weight"]
                 
                 optimizer_grouped_parameters = [
@@ -477,7 +614,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             amax_compute_algo=config.fp8_amax_compute_algo,
         )
     
-    def _run_training(self, trainer, train_dataset, val_dataset, config, device):
+    def _run_training(self, trainer, train_dataset, val_dataset, config, device, memsep_trainer=None):
         """Execute the main training loop."""
         train_loader = DataLoader(
             train_dataset,
@@ -584,6 +721,10 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 trainer.global_step += 1
                 
                 batch = {k: v.to(device) for k, v in batch.items()}
+
+                # MemSep: Pre-step gate scheduling and phase management
+                if memsep_trainer is not None:
+                    memsep_trainer.pre_step(trainer.global_step)
                 
                 fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=self._create_fp8_recipe(config)) if config.use_fp8 else autocast(
                     enabled=(config.use_fp16 or config.use_bf16),
@@ -598,6 +739,14 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                         total_loss = sum(v for v in loss.values() if isinstance(v, torch.Tensor))
                     else:
                         total_loss = loss
+
+                    # MemSep: Add memory alignment loss
+                    if memsep_trainer is not None:
+                        knowledge_ctx = None
+                        if hasattr(trainer.model, 'memory_router') and trainer.model.memory_router is not None:
+                            knowledge_ctx = getattr(trainer.model.memory_router, '_prefetch_state', None)
+                        mem_loss = memsep_trainer.compute_memory_loss(knowledge_ctx)
+                        total_loss = total_loss + mem_loss * trainer.config.memsep_alignment_weight
                     
                     loss = total_loss / accumulation_steps
                 
@@ -639,6 +788,8 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                         f"Loss: {avg_loss:.4f} | "
                         f"LR: {current_lr:.2e} | "
                         f"Time: {time.time() - start_time:.1f}s"
+                        + (f" | Gate: {memsep_trainer.gate_scheduler.get_gate():.3f} | Phase: {memsep_trainer.current_phase.value}"
+                           if memsep_trainer is not None else "")
                     )
                 
                 if trainer.global_step % config.checkpoint_interval == 0:

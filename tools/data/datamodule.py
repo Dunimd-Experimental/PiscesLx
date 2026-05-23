@@ -196,19 +196,40 @@ class PiscesL1BaseDataset(Dataset):
                     self._load_preference_source(source)
     
     def _load_text_source(self, source: Dict[str, Any]) -> None:
-        """Load text data source."""
+        """Load text data source (file or directory).
+
+        If path is a directory, recursively loads all .jsonl/.json files.
+        If path is a file, loads it directly.
+        """
         path = source.get("path", "")
         weight = source.get("weight", 1.0)
-        
+
         if not os.path.exists(path):
             _LOG.warning(f"Text data not found: {path}")
             return
-        
-        samples = []
-        with open(path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line:
+
+        samples: List[Dict[str, Any]] = []
+        if os.path.isdir(path):
+            for root, _, files in os.walk(path):
+                for fname in sorted(files):
+                    if fname.endswith(('.jsonl', '.json')):
+                        file_path = os.path.join(root, fname)
+                        samples.extend(self._read_text_file(file_path))
+        else:
+            samples = self._read_text_file(path)
+
+        self.data_sources.append(samples)
+        self.weights.append(weight * len(samples))
+
+    @staticmethod
+    def _read_text_file(file_path: str) -> List[Dict[str, Any]]:
+        samples: List[Dict[str, Any]] = []
+        with open(file_path, 'r', encoding='utf-8') as f:
+            if file_path.endswith('.jsonl'):
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
                     try:
                         sample = json.loads(line)
                         samples.append({
@@ -220,9 +241,13 @@ class PiscesL1BaseDataset(Dataset):
                             "type": "text",
                             "text": line,
                         })
-        
-        self.data_sources.append(samples)
-        self.weights.append(weight * len(samples))
+            else:
+                data = json.load(f)
+                items = data if isinstance(data, list) else [data]
+                for item in items:
+                    text = item.get("text", item.get("content", str(item)))
+                    samples.append({"type": "text", "text": text})
+        return samples
     
     def _load_image_text_source(self, source: Dict[str, Any]) -> None:
         """Load image-text data source."""
