@@ -1070,8 +1070,12 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             samples = []
             try:
                 with open(file_path, 'rb') as raw:
-                    magic = raw.read(4)
+                    magic = raw.read(8)
                     raw.seek(0)
+                    head_text = magic.lower()
+                    if head_text.startswith(b'<!doctype html') or head_text.startswith(b'<html'):
+                        _LOG.error(f"File is HTML, not JSON: {file_path} — the dataset may be inaccessible (private/deleted/bad slug)")
+                        return []
                     is_gzip = magic[:2] == b'\x1f\x8b'
                     if is_gzip:
                         import gzip
@@ -1108,10 +1112,26 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                         samples.extend(_load_json_samples(os.path.join(root, fname)))
             return samples
 
+        def _patch_kagglesdk_compat():
+            """Patch missing get_web_endpoint in newer kagglesdk versions."""
+            try:
+                import kagglesdk.kaggle_env as kenv
+                if not hasattr(kenv, "get_web_endpoint"):
+                    def get_web_endpoint(config=None):
+                        if config and hasattr(config, "get"):
+                            endpoint = config.get("web_endpoint")
+                            if endpoint:
+                                return endpoint
+                        return "https://www.kaggle.com/api/v1"
+                    kenv.get_web_endpoint = get_web_endpoint
+            except ImportError:
+                pass
+
         def _resolve_data_path(data_spec):
             if data_spec.startswith(KAGGLE_PREFIX):
                 subpath = data_spec[len(KAGGLE_PREFIX):]
                 try:
+                    _patch_kagglesdk_compat()
                     import kagglehub
                     parts = subpath.replace("\\", "/").split("/")
                     if len(parts) < 2:
