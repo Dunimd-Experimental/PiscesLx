@@ -116,12 +116,18 @@ attn_res_max_blocks: 32
 attn_res_learnable_query: true
 attn_res_use_rmsnorm: true
 
+# Distributed Training (auto-enabled when multiple GPUs detected)
+# Use --distributed flag or set enabled: true for multi-GPU training
+distributed:
+  enabled: true
+  world_size: 0
+
 training_config:
-  learning_rate: 1.5e-5
+  learning_rate: 2e-5
   weight_decay: 0.01
-  batch_size: 4
+  batch_size: 8
   sequence_length: 2048
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 2
   max_steps: 100000
   warmup_ratio: 0.1
   warmup_steps: 100
@@ -133,10 +139,10 @@ training_config:
   mixed_precision: bf16
   flash_attention: true
   loss_type: lm
-  response_only_loss: false
-  num_workers: 4
+  response_only_loss: true
+  num_workers: 2
   pin_memory: true
-  prefetch_factor: 4
+  prefetch_factor: 2
   packing: true
   max_grad_norm: 1.0
   quantization:
@@ -161,7 +167,7 @@ training_config:
   moe_gradient:
     enabled: true
   kfac:
-    enabled: true
+    enabled: false
   multitask:
     enabled: false
 

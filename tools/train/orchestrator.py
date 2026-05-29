@@ -1002,6 +1002,18 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         dm = PiscesLxToolsDataDatasetManager()
 
+        # Initialize distributed process group for multi-GPU training
+        # Set by torchrun (LOCAL_RANK env) or --distributed flag
+        local_rank = os.environ.get("LOCAL_RANK")
+        if local_rank is not None and not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+            try:
+                torch.distributed.init_process_group(backend="nccl")
+                torch.cuda.set_device(int(local_rank))
+                _LOG.info(f"Distributed training initialized: rank={torch.distributed.get_rank()}, "
+                         f"world_size={torch.distributed.get_world_size()}")
+            except Exception as e:
+                _LOG.warning(f"Failed to initialize distributed training: {e}")
+
         dl_kwargs: Dict[str, Any] = {
             "batch_size": int(getattr(self.train_config.data, "batch_size", 1)),
             "shuffle": True,

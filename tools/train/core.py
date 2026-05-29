@@ -659,6 +659,18 @@ class PiscesLxTrainingOperator(object):
         self._post_transfer_setup(lora_enabled)
 
         _LOG.info(f"Model initialized: {self.model.__class__.__name__}")
+
+        # Wrap with DistributedDataParallel for multi-GPU training
+        if torch.distributed.is_available() and torch.distributed.is_initialized() and torch.distributed.get_world_size() > 1:
+            local_rank = torch.distributed.get_rank()
+            self.model = torch.nn.parallel.DistributedDataParallel(
+                self.model,
+                device_ids=[local_rank],
+                output_device=local_rank,
+                find_unused_parameters=True,
+            )
+            _LOG.info(f"Model wrapped with DDP: rank={local_rank}, world_size={torch.distributed.get_world_size()}")
+
         return self.model
 
     def _resolve_init_device(self, quant_enabled: bool, model_kwargs: dict) -> bool:

@@ -574,6 +574,26 @@ def main():
     )
     
     # -------------------------------------------------------------------------
+    # DISTRIBUTED TRAINING ARGUMENTS
+    # -------------------------------------------------------------------------
+    # --distributed: Flag to enable multi-GPU distributed training
+    # Automatically launches with torchrun when set
+    parser.add_argument(
+        '--distributed', 
+        action='store_true',
+        help='Enable distributed training across multiple GPUs'
+    )
+    
+    # --world_size: Number of GPUs for distributed training
+    # Defaults to detected GPU count when --distributed is set
+    parser.add_argument(
+        '--world_size', 
+        type=int,
+        default=0,
+        help='Number of GPUs for distributed training'
+    )
+    
+    # -------------------------------------------------------------------------
     # CHECKPOINT RESUMPTION ARGUMENTS
     # -------------------------------------------------------------------------
     # --resume_ckpt: Path to checkpoint for resuming interrupted training
@@ -1517,6 +1537,17 @@ def main():
     elif args.command == 'train':
         run_id = getattr(args, 'run_id', None) or None
         run_dir = getattr(args, 'run_dir', None) or None
+
+        # Auto-launch with torchrun for distributed training across multiple GPUs
+        if "LOCAL_RANK" not in os.environ and (args.distributed or args.world_size > 1):
+            n_gpu = args.world_size if args.world_size > 0 else 2
+            if n_gpu > 1:
+                import subprocess
+                cmd = [sys.executable, "-m", "torch.distributed.run",
+                       f"--nproc_per_node={n_gpu}"] + sys.argv
+                _get_logger().info(f"Launching distributed training on {n_gpu} GPUs via torchrun")
+                proc = subprocess.run(cmd)
+                sys.exit(proc.returncode)
         
         if not run_id:
             from opss.run.id_factory import POPSSRunIdFactory
