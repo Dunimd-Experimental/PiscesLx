@@ -74,7 +74,7 @@ audio_tokens: 128
 task_classes: 256
 eval_dims: 7
 residual_dropout_p: 0.1
-use_gradient_checkpointing: true
+use_gradient_checkpointing: false
 use_pre_norm: true
 attention_dropout: 0.0
 
@@ -135,8 +135,8 @@ training_config:
   min_lr_ratio: 0.1
   scheduler:
     warmup_type: exponential
-  gradient_checkpointing: true
-  mixed_precision: bf16
+  gradient_checkpointing: false
+  mixed_precision: fp16
   flash_attention: true
   loss_type: lm
   response_only_loss: true
@@ -272,11 +272,11 @@ ink_optimizer:
   kv_cache_bits: 8
   kv_cache_block_size: 64
   max_experts_on_gpu: 4
-  moe_offload_threshold: 0.8
+  moe_offload_threshold: 0
   moe_lru_cache_size: 8
-  checkpoint_transformer: true
-  checkpoint_ratio: 0.5
-  checkpoint_preserve_ratio: 0.3
+  checkpoint_transformer: false
+  checkpoint_ratio: 0
+  checkpoint_preserve_ratio: 0
   root_ortho_steps: 5
   root_soft_threshold: 0.1
   root_spectral_norm_clip: 1.0
