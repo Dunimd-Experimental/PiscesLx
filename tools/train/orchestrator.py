@@ -1185,6 +1185,14 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 train_ds = PiscesLxRawTextDataset(texts, tokenizer, seq_len)
             else:
                 train_ds = dm.load(name=str(ds_name), subset=str(ds_name), split="train", max_samples=None, config=model_cfg)
+            if torch.distributed.is_available() and torch.distributed.is_initialized():
+                from torch.utils.data.distributed import DistributedSampler
+                dl_kwargs["sampler"] = DistributedSampler(
+                    train_ds,
+                    num_replicas=torch.distributed.get_world_size(),
+                    rank=torch.distributed.get_rank(),
+                    shuffle=dl_kwargs.pop("shuffle", True),
+                )
             train_loader = DataLoader(train_ds, **dl_kwargs)
             self._current_train_loader = train_loader
 

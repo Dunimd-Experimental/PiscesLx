@@ -140,9 +140,9 @@ training_config:
   flash_attention: true
   loss_type: lm
   response_only_loss: true
-  num_workers: 2
-  pin_memory: true
-  prefetch_factor: 2
+  num_workers: 1
+  pin_memory: false
+  prefetch_factor: 1
   packing: true
   max_grad_norm: 1.0
   quantization:

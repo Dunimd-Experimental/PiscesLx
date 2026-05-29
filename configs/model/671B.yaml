@@ -116,6 +116,12 @@ attn_res_max_blocks: 32
 attn_res_learnable_query: true
 attn_res_use_rmsnorm: true
 
+# Distributed Training (auto-enabled when multiple GPUs detected)
+# Use --distributed flag or set enabled: true for multi-GPU training
+distributed:
+  enabled: true
+  world_size: 0
+
 training_config:
   learning_rate: 4.0e-6
   weight_decay: 0.01
