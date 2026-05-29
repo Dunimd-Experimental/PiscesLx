@@ -587,8 +587,11 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             if float(getattr(sch, "min_lr_ratio", 0.0) or 0.0) <= 0.0:
                 sch.min_lr_ratio = 0.1
 
-        self.train_config.gradient_checkpointing = bool(getattr(self.train_config, "gradient_checkpointing", True))
-        self.train_config.mixed_precision = str(getattr(self.train_config, "mixed_precision", "bf16") or "bf16")
+        # Only set defaults if not already explicitly configured from yaml/training_config
+        if str(getattr(self.train_config, "gradient_checkpointing", None)) not in ("false", "False", False):
+            self.train_config.gradient_checkpointing = True
+        if str(getattr(self.train_config, "mixed_precision", "bf16") or "bf16") == "bf16":
+            self.train_config.mixed_precision = "bf16"
         self.train_config.flash_attention = bool(getattr(self.train_config, "flash_attention", True))
 
         save_steps = int(getattr(self.train_config, "save_steps", 1000) or 1000)

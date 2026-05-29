@@ -688,8 +688,8 @@ class PiscesLxTrainingOperator(object):
         else:
             _LOG.info("CPU device - using CPU initialization for quantization")
         model_kwargs['device'] = 'cpu'
-        model_kwargs['dtype'] = torch.bfloat16
-        _LOG.info("Low-VRAM mode: CPU+BF16 initialization for quantization")
+        model_kwargs['dtype'] = torch.float16
+        _LOG.info("Low-VRAM mode: CPU+FP16 initialization for quantization")
         return True
 
     def _resolve_training_device(self) -> torch.device:
@@ -832,15 +832,14 @@ class PiscesLxTrainingOperator(object):
             try:
                 import bitsandbytes as bnb
                 import torch.nn as nn
-                import warnings
-                from concurrent.futures import ThreadPoolExecutor, as_completed
                 import threading
+                import warnings
                 warnings.filterwarnings('ignore', message='.*_check_is_size.*')
 
                 quant_type = "nf4" if method == "nf4" else "fp4"
                 compute_dtype = torch.bfloat16 if str(getattr(self.config, "mixed_precision", "bf16")).lower() == "bf16" else torch.float16
 
-                _LOG.info(f"Quantizing linear layers with {quant_type} (CPU-optimized parallel mode)...")
+                _LOG.info(f"Quantizing {total_linear} linear layers with {quant_type} (sequential low-memory mode)...")
 
                 skip_modules = set()
                 linear_modules = []
@@ -886,23 +885,14 @@ class PiscesLxTrainingOperator(object):
                     
                     return (name, quantized_weight, bias_data, in_features, out_features, has_bias)
 
-                max_workers = min(8, max(1, total_linear // 50))
-                _LOG.info(f"Using {max_workers} parallel workers for quantization")
-                
-                with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    futures = {
-                        executor.submit(quantize_single_layer, name, module): name 
-                        for name, module in linear_modules
-                    }
-                    
-                    for future in as_completed(futures):
-                        try:
-                            result = future.result()
-                            name = result[0]
-                            quantized_results[name] = result
-                        except Exception as e:
-                            failed_name = futures[future]
-                            _LOG.warning(f"Failed to quantize {failed_name}: {e}")
+                _LOG.info("Using sequential single-worker quantization (low-memory mode)")
+
+                for name, module in linear_modules:
+                    try:
+                        result = quantize_single_layer(name, module)
+                        quantized_results[result[0]] = result
+                    except Exception as e:
+                        _LOG.warning(f"Failed to quantize {name}: {e}")
 
                 _LOG.info("Applying quantized weights to model...")
                 linear4bit_count = 0
