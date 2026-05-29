@@ -680,8 +680,10 @@ class PiscesLxTrainingOperator(object):
             return False
         if self.device.type == "cuda":
             vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            if vram_gb >= 20:
+            if vram_gb >= 15:
                 _LOG.info(f"GPU VRAM {vram_gb:.1f}GB - using GPU initialization for quantization")
+                model_kwargs['device'] = self.device
+                model_kwargs['dtype'] = torch.float16
                 return False
             else:
                 _LOG.info(f"GPU VRAM {vram_gb:.1f}GB - using CPU initialization for quantization (low VRAM)")
