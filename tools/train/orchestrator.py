@@ -1006,6 +1006,10 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         # Set by torchrun (LOCAL_RANK env) or --distributed flag
         local_rank = os.environ.get("LOCAL_RANK")
         if local_rank is not None and not (torch.distributed.is_available() and torch.distributed.is_initialized()):
+            os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+            os.environ.setdefault("MASTER_PORT", "29500")
+            os.environ.setdefault("NCCL_SOCKET_IFNAME", "lo")
+            os.environ.setdefault("GLOO_SOCKET_IFNAME", "lo")
             try:
                 torch.distributed.init_process_group(backend="nccl")
                 torch.cuda.set_device(int(local_rank))

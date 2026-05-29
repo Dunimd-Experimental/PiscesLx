@@ -1543,12 +1543,18 @@ def main():
             n_gpu = args.world_size if args.world_size > 0 else 2
             if n_gpu > 1:
                 import subprocess
-                os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-                os.environ.setdefault("MASTER_PORT", "29500")
+                env = os.environ.copy()
+                env["MASTER_ADDR"] = "127.0.0.1"
+                env["MASTER_PORT"] = "29500"
+                env["NCCL_SOCKET_IFNAME"] = "lo"
+                env["GLOO_SOCKET_IFNAME"] = "lo"
                 cmd = [sys.executable, "-m", "torch.distributed.run",
-                       f"--nproc_per_node={n_gpu}"] + sys.argv
+                       f"--nproc_per_node={n_gpu}",
+                       "--master_addr=127.0.0.1",
+                       "--master_port=29500",
+                       "--node_rank=0"] + sys.argv
                 _get_logger().info(f"Launching distributed training on {n_gpu} GPUs via torchrun")
-                proc = subprocess.run(cmd)
+                proc = subprocess.run(cmd, env=env)
                 sys.exit(proc.returncode)
         
         if not run_id:
