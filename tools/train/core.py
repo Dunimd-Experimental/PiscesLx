@@ -660,17 +660,6 @@ class PiscesLxTrainingOperator(object):
 
         _LOG.info(f"Model initialized: {self.model.__class__.__name__}")
 
-        # Wrap with DistributedDataParallel for multi-GPU training
-        if torch.distributed.is_available() and torch.distributed.is_initialized() and torch.distributed.get_world_size() > 1:
-            local_rank = torch.distributed.get_rank()
-            self.model = torch.nn.parallel.DistributedDataParallel(
-                self.model,
-                device_ids=[local_rank],
-                output_device=local_rank,
-                find_unused_parameters=True,
-            )
-            _LOG.info(f"Model wrapped with DDP: rank={local_rank}, world_size={torch.distributed.get_world_size()}")
-
         return self.model
 
     def _resolve_init_device(self, quant_enabled: bool, model_kwargs: dict) -> bool:
@@ -680,7 +669,7 @@ class PiscesLxTrainingOperator(object):
             return False
         if self.device.type == "cuda":
             vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            if vram_gb >= 15:
+            if vram_gb >= 14:
                 _LOG.info(f"GPU VRAM {vram_gb:.1f}GB - using GPU initialization for quantization")
                 model_kwargs['device'] = self.device
                 model_kwargs['dtype'] = torch.float16
@@ -1110,29 +1099,27 @@ class PiscesLxTrainingOperator(object):
             _LOG.warning(f"Failed to enable gradient checkpointing: {e}")
     
     def _setup_distributed_training(self):
-        """
-        Setup distributed training with DistributedDataParallel.
-        
-        Initializes process group and wraps model for multi-GPU training.
-        Requires torchrun or mpirun for process launching.
-        
-        Backend:
-            Uses NCCL backend for GPU communication (fastest for CUDA).
-            Falls back to Gloo if NCCL is not available.
-        """
         try:
             import torch.distributed as dist
-            
+
             if not dist.is_initialized():
-                dist.init_process_group(backend='nccl')
-            
-            # Wrap model with DistributedDataParallel
+                _LOG.info("Distributed process group not initialized; skipping DDP wrapping")
+                return
+
+            world_size = dist.get_world_size()
+            if world_size <= 1:
+                _LOG.info("World size <= 1; DDP wrapping not needed")
+                return
+
+            rank = dist.get_rank()
             self.model = nn.parallel.DistributedDataParallel(
                 self.model,
-                device_ids=[torch.cuda.current_device()]
+                device_ids=[rank] if self.device.type == "cuda" else None,
+                output_device=rank if self.device.type == "cuda" else None,
+                find_unused_parameters=True,
             )
-            
-            _LOG.info("Distributed training setup completed")
+
+            _LOG.info(f"Distributed training setup completed: rank={rank}, world_size={world_size}")
         except Exception as e:
             _LOG.error(f"Distributed training setup failed: {e}")
     

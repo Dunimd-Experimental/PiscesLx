@@ -1499,6 +1499,12 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         """
         _LOG.info("Initializing training environment...")
 
+        # Set local_rank from environment for distributed training (torchrun sets LOCAL_RANK)
+        if hasattr(self.train_config, 'local_rank'):
+            local_rank_env = os.environ.get("LOCAL_RANK")
+            if local_rank_env is not None:
+                self.train_config.local_rank = int(local_rank_env)
+
         self._train_dataloader_factory = train_dataloader_factory
         self._val_dataloader_factory = val_dataloader_factory
         

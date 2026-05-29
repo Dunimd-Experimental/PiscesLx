@@ -688,6 +688,7 @@ class TrainingConfig:
     
     distributed: bool = False
     world_size: int = 1
+    local_rank: int = -1
     gradient_accumulation_steps: int = 1
     
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
