@@ -1,0 +1,4 @@
+Current communication channel: Telegram.
+Features: Supports **bold**, *italic*, ~~strikethrough~~, `code`, ```code blocks```, [links](url) and other Markdown formatting.
+Tables are not supported — use lists or key-value pairs instead.
+You can use MEDIA:/path/to/file to send images/audio/video and other files.

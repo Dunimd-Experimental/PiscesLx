@@ -1,0 +1,270 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of Encre.
+# The Encre project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# DISCLAIMER: Users must comply with applicable AI regulations.
+# Non-compliance may result in service termination or legal liability.
+
+# ==============================================================================
+# Encre Dangerous Command Patterns — Blacklist for terminal operations
+#
+# Format: one regex pattern per line.
+# Section headers: [linux], [windows], [macos]
+# Lines starting with '#' are comments and ignored.
+# Empty lines are ignored.
+#
+# When permission_mode="blacklist", any bash command matching a pattern
+# below will trigger a permission prompt.
+# ==============================================================================
+
+# ── LINUX ──────────────────────────────────────────────────────────────────────
+[linux]
+
+# File destruction
+\brm\s+.*-(?:[a-z]*r[a-z]*f|rf)\b
+\bmkfs\.?\w*\s
+\bdd\s+if=.*\s+of=
+\bshred\s
+\bwipe\s
+
+# Privilege escalation & permission changes
+\bsudo\b
+\bsu\s+-
+\bchmod\s+.*777\b
+\bchmod\s+[0-7]*[456][0-7]{2}\b
+\bchown\s+.*root
+\bchattr\s
+
+# Fork bombs & resource exhaustion
+:\(\)\s*\{.*
+\b:(){ :\|:& };:
+
+# Reverse shells
+\bbash\s+-i\s*>&.*0>&1
+\bnc\s+.*-(?:e|(?:l|n)vp?)\s
+\bsocat\s+.*exec:
+\btelnet\s+.*(?:/bin/sh|/bin/bash|cmd)
+\bpython[23]?\s+-c\s+.*socket
+
+# Curl/wget piping to shell
+\bcurl\s+\S+.*\|\s*(?:ba)?sh\b
+\bwget\s+\S+.*-O\s*-\s*\|\s*(?:ba)?sh\b
+
+# Encoded/obfuscated evaluation
+\bbase64\s+.*\|.*(?:ba)?sh\b
+\bxxd\s+.*-r.*(?:ba)?sh\b
+\beval\s
+\bexec\s+\d*>&\d*
+
+# System service control
+\bsystemctl\s+(?:stop|disable|mask)\s
+\bservice\s+\S+\s+stop\b
+\bmodprobe\s+-r\s
+\bkill\s+-9\s
+\bpkill\s
+
+# Data exfiltration & network
+\bnc\s+\S+\s+\d+\s*<
+\bcurl\s+.*-F\s+\S+@\S+
+\bscp\s+\S+@
+\bssh\s+-[DRL]\s
+
+# Redirect to system paths
+>\s*/dev/(?:sd[a-z]+|nvme\d+n\d+|mmcblk\d+)
+>\s*/etc/(?:passwd|shadow|sudoers|hosts|resolv\.conf)
+>\s*/(?:etc|boot|sys|proc|dev)/
+
+# Scheduled tasks & boot
+\bcrontab\s+-
+\bat\s+\d
+
+# Network configuration
+\biptables\s+-[ADIF]
+
+# Mount operations
+\bmount\s
+\bumount\s
+
+# Sensitive file reads
+\bcat\s+/etc/(?:shadow|passwd)\b
+\bcat\s+.*\.ssh/
+\bcat\s+.*\.env\b
+
+# Variable manipulation
+\$\{(?:PATH|HOME|SHELL|IFS)[:#%/]
+\bIFS\s*=
+
+# ── WINDOWS (cmd.exe / PowerShell) ────────────────────────────────────────────
+[windows]
+
+# File & disk destruction
+\bmkdir\s+/s\s+/q\b
+\bdel\s+/f\s+/s\s+/q\b
+\brmdir\s+/s\s+/q\b
+\bformat\s+[a-zA-Z]:
+\bdiskpart\b
+\bRemove-Item\s+.*-Recurse\s+.*-Force\b
+\bri\s+.*-r\s+.*-fo\b
+
+# Registry manipulation
+\breg\s+(?:add|delete)\b
+\breg\s+delete\s+HKLM
+\breg\s+delete\s+HKCU
+\bSet-ItemProperty\s+.*HKLM:
+\bRemove-Item\s+.*HKLM:
+\bRemove-ItemProperty\b
+
+# User & group management
+\bnet\s+user\s+\S+\s+/add\b
+\bnet\s+user\s+\S+\s+/delete\b
+\bnet\s+localgroup\s+Administrators\s+/add\b
+\bnet\s+localgroup\s+Administrators\s+/delete\b
+\bAdd-LocalGroupMember\b
+\bRemove-LocalUser\b
+
+# Service control
+\bnet\s+stop\s
+\bsc\s+(?:stop|delete)\s
+\bsc\s+config\s+\S+\s+start=\s*disabled\b
+\bStop-Service\s+.*-Force\b
+\bGet-Service\s+.*\|.*Stop-Service\b
+
+# Process termination
+\btaskkill\s+/f\b
+\btaskkill\s+/im\s
+\bStop-Process\s+.*-Force\b
+\bk\s+-f\b
+
+# System shutdown
+\bshutdown\s+/s\s+/f\b
+\bshutdown\s+/p\b
+\bshutdown\s+/r\s+/f\b
+\bRestart-Computer\s+.*-Force\b
+\bStop-Computer\s+.*-Force\b
+
+# PowerShell encoded / obfuscated commands
+\bpowershell\s+.*-EncodedCommand\b
+\bpowershell\s+.*-enc\b
+\bpowershell\s+.*-e\s+\S{20,}
+\bpowershell\s+.*[Ww]indow[Ss]tyle\s+[Hh]idden\b
+\bpowershell\s+.*-NoProfile\s+.*-NonInteractive\b
+
+# PowerShell invocation & download-exec chains
+\bInvoke-Expression\b
+\biex\s
+\bInvoke-WebRequest\s+.*\|.*Invoke-Expression\b
+\biwr\s+.*\|.*iex\b
+\bInvoke-RestMethod\s+.*\|.*Invoke-Expression\b
+\birm\s+.*\|.*iex\b
+\bNew-Object\s+Net\.WebClient.*\.DownloadString\b
+\b\(New-Object\s+Net\.WebClient\).*\.DownloadFile\b
+\bStart-Process\s+.*\{.*\}.*-ArgumentList\b
+
+# WMI manipulation
+\bwmic\s+process\s+call\s+create\b
+\bwmic\s+/node:
+\bInvoke-WmiMethod\b
+\bGet-WmiObject\s+.*\|.*Remove-WmiObject\b
+
+# Permission & ownership changes
+\bicacls\s+\S+\s+/grant\s+\S+:F\b
+\bicacls\s+\S+\s+/deny\b
+\bicacls\s+\S+\s+/reset\b
+\btakeown\s+/f\s
+\bSet-Acl\b
+
+# Boot configuration
+\bbcdedit\s+/set\b
+\bbcdedit\s+/delete\b
+\bbootcfg\s+/delete\b
+
+# Network configuration
+\bnetsh\s+interface\s+(?:set|delete|reset)\b
+\bnetsh\s+firewall\s+(?:set|delete|reset)\b
+\bnetsh\s+advfirewall\s+set\b
+\bNew-NetFirewallRule\b
+\bRemove-NetFirewallRule\b
+
+# Scheduled tasks
+\bschtasks\s+/create\b
+\bschtasks\s+/delete\s+/f\b
+\bschtasks\s+/change\b
+\bRegister-ScheduledTask\b
+\bUnregister-ScheduledTask\b
+
+# BitLocker sabotage
+\bmanage-bde\s+.*-off\b
+\bSuspend-BitLocker\b
+\bDisable-BitLocker\b
+
+# DNS & hosts
+\nslookup\s
+\bAdd-Content\s+.*\\etc\\hosts\b
+\bipconfig\s+/flushdns\b
+
+# ── macOS ─────────────────────────────────────────────────────────────────────
+[macos]
+
+# Same Unix patterns apply (macOS is Unix-based)
+# Plus macOS-specific dangerous commands:
+
+# Disk management
+\bdiskutil\s+(?:eraseDisk|eraseVolume|reformat|partitionDisk|zeroDisk|randomDisk)\b
+\bdiskutil\s+(?:unmountDisk|unmount\s+force)\b
+\bhdiutil\s+(?:compact|burn)\b
+
+# Service & daemon control
+\blaunchctl\s+(?:unload|remove|disable)\s
+\blaunchctl\s+unload\s+/System/Library/LaunchDaemons/
+\blaunchctl\s+remove\s+
+
+# System Integrity Protection (SIP)
+\bcsrutil\s+disable\b
+\bcsrutil\s+clear\b
+
+# AppleScript execution
+\bosascript\s+.*-e\s
+\bosascript\s+.*-l\s
+
+# Package installation (potential malware)
+\binstaller\s+-pkg\s+.*-target\s+/\b
+\binstaller\s+-store\b
+
+# Firmware modification
+\bnvram\s+.*boot-args\b
+\bnvram\s+-d\s
+\bsystemsetup\s+-set
+
+# Keychain & security
+\bsecurity\s+delete-keychain\b
+\bsecurity\s+delete-generic-password\b
+\bsecurity\s+lock-keychain\b
+
+# User & directory services
+\bdscl\s+.*-create\b
+\bdscl\s+.*-delete\b
+\bdscl\s+.*-passwd\b
+\bdscl\s+.*/Users/\S+\s+UserShell\b
+
+# Time Machine sabotage
+\btmutil\s+delete\b
+\btmutil\s+remove\b
+\btmutil\s+disable\b
+\btmutil\s+disablelocal\b
+
+# File operations on system paths
+\bditto\s+.*/System/Library
+\bditto\s+.*/Library/LaunchDaemons

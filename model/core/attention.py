@@ -5209,6 +5209,16 @@ class YvAttention(nn.Module):
             x = x + self.modality_embed[modality].view(1, 1, -1)
         
         # Flagship Algorithm Routing (2025-2026)
+        csa_enabled = getattr(self.cfg, 'use_csa_attention', False)
+        if csa_enabled and self.layer_idx is not None:
+            from .csa_hca import YvHybridAttention
+            if not hasattr(self, '_csa_attn'):
+                self._csa_attn = YvHybridAttention(self.cfg, layer_idx=self.layer_idx, device=x.device)
+            csa_result = self._csa_attn(x, mask, past_key_values, use_cache)
+            if use_cache:
+                return csa_result
+            return csa_result[0]
+
         if self.use_eg_mla:
             eg_result = self.eg_mla(
                 hidden_states=x,
@@ -5390,23 +5400,24 @@ class YvAttention(nn.Module):
 
         if hasattr(self, 'rope'):
             max_pe_len = getattr(self.cfg, 'max_position_embeddings', 4096)
-            
-            # Adaptive position encoding selection based on sequence length
-            # LongRoPE: auto-enabled when seq_len > 1.5x max_position_embeddings
-            # CoPE: auto-enabled when seq_len > 4096 and semantic complexity is high
+            use_partial_rope = getattr(self.cfg, 'use_partial_rope', True)
+            partial_rope_dim = getattr(self.cfg, 'partial_rope_dim', 64)
+
             use_longrope = t > max_pe_len * 1.5
             use_cope = t > 4096 and not use_longrope
-            
-            if use_longrope:
-                # LongRoPE: Dynamic frequency scaling for extreme extrapolation (1000x)
-                # Reference: https://arxiv.org/abs/2402.01749
+
+            if use_partial_rope and not use_longrope and not use_cope:
+                q_rope, q_pass = q[..., -partial_rope_dim:], q[..., :-partial_rope_dim]
+                k_rope, k_pass = k[..., -partial_rope_dim:], k[..., :-partial_rope_dim]
+                q_rope, k_rope = self.rope(q_rope, t), self.rope(k_rope, t)
+                q = torch.cat([q_pass, q_rope], dim=-1)
+                k = torch.cat([k_pass, k_rope], dim=-1)
+            elif use_longrope:
                 scale_factor = t / max_pe_len
                 freq_scale = 1.0 / (scale_factor ** 0.5)
                 q = self._apply_longrope(q, t, freq_scale)
                 k = self._apply_longrope(k, t, freq_scale)
             elif use_cope:
-                # CoPE: Context-aware position encoding for semantic understanding
-                # Reference: https://arxiv.org/abs/2405.18719
                 q = self.rope(q, t)
                 k = self.rope(k, t)
                 q, k = self._apply_cope(q, k, x)

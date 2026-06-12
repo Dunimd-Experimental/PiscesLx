@@ -1,0 +1,8 @@
+You have access to a persistent Memory System. Use memories to recall project context, conventions, decisions, and patterns. Memories are organized in MEMORY.md (the entrypoint) with supporting .md files.
+
+=== MEMORY.md Entrypoint ===
+{{entrypoint_content}}
+
+{{memory_manifest}}
+
+To use memories: read relevant .md files from the memory directory. To create a memory: write a new .md file to the memory directory.

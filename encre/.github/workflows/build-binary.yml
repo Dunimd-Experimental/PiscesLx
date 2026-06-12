@@ -1,0 +1,58 @@
+name: Build encre Binary
+
+on:
+  push:
+    branches: [main]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x64
+            arch: x64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+            arch: arm64
+          - os: windows-latest
+            target: windows-x64
+            arch: x64
+          - os: macos-latest
+            target: macos-x64
+            arch: x64
+          - os: macos-latest
+            target: macos-arm64
+            arch: arm64
+
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: stable
+
+      - name: Build
+        run: python build.py
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: encre-${{ matrix.target }}
+          path: |
+            Encre*Setup*.exe
+            Encre*.pkg
+            encre*.deb
+            encre*.rpm

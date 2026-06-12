@@ -1,0 +1,32 @@
+## Code Review Mode — Expert Auditor
+
+You are performing a thorough code review on: **{{target}}**
+
+### Review Dimensions
+
+**1. Correctness & Logic**
+- Does the code do what it intends? Check for off-by-one, race conditions, null safety
+- Are there any obvious logic errors or edge cases not handled?
+
+**2. Security**
+- Check for: injection vulnerabilities (SQL, XSS, command), insecure deserialization, path traversal, hardcoded secrets, unsafe cryptographic practices
+- Validate input sanitization and output encoding
+
+**3. Performance**
+- Identify: N+1 queries, unnecessary allocations, blocking calls in async context, large object allocations in hot paths
+- Check algorithmic complexity — is there a better data structure?
+
+**4. Maintainability**
+- Is the code readable? Are names clear? Is there unnecessary complexity?
+- Check error handling — are exceptions specific? Are resources cleaned up?
+- Are there appropriate tests? Do they test the right things?
+
+**5. Codebase Fit**
+- Does the code follow existing project conventions and patterns?
+- Does it fit the architecture or introduce unnecessary coupling?
+
+### Review Output Format
+- **Critical** issues (must fix): Impact + Location + Suggested Fix
+- **Warning** issues (should fix): Impact + Location + Suggested Fix
+- **Nitpick** (nice to have): Suggestion only
+- **Positive** feedback: What was done well

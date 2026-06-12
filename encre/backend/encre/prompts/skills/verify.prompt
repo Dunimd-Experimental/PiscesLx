@@ -1,0 +1,95 @@
+You are verifying code quality and correctness for: {{scope}}
+
+Execute the following verification pipeline systematically. Do not skip steps.
+
+## Step 1: Identify Verification Targets
+First, determine what needs to be verified:
+- If specific files or directories were mentioned, verify those
+- If a scope like "all" or "project" is given, identify all modified files via git diff or recent file timestamps
+- List the files you will verify before proceeding
+
+## Step 2: Static Analysis
+
+### 2.1 Syntax and Import Check
+- Attempt to compile/parse each target file (e.g., `python -m py_compile file.py`)
+- Verify all imports resolve correctly (no ImportError)
+- Check for circular imports
+- Verify Python version compatibility
+
+### 2.2 Type Checking
+- Run the project's type checker if configured (e.g., mypy, pyright, pytype)
+- Focus on the modified files and their direct dependencies
+- Report any type mismatches, missing type annotations, or unsafe operations
+
+### 2.3 Lint Check
+- Run the project's linter (e.g., ruff, flake8, pylint)
+- Focus on errors and warnings (not style nits unless project convention requires them)
+- Common issues to flag: unused imports, undefined variables, bare except, mutable defaults, dangerous default args
+
+## Step 3: Unit and Integration Tests
+
+### 3.1 Test Discovery
+- Locate the test runner configuration (pytest, unittest, nose)
+- Identify relevant test files matching the modified source files
+- If no tests exist for a modified file, note it as a coverage gap
+
+### 3.2 Test Execution
+- Run all relevant tests using the project's test command
+- If the full suite takes too long (>2 min), run only tests related to modified files
+- Capture the full test output including failures, errors, and skipped tests
+
+### 3.3 Test Analysis
+- For each failure: identify the failing assertion, trace it to the source change, and explain the root cause
+- Distinguish between pre-existing failures and newly introduced failures
+- If a test needs to be updated (not a bug fix), explain why
+
+## Step 4: Build Verification
+- If the project has a build step, run it (e.g., `python setup.py build`, `cargo build`, `npm run build`)
+- Verify the build completes with 0 errors
+- Check for any warnings and categorize their severity
+
+## Step 5: Runtime Smoke Test
+- If applicable, run a quick smoke test of the application
+- Verify the application starts without errors
+- Test a minimal happy-path workflow
+
+## Step 6: Report Generation
+Produce a structured verification report:
+
+```markdown
+## Verification Report
+
+### Scope
+[List of files/directories verified]
+
+### Static Analysis
+- Syntax/Parsing: [PASS/FAIL] — N files checked, N errors
+- Type Checking: [PASS/FAIL] — N errors, N warnings
+- Linting: [PASS/FAIL] — N errors, N warnings
+
+### Tests
+- Test Runner: [pytest/unittest/other]
+- Tests Run: N
+- Passed: N
+- Failed: N (N pre-existing, N new)
+- Skipped: N
+- Coverage: XX%
+
+### Build
+- Status: [PASS/FAIL]
+- Warnings: N
+
+### Smoke Test
+- Status: [PASS/FAIL/SKIPPED]
+- Details: ...
+
+### Summary
+[OVERALL: PASS / FAIL WITH ISSUES / BLOCKED]
+
+### Action Items
+- [ ] Critical: ...
+- [ ] Warning: ...
+- [ ] Suggestion: ...
+```
+
+If verification fails at any step, provide clear, actionable guidance on how to fix each issue before proceeding.

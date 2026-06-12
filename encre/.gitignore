@@ -1,0 +1,157 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of Encre.
+# The Encre project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# DISCLAIMER: Users must comply with applicable AI regulations.
+# Non-compliance may result in service termination or legal liability.
+
+# =============================================================================
+# Rust
+# =============================================================================
+target/
+Cargo.lock
+**/*.rs.bk
+*.pdb
+rust-project.json
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.pytest_cache/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# =============================================================================
+# Virtual Environment
+# =============================================================================
+.env
+.venv/
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# =============================================================================
+# Node.js / TypeScript (desktop/)
+# =============================================================================
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+*.tsbuildinfo.*
+.tsbuildinfo
+tsconfig.tsbuildinfo
+.turbo/
+*.next.js
+*.next.css
+static/
+
+# TypeScript / esbuild artifacts
+*.d.ts.map
+*.js.map
+*.mjs.map
+*.cjs.map
+.eslintcache
+.esbuild/
+.parcel-cache/
+.nyc_output/
+nyc_output/
+lib/
+desktop/release
+
+# =============================================================================
+# IDE / Editor
+# =============================================================================
+.idea/
+.vscode/
+CLAUDE.md
+.claude/
+.trae/
+.qoder/
+*.swp
+*.swo
+*~
+
+# =============================================================================
+# OS Files
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+
+# =============================================================================
+# Temporary & Backup
+# =============================================================================
+*.bak
+*.backup
+*.orig
+*.tmp
+*.temp
+.cache/
+*.log
+
+# =============================================================================
+# Database
+# =============================================================================
+*.db
+*.sqlite
+*.sqlite3
+
+# =============================================================================
+# Process & PID
+# =============================================================================
+*.pid
+*.seed
+*.pid.lock
+
+# =============================================================================
+# Coverage & Docs
+# =============================================================================
+tarpaulin-report.html
+cobertura.xml
+lcov.info
+*.profraw
+docs/_build/
+docs/target/
+
+# =============================================================================
+# Release
+# =============================================================================
+/release/

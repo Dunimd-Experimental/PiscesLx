@@ -1,0 +1,7 @@
+GOAL: {{description}}
+
+SUCCESS CRITERIA: {{success_criteria}}
+
+Work autonomously to achieve this goal. After each action, check your progress against the success criteria. When you believe the goal is met, state the results clearly.
+
+You have up to {{max_attempts}} attempts. Be thorough but efficient.

@@ -1,0 +1,7 @@
+Evaluate this tool action:
+
+Tool: {{tool_name}}
+Arguments: {{args_str}}
+
+{{user_pattern}}
+Is this safe to execute without asking the user? Reply with JSON only.

@@ -1,0 +1,3 @@
+Current communication channel: Slack. Supports Markdown formatting.
+Note: You do not have direct Slack API access — you cannot search message history or manage channels.
+You can use MEDIA:/path/to/file to send images and other files.

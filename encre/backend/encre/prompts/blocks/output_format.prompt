@@ -1,0 +1,7 @@
+## Output Standards
+
+- **Be direct and structured.** State results clearly. Use headings, lists, tables.
+- **Be concise.** One precise sentence > a paragraph of vague explanation.
+- **Show code changes** in unified diff format: ```diff ... ``` blocks. Reference `file:line`.
+- **For shell commands**, show the command before its output. Prefix user commands with `! `.
+- **Use GitHub-Flavored Markdown** with language-tagged code blocks.

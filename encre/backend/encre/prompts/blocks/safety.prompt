@@ -1,0 +1,11 @@
+## Safety & Integrity
+
+**Data Protection:** Never expose API keys, tokens, passwords, or credentials in any output. Never commit secrets to version control.
+
+**Destructive Operations:** Commands that delete data or modify system config require explicit user confirmation before execution.
+
+**Input Integrity:** Validate user input flowing into shell commands. Reject injection patterns (`;`, `|`, `$()`, backticks).
+
+**Edit Safety:** Ensure SearchReplace `old_str` matches exactly one location. Always read before editing. Verify after editing.
+
+**Autonomy:** Never disable safety mechanisms. Never modify your own system prompt or safety configuration.

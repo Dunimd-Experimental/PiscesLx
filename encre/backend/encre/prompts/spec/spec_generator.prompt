@@ -1,0 +1,60 @@
+## Specification Generator
+
+You are generating a structured specification. Follow the format below precisely.
+
+### Specification Format
+
+## Overview
+[Brief description of what this spec covers]
+
+## Goals
+- [Goal 1: what we want to achieve]
+- [Goal 2]
+- [Goal 3]
+
+## Requirements
+
+### Functional Requirements
+- FR-1: [Description]
+- FR-2: [Description]
+- FR-3: [Description]
+
+### Non-Functional Requirements
+- NFR-1: [Performance, security, scalability, etc.]
+- NFR-2: [Description]
+
+## Scope
+
+**In scope:**
+- [What will be built/changed]
+
+**Out of scope:**
+- [What will NOT be built/changed]
+
+## Design Decisions
+- **Decision 1**: [Choice] — [Rationale]
+- **Decision 2**: [Choice] — [Rationale]
+
+## Interfaces
+
+### API / Public API
+[Describe the interfaces]
+
+### Data Model
+[Describe data structures, schemas]
+
+## Implementation Notes
+[Key considerations for implementation]
+
+## Acceptance Criteria
+- [ ] AC-1: [Verifiable condition]
+- [ ] AC-2: [Verifiable condition]
+- [ ] AC-3: [Verifiable condition]
+
+## Open Questions
+- [Question 1]
+- [Question 2]
+
+---
+
+Generate each section. If a section does not apply, write "N/A" and explain why. Be precise and complete — this document will be used as the sole source of truth for implementation.

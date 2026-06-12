@@ -1,5 +1,11 @@
 <div align="center">
 
+[![Encre Agent](https://img.shields.io/badge/🚀_Encre_Agent—General_Purpose_AI_Agent-brightgreen?style=for-the-badge&logo=git)](https://gitee.com/dunimd/encre.git)
+
+</div>
+
+<div align="center">
+
 # ⚖️ Legal Disclaimer
 
 **Compliance with AI regulations is the user's legal obligation.**
@@ -22,7 +28,6 @@ English | [简体中文](README.zh.md)
 <a href="https://x.com/Dunimd2025" target="_blank">
     <img alt="X" src="https://img.shields.io/badge/X-Dunimd-000000?style=flat-square&logo=x"/>
 </a>
-
 <a href="https://gitee.com/dunimd" target="_blank">
     <img alt="Gitee" src="https://img.shields.io/badge/Gitee-Dunimd-C71D23?style=flat-square&logo=gitee"/>
 </a>
@@ -33,7 +38,10 @@ English | [简体中文](README.zh.md)
     <img alt="Hugging Face" src="https://img.shields.io/badge/Hugging%20Face-Dunimd-FFD21E?style=flat-square&logo=huggingface"/>
 </a>
 <a href="https://modelscope.cn/organization/dunimd" target="_blank">
-    <img alt="ModelScope" src="https://img.shields.io/badge/ModelScope-Dunimd-1E6CFF?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1sbnM9Imh0dHA6Ly93d3cudzMub3JnLzIwMDAvc3ZnIj4KPHBhdGggZD0iTTcuMDA2IDBDMy4xNDIgMCAwIDMuMTQyIDAgNy4wMDZTMy4xNDIgMTQuMDEyIDcuMDA2IDE0LjAxMkMxMC44NyAxNC4wMTIgMTQuMDEyIDEwLjg3IDE0LjAxMiA3LjAwNkMxNC4wMTIgMy4xNDIgMTAuODcgMCA3LjAwNiAwWiIgZmlsbD0iIzFFNkNGRiIvPgo8L3N2Zz4K"/>
+    <img alt="ModelScope" src="https://img.shields.io/badge/ModelScope-Dunimd-1E6CFF?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1zbmFtZT0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik03LjAwNiAwQzMuMTQyIDAgMCAzLjE0MiAwIDcuMDA2UzMuMTQyIDE0LjAxMiA3LjAwNiAxNC4wMTJDMTAuODcgMTQuMDEyIDE0LjAxMiAxMC44NyAxNC4wMTIgNy4wMDZDMTQuMDEyIDMuMTQyIDEwLjg3IDAgNy4wMDYgMFoiIGZpbGw9IiMxRTZDRkYiLz48L3N2Zz4K"/>
+</a>
+<a href="https://gitee.com/dunimd/encre.git" target="_blank">
+    <img alt="Encre Agent" src="https://img.shields.io/badge/Encre_Agent-Dunimd-7B68EE?style=flat-square&logo=git"/>
 </a>
 
 A high-performance multimodal Mixture-of-Experts (MoE) model featuring the **Yv Architecture**, supporting text, image, audio, video, document, and agent understanding. PiscesL1 (PiscesLx series, Dunimd Team) is designed for research and practical applications, capable of running on a single RTX 4090 GPU with scalable architecture up to 1T parameters.
@@ -207,6 +215,7 @@ python manage.py help
 | Command   | Description                                                         |
 |-----------|---------------------------------------------------------------------|
 | setup     | Environment setup and dependency installation                       |
+| enta      | **EnTA autonomous training loop** (LLM-driven, multi-teacher)      |
 | train     | Train model (support quantization / LoRA / RLHF / GaLore)          |
 | serve     | Start OpenAI-compatible backend inference service                  |
 | test      | Project health check (8-stage validation)                          |
@@ -220,6 +229,29 @@ python manage.py help
 | cache     | Cache management for .pisceslx directory                           |
 | publish   | Package and publish models as Docker images                        |
 | help      | Show help information                                             |
+
+### EnTA Training
+```bash
+# List configured teacher models
+python manage.py enta --list_models
+
+# Dry run (validate pipeline)
+python manage.py enta --dry_run
+
+# Full training with teacher model and student checkpoint
+python manage.py enta --teacher deepseek-r1 --model_path ./ckpt/7B.pt
+
+# With round-table and subconscious training
+python manage.py enta --teacher deepseek-r1 \
+  --aux_teachers "deepseek-v3.2,qwen3.6,agens-2.0-flash" \
+  --model_path ./ckpt/7B.pt
+
+# Start from advanced stage
+python manage.py enta --enta_stage advanced --max_tasks 10000
+
+# Disable subconscious (train 7B core only)
+python manage.py enta --no_subconscious
+```
 
 ### Quick Experience
 ```bash
@@ -320,15 +352,6 @@ python manage.py dev enable    # Enable developer mode
 python manage.py dev disable   # Disable developer mode
 python manage.py dev status    # Check developer mode status
 
-# Available commands during training:
-#   Memory: :mem, :mem-gpu, :mem-cpu
-#   Model: :layer, :layers, :grad, :grad-norm
-#   Training: :pause, :resume, :save, :lr, :batch
-#   Config: :config, :config-model, :config-data
-#   Monitoring: :watch, :watch-clear, :profile
-#   Intervention: :inject, :freeze, :unfreeze, :nan-check
-#   Other: :help, :q
-
 # Cache management for .pisceslx directory
 python manage.py cache         # Show cache status
 python manage.py cache clean   # Clean all cache (settings/ protected)
@@ -353,7 +376,6 @@ Dataset is configured by `configs/dataset.yaml` and downloaded through:
 python manage.py download
 ```
 - Default download priority: ModelScope → HuggingFace (automatic mirroring when inaccessible)
-
 - Complete list see `configs/dataset.yaml`
 
 ---
@@ -366,6 +388,7 @@ python manage.py download
 - How to resume training? `--resume_ckpt path/to/ckpt.pt` (optional `--reset_lr`)
 - CPU only? Can use `--device cpu` (slower performance).
 - How to perform evaluation? `python manage.py benchmark ...`, with `--config`, `--seq_len`, `--model` and other parameters.
+- How does EnTA work? EnTA is an LLM-driven agent that autonomously trains the 7B student model. See [EnTA Architecture](#-encre-train-agent-enta).
 
 ---
 
@@ -490,7 +513,7 @@ If you use this project in your research, please cite:
 ```bibtex
 @misc{piscesl1,
   author = {Wenze Wei, Dunimd Team},
-  title = {PiscesL1: A High-Performance Multimodal Mixture-of-Experts Model},
+  title = {PiscesL1: A High-Performance Multimodal Mixture-of-Experts Model with Autonomous Training Agent},
   year = {2026},
   publisher = {GitHub},
   url = {https://github.com/mf2023/piscesl1}
