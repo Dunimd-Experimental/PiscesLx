@@ -52,7 +52,7 @@ class EvolutionConfig:
         )
 
     @classmethod
-    def create_disabled(cls) -> EvolutionConfig:
+    def create_disabled(cls) -> "EvolutionConfig":
         from encre.config import get_data_dir
         from encre.evolution.learner import EncreEvolutionLearner
         from encre.evolution.optimizer import EncreStrategyOptimizer
