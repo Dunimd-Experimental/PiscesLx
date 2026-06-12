@@ -355,7 +355,7 @@ class EncreConfig:
         return cfg
 
     @classmethod
-    def from_env(cls) -> EncreConfig:
+    def from_env(cls) -> "EncreConfig":
         return cls.from_file(path=None)
 
     _MODEL_FLAT_FIELDS = frozenset({"model", "api_key", "base_url", "max_tokens", "backend_type"})
