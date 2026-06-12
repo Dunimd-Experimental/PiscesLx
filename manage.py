@@ -1660,6 +1660,9 @@ def main():
         # EnTA: Encre Train Agent ¡ª autonomous LLM-driven training loop
         # EnTA itself is an Agent (driven by Agens-2.0-Flash) that
         # autonomously decides what to teach and how.
+        _backend = os.path.join(os.path.dirname(__file__), 'encre', 'backend')
+        if _backend not in sys.path:
+            sys.path.insert(0, _backend)
         from encre.enta import launch_enta
         import asyncio
 
