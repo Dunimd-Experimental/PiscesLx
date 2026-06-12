@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Stub: compact module was removed, this stub prevents import errors."""
 
 

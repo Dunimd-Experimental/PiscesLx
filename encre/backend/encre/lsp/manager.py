@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """Multi-language LSP manager with auto-discovery of installed servers.
 
 Scans PATH for known LSP servers and activates only those found.

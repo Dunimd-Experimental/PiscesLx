@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 from encre.agents.builtin import get_builtin_sub_agents
 
 __all__ = [

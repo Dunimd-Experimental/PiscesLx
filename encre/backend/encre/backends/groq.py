@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """
 Groq backend — Llama 3.3 70B, Llama 4 Scout, GPT-OSS 120B (2026 lineup).
 

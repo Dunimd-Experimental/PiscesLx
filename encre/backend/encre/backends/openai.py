@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """
 OpenAI backend — GPT-4.1 family, GPT-5.x, o3, o4-mini (2026 lineup).
 

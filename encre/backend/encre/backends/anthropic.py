@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """
 Anthropic backend — Claude Opus 4.6/4.7, Sonnet 4.5/4.6, Haiku 4.5 (2026 lineup).
 

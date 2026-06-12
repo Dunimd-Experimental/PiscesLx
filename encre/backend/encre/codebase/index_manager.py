@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """Background index manager — owns workspace code indices independently of
 any WebSocket connection.  Lives at the EncreServer level and survives
 window open/close cycles.

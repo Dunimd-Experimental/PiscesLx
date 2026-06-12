@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 from encre.sandbox.container import EncreContainerSandbox as EncreContainerSandbox
 from encre.sandbox.types import SandboxConfig as SandboxConfig
 from encre.sandbox.types import SandboxResult as SandboxResult

@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 from encre.tools.builtin.file_read import EncreFileReadTool
 from encre.tools.builtin.file_write import EncreFileWriteTool
 from encre.tools.builtin.file_edit import EncreFileEditTool

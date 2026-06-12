@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """Native acceleration bridge 鈥?all model-facing operations are Rust-only.
 
 All functions are re-exported directly from the compiled ``encre._native``

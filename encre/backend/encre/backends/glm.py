@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """
 GLM (Zhipu AI) backend — GLM-4.5, GLM-4.6, GLM-4.7 (2026 lineup).
 

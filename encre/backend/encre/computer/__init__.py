@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 from encre.computer.browser import EncreBrowserSession, BrowserState, BrowserViewport
 from encre.computer.desktop import EncreDesktopSession, DesktopScreenState, DesktopLocateResult
 

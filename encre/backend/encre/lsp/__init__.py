@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 from encre.lsp.protocol import Position, Range, Location, Diagnostic, HoverResult, LSPState
 from encre.lsp.client import EncreLSPClient
 from encre.lsp.manager import EncreLSPManager

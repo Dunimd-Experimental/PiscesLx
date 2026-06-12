@@ -18,6 +18,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import annotations
 from encre.agent import EncreAgent
 from encre.goal import EncreGoalRunner, EncreGoalLoop, GoalDefinition, GoalResult, GoalStatus, GoalEvent
 from encre.scheduler import EncreScheduler, ScheduledJob, CronSchedule, ScheduleType, JobState

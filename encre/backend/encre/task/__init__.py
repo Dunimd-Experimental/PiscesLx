@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 from encre.task.types import EncreTask
 from encre.task.manager import EncreTaskManager
 from encre.task.executor import EncreTaskExecutor

@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 from encre.learning.engine import LearningEngine
 from encre.learning.skill_generator import SkillGenerator
 from encre.learning.consolidator import MemoryConsolidator

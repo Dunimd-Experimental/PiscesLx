@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """MCP server provider catalog.
 
 Each entry is a real service provider that offers an MCP server, with its

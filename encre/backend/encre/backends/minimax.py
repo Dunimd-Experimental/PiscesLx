@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """
 MiniMax backend — MiniMax-M2.1, M2.5, M2.7 (2026 lineup).
 

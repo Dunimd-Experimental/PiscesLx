@@ -1,3 +1,4 @@
+from __future__ import annotations
 """Stub: hooks module was removed, this stub prevents import errors."""
 
 

@@ -5,6 +5,7 @@
 # ...
 # Licensed under the Apache License, Version 2.0.
 
+from __future__ import annotations
 from typing import Any
 
 from encre.tools.base import build_tool

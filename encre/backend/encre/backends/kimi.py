@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """
 Kimi / Moonshot backend — Kimi-K2, Kimi-K2.5, Kimi-K2.6 (2026 lineup).
 

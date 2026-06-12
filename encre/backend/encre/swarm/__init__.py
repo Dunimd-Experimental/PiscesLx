@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 from encre.swarm.mailbox import EncreMailbox, MailboxMessage
 from encre.swarm.teammate import EncreTeammate, TeammateHandle
 from encre.swarm.manager import EncreSwarmManager, SwarmProgress

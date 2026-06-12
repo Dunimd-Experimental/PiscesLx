@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """
 Standalone indexing worker — runs in a separate process so the main server
 is not blocked by CPU-intensive codebase scanning.

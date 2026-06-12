@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """
 Xiaomi MiMo backend — MiMo-V2-Flash, MiMo-V2.5, MiMo-V2.5-Pro (2026 lineup).
 

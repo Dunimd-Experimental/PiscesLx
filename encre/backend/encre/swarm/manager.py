@@ -1,4 +1,5 @@
-﻿#!/usr/bin/env python3
+from __future__ import annotations
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.

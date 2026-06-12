@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 """
 Google backend — Gemini 2.5 Pro, Gemini 2.5 Flash (2026 lineup).
 

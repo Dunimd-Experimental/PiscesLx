@@ -21,6 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 from encre.evolution.config import EvolutionConfig
 from encre.evolution.learner import EncreEvolutionLearner, SuccessRecord, ErrorRecord
 from encre.evolution.optimizer import EncreStrategyOptimizer, ToolStrategy

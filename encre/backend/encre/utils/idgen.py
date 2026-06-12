@@ -22,6 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 
+from __future__ import annotations
 class BranchIDGenerator:
     """Generate IDs in format {session_id}:{branch_id}:{entity_type}:{local_id}"""
 
