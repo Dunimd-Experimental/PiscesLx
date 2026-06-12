@@ -37,7 +37,7 @@ class EvolutionConfig:
     meta_enabled: bool = True
 
     @classmethod
-    def create_default(cls) -> EvolutionConfig:
+    def create_default(cls) -> "EvolutionConfig":
         from encre.config import get_data_dir
         from encre.evolution.learner import EncreEvolutionLearner
         from encre.evolution.optimizer import EncreStrategyOptimizer
