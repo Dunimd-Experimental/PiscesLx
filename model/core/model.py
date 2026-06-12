@@ -210,6 +210,7 @@ from .hybrid import YvHybridBlock
 from utils.dc import PiscesLxLogger
 from .blocks import YvTransformerBlock
 from .cache import YvUnifiedCacheManager
+from .subconscious import YvSubconsciousSystem
 from typing import Optional, Tuple, Dict, Any, List, Union
 from ..reasoning import YvMultiModalReasoningEnhancer
 from ..generation.speculative import YvAdaptiveSpeculativeDecoder, YvSpeculativeConfig
@@ -593,25 +594,42 @@ class YvModel(nn.Module):
             yield name, module
 
     def __init__(self, cfg, device=None, dtype=None, quantization_config=None, lora_config=None):
-        """Initialize Yv model with configuration.
-        
-        Args:
-            cfg: Configuration object containing model hyperparameters.
-                Required: hidden_size, n_layer, vocab_size
-                Optional: n_head, n_kv_head, max_position_embeddings, etc.
-            device: Device to place model parameters on.
-            dtype: Data type for model parameters.
-            quantization_config: Configuration for model quantization.
-            lora_config: Configuration for LoRA adapters.
-        
-        Note:
-            Initialization is logged at debug level for each major component.
-            Total parameter count is logged at the end of initialization.
-        """
         super().__init__()
         _LOG.debug("YvModel: __init__ start")
         self.cfg = cfg
         self.config = cfg
+
+        if device is None:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        if dtype is None:
+            dtype = torch.bfloat16 if device.type == 'cuda' else torch.float32
+        self._device = device
+        self._dtype = dtype
+
+        # Automatic VRAM optimization: selects optimal settings without conflicts
+        from utils.vram_controller import auto_optimize, get_vram_monitor
+        auto_optimize(cfg)
+        self._vram_monitor = get_vram_monitor(cfg)
+
+        if getattr(cfg, 'use_quartet', False):
+            cfg.use_fp4 = True
+            cfg.fp4_block_size = getattr(cfg, 'fp4_block_size', 16)
+            cfg.fp4_stochastic_rounding = True
+            cfg.fp4_master_weights_dtype = 'fp32'
+            cfg.coat_enabled = True
+
+        # Resolve conflicting VRAM settings across dual flag systems
+        if getattr(cfg, 'vram_fp4_training', False):
+            cfg.use_fp4 = True
+        if getattr(cfg, 'vram_kv_cache_quantization', False):
+            cfg.cache_quantization = True
+        if getattr(cfg, 'vram_gradient_checkpointing', False):
+            cfg.use_gradient_checkpointing = True
+        if getattr(cfg, 'vram_flash_attention', False):
+            cfg.use_flash_attention = True
+
+        if getattr(cfg, 'moe_num_experts', 0) >= 16 and getattr(cfg, 'moe_shared_experts', 0) == 0:
+            setattr(self.config, 'moe_shared_experts', max(1, getattr(cfg, 'moe_num_experts', 64) // 32))
 
         if not hasattr(self.config, 'num_layers'):
             setattr(self.config, 'num_layers', getattr(self.config, 'n_layer', 0))
@@ -691,12 +709,8 @@ class YvModel(nn.Module):
             self.layers.append(block)
 
         _LOG.debug("YvModel: initializing norm...")
-        self.norm = YvRMSNorm(cfg.hidden_size)
+        self.norm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
 
-        # MemSep: Knowledge retrieval router for Engram-style lookup-computation separation
-        # Based on Engram (Liang Wenfeng et al., arXiv:2601.07372, 2026)
-        # Projects hidden states to 256-dim address space, queries FAISS index
-        # for top-K knowledge slots on mmap-backed knowledge store (zero GPU memory)
         self.use_memory_separation = getattr(cfg, 'use_memory_separation', False)
         if self.use_memory_separation:
             from .memory_router import YvMemoryRouter
@@ -714,14 +728,38 @@ class YvModel(nn.Module):
             )
             self.memory_read_interval = getattr(cfg, 'memory_read_interval', 4)
             self.memory_prefetch_depth = getattr(cfg, 'memory_prefetch_depth', 4)
-            _LOG.info(
-                f"Memory separation enabled: router_dim=256, top_k={getattr(cfg, 'memory_top_k', 8)}, "
-                f"read_interval={self.memory_read_interval}"
-            )
         else:
             self.memory_router = None
             self.memory_read_interval = 0
             self.memory_prefetch_depth = 0
+
+        # Subconscious: 0.5B dynamic head + 314B implicit knowledge field
+        # Activated when use_subconscious=True. This is the "第潜意识" system
+        # separate from the 1M context and the memory router.
+        self.use_subconscious = getattr(cfg, 'use_subconscious', False)
+        if self.use_subconscious:
+            _LOG.debug("YvModel: initializing subconscious system...")
+            _sc_kw = lambda k, d: getattr(cfg, f'subconscious_{k}', d)
+            self.subconscious = YvSubconsciousSystem(
+                hidden_size=cfg.hidden_size,
+                num_layers=cfg.n_layer,
+                knowledge_dim=_sc_kw('knowledge_dim', 256),
+                num_codebooks=_sc_kw('num_codebooks', 16),
+                codebook_size=_sc_kw('codebook_size', 131072),
+                codebook_dim=_sc_kw('codebook_dim', 128),
+                num_field_heads=_sc_kw('num_field_heads', 8),
+                head_dim=_sc_kw('head_dim', 1024),
+                head_num_layers=_sc_kw('head_num_layers', 2),
+                head_num_attn_heads=_sc_kw('head_num_attn_heads', 4),
+                device=device,
+                dtype=dtype,
+            )
+            self.subconscious_read_interval = _sc_kw('read_interval', 1)
+            self.subconscious_prefetch_depth = _sc_kw('prefetch_depth', 2)
+        else:
+            self.subconscious = None
+            self.subconscious_read_interval = 0
+            self.subconscious_prefetch_depth = 0
 
         _LOG.debug("YvModel: initializing multimodal encoders...")
         self._lazy_init_flags = {
@@ -734,39 +772,38 @@ class YvModel(nn.Module):
             'speculative_decoder': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_speculative_decoder', True),
         }
         self._lazy_initialized = {k: False for k in self._lazy_init_flags}
-        
+
         if self._lazy_init_flags.get('vision', False):
             self._vision_encoder = None
             self.vision = None
         else:
-            self.vision = YvVisionEncoder(cfg) if device is None or device == 'cpu' else YvVisionEncoder(cfg)
-        
+            self.vision = YvVisionEncoder(cfg, device=device, dtype=dtype)
+
         if self._lazy_init_flags.get('video', False):
             self._video_encoder = None
             self.video = None
         else:
-            self.video = YvVideoEncoder(cfg) if device is None or device == 'cpu' else YvVideoEncoder(cfg)
-        
+            self.video = YvVideoEncoder(cfg, device=device, dtype=dtype)
+
         if self._lazy_init_flags.get('audio', False):
             self._audio_encoder = None
             self.audio = None
         else:
-            self.audio = YvAudioEncoder(cfg) if device is None or device == 'cpu' else YvAudioEncoder(cfg)
-        
+            self.audio = YvAudioEncoder(cfg, device=device, dtype=dtype)
+
         if self._lazy_init_flags.get('doc', False):
             self._doc_encoder = None
             self.doc = None
         else:
-            self.doc = YvDocEncoder(cfg) if device is None or device == 'cpu' else YvDocEncoder(cfg)
+            self.doc = YvDocEncoder(cfg, device=device, dtype=dtype)
 
-        self.agent_encoder = YvAgenticEncoder(cfg)
+        self.agent_encoder = YvAgenticEncoder(cfg, device=device, dtype=dtype)
 
         use_enhanced_fusion = getattr(cfg, 'use_enhanced_fusion', False)
         use_recurrent_refiner = getattr(cfg, 'use_recurrent_modal_refiner', True)
         if use_recurrent_refiner:
             from ..multimodal.fusion import YvRecurrentModalRefiner
             self.modal_fusion = YvRecurrentModalRefiner(cfg, device=device, dtype=dtype)
-            _LOG.debug("YvModel: using YvRecurrentModalRefiner")
         elif use_enhanced_fusion:
             from ..multimodal import YvEnhancedModalFusion, YvModalFusionConfig
             fusion_config = YvModalFusionConfig(
@@ -779,17 +816,15 @@ class YvModel(nn.Module):
                 use_modality_attention=True,
                 use_cross_modal_alignment=True
             )
-            self.modal_fusion = YvEnhancedModalFusion(fusion_config)
-            _LOG.debug("YvModel: using YvEnhancedModalFusion")
+            self.modal_fusion = YvEnhancedModalFusion(fusion_config, device=device, dtype=dtype)
         else:
-            self.modal_fusion = YvDynamicModalFusion(cfg)
-            _LOG.debug("YvModel: using legacy YvDynamicModalFusion")
+            self.modal_fusion = YvDynamicModalFusion(cfg, device=device, dtype=dtype)
 
         try:
             if 'agent_encoder' in self._modules:
                 del self._modules['agent_encoder']
-        except Exception as e:
-            _LOG.debug(f"YvModel: agent_encoder cleanup skipped: {e}")
+        except Exception:
+            pass
 
         _LOG.debug("YvModel: initializing output heads...")
         self.lm_head = nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
@@ -799,7 +834,7 @@ class YvModel(nn.Module):
         self.num_mtp_heads = int(getattr(cfg, 'num_mtp_heads', 4))
         self.mtp_loss_weight = float(getattr(cfg, 'mtp_loss_weight', 0.5))
         self.mtp_share_embeddings = bool(getattr(cfg, 'mtp_share_embeddings', True))
-        
+
         if self.num_mtp_heads > 0:
             self.mtp_heads = nn.ModuleList([
                 nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
@@ -808,17 +843,16 @@ class YvModel(nn.Module):
             if self.mtp_share_embeddings:
                 for mtp_head in self.mtp_heads:
                     mtp_head.weight = self.lm_head.weight
-            _LOG.debug(f"YvModel: MTP initialized with {self.num_mtp_heads} heads")
 
         self.modal_token_count = getattr(cfg, 'modal_token_count', 8)
         self.fusion_proj = nn.Linear(cfg.hidden_size, cfg.hidden_size, bias=False, device=device, dtype=dtype)
 
         _LOG.debug("YvModel: initializing reasoner...")
-        self.reasoner = YvUnifiedReasoner(cfg)
+        self.reasoner = YvUnifiedReasoner(cfg, device=device, dtype=dtype)
         self.reasoner.initialize_reasoning_tokens(None)
 
         _LOG.debug("YvModel: initializing multi-modal reasoning enhancer...")
-        self.mm_reasoning_enhancer = YvMultiModalReasoningEnhancer(cfg)
+        self.mm_reasoning_enhancer = YvMultiModalReasoningEnhancer(cfg, device=device, dtype=dtype)
 
         _LOG.debug("YvModel: initializing agentic...")
         try:
@@ -830,14 +864,14 @@ class YvModel(nn.Module):
         try:
             if 'agentic' in self._modules:
                 del self._modules['agentic']
-        except Exception as e:
-            _LOG.debug(f"YvModel: agentic cleanup skipped: {e}")
+        except Exception:
+            pass
 
         try:
             if 'mm_reasoning_enhancer' in self._modules:
                 del self._modules['mm_reasoning_enhancer']
-        except Exception as e:
-            _LOG.debug(f"YvModel: mm_reasoning_enhancer cleanup skipped: {e}")
+        except Exception:
+            pass
 
         _LOG.debug("YvModel: initializing speculative decoder...")
         self.speculative_config = YvSpeculativeConfig(
@@ -851,28 +885,25 @@ class YvModel(nn.Module):
             tree_depth=getattr(cfg, 'speculative_tree_depth', 5)
         )
         self.speculative_decoder = YvAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
-        _LOG.debug("YvModel: speculative decoder initialized")
 
         try:
             for k in ("speculative_decoder",):
                 if k in self._modules:
                     del self._modules[k]
-        except Exception as e:
-            _LOG.debug(f"YvModel: speculative_decoder cleanup skipped: {e}")
+        except Exception:
+            pass
 
         if lora_config is not None:
             try:
                 from peft import get_peft_model
                 self = get_peft_model(self, lora_config)
-                _LOG.debug("YvModel: LoRA adapters injected (peft)")
             except Exception as e:
                 _LOG.error(f"LoRA injection failed: {e}")
 
         if getattr(cfg, 'depth_aware_init', True):
             from ..core.norms import _depth_aware_init_weights
             self.apply(lambda m: _depth_aware_init_weights(m, cfg.n_layer, cfg.hidden_size))
-            _LOG.debug("YvModel: depth-aware initialization applied")
-        
+
         initializer_range = getattr(cfg, 'initializer_range', 0.02)
         use_scaled_init = getattr(cfg, 'use_scaled_init', True)
         if use_scaled_init and initializer_range != 0.02:
@@ -881,12 +912,10 @@ class YvModel(nn.Module):
                 if hasattr(module, 'weight') and module.weight is not None:
                     if module.weight.dim() >= 2:
                         nn.init.normal_(module.weight, mean=0, std=scaled_std)
-            _LOG.debug(f"YvModel: scaled initialization applied (std={scaled_std:.6f})")
-        
+
         if getattr(cfg, 'tie_word_embeddings', False):
             if hasattr(self, 'lm_head') and hasattr(self, 'embed'):
                 self.lm_head.weight = self.embed.weight
-                _LOG.debug("YvModel: word embeddings tied")
 
         total_params = sum(p.numel() for p in self.parameters())
         _LOG.debug(f"YvModel: total parameters = {total_params/1e6:.2f}M")
@@ -946,39 +975,31 @@ class YvModel(nn.Module):
             layer.use_checkpoint = enabled
     
     def _lazy_get_vision_encoder(self):
-        """Get vision encoder with lazy initialization."""
         if self.vision is None and self._lazy_init_flags.get('vision', False):
             if not self._lazy_initialized.get('vision', False):
-                self.vision = YvVisionEncoder(self.cfg)
+                self.vision = YvVisionEncoder(self.cfg, device=self._device, dtype=self._dtype)
                 self._lazy_initialized['vision'] = True
-                _LOG.debug("YvModel: vision encoder lazy initialized")
         return self.vision
-    
+
     def _lazy_get_audio_encoder(self):
-        """Get audio encoder with lazy initialization."""
         if self.audio is None and self._lazy_init_flags.get('audio', False):
             if not self._lazy_initialized.get('audio', False):
-                self.audio = YvAudioEncoder(self.cfg)
+                self.audio = YvAudioEncoder(self.cfg, device=self._device, dtype=self._dtype)
                 self._lazy_initialized['audio'] = True
-                _LOG.debug("YvModel: audio encoder lazy initialized")
         return self.audio
-    
+
     def _lazy_get_video_encoder(self):
-        """Get video encoder with lazy initialization."""
         if self.video is None and self._lazy_init_flags.get('video', False):
             if not self._lazy_initialized.get('video', False):
-                self.video = YvVideoEncoder(self.cfg)
+                self.video = YvVideoEncoder(self.cfg, device=self._device, dtype=self._dtype)
                 self._lazy_initialized['video'] = True
-                _LOG.debug("YvModel: video encoder lazy initialized")
         return self.video
-    
+
     def _lazy_get_doc_encoder(self):
-        """Get doc encoder with lazy initialization."""
         if self.doc is None and self._lazy_init_flags.get('doc', False):
             if not self._lazy_initialized.get('doc', False):
-                self.doc = YvDocEncoder(self.cfg)
+                self.doc = YvDocEncoder(self.cfg, device=self._device, dtype=self._dtype)
                 self._lazy_initialized['doc'] = True
-                _LOG.debug("YvModel: doc encoder lazy initialized")
         return self.doc
     
     def is_lazy_initialized(self, component: str) -> bool:
@@ -993,23 +1014,6 @@ class YvModel(nn.Module):
         return self._lazy_initialized.get(component, True)
 
     def to(self, device=None, dtype=None, non_blocking=False):
-        """Move model to specified device and/or dtype.
-        
-        Overrides the default to() method for optimized device transfer,
-        ensuring all components are properly moved including non-module
-        attributes.
-        
-        Args:
-            device: Target device (e.g., 'cuda', 'cpu', torch.device).
-            dtype: Target data type (e.g., torch.float16, torch.bfloat16).
-            non_blocking: Whether to perform non-blocking transfer.
-            
-        Returns:
-            self: The model after device/dtype transfer.
-        
-        Note:
-            This handles ModuleList specially for proper recursive transfer.
-        """
         if device is None and dtype is None:
             return super().to(device, dtype, non_blocking)
 
@@ -1021,13 +1025,19 @@ class YvModel(nn.Module):
             self.task_head,
             self.eval_head,
             self.fusion_proj,
+            getattr(self, 'modal_fusion', None),
+            getattr(self, 'reasoner', None),
+            getattr(self, 'mm_reasoning_enhancer', None),
+            getattr(self, 'cache_manager', None),
         ]
 
         for m in modules:
+            if m is None:
+                continue
             if isinstance(m, nn.ModuleList):
                 for sub in m:
                     sub.to(device=device, dtype=dtype, non_blocking=non_blocking)
-            else:
+            elif isinstance(m, nn.Module):
                 m.to(device=device, dtype=dtype, non_blocking=non_blocking)
 
         return self
@@ -1530,6 +1540,11 @@ class YvModel(nn.Module):
             )
 
         b, t = input_ids.shape
+
+        # Runtime VRAM check — auto-adjust if memory pressure detected
+        if hasattr(self, '_vram_monitor'):
+            self._vram_monitor.check_and_adjust()
+
         text_emb = self.embed(input_ids)
         modal_features = {'text': text_emb}
 
@@ -1622,30 +1637,48 @@ class YvModel(nn.Module):
         
         mask = torch.triu(torch.full((t, t), float('-inf'), device=x.device, dtype=x.dtype), diagonal=1)
 
+        # OOMB: Out-of-Order Memory Banking for million-token context
+        use_oomb = getattr(self.cfg, 'use_oomb_context', False)
+        if use_oomb:
+            oomb_chunk_size = getattr(self.cfg, 'oomb_chunk_size', 32768)
+            chunk_size = min(chunk_size, oomb_chunk_size)
+            self._oomb_memory_bank = []
+
         total_aux_loss = 0.0
         chunk_size = min(getattr(self.cfg, 'max_position_embeddings', 2048), 8192)
         outputs = []
 
         if use_cache:
             seq_len = x.shape[1]
-            if seq_len > 1024:
+            if seq_len > 4096:
                 cache_dtype = torch.float16
-                cache_quant_bits = 4
-            elif seq_len > 512:
+                cache_quant_bits = 8
+            elif seq_len > 1024:
                 cache_dtype = torch.float16
                 cache_quant_bits = 8
             else:
-                cache_dtype = torch.float32
+                cache_dtype = torch.bfloat16
                 cache_quant_bits = 16
         else:
-            cache_dtype = torch.float32
+            cache_dtype = torch.bfloat16
             cache_quant_bits = 16
+
+        use_mixed_precision_cache = getattr(self.cfg, 'use_mixed_precision_cache', True)
 
         next_cache = [] if use_cache else None
 
         for i in range(0, x.shape[1], chunk_size):
             x_chunk = x[:, i:i+chunk_size, ...]
             mask_chunk = mask[i:i+chunk_size, i:i+chunk_size]
+
+            # Subconscious: run the 0.5B dynamic head + 314B field once per forward
+            # on the first chunk. Retrieved knowledge is cached and consumed
+            # by each block's modulator.
+            if self.use_subconscious and self.subconscious is not None and i == 0:
+                self.subconscious(x_chunk)
+                for layer in self.layers:
+                    if hasattr(layer, '_set_subconscious_system'):
+                        layer._set_subconscious_system(self.subconscious)
 
             def block_fn(xc, msk, layer_past_key_values=None):
                 h = xc
@@ -1681,7 +1714,22 @@ class YvModel(nn.Module):
                         layer_past_key_values[layer_idx] if layer_past_key_values is not None else None
                     )
 
-                    if past_kv is not None and cache_quant_bits < 16:
+                    if use_mixed_precision_cache and past_kv is not None and cache_quant_bits < 16:
+                        key_states, value_states = past_kv
+                        if key_states is not None:
+                            head_dim = key_states.shape[-1]
+                            partial_rope_dim = min(128, head_dim // 4)
+                            k_rope_part = key_states[..., :partial_rope_dim].to(torch.bfloat16)
+                            k_non_rope = key_states[..., partial_rope_dim:].to(cache_dtype)
+                            key_states = torch.cat([k_rope_part, k_non_rope], dim=-1)
+                        if value_states is not None:
+                            head_dim = value_states.shape[-1]
+                            partial_rope_dim = min(128, head_dim // 4)
+                            v_rope_part = value_states[..., :partial_rope_dim].to(torch.bfloat16)
+                            v_non_rope = value_states[..., partial_rope_dim:].to(cache_dtype)
+                            value_states = torch.cat([v_rope_part, v_non_rope], dim=-1)
+                        past_kv = (key_states, value_states)
+                    elif past_kv is not None and cache_quant_bits < 16:
                         past_kv = tuple(
                             tensor.to(cache_dtype) if tensor is not None else None
                             for tensor in past_kv
@@ -1732,7 +1780,6 @@ class YvModel(nn.Module):
                 if next_cache is not None and cache_chunk is not None:
                     next_cache.extend(cache_chunk)
             else:
-                # Use checkpoint without autocast to avoid CUDA context issues
                 h_chunk, aux_chunk, _ = cp.checkpoint(
                     block_fn,
                     x_chunk,
@@ -1741,8 +1788,17 @@ class YvModel(nn.Module):
                     use_reentrant=False
                 )
 
+            if use_oomb:
+                self._oomb_memory_bank.append(h_chunk.detach())
+                if len(self._oomb_memory_bank) > 8:
+                    self._oomb_memory_bank.pop(0)
+
             outputs.append(h_chunk)
             total_aux_loss = total_aux_loss + aux_chunk
+
+        # Clear subconscious cache after layer processing
+        if self.use_subconscious and self.subconscious is not None:
+            self.subconscious.clear_cache()
 
         # Concatenate all chunks at once after the loop (more efficient than per-chunk)
         if outputs:

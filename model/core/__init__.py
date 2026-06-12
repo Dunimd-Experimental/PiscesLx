@@ -266,6 +266,12 @@ from .mamba3 import (
 
 from .memory_router import YvMemoryRouter, YvMemoryKnowledgeStore
 from .memory_attention import YvMemoryCrossAttention, YvMemoryFusionGate
+from .subconscious import (
+    YvSubconsciousSystem,
+    YvImplicitKnowledgeField,
+    YvDynamicHead,
+    YvSubconsciousModulator,
+)
 from .eg_mla import YvEGMLA
 from .duo_attention import YvDuoAttention
 from .ewc import YvEWC
@@ -399,4 +405,9 @@ __all__ = [
     "YvMemoryKnowledgeStore",
     "YvMemoryCrossAttention",
     "YvMemoryFusionGate",
+
+    "YvSubconsciousSystem",
+    "YvImplicitKnowledgeField",
+    "YvDynamicHead",
+    "YvSubconsciousModulator",
 ]

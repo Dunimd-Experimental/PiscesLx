@@ -267,4 +267,8 @@ __all__ = [
     "MemSepGateScheduler",
     "POPSSMemoryAlignmentLoss",
     "create_memsep_trainer",
+
+    "SubconsciousTrainer",
+    "SubconsciousTrainingConfig",
+    "TrainingPhase",
 ]

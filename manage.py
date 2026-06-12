@@ -296,6 +296,7 @@ COMMANDS = [
     'cache',      # Cache management for .pisceslx directory
     'plxs',       # Start Xi Studio (graphical workstation)
     'publish',    # Package and publish models as Docker images
+    'enta',       # EnTA autonomous training loop
 ]
 
 
@@ -1596,6 +1597,43 @@ def main():
     # -------------------------------------------------------------------------
     # Start the OpenAI-compatible backend inference service
     # Provides REST API endpoints for model inference
+    elif args.command == 'enta':
+        # EnTA: Encre Train Agent ¡ª autonomous LLM-driven training loop
+        # EnTA itself is an Agent (driven by Agens-2.0-Flash) that
+        # autonomously decides what to teach and how.
+        from encre.enta import launch_enta
+        import asyncio
+
+        use_subconscious = (
+            not getattr(args, 'no_subconscious', False)
+            and getattr(args, 'subconscious', True)
+        )
+
+        if getattr(args, 'list_models', False):
+            from encre.enta import list_configured_models
+            models = list_configured_models()
+            if not models:
+                _get_logger().info('No teacher models configured. Set ENTA_* env vars.')
+            else:
+                _get_logger().info('Configured teacher models:')
+                for name, btype in sorted(models.items()):
+                    _get_logger().info(f'  {name}  ({btype})')
+            return
+
+        summary = asyncio.run(launch_enta(
+            teacher=getattr(args, 'teacher', 'deepseek-r1'),
+            agent_model='agens-2.0-flash',
+            aux_teachers=getattr(args, 'aux_teachers', '').split(','),
+            max_tasks=getattr(args, 'max_tasks', 0),
+            tasks_per_stage=getattr(args, 'tasks_per_stage', 5000),
+            subconscious_enabled=use_subconscious,
+            starting_stage=getattr(args, 'enta_stage', 'foundation'),
+            record_interval=getattr(args, 'record_interval', 100),
+            dry_run=getattr(args, 'dry_run', False),
+            model_path=getattr(args, 'model_path', ''),
+        ))
+        _get_logger().info(f'EnTA complete: {summary}')
+
     elif args.command == 'serve':
         # Import the backend server class
         from tools.infer.server import PiscesLxBackendServer

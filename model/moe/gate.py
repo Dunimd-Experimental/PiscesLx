@@ -306,9 +306,26 @@ class YvMoEGate(nn.Module):
             self.current_step += 1
             if self.current_step > self.random_to_gradient_steps:
                 self.use_random_routing = False
-        
+
+        # Anticipatory Routing: use stale gate params (from previous steps) for routing,
+        # but current params for features. Decouples backbone/router updates.
+        # Based on DeepSeek-V4 Pro technical report.
+        use_anticipatory = self.training and hasattr(self, '_stale_gate_weight') and not self._is_checkpointing
+        if use_anticipatory:
+            gate_weight = self._stale_gate_weight
+        else:
+            gate_weight = self.gate.weight
+
         # Compute routing logits
-        logits = self.gate(x_flat)
+        if use_anticipatory:
+            logits = F.linear(x_flat, gate_weight)
+        else:
+            logits = self.gate(x_flat)
+
+        # Update stale weights periodically (every 10 steps)
+        if self.training and not self._is_checkpointing:
+            if not hasattr(self, '_stale_gate_weight') or self.current_step % 10 == 0:
+                self._stale_gate_weight = self.gate.weight.detach().clone()
         
         # Apply DeepSeek-style dynamic bias for auxiliary-loss-free load balancing
         logits = logits + self.expert_bias

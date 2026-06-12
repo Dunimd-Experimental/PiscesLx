@@ -494,10 +494,40 @@ class YvConfig:
     chinchilla_c_budget: float = 0.0
     chinchilla_d_ratio: float = 1.0
 
+    # ========================================
+    # DeepSeek V4 Pro-inspired Optimizations
+    # ========================================
+
+    # Manifold-Constrained Hyper-Connections (mHC)
+    use_mhc: bool = False
+    mhc_n_hc: int = 4
+    mhc_sinkhorn_iters: int = 20
+
+    # Partial RoPE: only apply RoPE to last N dims of Q/K
+    use_partial_rope: bool = True
+    partial_rope_dim: int = 64
+
+    # SwiGLU Clamping: prevents activation explosion
+    swiglu_clamp: bool = True
+
+    # Mixed-precision KV Cache: RoPE dims BF16, rest lower precision
+    use_mixed_precision_cache: bool = True
+
+    # Muon Optimizer enabled flag (for checkpoint compatibility)
+    muon_enabled: bool = False
+
+    # CSA/HCA Hybrid Attention (DeepSeek-V4 inspired)
+    use_csa_attention: bool = False
+    csa_compression_ratio: int = 4
+    csa_top_k: int = 1024
+    csa_sliding_window: int = 128
+    csa_indexer_rank: int = 64
+    hca_compression_ratio: int = 128
+
     use_mla: bool = True
     kv_lora_rank: int = 512
     mla_q_lora_rank: Optional[int] = None
-    
+
     # ========================================
     # Lazy Initialization Configuration
     # ========================================
@@ -763,6 +793,27 @@ class YvConfig:
     memory_capacity_factor: float = 1.0
     memory_index_type: str = "ivfpq"
     memory_knowledge_slots: int = 0
+
+    # ========================================
+    # Subconscious Configuration
+    # 0.5B Dynamic Head + 314B-equivalent Implicit Knowledge Field
+    #
+    # This system provides subconscious knowledge injection that runs
+    # in parallel to the 1M context window. It uses product-quantized
+    # codebooks for massive virtual capacity (K^M combinations) with
+    # only ~0.27B actual params for the field + ~0.23B for the head.
+    # ========================================
+    use_subconscious: bool = False
+    subconscious_knowledge_dim: int = 256
+    subconscious_num_codebooks: int = 16
+    subconscious_codebook_size: int = 131072
+    subconscious_codebook_dim: int = 128
+    subconscious_num_field_heads: int = 8
+    subconscious_head_dim: int = 1024
+    subconscious_head_num_layers: int = 2
+    subconscious_head_num_attn_heads: int = 4
+    subconscious_read_interval: int = 1
+    subconscious_prefetch_depth: int = 2
 
     def __post_init__(self):
         """Initialize computed fields after dataclass construction.

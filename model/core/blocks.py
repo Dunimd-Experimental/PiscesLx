@@ -459,6 +459,8 @@ class YvSwiGLU(nn.Module):
         """
         gate = F.silu(self.gate_proj(x))
         up = self.up_proj(x)
+        gate = torch.clamp(gate, max=10.0)
+        up = torch.clamp(up, min=-10.0, max=10.0)
         return self.down_proj(gate * up)
 
 
@@ -1360,6 +1362,7 @@ class YvTransformerBlock(nn.Module):
         self.use_mixture_of_depths = getattr(cfg, 'mixture_of_depths', False)
         self.use_lora = getattr(cfg, 'use_lora', False)
         self.use_dora = getattr(cfg, 'use_dora', False)
+        self.use_mhc = getattr(cfg, 'use_mhc', False)
         
         if self.use_parallel:
             self._init_parallel_block(cfg, device, dtype)
@@ -1428,6 +1431,27 @@ class YvTransformerBlock(nn.Module):
                 init_value=getattr(cfg, 'layer_scale_init', getattr(cfg, 'layerscale_init', 1e-5)),
                 device=device, dtype=dtype
             )
+
+        # Manifold-Constrained Hyper-Connections (mHC)
+        # Replaces standard residual with expanded stream + Birkhoff polytope constraint
+        # Based on DeepSeek-V4 Pro technical report
+        if self.use_mhc:
+            self.attn_mhc = YvMHC(
+                cfg.hidden_size,
+                n_hc=getattr(cfg, 'mhc_n_hc', 4),
+                sinkhorn_iters=getattr(cfg, 'mhc_sinkhorn_iters', 20),
+                device=device, dtype=dtype
+            )
+            self.mlp_mhc = YvMHC(
+                cfg.hidden_size,
+                n_hc=getattr(cfg, 'mhc_n_hc', 4),
+                sinkhorn_iters=getattr(cfg, 'mhc_sinkhorn_iters', 20),
+                device=device, dtype=dtype
+            )
+
+        # SwiGLU Clamping — prevents activation explosion
+        # Based on DeepSeek-V4: linear clip [-10, 10], gate cap at 10
+        self.swiglu_clamp = getattr(cfg, 'swiglu_clamp', True)
         
         # Hybrid SSM Integration: Mamba-3 for linear complexity on long sequences
         # Auto-enabled when hidden_size >= 2048 (sufficient capacity for SSM)
@@ -1519,6 +1543,23 @@ class YvTransformerBlock(nn.Module):
         else:
             self.memory_attn = None
             self._memory_context = None
+
+        # Subconscious: volatile knowledge injection via 0.5B dynamic head + 314B field
+        # Activated when use_subconscious=True in config. Parallel to 1M context.
+        # The subconscious system is a singleton owned by YvModel; each block
+        # gets a reference via _set_subconscious_system() before each forward.
+        self.use_subconscious = getattr(cfg, 'use_subconscious', False)
+        self._subconscious_system = None
+
+    def _set_subconscious_system(self, system: Optional[object]) -> None:
+        """Set reference to the subconscious system for this forward pass.
+
+        Called by YvModel.forward before layer processing begins.
+
+        Args:
+            system: The YvSubconsciousSystem instance, or None to disable.
+        """
+        self._subconscious_system = system
 
     def _set_memory_context(self, ctx: Optional[dict]) -> None:
         """Set memory context from YvModel forward for knowledge injection.
@@ -1882,7 +1923,8 @@ class YvTransformerBlock(nn.Module):
                 mask,
                 past_key_values=past_for_attn,
                 use_cache=True,
-                cache_manager=self.cache_manager
+                cache_manager=self.cache_manager,
+                layer_idx=self.layer_idx
             )
             attn_cache = present_kv
         else:
@@ -1891,37 +1933,48 @@ class YvTransformerBlock(nn.Module):
                 mask,
                 past_key_values=past_for_attn,
                 use_cache=False,
-                cache_manager=self.cache_manager
+                cache_manager=self.cache_manager,
+                layer_idx=self.layer_idx
             )
 
         if self.use_layerscale:
             attn_out = self.attn_layerscale(attn_out)
-        
+
+        # Subconscious: modulate attention output before residual
+        if self.use_subconscious and self._subconscious_system is not None:
+            mlp_dummy = torch.zeros_like(attn_out)
+            attn_out, _ = self._subconscious_system.modulate_layer(
+                self.layer_idx, attn_out, mlp_dummy
+            )
+
         if self.use_attn_res:
             self._accumulate_partial_block(attn_out)
-        
+
         if torch.cuda.device_count() > 1 and self.training:
             try:
                 import torch.distributed as dist
                 if dist.is_initialized():
                     world_size = dist.get_world_size()
-                    
+
                     compressed = attn_out.mean(dim=1)
-                    
+
                     if not hasattr(self, '_gather_buffer') or self._gather_buffer is None or self._gather_buffer[0].shape != compressed.shape:
                         self._gather_buffer = [torch.zeros_like(compressed) for _ in range(world_size)]
-                    
+
                     gathered = self._gather_buffer
                     for g in gathered:
                         g.zero_()
                     dist.all_gather(gathered, compressed)
-                    
+
                     other_info = torch.stack(gathered).mean(dim=0)
                     attn_out = attn_out + 0.05 * other_info.unsqueeze(1)
             except Exception as e:
                 _LOG.debug(f"YvTransformerBlock: distributed attention gathering skipped: {e}")
-            
-        x_out = residual + self.residual_dropout(self.residual_scale * attn_out)
+
+        if self.use_mhc:
+            x_out = self.attn_mhc(residual + self.residual_dropout(self.residual_scale * attn_out))
+        else:
+            x_out = residual + self.residual_dropout(self.residual_scale * attn_out)
         x_out = self.norm1(x_out)
         
         if hasattr(self, 'ssm_layer') and self.ssm_layer is not None:
@@ -1949,11 +2002,21 @@ class YvTransformerBlock(nn.Module):
         
         if self.use_layerscale:
             mlp_out = self.mlp_layerscale(mlp_out)
-        
+
+        # Subconscious: modulate MLP output before residual
+        if self.use_subconscious and self._subconscious_system is not None:
+            attn_dummy = torch.zeros_like(mlp_out)
+            _, mlp_out = self._subconscious_system.modulate_layer(
+                self.layer_idx, attn_dummy, mlp_out
+            )
+
         if self.use_attn_res:
             self._accumulate_partial_block(mlp_out)
-            
-        x_out = residual + self.residual_dropout(self.residual_scale * mlp_out)
+
+        if self.use_mhc:
+            x_out = self.mlp_mhc(residual + self.residual_dropout(self.residual_scale * mlp_out))
+        else:
+            x_out = residual + self.residual_dropout(self.residual_scale * mlp_out)
         x_out = self.norm2(x_out)
 
         if self.use_mixture_of_depths:
@@ -2183,218 +2246,137 @@ class YvTransformerBlock(nn.Module):
         self._partial_block_count += 1
 
 
-class YvManifoldConstraint(nn.Module):
-    """Manifold constraint for hyper-connection stability.
-    
-    Implements orthogonal projection onto a constrained manifold
-    to ensure stable and well-conditioned hyper-connections.
+class YvSinkhornKnopp(nn.Module):
+    """Birkhoff polytope projection via Sinkhorn-Knopp iteration.
+
+    Projects a matrix onto the doubly stochastic manifold (Birkhoff polytope),
+    where all rows and columns sum to 1. This ensures spectral norm ≤ 1 and
+    non-expansive transforms, stabilizing deep residual architectures.
+
+    Based on DeepSeek-V4 mHC: uses 20 Sinkhorn-Knopp iterations with
+    fused kernel optimization for minimal overhead.
+
+    Args:
+        n_iter: Number of Sinkhorn-Knopp iterations. Default: 20.
+        eps: Numerical stability epsilon. Default: 1e-6.
     """
-    
+
+    def __init__(self, n_iter: int = 20, eps: float = 1e-6):
+        super().__init__()
+        self.n_iter = n_iter
+        self.eps = eps
+
+    def forward(self, X: torch.Tensor) -> torch.Tensor:
+        """Project X onto the Birkhoff polytope.
+
+        Args:
+            X: Input matrix of shape (..., n, n).
+
+        Returns:
+            Doubly stochastic matrix of shape (..., n, n).
+        """
+        X = X - X.logsumexp(dim=-1, keepdim=True)
+        for _ in range(self.n_iter):
+            X = X - X.logsumexp(dim=-2, keepdim=True)
+            X = X - X.logsumexp(dim=-1, keepdim=True)
+        return X.exp()
+
+
+class YvMHC(nn.Module):
+    """Manifold-Constrained Hyper-Connections (mHC).
+
+    Replaces standard residual connections by expanding the residual stream
+    from d → n_hc×d and constraining the mixing matrix B to the Birkhoff
+    polytope via Sinkhorn-Knopp iteration. Spectral norm ≤ 1, non-expansive.
+
+    Based on DeepSeek-V4 Pro technical report (2026).
+
+    Args:
+        hidden_size: Model hidden dimension.
+        n_hc: Expansion factor for residual stream. Default: 4.
+        sinkhorn_iters: Sinkhorn-Knopp iterations. Default: 20.
+        device: Torch device.
+        dtype: Torch dtype.
+    """
+
     def __init__(
         self,
         hidden_size: int,
-        num_layers: int = 4,
-        constraint_type: str = "soft_orthogonal",
+        n_hc: int = 4,
+        sinkhorn_iters: int = 20,
         device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None
+        dtype: Optional[torch.dtype] = None,
     ):
-        """Initialize manifold constraint.
-        
-        Args:
-            hidden_size: Hidden dimension.
-            num_layers: Number of layers to connect.
-            constraint_type: Type of constraint:
-                - "soft_orthogonal": Soft orthogonal constraint
-                - "hard_orthogonal": Hard orthogonalization via SVD
-                - "norm_bound": Norm bounding constraint
-                - "spectral": Spectral norm constraint
-            device: Device for parameters.
-            dtype: Data type for parameters.
-        """
         super().__init__()
         self.hidden_size = hidden_size
-        self.num_layers = num_layers
-        self.constraint_type = constraint_type
-        
-        if constraint_type == "soft_orthogonal":
-            self.register_buffer("_eye", torch.eye(num_layers, device=device, dtype=dtype))
-        
-        elif constraint_type == "spectral":
-            self.spectral_norm = nn.Parameter(torch.ones(1, device=device, dtype=dtype))
-        
-    def forward(self, weights: torch.Tensor) -> torch.Tensor:
-        """Apply manifold constraint to hyper-connection weights.
-        
+        self.n_hc = n_hc
+
+        # Learnable residual mixing matrix B — expanded to n_hc × d
+        # B is constrained to Birkhoff polytope via Sinkhorn-Knopp
+        self.B = nn.Parameter(torch.randn(n_hc, n_hc, device=device, dtype=dtype) * 0.01)
+
+        # Input/output projections for expanded residual stream
+        self.input_proj = nn.Linear(hidden_size, hidden_size * n_hc, bias=False, device=device, dtype=dtype)
+        self.output_proj = nn.Linear(hidden_size * n_hc, hidden_size, bias=False, device=device, dtype=dtype)
+
+        self.sinkhorn = YvSinkhornKnopp(n_iter=sinkhorn_iters)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Apply mHC residual connection.
+
         Args:
-            weights: Hyper-connection weights [B, num_layers, H, H].
-            
+            x: Input tensor of shape (..., hidden_size).
+
         Returns:
-            Constrained weights.
+            Output tensor with mHC residual, shape (..., hidden_size).
         """
-        if self.constraint_type == "soft_orthogonal":
-            return self._soft_orthogonal_constraint(weights)
-        elif self.constraint_type == "hard_orthogonal":
-            return self._hard_orthogonal_constraint(weights)
-        elif self.constraint_type == "norm_bound":
-            return self._norm_bound_constraint(weights)
-        elif self.constraint_type == "spectral":
-            return self._spectral_constraint(weights)
-        return weights
-    
-    def _soft_orthogonal_constraint(self, weights: torch.Tensor) -> torch.Tensor:
-        """Soft orthogonal constraint via regularization."""
-        W = weights.mean(dim=0)
-        WtW = W @ W.transpose(-1, -2)
-        
-        ortho_loss = F.mse_loss(WtW, self._eye.expand_as(WtW))
-        
-        if self.training:
-            if not hasattr(self, "_ortho_loss_acc"):
-                self._ortho_loss_acc = 0.0
-            self._ortho_loss_acc = ortho_loss.item()
-        
-        return weights
-    
-    def _hard_orthogonal_constraint(self, weights: torch.Tensor) -> torch.Tensor:
-        """Hard orthogonalization via SVD."""
-        batch_size = weights.shape[0]
-        constrained = []
-        
-        for b in range(batch_size):
-            W = weights[b]
-            U, S, Vh = torch.linalg.svd(W)
-            V = Vh.transpose(-1, -2).conj()
-            W_ortho = U @ V
-            constrained.append(W_ortho)
-        
-        return torch.stack(constrained)
-    
-    def _norm_bound_constraint(self, weights: torch.Tensor) -> torch.Tensor:
-        """Norm bounding constraint."""
-        norms = torch.linalg.vector_norm(weights, dim=(-1, -2), keepdim=True)
-        max_norm = 1.0 / math.sqrt(weights.shape[-1])
-        scales = torch.clamp(norms / max_norm, min=1.0)
-        return weights / scales
-    
-    def _spectral_constraint(self, weights: torch.Tensor) -> torch.Tensor:
-        """Spectral norm constraint."""
-        spectral_norm = torch.linalg.svdvals(weights).max(dim=-1, keepdim=True)[0]
-        spectral_norm = spectral_norm.unsqueeze(-1).unsqueeze(-1)
-        
-        scale = self.spectral_norm / (spectral_norm + 1e-6)
-        scale = torch.clamp(scale, max=1.0)
-        
-        return weights * scale
-    
-    def get_constraint_loss(self) -> torch.Tensor:
-        """Get the constraint loss for training."""
-        if hasattr(self, "_ortho_loss_acc"):
-            loss = self._ortho_loss_acc
-            self._ortho_loss_acc = 0.0
-            return torch.tensor(loss, device=self._eye.device if hasattr(self, "_eye") else "cpu")
-        return torch.tensor(0.0, device=self._eye.device if hasattr(self, "_eye") else "cpu")
+        *dims, H = x.shape
+
+        # Expand residual stream
+        x_expanded = self.input_proj(x)  # (..., n_hc * H)
+        x_expanded = x_expanded.view(*dims, self.n_hc, H)  # (..., n_hc, H)
+
+        # Constrain B to Birkhoff polytope
+        B_constrained = self.sinkhorn(self.B)  # (n_hc, n_hc)
+
+        # Apply mixing: aggregated = B_constrained @ x_expanded along n_hc dim
+        x_mixed = torch.einsum('ij,...jh->...ih', B_constrained, x_expanded)  # (..., n_hc, H)
+
+        # Collapse back to hidden_size
+        x_mixed = x_mixed.reshape(*dims, self.n_hc * H)
+        output = self.output_proj(x_mixed)  # (..., H)
+
+        return output
 
 
 class YvHyperConnection(nn.Module):
     """Hyper-Connection layer with manifold constraints.
-    
-    Standard hyper-connection: y = Σᵢαᵢxᵢ where αᵢ are learnable weights.
-    mHC adds manifold constraints to ensure stable training.
+
+    Uses mHC (Manifold-Constrained Hyper-Connections) from DeepSeek-V4:
+    expands residual stream from d → n_hc×d, constrains mixing matrix
+    B to the Birkhoff polytope via Sinkhorn-Knopp iteration.
     """
-    
+
     def __init__(
         self,
         hidden_size: int,
-        num_layers: int = 4,
-        use_manifold_constraint: bool = True,
-        constraint_type: str = "soft_orthogonal",
+        n_hc: int = 4,
+        sinkhorn_iters: int = 20,
         drop_path_rate: float = 0.0,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ):
-        """Initialize hyper-connection.
-        
-        Args:
-            hidden_size: Hidden dimension.
-            num_layers: Number of layers to connect.
-            use_manifold_constraint: Whether to use manifold constraint.
-            constraint_type: Type of constraint.
-            drop_path_rate: Stochastic depth rate.
-            device: Device for parameters.
-            dtype: Data type for parameters.
-        """
         super().__init__()
-        self.hidden_size = hidden_size
-        self.num_layers = num_layers
+        self.mhc = YvMHC(hidden_size, n_hc, sinkhorn_iters, device, dtype)
         self.drop_path_rate = drop_path_rate
-        
-        self.use_manifold_constraint = use_manifold_constraint
-        if use_manifold_constraint:
-            self.manifold_constraint = YvManifoldConstraint(
-                hidden_size, num_layers, constraint_type, device=device, dtype=dtype
-            )
-        
-        self.weight_generator = nn.Sequential(
-            nn.Linear(hidden_size, hidden_size // 2, bias=False, device=device, dtype=dtype),
-            nn.GELU(),
-            nn.Linear(hidden_size // 2, num_layers, bias=False, device=device, dtype=dtype),
-        )
-        
-        self.gate = nn.Sigmoid()
-        self.layer_norm = nn.LayerNorm(hidden_size, device=device, dtype=dtype)
-        
-        self._init_weights()
-    
-    def _init_weights(self):
-        """Initialize weights."""
-        for module in self.weight_generator:
-            if isinstance(module, nn.Linear):
-                nn.init.xavier_uniform_(module.weight)
-    
-    def forward(
-        self,
-        layer_outputs: List[torch.Tensor],
-        current_input: torch.Tensor = None
-    ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Forward pass.
-        
-        Args:
-            layer_outputs: List of layer outputs [x₀, x₁, ..., xₙ].
-            current_input: Current layer input (optional).
-            
-        Returns:
-            Tuple of (hyper-connected output, gate weights).
-        """
-        if current_input is None:
-            current_input = layer_outputs[-1]
-        
-        input_features = current_input.mean(dim=1)
-        
-        raw_weights = self.weight_generator(input_features)
-        raw_weights = raw_weights.view(-1, self.num_layers)
-        
-        if self.use_manifold_constraint:
-            hyper_weights = self.manifold_constraint(raw_weights)
-        else:
-            hyper_weights = raw_weights
-        
-        gate_weights = self.gate(hyper_weights)
-        gate_weights = F.softmax(gate_weights, dim=-1)
-        
-        hyper_output = torch.zeros_like(layer_outputs[0])
-        for i, layer_out in enumerate(layer_outputs):
-            weight = gate_weights[:, i:i+1].unsqueeze(-1).unsqueeze(-1)
-            hyper_output = hyper_output + weight * layer_out
-        
-        output = self.layer_norm(hyper_output)
-        
-        return output, gate_weights
-    
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.training and self.drop_path_rate > 0 and torch.rand(1).item() < self.drop_path_rate:
+            return x
+        return self.mhc(x)
+
     def get_constraint_loss(self) -> torch.Tensor:
-        """Get constraint loss if applicable."""
-        if self.use_manifold_constraint:
-            return self.manifold_constraint.get_constraint_loss()
-        return torch.tensor(0.0, device="cpu")
+        return torch.tensor(0.0, device=self.mhc.B.device)
 
 
 class YvMHCBlock(nn.Module):
