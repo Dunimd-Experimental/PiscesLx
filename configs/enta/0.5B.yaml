@@ -1,0 +1,133 @@
+# ========================================
+# EnTA Training Pipeline (0.5B Edition)
+# ========================================
+# All EnTA runtime configuration (teachers, judge, rollouts, reward
+# weights, SFT/GRPO integration) is driven by this YAML file.
+#
+#   • Teachers and judge are *user-supplied*; this file provides the
+#     default paths where the EnCRE roundtable loader looks for the
+#     actual teacher/judge specifications (see ``data/enta/``).
+#   • Any field can be overridden from the command line or from an
+#     external EnTA config file.
+#
+# The ``backend`` and ``rollout`` sections control the *student*
+# rollout; the ``teachers`` / ``judge`` sections describe the *default*
+# teacher panel / judge that ``manage.py`` loads when no user-supplied
+# panel is provided.  Users are expected to edit these or to pass a
+# custom panel file via ``--enta-teacher-panel`` (or equivalent).
+# ========================================
+
+# ========================================
+# Student Model Rollout Backend
+# ========================================
+# The backend used to run the student model during the EnTA rollout
+# loop (not the teachers).
+#
+# "local"      uses HuggingFace transformers on the local device.
+# "vllm"       talks to a vLLM server.
+# "sglang"     talks to an SGLang server.
+# "llamacpp"   talks to a llama.cpp server.
+# "openai_compatible"  talks to any provider that speaks
+#                  /v1/chat/completions (OpenAI, vLLM, SGLang,
+#                  llama.cpp, or any cloud gateway).
+# ========================================
+backend: local
+model_name: Qwen/Qwen2.5-0.5B-Instruct
+device: cpu
+base_url: http://127.0.0.1:8000/v1
+api_key: EMPTY
+server_model: Qwen/Qwen2.5-0.5B-Instruct
+
+# ========================================
+# Teacher Panel Default (overridable)
+# ========================================
+# These are the *default* teacher entries that ``manage.py`` loads
+# when no user-supplied panel file is provided.
+#
+# The user is free to:
+#   • Add / remove / reorder entries here.
+#   • Point at a separate JSON/YAML panel file (see ``panel_file``).
+#   • Use any provider (OpenAI, Anthropic, self-hosted vLLM, etc.)
+#     as long as it speaks /v1/chat/completions.
+#
+# Each teacher has:
+#   - name:   unique identifier for this teacher.
+#   - role:   one of ``general``, ``reason``, ``tool``, ``code``,
+#             ``video``, ``image``, ``agent``, or any custom name.
+#   - weight: relative weight in the roundtable (higher = more
+#             influence on the judge's selection).
+#   - base_url: the /v1 endpoint (or empty for the default student backend).
+#   - model: the model name/identifier (provider-specific).
+#   - api_key: API key (or EMPTY for local / unauthenticated endpoints).
+# ========================================
+panel_file: ""
+teachers:
+  - name: reasoner
+    role: reason
+    weight: 1.0
+    base_url: ""
+    model: ""
+    api_key: ""
+
+# ========================================
+# Judge (overridable)
+# ========================================
+# The judge model scores and ranks teacher outputs in a roundtable.
+# If no judge is configured, the *first teacher in the panel* is
+# used as judge.  The user can add any number of judge configs here
+# or point at an external judge panel file.
+# ========================================
+judge: null
+
+# ========================================
+# Rollout Loop Parameters
+# ========================================
+# These control the per-sample student rollout.
+# ========================================
+max_steps: 16
+temperature: 0.6
+max_tokens: 1024
+max_violations: 6
+
+# ========================================
+# Reward Weights
+# ========================================
+# These weights control the reward signal computed by the EnCRE
+# reward calculator.  The final reward is normalised to [0, 1].
+# Weights must sum to 1.0; the calculator enforces this invariant.
+# ========================================
+completion_weight: 0.7
+tool_weight: 0.15
+safety_weight: 0.1
+execution_weight: 0.05
+
+# ========================================
+# SFT Integration (consumed by opss.train.sft)
+# ========================================
+sft:
+  use_encre_data_pipeline: true
+  encre_use_roundtable: false
+  encre_prompts_path: data/prompts/seed_prompts_0.5B.txt
+  encre_data_cache_path: .pisceslx/cache/encre_sft_dataset_0.5B.jsonl
+  encre_max_samples: 1024
+  encre_system_prompt: "You are a concise, expert assistant.  Answer directly."
+
+# ========================================
+# GRPO / Agentic-RL Integration (consumed by opss.train.grpo)
+# ========================================
+grpo:
+  use_encre_rollout: true
+  encre_use_roundtable: false
+  encre_system_prompt: "You are an agent.  Use the available tools to solve the task.  Stop when done."
+  group_size: 4
+  temperature: 1.0
+  clip_ratio: 0.2
+  entropy_coef: 0.01
+  kl_coef: 0.1
+  max_new_tokens: 512
+  ppo_epochs: 2
+  agent_rollout_steps: 4
+  max_tool_calls: 10
+  tool_call_reward: 0.1
+  task_completion_reward: 1.0
+  efficiency_penalty: -0.01

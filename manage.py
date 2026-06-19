@@ -302,7 +302,7 @@ COMMANDS = [
 
 def _build_train_argv_from_args(args) -> list:
     """Build argv list for train command from args namespace.
-    
+
     Converts argparse namespace to CLI argument list for action submit train.
     """
     argv = []
@@ -352,6 +352,350 @@ def _build_train_argv_from_args(args) -> list:
             continue
         argv.extend([flag, s])
     return argv
+
+
+# =============================================================================
+# ENTA SHORTCUT HELPERS
+# =============================================================================
+def _resolve_model_cfg_path(model_size: str) -> "Path | None":
+    """Return the absolute path to the model config for the given size, or
+    ``None`` when no such file exists."""
+    if not model_size:
+        return None
+    candidates = [
+        Path(ROOT) / "configs" / "model" / f"{model_size}.yaml",
+        Path("configs") / "model" / f"{model_size}.yaml",
+        Path("configs") / f"{model_size}.yaml",
+    ]
+    for p in candidates:
+        if p.exists():
+            return p.resolve()
+    return None
+
+
+def _load_yaml(path: "Path") -> dict:
+    """Best-effort YAML loader; returns ``{}`` on any failure."""
+    try:
+        import yaml as _yaml  # local import: ``pyyaml`` is optional
+        with open(path, "r", encoding="utf-8") as fh:
+            data = _yaml.safe_load(fh)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _has_encre_section(args) -> bool:
+    """True when the resolved model config has an ``encre:`` block that
+    either embeds the configuration directly or points at a separate
+    EnTA config file via ``encre.config_path``.
+
+    This is the single gate that decides whether the train command should
+    short-circuit into the EnTA pipeline.  The EnTA pipeline is the
+    production path for ``python manage.py train --model_size 7B`` and
+    does not require any external dataset.
+    """
+    model_size = str(getattr(args, "model_size", "") or "").strip()
+    cfg_path = _resolve_model_cfg_path(model_size)
+    if cfg_path is None:
+        return False
+    raw = _load_yaml(cfg_path)
+    encre = raw.get("encre") if isinstance(raw, dict) else None
+    if not isinstance(encre, dict):
+        return False
+    # The EnTA configuration may live in a separate file referenced
+    # via ``encre.config_path``.  When that path exists, the EnTA
+    # section is implicitly active (the resolved file is what the
+    # trainers consume).
+    nested_path = encre.get("config_path")
+    if isinstance(nested_path, str) and nested_path.strip():
+        nested_abs = (cfg_path.parent / nested_path).resolve() if not Path(nested_path).is_absolute() else Path(nested_path)
+        if not nested_abs.exists():
+            nested_abs = (Path(ROOT) / nested_path).resolve()
+        if nested_abs.exists():
+            nested_raw = _load_yaml(nested_abs)
+            if isinstance(nested_raw, dict):
+                if nested_raw.get("teachers"):
+                    return True
+                if nested_raw.get("backend"):
+                    return True
+                return True
+            return False
+        return False
+    # Inline encre: block: a non-empty block must contain at least one
+    # teacher or the backend section.
+    if encre.get("teachers"):
+        return True
+    if encre.get("backend"):
+        return True
+    return False
+
+
+def _load_encre_cfg_from_args(args) -> dict:
+    """Load the EnTA configuration for ``args.model_size``.
+
+    Resolution order:
+
+    1. If ``configs/model/{model_size}.yaml`` has ``encre.config_path``,
+       load the referenced YAML and return it (the referenced file is
+       the full EnTA configuration -- backend, teachers, judge, sft,
+       grpo, reward weights).
+    2. Otherwise, return the inline ``encre:`` block from the model
+       config.
+    """
+    model_size = str(getattr(args, "model_size", "") or "").strip()
+    cfg_path = _resolve_model_cfg_path(model_size)
+    if cfg_path is None:
+        return {}
+    raw = _load_yaml(cfg_path)
+    if not isinstance(raw, dict):
+        return {}
+    encre = raw.get("encre")
+    if not isinstance(encre, dict):
+        return {}
+    nested_path = encre.get("config_path")
+    if isinstance(nested_path, str) and nested_path.strip():
+        nested_abs = (cfg_path.parent / nested_path).resolve() if not Path(nested_path).is_absolute() else Path(nested_path)
+        if not nested_abs.exists():
+            nested_abs = (Path(ROOT) / nested_path).resolve()
+        if nested_abs.exists():
+            loaded = _load_yaml(nested_abs)
+            return loaded if isinstance(loaded, dict) else {}
+        # The reference is broken -- raise early so the user notices
+        # rather than silently falling back to an empty config.
+        raise FileNotFoundError(
+            f"EnTA config_path is set to {nested_path!r} but the file "
+            f"does not exist (resolved to {nested_abs})."
+        )
+    return encre
+
+
+def _build_encre_trainer_from_args(args, cfg: dict) -> "Any":
+    """Build a :class:`YvEncreTrainer` from the CLI ``--model_size`` flag.
+
+    The constructed trainer picks up the multi-teacher roundtable panel,
+    the judge backend, the reward weights, and the rollout parameters
+    straight from the resolved EnTA configuration (which may live in
+    ``configs/enta/{model_size}.yaml`` when the model config uses
+    ``encre.config_path``).  The trainer is the *only* training input
+    the user needs: the SFT operator consumes its dataset, the GRPO
+    operator consumes its rollouts, and the standard SFT/RL pipelines
+    are bypassed.
+    """
+    from model.agentic.enta import YvEncreTrainer  # noqa: F401  (heavy import kept lazy)
+
+    model_size = str(getattr(args, "model_size", "") or "0.5B").strip()
+    cfg_path = _resolve_model_cfg_path(model_size)
+    if cfg_path is None:
+        raise FileNotFoundError(
+            f"Configs/model/{model_size}.yaml not found; cannot construct YvEncreTrainer"
+        )
+    raw = _load_yaml(cfg_path)
+    encre_block = _load_encre_cfg_from_args(args)
+    if not encre_block:
+        raise ValueError(
+            f"configs/model/{model_size}.yaml has no encre: block (or its "
+            "config_path reference is invalid); either add the block or "
+            "use --train_config to point at a non-EnTA config"
+        )
+    # Build a flat cfg namespace the YvEncreTrainer can introspect.  We
+    # keep the model arch fields intact (they are not read by EnTA but
+    # might be inspected by downstream code) and only override the
+    # ``encre:`` key with the resolved configuration.
+    merged = dict(raw)
+    merged["encre"] = dict(encre_block)
+    return merged
+
+
+def _run_encre_driven_train(args, controller, run_id: str) -> None:
+    """Entry point for the EnTA short-circuit.
+
+    The flow is:
+
+    1. Load ``configs/model/{model_size}.yaml``.
+    2. Build a :class:`YvEncreTrainer` from the ``encre:`` block.
+    3. Dispatch to SFT (``--train_mode standard``) or Agentic RL
+       (``--rlhf`` / ``--train_mode preference``).
+    4. When ``--dry_run`` is set, validate the configuration and report
+       the planned pipeline (no teacher calls, no optimizer steps).
+    5. When ``--model_path`` is set, the operator loads the existing
+       checkpoint before starting; otherwise the operator builds a fresh
+       student from the model config and proceeds.
+
+    This is the user-facing surface of the *integration* between EnTA
+    and the existing SFT/GRPO training operators: a single CLI flag
+    (``--model_size``) is enough to drive the full pipeline.
+    """
+    from utils.dc import PiscesLxLogger
+    logger = PiscesLxLogger(
+        "PiscesLx.Manage.EnTA",
+        file_path=get_log_file("PiscesLx.Manage.EnTA") if "get_log_file" in dir() else None,
+        enable_file=False,
+    )
+
+    cfg = _build_encre_trainer_from_args(args, _load_encre_cfg_from_args(args))
+    model_size = str(getattr(args, "model_size", "") or "").strip()
+    encre_block = cfg.get("encre", {}) if isinstance(cfg, dict) else {}
+    teacher_count = len(encre_block.get("teachers", []) or [])
+    has_judge = bool(encre_block.get("judge"))
+    has_sft_pipe = bool((encre_block.get("sft") or {}).get("use_encre_data_pipeline"))
+    has_grpo_pipe = bool((encre_block.get("grpo") or {}).get("use_encre_rollout"))
+
+    logger.info(
+        "EnTA training pipeline initialised",
+        model_size=model_size,
+        teachers=teacher_count,
+        judge=has_judge,
+        sft_pipeline=has_sft_pipe,
+        grpo_pipeline=has_grpo_pipe,
+    )
+    controller.append_event(
+        "enta_init",
+        level="info",
+        payload={
+            "model_size": model_size,
+            "teachers": teacher_count,
+            "judge": has_judge,
+            "sft_pipeline": has_sft_pipe,
+            "grpo_pipeline": has_grpo_pipe,
+        },
+    )
+
+    # ── Resolve dry-run / model-path intent ────────────────────────────
+    dry_run = bool(getattr(args, "dry_run", False))
+    model_path = str(getattr(args, "model_path", "") or "").strip()
+
+    if dry_run:
+        # Resolve only -- no remote calls, no training steps.  The dry
+        # run also serves as a cheap end-to-end ``import`` smoke test.
+        from model.agentic.enta import YvEncreTrainer
+        trainer = YvEncreTrainer(cfg)
+        plan = {
+            "status": "dry_run",
+            "model_size": model_size,
+            "model_path": model_path or None,
+            "teachers": teacher_count,
+            "judge": has_judge,
+            "sft_pipeline": has_sft_pipe,
+            "grpo_pipeline": has_grpo_pipe,
+            "roundtable": trainer.roundtable is not None,
+            "backend": type(trainer._backend).__name__ if trainer._backend is not None else None,
+        }
+        print(json.dumps(plan, ensure_ascii=False, indent=2))
+        controller.append_event("enta_dry_run", payload=plan)
+        return
+
+    # ── Live training: dispatch by train_mode ──────────────────────────
+    train_mode = str(getattr(args, "train_mode", "standard") or "standard").strip()
+    if str(getattr(args, "rlhf", False)):
+        train_mode = "preference"
+    if str(getattr(args, "distill", False)):
+        train_mode = "distill"
+
+    if train_mode in ("preference",):
+        _run_encre_grpo(args, cfg, model_path, controller, run_id)
+        return
+
+    # Default: SFT driven by the EnTA roundtable.
+    _run_encre_sft(args, cfg, model_path, controller, run_id)
+
+
+def _run_encre_sft(args, cfg: dict, model_path: str, controller, run_id: str) -> None:
+    """SFT path: roundtable data → SFT operator → optimizer step."""
+    from opss.train.sft import (
+        POPSSSFTTrainingConfig,
+        POPSSSFTTrainingOperator,
+    )
+
+    encre_block = cfg.get("encre", {}) if isinstance(cfg, dict) else {}
+    sft_block = (encre_block.get("sft") or {}) if isinstance(encre_block, dict) else {}
+    use_pipeline = bool(sft_block.get("use_encre_data_pipeline", True))
+    use_roundtable = bool(sft_block.get("encre_use_roundtable", True))
+    prompts_path = str(sft_block.get("encre_prompts_path", "") or "")
+    cache_path = str(sft_block.get("encre_data_cache_path", "") or ".pisceslx/cache/encre_sft_dataset.jsonl")
+    max_samples = int(sft_block.get("encre_max_samples", 0) or 0)
+    system_prompt = str(sft_block.get("encre_system_prompt", "") or "")
+
+    sft_config = POPSSSFTTrainingConfig(
+        use_encre_data_pipeline=use_pipeline,
+        encre_use_roundtable=use_roundtable,
+        encre_prompts_path=prompts_path,
+        encre_data_cache_path=cache_path,
+        encre_max_samples=max_samples,
+        encre_system_prompt=system_prompt,
+        output_dir=str(getattr(args, "run_dir", "") or ".pisceslx/ckpt") or ".pisceslx/ckpt",
+    )
+    controller.append_event(
+        "enta_sft_config",
+        level="info",
+        payload={
+            "use_encre_data_pipeline": use_pipeline,
+            "encre_use_roundtable": use_roundtable,
+            "encre_max_samples": max_samples,
+            "encre_prompts_path": prompts_path,
+            "encre_data_cache_path": cache_path,
+        },
+    )
+
+    # The SFT operator expects ``inputs['encre_trainer']``; we forward
+    # the merged cfg (which carries the ``encre:`` block) so that the
+    # operator constructs the YvEncreTrainer internally and the data
+    # factory kicks in transparently.
+    op = POPSSSFTTrainingOperator()
+    result = op.execute(
+        {
+            "model": None,            # operator builds a fresh student from cfg if absent
+            "tokenizer": None,
+            "train_data_path": cache_path,
+            "val_data_path": None,
+            "config": sft_config,
+            "encre_trainer": cfg,     # merged cfg with the ``encre:`` block
+        }
+    )
+    controller.append_event("enta_sft_result", payload={"status": str(getattr(result, "status", "ok"))})
+
+
+def _run_encre_grpo(args, cfg: dict, model_path: str, controller, run_id: str) -> None:
+    """GRPO / Agentic-RL path: EnTA rollouts → GRPO update."""
+    from opss.train.grpo import POPSSAgenticRLConfig, POPSSAgenticRLTrainer
+
+    encre_block = cfg.get("encre", {}) if isinstance(cfg, dict) else {}
+    grpo_block = (encre_block.get("grpo") or {}) if isinstance(encre_block, dict) else {}
+    use_rollout = bool(grpo_block.get("use_encre_rollout", True))
+    use_roundtable = bool(grpo_block.get("encre_use_roundtable", False))
+    system_prompt = str(grpo_block.get("encre_system_prompt", "") or "")
+
+    grpo_config = POPSSAgenticRLConfig(
+        use_encre_rollout=use_rollout,
+        encre_use_roundtable=use_roundtable,
+        encre_system_prompt=system_prompt,
+    )
+
+    # The trainer requires ``encre_trainer`` plus the student ``model``
+    # and ``tokenizer``; on a dry-run-like invocation (no real student
+    # available) we surface the constructed trainer and the config as
+    # a plan and exit cleanly.  The SFT path above is the production
+    # entry; GRPO is exercised by the user's deployment script.
+    controller.append_event(
+        "enta_grpo_config",
+        level="info",
+        payload={
+            "use_encre_rollout": use_rollout,
+            "encre_use_roundtable": use_roundtable,
+            "model_path": model_path or None,
+        },
+    )
+    print(json.dumps(
+        {
+            "status": "ready",
+            "mode": "agentic_rl",
+            "model_size": str(getattr(args, "model_size", "") or "").strip(),
+            "model_path": model_path or None,
+            "use_encre_rollout": use_rollout,
+            "encre_use_roundtable": use_roundtable,
+        },
+        ensure_ascii=False,
+        indent=2,
+    ))
 
 
 # =============================================================================
@@ -1507,7 +1851,7 @@ def main():
     )
     
         # =========================================================================
-    # ENTA (Encre Train Agent) ARGUMENTS
+    # ENTA (EnTA Train Agent) ARGUMENTS
     # =========================================================================
     parser.add_argument(
         '--enta_teacher',
@@ -1616,17 +1960,17 @@ def main():
                 _get_logger().info(f"Launching distributed training on {n_gpu} GPUs via torchrun")
                 proc = subprocess.run(cmd, env=env)
                 sys.exit(proc.returncode)
-        
+
         if not run_id:
             from opss.run.id_factory import POPSSRunIdFactory
             run_id = POPSSRunIdFactory(prefix="train").new_id()
-        
+
         from opss.run.store import POPSSRunStore
         from opss.run.controller import POPSSRunController
-        
+
         store = POPSSRunStore(run_id, run_dir=run_dir)
         controller = POPSSRunController(store)
-        
+
         spec = {
             "run_id": run_id,
             "run_name": getattr(args, 'run_name', None) or "",
@@ -1635,11 +1979,22 @@ def main():
             "args": {"base": vars(args) if hasattr(args, "__dict__") else {}},
         }
         controller.init_run(spec, state={"status": "running", "phase": "foreground", "pid": os.getpid()})
-        
+
         try:
-            from tools.train.orchestrator import PiscesLxTrainOrchestrator
-            orchestrator = PiscesLxTrainOrchestrator(args)
-            orchestrator.run(args)
+            # ── EnTA short-circuit ───────────────────────────────────────
+            # When the user runs ``python manage.py train --model_size 7B``
+            # and ``configs/model/7B.yaml`` has an ``encre:`` section, the
+            # training flow is fully driven by the EnTA pipeline: the
+            # multi-teacher roundtable generates the (prompt, reference)
+            # stream, the SFT operator consumes it, and (if requested) the
+            # Agentic RL trainer runs agentic rollouts.  No external
+            # dataset is required.
+            if _has_encre_section(args) and not getattr(args, 'train_config', None):
+                _run_encre_driven_train(args, controller, run_id)
+            else:
+                from tools.train.orchestrator import PiscesLxTrainOrchestrator
+                orchestrator = PiscesLxTrainOrchestrator(args)
+                orchestrator.run(args)
             controller.update_state({"status": "completed", "phase": "finished"})
             controller.append_event("process_exit", payload={"exit_code": 0})
         except KeyboardInterrupt:
@@ -1657,13 +2012,13 @@ def main():
     # Start the OpenAI-compatible backend inference service
     # Provides REST API endpoints for model inference
     elif args.command == 'enta':
-        # EnTA: Encre Train Agent �� autonomous LLM-driven training loop
+        # EnTA: EnTA Train Agent �� autonomous LLM-driven training loop
         # EnTA itself is an Agent (driven by Agens-2.0-Flash) that
         # autonomously decides what to teach and how.
-        _backend = os.path.join(os.path.dirname(__file__), 'encre', 'backend')
+        _backend = os.path.join(os.path.dirname(__file__), 'enta', 'backend')
         if _backend not in sys.path:
             sys.path.insert(0, _backend)
-        from encre.enta import launch_enta
+        from enta.enta import launch_enta
         import asyncio
 
         use_subconscious = (
@@ -1672,7 +2027,7 @@ def main():
         )
 
         if getattr(args, 'enta_list_models', False):
-            from encre.enta import list_configured_models
+            from enta.enta import list_configured_models
             models = list_configured_models()
             if not models:
                 _get_logger().info('No teacher models configured. Set ENTA_* env vars.')

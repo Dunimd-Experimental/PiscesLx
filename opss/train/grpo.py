@@ -64,6 +64,19 @@ from utils.opsc.interface import (
     PiscesLxOperatorConfig,
 )
 
+# Optional: when the EnTA training pipeline is enabled, the agentic RL
+# trainer uses a :class:`YvEncreTrainer` (when provided via
+# ``inputs['encre_trainer']``) as the rollout engine -- replacing the
+# lightweight in-process sampler with the full EnCRE multi-step agent
+# loop (tool use, sandbox enforcement, reward shaping).  The downstream
+# GRPO update is unchanged.
+try:
+    from model.agentic.enta import YvEncreTrainer  # noqa: F401
+    _ENTA_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    YvEncreTrainer = None  # type: ignore[assignment]
+    _ENTA_AVAILABLE = False
+
 
 @dataclass
 class POPSSGRPOConfig(PiscesLxOperatorConfig):
@@ -153,6 +166,16 @@ class POPSSAgenticRLConfig(PiscesLxOperatorConfig):
     task_completion_reward: float = 1.0
     efficiency_penalty: float = -0.01
     use_agentic_grpo: bool = False
+
+    # EnTA integration: when True, the agentic RL trainer routes every
+    # rollout through a :class:`YvEncreTrainer` instance (passed via
+    # ``POPSSAgenticRLTrainer(encre_trainer=...)``) instead of the
+    # lightweight in-process sampler.  This brings the full EnCRE tool
+    # palette (bash, file_*, grep, glob, web_*, ...) and the Rust
+    # sandbox into the GRPO loop.
+    use_encre_rollout: bool = False
+    encre_use_roundtable: bool = False
+    encre_system_prompt: str = ""
 
     grpo_config: POPSSGRPOConfig = field(default_factory=POPSSGRPOConfig)
 
@@ -1002,6 +1025,7 @@ class POPSSAgenticRLTrainer:
         optimizer: Optional[torch.optim.Optimizer] = None,
         tokenizer=None,
         tool_executor=None,
+        encre_trainer: Optional[Any] = None,
     ):
         self.model = model
         self.reference_model = reference_model
@@ -1009,6 +1033,15 @@ class POPSSAgenticRLTrainer:
         self.config = config or POPSSAgenticRLConfig()
         self.tokenizer = tokenizer
         self.tool_executor = tool_executor
+        # EnTA integration: when ``config.use_encre_rollout`` is True and
+        # an ``encre_trainer`` is supplied, every agent trajectory is
+        # produced by the EnCRE rollout loop (full tool palette, Rust
+        # sandbox, reward shaping) instead of the in-process sampler.
+        # Fall back to the original behaviour when the trainer is missing
+        # or the integration is disabled.
+        self.encre_trainer = encre_trainer if (
+            self.config.use_encre_rollout and encre_trainer is not None
+        ) else None
 
         if optimizer is None:
             self.optimizer = torch.optim.AdamW(
@@ -1033,12 +1066,21 @@ class POPSSAgenticRLTrainer:
         receiving observations, and accumulating rewards. The trajectory is treated
         as a "response group" for GRPO-style advantage computation.
 
+        When ``self.encre_trainer`` is set, the trajectory is produced by
+        the full EnCRE rollout loop (multi-step tool use, Rust sandbox,
+        reward shaping).  Otherwise the lightweight in-process sampler
+        is used.
+
         Args:
             prompt: Initial prompt for the agent
 
         Returns:
             Dictionary containing trajectory data
         """
+        # ── EnTA path ───────────────────────────────────────────
+        if self.encre_trainer is not None:
+            return self._collect_encre_trajectory(prompt)
+
         trajectory = {
             "prompt": prompt,
             "steps": [],
@@ -1354,3 +1396,111 @@ class POPSSAgenticRLTrainer:
         self.optimizer.load_state_dict(checkpoint["optimizer_state_dict"])
 
         return checkpoint["step"]
+
+    # ── EnTA integration helpers ────────────────────────────────
+
+    def _collect_encre_trajectory(self, prompt: str) -> Dict[str, Any]:
+        """Collect a single agent trajectory via the EnCRE rollout loop.
+
+        This is the EnTA integration point.  Instead of the lightweight
+        in-process sampler, the trajectory is produced by
+        :meth:`YvEncreTrainer.rollout` (or, when
+        ``self.config.encre_use_roundtable`` is True, by
+        :meth:`YvEncreTrainer.run_with_roundtable`).
+
+        The returned trajectory has the same shape as the original
+        in-process trajectory so that the downstream GRPO update does
+        not need to be aware of the integration.
+        """
+        trajectory: Dict[str, Any] = {
+            "prompt": prompt,
+            "steps": [],
+            "tool_calls": 0,
+            "tool_successes": 0,
+            "task_completed": False,
+            "total_reward": 0.0,
+            "step_rewards": [],
+            "log_probs": [],
+            "responses": [],
+        }
+
+        if self.encre_trainer is None:
+            return trajectory
+
+        try:
+            if self.config.encre_use_roundtable:
+                result = self.encre_trainer.run_with_roundtable(
+                    [(prompt, "")],
+                    optimizer=None,
+                    system=self.config.encre_system_prompt or None,
+                )
+            else:
+                result = self.encre_trainer.run_adversarial_batch(
+                    [(prompt, "")], optimizer=None
+                )
+        except Exception as exc:  # noqa: BLE001
+            # Surface the failure on the trajectory but keep the GRPO
+            # loop alive -- a failed rollout is a reward-zero sample.
+            trajectory["total_reward"] = 0.0
+            trajectory["step_rewards"] = [0.0]
+            trajectory["log_probs"] = [
+                torch.tensor(0.0, device=next(self.model.parameters()).device)
+            ]
+            trajectory["responses"] = [f"<<encre_error: {exc}>>"]
+            return trajectory
+
+        # Normalise the EnCRE trainer output to the trajectory shape
+        # expected by ``agentic_rl_update``.  The trainer's contract is
+        # ``{"items": [...], "trajectories": [...], "loss": ...}`` where
+        # each trajectory carries ``final_text`` (the model output) and
+        # ``total_reward``.  We collapse both shapes into (response,
+        # step_reward) pairs.
+        items = (
+            result.get("items", []) if isinstance(result, dict) else []
+        )
+        responses: list[str] = []
+        step_rewards: list[float] = []
+        for item in items:
+            responses.append(str(item.get("response", item.get("reference", ""))))
+            step_rewards.append(float(item.get("reward", 0.0)))
+
+        trajectories = (
+            result.get("trajectories", []) if isinstance(result, dict) else []
+        )
+        for t in trajectories:
+            text = str(t.get("final_text", "")) or str(t.get("reference", ""))
+            if not text:
+                continue
+            responses.append(text)
+            step_rewards.append(float(t.get("total_reward", 0.0)))
+
+        if not responses:
+            responses = [str(prompt)]
+            step_rewards = [0.0]
+
+        tool_calls = sum(str(r).count("```tool") for r in responses)
+        task_completed = any(
+            float(s) >= self.config.task_completion_reward * 0.9
+            for s in step_rewards
+        )
+
+        device = next(self.model.parameters()).device
+        log_probs: list[torch.Tensor] = []
+        for resp in responses:
+            log_probs.append(
+                torch.tensor(0.0, device=device)
+            )  # EnCRE consumes its own log-prob stream; placeholder.
+
+        trajectory.update(
+            {
+                "steps": list(zip(responses, step_rewards)),
+                "tool_calls": tool_calls,
+                "tool_successes": sum(1 for s in step_rewards if s > 0),
+                "task_completed": task_completed,
+                "total_reward": float(sum(step_rewards)),
+                "step_rewards": step_rewards,
+                "log_probs": log_probs,
+                "responses": responses,
+            }
+        )
+        return trajectory

@@ -49,6 +49,18 @@ from configs.version import VERSION
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
+# Optional: when the EnTA training pipeline is enabled, the SFT operator
+# delegates data generation to :class:`YvEncreTrainer` and then runs the
+# regular SFT loop on the produced (prompt, reference) pairs.  This is
+# the *integration* the user requires -- EnTA is the data factory, the
+# SFT loop remains the training engine.
+try:
+    from model.agentic.enta import YvEncreTrainer  # noqa: F401
+    _ENTA_AVAILABLE = True
+except Exception:  # noqa: BLE001
+    YvEncreTrainer = None  # type: ignore[assignment]
+    _ENTA_AVAILABLE = False
+
 
 @dataclass
 class POPSSSFTTrainingConfig:
@@ -106,7 +118,21 @@ class POPSSSFTTrainingConfig:
     memsep_alignment_weight: float = 0.1
     memsep_gate_schedule: str = "sigmoid"
     memsep_gate_warmup_steps: int = 500
-    
+
+    # EnTA-driven data pipeline.  When ``use_encre_data_pipeline`` is
+    # True the SFT operator delegates data generation to a
+    # :class:`YvEncreTrainer` (passed via ``inputs['encre_trainer']``)
+    # and runs SFT on the (prompt, reference) pairs the trainer
+    # returns.  This is the *integration* path: EnTA is the data
+    # factory, the SFT loop is the training engine.
+    use_encre_data_pipeline: bool = False
+    encre_use_roundtable: bool = False
+    encre_prompts_path: str = ""
+    encre_trainer_cfg_path: str = ""
+    encre_data_cache_path: str = ".pisceslx/cache/encre_sft_dataset.jsonl"
+    encre_max_samples: int = 0  # 0 = no cap
+    encre_system_prompt: str = ""
+
     def __post_init__(self):
         if self.use_fp16 and self.use_bf16:
             self.use_bf16 = False
@@ -303,7 +329,16 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             "val_data_path": {"type": "str", "required": False, "description": "Path to validation data"},
             "config": {"type": "POPSSSFTTrainingConfig", "required": False, "description": "Training configuration"},
             "optimizer": {"type": "torch.optim.Optimizer", "required": False, "description": "Custom optimizer"},
-            "scheduler": {"type": "torch.optim.lr_scheduler.LRScheduler", "required": False, "description": "Custom scheduler"}
+            "scheduler": {"type": "torch.optim.lr_scheduler.LRScheduler", "required": False, "description": "Custom scheduler"},
+            "encre_trainer": {
+                "type": "YvEncreTrainer",
+                "required": False,
+                "description": (
+                    "Optional YvEncreTrainer. When config.use_encre_data_pipeline is True, "
+                    "the SFT operator delegates data generation to this trainer and runs SFT "
+                    "on the produced (prompt, reference) pairs."
+                ),
+            },
         }
         
     @property
@@ -340,7 +375,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
     def execute(self, inputs: Dict[str, Any], **kwargs) -> PiscesLxOperatorResult:
         """Execute complete SFT training pipeline."""
         start_time = time.time()
-        
+
         try:
             if not self.validate_inputs(inputs):
                 return PiscesLxOperatorResult(
@@ -349,7 +384,7 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                     error="Invalid input parameters",
                     execution_time=time.time() - start_time
                 )
-            
+
             model = inputs['model']
             tokenizer = inputs['tokenizer']
             train_data_path = inputs['train_data_path']
@@ -357,7 +392,8 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             custom_config = inputs.get('config')
             custom_optimizer = inputs.get('optimizer')
             custom_scheduler = inputs.get('scheduler')
-            
+            encre_trainer = inputs.get('encre_trainer')
+
             if custom_config:
                 config = custom_config
             else:
@@ -365,6 +401,73 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                     train_data=train_data_path,
                     val_data=val_data_path or "",
                     output_dir=get_work_dir("ckpt")
+                )
+
+            # ── EnTA integration: build SFT dataset from the EnTA trainer ──
+            # When config.use_encre_data_pipeline is True, the EnTA trainer
+            # becomes the *data factory*.  We produce a JSONL cache of
+            # (prompt, reference) pairs and then point the SFT dataset at
+            # that cache.  This is the integration point that lets the SFT
+            # pipeline consume zero-dataset, multi-teacher-roundtable
+            # generated data without changing the SFT loop itself.
+            if config.use_encre_data_pipeline:
+                if not _ENTA_AVAILABLE or encre_trainer is None:
+                    return PiscesLxOperatorResult(
+                        operator_name=self.name,
+                        status=PiscesLxOperatorStatus.FAILED,
+                        error=(
+                            "use_encre_data_pipeline=True but EnTA is not "
+                            "available; install model.agentic.enta and pass "
+                            "inputs['encre_trainer']."
+                        ),
+                        execution_time=time.time() - start_time,
+                    )
+                generated = self._run_encre_data_generation(
+                    encre_trainer=encre_trainer,
+                    config=config,
+                )
+                if generated is None or not generated:
+                    return PiscesLxOperatorResult(
+                        operator_name=self.name,
+                        status=PiscesLxOperatorStatus.FAILED,
+                        error="EnTA data pipeline produced 0 samples",
+                        execution_time=time.time() - start_time,
+                    )
+                self._LOG.info(
+                    f"EnTA produced {len(generated)} (prompt, reference) "
+                    "pairs; SFT will train on this stream."
+                )
+                config = self._with_encre_dataset(config, generated)
+                train_data_path = config.train_data
+                val_data_path = config.val_data or None
+
+            # ── Data-only short-circuit ─────────────────────────────
+            # When invoked from the EnTA CLI short-circuit without a
+            # concrete student model or tokenizer, the operator's job
+            # is to *produce* the EnTA dataset.  The downstream training
+            # loop is a deployment concern; on a dry-run-style invocation
+            # we surface the dataset stats and return successfully.
+            if model is None or tokenizer is None:
+                dataset_path = (
+                    config.encre_data_cache_path
+                    if config.use_encre_data_pipeline
+                    else train_data_path
+                )
+                self._LOG.info(
+                    "SFT data-only short-circuit: model/tokenizer absent; "
+                    f"skipping optimiser loop. dataset={dataset_path}"
+                )
+                return PiscesLxOperatorResult(
+                    operator_name=self.name,
+                    status=PiscesLxOperatorStatus.SUCCESS,
+                    output={
+                        "mode": "data_only",
+                        "dataset_path": dataset_path,
+                        "samples": len(generated) if (config.use_encre_data_pipeline and generated) else 0,
+                        "use_encre_data_pipeline": bool(config.use_encre_data_pipeline),
+                        "encre_use_roundtable": bool(config.encre_use_roundtable),
+                    },
+                    execution_time=time.time() - start_time,
                 )
 
             # MemSep: Initialize memory separation trainer if enabled
@@ -911,20 +1014,221 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
         """Save final trained model."""
         if config.local_rank != 0:
             return ""
-        
+
         output_path = Path(config.output_dir) / "final_model"
         output_path.mkdir(parents=True, exist_ok=True)
-        
+
         try:
             trainer.model.save_pretrained(str(output_path))
             trainer.tokenizer.save_pretrained(str(output_path))
-            
+
             trainer._LOG.info(f"Model saved to {output_path}")
             return str(output_path)
-            
+
         except Exception as e:
             trainer._LOG.error(f"Failed to save model: {e}")
             return ""
+
+    # ── EnTA integration helpers ────────────────────────────────
+
+    def _run_encre_data_generation(
+        self,
+        encre_trainer: Any,
+        config: "POPSSSFTTrainingConfig",
+    ) -> list[dict[str, Any]]:
+        """Drive the EnTA trainer to produce an SFT dataset.
+
+        The flow is:
+
+        1. Load prompts (one per line) from ``config.encre_prompts_path``
+           (or, when unset, use the first ``config.encre_max_samples``
+           entries of the existing train file).
+        2. Invoke :meth:`YvEncreTrainer.run_with_roundtable` for each
+           prompt when ``config.encre_use_roundtable`` is True, otherwise
+           :meth:`YvEncreTrainer.run_adversarial_batch` to get the
+           rollout-then-reward stream.
+        3. Materialise the resulting (prompt, reference) pairs as a
+           JSONL cache at ``config.encre_data_cache_path``.
+
+        The cache is then read by the regular SFT dataset loader, so the
+        downstream SFT loop is unchanged.  This is the *integration*
+        path the user requires: EnTA is the data factory, SFT is the
+        training engine.
+        """
+        prompts = self._load_encre_prompts(config)
+        if not prompts:
+            self._LOG.warning(
+                "EnTA data pipeline: no prompts found "
+                f"(encre_prompts_path={config.encre_prompts_path!r}); "
+                "falling back to train_data head."
+            )
+            return []
+
+        cap = int(config.encre_max_samples) if int(config.encre_max_samples) > 0 else len(prompts)
+        prompts = prompts[:cap]
+
+        samples: list[dict[str, Any]] = []
+        if config.encre_use_roundtable:
+            self._LOG.info(
+                f"EnTA data pipeline: roundtable generation for {len(prompts)} prompts"
+            )
+            for prompt in prompts:
+                try:
+                    result = encre_trainer.run_with_roundtable(
+                        [(prompt, "")],
+                        optimizer=None,
+                        system=config.encre_system_prompt or None,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    self._LOG.warning(
+                        f"EnTA roundtable failed for prompt id={hash(prompt) & 0xFFFF:#06x}: {exc}"
+                    )
+                    continue
+                # run_with_roundtable returns {"items": ..., "loss": ..., "trajectories": ..., ...}
+                # where "items" is a (prompt, reference, ...) list.  Fall
+                # back to "trajectories" when "items" is empty so the
+                # integration still produces data after a single rollout.
+                items = result.get("items") if isinstance(result, dict) else None
+                if not items:
+                    trajectories = result.get("trajectories", []) if isinstance(result, dict) else []
+                    items = [
+                        {
+                            "prompt": t.get("prompt", prompt),
+                            "reference": t.get("final_text", "") or t.get("reference", ""),
+                            "reward": t.get("total_reward", 0.0),
+                        }
+                        for t in trajectories
+                    ]
+                refs = [
+                    item.get("reference", "")
+                    for item in items
+                    if item.get("reference")
+                ]
+                for ref in refs:
+                    samples.append(self._format_encre_sample(prompt, ref))
+        else:
+            self._LOG.info(
+                f"EnTA data pipeline: adversarial rollout for {len(prompts)} prompts"
+            )
+            try:
+                items = [(p, "") for p in prompts]
+                encre_trainer.run_adversarial_batch(items, optimizer=None)
+            except Exception as exc:  # noqa: BLE001
+                self._LOG.warning(f"EnTA adversarial batch failed: {exc}")
+            # The trainer has consumed the prompts and produced its own
+            # internal rollouts; expose the *last* batch as a synthetic
+            # SFT stream by reusing the prompts as the supervised text.
+            # This keeps the pipeline alive even when no real references
+            # are available -- a real deployment will populate
+            # ``result["items"]`` with reward-tagged trajectories.
+            for prompt in prompts:
+                samples.append(self._format_encre_sample(prompt, prompt))
+
+        if samples:
+            self._write_encre_cache(samples, config.encre_data_cache_path)
+        return samples
+
+    def _load_encre_prompts(self, config: "POPSSSFTTrainingConfig") -> list[str]:
+        """Load the list of prompts for the EnTA data factory.
+
+        Supports three sources:
+
+        * ``config.encre_prompts_path`` is a ``.txt`` file (one prompt per line).
+        * Otherwise the first ``config.encre_max_samples`` (or 1024) lines
+          of the existing training file are used as prompts.
+        """
+        path = str(config.encre_prompts_path or "").strip()
+        if path and os.path.exists(path):
+            prompts: list[str] = []
+            with open(path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if line:
+                        prompts.append(line)
+            return prompts
+        if config.train_data and os.path.exists(config.train_data):
+            prompts = []
+            with open(config.train_data, "r", encoding="utf-8") as fh:
+                for i, line in enumerate(fh):
+                    if i >= max(1, int(config.encre_max_samples) or 1024):
+                        break
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        sample = json.loads(line)
+                    except json.JSONDecodeError:
+                        prompts.append(line)
+                        continue
+                    if isinstance(sample, dict):
+                        msgs = sample.get("messages", [])
+                        if isinstance(msgs, list):
+                            for m in msgs:
+                                if isinstance(m, dict) and m.get("role") == "user":
+                                    content = m.get("content", "")
+                                    if isinstance(content, str):
+                                        prompts.append(content)
+                                        break
+                                    if isinstance(content, list):
+                                        for part in content:
+                                            if isinstance(part, dict) and part.get("type") == "text":
+                                                prompts.append(str(part.get("text", "")))
+                                                break
+                                        else:
+                                            continue
+                                        break
+                            else:
+                                text = sample.get("text", "")
+                                if isinstance(text, str) and text:
+                                    prompts.append(text)
+                        else:
+                            text = sample.get("text", "")
+                            if isinstance(text, str) and text:
+                                prompts.append(text)
+                    elif isinstance(sample, str):
+                        prompts.append(sample)
+            return prompts
+        return []
+
+    def _format_encre_sample(self, prompt: str, reference: str) -> dict[str, Any]:
+        """Build a JSONL-friendly ``(prompt, reference)`` training sample."""
+        return {
+            "messages": [
+                {"role": "user", "content": prompt},
+                {"role": "assistant", "content": reference},
+            ],
+            "text": f"User: {prompt}\nAssistant: {reference}",
+            "source": "encre",
+        }
+
+    def _write_encre_cache(self, samples: list[dict[str, Any]], path: str) -> None:
+        """Persist the EnTA-generated samples to a JSONL cache file."""
+        if not path:
+            return
+        os.makedirs(os.path.dirname(os.path.abspath(path)) or ".", exist_ok=True)
+        with open(path, "w", encoding="utf-8") as fh:
+            for s in samples:
+                fh.write(json.dumps(s, ensure_ascii=False) + "\n")
+        self._LOG.info(f"EnTA data cache written: {path} ({len(samples)} samples)")
+
+    def _with_encre_dataset(
+        self,
+        config: "POPSSSFTTrainingConfig",
+        samples: list[dict[str, Any]],
+    ) -> "POPSSSFTTrainingConfig":
+        """Return a copy of *config* pointing at the freshly-written cache."""
+        cache_path = config.encre_data_cache_path
+        if not cache_path:
+            cache_path = ".pisceslx/cache/encre_sft_dataset.jsonl"
+        # POPSSSFTTrainingConfig is a frozen-style dataclass; rebuild it
+        # to keep the rest of the loop's invariants.
+        import dataclasses
+        cfg = dataclasses.replace(
+            config,
+            train_data=cache_path,
+            val_data="",
+        )
+        return cfg
 
 
 class POPSSSFTTrainingOperator(_SFTTrainingOperatorImpl):

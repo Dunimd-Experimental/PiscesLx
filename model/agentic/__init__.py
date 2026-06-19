@@ -97,6 +97,11 @@ from ..multimodal.state_machine import (
     YvAgenticEvent,
 )
 from ..multimodal.tool_executor import YvToolExecutor, YvToolResult
+from .enta import (
+    YvEncreTrainer,
+    YvEncreAdversarialStage,
+    YvEncreRewardSignal,
+)
 
 __all__ = [
     "YvAgentic",
@@ -112,4 +117,7 @@ __all__ = [
     "YvAgenticEvent",
     "YvToolExecutor",
     "YvToolResult",
+    "YvEncreTrainer",
+    "YvEncreAdversarialStage",
+    "YvEncreRewardSignal",
 ]

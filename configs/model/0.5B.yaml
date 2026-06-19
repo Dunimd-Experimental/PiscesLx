@@ -466,3 +466,13 @@ memory_cache_tokens: 2048
 memory_prefetch_depth: 2
 memory_capacity_factor: 1.0
 memory_store_path: ""
+
+
+# ========================================
+# EnTA Training Pipeline (Multi-Teacher Roundtable)
+# All EnTA-specific configuration (teachers, judge, reward weights,
+# rollout parameters, SFT/GRPO integration) lives in a separate file
+# so this model YAML stays focused on the architecture.
+# ========================================
+encre:
+  config_path: configs/enta/0.5B.yaml

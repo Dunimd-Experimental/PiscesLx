@@ -467,3 +467,29 @@ memory_cache_tokens: 4096
 memory_prefetch_depth: 4
 memory_capacity_factor: 1.2
 memory_store_path: ""
+
+# ========================================
+# Subconscious System (0.5B Head + 314B Implicit Knowledge Field)
+# Scaled for 32B: hidden=5120, n_layer=64.
+# ========================================
+use_subconscious: true
+subconscious_knowledge_dim: 256
+subconscious_num_codebooks: 16
+subconscious_codebook_size: 131072
+subconscious_codebook_dim: 128
+subconscious_num_field_heads: 8
+subconscious_head_dim: 1280
+subconscious_head_num_layers: 2
+subconscious_head_num_attn_heads: 4
+subconscious_read_interval: 1
+subconscious_prefetch_depth: 2
+
+
+# ========================================
+# EnTA Training Pipeline (Multi-Teacher Roundtable)
+# All EnTA-specific configuration (teachers, judge, reward weights,
+# rollout parameters, SFT/GRPO integration) lives in a separate file
+# so this model YAML stays focused on the architecture.
+# ========================================
+encre:
+  config_path: configs/enta/32B.yaml

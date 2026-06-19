@@ -1,4 +1,0 @@
-### Connected IM Channels
-
-The following IM platforms are connected via adapters and their messages are routed to this iClaw session:
-{{adapter_list}}
