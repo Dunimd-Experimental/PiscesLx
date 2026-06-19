@@ -127,6 +127,14 @@ def _ensure_enta_path() -> None:
         if candidate not in sys.path:
             sys.path.insert(0, candidate)
 
+    # If ``enta`` was already loaded as a *namespace* package
+    # (i.e. ``__file__`` is None), evict it from ``sys.modules`` so
+    # that the next ``import enta`` re-scans ``sys.path`` and picks
+    # up the real ``__init__.py``.
+    stale = sys.modules.get("enta")
+    if stale is not None and getattr(stale, "__file__", None) is None:
+        del sys.modules["enta"]
+
 
 def _bind_enta():
     """Bind the slimmed EnCRE package and return it.
