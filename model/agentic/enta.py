@@ -93,6 +93,41 @@ _ENTA = None
 _ENTA_IMPORT_ERROR: Exception | None = None
 
 
+def _ensure_enta_path() -> None:
+    """Ensure ``enta/backend/`` is on ``sys.path`` so ``import enta``
+    finds the real ``__init__.py`` (which exposes ``create_default_backend``,
+    ``build_training_tool_registry``, etc.) rather than the empty namespace
+    package at ``enta/``.
+
+    The enta package is structured as::
+
+        enta/
+          backend/          ← needs to be on sys.path
+            enta/
+              __init__.py   ← the actual package entry point
+              backends/
+              tools/
+              ...
+
+    When the working directory is the project root, ``import enta`` loads
+    a *namespace* package from ``enta/`` (which has no ``__init__.py``)
+    instead of the real package at ``enta/backend/enta/``.  This helper
+    inserts the correct path early enough that ``_bind_enta()`` always
+    resolves the real module.
+    """
+    import os
+    import sys
+    import pathlib
+
+    this_file = pathlib.Path(__file__).resolve().parent        # model/agentic/
+    project_root = this_file.parent.parent.parent               # project root
+    enta_backend = project_root / "enta" / "backend"
+    if enta_backend.is_dir():
+        candidate = str(enta_backend)
+        if candidate not in sys.path:
+            sys.path.insert(0, candidate)
+
+
 def _bind_enta():
     """Bind the slimmed EnCRE package and return it.
 
@@ -104,6 +139,10 @@ def _bind_enta():
         return _ENTA
     if _ENTA_IMPORT_ERROR is not None:
         raise _ENTA_IMPORT_ERROR
+
+    # Ensure ``enta/backend/`` is on ``sys.path`` before the import.
+    _ensure_enta_path()
+
     try:
         import enta as _enta_mod
     except Exception as exc:  # pragma: no cover - environment dependent
