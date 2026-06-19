@@ -90,6 +90,11 @@ class YvImplicitKnowledgeField(nn.Module):
         - Massive capacity: combinatorial explosion without parameter explosion
         - Volatile: retrieved knowledge is computed fresh each forward pass
 
+    Addressing (fixed, was ~17B -> ~0):
+        The field receives *query vectors* from the dynamic head, not pre-computed
+        logits.  Logits are computed on the fly as dot products between queries
+        and codebook entries, eliminating the 17B-parameter address_proj.
+
     Args:
         num_codebooks: Number of product-quantized codebooks (M).
         codebook_size: Number of entries per codebook (K).
@@ -147,54 +152,53 @@ class YvImplicitKnowledgeField(nn.Module):
 
     def forward(
         self,
-        addressing_logits: torch.Tensor,
+        queries: torch.Tensor,
     ) -> torch.Tensor:
-        """Retrieve knowledge from the field given addressing signals.
+        """Retrieve knowledge from the field given query vectors.
+
+        Instead of receiving pre-computed logits (which would require a ~17B
+        parameter projection), this method receives compact query vectors and
+        computes logits as dot products with the codebook entries, then does
+        soft-addressing and retrieval in one fused step.
 
         Args:
-            addressing_logits: [batch, seq, num_heads * num_codebooks, codebook_size]
-                Raw logits for soft-addressing each codebook.
-                Each head addresses a separate slice of the codebooks.
+            queries: [batch, seq, num_heads, num_codebooks, codebook_dim]
+                Query vectors produced by YvDynamicHead.
 
         Returns:
             knowledge: [batch, seq, knowledge_dim]
                 Retrieved knowledge representation.
         """
-        B, T, *_ = addressing_logits.shape
+        B, T, H, M, D = queries.shape
 
-        # Reshape to separate heads and codebooks
-        # [B, T, num_heads, num_codebooks, codebook_size]
-        logits = addressing_logits.view(
-            B, T, self.num_heads, self.num_codebooks, self.codebook_size
-        )
+        # ── Step 1: compute logits as dot products ────────────────────
+        # queries:     [B, T, H, M, D]
+        # codebooks:   [H, M, K, D]
+        # logits:      [B, T, H, M, K]
+        logits = torch.einsum('bthmd,hmkd->bthmk', queries, self.codebooks)
 
-        # Soft addressing over each codebook
-        # [B, T, num_heads, num_codebooks, codebook_size]
-        addressing_weights = F.softmax(logits, dim=-1)
+        # ── Step 2: soft-addressing ──────────────────────────────────
+        addressing_weights = F.softmax(logits, dim=-1)  # [B, T, H, M, K]
 
         # Temperature annealing for sharper addressing during training
         if self.training:
-            # Start soft for gradient flow, gradually sharpen
             temp = max(0.5, 1.0 - self._get_training_progress() * 0.5)
             addressing_weights = F.softmax(logits / temp, dim=-1)
 
-        # Retrieve from codebooks via weighted sum
-        # codebooks: [num_heads, num_codebooks, codebook_size, codebook_dim]
-        # addressing_weights: [B, T, num_heads, num_codebooks, codebook_size]
-        # -> [B, T, num_heads, num_codebooks, codebook_dim]
+        # ── Step 3: weighted sum retrieval ───────────────────────────
+        # addressing_weights: [B, T, H, M, K]
+        # codebooks:          [H, M, K, D]
+        # retrieved:          [B, T, H, M, D]
         retrieved = torch.einsum(
-            'bthmk,hkmd->bthmd',
+            'bthmk,hmkd->bthmd',
             addressing_weights,
             self.codebooks
         )
 
-        # Combine across codebooks within each head
-        # [B, T, num_heads, knowledge_dim_per_head]  where knowledge_dim_per_head = codebook_dim
-        # Actually, we need to project to head_dim.
-        # For now, codebook_dim == head_dim, so just sum across codebooks
-        knowledge_per_head = retrieved.sum(dim=3)  # [B, T, num_heads, codebook_dim]
-
-        # Concatenate heads
+        # ── Step 4: combine codebooks and heads ──────────────────────
+        # Sum across codebooks within each head
+        knowledge_per_head = retrieved.sum(dim=3)           # [B, T, H, D]
+        # Concatenate heads → knowledge_dim  (= H * D)
         knowledge = knowledge_per_head.reshape(B, T, self.knowledge_dim)
 
         # Output projection and normalize
@@ -221,15 +225,19 @@ class YvImplicitKnowledgeField(nn.Module):
 class YvDynamicHead(nn.Module):
     """0.5B dynamic navigation head for implicit knowledge field addressing.
 
-    Projects the 7B core's current reasoning state into navigation coordinates
-    that address the implicit knowledge field. Designed for memory-address-speed
-    operation with minimal latency overhead.
+    Projects the 7B core's current reasoning state into compact query vectors
+    that address the implicit knowledge field via dot-product (not a giant
+    logit projection).  Designed for memory-address-speed operation with
+    minimal latency overhead.
 
-    Architecture:
+    Architecture (fixed parameter explosion):
         - Input projection: hidden_size -> head_dim
         - Lightweight transformer encoder (2 layers, 4 heads)
-        - Output projection: head_dim -> num_heads * num_codebooks * codebook_size
-        - Address generation via learned routing
+        - **Query projection**: head_dim -> num_heads * num_codebooks * codebook_dim
+          (was head_dim -> num_heads * num_codebooks * codebook_size, which
+           created a ~17B-parameter layer; now ~16.8M — 1000x reduction)
+        - Logits are computed on-the-fly in YvImplicitKnowledgeField via
+          einsum('bthmd,hmkd->bthmk') — no extra parameters needed.
 
     Key Properties:
         - Fast: O(1) routing via learned projection + lightweight processing
@@ -240,7 +248,7 @@ class YvDynamicHead(nn.Module):
     Args:
         hidden_size: 7B core's hidden dimension.
         num_codebooks: Number of codebooks in the knowledge field.
-        codebook_size: Number of entries per codebook.
+        codebook_dim: Dimension of each codebook entry.
         num_heads: Number of heads in the knowledge field.
         head_dim: Internal dimension for the navigation head.
         num_layers: Number of lightweight transformer layers.
@@ -250,7 +258,7 @@ class YvDynamicHead(nn.Module):
         self,
         hidden_size: int = 3584,
         num_codebooks: int = 16,
-        codebook_size: int = 131072,
+        codebook_dim: int = 128,
         num_heads: int = 8,
         head_dim: int = 1024,
         num_layers: int = 2,
@@ -261,7 +269,7 @@ class YvDynamicHead(nn.Module):
         super().__init__()
         self.hidden_size = hidden_size
         self.num_codebooks = num_codebooks
-        self.codebook_size = codebook_size
+        self.codebook_dim = codebook_dim
         self.num_heads = num_heads
         self.head_dim = head_dim
 
@@ -283,15 +291,24 @@ class YvDynamicHead(nn.Module):
         )
         self.encoder = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
 
-        # Addressing output: produces logits for each codebook entry
-        # Weight-tied output for parameter efficiency: shared projection per codebook
-        self.address_proj = nn.Linear(
+        # ── Query projection (FIXED: was 17B, now ~16.8M) ──────────────
+        # Instead of projecting to H*M*K logits (K=131072), project to
+        # H*M*D compact query vectors (D=128).  The actual logits are
+        # computed as dot products with codebook entries inside the
+        # knowledge field — no extra parameters needed.
+        #
+        #   Before: head_dim * H * M * K = 1024 * 8 * 16 * 131072 ≈ 17.2B
+        #   After:  head_dim * H * M * D = 1024 * 8 * 16 * 128   ≈ 16.8M
+        self.query_proj = nn.Linear(
             head_dim,
-            num_heads * num_codebooks * codebook_size,
+            num_heads * num_codebooks * codebook_dim,
             bias=False,
             device=device,
             dtype=dtype,
         )
+
+        # Query normalisation: stabilises the dot-product addressing
+        self.query_norm = nn.RMSNorm(codebook_dim, device=device, dtype=dtype)
 
         # Context gating: decides how much subconscious to apply
         # Based on current reasoning uncertainty
@@ -302,13 +319,11 @@ class YvDynamicHead(nn.Module):
             nn.Sigmoid(),
         )
 
-        # Norm for addressing stability
-        self.address_norm = nn.RMSNorm(num_heads * num_codebooks * codebook_size // num_codebooks, device=device, dtype=dtype)
-
         _LOG.info(
             f"YvDynamicHead: {self._param_count():.3f}B params, "
             f"hidden={hidden_size}, head_dim={head_dim}, "
-            f"num_layers={num_layers}"
+            f"num_layers={num_layers}, "
+            f"query_dim={num_codebooks}x{codebook_dim} (no more 17B logit proj)"
         )
 
     def _param_count(self) -> float:
@@ -320,12 +335,15 @@ class YvDynamicHead(nn.Module):
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Navigate the knowledge field based on current reasoning state.
 
+        Produces compact query vectors (not logits).  The knowledge field
+        computes logits on-the-fly via dot-product with its codebooks.
+
         Args:
             hidden_states: [batch, seq, hidden_size] from 7B core.
 
         Returns:
-            addressing_logits: [batch, seq, num_heads * num_codebooks, codebook_size]
-                Raw addressing signals for the knowledge field.
+            queries: [batch, seq, num_heads, num_codebooks, codebook_dim]
+                Compact query vectors for dot-product addressing.
             gate: [batch, seq, 1]
                 Context gating value (how much subconscious to apply).
         """
@@ -334,27 +352,25 @@ class YvDynamicHead(nn.Module):
         x = self.input_norm(x)
 
         # Lightweight context encoding
-        # This captures the current reasoning state for precise addressing
         x = self.encoder(x)
 
-        # Generate addressing logits
-        addressing_logits = self.address_proj(x)
+        # Generate query vectors (NOT logits)
+        # [B, T, H * M * D]
+        queries_flat = self.query_proj(x)
 
-        # Reshape to separate heads and codebooks
-        # [B, T, num_heads * num_codebooks, codebook_size]
-        B, T, D = addressing_logits.shape
-        addressing_logits = addressing_logits.view(
-            B, T, self.num_heads * self.num_codebooks, self.codebook_size
+        # Reshape to [B, T, H, M, D]
+        B, T, _ = queries_flat.shape
+        queries = queries_flat.view(
+            B, T, self.num_heads, self.num_codebooks, self.codebook_dim
         )
 
-        # Apply RMSNorm for stable addressing
-        # Normalize across the codebook dimension (per head-codebook group)
-        addressing_logits = self.address_norm(addressing_logits)
+        # Normalise queries for stable dot-product
+        queries = self.query_norm(queries)
 
         # Compute context gate
         gate = self.context_gate(x)  # [B, T, 1]
 
-        return addressing_logits, gate
+        return queries, gate
 
 
 class YvSubconsciousModulator(nn.Module):
@@ -445,6 +461,50 @@ class YvSubconsciousModulator(nn.Module):
 
         return attn_output, mlp_output
 
+    def modulate_attn_only(
+        self,
+        attn_output: torch.Tensor,
+        knowledge: torch.Tensor,
+        gate: torch.Tensor,
+    ) -> torch.Tensor:
+        """Modulate ONLY the attention output (efficient, no MLP compute).
+
+        Args:
+            attn_output: [batch, seq, hidden_size] Post-attention (before residual).
+            knowledge: [batch, seq, knowledge_dim] Retrieved subconscious knowledge.
+            gate: [batch, seq, 1] Context gating value.
+
+        Returns:
+            Modulated attention output.
+        """
+        params = self.attn_mod(knowledge)
+        gamma, beta = params.chunk(2, dim=-1)
+        gamma = gamma * gate
+        beta = beta * gate
+        return attn_output * (1.0 + gamma) + beta
+
+    def modulate_mlp_only(
+        self,
+        mlp_output: torch.Tensor,
+        knowledge: torch.Tensor,
+        gate: torch.Tensor,
+    ) -> torch.Tensor:
+        """Modulate ONLY the MLP output (efficient, no attention compute).
+
+        Args:
+            mlp_output: [batch, seq, hidden_size] Post-MLP (before residual).
+            knowledge: [batch, seq, knowledge_dim] Retrieved subconscious knowledge.
+            gate: [batch, seq, 1] Context gating value.
+
+        Returns:
+            Modulated MLP output.
+        """
+        params = self.mlp_mod(knowledge)
+        gamma, beta = params.chunk(2, dim=-1)
+        gamma = gamma * gate
+        beta = beta * gate
+        return mlp_output * (1.0 + gamma) + beta
+
 
 class YvSubconsciousSystem(nn.Module):
     """Complete subconscious knowledge system: 0.5B head + 314B field + injection.
@@ -505,10 +565,13 @@ class YvSubconsciousSystem(nn.Module):
         )
 
         # 0.5B dynamic navigation head
+        # NOTE: codebook_dim is passed instead of codebook_size so the head
+        # produces compact query vectors (~16.8M params) rather than giant
+        # logits (~17.2B params).
         self.dynamic_head = YvDynamicHead(
             hidden_size=hidden_size,
             num_codebooks=num_codebooks,
-            codebook_size=codebook_size,
+            codebook_dim=codebook_dim,  # was codebook_size — fixed param explosion
             num_heads=num_field_heads,
             head_dim=head_dim,
             num_layers=head_num_layers,
@@ -552,6 +615,11 @@ class YvSubconsciousSystem(nn.Module):
         This is called ONCE per model forward pass. The retrieved knowledge
         is cached and then consumed by each transformer layer's modulator.
 
+        Pipeline:
+            1. Dynamic head encodes hidden state → compact query vectors
+            2. Knowledge field computes dot-product logits → soft-addressing → retrieval
+            3. Retrieved knowledge is cached for layer-wise consumption
+
         Args:
             hidden_states: [batch, seq, hidden_size] From the 7B core
                 (typically from the first few layers or the embedding).
@@ -560,11 +628,12 @@ class YvSubconsciousSystem(nn.Module):
             knowledge: [batch, seq, knowledge_dim] Cached knowledge.
             gate: [batch, seq, 1] Context gate.
         """
-        # 1. Navigate the knowledge field
-        addressing_logits, gate = self.dynamic_head(hidden_states)
+        # 1. Navigate the knowledge field → compact query vectors (no 17B proj)
+        queries, gate = self.dynamic_head(hidden_states)
 
-        # 2. Retrieve knowledge from the field
-        knowledge = self.knowledge_field(addressing_logits)
+        # 2. Retrieve knowledge from the field via dot-product addressing
+        #    (logits computed on-the-fly inside the field, zero extra params)
+        knowledge = self.knowledge_field(queries)
 
         # 3. Add knowledge shift for layer-wise variation
         knowledge = knowledge + self.knowledge_shift
@@ -604,6 +673,56 @@ class YvSubconsciousSystem(nn.Module):
 
         modulator = self.modulators[layer_idx]
         return modulator(attn_output, mlp_output, knowledge, self._current_gate)
+
+    def modulate_attn(
+        self,
+        layer_idx: int,
+        attn_output: torch.Tensor,
+    ) -> torch.Tensor:
+        """Modulate ONLY the attention output (no dummy MLP tensor needed).
+
+        Efficient variant of :meth:`modulate_layer` that only computes the
+        attention FiLM transform — no wasteful computation for MLP.
+
+        Args:
+            layer_idx: Index of the current transformer layer.
+            attn_output: Post-attention output (before residual).
+
+        Returns:
+            Modulated attention output.
+        """
+        if self._current_knowledge is None or self._current_gate is None:
+            return attn_output
+        layer_shift = self.knowledge_shift * layer_idx * 0.01
+        knowledge = self._current_knowledge + layer_shift
+        return self.modulators[layer_idx].modulate_attn_only(
+            attn_output, knowledge, self._current_gate
+        )
+
+    def modulate_mlp(
+        self,
+        layer_idx: int,
+        mlp_output: torch.Tensor,
+    ) -> torch.Tensor:
+        """Modulate ONLY the MLP output (no dummy attention tensor needed).
+
+        Efficient variant of :meth:`modulate_layer` that only computes the
+        MLP FiLM transform — no wasteful computation for attention.
+
+        Args:
+            layer_idx: Index of the current transformer layer.
+            mlp_output: Post-MLP output (before residual).
+
+        Returns:
+            Modulated MLP output.
+        """
+        if self._current_knowledge is None or self._current_gate is None:
+            return mlp_output
+        layer_shift = self.knowledge_shift * layer_idx * 0.01
+        knowledge = self._current_knowledge + layer_shift
+        return self.modulators[layer_idx].modulate_mlp_only(
+            mlp_output, knowledge, self._current_gate
+        )
 
     def clear_cache(self):
         """Clear volatile subconscious cache after forward pass."""

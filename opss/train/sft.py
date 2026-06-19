@@ -40,8 +40,17 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader
 from torch.cuda.amp import GradScaler, autocast
-import transformer_engine.pytorch as te
-from transformer_engine.common.recipe import Format, DelayedScaling
+
+try:
+    import transformer_engine.pytorch as te
+    from transformer_engine.common.recipe import Format, DelayedScaling
+    _TE_AVAILABLE = True
+except ImportError:
+    te = None  # type: ignore[assignment]
+    Format = None  # type: ignore[assignment]
+    DelayedScaling = None  # type: ignore[assignment]
+    _TE_AVAILABLE = False
+_LOG_TE_WARNED = False
 
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file, get_work_dir
@@ -377,7 +386,30 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
         start_time = time.time()
 
         try:
-            if not self.validate_inputs(inputs):
+            # Extract config early so we can tailor validation to the mode.
+            custom_config = inputs.get('config')
+            if custom_config:
+                config = custom_config
+            else:
+                config = POPSSSFTTrainingConfig(
+                    train_data=inputs.get('train_data_path', ''),
+                    val_data=inputs.get('val_data_path') or "",
+                    output_dir=get_work_dir("ckpt")
+                )
+
+            # In EnTA data-pipeline mode the operator acts as a *data
+            # factory* only -- model and tokenizer are not required.
+            # For normal SFT, enforce the full schema.
+            if config.use_encre_data_pipeline:
+                if not inputs.get('train_data_path') and not config.train_data:
+                    self._LOG.error("Missing train_data_path for EnTA data pipeline")
+                    return PiscesLxOperatorResult(
+                        operator_name=self.name,
+                        status=PiscesLxOperatorStatus.FAILED,
+                        error="Missing train_data_path",
+                        execution_time=time.time() - start_time
+                    )
+            elif not self.validate_inputs(inputs):
                 return PiscesLxOperatorResult(
                     operator_name=self.name,
                     status=PiscesLxOperatorStatus.FAILED,
@@ -385,23 +417,13 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                     execution_time=time.time() - start_time
                 )
 
-            model = inputs['model']
-            tokenizer = inputs['tokenizer']
-            train_data_path = inputs['train_data_path']
+            model = inputs.get('model')
+            tokenizer = inputs.get('tokenizer')
+            train_data_path = inputs.get('train_data_path', config.train_data)
             val_data_path = inputs.get('val_data_path')
-            custom_config = inputs.get('config')
             custom_optimizer = inputs.get('optimizer')
             custom_scheduler = inputs.get('scheduler')
             encre_trainer = inputs.get('encre_trainer')
-
-            if custom_config:
-                config = custom_config
-            else:
-                config = POPSSSFTTrainingConfig(
-                    train_data=train_data_path,
-                    val_data=val_data_path or "",
-                    output_dir=get_work_dir("ckpt")
-                )
 
             # ── EnTA integration: build SFT dataset from the EnTA trainer ──
             # When config.use_encre_data_pipeline is True, the EnTA trainer
@@ -411,15 +433,46 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             # pipeline consume zero-dataset, multi-teacher-roundtable
             # generated data without changing the SFT loop itself.
             if config.use_encre_data_pipeline:
-                if not _ENTA_AVAILABLE or encre_trainer is None:
+                if not _ENTA_AVAILABLE:
                     return PiscesLxOperatorResult(
                         operator_name=self.name,
                         status=PiscesLxOperatorStatus.FAILED,
                         error=(
                             "use_encre_data_pipeline=True but EnTA is not "
-                            "available; install model.agentic.enta and pass "
-                            "inputs['encre_trainer']."
+                            "available; ensure model.agentic.enta imports cleanly."
                         ),
+                        execution_time=time.time() - start_time,
+                    )
+
+                # ── Materialise a real YvEncreTrainer when the caller
+                #    passes a config dict (manage.py integration path).
+                if isinstance(encre_trainer, dict):
+                    self._LOG.info("EnTA: constructing YvEncreTrainer from config dict ...")
+                    from types import SimpleNamespace
+                    def _to_ns(d):
+                        if isinstance(d, dict):
+                            return SimpleNamespace(**{k: _to_ns(v) for k, v in d.items()})
+                        if isinstance(d, list):
+                            return [_to_ns(x) for x in d]
+                        return d
+                    ns_cfg = _to_ns(encre_trainer)
+                    try:
+                        encre_trainer = YvEncreTrainer(ns_cfg)
+                        self._LOG.info("EnTA: YvEncreTrainer constructed successfully")
+                    except Exception as exc:  # noqa: BLE001
+                        self._LOG.error(f"EnTA: YvEncreTrainer construction failed: {exc}")
+                        return PiscesLxOperatorResult(
+                            operator_name=self.name,
+                            status=PiscesLxOperatorStatus.FAILED,
+                            error=f"Failed to construct YvEncreTrainer from config dict: {exc}",
+                            execution_time=time.time() - start_time,
+                        )
+
+                if encre_trainer is None:
+                    return PiscesLxOperatorResult(
+                        operator_name=self.name,
+                        status=PiscesLxOperatorStatus.FAILED,
+                        error="use_encre_data_pipeline=True but encre_trainer is None",
                         execution_time=time.time() - start_time,
                     )
                 generated = self._run_encre_data_generation(
@@ -705,8 +758,17 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
         return SFTTrainer(config, model, tokenizer, custom_optimizer, custom_scheduler)
     
     def _create_fp8_recipe(self, config):
-        """Create FP8 scaling recipe for transformer engine."""
+        """Create FP8 scaling recipe for transformer engine.
+        
+        Returns None when transformer_engine is not installed or FP8 is disabled.
+        """
         if not config.use_fp8:
+            return None
+        if not _TE_AVAILABLE:
+            global _LOG_TE_WARNED
+            if not _LOG_TE_WARNED:
+                self._LOG.warning("FP8 requested but transformer_engine is not installed; falling back to standard autocast.")
+                _LOG_TE_WARNED = True
             return None
         format_type = Format.HYBRID
         return DelayedScaling(
@@ -829,10 +891,13 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 if memsep_trainer is not None:
                     memsep_trainer.pre_step(trainer.global_step)
                 
-                fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=self._create_fp8_recipe(config)) if config.use_fp8 else autocast(
-                    enabled=(config.use_fp16 or config.use_bf16),
-                    dtype=torch.bfloat16 if config.use_bf16 else torch.float16,
-                )
+                if config.use_fp8 and _TE_AVAILABLE:
+                    fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=self._create_fp8_recipe(config))
+                else:
+                    fp8_context = autocast(
+                        enabled=(config.use_fp16 or config.use_bf16),
+                        dtype=torch.bfloat16 if config.use_bf16 else torch.float16,
+                    )
                 
                 with fp8_context:
                     outputs = trainer.model(**batch)
@@ -943,10 +1008,13 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
             for batch in val_loader:
                 batch = {k: v.to(device) for k, v in batch.items()}
                 
-                fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=self._create_fp8_recipe(config)) if config.use_fp8 else autocast(
-                    enabled=(config.use_fp16 or config.use_bf16),
-                    dtype=torch.bfloat16 if config.use_bf16 else torch.float16,
-                )
+                if config.use_fp8 and _TE_AVAILABLE:
+                    fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=self._create_fp8_recipe(config))
+                else:
+                    fp8_context = autocast(
+                        enabled=(config.use_fp16 or config.use_bf16),
+                        dtype=torch.bfloat16 if config.use_bf16 else torch.float16,
+                    )
                 
                 with fp8_context:
                     outputs = trainer.model(**batch)
@@ -1057,12 +1125,14 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
         """
         prompts = self._load_encre_prompts(config)
         if not prompts:
-            self._LOG.warning(
-                "EnTA data pipeline: no prompts found "
+            self._LOG.info(
+                "EnTA data pipeline: no external prompts found "
                 f"(encre_prompts_path={config.encre_prompts_path!r}); "
-                "falling back to train_data head."
+                "generating built-in bootstrap prompts for zero-data cold start."
             )
-            return []
+            prompts = self._generate_bootstrap_prompts()
+            if not prompts:
+                return []
 
         cap = int(config.encre_max_samples) if int(config.encre_max_samples) > 0 else len(prompts)
         prompts = prompts[:cap]
@@ -1189,6 +1259,108 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                         prompts.append(sample)
             return prompts
         return []
+
+    def _generate_bootstrap_prompts(self) -> list[str]:
+        """Generate a comprehensive built-in set of seed prompts for zero-data cold start.
+
+        When no external prompt file or training data is available, these prompts
+        provide diverse coverage across reasoning, coding, writing, analysis, and
+        instruction-following tasks so that the EnTA teacher models can produce
+        high-quality SFT training data without any user-supplied seeds.
+
+        Returns:
+            A list of prompt strings covering 10+ task categories.
+        """
+        return [
+            # ── Logical reasoning & mathematics ──────────────────────────
+            "A farmer has 17 sheep. All but 9 die. How many sheep are left? Explain your reasoning step by step.",
+            "Prove that the square root of 2 is irrational using proof by contradiction.",
+            "If a train travels at 60 km/h for 2.5 hours and then at 80 km/h for 1.5 hours, what is the average speed for the entire journey?",
+            "Explain the difference between deductive and inductive reasoning with three concrete examples of each.",
+            "Solve: If 3x + 7 = 22, what is x? Then verify your answer by substitution.",
+            "A committee of 3 people must be chosen from 8 candidates. How many different committees are possible? Show your work.",
+            "Explain the Pigeonhole Principle and provide a non-trivial application of it in computer science.",
+            "What is the probability of rolling at least one six when rolling three fair dice? Derive the answer from first principles.",
+            "Prove that the sum of the first n positive integers equals n(n+1)/2 using mathematical induction.",
+            "Explain the Monty Hall problem, solve it with Bayes' theorem, and discuss why the result is counterintuitive.",
+
+            # ── Code generation & debugging ────────────────────────────────
+            "Write a Python function that implements binary search on a sorted list, with clear comments explaining each step.",
+            "Implement a thread-safe LRU cache in Python with get and put operations in O(1) time complexity.",
+            "Write a SQL query that finds the top 5 customers by total spending in the last 90 days, including their order count.",
+            "Debug this code: `def fib(n): return fib(n-1) + fib(n-2)`. Identify all issues and provide an optimized iterative version.",
+            "Write a function that detects cycles in a directed graph using DFS. Include time and space complexity analysis.",
+            "Implement a Trie data structure with insert, search, and prefix-count operations in Python.",
+            "Write a Python decorator that caches function results with TTL (time-to-live) expiration support.",
+            "Explain the difference between concurrency and parallelism with code examples in Python using threading and multiprocessing.",
+            "Implement merge sort from scratch and explain why its worst-case time complexity is O(n log n).",
+            "Write a REST API endpoint in FastAPI that accepts file uploads, validates the file type and size, and returns a download URL.",
+
+            # ── Technical explanation ───────────────────────────────────
+            "Explain how transformer self-attention works to someone who understands basic linear algebra but has never seen a neural network.",
+            "What is the difference between TCP and UDP? When would you choose each protocol and why?",
+            "Explain the CAP theorem in distributed systems. Give a real-world example of a system at each vertex of the triangle.",
+            "How does gradient descent work? Explain the intuition, the math, and common pitfalls like vanishing gradients.",
+            "What is the difference between a process and a thread? How does the GIL in Python affect multithreading?",
+            "Explain how a B-tree index works in a database and why it is preferred over a hash index for range queries.",
+            "What is the difference between supervised, unsupervised, and reinforcement learning? Provide two real-world applications of each.",
+            "Explain how backpropagation works through a simple 2-layer neural network, computing gradients step by step.",
+            "What are embeddings in machine learning? Explain word2vec, contrastive learning, and why cosine similarity is used.",
+            "Describe how Raft consensus algorithm achieves leader election and log replication. Compare it with Paxos.",
+
+            # ── Creative writing ─────────────────────────────────────────
+            "Write a short story (300 words) about a librarian who discovers that the books in her library rewrite themselves every night.",
+            "Compose a haiku about machine learning, then explain the imagery in each line.",
+            "Write a dialogue between Socrates and a modern AI researcher debating whether machines can truly understand language.",
+            "Describe a city that exists entirely inside a giant tree. Include sensory details about daily life there.",
+            "Write the opening paragraph of a mystery novel set on a space station orbiting Jupiter.",
+            "Create a product description for an imaginary device that lets you record and replay dreams. Be persuasive and specific.",
+            "Write a letter from a future historian in 2100 looking back at the key technological breakthroughs of the 2020s.",
+            "Describe the taste, texture, and aroma of a fictional fruit called a 'luminberry' that glows in the dark.",
+
+            # ── Analysis & comparison ─────────────────────────────────
+            "Compare and contrast microservices and monolithic architecture. When is each approach better? Include trade-offs.",
+            "Analyze the ethical implications of AI-generated content in journalism. Present arguments from at least three stakeholder perspectives.",
+            "Compare the economic models of subscription-based vs. advertising-based platforms. Which is more sustainable long-term and why?",
+            "Analyze the strengths and weaknesses of Python, Rust, and Go for building a high-throughput data processing pipeline.",
+            "Compare CRISPR-Cas9 gene editing with traditional selective breeding. Discuss precision, timescale, and ethical considerations.",
+            "Evaluate the trade-offs between on-premise and cloud infrastructure for a startup expecting 10x growth in two years.",
+
+            # ── Instruction following ───────────────────────────────────
+            "List exactly 7 steps to make a perfect omelette. Each step must start with a verb and be exactly one sentence.",
+            "Rewrite this sentence in 5 different styles (formal, casual, poetic, technical, humorous): 'The cat sat on the mat.'",
+            "Create a JSON object representing a user profile with fields: name, age, email, preferences (nested array), and settings (nested object).",
+            "Summarize the concept of 'recursion' in exactly 50 words, then give a real-world analogy that a child could understand.",
+            "Generate a weekly meal plan for a vegetarian athlete. Include breakfast, lunch, dinner, and two snacks per day.",
+            "Write a commit message for a bug fix that corrects an off-by-one error in pagination. Follow conventional commits format.",
+            "Create a rubric for evaluating a technical presentation. Include 5 criteria with 4 performance levels each.",
+
+            # ── Knowledge Q&A ─────────────────────────────────────────
+            "Explain the water cycle in detail, including evaporation, condensation, precipitation, and collection.",
+            "What causes tectonic plates to move? Describe the three types of plate boundaries and their geological consequences.",
+            "How does photosynthesis work at the molecular level? Describe both the light-dependent and light-independent reactions.",
+            "Explain the key differences between classical and quantum computing. What problems is quantum computing theoretically better at solving?",
+            "Describe the structure and function of mitochondria. Why are they called the powerhouse of the cell?",
+            "What is the difference between DNA and RNA? Explain their roles in protein synthesis.",
+
+            # ── Planning & problem solving ─────────────────────────────
+            "You are organizing a conference for 500 attendees. Create a detailed plan covering venue, catering, schedule, and contingency plans.",
+            "A web application is experiencing intermittent 500 errors. Outline a systematic debugging strategy from detection to resolution.",
+            "Design a data pipeline that ingests 10TB of log data daily, processes it, and makes it queryable within 5 minutes.",
+            "Plan a migration strategy from a monolithic Django application to microservices. Include phased approach and risk mitigation.",
+            "You need to reduce the inference latency of a large language model by 50%. Propose at least 5 techniques with expected impact.",
+
+            # ── Translation & multilingual ───────────────────────────────
+            "Translate the following into French, Spanish, and Japanese, noting any cultural nuances: 'The early bird catches the worm.'",
+            "Explain the concept of 'Schadenfreude' in English, provide its etymology, and give three examples of its use in literature.",
+            "Compare how politeness is expressed differently in English, Japanese, and Korean. Include linguistic structures.",
+
+            # ── Role-play & scenario ──────────────────────────────────────
+            "You are a senior software architect. Review this system design: a single-server application handling 1M requests/second. Identify bottlenecks and propose solutions.",
+            "Act as a career counselor. A computer science graduate is torn between joining a FAANG company, a startup, or pursuing a PhD. Analyze each path.",
+            "You are a science communicator. Explain quantum entanglement to a 10-year-old, then to a PhD student. Compare your two explanations.",
+            "Pretend you are a historical advisor to a medieval king who wants to build the first printing press. Outline the technical and social challenges.",
+        ]
 
     def _format_encre_sample(self, prompt: str, reference: str) -> dict[str, Any]:
         """Build a JSONL-friendly ``(prompt, reference)`` training sample."""

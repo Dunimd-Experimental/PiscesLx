@@ -1941,10 +1941,10 @@ class YvTransformerBlock(nn.Module):
             attn_out = self.attn_layerscale(attn_out)
 
         # Subconscious: modulate attention output before residual
+        # Uses efficient modulate_attn (no dummy MLP tensor needed)
         if self.use_subconscious and self._subconscious_system is not None:
-            mlp_dummy = torch.zeros_like(attn_out)
-            attn_out, _ = self._subconscious_system.modulate_layer(
-                self.layer_idx, attn_out, mlp_dummy
+            attn_out = self._subconscious_system.modulate_attn(
+                self.layer_idx, attn_out
             )
 
         if self.use_attn_res:
@@ -2004,10 +2004,10 @@ class YvTransformerBlock(nn.Module):
             mlp_out = self.mlp_layerscale(mlp_out)
 
         # Subconscious: modulate MLP output before residual
+        # Uses efficient modulate_mlp (no dummy attention tensor needed)
         if self.use_subconscious and self._subconscious_system is not None:
-            attn_dummy = torch.zeros_like(mlp_out)
-            _, mlp_out = self._subconscious_system.modulate_layer(
-                self.layer_idx, attn_dummy, mlp_out
+            mlp_out = self._subconscious_system.modulate_mlp(
+                self.layer_idx, mlp_out
             )
 
         if self.use_attn_res:
@@ -2244,6 +2244,551 @@ class YvTransformerBlock(nn.Module):
         
         # Update count
         self._partial_block_count += 1
+
+
+class YvManifoldConstraint(nn.Module):
+    """Manifold constraint layer for geometric embedding spaces.
+
+    Constrains tensor representations to lie on a specified Riemannian manifold,
+    enabling geometric inductive biases that improve performance on tasks with
+    inherent structure: hierarchical data (hyperbolic), directional features
+    (spherical), or orthonormality requirements (Stiefel).
+
+    Supported manifolds:
+        - ``"hyperbolic"``: Poincaré ball model with curvature *c*.
+          Möbius gyrovector operations; ideal for tree/taxonomy embeddings.
+        - ``"spherical"``: Unit hypersphere.  Geodesic great-circle distance;
+          ideal for angular / directional features.
+        - ``"stiefel"``: Set of orthonormal matrices  V_{n,k}.
+          Polar-decomposition projection; ideal for attention projections.
+        - ``"grassmann"``: k-dimensional subspaces of R^n.
+          SVD-based projection; ideal for subspace representations.
+
+    The layer exposes:
+        - :meth:`project`      – Euclidean → manifold
+        - :meth:`expmap`       – tangent vector → manifold point
+        - :meth:`logmap`       – manifold point → tangent vector
+        - :meth:`distance`     – geodesic distance on manifold
+        - :meth:`egrad2rgrad`  – Euclidean gradient → Riemannian gradient
+        - :meth:`retraction`   – first-order approximation of expmap
+        - :meth:`inner_product`– Riemannian inner product in tangent space
+        - :meth:`forward`      – project + optional learnable scale/shift
+
+    Args:
+        dim:              Feature dimension (last axis size).
+        manifold_type:    ``'hyperbolic'`` | ``'spherical'`` | ``'stiefel'`` | ``'grassmann'``.
+        curvature:        Curvature *c* > 0 for the Poincaré ball (hyperbolic only).
+        stiefel_k:        Number of orthonormal columns for Stiefel / Grassmann.
+        learnable_scale:  If ``True``, attach learnable affine parameters on the
+                          projected output (analogue of LayerNorm γ/β).
+        clamp_radius:     Maximum norm before hard-clipping (safety).
+        eps:              Numerical-stability epsilon.
+        device / dtype:   Standard torch parameter options.
+
+    Shape:
+        - Input:  ``(..., dim)``
+        - Output: ``(..., dim)``  (same shape, projected onto the manifold)
+
+    Example::
+
+        >>> mc = YvManifoldConstraint(512, manifold_type="hyperbolic", curvature=1.0)
+        >>> x  = torch.randn(4, 32, 512)
+        >>> y  = mc(x)           # x projected into Poincaré ball
+        >>> d  = mc.distance(x, torch.randn_like(x))
+    """
+
+    _VALID_TYPES = {"hyperbolic", "spherical", "stiefel", "grassmann"}
+
+    def __init__(
+        self,
+        dim: int,
+        manifold_type: str = "hyperbolic",
+        curvature: float = 1.0,
+        stiefel_k: Optional[int] = None,
+        learnable_scale: bool = False,
+        clamp_radius: float = 1e4,
+        eps: float = 1e-7,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+    ):
+        super().__init__()
+        if manifold_type not in self._VALID_TYPES:
+            raise ValueError(
+                f"manifold_type must be one of {self._VALID_TYPES}, got '{manifold_type}'"
+            )
+
+        self.dim = dim
+        self.manifold_type = manifold_type
+        self.curvature = float(curvature)
+        self.eps = float(eps)
+        self.clamp_radius = float(clamp_radius)
+        self.stiefel_k = stiefel_k if stiefel_k is not None else dim
+
+        # ── learnable affine (optional) ──────────────────────────────────
+        self.learnable_scale = learnable_scale
+        if learnable_scale:
+            self.weight = nn.Parameter(
+                torch.ones(dim, device=device, dtype=dtype)
+            )
+            self.bias = nn.Parameter(
+                torch.zeros(dim, device=device, dtype=dtype)
+            )
+        else:
+            self.register_parameter("weight", None)
+            self.register_parameter("bias", None)
+
+        # ── curvature as learnable scalar for hyperbolic ─────────────────
+        if manifold_type == "hyperbolic":
+            self.log_curvature = nn.Parameter(
+                torch.tensor(math.log(max(self.curvature, 1e-8)),
+                             device=device, dtype=dtype)
+            )
+        else:
+            self.register_parameter("log_curvature", None)
+
+        # ── register a projection buffer for Stiefel init ───────────────
+        if manifold_type in ("stiefel", "grassmann"):
+            init_mat = torch.randn(dim, self.stiefel_k,
+                                   device=device, dtype=dtype)
+            Q, _ = torch.linalg.qr(init_mat)
+            self.register_buffer("_stiefel_basis", Q)
+
+        self._reset_parameters(device, dtype)
+
+    # ------------------------------------------------------------------ #
+    #  Parameter initialisation                                           #
+    # ------------------------------------------------------------------ #
+    def _reset_parameters(
+        self,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+    ) -> None:
+        """Initialise learnable parameters."""
+        if self.learnable_scale:
+            nn.init.ones_(self.weight)
+            nn.init.zeros_(self.bias)
+
+    # ------------------------------------------------------------------ #
+    #  Curvature helpers                                                   #
+    # ------------------------------------------------------------------ #
+    def _get_curvature(self) -> torch.Tensor:
+        """Return current curvature (learnable, always > 0)."""
+        return self.log_curvature.exp().clamp(min=1e-8)
+
+    # ================================================================== #
+    #                        PROJECTION                                    #
+    # ================================================================== #
+    def project(self, x: torch.Tensor) -> torch.Tensor:
+        """Project Euclidean point ``x`` onto the chosen manifold.
+
+        Args:
+            x: ``(..., dim)`` tensor.
+
+        Returns:
+            Projected tensor of the same shape lying on the manifold.
+        """
+        if self.manifold_type == "hyperbolic":
+            return self._project_hyperbolic(x)
+        if self.manifold_type == "spherical":
+            return self._project_spherical(x)
+        if self.manifold_type == "stiefel":
+            return self._project_stiefel(x)
+        # grassmann
+        return self._project_grassmann(x)
+
+    # ── hyperbolic (Poincaré ball) ───────────────────────────────────────
+    def _project_hyperbolic(self, x: torch.Tensor) -> torch.Tensor:
+        """Project into the open Poincaré ball of curvature *c*.
+
+        Enforces ‖x‖ < 1/√c via norm-clipping.
+        """
+        c = self._get_curvature()
+        max_norm = 1.0 / (c.sqrt() + self.eps)
+        norm = x.norm(dim=-1, keepdim=True).clamp(min=self.eps)
+        # Smooth tanh re-projection: x * tanh(max_norm * ‖x‖/‖x‖) → guarantees ‖y‖<max_norm
+        cond = norm > max_norm
+        projected = torch.where(
+            cond,
+            x / norm * max_norm * (1.0 - self.eps),
+            x,
+        )
+        return projected
+
+    # ── spherical ────────────────────────────────────────────────────────
+    def _project_spherical(self, x: torch.Tensor) -> torch.Tensor:
+        """Normalise *x* to the unit hypersphere."""
+        norm = x.norm(dim=-1, keepdim=True).clamp(min=self.eps)
+        return x / norm
+
+    # ── Stiefel ──────────────────────────────────────────────────────────
+    def _project_stiefel(self, x: torch.Tensor) -> torch.Tensor:
+        """Project matrix ``x`` onto the Stiefel manifold via polar decomposition.
+
+        For ``(..., n, k)`` input, computes the nearest orthonormal matrix.
+        Falls back to QR when SVD is not available for the batch shape.
+        """
+        orig_shape = x.shape
+        if x.dim() < 2:
+            x = x.unsqueeze(0)
+        # Flatten batch dims
+        batch_shape = x.shape[:-2]
+        flat = x.reshape(-1, *x.shape[-2:])  # (B, n, k)
+        # Polar decomposition via SVD:  X = UΣVᵀ  →  Q = UVᵀ
+        U, _S, Vh = torch.linalg.svd(flat, full_matrices=False)
+        Q = U @ Vh
+        Q = Q.reshape(orig_shape)
+        return Q
+
+    # ── Grassmann ────────────────────────────────────────────────────────
+    def _project_grassmann(self, x: torch.Tensor) -> torch.Tensor:
+        """Project onto the Grassmann manifold (subspace).
+
+        Returns the orthonormal basis spanning the same column space as *x*.
+        """
+        return self._project_stiefel(x)  # same operation, different interpretation
+
+    # ================================================================== #
+    #                     EXPONENTIAL & LOGARITHMIC MAPS                   #
+    # ================================================================== #
+    def expmap(self, x: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        r"""Exponential map: map tangent vector *v* at base point *x* to manifold.
+
+        .. math::
+            \exp_x(v) = \cosh(\|v\|_x)\, x
+                       + \sinh(\|v\|_x)\, \frac{v}{\|v\|_x}
+
+        For hyperbolic (Poincaré ball):
+        .. math::
+            \exp_x(v) = x \oplus_c
+              \left(\tanh\!\left(\frac{\sqrt{c}\,\lambda_x\|v\|}{2}\right)
+              \frac{v}{\sqrt{c}\,\|v\|}\right)
+
+        Args:
+            x: Base point on manifold ``(..., dim)``.
+            v: Tangent vector at *x* ``(..., dim)``.
+
+        Returns:
+            Point on manifold ``(..., dim)``.
+        """
+        if self.manifold_type == "hyperbolic":
+            return self._expmap_hyperbolic(x, v)
+        if self.manifold_type == "spherical":
+            return self._expmap_spherical(x, v)
+        # Stiefel / Grassmann: Cayley retraction
+        return self._retraction_cayley(x, v)
+
+    def logmap(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        r"""Logarithmic map: map manifold point *y* to tangent vector at *x*.
+
+        Inverse of :meth:`expmap`.  For the Poincaré ball:
+
+        .. math::
+            \log_x(y) = \frac{2}{\sqrt{c}\,\lambda_x}
+              \operatorname{artanh}\!\bigl(\sqrt{c}\,\|-x\oplus_c y\|\bigr)
+              \frac{-x\oplus_c y}{\|-x\oplus_c y\|}
+
+        Args:
+            x: Base point on manifold ``(..., dim)``.
+            y: Target point on manifold ``(..., dim)``.
+
+        Returns:
+            Tangent vector at *x* ``(..., dim)``.
+        """
+        if self.manifold_type == "hyperbolic":
+            return self._logmap_hyperbolic(x, y)
+        if self.manifold_type == "spherical":
+            return self._logmap_spherical(x, y)
+        return self._logmap_stiefel(x, y)
+
+    # ── hyperbolic maps ──────────────────────────────────────────────────
+    def _lambda_x(self, x: torch.Tensor) -> torch.Tensor:
+        r"""Conformal factor  λ_x = 2 / (1 − c‖x‖²)."""
+        c = self._get_curvature()
+        sq_norm = (x * x).sum(dim=-1, keepdim=True)
+        return 2.0 / (1.0 - c * sq_norm).clamp(min=self.eps)
+
+    def _mobius_add(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        r"""Möbius addition  x ⊕_c y  in the Poincaré ball.
+
+        .. math::
+            x \oplus_c y =
+              \frac{(1+2c\langle x,y\rangle + c\|y\|^2)x + (1-c\|x\|^2)y}
+                   {1+2c\langle x,y\rangle + c^2\|x\|^2\|y\|^2}
+        """
+        c = self._get_curvature()
+        x2 = (x * x).sum(dim=-1, keepdim=True)
+        y2 = (y * y).sum(dim=-1, keepdim=True)
+        xy = (x * y).sum(dim=-1, keepdim=True)
+
+        num = (1.0 + 2.0 * c * xy + c * y2) * x + (1.0 - c * x2) * y
+        denom = 1.0 + 2.0 * c * xy + c.pow(2) * x2 * y2
+        denom = denom.clamp(min=self.eps)
+
+        result = num / denom
+        return self._project_hyperbolic(result)
+
+    def _gyration(self, u: torch.Tensor, v: torch.Tensor, w: torch.Tensor) -> torch.Tensor:
+        r"""Gyration operator  gyr[u,v]w  for Möbius gyrovector space.
+
+        Required for parallel transport on the Poincaré ball.
+        """
+        c = self._get_curvature()
+        u2 = (u * u).sum(dim=-1, keepdim=True)
+        v2 = (v * v).sum(dim=-1, keepdim=True)
+        uv = (u * v).sum(dim=-1, keepdim=True)
+        uw = (u * w).sum(dim=-1, keepdim=True)
+        vw = (v * w).sum(dim=-1, keepdim=True)
+
+        A = -c.pow(2) * uw * v2 + c * vw + 2.0 * c.pow(2) * uv * vw
+        B = -c.pow(2) * vw * u2 - c * uw
+        D = 1.0 + 2.0 * c * uv + c.pow(2) * u2 * v2
+        D = D.clamp(min=self.eps)
+
+        return w + 2.0 * (A * u + B * v) / D
+
+    def _expmap_hyperbolic(self, x: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        r"""Exponential map on the Poincaré ball."""
+        c = self._get_curvature()
+        sqrt_c = c.sqrt()
+        lam = self._lambda_x(x)
+        v_norm = v.norm(dim=-1, keepdim=True).clamp(min=self.eps)
+
+        second_term = torch.tanh(sqrt_c * lam * v_norm / 2.0) * v / (sqrt_c * v_norm)
+        result = self._mobius_add(x, second_term)
+        return result
+
+    def _logmap_hyperbolic(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        r"""Logarithmic map on the Poincaré ball."""
+        c = self._get_curvature()
+        sqrt_c = c.sqrt()
+        # −x ⊕_c y
+        neg_x = -x
+        diff = self._mobius_add(neg_x, y)
+        diff_norm = diff.norm(dim=-1, keepdim=True).clamp(min=self.eps, max=1.0 / sqrt_c - self.eps)
+
+        lam = self._lambda_x(x)
+        # artanh(sqrt_c * ‖diff‖) * diff / (sqrt_c * ‖diff‖)  * (2 / (sqrt_c * lam))
+        artanh_arg = (sqrt_c * diff_norm).clamp(max=1.0 - self.eps)
+        artanh_val = 0.5 * torch.log((1.0 + artanh_arg) / (1.0 - artanh_arg + self.eps))
+
+        return (2.0 / (sqrt_c * lam)) * artanh_val * diff / diff_norm
+
+    # ── spherical maps ───────────────────────────────────────────────────
+    def _expmap_spherical(self, x: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        r"""Exponential map on the unit sphere."""
+        v_norm = v.norm(dim=-1, keepdim=True).clamp(min=self.eps)
+        # Remove radial component: v_orth = v - <v,x>x
+        v_orth = v - (v * x).sum(dim=-1, keepdim=True) * x
+        v_orth_norm = v_orth.norm(dim=-1, keepdim=True).clamp(min=self.eps)
+        v_dir = v_orth / v_orth_norm
+        return x * torch.cos(v_norm) + v_dir * torch.sin(v_norm)
+
+    def _logmap_spherical(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        r"""Logarithmic map on the unit sphere."""
+        inner = (x * y).sum(dim=-1, keepdim=True).clamp(-1.0 + self.eps, 1.0 - self.eps)
+        theta = torch.acos(inner)
+        # v = theta / sin(theta) * (y - cos(theta) * x)
+        sin_theta = torch.sin(theta).clamp(min=self.eps)
+        return theta / sin_theta * (y - inner * x)
+
+    # ── Stiefel maps ────────────────────────────────────────────────────
+    def _retraction_cayley(self, X: torch.Tensor, V: torch.Tensor) -> torch.Tensor:
+        r"""Cayley retraction on the Stiefel manifold.
+
+        .. math::
+            R_X(V) = (X + V)(I + V^\top V)^{-1/2}
+        Approximated via the Cayley transform:
+        .. math::
+            R_X(V) = X + V - X\,\mathrm{sym}(X^\top V)
+        """
+        XtV = torch.matmul(X.transpose(-2, -1), V)
+        sym = 0.5 * (XtV + XtV.transpose(-2, -1))
+        result = X + V - torch.matmul(X, sym)
+        return self._project_stiefel(result)
+
+    def _logmap_stiefel(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        r"""Approximate logarithmic map on the Stiefel manifold (projection)."""
+        V = Y - X
+        XtV = torch.matmul(X.transpose(-2, -1), V)
+        sym = 0.5 * (XtV + XtV.transpose(-2, -1))
+        return V - torch.matmul(X, sym)
+
+    # ================================================================== #
+    #                     GEODESIC DISTANCE                                 #
+    # ================================================================== #
+    def distance(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        r"""Geodesic distance between *x* and *y* on the manifold.
+
+        Args:
+            x, y: Points on the manifold ``(..., dim)``.
+
+        Returns:
+            Distance tensor ``(...)``.
+        """
+        if self.manifold_type == "hyperbolic":
+            return self._distance_hyperbolic(x, y)
+        if self.manifold_type == "spherical":
+            return self._distance_spherical(x, y)
+        if self.manifold_type in ("stiefel", "grassmann"):
+            return self._distance_stiefel(x, y)
+        return (x - y).norm(dim=-1)
+
+    def _distance_hyperbolic(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        r"""d(x,y) = (2/√c) artanh(√c ‖−x ⊕_c y‖)"""
+        c = self._get_curvature()
+        sqrt_c = c.sqrt()
+        diff = self._mobius_add(-x, y)
+        diff_norm = diff.norm(dim=-1, keepdim=False).clamp(
+            min=self.eps, max=1.0 / sqrt_c - self.eps
+        )
+        artanh_arg = (sqrt_c * diff_norm).clamp(max=1.0 - self.eps)
+        return (2.0 / sqrt_c) * torch.atanh(artanh_arg)
+
+    def _distance_spherical(self, x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
+        r"""d(x,y) = arccos(<x,y>)"""
+        inner = (x * y).sum(dim=-1).clamp(-1.0 + self.eps, 1.0 - self.eps)
+        return torch.acos(inner)
+
+    def _distance_stiefel(self, X: torch.Tensor, Y: torch.Tensor) -> torch.Tensor:
+        r"""Chordal distance  ‖X − Y‖_F."""
+        return (X - Y).pow(2).sum(dim=(-2, -1)).clamp(min=0.0).sqrt()
+
+    # ================================================================== #
+    #                  RIEMANNIAN GRADIENT & INNER PRODUCT                  #
+    # ================================================================== #
+    def egrad2rgrad(self, x: torch.Tensor, egrad: torch.Tensor) -> torch.Tensor:
+        r"""Convert Euclidean gradient to Riemannian gradient.
+
+        For the Poincaré ball:
+        .. math::
+            \mathrm{grad}_R f = \frac{(1-c\|x\|^2)^2}{4}\,\mathrm{grad}_E f
+
+        For the sphere:
+        .. math::
+            \mathrm{grad}_R f = \mathrm{grad}_E f - \langle x, \mathrm{grad}_E f\rangle\, x
+
+        Args:
+            x:     Point on manifold ``(..., dim)``.
+            egrad: Euclidean gradient ``(..., dim)``.
+
+        Returns:
+            Riemannian gradient ``(..., dim)``.
+        """
+        if self.manifold_type == "hyperbolic":
+            c = self._get_curvature()
+            sq_norm = (x * x).sum(dim=-1, keepdim=True)
+            factor = ((1.0 - c * sq_norm) / 2.0).pow(2)
+            return factor * egrad
+        if self.manifold_type == "spherical":
+            return egrad - (egrad * x).sum(dim=-1, keepdim=True) * x
+        # Stiefel / Grassmann
+        XtG = torch.matmul(x.transpose(-2, -1), egrad)
+        sym = 0.5 * (XtG + XtG.transpose(-2, -1))
+        return egrad - torch.matmul(x, sym)
+
+    def inner_product(
+        self,
+        x: torch.Tensor,
+        u: torch.Tensor,
+        v: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        r"""Riemannian inner product  ⟨u, v⟩_x  in the tangent space at *x*.
+
+        If *v* is ``None``, computes  ⟨u, u⟩_x  (squared norm).
+
+        Args:
+            x: Base point on manifold ``(..., dim)``.
+            u: Tangent vector ``(..., dim)``.
+            v: Second tangent vector (defaults to *u*).
+
+        Returns:
+            Inner-product tensor ``(...)``.
+        """
+        if v is None:
+            v = u
+        if self.manifold_type == "hyperbolic":
+            c = self._get_curvature()
+            sq_norm = (x * x).sum(dim=-1, keepdim=True)
+            # g_x = (2/(1-c‖x‖²))² · I
+            factor = (2.0 / (1.0 - c * sq_norm).clamp(min=self.eps)).pow(2)
+            return (factor.squeeze(-1)) * (u * v).sum(dim=-1)
+        if self.manifold_type == "spherical":
+            return (u * v).sum(dim=-1)
+        return (u * v).sum(dim=(-2, -1))
+
+    # ================================================================== #
+    #                     PARALLEL TRANSPORT                                 #
+    # ================================================================== #
+    def transport(self, x: torch.Tensor, y: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+        r"""Parallel transport of tangent vector *v* from *x* to *y*.
+
+        For the Poincaré ball, uses the gyration operator:
+        .. math::
+            P_{x\to y}(v) = \mathrm{gyr}[y, -x]\, v\, \frac{\lambda_x}{\lambda_y}
+
+        For the sphere:
+        .. math::
+            P_{x\to y}(v) = v - \frac{\langle x+y, v\rangle}{1+\langle x,y\rangle}(x+y)
+
+        Args:
+            x: Source point ``(..., dim)``.
+            y: Target point ``(..., dim)``.
+            v: Tangent vector at *x* ``(..., dim)``.
+
+        Returns:
+            Transported tangent vector at *y* ``(..., dim)``.
+        """
+        if self.manifold_type == "hyperbolic":
+            lam_x = self._lambda_x(x)
+            lam_y = self._lambda_x(y)
+            gyr = self._gyration(y, -x, v)
+            return gyr * (lam_x / lam_y.clamp(min=self.eps))
+        if self.manifold_type == "spherical":
+            inner_xy = (x * y).sum(dim=-1, keepdim=True).clamp(min=-1.0 + self.eps)
+            s = x + y
+            inner_sv = (s * v).sum(dim=-1, keepdim=True)
+            return v - inner_sv / (1.0 + inner_xy).clamp(min=self.eps) * s
+        # Stiefel / Grassmann: approximate with projection
+        return self._project_stiefel(v) if self.manifold_type == "stiefel" else v
+
+    # ================================================================== #
+    #                          FORWARD                                      #
+    # ================================================================== #
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Project *x* onto the manifold and optionally apply affine transform.
+
+        Args:
+            x: Input tensor ``(..., dim)``.
+
+        Returns:
+            Manifold-constrained tensor ``(..., dim)``.
+        """
+        y = self.project(x)
+        if self.learnable_scale:
+            y = y * self.weight + self.bias
+            y = self.project(y)  # re-project after affine to stay on manifold
+        return y
+
+    # ------------------------------------------------------------------ #
+    #  Utility                                                             #
+    # ------------------------------------------------------------------ #
+    def lorentz_factor(self, x: torch.Tensor) -> torch.Tensor:
+        r"""Return the Lorentz / conformal factor λ_x for diagnostics.
+
+        Only meaningful for ``hyperbolic``.
+        """
+        if self.manifold_type == "hyperbolic":
+            return self._lambda_x(x)
+        return torch.ones_like(x[..., :1])
+
+    def extra_repr(self) -> str:
+        parts = [f"dim={self.dim}", f"manifold={self.manifold_type}"]
+        if self.manifold_type == "hyperbolic":
+            parts.append(f"curvature={self.curvature}")
+        if self.manifold_type in ("stiefel", "grassmann"):
+            parts.append(f"k={self.stiefel_k}")
+        parts.append(f"learnable_scale={self.learnable_scale}")
+        return ", ".join(parts)
 
 
 class YvSinkhornKnopp(nn.Module):
