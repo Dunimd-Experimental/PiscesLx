@@ -409,7 +409,7 @@ class OpenAISSEBackend(BaseBackend):
                     stream=True,
                 )
             except Exception as exc:
-                _log.error("[http] client.send() raised %s: %s", type(exc).__name__, exc)
+                _log.error(f"[http] client.send() raised {type(exc).__name__}: {exc}")
                 raise
             _log.info("[http] client.send() done status=%d elapsed=%.2fs",
                        response.status_code, time.time() - _t_req)

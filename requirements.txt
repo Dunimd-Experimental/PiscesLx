@@ -52,15 +52,13 @@
 #
 # =============================================================================
 
-# Use Tsinghua mirror for China (syncs pre-release versions)
-# Alternative mirrors:
-#   - https://pypi.tuna.tsinghua.edu.cn/simple (Tsinghua)
-#   - https://mirrors.aliyun.com/pypi/simple (Aliyun)
-#   - https://pypi.mirrors.ustc.edu.cn/simple (USTC)
+# Primary mirror (Tsinghua, fast in China) for most packages.
+# Use --extra-index-url for PyPI fallback on packages that Tsinghua mirror
+# only has as source distribution (pre-built CUDA wheels).
+# pip prefers wheels over source distributions, so PyPI will provide
+# flash-attn, mamba-ssm, causal-conv1d as pre-compiled wheels.
 --index-url https://pypi.tuna.tsinghua.edu.cn/simple
-
-# Enable pre-release versions
---pre
+--extra-index-url https://pypi.org/simple
 
 # =============================================================================
 # SECTION 1: Core System Dependencies (No PyTorch deps)

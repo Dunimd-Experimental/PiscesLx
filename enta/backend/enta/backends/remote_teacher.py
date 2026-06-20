@@ -728,12 +728,12 @@ class TeacherRoundtable:
             try:
                 await client.aclose()
             except Exception as exc:  # noqa: BLE001
-                _LOG.warning("teacher %s close failed: %s", client.name, exc)
+                _LOG.warning(f"teacher {client.name} close failed: {exc}")
         if self._judge is not None:
             try:
                 await self._judge.aclose()
             except Exception as exc:  # noqa: BLE001
-                _LOG.warning("judge close failed: %s", exc)
+                _LOG.warning(f"judge close failed: {exc}")
 
 
 # ── Convenience helpers ────────────────────────────────────────────

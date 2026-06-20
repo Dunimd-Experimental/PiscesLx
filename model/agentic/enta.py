@@ -156,9 +156,8 @@ def _bind_enta():
     except Exception as exc:  # pragma: no cover - environment dependent
         _ENTA_IMPORT_ERROR = exc
         _LOG.error(
-            "EnCRE import failed; YvEncreTrainer requires the slimmed EnCRE "
-            "package on sys.path (cause: %s)",
-            type(exc).__name__,
+            f"EnCRE import failed; YvEncreTrainer requires the slimmed EnCRE "
+            f"package on sys.path (cause: {type(exc).__name__})"
         )
         raise
     _ENTA = _enta_mod
@@ -416,7 +415,7 @@ class _EncreToolAdapter:
         except Exception as exc:  # noqa: BLE001
             elapsed_ms = int((time.time() - started) * 1000)
             err_text = f"tool '{name}' raised {type(exc).__name__}: {exc}"
-            _LOG.warning("%s | trace=%s", err_text, traceback.format_exc(limit=2))
+            _LOG.warning(f"{err_text} | trace={traceback.format_exc(limit=2)}")
             return (
                 json.dumps(
                     {
@@ -641,12 +640,10 @@ class YvEncreTrainer:
 
         self._tool_defs: List[Dict[str, Any]] = self._adapter.openai_tools()
         _LOG.info(
-            "YvEncreTrainer ready | backend=%s tools=%d max_steps=%d max_tokens=%d roundtable=%s",
-            type(self._backend).__name__,
-            len(self._tool_defs),
-            self._max_steps,
-            self._max_tokens,
-            type(self._roundtable).__name__ if self._roundtable is not None else "none",
+            f"YvEncreTrainer ready | backend={type(self._backend).__name__} "
+            f"tools={len(self._tool_defs)} max_steps={self._max_steps} "
+            f"max_tokens={self._max_tokens} "
+            f"roundtable={type(self._roundtable).__name__ if self._roundtable is not None else 'none'}"
         )
 
     # ── Properties (real, useful to callers) ────────────────────
@@ -808,9 +805,7 @@ class YvEncreTrainer:
             result = await self._roundtable.run(prompt, messages=messages)
             if result.selected is None or not result.selected.text:
                 _LOG.warning(
-                    "roundtable produced no usable answer for prompt id=%s failures=%s",
-                    uuid.uuid4().hex[:8],
-                    result.failures,
+                    f"roundtable produced no usable answer for prompt id={uuid.uuid4().hex[:8]} failures={result.failures}"
                 )
                 continue
             out.append((prompt, result.selected.text, result))
@@ -939,7 +934,7 @@ class YvEncreTrainer:
         except Exception as exc:  # noqa: BLE001
             traj.error = f"{type(exc).__name__}: {exc}"
             traj.finished_reason = "error"
-            _LOG.error("rollout %s failed: %s", traj.rollout_id, traj.error)
+            _LOG.error(f"rollout {traj.rollout_id} failed: {traj.error}")
 
         traj.duration_ms = int((time.time() - start) * 1000)
         self._sandbox.evaluate(traj)
@@ -947,11 +942,8 @@ class YvEncreTrainer:
         traj.total_reward = total
         traj.reward_breakdown = breakdown
         _LOG.info(
-            "rollout %s | steps=%d reward=%.4f reason=%s",
-            traj.rollout_id,
-            len(traj.steps),
-            traj.total_reward,
-            traj.finished_reason,
+            f"rollout {traj.rollout_id} | steps={len(traj.steps)} "
+            f"reward={traj.total_reward:.4f} reason={traj.finished_reason}"
         )
         return traj
 
@@ -1274,11 +1266,7 @@ class YvEncreTrainer:
                 if step_loss is not None:
                     loss_terms.append(step_loss)
             except Exception as exc:  # noqa: BLE001
-                _LOG.warning(
-                    "SFT loss skipped for rollout %s: %s",
-                    traj.rollout_id,
-                    exc,
-                )
+                _LOG.warning(f"SFT loss skipped for rollout {traj.rollout_id}: {exc}")
                 continue
         if not loss_terms:
             return torch.zeros((), device=device)
