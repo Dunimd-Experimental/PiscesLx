@@ -537,7 +537,7 @@ class YvSelectiveSSM(nn.Module):
             scaled_deltaB_u = deltaB_u / (deltaA + 1e-8)
             h_cumsum = torch.cumsum(scaled_deltaB_u, dim=1)
             h = h_cumsum * scale
-            y = torch.sum(h * C.unsqueeze(1), dim=-1)
+            y = torch.sum(h * C.unsqueeze(2), dim=-1)
         
         y = y + u * D.unsqueeze(0).unsqueeze(0)
         
@@ -594,6 +594,7 @@ class YvProgressiveHybridGate(nn.Module):
         self,
         d_model: int,
         total_steps: int = 100000,
+        sequence_threshold: int = 4096,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ):
@@ -604,12 +605,15 @@ class YvProgressiveHybridGate(nn.Module):
             total_steps: Total training steps for progression.
                 The gate transitions from attention-only to full hybrid
                 over this many steps. Default: 100000.
+            sequence_threshold: Sequence length threshold for SSM activation.
+                Default: 4096.
             device: Device for parameters.
             dtype: Data type for parameters.
         """
         super().__init__()
         self.d_model = d_model
         self.total_steps = total_steps
+        self.sequence_threshold = sequence_threshold
         
         self.seq_stats_proj = nn.Linear(4, d_model // 4, device=device, dtype=dtype)
         self.content_proj = nn.Linear(d_model, d_model // 4, device=device, dtype=dtype)
@@ -688,7 +692,7 @@ class YvProgressiveHybridGate(nn.Module):
         progress = min(1.0, self.current_step.item() / self.total_steps)
         current_hybrid_ratio = torch.sigmoid(self.hybrid_ratio) * progress
         
-        if sequence_length > 4096:
+        if sequence_length > self.sequence_threshold:
             fixed_weights = self.fixed_long.to(hidden_states.device)
         else:
             fixed_weights = self.fixed_short.to(hidden_states.device)
@@ -839,7 +843,10 @@ class YvAdaptiveRouter(nn.Module):
         x_ssm = self.ssm_norm(x)
         ssm_out = ssm_fn(x_ssm)
         
-        output = attn_mask.unsqueeze(-1) * attn_out + ssm_mask.unsqueeze(-1) * ssm_out
+        if attn_mask is None and ssm_mask is None:
+            output = x
+        else:
+            output = attn_mask.unsqueeze(-1) * attn_out + ssm_mask.unsqueeze(-1) * ssm_out
         
         routing_loss = self._compute_routing_loss(router_probs)
         
@@ -1010,7 +1017,7 @@ class YvJambaBlock(nn.Module):
             self.mlp = YvDynamicMoELayer(cfg, device=device, dtype=dtype)
             
         self.mlp_norm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
-        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout_p', 0.1))
+        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
         
     def forward(
         self,
@@ -1131,6 +1138,7 @@ class YvHybridBlock(nn.Module):
             self.progressive_gate = YvProgressiveHybridGate(
                 cfg.hidden_size,
                 total_steps=getattr(cfg, 'hybrid_total_steps', 100000),
+                sequence_threshold=getattr(cfg, 'sequence_threshold', 4096),
                 device=device, dtype=dtype
             )
         else:
@@ -1176,9 +1184,9 @@ class YvHybridBlock(nn.Module):
             torch.ones(1, device=device, dtype=dtype) * (2.0 * cfg.n_layer) ** -0.5
         )
 
-        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout_p', 0.1))
+        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
 
-        self.use_checkpoint = getattr(cfg, 'use_gradient_checkpointing', True)
+        self.use_checkpoint = getattr(cfg, 'use_checkpoint', True)
         self.hybrid_layers = getattr(
             cfg, 'mamba3_layers', list(range(cfg.n_layer // 2, cfg.n_layer))
         )
@@ -1362,11 +1370,12 @@ class YvHybridBlock(nn.Module):
                 "gate_type": "attention_only"
             }
 
+        mlp_residual = hybrid_out
         hybrid_out = self.norm_fusion(hybrid_out)
 
         mlp_out, aux_loss = self._forward_mlp(hybrid_out)
 
-        output = hybrid_out + self.residual_dropout(
+        output = mlp_residual + self.residual_dropout(
             self.residual_scale_mlp * mlp_out
         )
 

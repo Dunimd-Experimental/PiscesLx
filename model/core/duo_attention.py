@@ -98,7 +98,7 @@ class YvDuoAttention(nn.Module):
             hidden_size, self.num_streaming_heads * self.head_dim, bias=False, device=device, dtype=dtype
         )
         self.streaming_kv_compress = nn.Linear(
-            hidden_size, self.head_dim * 2, bias=False, device=device, dtype=dtype
+            hidden_size, self.num_streaming_heads * self.head_dim * 2, bias=False, device=device, dtype=dtype
         )
 
         # Output projection
@@ -137,7 +137,17 @@ class YvDuoAttention(nn.Module):
         k_combined = torch.cat([self.streaming_k_buffer, k_new], dim=2)
         v_combined = torch.cat([self.streaming_v_buffer, v_new], dim=2)
 
-        if k_combined.shape[2] > self.streaming_buffer_size:
+        max_len = getattr(self, 'streaming_buffer_max_len', 8192)
+        if k_combined.shape[2] > max_len:
+            k_combined = torch.cat([
+                k_combined[:, :, :128, :],
+                k_combined[:, :, -(max_len - 128):, :]
+            ], dim=2)
+            v_combined = torch.cat([
+                v_combined[:, :, :128, :],
+                v_combined[:, :, -(max_len - 128):, :]
+            ], dim=2)
+        elif k_combined.shape[2] > self.streaming_buffer_size:
             k_combined = k_combined[:, :, -self.streaming_buffer_size:]
             v_combined = v_combined[:, :, -self.streaming_buffer_size:]
 
@@ -180,11 +190,13 @@ class YvDuoAttention(nn.Module):
         q_str = q_str.view(batch_size, seq_len, self.num_streaming_heads, self.head_dim).transpose(1, 2)
 
         kv_compressed = self.streaming_kv_compress(hidden_states)
-        k_str = kv_compressed[..., :self.head_dim]
-        v_str = kv_compressed[..., self.head_dim:]
+        k_str = kv_compressed[..., :self.num_streaming_heads * self.head_dim]
+        v_str = kv_compressed[..., self.num_streaming_heads * self.head_dim:]
 
         k_str = k_str.view(batch_size, seq_len, self.num_streaming_heads, self.head_dim).transpose(1, 2)
         v_str = v_str.view(batch_size, seq_len, self.num_streaming_heads, self.head_dim).transpose(1, 2)
+
+        k_str, v_str = self._update_streaming_buffer(k_str, v_str)
 
         # Handle past key values
         if past_key_value is not None:

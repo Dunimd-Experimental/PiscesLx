@@ -40,8 +40,14 @@ Architecture Overview:
        - intermediate_size: FFN hidden dimension
     
     2. **Mixture-of-Experts**:
-       - moe_num_experts: Total expert count (default: 64)
-       - moe_top_k: Activated experts per token (default: 2)
+       - moe_num_experts: Total expert count (default: 128)
+       - moe_top_k: Activated experts per token (default: 8)
+       - moe_shared_experts: Number of shared experts (default: 1)
+       - moe_fine_grained: Enable fine-grained expert segmentation (default: True)
+       - moe_num_sub_experts: Sub-experts per group (default: 4)
+       - moe_aux_loss_free: Use auxiliary loss-free balancing (default: True)
+       - moe_compute_mode: Compute/lookup split mode (default: "default")
+       - moe_anticipatory_routing: Enable anticipatory routing (default: True)
        - moe_capacity_factor: Routing capacity multiplier
        - Load balancing and noise parameters
     
@@ -69,6 +75,8 @@ Configuration Presets:
     - get_base_config(): 2048 hidden, 24 layers, 64 experts
     - get_large_config(): 4096 hidden, 32 layers, 128 experts
     - get_xl_config(): 6144 hidden, 48 layers, 256 experts
+    - get_compute_split_config(): 7B compute split (flagship)
+    - get_lookup_split_config(): 0.27B lookup split (flagship)
     - get_hybrid_config(): Attention-Mamba hybrid
     - get_jamba_style_config(): Jamba-style MoE-Mamba
 
@@ -197,14 +205,22 @@ class YvConfig:
         n_layer (int): Number of transformer layers. Defaults to ``24``.
         n_head (int): Number of attention heads. Defaults to ``16``.
         n_kv_head (int): Number of key-value heads for grouped attention. Defaults to ``4``.
-        moe_num_experts (int): Total experts for Mixture-of-Experts blocks. Defaults to ``64``.
-        moe_top_k (int): Number of activated experts per token. Defaults to ``2``.
+        moe_num_experts (int): Total experts for Mixture-of-Experts blocks. Defaults to ``128``.
+        moe_top_k (int): Number of activated experts per token. Defaults to ``8``.
         moe_capacity_factor (float): Routing capacity multiplier. Defaults to ``1.0``.
         moe_load_balance_alpha (float): Coefficient for load-balancing loss. Defaults to ``0.01``.
         moe_noise_std (float): Standard deviation of routing noise. Defaults to ``0.1``.
         moe_use_stable_gate (bool): Whether to use a stabilized MoE gate. Defaults to ``True``.
         moe_min_capacity (int): Minimum routing capacity per expert. Defaults to ``4``.
         moe_prediction_horizon (int): Horizon length for predictive capacity tuning. Defaults to ``8``.
+        moe_shared_experts (int): Number of shared experts in MoE layers. Defaults to ``1``.
+        moe_num_shared_experts (int): Alias for shared expert count. Defaults to ``1``.
+        moe_fine_grained (bool): Enable fine-grained expert segmentation. Defaults to ``True``.
+        moe_num_sub_experts (int): Sub-experts per group when fine-grained. Defaults to ``4``.
+        moe_aux_loss_free (bool): Use auxiliary loss-free load balancing. Defaults to ``True``.
+        moe_compute_mode (str): Compute/lookup split mode ("default" or "compute_split"). Defaults to ``"default"``.
+        moe_compute_split_ratio (float): Ratio of compute experts in compute_split. Defaults to ``0.5``.
+        moe_anticipatory_routing (bool): Enable anticipatory routing. Defaults to ``True``.
         intermediate_size (int): Transformer feed-forward hidden size. Defaults to ``5632``.
         max_position_embeddings (int): Maximum positional embeddings. Defaults to ``8192``.
         rope_theta (float): Base theta parameter for RoPE. Defaults to ``1e6``.
@@ -261,17 +277,20 @@ class YvConfig:
         tool_fact_consistency_threshold (float): Trigger tools when fact consistency is below this value. Defaults to 0.6.
         enable_debug_outputs (bool): If True, model.forward returns a 'debug' section with shapes and data types. Defaults to False.
         debug_verbose (bool): If True, include extra debug information like modality presence and fusion shapes. Defaults to False.
+        compute_params_total (int): Active compute-side parameter budget (parameter count). Defaults to 0.
+        lookup_params_total (int): External lookup/knowledge-field parameter budget (parameter count). Defaults to 0.
+        use_dual_inject (bool): Enable dual-path knowledge injection from memory separation and subconscious systems. Defaults to False.
     """
     model_type: str = "piscesl1"
     vocab_size: int = 151646
     hidden_size: int = 2048
     n_layer: int = 24
     n_head: int = 16
-    n_kv_head: int = 4
+    n_kv_head: Optional[int] = 4
     head_dim: Optional[int] = None
 
-    moe_num_experts: int = 64
-    moe_top_k: int = 2
+    moe_num_experts: int = 128
+    moe_top_k: int = 8
     moe_capacity_factor: float = 1.0
     moe_load_balance_alpha: float = 0.01
     moe_noise_std: float = 0.1
@@ -285,7 +304,14 @@ class YvConfig:
     moe_attention_mamba_temp: float = 0.3
     moe_l2_smooth_8k: float = 0.01
     moe_layers: List[int] = field(default_factory=list)
-    moe_shared_experts: int = 0
+    moe_shared_experts: int = 1
+    moe_num_shared_experts: int = 1
+    moe_fine_grained: bool = True
+    moe_num_sub_experts: int = 4
+    moe_aux_loss_free: bool = True
+    moe_compute_mode: str = "default"
+    moe_compute_split_ratio: float = 0.5
+    moe_anticipatory_routing: bool = True
     moe_expert_parallel: bool = False
     moe_token_dispatcher: str = "allgather"
 
@@ -339,6 +365,18 @@ class YvConfig:
     fusion_dropout: float = 0.1
     modal_token_count: int = 8
     use_enhanced_fusion: bool = False
+
+    # Native unified multimodal token space fusion
+    use_native_multimodal_fusion: bool = False
+    image_tokens: int = 256
+    audio_tokens: int = 512
+    video_tokens: int = 128
+    document_tokens: int = 256
+    agentic_tokens: int = 64
+    text_tokens: int = -1
+    native_fusion_output_tokens: int = 8
+    native_fusion_num_layers: int = 2
+    native_fusion_use_self_attention: bool = True
 
     enable_cognitive_density: bool = True
     enable_dynamic_capacity: bool = True
@@ -438,6 +476,20 @@ class YvConfig:
 
     flagship_level: float = 0.5
 
+    # ========================================
+    # Split-Architecture Budget Tracking
+    # ========================================
+    # Total parameter budget for the active compute (reasoning) model.
+    compute_params_total: int = 0
+
+    # Total parameter budget for the external lookup/knowledge field.
+    lookup_params_total: int = 0
+
+    # Enable dual-path knowledge injection from both memory separation and
+    # subconscious systems into the compute stream. Requires at least one of
+    # use_memory_separation or use_subconscious to be active.
+    use_dual_inject: bool = False
+
     galore_enabled: bool = False
     galore_rank: int = 128
     galore_update_interval: int = 200
@@ -527,6 +579,22 @@ class YvConfig:
     use_mla: bool = True
     kv_lora_rank: int = 512
     mla_q_lora_rank: Optional[int] = None
+
+    # ========================================
+    # Enhanced Multi-Head Latent Attention (MLA)
+    # ========================================
+    use_enhanced_mla: bool = True
+    mla_use_embedding_gate: bool = False
+    mla_rope_dim: int = 64
+
+    # ========================================
+    # Mixture of Block Attention (MoBA) for 1M+ context
+    # ========================================
+    use_moba_attention: bool = False
+    moba_block_size: int = 4096
+    moba_top_k: int = 4
+    moba_min_seq_len: int = 8192
+    moba_max_cached_blocks: int = 256
 
     # ========================================
     # Lazy Initialization Configuration
@@ -835,12 +903,54 @@ class YvConfig:
         if isinstance(self.activation_type, YvActivationType):
             self.activation_type = self.activation_type.value
 
-        if hasattr(self, 'flagship_level') and self.flagship_level != 0.5:
+        if self.flagship_level != 0.5:
             level = self.flagship_level
             
             self.dsa_sparse_ratio = 0.3 * (0.5 + level)
             self.thinking_intensity = 0.5 * (0.5 + level)
             self.swarm_intensity = 0.5 * (0.5 + level)
+
+        # Conflict detection and mutual exclusion assertions for flagship
+        # split-architecture flags.
+        assert not (self.use_eg_mla and self.use_duo_attention), (
+            "use_eg_mla and use_duo_attention are mutually exclusive attention modes"
+        )
+        assert not (self.use_eg_mla and self.use_moba_attention), (
+            "use_eg_mla and use_moba_attention are mutually exclusive attention modes"
+        )
+        assert not (self.use_duo_attention and self.use_moba_attention), (
+            "use_duo_attention and use_moba_attention are mutually exclusive attention modes"
+        )
+        assert not (self.use_mla and self.use_moba_attention), (
+            "use_mla and use_moba_attention are mutually exclusive attention modes"
+        )
+        if self.use_eg_mla:
+            assert self.attention_type in ("eg_mla", "standard"), (
+                "use_eg_mla requires attention_type='eg_mla' or 'standard'"
+            )
+        if self.use_duo_attention:
+            assert self.attention_type in ("duo_attention", "standard"), (
+                "use_duo_attention requires attention_type='duo_attention' or 'standard'"
+            )
+        if self.use_moba_attention:
+            assert self.attention_type in ("moba", "standard"), (
+                "use_moba_attention requires attention_type='moba' or 'standard'"
+            )
+        if self.use_dual_inject and not (self.use_subconscious or self.use_memory_separation):
+            raise ValueError(
+                "use_dual_inject requires at least one of use_subconscious or use_memory_separation"
+            )
+        if self.compute_params_total < 0:
+            raise ValueError("compute_params_total must be non-negative")
+        if self.lookup_params_total < 0:
+            raise ValueError("lookup_params_total must be non-negative")
+        # Split-architecture invariant: active compute budget and lookup budget
+        # must not both be positive in the same configuration.
+        if self.compute_params_total > 0 and self.lookup_params_total > 0:
+            raise ValueError(
+                "compute_params_total and lookup_params_total cannot both be positive "
+                "in a split-architecture configuration"
+            )
 
         # Auto-calculate knowledge slot count based on model capacity
         # Formula: knowledge_slots = hidden_size * n_layer * capacity_factor
@@ -1036,6 +1146,8 @@ class YvConfig:
             ... except ValueError as e:
             ...     print(f"Invalid configuration: {e}")
         """
+        if self.head_dim is None:
+            self.__post_init__()
         if self.hidden_size % self.n_head != 0:
             raise ValueError(f"hidden_size ({self.hidden_size}) must be divisible by n_head ({self.n_head})")
 
@@ -1226,12 +1338,112 @@ class YvConfig:
         )
 
     @classmethod
+    def get_compute_split_config(cls) -> 'YvConfig':
+        """Get the 2026 flagship compute-split configuration preset.
+
+        This configuration realizes the 7B active reasoning model in the
+        PiscesL1 split architecture. It enables all flagship compute-side
+        algorithms and pairs with an external 0.5B dynamic head + 314B
+        knowledge field at inference/training time.
+
+        Returns:
+            YvConfig: Compute-split configuration with:
+                - ~7B active parameters
+                - 3584 hidden size, 28 layers, 32 heads (8 KV heads)
+                - 128 MoE experts, top-8 routing
+                - 1M position context
+                - EG-MLA attention by default
+                - All flagship compute flags enabled
+
+        Example:
+            >>> config = YvConfig.get_compute_split_config()
+        """
+        return cls(
+            model_type="piscesl1_7b_compute",
+            hidden_size=3584,
+            n_layer=28,
+            n_head=32,
+            n_kv_head=8,
+            intermediate_size=14336,
+            moe_num_experts=128,
+            moe_top_k=8,
+            moe_capacity_factor=1.5,
+            moe_load_balance_alpha=0.05,
+            moe_noise_std=0.4,
+            max_position_embeddings=1048576,
+            attention_type="eg_mla",
+            use_mla=True,
+            kv_lora_rank=512,
+            compute_params_total=7000000000,
+            lookup_params_total=0,
+            use_dual_inject=True,
+            use_subconscious=True,
+            use_memory_separation=True,
+            use_eg_mla=True,
+            use_duo_attention=False,
+            use_ttt_e2e=True,
+            use_ewc=True,
+            use_dapo=True,
+            use_expert_evolution=True,
+            use_mamba3=True,
+            mamba3_layers=[i for i in range(28) if i % 4 == 0],
+            mamba3_use_flash_ssm=True,
+            use_hisa_attention=True,
+            flagship_level=0.85,
+        )
+
+    @classmethod
+    def get_lookup_split_config(cls) -> 'YvConfig':
+        """Get the 2026 flagship lookup-split configuration preset.
+
+        This configuration builds the knowledge encoder / lookup builder
+        side of the PiscesL1 split architecture. It is intentionally small
+        (~0.27B active parameters) because massive factual capacity lives
+        in the external 314B knowledge field, not in this encoder.
+
+        Returns:
+            YvConfig: Lookup-split configuration with:
+                - ~0.27B active parameters
+                - 512 hidden size, 12 layers, 8 heads (4 KV heads)
+                - 4 MoE experts, top-2 routing
+                - 128K position context
+                - Memory separation and subconscious injection enabled
+
+        Example:
+            >>> config = YvConfig.get_lookup_split_config()
+        """
+        return cls(
+            model_type="piscesl1_lookup",
+            hidden_size=512,
+            n_layer=12,
+            n_head=8,
+            n_kv_head=4,
+            intermediate_size=1024,
+            moe_num_experts=4,
+            moe_top_k=2,
+            max_position_embeddings=131072,
+            attention_type="standard",
+            compute_params_total=0,
+            lookup_params_total=270000000,
+            use_dual_inject=True,
+            use_subconscious=True,
+            use_memory_separation=True,
+            use_eg_mla=False,
+            use_duo_attention=False,
+            use_ttt_e2e=False,
+            use_ewc=False,
+            use_dapo=False,
+            use_expert_evolution=False,
+            use_mamba3=False,
+        )
+
+    @classmethod
     def get_hybrid_config(cls) -> 'YvConfig':
         """Get a hybrid Attention-Mamba configuration preset.
-        
+
         Combines attention layers with Mamba-3 SSM layers for efficient
         long-context processing with linear complexity.
-        
+
         Returns:
             YvConfig: Hybrid configuration with:
                 - 4096 hidden size
@@ -1239,7 +1451,7 @@ class YvConfig:
                 - 64 experts
                 - 16384 max positions
                 - Mamba-3 SSM enabled
-        
+
         Example:
             >>> config = YvConfig.get_hybrid_config()
         """
@@ -1692,7 +1904,7 @@ class YvConfig:
         if self.use_gradient_checkpointing or self.vram_gradient_checkpointing:
             activation_vram *= self.ink_checkpoint_ratio if self.ink_optimizer_enabled else 0.5
         if self.activation_quantization:
-            activation_vram *= 32 / self.activation_quant_bits
+            activation_vram *= self.activation_quant_bits / 32
         
         kv_vram = batch_size * seq_length * self.hidden_size * 2 / 1e9
         if self.use_mla:

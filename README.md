@@ -1,6 +1,6 @@
 <div align="center">
 
-[![Encre Agent](https://img.shields.io/badge/🚀_Encre_Agent—General_Purpose_AI_Agent-brightgreen?style=for-the-badge&logo=git)](https://gitee.com/dunimd/encre.git)
+[![Encre Agent](https://img.shields.io/badge/Encre_Agent—General_Purpose_AI_Agent-181717?style=for-the-badge&logo=github)](https://github.com/mf2023/Encre)
 
 </div>
 
@@ -40,11 +40,11 @@ English | [简体中文](README.zh.md)
 <a href="https://modelscope.cn/organization/dunimd" target="_blank">
     <img alt="ModelScope" src="https://img.shields.io/badge/ModelScope-Dunimd-1E6CFF?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1zbmFtZT0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik03LjAwNiAwQzMuMTQyIDAgMCAzLjE0MiAwIDcuMDA2UzMuMTQyIDE0LjAxMiA3LjAwNiAxNC4wMTJDMTAuODcgMTQuMDEyIDE0LjAxMiAxMC44NyAxNC4wMTIgNy4wMDZDMTQuMDEyIDMuMTQyIDEwLjg3IDAgNy4wMDYgMFoiIGZpbGw9IiMxRTZDRkYiLz48L3N2Zz4K"/>
 </a>
-<a href="https://gitee.com/dunimd/encre.git" target="_blank">
-    <img alt="Encre Agent" src="https://img.shields.io/badge/Encre_Agent-Dunimd-7B68EE?style=flat-square&logo=git"/>
+<a href="https://github.com/mf2023/Encre" target="_blank">
+    <img alt="Encre Agent" src="https://img.shields.io/badge/Encre_Agent-181717?style=flat-square&logo=github"/>
 </a>
 
-A high-performance multimodal Mixture-of-Experts (MoE) model featuring the **Yv Architecture**, supporting text, image, audio, video, document, and agent understanding. PiscesL1 (PiscesLx series, Dunimd Team) is designed for research and practical applications, capable of running on a single RTX 4090 GPU with scalable architecture up to 1T parameters.
+A multimodal Mixture-of-Experts (MoE) model framework featuring the **Yv Architecture**, supporting text, image, audio, video, document, and agent modalities. PiscesL1 (PiscesLx series, Dunimd Team) provides a configurable architecture from 0.5B to 1T parameters. The codebase serves as a reference architecture design with configurable hyperparameters — trained model weights are not included in this repository.
 
 </div>
 
@@ -52,106 +52,134 @@ A high-performance multimodal Mixture-of-Experts (MoE) model featuring the **Yv 
 
 ### 🧠 YvUnifiedReasoner - Unified Reasoning System
 
-YvUnifiedReasoner implements an intelligent routing framework that dynamically switches between Chain-of-Thought (CoT) and Multi-Path reasoning engines:
+YvUnifiedReasoner implements a routing framework that selects between Chain-of-Thought (CoT) and Multi-Path reasoning:
 
-- **YvCoTMemoryReasoner**: Memory-augmented chain-of-thought reasoner with adaptive depth control (1-3 layers), early stopping mechanism, and error analysis with self-correction
-- **YvMultiPathReasoningEngine**: Multi-path reasoning engine supporting up to 8 parallel hypothesis streams with dynamic fact verification and metacognitive uncertainty scoring
-- **Intelligent Routing**: Automatic selection of optimal reasoning path based on problem complexity and sequence length
-- **Control Tokens**: `<|start_hypothesis|>`, `<|start_evidence|>`, `<|start_conclusion|>`, `<|hypothesis_split|>`, `<|hypothesis_merge|>` enable external tools to precisely track the model's thinking path
+- **YvCoTMemoryReasoner**: Memory-augmented chain-of-thought reasoner with configurable depth (1-3 layers), early stopping, and self-correction
+- **YvMultiPathReasoningEngine**: Multi-path reasoning supporting up to 8 parallel hypothesis streams with fact verification
+- **Complexity-Based Routing**: Selection of reasoning path based on input complexity and sequence length
+- **Control Tokens**: `<|start_hypothesis|>`, `<|start_evidence|>`, `<|start_conclusion|>`, `<|hypothesis_split|>`, `<|hypothesis_merge|>`
 
-### 🔧 Yv MoE Scaling - Mixture-of-Experts
+### 🔧 Yv MoE - Mixture-of-Experts
 
-Mixture-of-Experts implementation:
+Mixture-of-Experts implementation with fine-grained routing:
 
-- **YvStableMoEGate**: Stable gating with LSTM load predictor, supporting Top-K routing for 6-64 experts
-- **Fine-grained Expert Segmentation**: Each "expert" is a combination of multiple sub-experts for more flexible routing
-- **Shared Expert Isolation**: Shared experts that are always activated to process all tokens
-- **Auxiliary Loss-free Load Balancing**: Load balancing without traditional auxiliary losses that affect model quality
-- **UltraMem TDQKR Optimization**: Tucker Decomposed Query-Key Retrieval optimization, reducing routing complexity from O(N) to O(√N)
-- **Dynamic Device Migration**: Dynamic expert migration for efficient memory management of large expert pools
+- **YvStableMoEGate**: Gating with LSTM load predictor, configurable expert count and top-K routing
+- **Fine-grained Expert Segmentation**: Each expert combines multiple sub-experts for finer routing granularity
+- **Shared Expert Isolation**: Dedicated experts that process all tokens for domain-general knowledge
+- **Auxiliary Loss-free Load Balancing**: Load balancing without auxiliary losses, using expert-level buffers
+- **Cognitive Density Optimization**: Expert specialization via routing entropy, mutual information, and diversity losses
+
+### 🧠 Subconscious System — Compute/Lookup Split
+
+Architecture separating active computation from static knowledge lookup:
+
+- **Product-Quantized Knowledge Field**: 16 codebooks × 131K entries, 131K¹⁶ virtual combinations (~0.27B params)
+- **Dynamic Navigation Head**: 0.23B head routes queries through the codebook space
+- **FiLM Modulation**: Retrieved knowledge modulates core layer activations via scale/shift
+- **0.5B Overhead**: Combined head + field adds 0.5B to a 7B core, enabling 314B-equivalent knowledge capacity
+- **Parallel to Context**: Knowledge runs parallel to the 1M context window, not increasing sequence length
+
+### 🧠 Memory Separation — External Knowledge Store
+
+Optional external knowledge retrieval via FAISS index:
+
+- **Deterministic O(1) Lookup**: N-gram address hashing for constant-time retrieval
+- **IVF-PQ Index**: Approximate nearest neighbor search for large knowledge bases
+- **Cross-Attention Injection**: Retrieved knowledge integrated via gated cross-attention
+- **Offline Knowledge Builder**: Independent 0.5B encoder for building the store from corpora
+- **mmap-backed**: Memory-mapped storage for efficient disk-to-GPU transfer
 
 ### 🌐 Multimodal Perception Stack
 
-Six-modality unified perception architecture:
+Six-modality processing architecture:
 
-- **YvVisionEncoder**: NaViT-style patch encoding with native resolution support (up to 2048px) and patch packing
-- **YvVideoEncoder**: Frame-level attention encoding with 3D RoPE spatio-temporal position encoding
-- **YvAudioEncoder**: Audio spectrum encoding with streaming audio processing support
-- **YvDocEncoder**: LayoutLMv3-style document encoding with layout-aware structural reasoning
-- **YvAgenticEncoder**: Agent state encoding with action space and state representation
-- **YvCrossModalAttention**: Cross-modal attention for deep inter-modal interaction
+- **YvVisionEncoder**: Patch encoding with native resolution support (up to 2048px) and patch packing
+- **YvVideoEncoder**: Frame-level encoding with 3D spatio-temporal position encoding via RoPE
+- **YvAudioEncoder**: Audio spectrum encoding with streaming processing support
+- **YvDocEncoder**: Document image encoding with layout-aware structural processing
+- **YvAgenticEncoder**: Agent state encoding for action space and state representation
+- **YvCrossModalAttention**: Cross-modal attention for inter-modal interaction
 
 ### ⚛️ YvDynamicModalFusion - Dynamic Modal Fusion
 
-Token-level multimodal fusion system:
+Token-level multimodal fusion:
 
-- **Cross-Modal Attention**: Cross-modal attention for inter-modal information exchange
-- **Modality-Aware Position Embeddings**: Modality-aware position embeddings
-- **Quality-Weighted Gating**: Quality-weighted gating that dynamically adjusts weights based on fusion quality
-- **YvEnhancedModalFusion**: Enhanced fusion module with contrastive cross-modal alignment and online adaptive weights
-- **Multiple Fusion Strategies**: Support for inserting fusion tokens before text sequences, concatenating 3D features, or outputting compressed summaries
+- **Cross-Modal Attention**: Exchange of information between modalities
+- **Modality-Aware Position Embeddings**: Position encoding that accounts for modality type
+- **Quality-Weighted Gating**: Dynamic weighting based on fusion quality scores
+- **Recurrent Modal Refiner**: Iterative refinement loop for cross-modal consistency
+- **Multiple Fusion Strategies**: Fusion tokens prepended to text, 3D feature concatenation, or compressed summary output
 
-### 📏 Ultra-Long Context Fabric
+### 📏 Long Context Processing
 
-Industry-leading 10M+ token context support:
+Context extension mechanisms up to 4M tokens:
 
-- **YaRN RoPE + Dynamic NTK Scaling**: YaRN position encoding with dynamic NTK scaling for 10M+ token extrapolation
-- **H2O Heavy-Hitter Oracle Attention**: Heavy-Hitter Oracle attention that retains important tokens for ultra-long context
-- **Streaming Attention**: Streaming attention for infinite-length generation
-- **Sliding Window Attention**: Sliding window attention combining local attention with global tokens
-- **Linear Attention**: O(n) complexity linear attention with ELU/Performer/Softmax feature mappings
-- **Paged Attention**: Paged attention for efficient KV cache management and sharing
-- **Ring Attention**: Ring attention for distributed ultra-long context processing
-- **Attention Sinks**: Attention sinks ensuring streaming inference stability
+- **YaRN RoPE + Dynamic NTK Scaling**: Position encoding extrapolation for extended sequences
+- **H2O Heavy-Hitter Oracle Attention**: Token retention based on attention score accumulation
+- **Streaming Attention**: Generation beyond trained context length by maintaining a local window
+- **Sliding Window Attention**: Local attention with configurable window size
+- **Linear Attention**: O(n) complexity attention via kernel feature maps (ELU/Performer)
+- **Paged Attention**: Block-based KV cache management for efficient memory use
+- **Ring Attention**: Distributed processing for extended contexts
+- **OOMB**: Out-of-Order Memory Banking for billion-token training contexts
+- **REFORM**: Compression-gather-recompute strategy for memory-efficient long context
 
-### 🔥 Hybrid Attention-SSM
+### 🔄 Hybrid Attention-SSM
 
-Industry-frontier hybrid architecture implementation:
+Hybrid attention and state space model architecture:
 
-- **Mamba-3 Integration**: Complete Mamba-3 SSM integration with trapezoidal discretization, complex states, and MIMO structure
-- **YvSelectiveSSM**: Selective State Space Model with input-dependent state transitions
-- **Progressive Gating**: Progressive gating for smooth transition from pure attention to hybrid mode, ensuring training stability
-- **Adaptive Routing**: Adaptive routing that dynamically selects attention or SSM based on sequence features
-- **Jamba-style Interleaved Architecture**: Jamba-style interleaved architecture with alternating attention and SSM layers
+- **Mamba-3 Integration**: SSM with discretization, complex states, and MIMO structure
+- **YvSelectiveSSM**: State Space Model with input-dependent state transitions
+- **Progressive Gating**: Gradual transition from attention to hybrid mode during training
+- **Adaptive Routing**: Per-token selection between attention or SSM based on sequence features
+- **Jamba-style Interleaved**: Alternating attention and SSM layers
 
-### 🎯 Advanced Attention Mechanisms
+### 🎯 Attention Mechanisms
 
-Complete attention mechanism implementations:
+Multiple attention implementations:
 
-- **Flash Attention 2/3**: GPU-optimized efficient attention supporting Ampere+ and Hopper+ architectures
-- **Multi-Head Latent Attention (MLA)**: Low-rank KV compression for significantly reduced KV cache
-- **Grouped Query Attention (GQA)**: Grouped query attention balancing quality and efficiency
-- **ALiBi Position Encoding**: Attention with Linear Biases position encoding without position embeddings
-- **QK Normalization**: Query-Key normalization for improved large model training stability
+- **Flash Attention 2/3**: GPU-optimized efficient attention (Ampere+ and Hopper+)
+- **Multi-Head Latent Attention (MLA)**: Low-rank KV compression via latent space
+- **Embedding-Gated MLA (EG-MLA)**: MLA with embedding-based gating for improved expressiveness
+- **Grouped Query Attention (GQA)**: Shared KV heads across query groups
+- **ALiBi Position Encoding**: Extrapolation via linear bias without position embeddings
+- **H2O Attention**: Heavy-Hitter Oracle for cache compression
+- **DuoAttention**: Separate retrieval and streaming attention heads
+- **Circulant Attention**: FFT-based approximation for long sequences
+- **QK Normalization**: Query-Key normalization for training stability
 
-### 🚀 Training Envelope & Optimization
+### 🚀 Training Pipeline & Optimization
 
-Complete training optimization suite:
+Training support:
 
-- **GaLore Optimization**: Low-rank gradient projection optimization with adaptive rank adjustment and multimodal module optimization
-- **K-FAC Enhanced Gradient Clipping**: K-FAC enhanced gradient clipping with layer coordination
-- **Multi-bit Quantization (2/4/8-bit)**: Multi-bit quantization support for extreme memory savings
-- **LoRA/QLoRA**: Low-rank adaptation fine-tuning supporting all linear layers
-- **Speculative Decoding**: Speculative decoding for 2-3x inference acceleration
-- **Multi-Token Prediction (MTP)**: Multi-token prediction for improved generation quality
-- **Smart Gradient Accumulation**: Smart gradient accumulation with adaptive memory management
-- **Multi-task Learning**: Multi-task learning support with adaptive task weights
+- **EnTA (Encre Train Agent)**: Automated multi-teacher distillation pipeline (Rust-native backend)
+- **GaLore**: Gradient low-rank projection for memory-efficient training
+- **Multi-bit Quantization (FP4/INT4/INT8)**: Quantization for memory reduction
+- **LoRA/QLoRA**: Low-rank adaptation for fine-tuning
+- **Speculative Decoding**: Draft-verify for inference acceleration
+- **Multi-Token Prediction (MTP)**: Predicting multiple future tokens per position
+- **DAPO**: Decoupled clipping policy optimization for reinforcement learning
+- **TTT-E2E**: Test-time training for adaptation during inference
+- **MTP (Multi-Token Prediction)**: Auxiliary multi-token prediction heads
+- **Ink Optimizer**: Unified optimizer with INT8/INT4 compression and sparse gradients
+- **Smart Gradient Accumulation**: Adaptive memory management
+- **Multi-task Learning**: Support for multiple task heads with adaptive weighting
 
 #### Reference Configuration
-Core components are located in `model/` and `model/multimodal/`, with default hyperparameters stored in `configs/model/*.json`.
+Core components are located in `model/` and `model/multimodal/`, with hyperparameters in `configs/model/*.yaml`.
 
 | Model Size | Layers | Hidden | Heads | KV Heads | MoE Experts | Top-K | Context | MLA Rank |
 |------------|--------|--------|-------|----------|-------------|-------|---------|----------|
 | 0.5B       | 16     | 640    | 10    | 5        | 6           | 2     | 256K    | 256      |
 | 1.5B       | 16     | 896    | 14    | 7        | 6           | 2     | 256K    | 256      |
-| 7B         | 28     | 3584   | 32    | 8        | 8           | 2     | 1M      | 512      |
-| 32B        | 64     | 5120   | 40    | 8        | 8           | 2     | 1M      | 512      |
-| 64B        | 80     | 6656   | 52    | 8        | 8           | 2     | 10M     | 1024     |
-| 70B        | 80     | 8192   | 64    | 8        | 8           | 2     | 10M     | 1024     |
-| 128B       | 120    | 10240  | 80    | 8        | 8           | 2     | 10M     | 1536     |
-| 314B       | 160    | 12288  | 96    | 12       | 16          | 4     | 10M     | 2048     |
-| 671B       | 200    | 16384  | 128   | 16       | 32          | 6     | 10M     | 2048     |
-| 1T         | 240    | 20480  | 160   | 20       | 64          | 8     | 10M     | 2560     |
+| 7B         | 28     | 3584   | 32    | 8        | 128         | 8     | 1M      | 512      |
+| 32B        | 64     | 5120   | 40    | 8        | 128         | 8     | 1M      | 512      |
+| 64B        | 80     | 6656   | 52    | 8        | 128         | 8     | 1M      | 1024     |
+| 70B        | 80     | 8192   | 64    | 8        | 128         | 8     | 2M      | 1024     |
+| 128B       | 120    | 10240  | 80    | 8        | 128         | 8     | 2M      | 1536     |
+| 314B       | 160    | 12288  | 96    | 12       | 256         | 8     | 4M      | 2048     |
+| 671B       | 200    | 16384  | 128   | 16       | 256         | 8     | 4M      | 2048     |
+| 1T         | 240    | 20480  | 160   | 20       | 512         | 8     | 4M      | 2560     |
 
 Note: Default quantization values inherit from their respective config files and can be directly overridden in training commands via `--force_quant --quant_bits {2,4,8}`, `--force_lora`.
 
@@ -388,7 +416,8 @@ python manage.py download
 - How to resume training? `--resume_ckpt path/to/ckpt.pt` (optional `--reset_lr`)
 - CPU only? Can use `--device cpu` (slower performance).
 - How to perform evaluation? `python manage.py benchmark ...`, with `--config`, `--seq_len`, `--model` and other parameters.
-- How does EnTA work? EnTA is an LLM-driven agent that autonomously trains the 7B student model. See [EnTA Architecture](#-encre-train-agent-enta).
+- How does EnTA work? EnTA is an LLM-driven agent that orchestrates multi-teacher distillation. See [Training Pipeline](#-training-pipeline--optimization).
+- Does this repository include trained model weights? No. This repository provides the architecture, training pipeline, and inference code. Model weights must be trained separately using the EnTA pipeline.
 
 ---
 
@@ -544,58 +573,50 @@ Open source packages and their agreement information used by this project:
 
 | 📦 Package | 📜 License | 📦 Package | 📜 License |
 |:-----------|:-----------|:-----------|:-----------|
-| torch | BSD-style | torchvision | BSD-style |
-| torchaudio | BSD-style | torch-directml | MIT |
-| transformers | Apache 2.0 | tokenizers | Apache 2.0 |
-| huggingface-hub | Apache 2.0 | modelscope | Apache 2.0 |
-| numpy | BSD 3-Clause | scipy | BSD 3-Clause |
-| scikit-learn | BSD 3-Clause | addict | MIT |
-| accelerate | Apache 2.0 | einops | MIT |
-| timm | Apache 2.0 | pytorch-lightning | Apache 2.0 |
-| pillow | HPND | PyMuPDF | AGPL 3.0 |
-| python-docx | MIT | python-pptx | MIT |
-| pdfplumber | MIT | pdf2image | MIT |
-| ocrmypdf | MPL 2.0 | bitsandbytes | MIT |
-| peft | Apache 2.0 | wheel | MIT |
-| xformers | BSD 3-Clause | trl | Apache 2.0 |
-| nvidia-ml-py3 | BSD 3-Clause | fastapi | MIT |
-| uvicorn | BSD 3-Clause | python-multipart | Apache 2.0 |
-| pydantic | MIT | httpx | BSD 3-Clause |
-| pandas | BSD 3-Clause | gradio | Apache 2.0 |
-| ijson | BSD 3-Clause | pyarrow | Apache 2.0 |
-| tqdm | MIT | jsonlines | MIT |
-| windows-curses | BSD 3-Clause | psutil | BSD 3-Clause |
-| streamlit | Apache 2.0 | PyYAML | MIT |
-| GitPython | BSD 3-Clause | opencv-python | MIT |
-| av | BSD 3-Clause | decord | Apache 2.0 |
-| imageio | BSD 3-Clause | imageio-ffmpeg | BSD 3-Clause |
-| openai | Apache 2.0 | requests | Apache 2.0 |
-| beautifulsoup4 | MIT | psutil | BSD 3-Clause |
+| accelerate | Apache 2.0 | addict | MIT |
+| aiofiles | Apache 2.0 | audioread | MIT |
+| av | BSD 3-Clause | beautifulsoup4 | MIT |
+| bert-score | MIT | bitsandbytes | MIT |
+| causal-conv1d | Apache 2.0 | datasets | Apache 2.0 |
+| decord | Apache 2.0 | deepspeed | Apache 2.0 |
+| dmsc | Apache 2.0 | docker | Apache 2.0 |
+| duckduckgo-search | MIT | einops | MIT |
+| evalscope | Apache 2.0 | fastapi | MIT |
+| flash-attn | BSD 3-Clause | GitPython | BSD 3-Clause |
+| gradio | Apache 2.0 | httpx | BSD 3-Clause |
+| huggingface-hub | Apache 2.0 | hydra-core | MIT |
+| ijson | BSD 3-Clause | imageio | BSD 3-Clause |
+| imageio-ffmpeg | BSD 3-Clause | jsonlines | MIT |
+| kagglehub | Apache 2.0 | librosa | ISC |
+| lm-eval | MIT | mamba-ssm | Apache 2.0 |
+| mlflow | Apache 2.0 | modelscope | Apache 2.0 |
+| numpy | BSD 3-Clause | nvidia-ml-py3 | BSD 3-Clause |
+| ocrmypdf | MPL 2.0 | omegaconf | BSD 3-Clause |
+| openai | Apache 2.0 | opencv-python | MIT |
+| pandas | BSD 3-Clause | pathlib2 | MIT |
+| pdf2image | MIT | pdfplumber | MIT |
+| peft | Apache 2.0 | pillow | HPND |
+| plotly | MIT | psutil | BSD 3-Clause |
+| pyarrow | Apache 2.0 | pydantic | MIT |
+| pydub | MIT | PyMuPDF | AGPL 3.0 |
+| python-docx | MIT | python-multipart | Apache 2.0 |
+| python-pptx | MIT | pytorch-lightning | Apache 2.0 |
 | pytz | MIT | pywin32 | PSF |
-| duckduckgo-search | MIT | plotly | MIT |
-| evalscope | Apache 2.0 | safetensors | Apache 2.0 |
-| deepspeed | Apache 2.0 | aiofiles | Apache 2.0 |
-| pathlib2 | MIT | textual | MIT |
-| dmsc | Apache 2.0 | datasets | Apache 2.0 |
-| rich | MIT | omegaconf | BSD 3-Clause |
-| hydra-core | MIT | wandb | MIT |
-| tensorboard | Apache 2.0 | mlflow | Apache 2.0 |
-| lm-eval | MIT | rouge-score | Apache 2.0 |
-| sacrebleu | Apache 2.0 | bert-score | MIT |
-| librosa | ISC | soundfile | BSD 3-Clause |
-| audioread | MIT | pydub | MIT |
-| flash-attn | BSD 3-Clause | triton | MIT |
-| mamba-ssm | Apache 2.0 | causal-conv1d | Apache 2.0 |
-| docker | Apache 2.0 | | |
+| PyYAML | MIT | requests | Apache 2.0 |
+| rich | MIT | rouge-score | Apache 2.0 |
+| sacrebleu | Apache 2.0 | safetensors | Apache 2.0 |
+| scikit-learn | BSD 3-Clause | scipy | BSD 3-Clause |
+| soundfile | BSD 3-Clause | streamlit | Apache 2.0 |
+| tensorboard | Apache 2.0 | textual | MIT |
+| timm | Apache 2.0 | tokenizers | Apache 2.0 |
+| torch | BSD-style | torch-directml | MIT |
+| torchaudio | BSD-style | torchvision | BSD-style |
+| tqdm | MIT | transformers | Apache 2.0 |
+| triton | MIT | trl | Apache 2.0 |
+| uvicorn | BSD 3-Clause | wandb | MIT |
+| wheel | MIT | windows-curses | BSD 3-Clause |
+| wrapt | BSD 3-Clause | xformers | BSD 3-Clause |
 
 </div>
-
-</div>
-
----
-
-<div align="center">
-
-**✅ Success. Connection established.**
 
 </div>

@@ -37,6 +37,7 @@ MoE Architecture Overview:
 Module Components:
     1. Expert Networks (expert.py):
        - YvExpertBase: Abstract base class for all experts
+       - YvExpert: Unified mode-aware default expert
        - YvStandardExpert: Standard FFN expert
        - YvSwiGLUExpert: SwiGLU-based expert (recommended)
        - YvGeGLUExpert: GeGLU-based expert
@@ -45,6 +46,7 @@ Module Components:
        - YvExpertFactory: Factory for creating expert instances
        - YvExpertConfig: Configuration dataclass for experts
        - YvExpertType: Enumeration of expert types
+       - YvExpertMode: Enumeration of expert execution modes
     
     2. Routing Components (gate.py):
        - YvMoEGate: Standard top-k routing gate with load balancing
@@ -124,6 +126,7 @@ from .layer import (
 )
 from .expert import (
     YvExpertBase,
+    YvExpert,
     YvStandardExpert,
     YvSwiGLUExpert,
     YvGeGLUExpert,
@@ -132,6 +135,7 @@ from .expert import (
     YvExpertFactory,
     YvExpertConfig,
     YvExpertType,
+    YvExpertMode,
     create_expert_module,
 )
 from .diversity import (
@@ -154,6 +158,7 @@ __all__ = [
     "YvFineGrainedRouter",
     "YvDeepSeekMoELayer",
     "YvExpertBase",
+    "YvExpert",
     "YvStandardExpert",
     "YvSwiGLUExpert",
     "YvGeGLUExpert",
@@ -162,6 +167,7 @@ __all__ = [
     "YvExpertFactory",
     "YvExpertConfig",
     "YvExpertType",
+    "YvExpertMode",
     "create_expert_module",
     "YvDiversityConfig",
     "YvMineStatisticsNetwork",

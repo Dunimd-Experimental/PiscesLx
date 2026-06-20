@@ -27,6 +27,8 @@ CLAUDE.md
 .vscode/
 .idea/
 .pisceslx/
+.encre/
+temp_filelist.txt
 *.swp
 *.swo
 *~
@@ -133,3 +135,4 @@ models/*.pth
 
 piscesl1/
 doc/
+2.txt

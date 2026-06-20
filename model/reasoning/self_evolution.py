@@ -51,12 +51,14 @@ class YvSEAL(nn.Module):
         self,
         model: nn.Module,
         confidence_threshold: float = 0.85,
-        max_synthetic_samples: int = 100
+        max_synthetic_samples: int = 100,
+        temperature: float = 2.0
     ):
         super().__init__()
         self.model = model
         self.confidence_threshold = confidence_threshold
         self.max_synthetic_samples = max_synthetic_samples
+        self.temperature = temperature
         self.synthetic_buffer: List[Tuple[torch.Tensor, torch.Tensor]] = []
 
     def generate_synthetic_data(
@@ -100,10 +102,16 @@ class YvSEAL(nn.Module):
             optimizer = torch.optim.SGD(self.model.lm_head.parameters(), lr=lr)
             optimizer.zero_grad()
 
-            # Reconstruct from verified knowledge
+            # Reconstruct from verified knowledge via self-distillation
             logits = self.model.lm_head(verified_knowledge)
-            target = torch.argmax(logits, dim=-1)
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target.view(-1))
+            with torch.no_grad():
+                soft_targets = F.softmax(logits / self.temperature, dim=-1)
+            loss = F.kl_div(
+                F.log_softmax(logits / self.temperature, dim=-1),
+                soft_targets,
+                reduction='batchmean'
+            )
+            loss = loss * (self.temperature ** 2)
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(self.model.lm_head.parameters(), 0.01)

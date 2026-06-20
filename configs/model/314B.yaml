@@ -26,6 +26,17 @@ n_layer: 160
 n_head: 96
 n_kv_head: 12
 
+# ========================================
+# Lookup Split Configuration (314B-equivalent Knowledge Field)
+# Actual trainable parameters: ~0.27B via product quantization
+# ========================================
+compute_params_total: 0
+lookup_params_total: 270000000
+use_dual_inject: true
+use_subconscious: true
+use_memory_separation: true
+attention_type: "standard"
+
 moe_num_experts: 16
 moe_top_k: 4
 moe_capacity_factor: 2.0

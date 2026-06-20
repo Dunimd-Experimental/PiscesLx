@@ -31,6 +31,7 @@ Layer Types:
     1. YvExpertChoiceRouter:
        - Expert-choice routing where experts select tokens
        - Capacity-based token allocation
+       - Subconscious hint injection into routing logits
        - Better load balancing than token-choice routing
     
     2. YvFineGrainedRouter:
@@ -38,10 +39,12 @@ Layer Types:
        - Each expert is a combination of smaller sub-experts
        - UltraMem TDQKR optimization for large expert counts
        - Auxiliary loss-free load balancing
+       - Anticipatory routing based on recent usage trends
     
     3. YvDynamicMoELayer:
        - Dynamic MoE with shared expert support
        - Fine-grained expert segmentation option
+       - Compute/lookup split via YvExpertMode
        - Dynamic device migration for large expert pools
        - UltraMem Skip-Layer for better gradient flow
     
@@ -49,12 +52,16 @@ Layer Types:
        - Complete DeepSeek-V3 style MoE implementation
        - All flagship features enabled by default
        - Fine-grained + shared experts + aux-loss-free
+       - 128 experts and top-8 routing by default
 
 Key Features:
     - Expert-choice routing with capacity constraints
     - Shared expert isolation (DeepSeek-V3 style)
     - Fine-grained expert segmentation for flexible routing
     - Auxiliary loss-free load balancing
+    - Anticipatory routing for trending expert prediction
+    - Compute/lookup split architecture support
+    - Subconscious hint injection into routing logits
     - Dynamic device migration for large expert pools
     - UltraMem TDQKR optimization (auto-enabled for 16+ experts)
     - UltraMem Skip-Layer for gradient flow
@@ -100,7 +107,7 @@ import torch.nn.functional as F
 from utils.dc import PiscesLxLogger
 from .expert_evolution import YvExpertEvolution
 from .gate import moe_init_weights
-from .expert import YvSharedExpert, YvExpertConfig, YvExpertType
+from .expert import YvExpert, YvSharedExpert, YvExpertConfig, YvExpertType, YvExpertMode
 
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.Moe", file_path=get_log_file("Yv.Moe"), enable_file=True)
@@ -164,6 +171,7 @@ class YvExpertChoiceRouter(nn.Module):
         """
         super().__init__()
         self.gate = nn.Linear(hidden_size, num_experts, bias=False)
+        self.subconscious_proj = nn.Linear(hidden_size, num_experts, bias=False)
         self.capacity_factor = capacity_factor
         self.num_experts = num_experts
         self.top_k = top_k
@@ -172,11 +180,17 @@ class YvExpertChoiceRouter(nn.Module):
         # When True, disables any stateful mutation inside forward.
         self._is_checkpointing = False
     
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        x: torch.Tensor,
+        subconscious_hints: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass of the expert-choice router.
         
         Args:
             x (torch.Tensor): Input tokens [num_tokens, hidden_size].
+            subconscious_hints (Optional[torch.Tensor]): Optional hidden-state
+                hints [num_tokens, hidden_size] injected into routing logits.
         
         Returns:
             tuple: A tuple containing:
@@ -187,6 +201,8 @@ class YvExpertChoiceRouter(nn.Module):
         tokens_per_expert = int(x.shape[0] * self.capacity_factor / self.num_experts)
         
         logits = self.gate(x)
+        if subconscious_hints is not None:
+            logits = logits + self.subconscious_proj(subconscious_hints)
         
         expert_indices = torch.topk(logits.T, tokens_per_expert, dim=1).indices
         
@@ -216,6 +232,7 @@ class YvFineGrainedRouter(nn.Module):
         - Fine-grained expert segmentation for flexible routing
         - UltraMem TDQKR optimization (auto-enabled for 16+ experts)
         - Auxiliary loss-free load balancing
+        - Anticipatory routing based on recent usage trends
         - Tucker decomposition for efficient routing
     
     UltraMem TDQKR (Tucker Decomposed Query-Key Retrieval):
@@ -254,7 +271,10 @@ class YvFineGrainedRouter(nn.Module):
         num_sub_experts: int = 1,
         top_k: int = 2,
         capacity_factor: float = 1.25,
-        use_aux_loss_free: bool = True
+        use_aux_loss_free: bool = True,
+        use_anticipatory_routing: bool = False,
+        anticipatory_momentum: float = 0.9,
+        anticipatory_scale: float = 0.1
     ) -> None:
         """Initialize the fine-grained router.
         
@@ -270,6 +290,12 @@ class YvFineGrainedRouter(nn.Module):
             use_aux_loss_free (bool): Use auxiliary loss-free load
                 balancing instead of traditional auxiliary loss.
                 Default: True.
+            use_anticipatory_routing (bool): Use lightweight anticipatory
+                routing based on recent expert usage trends. Default: False.
+            anticipatory_momentum (float): Momentum for usage EMA.
+                Default: 0.9.
+            anticipatory_scale (float): Scale of anticipatory bias.
+                Default: 0.1.
         """
         super().__init__()
         self.hidden_size = hidden_size
@@ -279,6 +305,9 @@ class YvFineGrainedRouter(nn.Module):
         self.top_k = top_k
         self.capacity_factor = capacity_factor
         self.use_aux_loss_free = use_aux_loss_free
+        self.use_anticipatory_routing = use_anticipatory_routing
+        self.anticipatory_momentum = anticipatory_momentum
+        self.anticipatory_scale = anticipatory_scale
 
         # Gradient checkpointing compatibility flag
         # When True, disables any stateful mutation inside forward.
@@ -289,6 +318,12 @@ class YvFineGrainedRouter(nn.Module):
         if use_aux_loss_free:
             self.register_buffer('expert_counts', torch.zeros(self.total_experts))
             self.register_buffer('total_tokens', torch.tensor(0.0))
+        
+        if use_anticipatory_routing:
+            self.register_buffer(
+                'expert_usage_ema',
+                torch.zeros(self.total_experts)
+            )
     
     def forward(
         self,
@@ -310,6 +345,11 @@ class YvFineGrainedRouter(nn.Module):
         
         logits = self.gate(x)
         
+        # Anticipatory routing: bias logits with recent usage trends
+        # to pre-balance load before top-k selection.
+        if self.use_anticipatory_routing:
+            logits = logits - self.anticipatory_scale * self.expert_usage_ema.view(1, -1)
+        
         # UltraMem TDQKR: Tucker Decomposed Query-Key Retrieval
         # Auto-enabled when total_experts > 16
         # Based on: ByteDance ICLR 2025
@@ -330,11 +370,19 @@ class YvFineGrainedRouter(nn.Module):
         
         top_k_weights = top_k_weights / (top_k_weights.sum(dim=-1, keepdim=True) + 1e-8)
         
-        if self.use_aux_loss_free and self.training and (not self._is_checkpointing):
+        if self.training and (not self._is_checkpointing):
             with torch.no_grad():
-                for idx in top_k_indices.flatten():
-                    self.expert_counts[idx] += 1
-                self.total_tokens += batch_size
+                if self.use_aux_loss_free:
+                    for idx in top_k_indices.flatten():
+                        self.expert_counts[idx] += 1
+                    self.total_tokens += batch_size
+                
+                if self.use_anticipatory_routing:
+                    one_hot = F.one_hot(top_k_indices, self.total_experts).float().sum(dim=1)
+                    batch_usage = one_hot.sum(dim=0) / (batch_size * self.top_k)
+                    self.expert_usage_ema.mul_(self.anticipatory_momentum).add_(
+                        batch_usage, alpha=1.0 - self.anticipatory_momentum
+                    )
         
         if self.use_aux_loss_free:
             load_balancing_loss = self._compute_aux_loss_free()
@@ -389,11 +437,14 @@ class YvFineGrainedRouter(nn.Module):
         """Reset expert usage statistics for new training epoch.
         
         Clears the expert_counts and total_tokens buffers used for
-        auxiliary loss-free load balancing.
+        auxiliary loss-free load balancing, and resets the anticipatory
+        routing usage EMA.
         """
         if self.use_aux_loss_free:
             self.expert_counts.zero_()
             self.total_tokens.zero_()
+        if self.use_anticipatory_routing:
+            self.expert_usage_ema.zero_()
 
 
 class YvDynamicMoELayer(nn.Module):
@@ -412,6 +463,9 @@ class YvDynamicMoELayer(nn.Module):
         - Fine-grained expert segmentation (optional)
         - Dynamic device migration for large expert pools
         - Auxiliary loss-free load balancing
+        - Compute/lookup split via YvExpertMode
+        - Anticipatory routing for trending expert prediction
+        - Subconscious hint injection into routing logits
         - UltraMem Skip-Layer for better gradient flow
     
     Design Principles:
@@ -427,6 +481,7 @@ class YvDynamicMoELayer(nn.Module):
         top_k (int): Number of experts to route each token to.
         num_experts (int): Total number of routed experts.
         num_shared_experts (int): Number of shared experts.
+        compute_mode (str): Compute split mode ("default" or "compute_split").
         max_gpu_experts (int): Maximum experts to keep on GPU.
     
     Example:
@@ -434,7 +489,8 @@ class YvDynamicMoELayer(nn.Module):
         ...     config,
         ...     num_shared_experts=1,
         ...     use_fine_grained=True,
-        ...     num_sub_experts=4
+        ...     num_sub_experts=4,
+        ...     compute_mode="compute_split"
         ... )
         >>> output, aux_loss = layer(hidden_states)
     
@@ -452,7 +508,8 @@ class YvDynamicMoELayer(nn.Module):
         dtype: Optional[torch.dtype] = None,
         num_shared_experts: int = 1,
         use_fine_grained: bool = False,
-        num_sub_experts: int = 1
+        num_sub_experts: int = 1,
+        compute_mode: str = "default"
     ) -> None:
         """Initialize the dynamic MoE layer.
         
@@ -460,10 +517,12 @@ class YvDynamicMoELayer(nn.Module):
             cfg: Configuration object with MoE parameters:
                 - hidden_size: Input/output dimension
                 - intermediate_size: Expert intermediate dimension
-                - moe_top_k: Number of experts per token (default: 2)
-                - moe_num_experts: Total expert count (default: 8)
+                - moe_top_k: Number of experts per token (default: 8)
+                - moe_num_experts: Total expert count (default: 128)
                 - moe_capacity_factor: Expert capacity factor
                 - moe_aux_loss_free: Use aux loss-free balancing
+                - moe_compute_split_ratio: Ratio of compute experts (default: 0.5)
+                - moe_anticipatory_routing: Enable anticipatory routing
                 - max_gpu_experts: Maximum experts on GPU
                 - moe_dropout: Dropout for experts
             device: Device to place the module on. Default: None.
@@ -474,19 +533,33 @@ class YvDynamicMoELayer(nn.Module):
                 segmentation. Default: False.
             num_sub_experts (int): Number of sub-experts per expert
                 group when fine-grained is enabled. Default: 1.
+            compute_mode (str): Expert compute mode. "default" uses
+                uniform experts; "compute_split" splits experts into
+                pure compute and pure lookup with compute experts using
+                50% of the intermediate size. Default: "default".
         """
         super().__init__()
         YvDynamicMoELayer._layer_count += 1
         self.cfg = cfg
         
-        self.top_k = getattr(cfg, 'moe_top_k', 2)
-        self.num_experts = getattr(cfg, 'moe_num_experts', 8)
+        self.top_k = getattr(cfg, 'moe_top_k', 8)
+        self.num_experts = getattr(cfg, 'moe_num_experts', 128)
         self.hidden_size = cfg.hidden_size
         self.intermediate_size = getattr(cfg, 'intermediate_size', cfg.hidden_size * 4)
         
         self.num_shared_experts = num_shared_experts
         self.use_fine_grained = use_fine_grained
         self.num_sub_experts = num_sub_experts if use_fine_grained else 1
+        self.compute_mode = compute_mode
+        self.compute_split_ratio = getattr(cfg, 'moe_compute_split_ratio', 0.5)
+        self.num_compute_experts = self.num_experts
+        self.num_lookup_experts = 0
+        
+        if compute_mode == "compute_split":
+            self.num_compute_experts = max(1, int(self.num_experts * self.compute_split_ratio))
+            self.num_lookup_experts = self.num_experts - self.num_compute_experts
+        
+        use_anticipatory = bool(getattr(cfg, 'moe_anticipatory_routing', False))
         
         if use_fine_grained:
             self.router = YvFineGrainedRouter(
@@ -495,7 +568,8 @@ class YvDynamicMoELayer(nn.Module):
                 self.num_sub_experts,
                 self.top_k,
                 capacity_factor=getattr(cfg, 'moe_capacity_factor', 1.25),
-                use_aux_loss_free=getattr(cfg, 'moe_aux_loss_free', True)
+                use_aux_loss_free=getattr(cfg, 'moe_aux_loss_free', True),
+                use_anticipatory_routing=use_anticipatory
             )
         else:
             self.router = YvExpertChoiceRouter(
@@ -505,21 +579,38 @@ class YvDynamicMoELayer(nn.Module):
                 top_k=self.top_k
             )
         
-        self.experts = nn.ModuleList([
-            nn.Sequential(
-                nn.Linear(cfg.hidden_size, self.intermediate_size, bias=False, device=device, dtype=dtype),
-                nn.SiLU(),
-                nn.Linear(self.intermediate_size, cfg.hidden_size, bias=False, device=device, dtype=dtype)
-            ) for _ in range(self.num_experts)
-        ])
-        for expert in self.experts:
-            expert.apply(moe_init_weights)
+        compute_intermediate = self.intermediate_size
+        if compute_mode == "compute_split":
+            compute_intermediate = max(1, int(self.intermediate_size * 0.5))
+        
+        self.experts = nn.ModuleList()
+        for expert_id in range(self.num_experts):
+            if compute_mode == "compute_split" and expert_id < self.num_compute_experts:
+                expert_intermediate = compute_intermediate
+                mode = YvExpertMode.PURE_COMPUTE
+            elif compute_mode == "compute_split":
+                expert_intermediate = self.intermediate_size
+                mode = YvExpertMode.PURE_LOOKUP
+            else:
+                expert_intermediate = self.intermediate_size
+                mode = YvExpertMode.PURE_COMPUTE
+            
+            expert_config = YvExpertConfig(
+                hidden_size=cfg.hidden_size,
+                intermediate_size=expert_intermediate,
+                expert_type=YvExpertType.SWIGLU,
+                mode=mode,
+                dropout=getattr(cfg, 'moe_dropout', 0.0),
+                use_bias=False
+            )
+            self.experts.append(YvExpert(expert_config, device=device, dtype=dtype))
         
         if self.num_shared_experts > 0:
             shared_config = YvExpertConfig(
                 hidden_size=cfg.hidden_size,
                 intermediate_size=self.intermediate_size,
                 expert_type=YvExpertType.SHARED,
+                mode=YvExpertMode.PURE_COMPUTE,
                 dropout=getattr(cfg, 'moe_dropout', 0.0),
                 use_bias=False
             )
@@ -537,6 +628,7 @@ class YvDynamicMoELayer(nn.Module):
         self.max_gpu_experts = getattr(cfg, 'max_gpu_experts', 4)
         self._active_experts = OrderedDict()
         self._step = 0
+        self._skip_buffer: Optional[torch.Tensor] = None
 
         # Expert Evolution Integration
         self.use_expert_evolution = bool(getattr(cfg, 'use_expert_evolution', False))
@@ -553,15 +645,16 @@ class YvDynamicMoELayer(nn.Module):
         if YvDynamicMoELayer._layer_count == 1:
             shared_info = f", {self.num_shared_experts} shared" if self.num_shared_experts > 0 else ""
             fine_grained_info = f" (fine-grained x{self.num_sub_experts})" if use_fine_grained else ""
+            compute_info = f", compute_mode={compute_mode}" if compute_mode != "default" else ""
             try:
                 _LOG.info(
                     f"YvDynamicMoELayer: {self.num_experts} experts{fine_grained_info}, "
-                    f"top-{self.top_k} routing{shared_info}"
+                    f"top-{self.top_k} routing{shared_info}{compute_info}"
                 )
             except UnicodeEncodeError:
                 print(
                     f"[OK] YvDynamicMoELayer: {self.num_experts} experts{fine_grained_info}, "
-                    f"top-{self.top_k} routing{shared_info}"
+                    f"top-{self.top_k} routing{shared_info}{compute_info}"
                 )
     
     def _move_expert_to_gpu(self, expert_id: int) -> None:
@@ -629,7 +722,11 @@ class YvDynamicMoELayer(nn.Module):
         
         return combined
     
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        x: torch.Tensor,
+        subconscious_hints: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass of the dynamic MoE layer.
         
         Routes input tokens to experts, computes expert outputs, combines
@@ -638,6 +735,8 @@ class YvDynamicMoELayer(nn.Module):
         
         Args:
             x (torch.Tensor): Input tensor [batch_size, seq_len, hidden_size].
+            subconscious_hints (Optional[torch.Tensor]): Optional hidden-state
+                hints [batch_size, seq_len, hidden_size] for expert-choice routing.
         
         Returns:
             tuple: A tuple containing:
@@ -651,6 +750,9 @@ class YvDynamicMoELayer(nn.Module):
         """
         batch_size, seq_len, hidden = x.shape
         x_flat = x.view(-1, hidden)
+        hints_flat = None
+        if subconscious_hints is not None:
+            hints_flat = subconscious_hints.view(-1, hidden)
         
         shared_output = self._compute_shared_expert_output(x)
         
@@ -672,7 +774,9 @@ class YvDynamicMoELayer(nn.Module):
                     expert_out = self.experts[expert_id](h_batch)
                     outputs[selected_tokens] += weights.unsqueeze(1) * expert_out
         else:
-            expert_indices, dispatch_mask, load_balancing_loss = self.router(x_flat)
+            expert_indices, dispatch_mask, load_balancing_loss = self.router(
+                x_flat, subconscious_hints=hints_flat
+            )
             
             outputs = torch.zeros_like(x_flat)
             
@@ -731,6 +835,8 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
         - Fine-grained expert segmentation (default: 4 sub-experts)
         - Shared expert isolation (default: 1 shared expert)
         - Auxiliary loss-free load balancing
+        - Anticipatory routing for trending expert prediction
+        - Compute/lookup split support (default: "default")
         - Device-aware expert placement for memory efficiency
         - UltraMem TDQKR optimization for large expert counts
         - UltraMem Skip-Layer for better gradient flow
@@ -741,6 +847,7 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
         - num_shared_experts: 1
         - use_fine_grained: True
         - num_sub_experts: 4
+        - compute_mode: "default"
     
     Knowledge Density Optimization:
         - Gradient cluster initialization for specialized experts
@@ -775,11 +882,12 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
             cfg: Configuration object with MoE parameters:
                 - hidden_size: Input/output dimension
                 - intermediate_size: Expert intermediate dimension
-                - moe_top_k: Number of experts per token (default: 2)
-                - moe_num_experts: Total expert count (default: 8)
+                - moe_top_k: Number of experts per token (default: 8)
+                - moe_num_experts: Total expert count (default: 128)
                 - moe_num_shared_experts: Number of shared experts (default: 1)
                 - moe_fine_grained: Enable fine-grained (default: True)
                 - moe_num_sub_experts: Sub-experts per group (default: 4)
+                - moe_compute_mode: Compute mode ("default" or "compute_split")
                 - expert_init_method: Expert initialization method
                     ('gradient_cluster', 'orthogonal', 'spectral', 'hybrid')
                 - diversity_weight: Weight for diversity regularization loss
@@ -793,9 +901,10 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
             cfg,
             device=device,
             dtype=dtype,
-            num_shared_experts=getattr(cfg, 'moe_shared_experts', getattr(cfg, 'moe_num_shared_experts', 0)),
+            num_shared_experts=getattr(cfg, 'moe_shared_experts', getattr(cfg, 'moe_num_shared_experts', 1)),
             use_fine_grained=getattr(cfg, 'moe_fine_grained', True),
-            num_sub_experts=getattr(cfg, 'moe_num_sub_experts', 4)
+            num_sub_experts=getattr(cfg, 'moe_num_sub_experts', 4),
+            compute_mode=getattr(cfg, 'moe_compute_mode', "default")
         )
         
         self.expert_init_method = getattr(cfg, 'expert_init_method', None)
@@ -1040,7 +1149,11 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
             dtype=dtype
         )
     
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+    def forward(
+        self,
+        x: torch.Tensor,
+        subconscious_hints: Optional[torch.Tensor] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """Forward pass with diversity regularization.
         
         Routes input tokens to experts, computes expert outputs, combines
@@ -1049,6 +1162,8 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
         
         Args:
             x (torch.Tensor): Input tensor [batch_size, seq_len, hidden_size].
+            subconscious_hints (Optional[torch.Tensor]): Optional hidden-state
+                hints [batch_size, seq_len, hidden_size] for expert-choice routing.
         
         Returns:
             tuple: A tuple containing:
@@ -1061,6 +1176,9 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
         """
         batch_size, seq_len, hidden = x.shape
         x_flat = x.view(-1, hidden)
+        hints_flat = None
+        if subconscious_hints is not None:
+            hints_flat = subconscious_hints.view(-1, hidden)
         
         shared_output = self._compute_shared_expert_output(x)
         
@@ -1087,7 +1205,9 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
             
             routing_probs_for_diversity = routing_weights
         else:
-            expert_indices, dispatch_mask, load_balancing_loss = self.router(x_flat)
+            expert_indices, dispatch_mask, load_balancing_loss = self.router(
+                x_flat, subconscious_hints=hints_flat
+            )
             
             outputs = torch.zeros_like(x_flat)
             expert_outputs_list = []
@@ -1158,9 +1278,9 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
             torch.Tensor: Diversity regularization loss scalar.
         """
         expert_weights = None
-        if hasattr(self.experts[0][0], 'weight'):
+        if hasattr(self.experts[0], 'gate_proj') and self.experts[0].gate_proj.weight is not None:
             expert_weights = torch.stack([
-                expert[0].weight for expert in self.experts
+                expert.gate_proj.weight for expert in self.experts
             ], dim=0)
         
         expert_outputs = None

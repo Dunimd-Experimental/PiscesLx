@@ -211,6 +211,7 @@ from utils.dc import PiscesLxLogger
 from .blocks import YvTransformerBlock
 from .cache import YvUnifiedCacheManager
 from .subconscious import YvSubconsciousSystem
+from .dual_injector import YvDualInjector
 from typing import Optional, Tuple, Dict, Any, List, Union
 from ..reasoning import YvMultiModalReasoningEnhancer
 from ..generation.speculative import YvAdaptiveSpeculativeDecoder, YvSpeculativeConfig
@@ -624,7 +625,7 @@ class YvModel(nn.Module):
         if getattr(cfg, 'vram_kv_cache_quantization', False):
             cfg.cache_quantization = True
         if getattr(cfg, 'vram_gradient_checkpointing', False):
-            cfg.use_gradient_checkpointing = True
+            cfg.use_checkpoint = True
         if getattr(cfg, 'vram_flash_attention', False):
             cfg.use_flash_attention = True
 
@@ -711,55 +712,70 @@ class YvModel(nn.Module):
         _LOG.debug("YvModel: initializing norm...")
         self.norm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
 
+        self.use_dual_inject = getattr(cfg, 'use_dual_inject', False)
+        self.use_subconscious = False
         self.use_memory_separation = getattr(cfg, 'use_memory_separation', False)
-        if self.use_memory_separation:
-            from .memory_router import YvMemoryRouter
-            self.memory_router = YvMemoryRouter(
-                hidden_size=cfg.hidden_size,
-                memory_router_dim=getattr(cfg, 'memory_router_dim', 256),
-                memory_knowledge_dim=getattr(cfg, 'memory_knowledge_dim', 256),
-                memory_top_k=getattr(cfg, 'memory_top_k', 8),
-                memory_cache_tokens=getattr(cfg, 'memory_cache_tokens', 4096),
-                memory_store_path=getattr(cfg, 'memory_store_path', ''),
-                memory_index_type=getattr(cfg, 'memory_index_type', 'ivfpq'),
-                memory_gate_init=getattr(cfg, 'memory_gate_init', 0.0),
-                device=device,
-                dtype=dtype,
-            )
-            self.memory_read_interval = getattr(cfg, 'memory_read_interval', 4)
-            self.memory_prefetch_depth = getattr(cfg, 'memory_prefetch_depth', 4)
-        else:
-            self.memory_router = None
-            self.memory_read_interval = 0
-            self.memory_prefetch_depth = 0
+        self.memory_router = None
+        self.memory_read_interval = 0
+        self.memory_prefetch_depth = 0
+        self.dual_injector = None
+        self.subconscious = None
+        self.subconscious_read_interval = 0
+        self.subconscious_prefetch_depth = 0
 
-        # Subconscious: 0.5B dynamic head + 314B implicit knowledge field
-        # Activated when use_subconscious=True. This is the "第潜意识" system
-        # separate from the 1M context and the memory router.
-        self.use_subconscious = getattr(cfg, 'use_subconscious', False)
-        if self.use_subconscious:
-            _LOG.debug("YvModel: initializing subconscious system...")
-            _sc_kw = lambda k, d: getattr(cfg, f'subconscious_{k}', d)
-            self.subconscious = YvSubconsciousSystem(
-                hidden_size=cfg.hidden_size,
-                num_layers=cfg.n_layer,
-                knowledge_dim=_sc_kw('knowledge_dim', 256),
-                num_codebooks=_sc_kw('num_codebooks', 16),
-                codebook_size=_sc_kw('codebook_size', 131072),
-                codebook_dim=_sc_kw('codebook_dim', 128),
-                num_field_heads=_sc_kw('num_field_heads', 8),
-                head_dim=_sc_kw('head_dim', 1024),
-                head_num_layers=_sc_kw('head_num_layers', 2),
-                head_num_attn_heads=_sc_kw('head_num_attn_heads', 4),
-                device=device,
-                dtype=dtype,
-            )
-            self.subconscious_read_interval = _sc_kw('read_interval', 1)
-            self.subconscious_prefetch_depth = _sc_kw('prefetch_depth', 2)
+        # Dual-path knowledge injection (FiLM + KV). When enabled it owns the
+        # subconscious system and the memory-separation KV producer, so the
+        # standalone memory router / subconscious path below is not duplicated.
+        if self.use_dual_inject:
+            _LOG.debug("YvModel: initializing dual injector...")
+            self.dual_injector = YvDualInjector(cfg, device=device, dtype=dtype)
+            # Expose the subconscious system for backward compatibility.
+            self.subconscious = self.dual_injector.subconscious
+            self.use_subconscious = True
+            self.use_memory_separation = True
+            self.subconscious_read_interval = getattr(cfg, 'subconscious_read_interval', 1)
+            self.subconscious_prefetch_depth = getattr(cfg, 'subconscious_prefetch_depth', 2)
         else:
-            self.subconscious = None
-            self.subconscious_read_interval = 0
-            self.subconscious_prefetch_depth = 0
+            if self.use_memory_separation:
+                from .memory_router import YvMemoryRouter
+                self.memory_router = YvMemoryRouter(
+                    hidden_size=cfg.hidden_size,
+                    memory_router_dim=getattr(cfg, 'memory_router_dim', 256),
+                    memory_knowledge_dim=getattr(cfg, 'memory_knowledge_dim', 256),
+                    memory_top_k=getattr(cfg, 'memory_top_k', 8),
+                    memory_cache_tokens=getattr(cfg, 'memory_cache_tokens', 4096),
+                    memory_store_path=getattr(cfg, 'memory_store_path', ''),
+                    memory_index_type=getattr(cfg, 'memory_index_type', 'ivfpq'),
+                    memory_gate_init=getattr(cfg, 'memory_gate_init', 0.0),
+                    device=device,
+                    dtype=dtype,
+                )
+                self.memory_read_interval = getattr(cfg, 'memory_read_interval', 4)
+                self.memory_prefetch_depth = getattr(cfg, 'memory_prefetch_depth', 4)
+
+            # Subconscious: 0.5B dynamic head + 314B implicit knowledge field
+            # Activated when use_subconscious=True. This is the "潜意识" system
+            # separate from the 1M context and the memory router.
+            self.use_subconscious = getattr(cfg, 'use_subconscious', False)
+            if self.use_subconscious:
+                _LOG.debug("YvModel: initializing subconscious system...")
+                _sc_kw = lambda k, d: getattr(cfg, f'subconscious_{k}', d)
+                self.subconscious = YvSubconsciousSystem(
+                    hidden_size=cfg.hidden_size,
+                    num_layers=cfg.n_layer,
+                    knowledge_dim=_sc_kw('knowledge_dim', 256),
+                    num_codebooks=_sc_kw('num_codebooks', 16),
+                    codebook_size=_sc_kw('codebook_size', 131072),
+                    codebook_dim=_sc_kw('codebook_dim', 128),
+                    num_field_heads=_sc_kw('num_field_heads', 8),
+                    head_dim=_sc_kw('head_dim', 1024),
+                    head_num_layers=_sc_kw('head_num_layers', 2),
+                    head_num_attn_heads=_sc_kw('head_num_attn_heads', 4),
+                    device=device,
+                    dtype=dtype,
+                )
+                self.subconscious_read_interval = _sc_kw('read_interval', 1)
+                self.subconscious_prefetch_depth = _sc_kw('prefetch_depth', 2)
 
         _LOG.debug("YvModel: initializing multimodal encoders...")
         self._lazy_init_flags = {
@@ -857,9 +873,10 @@ class YvModel(nn.Module):
         _LOG.debug("YvModel: initializing agentic...")
         try:
             from ..multimodal import YvAgentic
+            self.agentic = YvAgentic(cfg, model=self)
         except ImportError:
-            YvAgentic = None
-        self.agentic = YvAgentic(cfg, model=self)
+            self.agentic = None
+            _LOG.debug("YvModel: agentic import failed, agentic=None")
 
         try:
             if 'agentic' in self._modules:
@@ -894,11 +911,11 @@ class YvModel(nn.Module):
             pass
 
         if lora_config is not None:
-            try:
-                from peft import get_peft_model
-                self = get_peft_model(self, lora_config)
-            except Exception as e:
-                _LOG.error(f"LoRA injection failed: {e}")
+            raise RuntimeError(
+                "LoRA injection via lora_config is no longer supported internally. "
+                "Wrap the model externally with get_peft_model(): "
+                "model = get_peft_model(model, lora_config)"
+            )
 
         if getattr(cfg, 'depth_aware_init', True):
             from ..core.norms import _depth_aware_init_weights
@@ -1341,6 +1358,7 @@ class YvModel(nn.Module):
 
         min_new_tokens = int(kwargs.pop('min_new_tokens', 0)) if 'min_new_tokens' in kwargs else 0
         new_tokens_generated = 0
+        self._finished = None
 
         def _bump_gate_temperature(_model, delta: float, cap: float):
             """Adjust gate temperature for MoE layers during generation.
@@ -1422,8 +1440,14 @@ class YvModel(nn.Module):
                         )
                     ], dim=-1)
 
-                if next_token.item() == getattr(self.cfg, 'eos_token_id', 2) and new_tokens_generated >= min_new_tokens:
-                    break
+                eos_mask = (next_token == getattr(self.cfg, 'eos_token_id', 2)).squeeze(-1)
+                if eos_mask.any() and new_tokens_generated >= min_new_tokens:
+                    if not hasattr(self, '_finished') or self._finished is None:
+                        self._finished = eos_mask.clone()
+                    else:
+                        self._finished = self._finished | eos_mask
+                    if self._finished.all():
+                        break
 
                 if adaptive_enabled and adaptive_interval > 0 and ((step_idx + 1) % adaptive_interval == 0):
                     _bump_gate_temperature(self, adaptive_step, adaptive_cap)
@@ -1635,7 +1659,16 @@ class YvModel(nn.Module):
                     modal_id[:, :actual_modal_tokens] = n_modalities - 1
                     modal_protection_mask[:, :actual_modal_tokens] = True
         
-        mask = torch.triu(torch.full((t, t), float('-inf'), device=x.device, dtype=x.dtype), diagonal=1)
+        causal_mask = torch.triu(torch.full((t, t), float('-inf'), device=x.device, dtype=x.dtype), diagonal=1)
+        if attention_mask is not None:
+            ext_mask = attention_mask[:, None, :].to(x.dtype)  # [B, 1, T]
+            mask = causal_mask[None, :, :] + (1.0 - ext_mask) * float('-inf')  # [B, T, T]
+        else:
+            mask = causal_mask
+
+        total_aux_loss = 0.0
+        chunk_size = min(getattr(self.cfg, 'max_position_embeddings', 2048), 8192)
+        outputs = []
 
         # OOMB: Out-of-Order Memory Banking for million-token context
         use_oomb = getattr(self.cfg, 'use_oomb_context', False)
@@ -1643,10 +1676,6 @@ class YvModel(nn.Module):
             oomb_chunk_size = getattr(self.cfg, 'oomb_chunk_size', 32768)
             chunk_size = min(chunk_size, oomb_chunk_size)
             self._oomb_memory_bank = []
-
-        total_aux_loss = 0.0
-        chunk_size = min(getattr(self.cfg, 'max_position_embeddings', 2048), 8192)
-        outputs = []
 
         if use_cache:
             seq_len = x.shape[1]
@@ -1667,79 +1696,109 @@ class YvModel(nn.Module):
 
         next_cache = [] if use_cache else None
 
-        for i in range(0, x.shape[1], chunk_size):
-            x_chunk = x[:, i:i+chunk_size, ...]
-            mask_chunk = mask[i:i+chunk_size, i:i+chunk_size]
-
-            # Subconscious: run the 0.5B dynamic head + 314B field once per forward
-            # on the first chunk. Retrieved knowledge is cached and consumed
-            # by each block's modulator.
-            if self.use_subconscious and self.subconscious is not None and i == 0:
-                self.subconscious(x_chunk)
+        if not use_cache or past_key_values is None:
+            # Full sequence processing (no chunking — ensures cross-chunk attention)
+            if self.use_dual_inject and self.dual_injector is not None:
+                pass
+            elif self.use_subconscious and self.subconscious is not None:
+                self.subconscious(x)
                 for layer in self.layers:
                     if hasattr(layer, '_set_subconscious_system'):
                         layer._set_subconscious_system(self.subconscious)
 
-            def block_fn(xc, msk, layer_past_key_values=None):
-                h = xc
-                aux = 0.0
-                new_caches = []
-                seq_len = xc.shape[1]
+            h = x
+            for layer_idx, layer in enumerate(self.layers):
+                if self.use_memory_separation and self.memory_router is not None:
+                    if layer_idx % self.memory_read_interval == 0:
+                        knowledge_ctx = self.memory_router.forward(h)
+                        if knowledge_ctx is not None and hasattr(layer, '_set_memory_context'):
+                            layer._set_memory_context(knowledge_ctx)
 
-                for layer_idx, layer in enumerate(self.layers):
-                    use_mamba3_for_layer = False
-                    if getattr(self.cfg, 'use_mamba3', False):
-                        threshold = getattr(self.cfg, 'mamba3_sequence_threshold', 8192)
-                        mamba3_layers = getattr(self.cfg, 'mamba3_layers', [])
+                past_kv = self.cache_manager.get_kv_cache(layer_idx, None)
 
-                        if (not mamba3_layers or layer_idx in mamba3_layers) and seq_len >= threshold:
-                            use_mamba3_for_layer = True
+                if self.use_dual_inject and self.dual_injector is not None:
+                    h, extra_kv = self.dual_injector.inject(h, layer_idx)
+                else:
+                    extra_kv = None
 
-                    # MemSep: Query external knowledge store at configured intervals
-                    # Every memory_read_interval layers, project hidden states to
-                    # address space, query FAISS index, and set memory context on
-                    # the block for cross-attention injection in _forward_core.
-                    if self.use_memory_separation and self.memory_router is not None:
-                        if layer_idx % self.memory_read_interval == 0:
-                            knowledge_ctx = self.memory_router.forward(h)
-                            if knowledge_ctx is not None and hasattr(layer, '_set_memory_context'):
-                                layer._set_memory_context(knowledge_ctx)
-                        elif hasattr(layer, '_set_memory_context'):
-                            # Carry forward previous context if not at query interval
-                            # but propagate same context to avoid stale None
-                            pass
+                if hasattr(layer, 'set_sequence_length'):
+                    layer.set_sequence_length(h.shape[1])
 
-                    past_kv = self.cache_manager.get_kv_cache(
-                        layer_idx,
-                        layer_past_key_values[layer_idx] if layer_past_key_values is not None else None
-                    )
+                h, aux_loss = layer(
+                    h, mask, past_key_values=past_kv, use_cache=False,
+                    subconscious_kv=extra_kv, film_params=None,
+                )
+                total_aux_loss = total_aux_loss + (aux_loss if aux_loss is not None else 0.0)
 
-                    if use_mixed_precision_cache and past_kv is not None and cache_quant_bits < 16:
-                        key_states, value_states = past_kv
-                        if key_states is not None:
-                            head_dim = key_states.shape[-1]
-                            partial_rope_dim = min(128, head_dim // 4)
-                            k_rope_part = key_states[..., :partial_rope_dim].to(torch.bfloat16)
-                            k_non_rope = key_states[..., partial_rope_dim:].to(cache_dtype)
-                            key_states = torch.cat([k_rope_part, k_non_rope], dim=-1)
-                        if value_states is not None:
-                            head_dim = value_states.shape[-1]
-                            partial_rope_dim = min(128, head_dim // 4)
-                            v_rope_part = value_states[..., :partial_rope_dim].to(torch.bfloat16)
-                            v_non_rope = value_states[..., partial_rope_dim:].to(cache_dtype)
-                            value_states = torch.cat([v_rope_part, v_non_rope], dim=-1)
-                        past_kv = (key_states, value_states)
-                    elif past_kv is not None and cache_quant_bits < 16:
-                        past_kv = tuple(
-                            tensor.to(cache_dtype) if tensor is not None else None
-                            for tensor in past_kv
+            outputs = [h]
+        else:
+            # Chunked processing for incremental inference with KV cache
+            for i in range(0, x.shape[1], chunk_size):
+                x_chunk = x[:, i:i+chunk_size, ...]
+                if mask.dim() == 3:
+                    mask_chunk = mask[:, i:i+chunk_size, :i+chunk_size]
+                else:
+                    mask_chunk = mask[i:i+chunk_size, :i+chunk_size]
+
+                if self.use_dual_inject and self.dual_injector is not None:
+                    pass
+                elif self.use_subconscious and self.subconscious is not None and i == 0:
+                    self.subconscious(x_chunk)
+                    for layer in self.layers:
+                        if hasattr(layer, '_set_subconscious_system'):
+                            layer._set_subconscious_system(self.subconscious)
+
+                def block_fn(xc, msk, layer_past_key_values=None):
+                    h = xc
+                    aux = 0.0
+                    new_caches = []
+                    seq_len = xc.shape[1]
+
+                    for layer_idx, layer in enumerate(self.layers):
+                        if self.use_memory_separation and self.memory_router is not None:
+                            if layer_idx % self.memory_read_interval == 0:
+                                knowledge_ctx = self.memory_router.forward(h)
+                                if knowledge_ctx is not None and hasattr(layer, '_set_memory_context'):
+                                    layer._set_memory_context(knowledge_ctx)
+
+                        past_kv = self.cache_manager.get_kv_cache(
+                            layer_idx,
+                            layer_past_key_values[layer_idx] if layer_past_key_values is not None else None
                         )
 
-                    if use_cache:
+                        if use_mixed_precision_cache and past_kv is not None and cache_quant_bits < 16:
+                            key_states, value_states = past_kv
+                            if key_states is not None:
+                                head_dim = key_states.shape[-1]
+                                partial_rope_dim = min(128, head_dim // 4)
+                                k_rope_part = key_states[..., :partial_rope_dim].to(torch.bfloat16)
+                                k_non_rope = key_states[..., partial_rope_dim:].to(cache_dtype)
+                                key_states = torch.cat([k_rope_part, k_non_rope], dim=-1)
+                            if value_states is not None:
+                                head_dim = value_states.shape[-1]
+                                partial_rope_dim = min(128, head_dim // 4)
+                                v_rope_part = value_states[..., :partial_rope_dim].to(torch.bfloat16)
+                                v_non_rope = value_states[..., partial_rope_dim:].to(cache_dtype)
+                                value_states = torch.cat([v_rope_part, v_non_rope], dim=-1)
+                            past_kv = (key_states, value_states)
+                        elif past_kv is not None and cache_quant_bits < 16:
+                            past_kv = tuple(
+                                tensor.to(cache_dtype) if tensor is not None else None
+                                for tensor in past_kv
+                            )
+
+                        if self.use_dual_inject and self.dual_injector is not None:
+                            h, extra_kv = self.dual_injector.inject(h, layer_idx)
+                        else:
+                            extra_kv = None
+
                         if hasattr(layer, 'set_sequence_length'):
                             layer.set_sequence_length(seq_len)
 
-                        h, aux_loss, cache = layer(h, msk, past_key_values=past_kv, use_cache=True)
+                        h, aux_loss, cache = layer(
+                            h, msk, past_key_values=past_kv, use_cache=True,
+                            subconscious_kv=extra_kv, film_params=None,
+                        )
 
                         if cache is not None:
                             key_states, value_states = cache
@@ -1762,39 +1821,22 @@ class YvModel(nn.Module):
                             self.cache_manager.compute_pending_prediction(layer_idx, h)
 
                         new_caches.append(cache)
-                    else:
-                        if hasattr(layer, 'set_sequence_length'):
-                            layer.set_sequence_length(seq_len)
+                        aux = aux + (aux_loss if aux_loss is not None else 0.0)
 
-                        h, aux_loss = layer(h, msk, past_key_values=past_kv, use_cache=False)
-
-                    aux = aux + (aux_loss if aux_loss is not None else 0.0)
-
-                if use_cache:
                     return h, aux, new_caches
-                return h, aux, None
 
-            if use_cache:
                 with torch.amp.autocast("cuda", dtype=cache_dtype, enabled=(x.device.type == 'cuda')):
                     h_chunk, aux_chunk, cache_chunk = block_fn(x_chunk, mask_chunk, past_key_values)
                 if next_cache is not None and cache_chunk is not None:
                     next_cache.extend(cache_chunk)
-            else:
-                h_chunk, aux_chunk, _ = cp.checkpoint(
-                    block_fn,
-                    x_chunk,
-                    mask_chunk,
-                    None,
-                    use_reentrant=False
-                )
 
-            if use_oomb:
-                self._oomb_memory_bank.append(h_chunk.detach())
-                if len(self._oomb_memory_bank) > 8:
-                    self._oomb_memory_bank.pop(0)
+                if use_oomb:
+                    self._oomb_memory_bank.append(h_chunk.detach())
+                    if len(self._oomb_memory_bank) > 8:
+                        self._oomb_memory_bank.pop(0)
 
-            outputs.append(h_chunk)
-            total_aux_loss = total_aux_loss + aux_chunk
+                outputs.append(h_chunk)
+                total_aux_loss = total_aux_loss + aux_chunk
 
         # Clear subconscious cache after layer processing
         if self.use_subconscious and self.subconscious is not None:
@@ -1833,8 +1875,9 @@ class YvModel(nn.Module):
             mtp_logits_list = []
             
             if labels is not None:
+                text_seq_len = labels.shape[1]
                 lm_loss = F.cross_entropy(
-                    logits[:, :lm_seq_len, :].reshape(-1, logits.size(-1)),
+                    logits[:, -text_seq_len:, :].reshape(-1, logits.size(-1)),
                     labels.view(-1),
                     ignore_index=-100
                 )
@@ -2090,7 +2133,7 @@ class YvModelForSequenceClassification(nn.Module):
             **kwargs
         )
 
-        hidden_states = outputs.get('logits', outputs)
+        hidden_states = outputs['logits'] if isinstance(outputs, dict) else outputs
         if isinstance(hidden_states, torch.Tensor):
             pooled = hidden_states[:, 0]
         else:

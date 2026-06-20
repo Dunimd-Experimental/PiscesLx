@@ -1633,7 +1633,9 @@ class YvCacheCompressor:
             for k in range(n_clusters):
                 mask = (assignments == k)
                 if mask.any():
-                    cluster_centers[:, k] = combined[mask].mean(dim=0)
+                    count_k = mask.sum(dim=-1, keepdim=True).clamp(min=1)
+                    sum_k = (combined * mask.unsqueeze(-1)).sum(dim=1)
+                    cluster_centers[:, k] = sum_k / count_k
 
         compressed_keys = cluster_centers[:, :n_clusters].unsqueeze(1).expand(-1, heads, -1, -1)
         compressed_keys = compressed_keys.reshape(batch, heads, n_clusters, head_dim)
@@ -1978,7 +1980,7 @@ class YvUnifiedCacheManager:
                     entry['total_len'] -= delta
                 idx += 1
         except Exception as e:
-            _LOG.debug(f"Cache block compaction failed: {e}")
+            _LOG.warning(f"Cache block compaction failed: {e}")
 
     def _delta_encode_block(
         self,
@@ -2106,9 +2108,7 @@ class YvUnifiedCacheManager:
     ) -> torch.Tensor:
         batch_size, num_heads, seq_len, head_dim = key_states.shape
 
-        attention_scores = torch.matmul(key_states, value_states.transpose(-2, -1)) / math.sqrt(head_dim)
-
-        importance = attention_scores.diagonal(dim1=-2, dim2=-1)
+        importance = (key_states * key_states).sum(dim=-1) / math.sqrt(head_dim)
 
         position_weights = torch.exp(-torch.arange(seq_len, device=key_states.device).float() / 100.0)
         position_weights = position_weights.unsqueeze(0).unsqueeze(0)

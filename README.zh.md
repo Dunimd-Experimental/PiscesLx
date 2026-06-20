@@ -1,6 +1,6 @@
 <div align="center">
 
-[![Encre Agent](https://img.shields.io/badge/🚀_Encre_Agent—通用型智能体旗舰-brightgreen?style=for-the-badge&logo=git)](https://gitee.com/dunimd/encre.git)
+[![Encre Agent](https://img.shields.io/badge/Encre_Agent—通用型智能体旗舰-C71D23?style=for-the-badge&logo=gitee)](https://gitee.com/dunimd/encre.git)
 
 </div>
 
@@ -41,10 +41,10 @@
     <img alt="ModelScope" src="https://img.shields.io/badge/ModelScope-Dunimd-1E6CFF?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1sbmFtZT0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik03LjAwNiAwQzMuMTQyIDAgMCAzLjE0MiAwIDcuMDA2UzMuMTQyIDE0LjAxMiA3LjAwNiAxNC4wMTJDMTAuODcgMTQuMDEyIDE0LjAxMiAxMC44NyAxNC4wMTIgNy4wMDZDMTQuMDEyIDMuMTQyIDEwLjg3IDAgNy4wMDYgMFoiIGZpbGw9IiMxRTZDRkYiLz48L3N2Zz4K"/>
 </a>
 <a href="https://gitee.com/dunimd/encre.git" target="_blank">
-    <img alt="Encre Agent" src="https://img.shields.io/badge/Encre_Agent-Dunimd-7B68EE?style=flat-square&logo=git"/>
+    <img alt="Encre Agent" src="https://img.shields.io/badge/Encre_Agent-C71D23?style=flat-square&logo=gitee"/>
 </a>
 
-采用 **Yv架构** 的高性能多模态混合专家模型（MoE），支持文本、图像、音频、视频、文档与智能体理解。PiscesL1（PiscesLx 系列，Dunimd团队）面向研究与实用，可在单张 RTX 4090 上运行，体系可扩展至 1T 参数规模。
+采用 **Yv架构** 的多模态混合专家模型（MoE）框架，支持文本、图像、音频、视频、文档与智能体模态。PiscesL1（PiscesLx 系列，Dunimd团队）提供从 0.5B 到 1T 的可配置架构。本仓库为参考架构设计与可配置超参数的代码实现，不包含已训练的模型权重。
 
 </div>
 
@@ -52,23 +52,42 @@
 
 ### 🧠 YvUnifiedReasoner - 统一推理系统
 
-YvUnifiedReasoner 实现了智能路由的统一推理框架，在链式思维（CoT）与多路径推理引擎之间动态切换：
+YvUnifiedReasoner 实现了在链式思维（CoT）与多路径推理引擎之间选择的推理路由框架：
 
-- **YvCoTMemoryReasoner**：记忆增强的链式思维推理器，支持自适应深度控制（1-3层）、早期停止机制、以及错误分析与自纠错
-- **YvMultiPathReasoningEngine**：多路径推理引擎，支持最多8路假设流并行探索，配合动态事实验证与元认知不确定性评分
-- **智能路由**：根据问题复杂度和序列长度自动选择最优推理路径
-- **控制Token**：`<|start_hypothesis|>`、`<|start_evidence|>`、`<|start_conclusion|>`、`<|hypothesis_split|>`、`<|hypothesis_merge|>` 使外部工具能精确追踪模型的推理路径
+- **YvCoTMemoryReasoner**：记忆增强的链式思维推理器，支持可配置深度（1-3层）、早期停止机制和自纠错
+- **YvMultiPathReasoningEngine**：多路径推理引擎，支持最多8路假设流并行探索与事实验证
+- **基于复杂度的路由**：根据输入复杂度和序列长度选择推理路径
+- **控制Token**：`<|start_hypothesis|>`、`<|start_evidence|>`、`<|start_conclusion|>`、`<|hypothesis_split|>`、`<|hypothesis_merge|>`
 
-### 🔧 Yv MoE Scaling - 混合专家系统
+### 🔧 Yv MoE - 混合专家系统
 
-混合专家（MoE）实现：
+混合专家实现与细粒度路由：
 
-- **YvStableMoEGate**：带LSTM负载预测的稳定门控，支持6-64专家的Top-K路由
-- **细粒度专家分割**：每个"专家"由多个子专家组合而成，路由更灵活
-- **共享专家隔离**：始终激活的共享专家，处理所有token
-- **无辅助损失负载均衡**：无需影响模型质量的辅助损失即可实现负载均衡
-- **UltraMem TDQKR 优化**：Tucker分解查询-键检索优化，路由复杂度从O(N)降至O(√N)
-- **动态设备迁移**：为大型专家池高效管理内存的动态专家迁移
+- **YvStableMoEGate**：带LSTM负载预测的门控，可配置专家数和Top-K路由
+- **细粒度专家分割**：每个专家由多个子专家组合，路由粒度更细
+- **共享专家隔离**：专门处理所有token的领域通用专家
+- **无辅助损失负载均衡**：使用专家级缓冲实现负载均衡，无需辅助损失
+- **认知密度优化**：通过路由熵、互信息和多样性损失实现专家专业化
+
+### 🧠 潜意识系统 — 计算/查算分离
+
+将活跃计算与静态知识查找分离的架构：
+
+- **乘积量化知识场**：16个码本×131K条目，131K¹⁶种虚拟组合（约0.27B参数）
+- **动态导航头**：0.23B参数头将查询路由到码本空间
+- **FiLM调制**：检索的知识通过特征调制（scale/shift）调节核心层激活
+- **0.5B额外开销**：头+场在 7B 核心上增加 0.5B，实现 314B 等效知识容量
+- **与上下文并行**：知识注入与 1M 上下文窗口并行运行，不增加序列长度
+
+### 🧠 记忆分离 — 外部知识库
+
+通过 FAISS 索引的可选外部知识检索：
+
+- **确定性 O(1) 查找**：N 元语法地址哈希实现常数时间检索
+- **IVF-PQ 索引**：适用于大规模知识库的近似最近邻搜索
+- **交叉注意力注入**：通过门控交叉注意力将检索知识整合到隐藏状态
+- **离线知识构建器**：独立的 0.5B 编码器，用于从语料构建知识库
+- **mmap 后端**：内存映射存储，实现高效的磁盘到 GPU 传输
 
 ### 🌐 多模态感知栈
 
@@ -88,70 +107,76 @@ Token级多模态融合系统：
 - **跨模态注意力**：模态间信息交换的跨模态注意力
 - **模态感知位置编码**：模态感知的位置嵌入
 - **质量加权门控**：根据融合质量动态调整权重的质量加权门控
-- **YvEnhancedModalFusion**：增强融合模块，包含对比跨模态对齐和在线自适应权重
-- **多融合策略**：支持在文本序列前插入融合token、拼接3D特征或输出压缩摘要
+- **循环模态精炼器**：多轮迭代精炼以实现跨模态一致性
+- **多融合策略**：融合token前置拼接、3D特征拼接或压缩摘要输出
 
-### 📏 超长上下文结构
+### 📏 长上下文处理
 
-行业领先的 10M+ token 上下文支持：
+最高 4M token 的上下文扩展机制：
 
-- **YaRN RoPE + 动态 NTK 缩放**：YaRN 位置编码配合动态 NTK 缩放，支持 10M+ token 外推
-- **H2O Heavy-Hitter Oracle Attention**：保留重要 token 的超长上下文注意力
-- **流式注意力**：无限长度生成的流式注意力
-- **滑动窗口注意力**：局部注意力与全局 token 结合的滑动窗口注意力
-- **线性注意力**：O(n) 复杂度的线性注意力，支持 ELU/Performer/Softmax 特征映射
-- **分页注意力**：高效 KV 缓存管理和共享的分页注意力
-- **环形注意力**：分布式超长上下文处理的环形注意力
-- **注意力汇点**：保障流式推理稳定性的注意力汇点
+- **YaRN RoPE + 动态 NTK 缩放**：位置编码外推，支持长序列扩展
+- **H2O Heavy-Hitter Oracle Attention**：基于注意力分数累积的 token 保留
+- **流式注意力**：通过维护局部窗口实现超训练长度的生成
+- **滑动窗口注意力**：可配置窗口大小的局部注意力
+- **线性注意力**：通过核特征映射（ELU/Performer）实现 O(n) 复杂度注意力
+- **分页注意力**：基于块的 KV 缓存管理，高效利用内存
+- **环形注意力**：分布式环境下的长上下文处理
+- **OOMB**：面向十亿 token 训练上下文的乱序内存分块
+- **REFORM**：面向内存高效长上下文的压缩-聚合-重计算策略
 
-### 🔥 混合注意力-SSM
+### 🔄 混合注意力-SSM
 
-业界前沿的混合架构实现：
+注意力和状态空间模型的混合架构：
 
-- **Mamba-3 集成**：完整的 Mamba-3 SSM 集成，支持梯形离散化、复状态和 MIMO 结构
-- **YvSelectiveSSM**：选择性状态空间模型，具有输入相关的状态转换
-- **渐进式门控**：从纯注意力到混合模式的平滑过渡门控，保障训练稳定性
-- **自适应路由**：根据序列特征动态选择注意力或 SSM 的自适应路由
-- **Jamba 风格交错架构**：注意力和 SSM 层交替的 Jamba 风格架构
+- **Mamba-3 集成**：SSM 集成，支持离散化、复状态和 MIMO 结构
+- **YvSelectiveSSM**：具有输入相关状态转换的选择性状态空间模型
+- **渐进式门控**：训练期间从纯注意力到混合模式的渐进过渡
+- **自适应路由**：基于序列特征的逐 token 注意力/SSM 选择
+- **Jamba 风格交错**：注意力层和 SSM 层交替排列
 
-### 🎯 先进注意力机制
+### 🎯 注意力机制
 
-完整的注意力机制实现：
+多种注意力实现：
 
-- **Flash Attention 2/3**：GPU 优化高效注意力，支持 Ampere+ 和 Hopper+ 架构
-- **多头潜在注意力（MLA）**：低秩 KV 压缩，大幅减少 KV 缓存
-- **分组查询注意力（GQA）**：平衡质量和效率的分组查询注意力
-- **ALiBi 位置编码**：无需位置嵌入的线性偏置注意力
-- **QK 归一化**：改进大模型训练稳定性的查询-键归一化
+- **Flash Attention 2/3**：GPU 优化高效注意力（Ampere+ 和 Hopper+）
+- **多头潜在注意力（MLA）**：通过潜在空间进行低秩 KV 压缩
+- **嵌入门控 MLA（EG-MLA）**：带嵌入门控的 MLA，提升表达能力
+- **分组查询注意力（GQA）**：跨查询组共享 KV 头
+- **ALiBi 位置编码**：通过线性偏置进行外推，无需位置嵌入
+- **H2O 注意力**：用于缓存压缩的重度命中 oracle
+- **DuoAttention**：独立的检索和流式注意力头
+- **循环注意力**：基于 FFT 的长序列近似
+- **QK 归一化**：训练稳定性优化
 
-### 🚀 训练优化套件
+### 🚀 训练管线与优化
 
-完整的训练优化工具集：
+训练支持：
 
-- **GaLore 优化**：低秩梯度投影优化，支持自适应秩调整和多模态模块优化
-- **K-FAC 增强梯度裁剪**：K-FAC 增强梯度裁剪，支持层间协调
-- **多比特量化（2/4/8-bit）**：极致内存节省的多比特量化支持
-- **LoRA/QLoRA**：支持所有线性层的低秩适配微调
-- **推测解码**：2-3倍推理加速的推测解码
-- **多Token预测（MTP）**：提升生成质量的多Token预测
-- **智能梯度累积**：自适应内存管理的智能梯度累积
-- **多任务学习**：自适应任务权重的多任务学习支持
+- **EnTA（Encre Train Agent）**：自动化多教师蒸馏管线（Rust 原生后端）
+- **GaLore**：低秩梯度投影，实现内存高效的训练
+- **多比特量化（FP4/INT4/INT8）**：减少内存占用的量化方案
+- **LoRA/QLoRA**：用于微调的低秩适配
+- **推测解码**：草稿-验证模式用于推理加速
+- **多Token预测（MTP）**：每位置预测多个未来 token
+- **DAPO**：用于强化学习的解耦裁剪策略优化
+- **TTT-E2E**：推理期间的测试时训练，用于在线适应
+- **Ink 优化器**：统一优化器，支持 INT8/INT4 压缩和稀疏梯度
 
 #### 参考配置
-核心组件位于 `model/` 和 `model/multimodal/`，默认超参数存储在 `configs/model/*.json` 中。
+核心组件位于 `model/` 和 `model/multimodal/`，超参数存储在 `configs/model/*.yaml` 中。
 
 | 模型大小 | 层数 | 隐藏维度 | 注意力头 | KV头 | MoE专家 | Top-K | 上下文 | MLA秩 |
 |---------|------|---------|---------|------|---------|-------|--------|-------|
 | 0.5B    | 16   | 640     | 10      | 5    | 6       | 2     | 256K   | 256   |
 | 1.5B    | 16   | 896     | 14      | 7    | 6       | 2     | 256K   | 256   |
-| 7B      | 28   | 3584    | 32      | 8    | 8       | 2     | 1M     | 512   |
-| 32B     | 64   | 5120    | 40      | 8    | 8       | 2     | 1M     | 512   |
-| 64B     | 80   | 6656    | 52      | 8    | 8       | 2     | 10M    | 1024  |
-| 70B     | 80   | 8192    | 64      | 8    | 8       | 2     | 10M    | 1024  |
-| 128B    | 120  | 10240   | 80      | 8    | 8       | 2     | 10M    | 1536  |
-| 314B    | 160  | 12288   | 96      | 12   | 16      | 4     | 10M    | 2048  |
-| 671B    | 200  | 16384   | 128     | 16   | 32      | 6     | 10M    | 2048  |
-| 1T      | 240  | 20480   | 160     | 20   | 64      | 8     | 10M    | 2560  |
+| 7B      | 28   | 3584    | 32      | 8    | 128     | 8     | 1M     | 512   |
+| 32B     | 64   | 5120    | 40      | 8    | 128     | 8     | 1M     | 512   |
+| 64B     | 80   | 6656    | 52      | 8    | 128     | 8     | 1M     | 1024  |
+| 70B     | 80   | 8192    | 64      | 8    | 128     | 8     | 2M     | 1024  |
+| 128B    | 120  | 10240   | 80      | 8    | 128     | 8     | 2M     | 1536  |
+| 314B    | 160  | 12288   | 96      | 12   | 256     | 8     | 4M     | 2048  |
+| 671B    | 200  | 16384   | 128     | 16   | 256     | 8     | 4M     | 2048  |
+| 1T      | 240  | 20480   | 160     | 20   | 512     | 8     | 4M     | 2560  |
 
 注意：默认量化值继承自相应的配置文件，可在训练命令中通过 `--force_quant --quant_bits {2,4,8}`、`--force_lora` 直接覆盖。
 
@@ -388,7 +413,8 @@ python manage.py download
 - 如何恢复训练？`--resume_ckpt path/to/ckpt.pt`（可选 `--reset_lr`）
 - 只有 CPU？可使用 `--device cpu`（性能较慢）。
 - 如何评估模型？`python manage.py benchmark ...`，配合 `--config`、`--seq_len`、`--model` 等参数。
-- EnTA 如何工作？EnTA 是一个 LLM 驱动的自主训练智能体。详见 [EnTA 架构](#-encre-train-agent-enta)。
+- EnTA 如何工作？EnTA 是一个 LLM 驱动的多教师蒸馏编排智能体。详见[训练管线](#-训练管线与优化)。
+- 本仓库是否包含训练好的模型权重？不包含。本仓库提供架构、训练管线和推理代码。模型权重需使用 EnTA 管线另行训练。
 
 ---
 
@@ -519,29 +545,50 @@ python manage.py download
 
 | 📦 包名 | 📜 协议 | 📦 包名 | 📜 协议 |
 |:--------|:--------|:--------|:--------|
-| torch | BSD-style | torchvision | BSD-style |
-| torchaudio | BSD-style | torch-directml | MIT |
-| transformers | Apache 2.0 | tokenizers | Apache 2.0 |
-| huggingface-hub | Apache 2.0 | modelscope | Apache 2.0 |
-| numpy | BSD 3-Clause | scipy | BSD 3-Clause |
-| scikit-learn | BSD 3-Clause | addict | MIT |
-| accelerate | Apache 2.0 | einops | MIT |
-| timm | Apache 2.0 | pytorch-lightning | Apache 2.0 |
-| pillow | HPND | PyMuPDF | AGPL 3.0 |
-| bitsandbytes | MIT | peft | Apache 2.0 |
-| flash-attn | BSD 3-Clause | triton | MIT |
-| deepspeed | Apache 2.0 | datasets | Apache 2.0 |
-| wandb | MIT | tensorboard | Apache 2.0 |
-| docker | Apache 2.0 | | |
+| accelerate | Apache 2.0 | addict | MIT |
+| aiofiles | Apache 2.0 | audioread | MIT |
+| av | BSD 3-Clause | beautifulsoup4 | MIT |
+| bert-score | MIT | bitsandbytes | MIT |
+| causal-conv1d | Apache 2.0 | datasets | Apache 2.0 |
+| decord | Apache 2.0 | deepspeed | Apache 2.0 |
+| dmsc | Apache 2.0 | docker | Apache 2.0 |
+| duckduckgo-search | MIT | einops | MIT |
+| evalscope | Apache 2.0 | fastapi | MIT |
+| flash-attn | BSD 3-Clause | GitPython | BSD 3-Clause |
+| gradio | Apache 2.0 | httpx | BSD 3-Clause |
+| huggingface-hub | Apache 2.0 | hydra-core | MIT |
+| ijson | BSD 3-Clause | imageio | BSD 3-Clause |
+| imageio-ffmpeg | BSD 3-Clause | jsonlines | MIT |
+| kagglehub | Apache 2.0 | librosa | ISC |
+| lm-eval | MIT | mamba-ssm | Apache 2.0 |
+| mlflow | Apache 2.0 | modelscope | Apache 2.0 |
+| numpy | BSD 3-Clause | nvidia-ml-py3 | BSD 3-Clause |
+| ocrmypdf | MPL 2.0 | omegaconf | BSD 3-Clause |
+| openai | Apache 2.0 | opencv-python | MIT |
+| pandas | BSD 3-Clause | pathlib2 | MIT |
+| pdf2image | MIT | pdfplumber | MIT |
+| peft | Apache 2.0 | pillow | HPND |
+| plotly | MIT | psutil | BSD 3-Clause |
+| pyarrow | Apache 2.0 | pydantic | MIT |
+| pydub | MIT | PyMuPDF | AGPL 3.0 |
+| python-docx | MIT | python-multipart | Apache 2.0 |
+| python-pptx | MIT | pytorch-lightning | Apache 2.0 |
+| pytz | MIT | pywin32 | PSF |
+| PyYAML | MIT | requests | Apache 2.0 |
+| rich | MIT | rouge-score | Apache 2.0 |
+| sacrebleu | Apache 2.0 | safetensors | Apache 2.0 |
+| scikit-learn | BSD 3-Clause | scipy | BSD 3-Clause |
+| soundfile | BSD 3-Clause | streamlit | Apache 2.0 |
+| tensorboard | Apache 2.0 | textual | MIT |
+| timm | Apache 2.0 | tokenizers | Apache 2.0 |
+| torch | BSD-style | torch-directml | MIT |
+| torchaudio | BSD-style | torchvision | BSD-style |
+| tqdm | MIT | transformers | Apache 2.0 |
+| triton | MIT | trl | Apache 2.0 |
+| uvicorn | BSD 3-Clause | wandb | MIT |
+| wheel | MIT | windows-curses | BSD 3-Clause |
+| wrapt | BSD 3-Clause | xformers | BSD 3-Clause |
 
 </div>
 
-</div>
 
----
-
-<div align="center">
-
-**✅ 连接已建立。**
-
-</div>

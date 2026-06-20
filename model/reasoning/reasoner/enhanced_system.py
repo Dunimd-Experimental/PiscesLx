@@ -591,12 +591,19 @@ class YvEnhancedReasoningSystem(nn.Module):
         else:
             self.uncertainty_quantifier = None
         
+        num_fusion_features = 1
+        if config.use_recursive_reasoning:
+            num_fusion_features += 1
+        if config.use_thought_tree:
+            num_fusion_features += 1
+        
         self.output_proj = nn.Sequential(
-            nn.Linear(self.hidden_size * 3, self.hidden_size * 2),
+            nn.Linear(self.hidden_size * num_fusion_features, self.hidden_size * 2),
             nn.LayerNorm(self.hidden_size * 2),
             nn.GELU(),
             nn.Linear(self.hidden_size * 2, self.hidden_size)
         )
+        self._num_fusion_features = num_fusion_features
         
         self._init_weights()
     
@@ -714,17 +721,24 @@ class YvEnhancedReasoningSystem(nn.Module):
             thought_tree_output = tree_result['thought_tree_output']
             routing_info['tree_confidence'] = tree_result['confidence']
         
-        features_to_fuse = [hidden_states.mean(dim=1, keepdim=True)]
+        base_feature = hidden_states.mean(dim=1, keepdim=True)
+        features_to_fuse = [base_feature]
         
-        if recursive_output is not None:
-            if recursive_output.dim() == 2:
-                recursive_output = recursive_output.unsqueeze(1)
-            features_to_fuse.append(recursive_output)
+        if self.config.use_recursive_reasoning:
+            if recursive_output is not None:
+                if recursive_output.dim() == 2:
+                    recursive_output = recursive_output.unsqueeze(1)
+                features_to_fuse.append(recursive_output)
+            else:
+                features_to_fuse.append(torch.zeros_like(base_feature))
         
-        if thought_tree_output is not None:
-            if thought_tree_output.dim() == 2:
-                thought_tree_output = thought_tree_output.unsqueeze(1)
-            features_to_fuse.append(thought_tree_output)
+        if self.config.use_thought_tree:
+            if thought_tree_output is not None:
+                if thought_tree_output.dim() == 2:
+                    thought_tree_output = thought_tree_output.unsqueeze(1)
+                features_to_fuse.append(thought_tree_output)
+            else:
+                features_to_fuse.append(torch.zeros_like(base_feature))
         
         max_seq_len = max(f.size(1) for f in features_to_fuse)
         

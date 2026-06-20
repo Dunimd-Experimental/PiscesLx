@@ -178,12 +178,12 @@ class YvImplicitKnowledgeField(nn.Module):
         logits = torch.einsum('bthmd,hmkd->bthmk', queries, self.codebooks)
 
         # ── Step 2: soft-addressing ──────────────────────────────────
-        addressing_weights = F.softmax(logits, dim=-1)  # [B, T, H, M, K]
-
         # Temperature annealing for sharper addressing during training
         if self.training:
             temp = max(0.5, 1.0 - self._get_training_progress() * 0.5)
             addressing_weights = F.softmax(logits / temp, dim=-1)
+        else:
+            addressing_weights = F.softmax(logits, dim=-1)  # [B, T, H, M, K]
 
         # ── Step 3: weighted sum retrieval ───────────────────────────
         # addressing_weights: [B, T, H, M, K]
@@ -212,6 +212,9 @@ class YvImplicitKnowledgeField(nn.Module):
         if hasattr(self, '_training_step'):
             return min(1.0, self._training_step / 50000)
         return 0.0
+
+    def set_training_step(self, step: int):
+        self._training_step = step
 
     def extra_repr(self) -> str:
         return (
@@ -360,7 +363,7 @@ class YvDynamicHead(nn.Module):
 
         # Reshape to [B, T, H, M, D]
         B, T, _ = queries_flat.shape
-        queries = queries_flat.view(
+        queries = queries_flat.reshape(
             B, T, self.num_heads, self.num_codebooks, self.codebook_dim
         )
 
@@ -635,10 +638,8 @@ class YvSubconsciousSystem(nn.Module):
         #    (logits computed on-the-fly inside the field, zero extra params)
         knowledge = self.knowledge_field(queries)
 
-        # 3. Add knowledge shift for layer-wise variation
-        knowledge = knowledge + self.knowledge_shift
-
         # Cache for layer-wise consumption
+        # (knowledge shift is applied per-layer in modulate_layer / get_film_params)
         self._current_knowledge = knowledge
         self._current_gate = gate
 
@@ -728,6 +729,38 @@ class YvSubconsciousSystem(nn.Module):
         """Clear volatile subconscious cache after forward pass."""
         self._current_knowledge = None
         self._current_gate = None
+
+    def get_film_params(
+        self,
+        hidden_states: torch.Tensor,
+        layer_idx: int,
+    ) -> Dict[str, torch.Tensor]:
+        """Compute FiLM scale and shift for a specific layer.
+
+        This is used by :class:`YvDualInjector` to obtain the subconscious
+        modulation parameters without applying them, so the caller can decide
+        how to blend the FiLM path with the raw hidden stream.
+
+        Args:
+            hidden_states: [batch, seq, hidden_size] from the 7B core.
+            layer_idx: Index of the transformer layer being injected.
+
+        Returns:
+            Dict with keys ``scale`` and ``shift``, each of shape
+            [batch, seq, hidden_size].
+        """
+        queries, gate = self.dynamic_head(hidden_states)
+        knowledge = self.knowledge_field(queries)
+        knowledge = knowledge + self.knowledge_shift * (1 + layer_idx * 0.01)
+
+        attn_params = self.modulators[layer_idx].attn_mod(knowledge)
+        mlp_params = self.modulators[layer_idx].mlp_mod(knowledge)
+        gate_val = torch.sigmoid(attn_params.mean(dim=-1, keepdim=True))
+        params = gate_val * attn_params + (1 - gate_val) * mlp_params
+        scale, shift = params.chunk(2, dim=-1)
+        scale = scale * gate
+        shift = shift * gate
+        return {"scale": scale, "shift": shift}
 
     def get_knowledge(self) -> Optional[torch.Tensor]:
         """Get current cached knowledge for debugging/inspection."""

@@ -261,6 +261,83 @@ class YvMemoryCrossAttention(nn.Module):
         return torch.sigmoid(self.gate).item()
 
 
+class YvMemorySeparationLayer(nn.Module):
+    """Lookup-computation separation layer producing extra KV pairs.
+
+    This layer implements the "hard" injection path of dual knowledge
+    injection. It projects the current hidden state into additional key and
+    value tensors that are concatenated with the main self-attention KV
+    tensors inside :class:`YvAttention`. The extra KV pairs do **not** roll
+    into the persistent KV cache; they are recomputed per forward pass.
+
+    Architecture:
+        Per-layer learnable K/V projections from hidden_size to
+        n_kv_heads * head_dim. Output is reshaped to
+        [B, n_kv_heads, T, head_dim] so it can be concatenated with the
+        standard attention keys/values along the sequence dimension.
+
+    Args:
+        cfg: Model configuration. Requires ``hidden_size``, ``n_kv_head``,
+            ``n_head``, and optionally ``head_dim``.
+        num_layers: Number of transformer layers (for per-layer projections).
+        device: Device for parameters.
+        dtype: Data type for parameters.
+    """
+
+    def __init__(
+        self,
+        cfg,
+        num_layers: Optional[int] = None,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+    ):
+        super().__init__()
+        hidden_size = cfg.hidden_size
+        n_head = getattr(cfg, "n_head", 8)
+        n_kv_head = getattr(cfg, "n_kv_head", n_head)
+        head_dim = getattr(cfg, "head_dim", None)
+        if head_dim is None:
+            head_dim = hidden_size // n_head
+        inner_dim = n_kv_head * head_dim
+        num_layers = num_layers if num_layers is not None else getattr(cfg, "n_layer", 1)
+
+        self.n_kv_head = n_kv_head
+        self.head_dim = head_dim
+        self.hidden_size = hidden_size
+
+        # Per-layer K/V projections keep each layer's extra KV stream independent.
+        self.k_proj = nn.ModuleList([
+            nn.Linear(hidden_size, inner_dim, bias=False, device=device, dtype=dtype)
+            for _ in range(num_layers)
+        ])
+        self.v_proj = nn.ModuleList([
+            nn.Linear(hidden_size, inner_dim, bias=False, device=device, dtype=dtype)
+            for _ in range(num_layers)
+        ])
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        layer_idx: int,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Produce extra KV tensors for the given layer.
+
+        Args:
+            hidden_states: [batch, seq, hidden_size].
+            layer_idx: Index of the transformer layer consuming the KV pair.
+
+        Returns:
+            Tuple (extra_k, extra_v) each of shape
+            [batch, n_kv_head, seq, head_dim].
+        """
+        batch_size, seq_len, _ = hidden_states.shape
+        k = self.k_proj[layer_idx](hidden_states)
+        v = self.v_proj[layer_idx](hidden_states)
+        k = k.view(batch_size, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+        v = v.view(batch_size, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+        return k, v
+
+
 class YvMemoryFusionGate(nn.Module):
     """Adaptive fusion gate for knowledge injection scheduling.
 

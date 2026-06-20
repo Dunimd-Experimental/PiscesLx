@@ -391,8 +391,9 @@ class YvUnifiedReasoner(nn.Module):
             if self.ttt_trainer is None:
                 # Lazy initialization: create trainer with a dummy model
                 # In practice, this should be the actual model being used
+                lm_model = getattr(self, 'model', None) or getattr(getattr(self, 'parent_model', None), 'model', None)
                 self.ttt_trainer = YvTestTimeTrainer(
-                    model=self,
+                    model=lm_model if lm_model else self,
                     update_layers=getattr(self.cfg, 'ttt_update_layers', 2),
                     lr=getattr(self.cfg, 'ttt_learning_rate', 1e-5),
                     max_steps=getattr(self.cfg, 'ttt_max_steps', 5)
@@ -709,11 +710,11 @@ class YvUnifiedReasoner(nn.Module):
         for step in range(max_depth):
             step_input = reasoning_state.unsqueeze(1)
 
+            self.cot_reasoner.current_thinking_depth = min(step + 1, 5)
             cot_out = self.cot_reasoner.forward(
                 input_ids=step_input,
                 attention_mask=torch.ones(bsz, 1, device=device),
                 memory_context=None,
-                thinking_depth=min(step + 1, 5),
             )
 
             if isinstance(cot_out, dict):
@@ -777,10 +778,10 @@ class YvUnifiedReasoner(nn.Module):
                 noise = torch.randn_like(reasoning_state) * 0.01
                 alt_state = reasoning_state + noise
 
+                setattr(self.cot_reasoner, 'current_depth', 3)
                 alt_cot_out = self.cot_reasoner.forward(
                     input_ids=alt_state.unsqueeze(1),
                     attention_mask=torch.ones(bsz, 1, device=device),
-                    thinking_depth=3,
                 )
 
                 alt_logits = (

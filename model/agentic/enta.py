@@ -120,7 +120,7 @@ def _ensure_enta_path() -> None:
     import pathlib
 
     this_file = pathlib.Path(__file__).resolve().parent        # model/agentic/
-    project_root = this_file.parent.parent.parent               # project root
+    project_root = this_file.parent.parent                      # project root
     enta_backend = project_root / "enta" / "backend"
     if enta_backend.is_dir():
         candidate = str(enta_backend)

@@ -106,6 +106,9 @@ from typing import Optional
 
 from utils.dc import PiscesLxConfiguration, PiscesLxFilesystem, PiscesLxLogger
 
+import logging
+_LOG = logging.getLogger("PiscesLx.Core.Paths")
+
 
 def load_runtime_configuration() -> PiscesLxConfiguration:
     """
@@ -369,4 +372,3 @@ def get_settings_file() -> str:
     return str(Path(settings_dir) / "settings.yaml")
 
 
-_LOG = PiscesLxLogger("PiscesLx.Core.Paths", file_path=get_log_file("PiscesLx.Core.Paths"), enable_file=True)

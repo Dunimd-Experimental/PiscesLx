@@ -28,27 +28,32 @@ This module provides various expert network architectures for MoE layers,
 supporting different activation functions, gating mechanisms, and depths.
 
 Expert Types:
-    1. Standard Expert:
+    1. YvExpert (Unified):
+       - Default mode-aware SwiGLU expert
+       - Supports PURE_COMPUTE and PURE_LOOKUP modes
+       - Used by flagship MoE layers for compute/lookup split
+    
+    2. Standard Expert:
        - Basic feed-forward network with SiLU activation
        - Simple up-projection -> activation -> down-projection
        - Fast computation, moderate expressiveness
     
-    2. SwiGLU Expert:
+    3. SwiGLU Expert:
        - SwiGLU gating mechanism for enhanced expressiveness
        - gate_proj * up_proj with SiLU gating
        - Recommended for most use cases
     
-    3. GeGLU Expert:
+    4. GeGLU Expert:
        - GeGLU gating mechanism with GELU activation
        - Similar to SwiGLU but with GELU instead of SiLU
        - Good for tasks requiring smoother gradients
     
-    4. Multi-Layer Expert:
+    5. Multi-Layer Expert:
        - Deep expert with multiple hidden layers
        - Higher capacity for complex transformations
        - Use sparingly due to increased computation
     
-    5. Shared Expert:
+    6. Shared Expert:
        - Expert that is always active (not routed)
        - Used in DeepSeek-V3 style MoE
        - Provides base transformation for all tokens
@@ -59,6 +64,7 @@ Key Features:
     - Optional bias in linear layers
     - Factory pattern for easy expert creation
     - Registry for custom expert types
+    - Compute/lookup mode separation via YvExpertMode
 
 Performance Characteristics:
     - Standard: O(2 * hidden * intermediate) parameters
@@ -154,6 +160,31 @@ class YvExpertType(Enum):
     ATTENTION = "attention"
 
 
+class YvExpertMode(Enum):
+    """Enumeration of expert execution modes for compute/lookup separation.
+    
+    Defines how an expert operates within the MoE layer, supporting the
+    compute/lookup split architecture where factual knowledge can be
+    isolated from reasoning computation.
+    
+    Attributes:
+        PURE_COMPUTE: Standard trainable feed-forward expert.
+            Participates in gradient-based reasoning and computation.
+        PURE_LOOKUP: Frozen knowledge retrieval expert.
+            Parameters are frozen and act as static knowledge storage,
+            matching the Engram-style memory separation design.
+    
+    Example:
+        >>> mode = YvExpertMode.PURE_LOOKUP
+        >>> expert = YvExpert(config, mode=mode)
+    
+    Note:
+        PURE_LOOKUP experts set requires_grad=False for all parameters.
+    """
+    PURE_COMPUTE = "pure_compute"
+    PURE_LOOKUP = "pure_lookup"
+
+
 @dataclass
 class YvExpertConfig:
     """Configuration dataclass for expert network parameters.
@@ -193,11 +224,14 @@ class YvExpertConfig:
     dropout: float = 0.0
     use_bias: bool = False
     activation: str = "silu"
+    mode: YvExpertMode = YvExpertMode.PURE_COMPUTE
 
     def __post_init__(self):
-        """Post-initialization to convert string expert_type to enum."""
+        """Post-initialization to convert string enum values to enums."""
         if isinstance(self.expert_type, str):
             self.expert_type = YvExpertType(self.expert_type)
+        if isinstance(self.mode, str):
+            self.mode = YvExpertMode(self.mode)
 
 
 class YvExpertBase(nn.Module):
@@ -209,20 +243,39 @@ class YvExpertBase(nn.Module):
     
     Attributes:
         config (YvExpertConfig): Configuration for the expert.
+        mode (YvExpertMode): Execution mode of the expert.
     
     Note:
         This is an abstract class and cannot be instantiated directly.
         Use YvExpertFactory or specific expert classes instead.
     """
 
-    def __init__(self, config: YvExpertConfig):
-        """Initialize base expert with configuration.
+    def __init__(
+        self,
+        config: YvExpertConfig,
+        mode: YvExpertMode = YvExpertMode.PURE_COMPUTE
+    ):
+        """Initialize base expert with configuration and execution mode.
         
         Args:
             config: Expert configuration containing architecture parameters.
+            mode: Execution mode controlling compute vs lookup behavior.
         """
         super().__init__()
         self.config = config
+        if isinstance(mode, str):
+            mode = YvExpertMode(mode)
+        self.mode = mode
+
+    def _freeze_if_lookup(self) -> None:
+        """Freeze all parameters when the expert operates in lookup mode.
+        
+        Called by concrete subclasses after parameter creation to enforce
+        the compute/lookup split architecture.
+        """
+        if self.mode == YvExpertMode.PURE_LOOKUP:
+            for param in self.parameters():
+                param.requires_grad = False
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through the expert network.
@@ -270,15 +323,22 @@ class YvStandardExpert(YvExpertBase):
         Use SwiGLU experts for better quality at slight computational cost.
     """
 
-    def __init__(self, config: YvExpertConfig, device=None, dtype=None):
+    def __init__(
+        self,
+        config: YvExpertConfig,
+        mode: YvExpertMode = YvExpertMode.PURE_COMPUTE,
+        device=None,
+        dtype=None
+    ):
         """Initialize standard expert.
         
         Args:
             config: Expert configuration.
+            mode: Execution mode for compute/lookup split.
             device: Device to place parameters on.
             dtype: Data type for parameters.
         """
-        super().__init__(config)
+        super().__init__(config, mode=mode)
 
         self.up_proj = nn.Linear(
             config.hidden_size,
@@ -298,6 +358,7 @@ class YvStandardExpert(YvExpertBase):
         self.dropout = nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
 
         self._init_weights()
+        self._freeze_if_lookup()
 
     def _init_weights(self):
         """Initialize weights using Kaiming uniform initialization."""
@@ -359,15 +420,22 @@ class YvSwiGLUExpert(YvExpertBase):
         Uses 50% more parameters than standard expert.
     """
 
-    def __init__(self, config: YvExpertConfig, device=None, dtype=None):
+    def __init__(
+        self,
+        config: YvExpertConfig,
+        mode: YvExpertMode = YvExpertMode.PURE_COMPUTE,
+        device=None,
+        dtype=None
+    ):
         """Initialize SwiGLU expert.
         
         Args:
             config: Expert configuration.
+            mode: Execution mode for compute/lookup split.
             device: Device to place parameters on.
             dtype: Data type for parameters.
         """
-        super().__init__(config)
+        super().__init__(config, mode=mode)
 
         self.gate_proj = nn.Linear(
             config.hidden_size,
@@ -394,6 +462,7 @@ class YvSwiGLUExpert(YvExpertBase):
         self.dropout = nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
 
         self._init_weights()
+        self._freeze_if_lookup()
 
     def _init_weights(self):
         """Initialize weights using Kaiming uniform initialization."""
@@ -458,15 +527,22 @@ class YvGeGLUExpert(YvExpertBase):
         GELU may provide smoother gradients in some cases.
     """
 
-    def __init__(self, config: YvExpertConfig, device=None, dtype=None):
+    def __init__(
+        self,
+        config: YvExpertConfig,
+        mode: YvExpertMode = YvExpertMode.PURE_COMPUTE,
+        device=None,
+        dtype=None
+    ):
         """Initialize GeGLU expert.
         
         Args:
             config: Expert configuration.
+            mode: Execution mode for compute/lookup split.
             device: Device to place parameters on.
             dtype: Data type for parameters.
         """
-        super().__init__(config)
+        super().__init__(config, mode=mode)
 
         self.gate_proj = nn.Linear(
             config.hidden_size,
@@ -493,6 +569,7 @@ class YvGeGLUExpert(YvExpertBase):
         self.dropout = nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
 
         self._init_weights()
+        self._freeze_if_lookup()
 
     def _init_weights(self):
         """Initialize weights using Kaiming uniform initialization."""
@@ -551,6 +628,7 @@ class YvMultiLayerExpert(YvExpertBase):
     def __init__(
         self,
         config: YvExpertConfig,
+        mode: YvExpertMode = YvExpertMode.PURE_COMPUTE,
         num_layers: int = 2,
         device=None,
         dtype=None
@@ -559,11 +637,12 @@ class YvMultiLayerExpert(YvExpertBase):
         
         Args:
             config: Expert configuration.
+            mode: Execution mode for compute/lookup split.
             num_layers: Number of layers (minimum 2). Default: 2.
             device: Device to place parameters on.
             dtype: Data type for parameters.
         """
-        super().__init__(config)
+        super().__init__(config, mode=mode)
 
         self.num_layers = num_layers
 
@@ -581,6 +660,7 @@ class YvMultiLayerExpert(YvExpertBase):
         self.layers = nn.Sequential(*layers)
 
         self._init_weights()
+        self._freeze_if_lookup()
 
     def _init_weights(self):
         """Initialize weights using Kaiming uniform initialization."""
@@ -635,17 +715,25 @@ class YvSharedExpert(YvExpertBase):
         Output is typically combined with routed expert outputs.
     """
 
-    def __init__(self, config: YvExpertConfig, device=None, dtype=None):
+    def __init__(
+        self,
+        config: YvExpertConfig,
+        mode: YvExpertMode = YvExpertMode.PURE_COMPUTE,
+        device=None,
+        dtype=None
+    ):
         """Initialize shared expert.
         
         Args:
             config: Expert configuration.
+            mode: Execution mode for compute/lookup split.
             device: Device to place parameters on.
             dtype: Data type for parameters.
         """
-        super().__init__(config)
+        super().__init__(config, mode=mode)
 
-        self.expert = YvSwiGLUExpert(config, device, dtype)
+        self.expert = YvSwiGLUExpert(config, mode=mode, device=device, dtype=dtype)
+        self._freeze_if_lookup()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass through shared expert.
@@ -657,6 +745,44 @@ class YvSharedExpert(YvExpertBase):
             Output tensor [*, hidden_size].
         """
         return self.expert(x)
+
+
+class YvExpert(YvSwiGLUExpert):
+    """Unified default expert with compute/lookup mode support.
+    
+    This is the recommended expert implementation for PiscesL1 MoE layers,
+    combining the quality of SwiGLU with explicit compute/lookup mode control.
+    In PURE_LOOKUP mode, all parameters are frozen to act as static knowledge
+    storage, enabling the compute/lookup split architecture.
+    
+    Attributes:
+        mode (YvExpertMode): Execution mode of the expert.
+    
+    Example:
+        >>> config = YvExpertConfig(hidden_size=4096, intermediate_size=11008)
+        >>> compute_expert = YvExpert(config, mode=YvExpertMode.PURE_COMPUTE)
+        >>> lookup_expert = YvExpert(config, mode=YvExpertMode.PURE_LOOKUP)
+    
+    Note:
+        PURE_LOOKUP experts are frozen and intended for knowledge retrieval.
+    """
+
+    def __init__(
+        self,
+        config: YvExpertConfig,
+        mode: YvExpertMode = YvExpertMode.PURE_COMPUTE,
+        device=None,
+        dtype=None
+    ):
+        """Initialize the unified expert.
+        
+        Args:
+            config: Expert configuration.
+            mode: Execution mode for compute/lookup split.
+            device: Device to place parameters on.
+            dtype: Data type for parameters.
+        """
+        super().__init__(config, mode=mode, device=device, dtype=dtype)
 
 
 class YvExpertFactory:
@@ -700,6 +826,7 @@ class YvExpertFactory:
         cls,
         config: YvExpertConfig,
         expert_type: Optional[YvExpertType] = None,
+        mode: Optional[YvExpertMode] = None,
         device=None,
         dtype=None,
         **kwargs
@@ -709,6 +836,7 @@ class YvExpertFactory:
         Args:
             config: Expert configuration.
             expert_type: Optional expert type override. Uses config's type if None.
+            mode: Optional execution mode override. Uses config's mode if None.
             device: Device to place parameters on.
             dtype: Data type for parameters.
             **kwargs: Additional arguments for specific expert types
@@ -723,10 +851,12 @@ class YvExpertFactory:
         Example:
             >>> expert = YvExpertFactory.create(
             ...     config,
-            ...     expert_type=YvExpertType.SWIGLU
+            ...     expert_type=YvExpertType.SWIGLU,
+            ...     mode=YvExpertMode.PURE_COMPUTE
             ... )
         """
         expert_type = expert_type or config.expert_type
+        mode = mode or config.mode
 
         if expert_type not in cls._registry:
             raise ValueError(f"Unknown expert type: {expert_type}")
@@ -734,9 +864,15 @@ class YvExpertFactory:
         expert_class = cls._registry[expert_type]
 
         if expert_type == YvExpertType.MULTI_LAYER:
-            return expert_class(config, num_layers=kwargs.get('num_layers', 2), device=device, dtype=dtype)
+            return expert_class(
+                config,
+                mode=mode,
+                num_layers=kwargs.get('num_layers', 2),
+                device=device,
+                dtype=dtype
+            )
 
-        return expert_class(config, device=device, dtype=dtype)
+        return expert_class(config, mode=mode, device=device, dtype=dtype)
 
     @classmethod
     def register(cls, expert_type: YvExpertType, expert_class: type):
@@ -763,6 +899,7 @@ def create_expert_module(
     use_bias: bool = False,
     device=None,
     dtype=None,
+    mode: YvExpertMode = YvExpertMode.PURE_COMPUTE,
     **kwargs
 ) -> YvExpertBase:
     """Convenience function to create an expert module.
@@ -778,6 +915,7 @@ def create_expert_module(
         use_bias: Whether to use bias in linear layers. Default: False.
         device: Device to place parameters on.
         dtype: Data type for parameters.
+        mode: Execution mode for compute/lookup split. Default: PURE_COMPUTE.
         **kwargs: Additional arguments for specific expert types.
     
     Returns:
@@ -787,13 +925,15 @@ def create_expert_module(
         >>> expert = create_expert_module(
         ...     hidden_size=4096,
         ...     intermediate_size=11008,
-        ...     expert_type="swiglu"
+        ...     expert_type="swiglu",
+        ...     mode=YvExpertMode.PURE_COMPUTE
         ... )
     """
     config = YvExpertConfig(
         hidden_size=hidden_size,
         intermediate_size=intermediate_size,
         expert_type=expert_type,
+        mode=mode,
         dropout=dropout,
         use_bias=use_bias,
     )

@@ -197,6 +197,7 @@ import torch.nn.functional as F
 from dataclasses import dataclass, field
 from typing import Optional, Tuple, Union, List, Dict, Any
 from enum import Enum
+from .norms import YvRMSNorm
 
 class YvSSMMode(Enum):
     """Enumeration of SSM computation modes for different execution strategies.
@@ -448,15 +449,16 @@ class YvTrapezoidalDiscretization(nn.Module):
         Trapezoidal rule for numerical integration applied to SSM discretization.
     """
 
-    def __init__(self, d_model: int, dt_rank: int):
+    def __init__(self, d_model: int, dt_rank: int, d_state: int):
         """Initialize trapezoidal discretization.
         
         Args:
-            d_model: Model hidden dimension.
+            d_model: Model hidden dimension (unused, for API compat).
             dt_rank: Rank for delta parameter projection.
+            d_state: State dimension.
         """
         super().__init__()
-        self.dt_proj = nn.Linear(dt_rank, d_model, bias=True)
+        self.dt_proj = nn.Linear(dt_rank, d_state, bias=True)
         nn.init.constant_(self.dt_proj.weight, 0.0)
         nn.init.constant_(self.dt_proj.bias, 0.0)
 
@@ -539,6 +541,10 @@ class YvComplexStateSpace(nn.Module):
         """
         super().__init__()
         self.d_state = d_state
+        self.d_model = d_model
+
+        self.proj_in = nn.Linear(d_model, d_state, bias=False)
+        self.proj_out = nn.Linear(d_state, d_model, bias=False)
 
         A_real = torch.randn(d_state, d_state) * 0.05
         A_imag = torch.randn(d_state, d_state) * 0.05
@@ -579,19 +585,14 @@ class YvComplexStateSpace(nn.Module):
         Note:
             Falls back to zero output if numerical issues detected.
         """
-        x_complex = torch.complex(x, torch.zeros_like(x))
-        A_complex = self.A_complex.unsqueeze(0).unsqueeze(0)
-
+        A_complex = self.A_complex
         if torch.isnan(A_complex).any() or torch.isinf(A_complex).any():
             return x
 
-        x_transformed = torch.einsum(
-            'blds,blst->bldt',
-            x_complex.unsqueeze(-2),
-            A_complex
-        ).squeeze(-2)
-
-        result = x_transformed.real
+        x_state = self.proj_in(x)
+        x_complex = torch.complex(x_state, torch.zeros_like(x_state))
+        x_transformed = torch.einsum('bsd,de->bse', x_complex, A_complex)
+        result = self.proj_out(x_transformed.real)
 
         if torch.isnan(result).any() or torch.isinf(result).any():
             return torch.zeros_like(x)
@@ -755,23 +756,18 @@ class YvSelectiveScan(nn.Module):
         batch, seq_len, d_model = u.shape
         d_state = self.d_state
 
-        delta = delta.unsqueeze(-1)
-        A = A.unsqueeze(0).unsqueeze(0)
-        B = B.unsqueeze(-1)
-        C = C.unsqueeze(-2)
+        deltaA = torch.exp(delta.unsqueeze(-2) * A.unsqueeze(0).unsqueeze(0))
+        deltaB_u = delta.unsqueeze(-2) * B.unsqueeze(-1) * u.unsqueeze(-2)
 
-        deltaA = torch.exp(delta * A)
-        deltaB_u = delta * B * u.unsqueeze(-2)
-
-        h = torch.zeros(batch, 1, d_state, d_model, device=u.device, dtype=u.dtype)
+        h = torch.zeros(batch, d_state, d_model, device=u.device, dtype=u.dtype)
         outputs = []
 
         for t in range(seq_len):
-            h = deltaA[:, t:t+1] * h + deltaB_u[:, t:t+1]
-            y = torch.einsum('bsdm,bsm->bdm', h, C[:, t:t+1]).squeeze(1)
+            h = deltaA[:, t] * h + deltaB_u[:, t]
+            y = torch.einsum('bs,bsd->bd', C[:, t], h)
             outputs.append(y)
 
-        return torch.cat(outputs, dim=1)
+        return torch.stack(outputs, dim=1)
 
     def _associative_scan(self, delta: torch.Tensor, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         """Associative scan for long sequences with parallel computation.
@@ -792,24 +788,19 @@ class YvSelectiveScan(nn.Module):
         batch, seq_len, d_model = u.shape
         d_state = self.d_state
 
-        delta = delta.unsqueeze(-1)
-        A_exp = torch.exp(delta * A.unsqueeze(0).unsqueeze(0))
+        deltaA = torch.exp(delta.unsqueeze(-2) * A.unsqueeze(0).unsqueeze(0))
+        deltaB_u = delta.unsqueeze(-2) * B.unsqueeze(-1) * u.unsqueeze(-2)
 
-        B_u = B.unsqueeze(-1) * u.unsqueeze(-2).unsqueeze(-1)
+        log_deltaA = torch.log(deltaA.clamp(min=1e-10))
+        log_prefix = torch.cumsum(log_deltaA, dim=1)
+        prefix_prod = torch.exp(log_prefix)
 
-        log_A = torch.log(A_exp.clamp(min=1e-10))
+        deltaB_u_scaled = deltaB_u * torch.exp(-log_prefix)
+        cum_deltaB_u = torch.cumsum(deltaB_u_scaled, dim=1)
 
-        cum_log_A = torch.cumsum(log_A, dim=1)
+        h = prefix_prod * cum_deltaB_u
 
-        A_cum = torch.exp(cum_log_A)
-
-        B_u_scaled = B_u / A_exp.clamp(min=1e-10)
-
-        cum_B_u = torch.cumsum(B_u_scaled, dim=1)
-
-        h = A_cum * cum_B_u
-
-        y = torch.einsum('btsm,bts->btd', h, C)
+        y = torch.einsum('bts,btsd->btd', C, h)
 
         return y
 
@@ -874,19 +865,15 @@ class YvParallelScan(nn.Module):
         batch, chunk_len, d_model = x.shape
         d_state = A.shape[0]
 
-        A_expanded = A.unsqueeze(0).unsqueeze(0)
-        B_expanded = B.unsqueeze(0).unsqueeze(0)
-        C_expanded = C.unsqueeze(0).unsqueeze(0)
-
-        h = torch.zeros(batch, d_state, device=x.device, dtype=x.dtype)
+        h = torch.zeros(batch, d_state, d_model, device=x.device, dtype=x.dtype)
         outputs = []
 
         for t in range(chunk_len):
-            h = A_expanded.squeeze(0).squeeze(0) * h + B_expanded.squeeze(0).squeeze(0) * x[:, t:t+1].transpose(-1, -2)
-            y = C_expanded.squeeze(0).squeeze(0) @ h
-            outputs.append(y.transpose(-1, -2))
+            h = A * h + B[:, t].unsqueeze(-1) * x[:, t].unsqueeze(-2)
+            y = torch.einsum('bs,bsd->bd', C[:, t], h)
+            outputs.append(y)
 
-        return torch.cat(outputs, dim=1)
+        return torch.stack(outputs, dim=1)
 
     def forward(self, u: torch.Tensor, delta: torch.Tensor) -> torch.Tensor:
         batch, seq_len, d_model = u.shape
@@ -942,13 +929,13 @@ class YvChunkedParallelScan(nn.Module):
 
         A_mat = -torch.exp(A.float())
 
-        h = torch.zeros(batch, d_state, device=x.device, dtype=x.dtype)
+        h = torch.zeros(batch, d_state, d_model, device=x.device, dtype=x.dtype)
         outputs = []
 
         for t in range(chunk_len):
-            h = A_mat @ h + B[:, t:t+1].transpose(-1, -2) * x[:, t:t+1]
-            y = C[:, t:t+1] @ h
-            outputs.append(y.squeeze(-1))
+            h = A_mat * h + B[:, t].unsqueeze(-1) * x[:, t].unsqueeze(-2)
+            y = torch.einsum('bs,bsd->bd', C[:, t], h)
+            outputs.append(y)
 
         return torch.stack(outputs, dim=1), h
 
@@ -961,7 +948,7 @@ class YvChunkedParallelScan(nn.Module):
 
         n_chunks = (seq_len + self.chunk_size - 1) // self.chunk_size
         outputs = []
-        h_carry = torch.zeros(batch, self.d_state, device=u.device, dtype=u.dtype)
+        h_carry = torch.zeros(batch, self.d_state, d_model, device=u.device, dtype=u.dtype)
 
         for i in range(n_chunks):
             start = i * self.chunk_size
@@ -974,7 +961,7 @@ class YvChunkedParallelScan(nn.Module):
             chunk_out, h_new = self._chunk_scan(chunk_u, A, chunk_B, chunk_C)
 
             A_mat = -torch.exp(A.float())
-            chunk_out = chunk_out + (chunk_C @ (A_mat @ h_carry.unsqueeze(-1))).squeeze(-1)
+            chunk_out = chunk_out + torch.einsum('bts,bsd->btd', chunk_C, A_mat * h_carry)
 
             h_carry = h_new
             outputs.append(chunk_out)
@@ -1181,7 +1168,7 @@ class YvVKernel(nn.Module):
         self.d_state = d_state
         self.max_seq_len = max_seq_len
 
-        self.A_log = nn.Parameter(torch.randn(d_state, d_model))
+        self.A_log = nn.Parameter(torch.randn(d_state))
         self.B = nn.Parameter(torch.randn(d_state, d_model) * 0.1)
         self.C = nn.Parameter(torch.randn(d_model, d_state) * 0.1)
         self.D = nn.Parameter(torch.ones(d_model))
@@ -1192,14 +1179,14 @@ class YvVKernel(nn.Module):
         self._cache_seq_len = 0
 
     def _compute_kernel(self, seq_len: int, device: torch.device, dtype: torch.dtype) -> torch.Tensor:
-        A = -torch.exp(self.A_log.float())
+        A_diag = -torch.exp(self.A_log.float())
 
         kernel = torch.zeros(seq_len, self.d_model, device=device, dtype=dtype)
 
-        h = torch.eye(self.d_state, device=device, dtype=dtype)
+        h = torch.ones(self.d_state, device=device, dtype=dtype)
         for t in range(seq_len):
-            kernel[t] = self.C.float() @ h @ self.B.float()
-            h = A @ h
+            kernel[t] = torch.einsum('dn,n,nd->d', self.C.float(), h, self.B.float())
+            h = h * A_diag
 
         return kernel
 
@@ -1211,11 +1198,13 @@ class YvVKernel(nn.Module):
             self._cache_seq_len = seq_len
 
         kernel = self._kernel_cache[:seq_len]
+        kernel = kernel.permute(1, 0).unsqueeze(1)
 
         output = F.conv1d(
             x.transpose(-1, -2),
-            kernel.unsqueeze(1).transpose(-1, -2),
-            padding=seq_len - 1
+            kernel,
+            padding=seq_len - 1,
+            groups=d_model
         )[:, :, :seq_len]
 
         output = output.transpose(-1, -2)
@@ -1389,22 +1378,21 @@ class YvFlashSSM(nn.Module):
         d_state = self.d_state
 
         output = torch.empty_like(u)
-        h = torch.zeros(batch, d_state, device=u.device, dtype=u.dtype)
+        h = torch.zeros(batch, d_state, d_model, device=u.device, dtype=u.dtype)
 
         chunk_size = 64
         for chunk_start in range(0, seq_len, chunk_size):
             chunk_end = min(chunk_start + chunk_size, seq_len)
 
             for t in range(chunk_start, chunk_end):
-                delta_t = delta[:, t:t+1].unsqueeze(-1)
-                A_t = A.unsqueeze(0)
-                B_t = B[:, t:t+1].unsqueeze(1)
-                C_t = C[:, t:t+1].unsqueeze(-1)
-                u_t = u[:, t:t+1]
+                delta_t = delta[:, t]
+                deltaA = torch.exp(delta_t.unsqueeze(1) * A.unsqueeze(0))
 
-                h = h * torch.exp(delta_t * A_t) + B_t * u_t
-                y = (C_t @ h).squeeze(1)
-                output[:, t:t+1] = y
+                deltaB_u = delta_t.unsqueeze(1) * B[:, t].unsqueeze(-1) * u[:, t].unsqueeze(1)
+
+                h = deltaA * h + deltaB_u
+                y = torch.einsum('bs,bsd->bd', C[:, t], h)
+                output[:, t] = y
 
         return output
 
@@ -1423,7 +1411,7 @@ class YvFlashSSM(nn.Module):
         A = -torch.exp(self.A_log.float())
 
         B = BC[..., :self.d_state]
-        C = BC[..., self.d_state:]
+        C = BC[..., self.d_state:2*self.d_state]
 
         output = self._flash_scan(u, delta, A, B, C)
         output = output + u * self.D.unsqueeze(0).unsqueeze(0)
@@ -1520,10 +1508,10 @@ class YvMamba3Block(nn.Module):
             padding=config.d_conv - 1,
         )
 
-        self.selective_scan = YvSelectiveScan(config.d_inner, config.dt_rank)
+        self.selective_scan = YvSelectiveScan(config.d_inner, config.dt_rank, config.d_state)
 
         if config.use_trapezoidal:
-            self.trapezoidal = YvTrapezoidalDiscretization(config.d_inner, config.dt_rank)
+            self.trapezoidal = YvTrapezoidalDiscretization(config.d_inner, config.dt_rank, config.d_state)
 
         if config.use_complex:
             self.complex_ssm = YvComplexStateSpace(config.d_state, config.d_inner)
@@ -1591,11 +1579,6 @@ class YvMamba3Block(nn.Module):
         x = self.conv1d(x)[:, :, :seq_len]
         x = rearrange(x, 'b d l -> b l d')
         x = F.silu(x)
-
-        if self.config.use_trapezoidal and hasattr(self, 'trapezoidal'):
-            dt = torch.randn(batch, seq_len, self.config.dt_rank, device=x.device) * 0.1
-            A = torch.eye(self.config.d_state, device=x.device)
-            discretized_A = self.trapezoidal(dt, A)
 
         if self.config.use_complex and hasattr(self, 'complex_ssm'):
             x_complex = self.complex_ssm(x)
@@ -1697,7 +1680,7 @@ class YvMamba3Stack(nn.Module):
         ])
 
         if config.use_rms_norm:
-            self.norm = nn.RMSNorm(config.d_model, eps=config.layer_norm_eps)
+            self.norm = YvRMSNorm(config.d_model, eps=config.layer_norm_eps)
         else:
             self.norm = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
 
@@ -1728,7 +1711,7 @@ class YvMamba3Integration(nn.Module):
         self.mamba3_block = YvMamba3Block(config)
 
         if config.use_rms_norm:
-            self.layer_norm = nn.RMSNorm(d_model, eps=config.layer_norm_eps)
+            self.layer_norm = YvRMSNorm(d_model, eps=config.layer_norm_eps)
         else:
             self.layer_norm = nn.LayerNorm(d_model, eps=config.layer_norm_eps)
 
@@ -1815,7 +1798,7 @@ class YvMamba3Decoder(nn.Module):
         ])
 
         if config.use_rms_norm:
-            self.final_norm = nn.RMSNorm(config.d_model, eps=config.layer_norm_eps)
+            self.final_norm = YvRMSNorm(config.d_model, eps=config.layer_norm_eps)
         else:
             self.final_norm = nn.LayerNorm(config.d_model, eps=config.layer_norm_eps)
 

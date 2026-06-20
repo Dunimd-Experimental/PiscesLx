@@ -79,12 +79,13 @@ class YvTestTimeTrainer:
                     if part.isdigit():
                         total_layers = max(total_layers, int(part) + 1)
 
+        import re
         self.params_to_update = []
         for name, param in model.named_parameters():
             if param.requires_grad:
-                for i in range(1, update_layers + 1):
-                    target_layer = total_layers - i
-                    if f"layers.{target_layer}" in name or (total_layers <= 0 and "layers" in name):
+                for i in range(update_layers):
+                    target_layer = total_layers - 1 - i
+                    if re.search(rf'layers\.{target_layer}\.', name) or re.search(rf'layers\.{target_layer}$', name):
                         self.params_to_update.append(param)
                         break
 
@@ -250,7 +251,11 @@ class YvTestTimeTrainer:
             if hasattr(outputs, "logits") and outputs.logits is not None:
                 logits = outputs.logits
             else:
-                logits = batch_input if batch_input.size(-1) > 1000 else None
+                vocab_size = getattr(self.model.cfg, 'vocab_size', None) if hasattr(self, 'model') and hasattr(self.model, 'cfg') else None
+                if vocab_size and batch_input.size(-1) == vocab_size:
+                    logits = batch_input
+                else:
+                    logits = None
 
             if hasattr(outputs, "hidden_states") and outputs.hidden_states:
                 hidden_states = outputs.hidden_states[-1]

@@ -26,18 +26,36 @@ n_layer: 28
 n_head: 32
 n_kv_head: 8
 
-moe_num_experts: 8
-moe_top_k: 2
-moe_capacity_factor: 1.5
-moe_load_balance_alpha: 0.05
-moe_noise_std: 0.4
+# ========================================
+# Compute / Lookup Split Configuration
+# 7B active compute + 0.5B dynamic head + 314B-equivalent frozen knowledge field
+# ========================================
+compute_params_total: 7000000000
+lookup_params_total: 0
+use_dual_inject: true
+use_subconscious: true
+use_memory_separation: true
+attention_type: "eg_mla"
+
+moe_num_experts: 128
+moe_top_k: 8
+moe_capacity_factor: 1.25
+moe_load_balance_alpha: 0.0
+moe_noise_std: 0.1
 moe_use_stable_gate: true
-moe_min_capacity: 4
+moe_min_capacity: 8
 moe_prediction_horizon: 10
-moe_routing_temperature: 3.0
-moe_temperature_min: 0.8
-moe_temperature_max: 3.0
-moe_random_to_gradient_steps: 2000
+moe_routing_temperature: 1.0
+moe_temperature_min: 0.5
+moe_temperature_max: 1.5
+moe_random_to_gradient_steps: 500
+moe_num_shared_experts: 1
+moe_fine_grained: true
+moe_num_sub_experts: 4
+moe_aux_loss_free: true
+moe_compute_mode: "compute_split"
+moe_compute_split_ratio: 0.5
+moe_anticipatory_routing: true
 
 enable_dynamic_fusion: true
 fusion_quality_threshold: 0.2
@@ -123,36 +141,36 @@ distributed:
   world_size: 0
 
 training_config:
-  learning_rate: 2e-5
-  weight_decay: 0.01
-  batch_size: 8
-  sequence_length: 2048
-  gradient_accumulation_steps: 2
+  learning_rate: 3e-4
+  weight_decay: 0.1
+  batch_size: 4
+  sequence_length: 8192
+  gradient_accumulation_steps: 8
   max_steps: 100000
-  warmup_ratio: 0.1
-  warmup_steps: 100
+  warmup_ratio: 0.01
+  warmup_steps: 2000
   scheduler_name: cosine
   min_lr_ratio: 0.1
   scheduler:
-    warmup_type: exponential
-  gradient_checkpointing: false
-  mixed_precision: fp16
+    warmup_type: linear
+  gradient_checkpointing: true
+  mixed_precision: bf16
   flash_attention: true
   loss_type: lm
-  response_only_loss: true
-  num_workers: 1
-  pin_memory: false
-  prefetch_factor: 1
+  response_only_loss: false
+  num_workers: 4
+  pin_memory: true
+  prefetch_factor: 2
   packing: true
   max_grad_norm: 1.0
   quantization:
-    enabled: true
+    enabled: false
     method: nf4
     bits: 4
     group_size: 128
     symmetric: false
   lora:
-    enabled: true
+    enabled: false
     r: 16
     lora_alpha: 32
     target_modules:
@@ -173,7 +191,7 @@ training_config:
 
 inference_config:
   force_quant: null
-  force_lora: true
+  force_lora: false
   lora_config:
     r: 16
     lora_alpha: 32
@@ -297,7 +315,7 @@ mla_rope_scaling_factor: 1.0
 # ========================================
 
 # EG-MLA: Embedding-Gated Multi-Head Latent Attention (NeurIPS 2025)
-use_eg_mla: false
+use_eg_mla: true
 eg_mla_compression_ratio: 0.916
 
 # DuoAttention: Retrieval vs Streaming Heads (ICLR 2026 MIT)
@@ -306,7 +324,7 @@ duo_attention_retrieval_ratio: 0.2
 duo_attention_buffer_size: 1024
 
 # Test-Time Training TTT-E2E (arXiv 2512.23675)
-use_ttt_e2e: false
+use_ttt_e2e: true
 ttt_update_layers: 2
 ttt_learning_rate: 0.00001
 ttt_max_steps: 5
@@ -314,33 +332,33 @@ ttt_confidence_threshold: 0.6
 ttt_complexity_threshold: 0.7
 
 # Expert Evolution: Hebbian Learning + Domain Specialization
-use_expert_evolution: false
+use_expert_evolution: true
 expert_evolution_base_lr: 0.00001
 expert_evolution_decay: 0.99
 
 # EWC: Elastic Weight Consolidation
-use_ewc: false
+use_ewc: true
 ewc_lambda: 1000.0
 
 # SEAL: Self-Adapting LLMs (MIT 2025)
-use_seal: false
+use_seal: true
 seal_confidence_threshold: 0.85
 seal_max_synthetic_samples: 100
 
 # DAPO: Decoupled Clipping Policy Optimization (2025)
-use_dapo: false
+use_dapo: true
 dapo_epsilon_low: 0.2
 dapo_epsilon_high: 0.4
 dapo_diversity_threshold: 0.3
 
 # Verification: CRV + OTV + ARES
-use_crv_verification: false
-use_otv_verification: false
-use_ares_verification: false
+use_crv_verification: true
+use_otv_verification: true
+use_ares_verification: true
 otv_quality_threshold: 0.6
 
 # SyncFusion: Audio-Video Synchronous Understanding (ICLR 2025)
-use_sync_fusion: false
+use_sync_fusion: true
 sync_fusion_temporal_bins: 16
 
 # Coupled Mamba Fusion (NeurIPS 2024)
@@ -348,7 +366,7 @@ use_coupled_mamba_fusion: false
 coupled_mamba_coupling_strength: 0.3
 
 # SparseSSM: Training-Free Mamba Pruning (ICLR 2026)
-use_sparse_ssm: false
+use_sparse_ssm: true
 sparse_ssm_ratio: 0.5
 
 # Gated Delta Networks (ICLR 2025)
@@ -360,12 +378,15 @@ oomb_chunk_size: 32768
 oomb_max_context: 4194304
 
 # REFORM: Compress-Gather-Recompute (2025)
-use_reform: false
+use_reform: true
 reform_compression_ratio: 4
 reform_importance_threshold: 0.1
 
 # Quartet: End-to-End FP4 Training (OpenReview 2025)
-use_quartet: false
+use_quartet: true
+
+# Native Unified Multimodal Token Space
+use_native_multimodal_fusion: true
 
 # Long Context Extensions
 max_context_length: 1048576

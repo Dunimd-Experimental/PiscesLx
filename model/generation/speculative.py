@@ -417,15 +417,20 @@ class YvMedusaHead(nn.Module):
         """
         super().__init__()
         self.num_heads = num_heads
+        self.hidden_size = hidden_size
+        self.vocab_size = vocab_size
         
         self.heads = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(hidden_size, hidden_size, device=device, dtype=dtype),
+                nn.Linear(hidden_size, hidden_size),
                 nn.SiLU(),
-                nn.Linear(hidden_size, vocab_size, bias=False, device=device, dtype=dtype)
+                nn.Linear(hidden_size, vocab_size, bias=False)
             )
             for _ in range(num_heads)
         ])
+        
+        if device is not None or dtype is not None:
+            self.heads = self.heads.to(device=device, dtype=dtype)
         
         self._init_weights()
     
@@ -446,6 +451,8 @@ class YvMedusaHead(nn.Module):
             List of logits tensors, one per head.
             Each tensor shape: [batch, seq, vocab_size].
         """
+        if self.heads[0][0].weight.device != hidden_states.device or self.heads[0][0].weight.dtype != hidden_states.dtype:
+            self.heads = self.heads.to(device=hidden_states.device, dtype=hidden_states.dtype)
         return [head(hidden_states) for head in self.heads]
 
 
@@ -869,9 +876,8 @@ class YvSpeculativeDecoder(nn.Module):
             sorted_indices_to_remove = cumulative_probs > self.config.top_p
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
-            indices_to_remove = sorted_indices_to_remove.scatter(
-                -1, sorted_indices, sorted_indices_to_remove
-            )
+            indices_to_remove = torch.zeros_like(sorted_indices_to_remove, dtype=torch.bool)
+            indices_to_remove.scatter_(-1, sorted_indices, sorted_indices_to_remove)
             logits[indices_to_remove] = float('-inf')
         
         return logits
@@ -948,7 +954,8 @@ class YvSpeculativeDecoder(nn.Module):
             sorted_indices_to_remove = cumulative_probs > self.config.top_p
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
-            indices_to_remove = sorted_indices_to_remove.scatter(-1, sorted_indices, sorted_indices_to_remove)
+            indices_to_remove = torch.zeros_like(sorted_indices_to_remove, dtype=torch.bool)
+            indices_to_remove.scatter_(-1, sorted_indices, sorted_indices_to_remove)
             logits[indices_to_remove] = float('-inf')
         
         probs = F.softmax(logits, dim=-1)
@@ -1222,12 +1229,14 @@ class YvMedusaDecoder(nn.Module):
         
         hidden_size = getattr(model.config, 'hidden_size', 2048)
         vocab_size = getattr(model.config, 'vocab_size', 65536)
+        device = next(model.parameters()).device
+        dtype = next(model.parameters()).dtype
         
         self.medusa_heads = nn.ModuleList([
             nn.Sequential(
-                nn.Linear(hidden_size, hidden_size),
+                nn.Linear(hidden_size, hidden_size, device=device, dtype=dtype),
                 nn.SiLU(),
-                nn.Linear(hidden_size, vocab_size, bias=False)
+                nn.Linear(hidden_size, vocab_size, bias=False, device=device, dtype=dtype)
             )
             for _ in range(config.medusa_heads)
         ])

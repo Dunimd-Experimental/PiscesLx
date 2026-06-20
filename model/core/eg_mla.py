@@ -42,6 +42,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple
 
+from .norms import YvYaRNRotaryEmbedding
+
 
 class YvEGMLA(nn.Module):
     """Embedding-Gated Multi-Head Latent Attention.
@@ -124,6 +126,12 @@ class YvEGMLA(nn.Module):
         )
 
         self.scale = self.head_dim ** -0.5
+        self.partial_rope_dim = 64
+        self.rotary_emb = YvYaRNRotaryEmbedding(
+            dim=self.partial_rope_dim,
+            max_position_embeddings=10485760,
+            base=10000.0,
+        )
 
         # Track compression statistics
         self.register_buffer("total_tokens", torch.tensor(0.0))
@@ -158,25 +166,34 @@ class YvEGMLA(nn.Module):
         kv_latent_raw = self.kv_compress(hidden_states)
         kv_latent = gate * kv_latent_raw
 
+        # Handle past key values - concatenate compressed latents before decompression
+        if past_key_value is not None:
+            past_latent = past_key_value[0]
+            kv_latent = torch.cat([past_latent, kv_latent], dim=1)
+
+        kv_seq_len = kv_latent.shape[1]
+
         # Decompress to keys and values
         k = self.k_decompress(kv_latent)
         v = self.v_decompress(kv_latent)
 
-        k = k.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
-        v = v.view(batch_size, seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        k = k.view(batch_size, kv_seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
+        v = v.view(batch_size, kv_seq_len, self.num_kv_heads, self.head_dim).transpose(1, 2)
 
         # Compress queries
         q_latent = self.q_compress(hidden_states)
         q = self.q_decompress(q_latent)
         q = q.view(batch_size, seq_len, self.num_heads, self.head_dim).transpose(1, 2)
 
-        # Handle past key values
-        if past_key_value is not None:
-            past_k, past_v = past_key_value
-            k = torch.cat([past_k, k], dim=2)
-            v = torch.cat([past_v, v], dim=2)
+        # Apply decoupled RoPE
+        if self.partial_rope_dim > 0:
+            q_pe = q[..., -self.partial_rope_dim:]
+            q_pe = self.rotary_emb(q_pe, seq_len)
+            q = torch.cat([q[..., :-self.partial_rope_dim], q_pe], dim=-1)
 
-        kv_seq_len = k.shape[2]
+            k_pe = k[..., -self.partial_rope_dim:]
+            k_pe = self.rotary_emb(k_pe, kv_seq_len)
+            k = torch.cat([k[..., :-self.partial_rope_dim], k_pe], dim=-1)
 
         # Compute attention scores
         attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale
@@ -197,8 +214,7 @@ class YvEGMLA(nn.Module):
             self.total_compression_ratio += compression_ratio * seq_len * batch_size
 
         if use_cache:
-            # Return compressed KV for caching
-            compressed_kv = (k, v)
+            compressed_kv = (kv_latent,)
             return output, compressed_kv
 
         return output, None

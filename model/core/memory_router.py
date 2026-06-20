@@ -230,7 +230,7 @@ class YvMemoryRouter(nn.Module):
                 - distances: [B, T, top_k]
         """
         if not self._ensure_index_loaded():
-            return None, None, None
+            return None, None, None, None
 
         try:
             import numpy as np
@@ -257,19 +257,20 @@ class YvMemoryRouter(nn.Module):
             distances_t = torch.from_numpy(distances).to(device=queries.device, dtype=queries.dtype)
 
             # Reshape back to batched form
-            embeddings = embeddings.view(batch_size, seq_len, k, self.knowledge_dim)
-            indices_t = indices_t.view(batch_size, seq_len, k)
-            distances_t = distances_t.view(batch_size, seq_len, k)
+            k_actual = k
+            embeddings = embeddings.view(batch_size, seq_len, k_actual, self.knowledge_dim)
+            indices_t = indices_t.view(batch_size, seq_len, k_actual)
+            distances_t = distances_t.view(batch_size, seq_len, k_actual)
 
             # Update statistics
             self._query_count += batch_size * seq_len
             self._hit_count += batch_size * seq_len  # All queries get results from ANN
 
-            return embeddings, indices_t, distances_t
+            return embeddings, indices_t, distances_t, k_actual
 
         except Exception as e:
             _LOG.error(f"Knowledge query failed: {e}")
-            return None, None, None
+            return None, None, None, None
 
     def forward(
         self,
@@ -304,19 +305,26 @@ class YvMemoryRouter(nn.Module):
         queries = F.normalize(queries, p=2, dim=-1)
 
         # Query FAISS index
-        knowledge, slot_indices, distances = self._query_knowledge(queries)
+        knowledge, slot_indices, distances, k_actual = self._query_knowledge(queries)
 
         if knowledge is None:
             return None
 
         # Project knowledge embeddings to model hidden size
-        # knowledge: [B, T, top_k, knowledge_dim]
+        # knowledge: [B, T, k_actual, knowledge_dim]
         # knowledge_projected: [B, T, top_k, hidden_size]
-        knowledge_flat = knowledge.view(-1, self.knowledge_dim)
+        k_actual = knowledge.shape[2]
+        knowledge_flat = knowledge.contiguous().view(-1, self.knowledge_dim)
         knowledge_proj_flat = self.knowledge_proj(knowledge_flat)
         knowledge_projected = knowledge_proj_flat.view(
-            batch_size, seq_len, self.top_k, self.hidden_size
+            batch_size, seq_len, k_actual, self.hidden_size
         )
+        if k_actual < self.top_k:
+            padding = torch.zeros(
+                batch_size, seq_len, self.top_k - k_actual, self.hidden_size,
+                device=knowledge_projected.device, dtype=knowledge_projected.dtype
+            )
+            knowledge_projected = torch.cat([knowledge_projected, padding], dim=2)
 
         gate_value = torch.sigmoid(self.gate)
 

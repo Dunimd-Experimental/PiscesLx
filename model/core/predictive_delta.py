@@ -352,9 +352,7 @@ class YvPredictiveDeltaCoder(nn.Module):
         q = torch.clamp(torch.round((tensor_flat / scale) * half_range), -half_range, half_range)
         q = q.reshape(orig_shape)
 
-        scale_out = scale.view(*([1] * (len(orig_shape) - 1)), -1)
-        if scale_out.shape[-1] == 1:
-            scale_out = scale_out.expand(*orig_shape[:-1], 1)
+        scale_out = scale.view(scale.shape[0], *([1] * (len(orig_shape) - 1)))
 
         return q, scale_out
 

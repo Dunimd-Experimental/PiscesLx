@@ -55,7 +55,7 @@ class YvEWC(nn.Module):
 
     def __init__(
         self,
-        params: Iterator[nn.Parameter],
+        params,
         lambda_ewc: float = 1000.0
     ):
         super().__init__()
@@ -63,11 +63,19 @@ class YvEWC(nn.Module):
         self.fisher_dict: Dict[str, torch.Tensor] = {}
         self.optimal_params: Dict[str, torch.Tensor] = {}
 
-        # Register optimal parameters
-        for name, param in params:
-            if param.requires_grad:
-                self.optimal_params[name] = param.data.clone()
-                self.fisher_dict[name] = torch.zeros_like(param.data)
+        # Determine if params are named (Iterator[Tuple[str, nn.Parameter]]) or plain (Iterator[nn.Parameter])
+        param_list = list(params)
+        if param_list and isinstance(param_list[0], (list, tuple)) and len(param_list[0]) == 2:
+            for name, param in param_list:
+                if param.requires_grad:
+                    self.optimal_params[name] = param.data.clone()
+                    self.fisher_dict[name] = torch.zeros_like(param.data)
+        else:
+            for i, param in enumerate(param_list):
+                if param.requires_grad:
+                    name = f"param_{i}"
+                    self.optimal_params[name] = param.data.clone()
+                    self.fisher_dict[name] = torch.zeros_like(param.data)
 
     def compute_fisher_information(
         self,

@@ -316,7 +316,8 @@ class YvSampler:
                 strategy=config.strategy
             )
 
-        logits = logits / config.temperature
+        temperature = max(config.temperature, 1e-8)
+        logits = logits / temperature
 
         if config.repetition_penalty != 1.0 and past_tokens is not None:
             logits = self._apply_repetition_penalty(logits, past_tokens, config.repetition_penalty)
@@ -382,7 +383,8 @@ class YvSampler:
         sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
         sorted_indices_to_remove[..., 0] = 0
 
-        indices_to_remove = sorted_indices_to_remove.scatter(-1, sorted_indices, sorted_indices_to_remove)
+        indices_to_remove = torch.zeros_like(sorted_indices_to_remove, dtype=torch.bool)
+        indices_to_remove.scatter_(-1, sorted_indices, sorted_indices_to_remove)
         logits = logits.masked_fill(indices_to_remove, float('-inf'))
 
         probs = F.softmax(logits, dim=-1)
@@ -425,7 +427,8 @@ class YvSampler:
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
             sorted_indices_to_remove[..., 0] = 0
 
-            indices_to_remove = sorted_indices_to_remove.scatter(-1, sorted_indices, sorted_indices_to_remove)
+            indices_to_remove = torch.zeros_like(sorted_indices_to_remove, dtype=torch.bool)
+            indices_to_remove.scatter_(-1, sorted_indices, sorted_indices_to_remove)
             logits = logits.masked_fill(indices_to_remove, float('-inf'))
 
         probs = F.softmax(logits, dim=-1)

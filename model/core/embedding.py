@@ -1012,11 +1012,11 @@ class YvUnifiedEmbedding(nn.Module):
             if position_ids is None:
                 position_ids = torch.arange(seq_len, device=device).unsqueeze(0)
             position_embeds = self.position_embedding(position_ids, seq_len)
+            embeddings = token_embeds + position_embeds
         else:
-            cos, sin = self.position_embedding(seq_len, device, token_embeds.dtype)
-            position_embeds = self._apply_rotary_embedding(token_embeds, cos, sin)
-            
-        embeddings = token_embeds + position_embeds
+            # RoPE is applied in attention layers, not as an additive embedding here
+            position_embeds = None
+            embeddings = token_embeds
         
         if modality != "text":
             embeddings = self.modality_embedding(embeddings, modality)

@@ -73,7 +73,7 @@ class YvLightningIndexer(nn.Module):
             key_padding_mask: Optional mask for compressed positions.
 
         Returns:
-            (selected_k, selected_v) — top-k selected entries.
+            (selected_k, top_k_indices, index_scores) — top-k selected entries and their indices.
         """
         B, n_head, T, _ = q.shape
         B_kv, n_kv, T_comp, _ = k_compressed.shape
@@ -119,7 +119,7 @@ class YvLightningIndexer(nn.Module):
         k_expanded = k_expanded.unsqueeze(2).expand(-1, -1, T, -1, -1)
         selected_k = k_expanded.gather(3, top_k_indices_exp)
 
-        return selected_k, index_scores
+        return selected_k, top_k_indices, index_scores
 
 
 class YvCompressedSparseAttention(nn.Module):
@@ -268,25 +268,27 @@ class YvCompressedSparseAttention(nn.Module):
         k_compressed, v_compressed = self._compress_kv(k, v)  # (B, n_kv, n_blocks, D)
 
         # Indexer selects top-k compressed entries
-        selected_k, _ = self.indexer(q, k_compressed)  # (B, n_head, T, top_k, D)
+        selected_k, top_k_indices, _ = self.indexer(q, k_compressed)  # (B, n_head, T, top_k, D)
 
-        # Interpolate V for selected entries
-        T_comp = k_compressed.shape[2]
-        v_expanded = v_compressed.unsqueeze(2).expand(-1, -1, T, -1, -1)
-        selected_k_indices = self.indexer.top_k
-        top_k_actual = min(selected_k_indices, T_comp)
-        # Simplified: just use compressed KV directly with attention
-        # Reshape for attention
-        k_attn = k_compressed.unsqueeze(2).expand(-1, -1, self.n_head // max(1, self.n_kv_head), -1, -1)
-        k_attn = k_attn.reshape(B, self.n_head, -1, self.head_dim)
-        v_attn = v_compressed.unsqueeze(2).expand(-1, -1, self.n_head // max(1, self.n_kv_head), -1, -1)
-        v_attn = v_attn.reshape(B, self.n_head, -1, self.head_dim)
+        # Gather V entries corresponding to selected K indices
+        v_expanded = v_compressed.unsqueeze(2).expand(-1, -1, T, -1, -1)  # (B, n_kv, T, T_comp, D)
+        top_k_indices_exp = top_k_indices.unsqueeze(-1).expand(-1, -1, -1, -1, self.head_dim)
+        selected_v = v_expanded.gather(3, top_k_indices_exp)  # (B, n_kv, T, top_k, D)
+
+        # Expand KV heads to match n_head
+        repeat_factor = max(1, self.n_head // max(1, self.n_kv_head))
+        k_attn = selected_k.reshape(B, self.n_head, -1, self.head_dim)
+        if self.n_head > self.n_kv_head:
+            selected_v = selected_v.repeat_interleave(repeat_factor, dim=1)
+        v_attn = selected_v.reshape(B, self.n_head, -1, self.head_dim)
 
         # Concatenate sliding window with compressed
         if T > sw:
             k_sw_expanded = k_sw
+            v_sw_expanded = v_sw
             if self.n_head > self.n_kv_head:
-                k_sw_expanded = k_sw_expanded.repeat_interleave(self.n_head // self.n_kv_head, dim=1)
+                k_sw_expanded = k_sw_expanded.repeat_interleave(repeat_factor, dim=1)
+                v_sw_expanded = v_sw_expanded.repeat_interleave(repeat_factor, dim=1)
             k_full = torch.cat([k_attn, k_sw_expanded], dim=-2)
             v_full = torch.cat([v_attn, v_sw_expanded], dim=-2)
         else:

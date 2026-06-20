@@ -597,8 +597,8 @@ class YvGroupNorm(nn.Module):
             x = x.view(x.shape[0], self.num_groups, -1)
             rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
             x = x * rms
-            x = x.view(x.shape[0], -1)
-            return self.weight * x + self.bias
+            x = x.view(x.shape[0], self.num_channels, -1)
+            return self.weight[:, None] * x + self.bias[:, None]
         else:
             return F.group_norm(x, self.num_groups, self.weight, self.bias, self.eps)
 

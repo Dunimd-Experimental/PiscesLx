@@ -858,7 +858,6 @@ class YvLinearAttention(nn.Module):
         if feature_map_type == "elu":
             self.feature_map = nn.Sequential(
                 nn.Linear(self.head_dim, feature_dim, bias=False, device=device, dtype=dtype),
-                nn.ELU()
             )
         elif feature_map_type == "performer":
             self.register_buffer(
@@ -1177,7 +1176,7 @@ class YvLinearAttention(nn.Module):
         numerator = torch.einsum('bhqd,bhqdf->bhvf', q_features, kv_cumsum)
         
         denominator = torch.einsum('bhqd,bhqd->bhq', q_features, k_sum)
-        denominator = denominator.unsqueeze(-1).expand(-1, -1, -1, head_dim)
+        denominator = denominator.unsqueeze(-1)
         
         output = numerator / (denominator + self.eps)
         
@@ -1267,50 +1266,16 @@ class YvCirculantAttention(nn.Module):
         head_dim: int,
         fft_len: int
     ) -> torch.Tensor:
-        """Compute attention using FFT-based circulant matrix multiplication.
-
-        Uses the BCCB (Block Circulant with Circulant Blocks) structure to
-        compute attention efficiently in the frequency domain.
-
-        Args:
-            q: Query tensor [batch, heads, seq, head_dim].
-            k: Key tensor [batch, heads, seq, head_dim].
-            v: Value tensor [batch, heads, seq, head_dim].
-            seq_len: Original sequence length.
-            batch_size: Batch dimension.
-            n_heads: Number of attention heads.
-            head_dim: Per-head dimension.
-            fft_len: Padded FFT length (power of 2).
-
-        Returns:
-            Attention output [batch, heads, seq, head_dim].
-        """
+        """Compute attention using standard softmax (fallback from FFT)."""
+        attn_weights = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(head_dim)
         if self.causal:
-            return self._fft_causal_attention(q, k, v, seq_len, batch_size, n_heads, head_dim, fft_len)
-
-        q_padded = F.pad(q, (0, fft_len - seq_len))
-        k_padded = F.pad(k, (0, fft_len - seq_len))
-        v_padded = F.pad(v, (0, fft_len - seq_len))
-
-        Q_fft = torch.fft.rfft(q_padded, n=fft_len, dim=-2)
-        K_fft = torch.fft.rfft(k_padded, n=fft_len, dim=-2)
-        V_fft = torch.fft.rfft(v_padded, n=fft_len, dim=-2)
-
-        if self.causal:
-            causal_mask = torch.tril(torch.ones(fft_len, fft_len, device=q.device, dtype=torch.bool))
-            causal_mask_fft = torch.fft.rfft(causal_mask.float(), n=fft_len, dim=-2)
-            attn_fft = Q_fft * K_fft.conj()
-            attn_fft = attn_fft * causal_mask_fft.unsqueeze(0).unsqueeze(0)
-        else:
-            attn_fft = Q_fft * K_fft.conj()
-
-        attn_fft = attn_fft / (torch.abs(attn_fft).max(dim=-1, keepdim=True)[0] + self.eps)
-
-        out_fft = attn_fft * V_fft
-        out = torch.fft.irfft(out_fft, n=fft_len, dim=-2)
-
-        out = out[..., :seq_len, :]
-
+            causal_mask = torch.triu(
+                torch.ones(seq_len, seq_len, device=q.device, dtype=torch.bool),
+                diagonal=1
+            )
+            attn_weights = attn_weights.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+        attn_weights = F.softmax(attn_weights, dim=-1)
+        out = torch.matmul(attn_weights, v)
         return out
 
     def _fft_causal_attention(
@@ -1324,40 +1289,15 @@ class YvCirculantAttention(nn.Module):
         head_dim: int,
         fft_len: int
     ) -> torch.Tensor:
-        """Compute causal attention using FFT with lower-triangular masking.
-
-        Args:
-            q: Query tensor [batch, heads, seq, head_dim].
-            k: Key tensor [batch, heads, seq, head_dim].
-            v: Value tensor [batch, heads, seq, head_dim].
-            seq_len: Original sequence length.
-            batch_size: Batch dimension.
-            n_heads: Number of attention heads.
-            head_dim: Per-head dimension.
-            fft_len: Padded FFT length (power of 2).
-
-        Returns:
-            Causal attention output [batch, heads, seq, head_dim].
-        """
-        q_padded = F.pad(q, (0, 0, 0, fft_len - seq_len))
-        k_padded = F.pad(k, (0, 0, 0, fft_len - seq_len))
-        v_padded = F.pad(v, (0, 0, 0, fft_len - seq_len))
-
-        Q_fft = torch.fft.rfft(q_padded, n=fft_len, dim=-2)
-        K_fft = torch.fft.rfft(k_padded, n=fft_len, dim=-2)
-        V_fft = torch.fft.rfft(v_padded, n=fft_len, dim=-2)
-
-        causal_mask = torch.tril(torch.ones(fft_len, fft_len, device=q.device, dtype=q.dtype))
-        causal_fft = torch.fft.rfft(causal_mask, n=fft_len, dim=-2)
-
-        attn_fft = Q_fft * K_fft.conj() * causal_fft.unsqueeze(0).unsqueeze(0)
-        attn_fft = attn_fft / (torch.abs(attn_fft).max(dim=-1, keepdim=True)[0] + self.eps)
-
-        out_fft = attn_fft * V_fft
-        out = torch.fft.irfft(out_fft, n=fft_len, dim=-2)
-
-        out = out[..., :seq_len, :]
-
+        """Compute causal attention using standard softmax (fallback from FFT)."""
+        attn_weights = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(head_dim)
+        causal_mask = torch.triu(
+            torch.ones(seq_len, seq_len, device=q.device, dtype=torch.bool),
+            diagonal=1
+        )
+        attn_weights = attn_weights.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+        attn_weights = F.softmax(attn_weights, dim=-1)
+        out = torch.matmul(attn_weights, v)
         return out
 
     def _standard_attention(
@@ -2089,7 +2029,7 @@ class YvPagedAttention(nn.Module):
         # PQCache: Product Quantization for KV cache compression
         # Auto-enabled when cache elements > 10M
         # Based on: PKU-DAIR SIGMOD 2025
-        if self.training and keys.numel() > 1e7:
+        if keys.numel() > 1e7:
             codebook_size = 256
             keys_flat = keys.view(-1, keys.shape[-1])
             values_flat = values.view(-1, values.shape[-1])
@@ -2966,14 +2906,15 @@ class YvRingAttention(nn.Module):
             
             for i in range(0, seq_len, chunk_size):
                 q_chunk = q[:, :, i:i + chunk_size]
-                
+
                 chunk_scores = torch.matmul(q_chunk, k.transpose(-2, -1)) * self.scale
-                
-                causal_mask = torch.triu(
-                    torch.ones(q_chunk.shape[2], k.shape[2], device=q.device, dtype=torch.bool),
-                    diagonal=1
-                )
-                chunk_scores = chunk_scores.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+
+                if ring_step == 0:
+                    causal_mask = torch.triu(
+                        torch.ones(q_chunk.shape[2], k.shape[2], device=q.device, dtype=torch.bool),
+                        diagonal=1
+                    )
+                    chunk_scores = chunk_scores.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
                 
                 chunk_max = chunk_scores.max(dim=-1, keepdim=True)[0]
                 chunk_exp = torch.exp(chunk_scores - chunk_max)
@@ -3414,6 +3355,7 @@ class YvDynamicH2OAttention(nn.Module):
         self.streaming_window = streaming_window
         self.num_cache_levels = num_cache_levels
         self.enable_paged_attention = enable_paged_attention
+        self.memory_size = 256
         
         self.q_proj = nn.Linear(hidden_size, hidden_size, bias=False, device=device, dtype=dtype)
         self.k_proj = nn.Linear(hidden_size, hidden_size, bias=False, device=device, dtype=dtype)
@@ -4744,6 +4686,417 @@ class YvHISAAttention(nn.Module):
         return output, None
 
 
+class YvMixtureBlockAttention(nn.Module):
+    """Mixture of Block Attention (MoBA) for million-token context.
+
+    MoBA reduces the KV cache footprint for long sequences by splitting the
+    key/value sequence into fixed-size blocks and letting each query attend to
+    a small set of top-ranked previous blocks plus the current block.  This
+    changes the active KV memory from O(N) to O(top_k * block_size) and allows
+    inference to keep a bounded block cache instead of the full token-level KV
+    cache.
+
+    Architecture:
+        - Block split: K/V are grouped into non-overlapping blocks of size
+          ``block_size``.
+        - Block routing: A lightweight score is computed between a query-block
+          representative and every previous block representative.
+        - Top-k selection: The highest-scoring previous blocks are kept.
+        - Local block: The current block is always fully attended (causal
+          masking is applied inside the current block only).
+
+    For autoregressive generation a persistent block cache is maintained.  When
+    ``block_size`` new tokens are accumulated they are converted into a single
+    block, scored, and inserted into the cache.  The cache is bounded by
+    ``max_cached_blocks``; oldest blocks are evicted when the bound is exceeded.
+
+    Attributes:
+        hidden_size (int): Model hidden dimension.
+        n_head (int): Number of query heads.
+        n_kv_head (int): Number of key/value heads.
+        head_dim (int): Dimension per head.
+        block_size (int): Number of tokens per block.
+        top_k (int): Number of previous blocks to attend per query block.
+        max_cached_blocks (int): Maximum number of blocks kept in the cache.
+        min_seq_len (int): Sequence length below which standard attention is used.
+        attention_dropout (float): Dropout probability.
+        scale (float): Attention scale factor.
+        block_cache_k (torch.Tensor): Cached key blocks.
+        block_cache_v (torch.Tensor): Cached value blocks.
+        block_cache_positions (torch.Tensor): Global start position of each block.
+        block_cache_scores (torch.Tensor): Importance score of each block.
+
+    Reference:
+        "MoBA: Mixture of Block Attention for Long-Context Inference", 2025.
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        n_head: int,
+        n_kv_head: int,
+        block_size: int = 4096,
+        top_k: int = 4,
+        max_cached_blocks: int = 256,
+        attention_dropout: float = 0.0,
+        min_seq_len: int = 8192,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.n_head = n_head
+        self.n_kv_head = n_kv_head if n_kv_head is not None else n_head
+        self.head_dim = hidden_size // n_head
+        self.block_size = block_size
+        self.top_k = top_k
+        self.max_cached_blocks = max_cached_blocks
+        self.attention_dropout = attention_dropout
+        self.min_seq_len = min_seq_len
+        self.scale = self.head_dim ** -0.5
+        self.num_groups = n_head // self.n_kv_head
+
+        self.q_proj = nn.Linear(
+            hidden_size, n_head * self.head_dim, bias=False, device=device, dtype=dtype
+        )
+        self.k_proj = nn.Linear(
+            hidden_size, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
+        )
+        self.v_proj = nn.Linear(
+            hidden_size, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
+        )
+        self.o_proj = nn.Linear(
+            n_head * self.head_dim, hidden_size, bias=False, device=device, dtype=dtype
+        )
+
+        self.register_buffer("block_cache_k", None, persistent=False)
+        self.register_buffer("block_cache_v", None, persistent=False)
+        self.register_buffer("block_cache_positions", None, persistent=False)
+        self.register_buffer("block_cache_scores", None, persistent=False)
+        self.register_buffer("partial_k", None, persistent=False)
+        self.register_buffer("partial_v", None, persistent=False)
+        self.register_buffer("partial_len", torch.tensor(0, dtype=torch.long), persistent=False)
+
+    def _split_into_blocks(
+        self,
+        tensor: torch.Tensor,
+        block_size: int
+    ) -> Tuple[torch.Tensor, int]:
+        """Reshape a [batch, heads, seq_len, head_dim] tensor into blocks."""
+        batch, heads, seq_len, head_dim = tensor.shape
+        num_blocks = (seq_len + block_size - 1) // block_size
+        pad_len = num_blocks * block_size - seq_len
+        if pad_len > 0:
+            tensor = F.pad(tensor, (0, 0, 0, pad_len))
+        return tensor.view(batch, heads, num_blocks, block_size, head_dim), pad_len
+
+    def _standard_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Standard causal attention used for short sequences."""
+        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale
+
+        seq_len = q.shape[2]
+        kv_len = k.shape[2]
+        causal_mask = torch.triu(
+            torch.ones(seq_len, kv_len, device=q.device, dtype=torch.bool),
+            diagonal=kv_len - seq_len + 1
+        )
+        attn_weights = attn_weights.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+
+        if attention_mask is not None:
+            attn_weights = attn_weights + attention_mask
+
+        attn_weights = F.softmax(attn_weights, dim=-1)
+        if self.training:
+            attn_weights = F.dropout(attn_weights, p=self.attention_dropout)
+
+        return torch.matmul(attn_weights, v)
+
+    def _select_top_blocks(
+        self,
+        q_repr: torch.Tensor,
+        k_blocks: torch.Tensor,
+        top_k: int
+    ) -> torch.Tensor:
+        """Select the top-k previous blocks based on routing scores.
+
+        Args:
+            q_repr: [batch, n_head, query_blocks, head_dim].
+            k_blocks: [batch, n_kv_head, num_blocks, block_size, head_dim].
+            top_k: Number of blocks to select.
+
+        Returns:
+            Indices of selected blocks [batch, top_k].  The same set of blocks
+            is used for all heads to keep the gather operation efficient.
+        """
+        batch, n_head, num_q_blocks, head_dim = q_repr.shape
+        n_kv_head = k_blocks.shape[1]
+        num_blocks = k_blocks.shape[2]
+
+        k_repr = k_blocks.mean(dim=3)  # [batch, n_kv_head, num_blocks, head_dim]
+
+        if n_head != n_kv_head:
+            q_repr_kv = q_repr.view(
+                batch, n_kv_head, self.num_groups, num_q_blocks, head_dim
+            ).mean(dim=2).permute(0, 2, 1, 3)
+        else:
+            q_repr_kv = q_repr.permute(0, 2, 1, 3)
+
+        # [batch, num_q_blocks, n_kv_head, num_blocks]
+        scores = torch.einsum('bqkh,bkvh->bqkv', q_repr_kv, k_repr) / math.sqrt(head_dim)
+        scores = scores.mean(dim=(1, 2))  # [batch, num_blocks]
+
+        top_k = min(top_k, num_blocks)
+        _, top_indices = torch.topk(scores, top_k, dim=-1)  # [batch, top_k]
+        return top_indices
+
+    def _moba_prefill(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """Block-sparse attention for a full sequence."""
+        batch, n_head, seq_len, head_dim = q.shape
+        n_kv_head = k.shape[1]
+        block_size = self.block_size
+        top_k = self.top_k
+
+        k_blocks, _ = self._split_into_blocks(k, block_size)
+        v_blocks, _ = self._split_into_blocks(v, block_size)
+        num_blocks = k_blocks.shape[2]
+
+        q_blocks, _ = self._split_into_blocks(q, block_size)
+
+        k_repr = k_blocks.mean(dim=3)  # [batch, n_kv_head, num_blocks, head_dim]
+        q_repr = q_blocks.mean(dim=3)  # [batch, n_head, num_blocks, head_dim]
+
+        output = torch.zeros_like(q)
+
+        for i in range(num_blocks):
+            q_start = i * block_size
+            q_end = min((i + 1) * block_size, seq_len)
+            block_len = q_end - q_start
+            q_block = q[:, :, q_start:q_end]
+
+            selected_k = [k_blocks[:, :, i, :block_len]]
+            selected_v = [v_blocks[:, :, i, :block_len]]
+
+            if i > 0:
+                top_indices = self._select_top_blocks(
+                    q_repr[:, :, i:i + 1], k_blocks[:, :, :i], top_k
+                )  # [batch, top_k]
+
+                top_k_i = top_indices.shape[1]
+                top_indices_expanded = top_indices.view(
+                    batch, 1, top_k_i, 1, 1
+                ).expand(-1, n_kv_head, -1, block_size, head_dim)
+                sel_k = torch.gather(k_blocks[:, :, :i], 2, top_indices_expanded)
+                sel_v = torch.gather(v_blocks[:, :, :i], 2, top_indices_expanded)
+                selected_k.append(sel_k.reshape(batch, n_kv_head, top_k_i * block_size, head_dim))
+                selected_v.append(sel_v.reshape(batch, n_kv_head, top_k_i * block_size, head_dim))
+
+            k_cat = torch.cat(selected_k, dim=2)
+            v_cat = torch.cat(selected_v, dim=2)
+            kv_len = k_cat.shape[2]
+
+            if n_head != n_kv_head:
+                k_cat = k_cat.repeat_interleave(self.num_groups, dim=1)
+                v_cat = v_cat.repeat_interleave(self.num_groups, dim=1)
+
+            attn = torch.matmul(q_block, k_cat.transpose(-2, -1)) * self.scale
+
+            # Causal mask inside the current block only.
+            current_offset = kv_len - block_len
+            causal_mask = torch.triu(
+                torch.ones(block_len, block_len, device=q.device, dtype=torch.bool),
+                diagonal=1
+            )
+            full_mask = torch.zeros(block_len, kv_len, device=q.device, dtype=torch.bool)
+            full_mask[:, current_offset:] = causal_mask
+            attn = attn.masked_fill(full_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+
+            if attention_mask is not None:
+                mask_slice = attention_mask[:, :, q_start:q_end, :kv_len]
+                attn = attn + mask_slice
+
+            attn = F.softmax(attn, dim=-1)
+            if self.training:
+                attn = F.dropout(attn, p=self.attention_dropout)
+
+            output[:, :, q_start:q_end] = torch.matmul(attn, v_cat)
+
+        return output
+
+    def _moba_decode(
+        self,
+        q: torch.Tensor,
+        k_new: torch.Tensor,
+        v_new: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None
+    ) -> torch.Tensor:
+        """MoBA for one decoding step with a persistent block cache."""
+        batch, n_head, new_len, head_dim = q.shape
+        n_kv_head = k_new.shape[1]
+        block_size = self.block_size
+        top_k = self.top_k
+
+        # Accumulate new tokens into the partial block buffer.
+        if self.partial_k is None:
+            self.partial_k = k_new
+            self.partial_v = v_new
+        else:
+            self.partial_k = torch.cat([self.partial_k, k_new], dim=2)
+            self.partial_v = torch.cat([self.partial_v, v_new], dim=2)
+        self.partial_len += new_len
+
+        # Convert complete partial blocks into the persistent cache.
+        complete_blocks = self.partial_len // block_size
+        if complete_blocks > 0:
+            split_len = complete_blocks * block_size
+            full_k, self.partial_k = self.partial_k.split([split_len, self.partial_len - split_len], dim=2)
+            full_v, self.partial_v = self.partial_v.split([split_len, self.partial_len - split_len], dim=2)
+            self.partial_len -= split_len
+
+            full_k_blocks, _ = self._split_into_blocks(full_k, block_size)
+            full_v_blocks, _ = self._split_into_blocks(full_v, block_size)
+            block_scores = full_k_blocks.norm(dim=-1).mean(dim=(1, 3))  # [batch, complete_blocks]
+
+            positions = torch.arange(
+                self.block_cache_positions.shape[1] if self.block_cache_positions is not None else 0,
+                self.block_cache_positions.shape[1] + complete_blocks if self.block_cache_positions is not None else complete_blocks,
+                device=q.device
+            ).view(1, -1).expand(batch, -1)
+
+            if self.block_cache_k is None:
+                self.block_cache_k = full_k_blocks
+                self.block_cache_v = full_v_blocks
+                self.block_cache_scores = block_scores
+                self.block_cache_positions = positions
+            else:
+                self.block_cache_k = torch.cat([self.block_cache_k, full_k_blocks], dim=2)
+                self.block_cache_v = torch.cat([self.block_cache_v, full_v_blocks], dim=2)
+                self.block_cache_scores = torch.cat([self.block_cache_scores, block_scores], dim=1)
+                self.block_cache_positions = torch.cat([self.block_cache_positions, positions], dim=1)
+
+            # Evict oldest blocks if the cache exceeds the budget.
+            if self.block_cache_k.shape[2] > self.max_cached_blocks:
+                self.block_cache_k = self.block_cache_k[:, :, -self.max_cached_blocks:]
+                self.block_cache_v = self.block_cache_v[:, :, -self.max_cached_blocks:]
+                self.block_cache_scores = self.block_cache_scores[:, -self.max_cached_blocks:]
+                self.block_cache_positions = self.block_cache_positions[:, -self.max_cached_blocks:]
+
+        # Build the active KV set: selected cached blocks + the partial block.
+        selected_k = []
+        selected_v = []
+
+        if self.block_cache_k is not None and self.block_cache_k.shape[2] > 0:
+            k_repr = self.block_cache_k.mean(dim=3)  # [batch, n_kv_head, num_blocks, head_dim]
+            q_repr = q.mean(dim=2, keepdim=True)  # [batch, n_head, 1, head_dim]
+
+            if n_head != n_kv_head:
+                q_repr_kv = q_repr.view(batch, n_kv_head, self.num_groups, 1, head_dim).mean(dim=2)
+            else:
+                q_repr_kv = q_repr
+
+            scores = torch.einsum('bkqh,bknh->bkn', q_repr_kv, k_repr) / math.sqrt(head_dim)
+            scores = scores.mean(dim=1)  # [batch, num_blocks]
+            top_k_actual = min(top_k, scores.shape[1])
+            _, top_indices = torch.topk(scores, top_k_actual, dim=-1)
+
+            top_indices_expanded = top_indices.view(batch, 1, top_k_actual, 1, 1).expand(
+                -1, n_kv_head, -1, block_size, head_dim
+            )
+            sel_k = torch.gather(self.block_cache_k, 2, top_indices_expanded)
+            sel_v = torch.gather(self.block_cache_v, 2, top_indices_expanded)
+            selected_k.append(sel_k.reshape(batch, n_kv_head, top_k_actual * block_size, head_dim))
+            selected_v.append(sel_v.reshape(batch, n_kv_head, top_k_actual * block_size, head_dim))
+
+        if self.partial_k is not None and self.partial_len > 0:
+            selected_k.append(self.partial_k[:, :, :self.partial_len])
+            selected_v.append(self.partial_v[:, :, :self.partial_len])
+
+        if not selected_k:
+            # No history yet; fall back to standard attention over current tokens.
+            return self._standard_attention(q, k_new, v_new, attention_mask)
+
+        k_cat = torch.cat(selected_k, dim=2)
+        v_cat = torch.cat(selected_v, dim=2)
+
+        if n_head != n_kv_head:
+            k_cat = k_cat.repeat_interleave(self.num_groups, dim=1)
+            v_cat = v_cat.repeat_interleave(self.num_groups, dim=1)
+
+        attn = torch.matmul(q, k_cat.transpose(-2, -1)) * self.scale
+
+        if attention_mask is not None:
+            attn = attn + attention_mask[:, :, -new_len:, :k_cat.shape[2]]
+
+        attn = F.softmax(attn, dim=-1)
+        if self.training:
+            attn = F.dropout(attn, p=self.attention_dropout)
+
+        return torch.matmul(attn, v_cat)
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        past_key_value: Optional[Tuple[torch.Tensor, ...]] = None,
+        use_cache: bool = False
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple[torch.Tensor, ...]]]:
+        """Compute MoBA attention.
+
+        Args:
+            hidden_states: [batch, seq_len, hidden_size].
+            attention_mask: Optional attention mask.
+            past_key_value: Optional cached block cache tuple.
+            use_cache: Whether to return the block cache.
+
+        Returns:
+            Attention output, optionally with the cache tuple.
+        """
+        batch, seq_len, _ = hidden_states.shape
+
+        q = self.q_proj(hidden_states).view(batch, seq_len, self.n_head, self.head_dim).transpose(1, 2)
+        k = self.k_proj(hidden_states).view(batch, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+        v = self.v_proj(hidden_states).view(batch, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+
+        if past_key_value is not None:
+            self.block_cache_k = past_key_value[0]
+            self.block_cache_v = past_key_value[1]
+            self.block_cache_positions = past_key_value[2]
+            self.block_cache_scores = past_key_value[3]
+            self.partial_k = past_key_value[4]
+            self.partial_v = past_key_value[5]
+            self.partial_len = past_key_value[6]
+
+        if seq_len == 1:
+            output = self._moba_decode(q, k, v, attention_mask)
+        elif seq_len < self.min_seq_len:
+            output = self._standard_attention(q, k, v, attention_mask)
+        else:
+            output = self._moba_prefill(q, k, v, attention_mask)
+
+        output = output.transpose(1, 2).reshape(batch, seq_len, self.n_head * self.head_dim)
+        output = self.o_proj(output)
+
+        if use_cache:
+            present_kv = (
+                self.block_cache_k, self.block_cache_v, self.block_cache_positions,
+                self.block_cache_scores, self.partial_k, self.partial_v, self.partial_len
+            )
+            return output, present_kv
+
+        return output
+
+
 class YvAttention(nn.Module):
     """Unified Multi-head Attention with comprehensive backend support.
     
@@ -4886,6 +5239,38 @@ class YvAttention(nn.Module):
         self.kv_lora_rank = int(getattr(cfg, 'kv_lora_rank', 512))
         self.q_lora_rank = getattr(cfg, 'mla_q_lora_rank', None)
         self.mla_rope_scaling = float(getattr(cfg, 'mla_rope_scaling_factor', 1.0))
+
+        self.use_enhanced_mla = bool(getattr(cfg, 'use_enhanced_mla', True))
+        self.mla_use_embedding_gate = bool(getattr(cfg, 'mla_use_embedding_gate', False))
+        self.mla_rope_dim = int(getattr(cfg, 'mla_rope_dim', 64))
+
+        self.use_moba_attention = bool(getattr(cfg, 'use_moba_attention', False))
+        self.moba_block_size = int(getattr(cfg, 'moba_block_size', 4096))
+        self.moba_top_k = int(getattr(cfg, 'moba_top_k', 4))
+        self.moba_min_seq_len = int(getattr(cfg, 'moba_min_seq_len', 8192))
+        self.moba_max_cached_blocks = int(getattr(cfg, 'moba_max_cached_blocks', 256))
+
+        self.use_eg_mla = bool(getattr(cfg, 'use_eg_mla', False))
+        self.use_duo_attention = bool(getattr(cfg, 'use_duo_attention', False))
+
+        if self.use_moba_attention:
+            assert not (self.use_mla or self.use_eg_mla or self.use_duo_attention), (
+                "MoBA is mutually exclusive with MLA/EG-MLA/DuoAttention in YvAttention"
+            )
+            self.moba_attention = YvMixtureBlockAttention(
+                hidden_size=cfg.hidden_size,
+                n_head=cfg.n_head,
+                n_kv_head=self.n_kv_head,
+                block_size=self.moba_block_size,
+                top_k=self.moba_top_k,
+                max_cached_blocks=self.moba_max_cached_blocks,
+                attention_dropout=getattr(cfg, 'attention_dropout', 0.0),
+                min_seq_len=self.moba_min_seq_len,
+                device=device,
+                dtype=dtype,
+            )
+
+        self.layer_idx = None
         
         self.dsa_sparse_ratio = float(getattr(cfg, 'dsa_sparse_ratio', 0.3))
         self.dsa_importance_threshold = float(getattr(cfg, 'dsa_importance_threshold', 0.1))
@@ -4933,10 +5318,6 @@ class YvAttention(nn.Module):
                 dtype=dtype,
             )
         
-        # Flagship Algorithm Integration (2025-2026)
-        self.use_eg_mla = bool(getattr(cfg, 'use_eg_mla', False))
-        self.use_duo_attention = bool(getattr(cfg, 'use_duo_attention', False))
-
         if self.use_eg_mla:
             self.eg_mla = YvEGMLA(
                 hidden_size=cfg.hidden_size,
@@ -4971,9 +5352,18 @@ class YvAttention(nn.Module):
             self.v_decompress = nn.Linear(
                 self.kv_lora_rank, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
             )
-            self.rope_decompress = nn.Linear(
-                self.kv_lora_rank, self.head_dim, bias=False, device=device, dtype=dtype
-            )
+            if self.use_enhanced_mla:
+                self.rope_decompress = nn.Linear(
+                    self.kv_lora_rank, self.mla_rope_dim, bias=False, device=device, dtype=dtype
+                )
+            else:
+                self.rope_decompress = nn.Linear(
+                    self.kv_lora_rank, self.head_dim, bias=False, device=device, dtype=dtype
+                )
+            if self.mla_use_embedding_gate:
+                self.embedding_gate = nn.Linear(
+                    cfg.hidden_size, self.kv_lora_rank, bias=False, device=device, dtype=dtype
+                )
             if self.q_lora_rank is not None:
                 self.q_compress = nn.Linear(
                     cfg.hidden_size, self.q_lora_rank, bias=False, device=device, dtype=dtype
@@ -5173,7 +5563,8 @@ class YvAttention(nn.Module):
         use_cache: bool = False,
         cache_manager: Optional[Any] = None,
         layer_idx: int = 0,
-        modality: str = 'text'
+        modality: str = 'text',
+        extra_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
         """Run the attention forward pass.
 
@@ -5204,7 +5595,8 @@ class YvAttention(nn.Module):
             x = x.reshape(1, -1, x.size(-1))
 
         b, t, _ = x.shape
-        
+        self.layer_idx = layer_idx
+
         if modality in self.modality_embed:
             x = x + self.modality_embed[modality].view(1, 1, -1)
         
@@ -5240,6 +5632,17 @@ class YvAttention(nn.Module):
             if use_cache:
                 return duo_result
             return duo_result[0]
+
+        if self.use_moba_attention:
+            moba_out = self.moba_attention(
+                hidden_states=x,
+                attention_mask=mask,
+                past_key_value=None,
+                use_cache=False,
+            )
+            if use_cache:
+                return moba_out, None
+            return moba_out
 
         if layer_idx < 8:
             effective_window = min(2048, t)
@@ -5320,42 +5723,62 @@ class YvAttention(nn.Module):
         if hasattr(self, 'sparse_attention') and self.sparse_pattern != 'none':
             return self.sparse_attention(x, mask)
 
+        mla_rope_applied = False
         if self.use_mla:
             kv_latent = self.kv_compress(x)
 
+            # Optional embedding gate for dynamic per-token compression strength
+            if self.mla_use_embedding_gate:
+                gate = torch.sigmoid(self.embedding_gate(x))
+                kv_latent = gate * kv_latent
+
+            # Concatenate past compressed KV before decompression to keep cache compact
+            if past_key_values is not None:
+                past_kv_latent = past_key_values[0]
+                kv_latent = torch.cat([past_kv_latent, kv_latent], dim=1)
+
+            kv_len = kv_latent.shape[1]
+
+            # Cache the compressed latent before adding per-pass extra KV.
+            kv_latent_for_cache = kv_latent
+
+            # Decompress keys and values from the shared low-rank latent
+            k = self.k_decompress(kv_latent).view(b, kv_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+            v = self.v_decompress(kv_latent).view(b, kv_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+
+            # Hard knowledge injection: prepend extra KV tokens to the keys/values.
+            # These tokens participate in attention but are NOT written to KV cache.
+            if extra_kv is not None:
+                extra_k, extra_v = extra_kv
+                k = torch.cat([extra_k, k], dim=-2)
+                v = torch.cat([extra_v, v], dim=-2)
+                kv_len = k.shape[-2]
+
+            # Queries are computed from current tokens only
             if hasattr(self, 'q_compress'):
                 q_latent = self.q_compress(x)
                 q = self.q_decompress(q_latent)
             else:
                 q = self.q_proj(x)
-
-            if hasattr(self, 'rope'):
-                k_full = self.k_decompress(kv_latent)
-                v = self.v_decompress(kv_latent)
-
-                k_for_rope = self.rope_decompress(kv_latent)
-                k_for_rope = k_for_rope.view(b, t, self.n_kv_head, self.head_dim)
-                k_for_rope = k_for_rope.transpose(1, 2)
-                k_for_rope = self.rope(k_for_rope, t)
-                k_for_rope = k_for_rope.transpose(1, 2)
-                k_for_rope = k_for_rope.reshape(b, t, self.n_kv_head * self.head_dim)
-
-                k_rope_expanded = k_for_rope.view(b, t, self.n_kv_head, self.head_dim)
-                k_full = k_full.view(b, t, self.n_kv_head, self.head_dim)
-                k_full = k_full + k_rope_expanded * 0.1
-                k = k_full.view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
-            else:
-                k = self.k_decompress(kv_latent).view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
-                v = self.v_decompress(kv_latent).view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
-
             q = q.view(b, t, self.n_head, self.head_dim).transpose(1, 2)
 
-            past_kv_latent = None
-            if past_key_values is not None:
-                past_kv_latent = past_key_values[0] if isinstance(past_key_values, (list, tuple)) else past_key_values
+            # Decoupled RoPE: rotary position encoding applied to a dedicated subspace
+            mla_rope_applied = False
+            if hasattr(self, 'rope') and self.use_enhanced_mla:
+                rope_dim = min(self.mla_rope_dim, self.head_dim)
+                if rope_dim > 0:
+                    k_pe = self.rope_decompress(kv_latent).view(b, kv_len, 1, rope_dim)
+                    k_pe = k_pe.expand(-1, -1, self.n_kv_head, -1).transpose(1, 2)
+                    k_pe = self.rope(k_pe, kv_len)
+                    k_pe = k_pe.transpose(1, 2)
 
-            if past_kv_latent is not None:
-                kv_latent = torch.cat([past_kv_latent, kv_latent], dim=1)
+                    q_pe = q[..., -rope_dim:]
+                    q_pe = self.rope(q_pe, t)
+                    q = torch.cat([q[..., :-rope_dim], q_pe], dim=-1)
+
+                    k_nope = k[..., :-rope_dim]
+                    k = torch.cat([k_nope, k_pe], dim=-1)
+                    mla_rope_applied = True
         elif getattr(self, 'fused_qkv', False):
             qkv = self.qkv_proj(x)
             q_end = self.n_head * self.head_dim
@@ -5398,7 +5821,7 @@ class YvAttention(nn.Module):
                 k = k_gathered
                 v = v_gathered
 
-        if hasattr(self, 'rope'):
+        if hasattr(self, 'rope') and not mla_rope_applied:
             max_pe_len = getattr(self.cfg, 'max_position_embeddings', 4096)
             use_partial_rope = getattr(self.cfg, 'use_partial_rope', True)
             partial_rope_dim = getattr(self.cfg, 'partial_rope_dim', 64)
@@ -5433,10 +5856,21 @@ class YvAttention(nn.Module):
                 q = q * drop_mask.float()
                 k = k * drop_mask[:, :, :k.shape[2], :].float()
 
-        if past_key_values is not None:
+        if past_key_values is not None and not self.use_mla:
             past_k, past_v = past_key_values
             k = torch.cat([past_k, k], dim=-2)
             v = torch.cat([past_v, v], dim=-2)
+
+        # Capture the true KV cache content before adding per-pass extra KV.
+        k_cache = k
+        v_cache = v
+
+        # Hard knowledge injection: prepend extra KV tokens. These tokens
+        # attend to the query but are never written to the rolling KV cache.
+        if extra_kv is not None:
+            extra_k, extra_v = extra_kv
+            k = torch.cat([extra_k, k], dim=-2)
+            v = torch.cat([extra_v, v], dim=-2)
 
         seq_len = k.size(-2)
 
@@ -5589,6 +6023,9 @@ class YvAttention(nn.Module):
         out = out_.reshape(b, self.n_head, t, self.head_dim).transpose(1, 2).contiguous().view(b, t, -1)
         out = self.attn_dropout(out)
         out = self.o_proj(out)
+
+        if self.use_attention_sink and self.training and hasattr(self, 'attn_sink'):
+            out = out[:, self.attn_sink.n_sink:, :]
         
         if seq_len > 100000:
             attenuation_factor = 0.15
@@ -5599,9 +6036,7 @@ class YvAttention(nn.Module):
 
         if use_cache:
             if self.use_mla:
-                return out, (kv_latent, kv_latent)
-            k_cache = k[:, :self.n_kv_head] if self.n_kv_head != self.n_head else k
-            v_cache = v[:, :self.n_kv_head] if self.n_kv_head != self.n_head else v
+                return out, (k_cache, v_cache)
             return out, (k_cache, v_cache)
 
         return out

@@ -265,7 +265,12 @@ from .mamba3 import (
 )
 
 from .memory_router import YvMemoryRouter, YvMemoryKnowledgeStore
-from .memory_attention import YvMemoryCrossAttention, YvMemoryFusionGate
+from .memory_attention import (
+    YvMemoryCrossAttention,
+    YvMemoryFusionGate,
+    YvMemorySeparationLayer,
+)
+from .dual_injector import YvDualInjector
 from .subconscious import (
     YvSubconsciousSystem,
     YvImplicitKnowledgeField,
@@ -405,6 +410,9 @@ __all__ = [
     "YvMemoryKnowledgeStore",
     "YvMemoryCrossAttention",
     "YvMemoryFusionGate",
+    "YvMemorySeparationLayer",
+
+    "YvDualInjector",
 
     "YvSubconsciousSystem",
     "YvImplicitKnowledgeField",

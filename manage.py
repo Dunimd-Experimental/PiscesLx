@@ -1850,65 +1850,6 @@ def main():
         help='Publish configuration file path (JSON/YAML)'
     )
     
-        # =========================================================================
-    # ENTA (EnTA Train Agent) ARGUMENTS
-    # =========================================================================
-    parser.add_argument(
-        '--enta_teacher',
-        type=str,
-        default='deepseek-r1',
-        help='Primary teacher model for EnTA training (default: deepseek-r1)'
-    )
-    parser.add_argument(
-        '--enta_max_tasks',
-        type=int,
-        default=0,
-        help='Maximum training tasks for EnTA (0 = unlimited)'
-    )
-    parser.add_argument(
-        '--enta_tasks_per_stage',
-        type=int,
-        default=5000,
-        help='Tasks per curriculum stage for EnTA'
-    )
-    parser.add_argument(
-        '--enta_subconscious',
-        action='store_true',
-        default=True,
-        help='Enable subconscious system training for EnTA'
-    )
-    parser.add_argument(
-        '--no_enta_subconscious',
-        action='store_true',
-        default=False,
-        help='Disable subconscious system training for EnTA'
-    )
-    parser.add_argument(
-        '--enta_sft',
-        action='store_true',
-        default=True,
-        help='Enable SFT on 7B core for EnTA'
-    )
-    parser.add_argument(
-        '--enta_record_interval',
-        type=int,
-        default=100,
-        help='Logging interval for EnTA (tasks)'
-    )
-    parser.add_argument(
-        '--enta_stage',
-        type=str,
-        default='foundation',
-        choices=['foundation', 'integration', 'advanced', 'specialization', 'self_play'],
-        help='Starting training stage for EnTA'
-    )
-    parser.add_argument(
-        '--enta_list_models',
-        action='store_true',
-        default=False,
-        help='List all configured teacher models for EnTA'
-    )
-
     # =========================================================================
     # PARSE ARGUMENTS
     # =========================================================================
@@ -2011,46 +1952,6 @@ def main():
     # -------------------------------------------------------------------------
     # Start the OpenAI-compatible backend inference service
     # Provides REST API endpoints for model inference
-    elif args.command == 'enta':
-        # EnTA: EnTA Train Agent �� autonomous LLM-driven training loop
-        # EnTA itself is an Agent (driven by Agens-2.0-Flash) that
-        # autonomously decides what to teach and how.
-        _backend = os.path.join(os.path.dirname(__file__), 'enta', 'backend')
-        if _backend not in sys.path:
-            sys.path.insert(0, _backend)
-        from enta.enta import launch_enta
-        import asyncio
-
-        use_subconscious = (
-            not getattr(args, 'no_enta_subconscious', False)
-            and getattr(args, 'enta_subconscious', True)
-        )
-
-        if getattr(args, 'enta_list_models', False):
-            from enta.enta import list_configured_models
-            models = list_configured_models()
-            if not models:
-                _get_logger().info('No teacher models configured. Set ENTA_* env vars.')
-            else:
-                _get_logger().info('Configured teacher models:')
-                for name, btype in sorted(models.items()):
-                    _get_logger().info(f'  {name}  ({btype})')
-            return
-
-        summary = asyncio.run(launch_enta(
-            teacher=getattr(args, 'enta_teacher', 'deepseek-r1'),
-            agent_model='agens-2.0-flash',
-            aux_teachers=getattr(args, 'aux_teachers', '').split(','),
-            max_tasks=getattr(args, 'enta_max_tasks', 0),
-            tasks_per_stage=getattr(args, 'enta_tasks_per_stage', 5000),
-            subconscious_enabled=use_subconscious,
-            starting_stage=getattr(args, 'enta_stage', 'foundation'),
-            record_interval=getattr(args, 'enta_record_interval', 100),
-            dry_run=getattr(args, 'dry_run', False),
-            model_path=getattr(args, 'model_path', ''),
-        ))
-        _get_logger().info(f'EnTA complete: {summary}')
-
     elif args.command == 'serve':
         # Import the backend server class
         from tools.infer.server import PiscesLxBackendServer

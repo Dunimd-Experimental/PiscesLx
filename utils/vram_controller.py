@@ -62,7 +62,7 @@ def profile_gpu() -> VRAMProfile:
         profile.device_name = props.name
         profile.cuda_capability = (props.major, props.minor)
         profile.is_ampere_or_newer = props.major >= 8
-        profile.is_hopper_or_newer = (props.major >= 9) or (props.major >= 8 and props.minor >= 9)
+        profile.is_hopper_or_newer = props.major >= 9
 
         free_mem, _ = torch.cuda.mem_get_info(0)
         profile.free_gb = free_mem / 1e9

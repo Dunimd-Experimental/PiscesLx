@@ -623,12 +623,12 @@ class YvDoRA(nn.Module):
         """
         lora_out = self.dropout(x) @ self.lora_A @ self.lora_B * self.scaling
         
-        base_out = x @ base_weight
+        combined_weight = base_weight + self.lora_A @ self.lora_B * self.scaling
+        weight_norm = torch.norm(combined_weight, dim=0, keepdim=True)
+        normalized_weight = combined_weight / (weight_norm + 1e-8)
+        scaled_weight = normalized_weight * self.magnitude
         
-        combined = base_out + lora_out
-        
-        norm = torch.norm(combined, dim=-1, keepdim=True)
-        return combined * self.magnitude.unsqueeze(0) / (norm + 1e-8)
+        return x @ scaled_weight
 
 
 class YvAdaptiveComputationTime(nn.Module):
@@ -802,7 +802,7 @@ class YvMixtureOfDepths(nn.Module):
 
         x_skip = self.skip_norm(x)
 
-        output = process_mask.unsqueeze(-1) * processed + skip_prob.unsqueeze(-1) * x_skip
+        output = process_mask.unsqueeze(-1) * processed + (1.0 - process_mask).unsqueeze(-1) * x_skip
 
         routing_loss = self._compute_routing_loss(router_probs)
 
@@ -1103,40 +1103,53 @@ class YvParallelBlock(nn.Module):
             self.attn_scale = nn.Identity()
             self.mlp_scale = nn.Identity()
             
-        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout_p', 0.1))
+        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
         
     def forward(
         self,
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        use_cache: bool = False
+        use_cache: bool = False,
+        subconscious_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        film_params: Optional[Dict[str, torch.Tensor]] = None,
     ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Forward pass with parallel attention and MLP.
-        
+
         Args:
             x: Input tensor.
             mask: Attention mask.
             past_key_values: Cached key/value pairs.
             use_cache: Whether to use cache.
-            
+            subconscious_kv: Optional extra KV pair for hard knowledge injection.
+            film_params: Optional FiLM modulation parameters.
+
         Returns:
             Output tensor(s).
         """
+        if film_params is not None:
+            scale = film_params["scale"]
+            shift = film_params["shift"]
+            x = x * (1.0 + scale) + shift
+
         residual = x
         x_norm = self.norm(x)
-        
+
         if use_cache:
             attn_out, present_kv = self.attn(
-                x_norm, mask, past_key_values=past_key_values, use_cache=True
+                x_norm, mask, past_key_values=past_key_values, use_cache=True,
+                extra_kv=subconscious_kv,
             )
         else:
-            attn_out = self.attn(x_norm, mask, past_key_values=past_key_values, use_cache=False)
-            
+            attn_out = self.attn(
+                x_norm, mask, past_key_values=past_key_values, use_cache=False,
+                extra_kv=subconscious_kv,
+            )
+
         mlp_out, aux_loss = self.mlp(x_norm)
-        
+
         output = residual + self.residual_dropout(self.attn_scale(attn_out) + self.mlp_scale(mlp_out))
-        
+
         if use_cache:
             return output, aux_loss, present_kv
         return output, aux_loss
@@ -1184,35 +1197,48 @@ class YvDeepNormBlock(nn.Module):
             cfg.hidden_size, cfg.n_layer, device=device, dtype=dtype
         )
         
-        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout_p', 0.1))
+        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
         
     def forward(
         self,
         x: torch.Tensor,
         mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
-        use_cache: bool = False
+        use_cache: bool = False,
+        subconscious_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        film_params: Optional[Dict[str, torch.Tensor]] = None,
     ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Forward pass with DeepNorm.
-        
+
         Args:
             x: Input tensor.
             mask: Attention mask.
             past_key_values: Cached key/value pairs.
             use_cache: Whether to use cache.
-            
+            subconscious_kv: Optional extra KV pair for hard knowledge injection.
+            film_params: Optional FiLM modulation parameters.
+
         Returns:
             Output tensor(s).
         """
+        if film_params is not None:
+            scale = film_params["scale"]
+            shift = film_params["shift"]
+            x = x * (1.0 + scale) + shift
+
         residual = x
-        
+
         if use_cache:
             attn_out, present_kv = self.attn(
-                x, mask, past_key_values=past_key_values, use_cache=True
+                x, mask, past_key_values=past_key_values, use_cache=True,
+                extra_kv=subconscious_kv,
             )
         else:
-            attn_out = self.attn(x, mask, past_key_values=past_key_values, use_cache=False)
-            
+            attn_out = self.attn(
+                x, mask, past_key_values=past_key_values, use_cache=False,
+                extra_kv=subconscious_kv,
+            )
+
         x = self.deep_norm_attn(residual, self.residual_dropout(attn_out))
         
         residual = x
@@ -1269,7 +1295,7 @@ class YvCrossAttentionBlock(nn.Module):
         self.norm2 = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
         self.norm3 = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
         
-        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout_p', 0.1))
+        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
         
     def forward(
         self,
@@ -1378,8 +1404,8 @@ class YvTransformerBlock(nn.Module):
                 device=device, dtype=dtype
             )
             
-        self.use_checkpoint = getattr(cfg, 'use_gradient_checkpointing', True)
-        self.adaptive_checkpointing = getattr(cfg, 'adaptive_gradient_checkpointing', True)
+        self.use_checkpoint = getattr(cfg, 'use_checkpoint', True)
+        self.adaptive_checkpointing = getattr(cfg, 'adaptive_checkpointing', True)
         self.memory_threshold_high = getattr(cfg, 'memory_threshold_high', 0.85)
         self.memory_threshold_low = getattr(cfg, 'memory_threshold_low', 0.60)
         self.checkpoint_frequency = getattr(cfg, 'checkpoint_frequency', 1)
@@ -1418,7 +1444,7 @@ class YvTransformerBlock(nn.Module):
         self.residual_scale = nn.Parameter(
             torch.ones(1, device=device, dtype=dtype) * getattr(cfg, 'residual_alpha', (2.0 * cfg.n_layer) ** -0.5)
         )
-        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout_p', 0.1))
+        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
         
         if self.use_layerscale:
             self.attn_layerscale = YvLayerScale(
@@ -1535,7 +1561,7 @@ class YvTransformerBlock(nn.Module):
                 knowledge_dim=getattr(cfg, 'memory_knowledge_dim', 256),
                 n_heads=getattr(cfg, 'memory_cross_attn_heads', 4),
                 gate_init=getattr(cfg, 'memory_gate_init', 0.0),
-                dropout=getattr(cfg, 'residual_dropout_p', 0.1),
+                dropout=getattr(cfg, 'residual_dropout', 0.1),
                 device=device,
                 dtype=dtype,
             )
@@ -1579,6 +1605,27 @@ class YvTransformerBlock(nn.Module):
             Knowledge context dict or None.
         """
         return self._memory_context
+
+    def _apply_film(
+        self,
+        hidden_states: torch.Tensor,
+        film_params: Optional[Dict[str, torch.Tensor]],
+    ) -> torch.Tensor:
+        """Apply FiLM modulation if ``film_params`` is provided.
+
+        Args:
+            hidden_states: [batch, seq, hidden_size].
+            film_params: Dict with ``scale`` and ``shift`` tensors, each
+                of shape [batch, seq, hidden_size].
+
+        Returns:
+            Modulated hidden states.
+        """
+        if film_params is None:
+            return hidden_states
+        scale = film_params["scale"]
+        shift = film_params["shift"]
+        return hidden_states * (1.0 + scale) + shift
 
     def _init_parallel_block(self, cfg, device, dtype):
         """Initialize parallel attention-MLP block.
@@ -1786,7 +1833,15 @@ class YvTransformerBlock(nn.Module):
             _LOG.error(f"Adaptive checkpointing memory check failed: {e}")
             return self.use_checkpoint
 
-    def _apply_with_checkpoint(self, x, mask, past_key_values=None, use_cache=False):
+    def _apply_with_checkpoint(
+        self,
+        x,
+        mask,
+        past_key_values=None,
+        use_cache=False,
+        subconscious_kv=None,
+        film_params=None,
+    ):
         """Apply the transformer block with optional gradient checkpointing.
 
         Args:
@@ -1794,6 +1849,8 @@ class YvTransformerBlock(nn.Module):
             mask: Attention mask tensor.
             past_key_values: Cached key/value pairs.
             use_cache: Whether to use and update key/value cache.
+            subconscious_kv: Optional extra KV pair for hard knowledge injection.
+            film_params: Optional FiLM modulation parameters.
 
         Returns:
             Output tensor(s) from the transformer block.
@@ -1803,7 +1860,14 @@ class YvTransformerBlock(nn.Module):
         attn_past_key_values = past_key_values if past_key_values is not None else None
         should_checkpoint = self._should_use_checkpoint()
 
-        def _inner(xc, mask_arg=None, kv=None, use_cache_arg=False):
+        def _inner(
+            xc,
+            mask_arg=None,
+            kv=None,
+            use_cache_arg=False,
+            subconscious_kv_arg=None,
+            film_params_arg=None,
+        ):
             """Inner function for gradient checkpointing.
 
             Args:
@@ -1811,6 +1875,8 @@ class YvTransformerBlock(nn.Module):
                 mask_arg: Attention mask tensor.
                 kv: Past key/value pairs.
                 use_cache_arg: Whether to use cache.
+                subconscious_kv_arg: Optional extra KV pair.
+                film_params_arg: Optional FiLM parameters.
 
             Returns:
                 Output from _forward_core.
@@ -1821,7 +1887,14 @@ class YvTransformerBlock(nn.Module):
             saved_use_attn_res = self.use_attn_res
             self.use_attn_res = False
             try:
-                return self._forward_core(xc, mask_arg, kv, use_cache_arg)
+                return self._forward_core(
+                    xc,
+                    mask_arg,
+                    kv,
+                    use_cache_arg,
+                    subconscious_kv=subconscious_kv_arg,
+                    film_params=film_params_arg,
+                )
             finally:
                 self.use_attn_res = saved_use_attn_res
 
@@ -1831,6 +1904,8 @@ class YvTransformerBlock(nn.Module):
             try:
                 out = cp.checkpoint(
                     _inner, x, mask, attn_past_key_values, use_cache,
+                    subconscious_kv_arg=subconscious_kv,
+                    film_params_arg=film_params,
                     use_reentrant=False,
                     preserve_rng_state=True,
                     determinism_check="default"
@@ -1838,7 +1913,14 @@ class YvTransformerBlock(nn.Module):
             finally:
                 self._set_moe_checkpointing(False)
         else:
-            out = _inner(x, mask, attn_past_key_values, use_cache)
+            out = _inner(
+                x,
+                mask,
+                attn_past_key_values,
+                use_cache,
+                subconscious_kv_arg=subconscious_kv,
+                film_params_arg=film_params,
+            )
 
         return out
 
@@ -1872,7 +1954,15 @@ class YvTransformerBlock(nn.Module):
                                     if hasattr(expert, '_is_checkpointing'):
                                         expert._is_checkpointing = is_checkpointing
 
-    def forward(self, x, mask, past_key_values=None, use_cache=False):
+    def forward(
+        self,
+        x,
+        mask,
+        past_key_values=None,
+        use_cache=False,
+        subconscious_kv=None,
+        film_params=None,
+    ):
         """Forward pass through the transformer block.
 
         Args:
@@ -1880,18 +1970,43 @@ class YvTransformerBlock(nn.Module):
             mask: Attention mask tensor.
             past_key_values: Cached key/value pairs.
             use_cache: Whether to use and update key/value cache.
+            subconscious_kv: Optional extra KV pair for hard knowledge injection.
+            film_params: Optional FiLM modulation parameters.
 
         Returns:
             Output tensor(s).
         """
         if self.use_parallel:
-            return self.parallel_block(x, mask, past_key_values, use_cache)
+            return self.parallel_block(
+                x, mask, past_key_values, use_cache,
+                subconscious_kv=subconscious_kv,
+                film_params=film_params,
+            )
         elif self.use_deepnorm:
-            return self.deepnorm_block(x, mask, past_key_values, use_cache)
+            return self.deepnorm_block(
+                x, mask, past_key_values, use_cache,
+                subconscious_kv=subconscious_kv,
+                film_params=film_params,
+            )
         else:
-            return self._apply_with_checkpoint(x, mask, past_key_values, use_cache)
+            return self._apply_with_checkpoint(
+                x,
+                mask,
+                past_key_values,
+                use_cache,
+                subconscious_kv=subconscious_kv,
+                film_params=film_params,
+            )
 
-    def _forward_core(self, x, mask, attn_past_key_values=None, use_cache=False):
+    def _forward_core(
+        self,
+        x,
+        mask,
+        attn_past_key_values=None,
+        use_cache=False,
+        subconscious_kv=None,
+        film_params=None,
+    ):
         """Core forward computation without checkpointing wrapper.
 
         Args:
@@ -1899,15 +2014,20 @@ class YvTransformerBlock(nn.Module):
             mask: Attention mask tensor.
             attn_past_key_values: Key/value cache for attention.
             use_cache: Whether to use and update key/value cache.
+            subconscious_kv: Optional extra KV pair for hard knowledge injection.
+            film_params: Optional FiLM modulation parameters.
 
         Returns:
             Output tensor(s).
         """
+        # FiLM modulation is applied to the incoming hidden stream first.
+        x = self._apply_film(x, film_params)
+
         residual = x
-        
+
         if self.use_attn_res:
             x = self._apply_attn_res(x)
-        
+
         x_norm = self.pre_norm1(x)
         attn_cache = None
         past_for_attn = attn_past_key_values
@@ -1924,7 +2044,8 @@ class YvTransformerBlock(nn.Module):
                 past_key_values=past_for_attn,
                 use_cache=True,
                 cache_manager=self.cache_manager,
-                layer_idx=self.layer_idx
+                layer_idx=self.layer_idx,
+                extra_kv=subconscious_kv,
             )
             attn_cache = present_kv
         else:
@@ -1934,18 +2055,12 @@ class YvTransformerBlock(nn.Module):
                 past_key_values=past_for_attn,
                 use_cache=False,
                 cache_manager=self.cache_manager,
-                layer_idx=self.layer_idx
+                layer_idx=self.layer_idx,
+                extra_kv=subconscious_kv,
             )
 
         if self.use_layerscale:
             attn_out = self.attn_layerscale(attn_out)
-
-        # Subconscious: modulate attention output before residual
-        # Uses efficient modulate_attn (no dummy MLP tensor needed)
-        if self.use_subconscious and self._subconscious_system is not None:
-            attn_out = self._subconscious_system.modulate_attn(
-                self.layer_idx, attn_out
-            )
 
         if self.use_attn_res:
             self._accumulate_partial_block(attn_out)
@@ -2002,13 +2117,6 @@ class YvTransformerBlock(nn.Module):
         
         if self.use_layerscale:
             mlp_out = self.mlp_layerscale(mlp_out)
-
-        # Subconscious: modulate MLP output before residual
-        # Uses efficient modulate_mlp (no dummy attention tensor needed)
-        if self.use_subconscious and self._subconscious_system is not None:
-            mlp_out = self._subconscious_system.modulate_mlp(
-                self.layer_idx, mlp_out
-            )
 
         if self.use_attn_res:
             self._accumulate_partial_block(mlp_out)
@@ -2988,9 +3096,6 @@ class YvMHCBlock(nn.Module):
         
         self.hyper_connection = YvHyperConnection(
             hidden_size=hidden_size,
-            num_layers=num_layers,
-            use_manifold_constraint=use_manifold_constraint,
-            constraint_type=constraint_type,
             drop_path_rate=drop_path_rate,
             device=device,
             dtype=dtype
@@ -3040,8 +3145,8 @@ class YvMHCBlock(nn.Module):
         if len(self._cache) > 4:
             self._cache = self._cache[-4:]
         
-        hyper_output, gate_weights = self.hyper_connection(
-            self._cache, input_norm
+        hyper_output = self.hyper_connection(
+            input_norm
         )
         
         output = x + hyper_output

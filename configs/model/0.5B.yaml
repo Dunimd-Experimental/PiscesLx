@@ -26,6 +26,16 @@ n_layer: 16
 n_head: 10
 n_kv_head: 5
 
+# ========================================
+# Lookup Split Configuration (0.5B Dynamic Head)
+# ========================================
+compute_params_total: 0
+lookup_params_total: 270000000
+use_dual_inject: true
+use_subconscious: true
+use_memory_separation: true
+attention_type: "standard"
+
 moe_num_experts: 4
 moe_top_k: 2
 moe_capacity_factor: 1.2
