@@ -28,7 +28,7 @@ import json
 from typing import Any
 
 from enta.tools.base import build_tool
-from enta.tools.builtin._shell_manager import BackgroundShellManager
+from ._shell_manager import BackgroundShellManager
 
 
 async def _bash_output_execute(**kwargs: Any) -> str:

@@ -52,13 +52,14 @@ import os as _os
 import subprocess as _sp
 
 _CRF = 0x08000000  # CREATE_NO_WINDOW only
-_SI = _sp.STARTUPINFO(dwFlags=_sp.STARTF_USESHOWWINDOW, wShowWindow=_sp.SW_HIDE)
+_SI = _sp.STARTUPINFO(dwFlags=_sp.STARTF_USESHOWWINDOW, wShowWindow=_sp.SW_HIDE) if _os.name == "nt" else None
 
 
 def _inj(kw):
     if _os.name == "nt":
         kw.setdefault("creationflags", _CRF)
-        kw.setdefault("startupinfo", _SI)
+        if _SI is not None:
+            kw.setdefault("startupinfo", _SI)
     else:
         kw.setdefault("new_session", True)
     return kw
