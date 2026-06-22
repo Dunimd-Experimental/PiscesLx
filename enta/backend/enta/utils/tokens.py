@@ -34,7 +34,7 @@ from typing import Any
 # ---------------------------------------------------------------------------
 _HAS_NATIVE: bool = False
 try:
-    from enta._native import count_tokens as _native_count_tokens
+    from ._native import count_tokens as _native_count_tokens
     _HAS_NATIVE = True
 except ImportError:
     pass

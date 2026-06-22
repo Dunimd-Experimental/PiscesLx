@@ -33,7 +33,7 @@ Rust extension.  If the extension is not installed, Python's normal
     # copy target/release/_native.{dll,so} 鈫?backend/enta/_native.pyd
 """
 
-from enta._native import (
+from ._native import (
     Bm25Index,
     apply_diff,
     build_content_length_header,

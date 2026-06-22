@@ -45,7 +45,7 @@ mod linux_impl {
     // Landlock ABI versions
     const LANDLOCK_ABI_V1: u64 = 1;
     const LANDLOCK_ABI_V2: u64 = 2; // adds network support (Linux 5.19+)
-    const LANDLOCK_ABI_V3: u64 = 3; // adds scoped rules (Linux 6.3+)
+    // const LANDLOCK_ABI_V3: u64 = 3; // adds scoped rules (Linux 6.3+)
 
     // --- Landlock rule attribute flags (merged from linux/landlock.h) ---
 
@@ -78,7 +78,7 @@ mod linux_impl {
 
     // Landlock rule type
     const LANDLOCK_RULE_PATH_BENEATH: u64 = 1;
-    const LANDLOCK_RULE_NET_PORT: u64 = 2;
+    // const LANDLOCK_RULE_NET_PORT: u64 = 2; // unused
 
     // --- FFI: raw libc syscall wrapper ---
 
@@ -86,7 +86,7 @@ mod linux_impl {
         fn syscall(number: i64, ...) -> i64;
     }
 
-    /// The C `prctl` syscall for checking Landlock availability.
+    // The C `prctl` syscall for checking Landlock availability.
     extern "C" {
         fn prctl(option: c_int, ...) -> c_int;
     }
@@ -208,7 +208,7 @@ mod linux_impl {
 
     /// Add a path-beneath rule to the given ruleset fd.
     fn add_path_beneath_rule(ruleset_fd: i32, path: &str, allowed_access: u64) -> Result<(), String> {
-        use std::os::unix::ffi::OsStrExt;
+        // // use std::os::unix::ffi::OsStrExt; // unused // unused
         let cpath = CString::new(path).map_err(|_| format!("Invalid path: {}", path))?;
 
         // Open the parent directory as a file descriptor
@@ -252,7 +252,7 @@ mod linux_impl {
         Ok(())
     }
 
-    /// Extern libc `open` (O_PATH, O_CLOEXEC).
+    // Extern libc `open` (O_PATH, O_CLOEXEC).
     extern "C" {
         fn open(path: *const std::os::raw::c_char, flags: i32, ...) -> i32;
     }

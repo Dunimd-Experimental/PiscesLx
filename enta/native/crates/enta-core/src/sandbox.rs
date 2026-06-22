@@ -84,7 +84,7 @@ pub fn sandbox_execute(
 
     #[cfg(target_os = "linux")]
     {
-        _apply_linux_sandbox(&mut cmd, workspace);
+        _apply_linux_sandbox(&mut cmd, _workspace);
     }
 
     #[cfg(target_os = "macos")]

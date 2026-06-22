@@ -203,47 +203,47 @@ class PiscesLxLogger:
         formatted = self._format(msg, **kwargs)
         logger = self._ctx.logger
         if hasattr(logger, 'debug'):
-            logger.debug(self.name, formatted)
+            logger.debug(f"{self.name}: {formatted}")
         else:
             print(f"[DEBUG] {self.name}: {formatted}")
         self._write_to_file("DEBUG", formatted)
-    
+
     def info(self, msg: str, **kwargs) -> None:
         formatted = self._format(msg, **kwargs)
         logger = self._ctx.logger
         if hasattr(logger, 'info'):
-            logger.info(self.name, formatted)
+            logger.info(f"{self.name}: {formatted}")
         else:
             print(f"[INFO] {self.name}: {formatted}")
         self._write_to_file("INFO", formatted)
-    
+
     def warning(self, msg: str, **kwargs) -> None:
         formatted = self._format(msg, **kwargs)
         logger = self._ctx.logger
         if hasattr(logger, 'warn'):
-            logger.warn(self.name, formatted)
+            logger.warn(f"{self.name}: {formatted}")
         elif hasattr(logger, 'warning'):
-            logger.warning(self.name, formatted)
+            logger.warning(f"{self.name}: {formatted}")
         else:
             print(f"[WARNING] {self.name}: {formatted}")
         self._write_to_file("WARNING", formatted)
-    
+
     def error(self, msg: str, **kwargs) -> None:
         formatted = self._format(msg, **kwargs)
         logger = self._ctx.logger
         if hasattr(logger, 'error'):
-            logger.error(self.name, formatted)
+            logger.error(f"{self.name}: {formatted}")
         else:
             print(f"[ERROR] {self.name}: {formatted}")
         self._write_to_file("ERROR", formatted)
-    
+
     def critical(self, msg: str, **kwargs) -> None:
         formatted = self._format(msg, **kwargs)
         logger = self._ctx.logger
         if hasattr(logger, 'critical'):
-            logger.critical(self.name, formatted)
+            logger.critical(f"{self.name}: {formatted}")
         elif hasattr(logger, 'error'):
-            logger.error(self.name, formatted)
+            logger.error(f"{self.name}: {formatted}")
         else:
             print(f"[CRITICAL] {self.name}: {formatted}")
         self._write_to_file("CRITICAL", formatted)
