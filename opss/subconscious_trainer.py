@@ -19,19 +19,20 @@
 # limitations under the License.
 
 """
-Subconscious Training Engine for EnTA-driven autonomous training.
+Subconscious Training Engine for autonomous RL-driven training.
 
 Trains the 0.5B Dynamic Head + 314B Implicit Knowledge Field architecture
-using reinforcement learning signals from EnTA. The training pipeline:
+using reinforcement learning signals from an external orchestrator. The
+training pipeline:
 
 1. Knowledge Field Warm Start: Initialize codebooks using teacher model outputs
-2. Dynamic Head RL Training: EnTA generates tasks → 7B executes → reward → head update
+2. Dynamic Head RL Training: external task generation → 7B executes → reward → head update
 3. Knowledge Field Refinement: Periodically update codebooks with discovered patterns
 4. Self-Play: After initial training, the system generates its own training data
 
 Key Design:
-    - EnTA is the orchestrator (not part of this module)
-    - This module provides the API that EnTA calls
+    - An external training orchestrator drives the training loop
+    - This module provides the step() API that the orchestrator calls
     - All training signals come from task execution rewards
     - No human-annotated data required
 """
@@ -142,17 +143,19 @@ class RewardNormalizer:
 class SubconsciousTrainer:
     """Training orchestrator for the subconscious system.
 
-    Provides the training API that EnTA calls. Manages training phases,
-    optimizer state, reward processing, and knowledge field updates.
+    Provides the training API that an external orchestrator calls. Manages
+    training phases, optimizer state, reward processing, and knowledge field
+    updates.
 
-    EnTA integration:
-        EnTA calls trainer.step(task, reward) after each task execution.
-        Internally, the trainer handles gradient computation and parameter updates.
+    Orchestrator integration:
+        External orchestrator calls trainer.step(task, reward) after each
+        task execution. Internally, the trainer handles gradient computation
+        and parameter updates.
 
     Training Flow:
-        1. EnTA initializes with warm_start() using teacher embeddings
-        2. EnTA generates tasks → 7B executes with subconscious system
-        3. EnTA evaluates quality → computes reward → calls trainer.step()
+        1. External orchestrator initializes with warm_start() using teacher embeddings
+        2. Orchestrator generates tasks → 7B executes with subconscious system
+        3. Orchestrator evaluates quality → computes reward → calls trainer.step()
         4. Trainer computes PPO update for the dynamic head
         5. Periodically: refine codebooks with discovered patterns
         6. After convergence: switch to self-play phase
@@ -388,7 +391,7 @@ class SubconsciousTrainer:
 
         Args:
             hidden_states: 7B hidden states.
-            quality_score: Reward from EnTA.
+            quality_score: Reward from the external orchestrator.
             task_metadata: Optional metadata.
 
         Returns:
@@ -676,7 +679,7 @@ class SubconsciousTrainer:
                     _LOG.debug(f"  {n_low_usage} codebook entries underutilized, marking for refresh")
 
     def set_phase(self, phase: TrainingPhase):
-        """Manually set training phase (called by EnTA).
+        """Manually set training phase (called by external orchestrator).
 
         Args:
             phase: Target training phase.

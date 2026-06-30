@@ -1358,7 +1358,7 @@ class YvMoELayer(nn.Module):
     """
     _layer_count = 0
     def __init__(self, cfg, device=None, dtype=None, print_every=8, max_gpu_experts=4,
-                 use_stable_gate=True):
+                 use_stable_gate=True, gate=None):
         """Initialize the MoE layer with load balancing.
         
         Args:
@@ -1372,12 +1372,19 @@ class YvMoELayer(nn.Module):
                 - moe_prediction_horizon: Steps for load prediction
                 - enable_dynamic_capacity: Enable dynamic capacity
                 - enable_cognitive_density: Enable cognitive enhancement
+                - use_path_moe: Enable PathMoE shared routing (default: False)
+                - use_phi_balancing: Enable Phi-Balancing (default: False)
+                - path_moe_stage_size: Stage size for PathMoE (default: 4)
+                - phi_balancing_lr: Learning rate for Phi-Balancing (default: 0.01)
+                - phi_balancing_ema_decay: EMA decay for Phi-Balancing (default: 0.99)
             device: Device to place the module on. Default: None.
             dtype: Data type for module parameters. Default: None.
             print_every (int): Print interval for logging. Default: 8.
             max_gpu_experts (int): Maximum experts on GPU. Default: 4.
             use_stable_gate (bool): Use stable gate for better balance.
                 Default: True.
+            gate: Optional pre-built gate module for PathMoE sharing. If provided,
+                skips internal gate creation and uses this gate instead.
         """
         super().__init__()
         YvMoELayer._layer_count += 1
@@ -1385,8 +1392,16 @@ class YvMoELayer(nn.Module):
         self.top_k = getattr(cfg, 'moe_top_k', 2)
         self.num_experts = getattr(cfg, 'moe_num_experts', 8)
         
-        # Initialize routing gate
-        if use_stable_gate:
+        # PathMoE and Phi-Balancing configuration
+        self.use_path_moe = bool(getattr(cfg, 'use_path_moe', False))
+        self.use_phi_balancing = bool(getattr(cfg, 'use_phi_balancing', False))
+        self._stage_size = int(getattr(cfg, 'path_moe_stage_size', 4))
+        self._path_moe_stage_idx = int(getattr(cfg, '_path_moe_stage_idx', 0))
+        
+        # Initialize routing gate (skip if external gate provided for PathMoE)
+        if gate is not None:
+            self.gate = gate
+        elif use_stable_gate:
             # Enable fixed shape mode for small models to avoid gradient checkpointing issues
             fixed_shape_mode = (cfg.hidden_size <= 768)
             self.gate = YvStableMoEGate(
@@ -1640,6 +1655,162 @@ class YvMoELayer(nn.Module):
             self._monitor_expert_balance(idx)
             self._step += 1
             return y.view(b, t, d), aux_loss
+
+
+class YvPathMoEGate(nn.Module):
+    """
+    PathMoE: Shared router across a stage of MoE layers.
+
+    A single inner gate is shared by `stage_size` consecutive MoE layers.
+    Each token uses the SAME expert assignment for all layers in the stage.
+    No auxiliary load-balancing loss is needed because routing naturally
+    balances when all layers in a stage vote through the same gate.
+
+    The wrapper caches the gate output on the first call within a stage
+    and returns the cached (scores, indices, loss) for subsequent calls.
+    After `stage_size` calls the cycle resets and the gate is re-evaluated.
+
+    Key innovations:
+    - Shared routing: one gate -> multiple MoE layers
+    - No aux loss: routing naturally balances with layer consensus
+    - Stage-level parallelism: all layer experts use same assignment
+
+    Args:
+        gate (nn.Module): Inner gate module (YvMoEGate or YvStableMoEGate).
+        stage_size (int): Number of consecutive MoE layers sharing this gate.
+
+    Example:
+        >>> inner_gate = YvMoEGate(hidden_size=4096, num_experts=64, top_k=2)
+        >>> shared_gate = YvPathMoEGate(inner_gate, stage_size=4)
+        >>> # First call runs gate, caches result
+        >>> scores, idx, loss = shared_gate(x)
+        >>> # Next 3 calls return cached result
+        >>> scores, idx, loss = shared_gate(x)
+    """
+    # Global registry for sharing path gates across layers in the same model.
+    # Key: (model_id, stage_idx) -> YvPathMoEGate instance.
+    # model_id = id(cfg) to isolate different model instances.
+    _shared_gates: dict = {}
+
+    def __init__(self, gate: nn.Module, stage_size: int = 4):
+        super().__init__()
+        self.gate = gate
+        self.stage_size = stage_size
+        self._cache: Optional[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]] = None
+        self._layer_idx = 0
+
+    @classmethod
+    def get_or_create(
+        cls,
+        gate: nn.Module,
+        stage_idx: int,
+        stage_size: int,
+        model_id: int,
+    ) -> "YvPathMoEGate":
+        key = (model_id, stage_idx)
+        if key not in cls._shared_gates:
+            cls._shared_gates[key] = cls(gate, stage_size)
+        return cls._shared_gates[key]
+
+    def forward(self, x: torch.Tensor):
+        if self._layer_idx == 0:
+            self._cache = self.gate(x)
+        result = self._cache
+        assert result is not None, "YvPathMoEGate: cache is None on layer_idx != 0"
+        self._layer_idx = (self._layer_idx + 1) % self.stage_size
+        return result
+
+    def reset(self):
+        self._cache = None
+        self._layer_idx = 0
+
+    def extra_repr(self) -> str:
+        return f"stage_size={self.stage_size}, gate={type(self.gate).__name__}"
+
+
+class YvPhiBalancing(nn.Module):
+    """
+    Phi-Balancing: Population-level mirror descent for MoE load balancing.
+
+    Maintains an EMA of per-expert routing probability and adjusts per-expert
+    bias via mirror descent in probability space.  Compatible with
+    auxiliary-loss-free training (DeepSeek-V3 / PathMoE style).
+
+    Update rule:
+        pi_t     = EMA(pi_{t-1}, avg_routing_prob)
+        g_t      = pi_t - target (uniform)
+        bias_{t+1} = bias_t - lr * g_t / sqrt(pi_t + eps)
+
+    The gradient scaling by 1/sqrt(pi_t) gives stronger updates to
+    under-utilized experts (mirror descent in simplex).
+
+    Args:
+        num_experts (int): Total number of experts.
+        lr (float): Learning rate for bias update. Default: 0.01.
+        ema_decay (float): Decay factor for routing probability EMA.
+            Default: 0.99.
+        clamp_min (float): Minimum bias value. Default: -2.0.
+        clamp_max (float): Maximum bias value. Default: 2.0.
+        device: Device for buffers.
+        dtype: Data type for buffers.
+
+    Example:
+        >>> balancer = YvPhiBalancing(num_experts=64, lr=0.01, ema_decay=0.99)
+        >>> logits = torch.randn(1024, 64)
+        >>> biased_logits = balancer(logits)  # biased logits for routing
+        >>> loss = balancer.get_loss()        # optional diagnostic loss
+    """
+
+    def __init__(
+        self,
+        num_experts: int,
+        lr: float = 0.01,
+        ema_decay: float = 0.99,
+        clamp_min: float = -2.0,
+        clamp_max: float = 2.0,
+        device=None,
+        dtype=None,
+    ):
+        super().__init__()
+        self.lr = lr
+        self.ema_decay = ema_decay
+        self.clamp_min = clamp_min
+        self.clamp_max = clamp_max
+
+        self.register_buffer("expert_bias", torch.zeros(num_experts, device=device, dtype=dtype))
+        self.register_buffer("routing_ema", torch.zeros(num_experts, device=device, dtype=dtype))
+        self.register_buffer("step", torch.tensor(0, device=device, dtype=torch.long))
+        self.register_buffer("_loss_accum", torch.zeros(1, device=device, dtype=dtype))
+
+    def forward(self, logits: torch.Tensor) -> torch.Tensor:
+        biased_logits = logits + self.expert_bias
+
+        if self.training:
+            self.step += 1
+            with torch.no_grad():
+                routing_probs = F.softmax(biased_logits, dim=-1)
+                avg_probs = routing_probs.mean(dim=0)
+                self.routing_ema.mul_(self.ema_decay).add_(avg_probs.detach(), alpha=1.0 - self.ema_decay)
+                n = self.expert_bias.numel()
+                target = 1.0 / n
+                pi_t = self.routing_ema.clamp(min=1e-8)
+                g_t = pi_t - target
+                bias_update = self.lr * g_t / pi_t.sqrt()
+                self.expert_bias.sub_(bias_update)
+                self.expert_bias.clamp_(self.clamp_min, self.clamp_max)
+
+                kl = (pi_t * (pi_t / target).log()).sum()
+                self._loss_accum.add_(kl)
+
+        return biased_logits
+
+    def get_loss(self) -> torch.Tensor:
+        loss = self._loss_accum.clone()
+        self._loss_accum.zero_()
+        return loss.squeeze(0)
+
+    def extra_repr(self) -> str:
+        return f"lr={self.lr}, ema_decay={self.ema_decay}, clamp=[{self.clamp_min}, {self.clamp_max}]"
 
 
 class YvModalAwareRouter(nn.Module):

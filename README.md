@@ -40,9 +40,7 @@ English | [简体中文](README.zh.md)
 <a href="https://modelscope.cn/organization/dunimd" target="_blank">
     <img alt="ModelScope" src="https://img.shields.io/badge/ModelScope-Dunimd-1E6CFF?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1zbmFtZT0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik03LjAwNiAwQzMuMTQyIDAgMCAzLjE0MiAwIDcuMDA2UzMuMTQyIDE0LjAxMiA3LjAwNiAxNC4wMTJDMTAuODcgMTQuMDEyIDE0LjAxMiAxMC44NyAxNC4wMTIgNy4wMDZDMTQuMDEyIDMuMTQyIDEwLjg3IDAgNy4wMDYgMFoiIGZpbGw9IiMxRTZDRkYiLz48L3N2Zz4K"/>
 </a>
-<a href="https://github.com/mf2023/Encre" target="_blank">
-    <img alt="Encre Agent" src="https://img.shields.io/badge/Encre_Agent-181717?style=flat-square&logo=github"/>
-</a>
+
 
 A multimodal Mixture-of-Experts (MoE) model framework featuring the **Yv Architecture**, supporting text, image, audio, video, document, and agent modalities. PiscesL1 (PiscesLx series, Dunimd Team) provides a configurable architecture from 0.5B to 1T parameters. The codebase serves as a reference architecture design with configurable hyperparameters — trained model weights are not included in this repository.
 
@@ -152,7 +150,6 @@ Multiple attention implementations:
 
 Training support:
 
-- **EnTA (Encre Train Agent)**: Automated multi-teacher distillation pipeline (Rust-native backend)
 - **GaLore**: Gradient low-rank projection for memory-efficient training
 - **Multi-bit Quantization (FP4/INT4/INT8)**: Quantization for memory reduction
 - **LoRA/QLoRA**: Low-rank adaptation for fine-tuning
@@ -243,7 +240,6 @@ python manage.py help
 | Command   | Description                                                         |
 |-----------|---------------------------------------------------------------------|
 | setup     | Environment setup and dependency installation                       |
-| enta      | **EnTA autonomous training loop** (LLM-driven, multi-teacher)      |
 | train     | Train model (support quantization / LoRA / RLHF / GaLore)          |
 | serve     | Start OpenAI-compatible backend inference service                  |
 | test      | Project health check (8-stage validation)                          |
@@ -257,29 +253,6 @@ python manage.py help
 | cache     | Cache management for .pisceslx directory                           |
 | publish   | Package and publish models as Docker images                        |
 | help      | Show help information                                             |
-
-### EnTA Training
-```bash
-# List configured teacher models
-python manage.py enta --list_models
-
-# Dry run (validate pipeline)
-python manage.py enta --dry_run
-
-# Full training with teacher model and student checkpoint
-python manage.py enta --teacher deepseek-r1 --model_path ./ckpt/7B.pt
-
-# With round-table and subconscious training
-python manage.py enta --teacher deepseek-r1 \
-  --aux_teachers "deepseek-v3.2,qwen3.6,agens-2.0-flash" \
-  --model_path ./ckpt/7B.pt
-
-# Start from advanced stage
-python manage.py enta --enta_stage advanced --max_tasks 10000
-
-# Disable subconscious (train 7B core only)
-python manage.py enta --no_subconscious
-```
 
 ### Quick Experience
 ```bash
@@ -416,8 +389,7 @@ python manage.py download
 - How to resume training? `--resume_ckpt path/to/ckpt.pt` (optional `--reset_lr`)
 - CPU only? Can use `--device cpu` (slower performance).
 - How to perform evaluation? `python manage.py benchmark ...`, with `--config`, `--seq_len`, `--model` and other parameters.
-- How does EnTA work? EnTA is an LLM-driven agent that orchestrates multi-teacher distillation. See [Training Pipeline](#-training-pipeline--optimization).
-- Does this repository include trained model weights? No. This repository provides the architecture, training pipeline, and inference code. Model weights must be trained separately using the EnTA pipeline.
+- Does this repository include trained model weights? No. This repository provides the architecture and inference code. Model weights must be trained separately.
 
 ---
 

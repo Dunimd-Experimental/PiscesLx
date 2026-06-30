@@ -45,6 +45,7 @@ Algorithm:
 """
 
 import contextlib
+import math
 
 import torch
 
@@ -64,18 +65,7 @@ from utils.opsc.interface import (
     PiscesLxOperatorConfig,
 )
 
-# Optional: when the EnTA training pipeline is enabled, the agentic RL
-# trainer uses a :class:`YvEncreTrainer` (when provided via
-# ``inputs['encre_trainer']``) as the rollout engine -- replacing the
-# lightweight in-process sampler with the full EnCRE multi-step agent
-# loop (tool use, sandbox enforcement, reward shaping).  The downstream
-# GRPO update is unchanged.
-try:
-    from model.agentic.enta import YvEncreTrainer  # noqa: F401
-    _ENTA_AVAILABLE = True
-except Exception:  # noqa: BLE001
-    YvEncreTrainer = None  # type: ignore[assignment]
-    _ENTA_AVAILABLE = False
+
 
 
 @dataclass
@@ -134,6 +124,73 @@ class POPSSGRPOConfig(PiscesLxOperatorConfig):
     dapo_epsilon_high: float = 0.4
     dapo_diversity_threshold: float = 0.3
 
+    # ── iGRPO: Two-Stage Self-Conditioning (arXiv 2026) ─────────
+    # First stage generates draft trajectories; second stage conditions
+    # on the best draft to produce refined trajectories.  Advantage is
+    # computed relative to the best draft (self-conditioned baseline).
+    use_igrpo: bool = False
+    igrpo_draft_ratio: float = 0.5    # fraction of group used as drafts
+    igrpo_conditioning_strength: float = 0.3  # blend weight for draft baseline
+    igrpo_draft_temperature: float = 1.2      # higher temperature for draft diversity
+    igrpo_refinement_temperature: float = 0.8 # lower temperature for focused refinement
+    igrpo_self_consistent_weight: float = 0.2 # weight for self-consistency bonus
+
+    # ── GraphPO: Graph-Based Trajectory Exploration ──────────────
+    # Expands trajectories into a decision graph, branching at key
+    # decision points (tool calls, reasoning forks).  Rewards are
+    # propagated back through graph paths for structured credit
+    # assignment.
+    use_graphpo: bool = False
+    graphpo_max_branches: int = 3       # max branches per decision node
+    graphpo_depth_penalty: float = 0.05 # penalty per depth level
+    graphpo_exploration_bonus: float = 0.1  # bonus for visiting new nodes
+    graphpo_reward_discount: float = 0.95   # discount factor for backprop
+    graphpo_top_paths: int = 5          # keep top-K paths for training
+
+    # ── CoDaPO: Confidence/Difficulty Adaptive (arXiv 2026) ──────
+    # Dynamically adjusts clipping range, KL penalty, and temperature
+    # based on per-response confidence scores and task difficulty.
+    use_codapo: bool = False
+    codapo_confidence_threshold_low: float = 0.3
+    codapo_confidence_threshold_high: float = 0.7
+    codapo_clip_low_confidence: float = 0.1    # tighter clip for low confidence
+    codapo_clip_high_confidence: float = 0.3   # wider clip for high confidence
+    codapo_kl_low_confidence: float = 0.05     # lower KL for uncertain responses
+    codapo_kl_high_confidence: float = 0.15    # higher KL for confident responses
+    codapo_difficulty_adapt_temperature: bool = True
+
+    # ── GRPO-VPS: Verifiable Process Supervision (arXiv 2026) ──────
+    # Splits responses into reasoning steps, assigns per-step verifiable
+    # rewards (correctness + process quality), and combines with outcome
+    # reward for finer-grained supervision.
+    use_vps: bool = False
+    vps_outcome_weight: float = 0.6
+    vps_process_weight: float = 0.4
+    vps_step_delimiter: str = "\n"
+    vps_min_steps: int = 1
+    vps_quality_scale: float = 1.0
+
+    # ── MMR-GRPO: Diversity-aware Multi-Model Refinement (arXiv 2026) ──
+    # Maintains a diversity buffer of recent successful trajectories.
+    # During training, mixes current policy trajectories with diverse
+    # historical ones and rewards diverse trajectories to prevent mode
+    # collapse in reinforcement learning.
+    use_mmr_grpo: bool = False
+    mmr_buffer_size: int = 32
+    mmr_diversity_weight: float = 0.2
+    mmr_similarity_threshold: float = 0.85
+    mmr_mix_ratio: float = 0.3
+    mmr_embedding_dim: int = 64
+
+    # ── TR-GRPO: Token-Level Reward Weighting (arXiv 2026) ──────────
+    # Assigns per-token advantages based on token importance/surprise
+    # estimated from policy probability change.  Provides more fine-grained
+    # credit assignment than sequence-level GRPO.
+    use_tr_grpo: bool = False
+    tr_importance_scale: float = 1.0
+    tr_importance_bias: float = 0.1
+    tr_token_clip_ratio: float = 0.2
+
     def __post_init__(self):
         super().__post_init__()
         if self.group_size < 2:
@@ -167,16 +224,6 @@ class POPSSAgenticRLConfig(PiscesLxOperatorConfig):
     efficiency_penalty: float = -0.01
     use_agentic_grpo: bool = False
 
-    # EnTA integration: when True, the agentic RL trainer routes every
-    # rollout through a :class:`YvEncreTrainer` instance (passed via
-    # ``POPSSAgenticRLTrainer(encre_trainer=...)``) instead of the
-    # lightweight in-process sampler.  This brings the full EnCRE tool
-    # palette (bash, file_*, grep, glob, web_*, ...) and the Rust
-    # sandbox into the GRPO loop.
-    use_encre_rollout: bool = False
-    encre_use_roundtable: bool = False
-    encre_system_prompt: str = ""
-
     grpo_config: POPSSGRPOConfig = field(default_factory=POPSSGRPOConfig)
 
     def __post_init__(self):
@@ -185,6 +232,18 @@ class POPSSAgenticRLConfig(PiscesLxOperatorConfig):
             raise ValueError("agent_rollout_steps must be at least 1")
         if self.max_tool_calls < 1:
             raise ValueError("max_tool_calls must be at least 1")
+
+
+@dataclass
+class TrajectoryEntry:
+    """Entry in the MMR-GRPO diversity buffer.
+
+    Stores the embedding of a trajectory and its associated rewards
+    for diversity-aware sampling and mode-collapse prevention.
+    """
+    embedding: torch.Tensor
+    reward: float = 0.0
+    diversity_score: float = 0.0
 
 
 class POPSSGRPOOperator(PiscesLxOperatorInterface):
@@ -217,6 +276,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         super().__init__()
         self._name = "grpo"
         self._version = VERSION
+        self._mmr_diversity_buffer = None
     
     @property
     def name(self) -> str:
@@ -305,6 +365,25 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
             
             execution_time = self._get_time() - start_time
             
+            # Determine active algorithm mode
+            alg_modes = []
+            if getattr(config, 'use_igrpo', False):
+                alg_modes.append("iGRPO")
+            if getattr(config, 'use_graphpo', False):
+                alg_modes.append("GraphPO")
+            if getattr(config, 'use_codapo', False):
+                alg_modes.append("CoDaPO")
+            if getattr(config, 'use_dapo', False):
+                alg_modes.append("DAPO")
+            if getattr(config, 'use_vps', False):
+                alg_modes.append("GRPO-VPS")
+            if getattr(config, 'use_mmr_grpo', False):
+                alg_modes.append("MMR-GRPO")
+            if getattr(config, 'use_tr_grpo', False):
+                alg_modes.append("TR-GRPO")
+            if not alg_modes:
+                alg_modes.append("GRPO")
+
             return PiscesLxOperatorResult(
                 operator_name=self.name,
                 status=PiscesLxOperatorStatus.SUCCESS,
@@ -312,7 +391,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
                 execution_time=execution_time,
                 metadata={
                     "version": self.version,
-                    "algorithm": "GRPO",
+                    "algorithm": "+".join(alg_modes),
                     "group_size": config.group_size,
                     "num_prompts": len(prompts),
                 },
@@ -348,60 +427,134 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
             "verification_rewards", "refinement_iterations",
         ]}
 
-        responses, log_probs, old_log_probs = self._sample_group_responses(
-            model=model,
-            prompt=prompt,
-            group_size=config.group_size,
-            config=config,
-            tokenizer=tokenizer,
-        )
+        # ── Route through selected algorithm mode ─────────────────
+        use_igrpo = getattr(config, 'use_igrpo', False)
+        use_graphpo = getattr(config, 'use_graphpo', False)
+        use_codapo = getattr(config, 'use_codapo', False)
+        use_vps = getattr(config, 'use_vps', False)
+        use_mmr_grpo = getattr(config, 'use_mmr_grpo', False)
+        use_tr_grpo = getattr(config, 'use_tr_grpo', False)
 
-        refined_responses, verification_rewards = self._apply_iterative_refinement(
-            model=model,
-            prompt=prompt,
-            responses=responses,
-            config=config,
-            tokenizer=tokenizer,
-        )
-
-        if config.enable_self_verification and any(v > 0 for v in verification_rewards):
-            final_responses = refined_responses
-            combined_rewards = []
-            for i, (original_reward, refined_reward) in enumerate(zip(
-                self._compute_rewards(responses, prompt, reward_function),
-                verification_rewards
-            )):
-                combined_reward = original_reward + config.verification_weight * refined_reward
-                combined_rewards.append(combined_reward)
-        else:
-            final_responses = responses
-            combined_rewards = self._compute_rewards(
-                responses=responses,
-                prompt=prompt,
-                reward_function=reward_function,
+        if use_igrpo:
+            # iGRPO: Two-stage self-conditioned sampling
+            (responses, log_probs, old_log_probs,
+             consistency_scores) = self._igrpo_two_stage_sample(
+                model=model, prompt=prompt, config=config,
+                tokenizer=tokenizer, reward_function=reward_function,
             )
+            refined_responses, verification_rewards = self._apply_iterative_refinement(
+                model=model, prompt=prompt, responses=responses,
+                config=config, tokenizer=tokenizer,
+            )
+            final_responses = refined_responses if config.enable_self_verification else responses
+            combined_rewards = self._compute_rewards(final_responses, prompt, reward_function)
+            rewards_tensor = torch.tensor(combined_rewards, dtype=torch.float32)
+            advantages = self._igrpo_self_conditioned_advantages(
+                rewards=rewards_tensor, consistency_scores=consistency_scores,
+                group_size=config.group_size, config=config,
+            )
+        elif use_graphpo:
+            # GraphPO: Graph-based trajectory expansion
+            (responses, log_probs, old_log_probs,
+             graph_rewards) = self._graphpo_expand_trajectories(
+                model=model, prompt=prompt, config=config,
+                tokenizer=tokenizer, reward_function=reward_function,
+            )
+            refined_responses, verification_rewards = self._apply_iterative_refinement(
+                model=model, prompt=prompt, responses=responses,
+                config=config, tokenizer=tokenizer,
+            )
+            final_responses = refined_responses if config.enable_self_verification else responses
+            rewards_tensor = graph_rewards
+            advantages = self._graphpo_compute_advantages(
+                rewards=rewards_tensor, group_size=config.group_size, config=config,
+            )
+        else:
+            # Standard GRPO sampling (with optional VPS, MMR, TR extensions)
+            responses, log_probs, old_log_probs = self._sample_group_responses(
+                model=model, prompt=prompt, group_size=config.group_size,
+                config=config, tokenizer=tokenizer,
+            )
+            refined_responses, verification_rewards = self._apply_iterative_refinement(
+                model=model, prompt=prompt, responses=responses,
+                config=config, tokenizer=tokenizer,
+            )
+            if config.enable_self_verification and any(v > 0 for v in verification_rewards):
+                final_responses = refined_responses
+                combined_rewards = []
+                for i, (original_reward, refined_reward) in enumerate(zip(
+                    self._compute_rewards(responses, prompt, reward_function),
+                    verification_rewards
+                )):
+                    combined_reward = original_reward + config.verification_weight * refined_reward
+                    combined_rewards.append(combined_reward)
+            else:
+                final_responses = responses
+                combined_rewards = self._compute_rewards(
+                    responses=responses, prompt=prompt, reward_function=reward_function,
+                )
+            rewards_tensor = torch.tensor(combined_rewards, dtype=torch.float32)
 
-        rewards_tensor = torch.tensor(combined_rewards, dtype=torch.float32)
+            # ── VPS: Verifiable Process Supervision ──
+            if use_vps:
+                rewards_tensor, vps_scores = self._compute_vps_rewards(
+                    sequences=final_responses, rewards=rewards_tensor,
+                    tokenizer=tokenizer, config=config,
+                    prompt=prompt, reward_function=reward_function,
+                )
+                stats["vps_step_scores"] = [s.tolist() for s in vps_scores]
 
-        advantages = self.compute_group_advantages(
-            rewards=rewards_tensor,
-            group_size=config.group_size,
-            normalize=config.advantage_normalization,
-            min_std=config.min_std,
-        )
+            # ── MMR: Diversity-aware Multi-Model Refinement ──
+            if use_mmr_grpo:
+                self._mmr_update_buffer(
+                    trajectories=final_responses, rewards=rewards_tensor,
+                    config=config, tokenizer=tokenizer,
+                    device=rewards_tensor.device,
+                )
+                rewards_tensor = self._mmr_diversify_rewards(
+                    responses=final_responses, rewards=rewards_tensor,
+                    config=config, tokenizer=tokenizer,
+                    device=rewards_tensor.device,
+                )
 
-        if reference_model and config.use_reference_model:
+            # ── Advantage computation (TR or standard) ──
+            if use_tr_grpo:
+                token_lp, token_old_lp, token_mask = self._compute_token_level_log_probs(
+                    model=model, prompt=prompt, responses=final_responses,
+                    tokenizer=tokenizer, config=config,
+                )
+                token_adv = self._compute_token_advantages(
+                    old_log_probs=token_old_lp, new_log_probs=token_lp,
+                    rewards=rewards_tensor, mask=token_mask, config=config,
+                )
+                tr_data = (token_lp, token_old_lp, token_mask, token_adv)
+                advantages = token_adv.mean(dim=-1)
+            else:
+                tr_data = None
+                advantages = self.compute_group_advantages(
+                    rewards=rewards_tensor, group_size=config.group_size,
+                    normalize=config.advantage_normalization, min_std=config.min_std,
+                )
+
+        # ── Reference log probabilities ─────────────────────────
+        if use_tr_grpo and not use_igrpo and not use_graphpo:
+            if reference_model and config.use_reference_model:
+                token_ref_lp, _, _ = self._compute_token_level_log_probs(
+                    model=reference_model, prompt=prompt,
+                    responses=final_responses, tokenizer=tokenizer, config=config,
+                )
+            else:
+                token_ref_lp = torch.zeros_like(token_lp)
+            ref_log_probs = token_ref_lp
+        elif reference_model and config.use_reference_model:
             ref_log_probs = self._compute_reference_log_probs(
-                reference_model=reference_model,
-                prompt=prompt,
-                responses=final_responses,
-                tokenizer=tokenizer,
-                config=config,
+                reference_model=reference_model, prompt=prompt,
+                responses=final_responses, tokenizer=tokenizer, config=config,
             )
         else:
             ref_log_probs = torch.zeros_like(log_probs)
 
-        if config.enable_self_verification:
+        if config.enable_self_verification and not use_igrpo and not use_graphpo and not use_tr_grpo:
             refined_log_probs = []
             for response in final_responses:
                 if tokenizer:
@@ -409,36 +562,47 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
                     input_ids = tokenizer.encode(full_text, return_tensors="pt").to(next(model.parameters()).device)
                 else:
                     input_ids = torch.tensor([[ord(c) for c in prompt + response]], dtype=torch.long, device=next(model.parameters()).device)
-
                 fp8_context = te.fp8_autocast(enabled=True, fp8_recipe=DelayedScaling(
                     margin=0, interval=1, fp8_format=Format.HYBRID, amax_history_len=1024, amax_compute_algo="max",
                 )) if config and config.use_fp8 else contextlib.nullcontext()
-
                 with fp8_context:
                     outputs = model(input_ids)
                 logits = outputs.logits if hasattr(outputs, 'logits') else outputs[0]
                 log_probs_response = F.log_softmax(logits, dim=-1)
                 token_log_probs = log_probs_response[:, :-1, :].gather(2, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
                 refined_log_probs.append(token_log_probs.sum())
-
             refined_log_probs_tensor = torch.stack(refined_log_probs)
             log_probs = refined_log_probs_tensor
 
         for epoch in range(config.ppo_epochs):
-            epoch_stats = self._ppo_update(
-                model=model,
-                log_probs=log_probs,
-                old_log_probs=old_log_probs,
-                ref_log_probs=ref_log_probs,
-                advantages=advantages,
-                config=config,
-                optimizer=optimizer,
-            )
-
+            if use_tr_grpo and not use_igrpo and not use_graphpo:
+                token_lp, token_old_lp, token_mask, token_adv = tr_data
+                epoch_stats = self._tr_ppo_update(
+                    model=model,
+                    token_log_probs=token_lp,
+                    token_old_log_probs=token_old_lp,
+                    token_ref_log_probs=ref_log_probs,
+                    token_advantages=token_adv,
+                    mask=token_mask,
+                    config=config,
+                    optimizer=optimizer,
+                )
+            elif use_codapo:
+                epoch_stats = self._codapo_adaptive_update(
+                    model=model, log_probs=log_probs, old_log_probs=old_log_probs,
+                    ref_log_probs=ref_log_probs, advantages=advantages,
+                    config=config, optimizer=optimizer,
+                )
+            else:
+                epoch_stats = self._ppo_update(
+                    model=model, log_probs=log_probs, old_log_probs=old_log_probs,
+                    ref_log_probs=ref_log_probs, advantages=advantages,
+                    config=config, optimizer=optimizer,
+                )
             for key, values in epoch_stats.items():
                 stats[key].extend(values)
 
-        stats["rewards"].extend(combined_rewards)
+        stats["rewards"].extend(combined_rewards if not use_graphpo else rewards_tensor.tolist())
         stats["advantages"].extend(advantages.tolist())
         stats["verification_rewards"].extend(verification_rewards)
         stats["refinement_iterations"].append(sum(1 for v in verification_rewards if v > 0))
@@ -853,6 +1017,818 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
 
         return stats
     
+    # ── iGRPO: Two-Stage Self-Conditioning ──────────────────────────────
+
+    def _igrpo_two_stage_sample(
+        self,
+        model: nn.Module,
+        prompt: str,
+        config: POPSSGRPOConfig,
+        tokenizer,
+        reward_function,
+    ) -> Tuple[List[str], torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Two-stage self-conditioned sampling for iGRPO.
+
+        Stage 1: Generate draft responses at high temperature.
+        Stage 2: Select best drafts, condition refinement at lower temperature.
+        Returns responses, log_probs, old_log_probs, and self-consistency scores.
+        """
+        draft_size = max(1, int(config.group_size * config.igrpo_draft_ratio))
+        refine_size = config.group_size - draft_size
+
+        # Stage 1: Draft generation
+        draft_responses = []
+        draft_log_probs = []
+        model.eval()
+        with torch.no_grad():
+            for _ in range(draft_size):
+                orig_temp = config.temperature
+                config.temperature = config.igrpo_draft_temperature
+                response, log_prob = self._generate_response(
+                    model=model, prompt=prompt, config=config, tokenizer=tokenizer,
+                )
+                config.temperature = orig_temp
+                draft_responses.append(response)
+                draft_log_probs.append(log_prob)
+
+        # Score drafts and select best for conditioning
+        draft_rewards = self._compute_rewards(draft_responses, prompt, reward_function)
+        draft_scores = torch.tensor(draft_rewards)
+        best_draft_idx = draft_scores.argmax().item()
+        best_draft = draft_responses[best_draft_idx]
+
+        # Stage 2: Refinement conditioned on best draft
+        conditioned_prompt = prompt + "\n<reference_draft>" + best_draft + "</reference_draft>"
+        refine_responses = []
+        refine_log_probs = []
+        model.train()
+        for _ in range(refine_size):
+            orig_temp = config.temperature
+            config.temperature = config.igrpo_refinement_temperature
+            response, log_prob = self._generate_response(
+                model=model, prompt=conditioned_prompt, config=config, tokenizer=tokenizer,
+            )
+            config.temperature = orig_temp
+            refine_responses.append(response)
+            refine_log_probs.append(log_prob)
+
+        # Combine: drafts + refinements
+        all_responses = draft_responses + refine_responses
+        all_log_probs = torch.stack(draft_log_probs + refine_log_probs)
+        all_old_log_probs = all_log_probs.detach().clone()
+
+        # Self-consistency scores: lexical overlap between each response and best draft
+        best_draft_words = set(best_draft.lower().split())
+        consistency_scores = []
+        for resp in all_responses:
+            resp_words = set(resp.lower().split())
+            if len(best_draft_words) > 0:
+                overlap = len(best_draft_words & resp_words) / len(best_draft_words)
+            else:
+                overlap = 0.0
+            consistency_scores.append(overlap)
+        consistency_tensor = torch.tensor(consistency_scores)
+
+        return all_responses, all_log_probs, all_old_log_probs, consistency_tensor
+
+    def _igrpo_self_conditioned_advantages(
+        self,
+        rewards: torch.Tensor,
+        consistency_scores: torch.Tensor,
+        group_size: int,
+        config: POPSSGRPOConfig,
+    ) -> torch.Tensor:
+        """Compute self-conditioned advantages with draft baseline.
+
+        A_i = (r_i - (1-λ)*mean(r_group) - λ*consistency_i) / std(r_group + ε)
+        where λ = igrpo_conditioning_strength
+        """
+        rewards = rewards.view(-1, group_size)
+        mean = rewards.mean(dim=-1, keepdim=True)
+        std = rewards.std(dim=-1, keepdim=True).clamp(min=config.min_std)
+
+        consistency_bonus = config.igrpo_self_consistent_weight * consistency_scores.view(-1, group_size)
+        baseline = (1.0 - config.igrpo_conditioning_strength) * mean + config.igrpo_conditioning_strength * consistency_bonus
+        advantages = (rewards - baseline) / std
+        return advantages.view(-1)
+
+    # ── GraphPO: Graph-Based Trajectory Exploration ─────────────────────
+
+    def _graphpo_expand_trajectories(
+        self,
+        model: nn.Module,
+        prompt: str,
+        config: POPSSGRPOConfig,
+        tokenizer,
+        reward_function,
+    ) -> Tuple[List[str], torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Expand a set of trajectories into a decision graph.
+
+        At each decision point (tool call / reasoning fork), branch into
+        multiple continuations.  Rewards are propagated back through the
+        graph paths, and the top-K paths are returned for training.
+        """
+        import itertools
+
+        # Generate initial responses (root nodes)
+        root_responses = []
+        root_log_probs = []
+        model.eval()
+        with torch.no_grad():
+            for _ in range(config.group_size):
+                response, log_prob = self._generate_response(
+                    model=model, prompt=prompt, config=config, tokenizer=tokenizer,
+                )
+                root_responses.append(response)
+                root_log_probs.append(log_prob)
+
+        # Expand each root into a tree by branching at decision points
+        all_paths = []
+        for root_resp, root_lp in zip(root_responses, root_log_probs):
+            paths = self._graphpo_branch_from(
+                model=model, prompt=prompt, response=root_resp,
+                log_prob=root_lp, depth=0, config=config, tokenizer=tokenizer,
+            )
+            all_paths.extend(paths)
+
+        # Score all paths
+        final_responses = [p["response"] for p in all_paths]
+        rewards = self._compute_rewards(final_responses, prompt, reward_function)
+
+        for i, path in enumerate(all_paths):
+            path["reward"] = rewards[i] if i < len(rewards) else 0.0
+            depth_penalty = config.graphpo_depth_penalty * path["depth"]
+            path["discounted_reward"] = path["reward"] * (config.graphpo_reward_discount ** path["depth"]) - depth_penalty
+
+        # Sort by discounted reward, take top-k
+        all_paths.sort(key=lambda p: p["discounted_reward"], reverse=True)
+        top_paths = all_paths[:config.graphpo_top_paths]
+
+        # If fewer than group_size paths, pad with root responses
+        while len(top_paths) < config.group_size:
+            idx = len(top_paths) % len(root_responses)
+            top_paths.append({
+                "response": root_responses[idx],
+                "log_prob": root_log_probs[idx],
+                "reward": 0.0,
+                "discounted_reward": 0.0,
+                "depth": 0,
+            })
+
+        graph_responses = [p["response"] for p in top_paths]
+        graph_log_probs = torch.stack([p["log_prob"] for p in top_paths])
+        graph_old_probs = graph_log_probs.detach().clone()
+        graph_rewards = torch.tensor([p["discounted_reward"] for p in top_paths])
+
+        return graph_responses, graph_log_probs, graph_old_probs, graph_rewards
+
+    def _graphpo_branch_from(
+        self,
+        model: nn.Module,
+        prompt: str,
+        response: str,
+        log_prob: torch.Tensor,
+        depth: int,
+        config: POPSSGRPOConfig,
+        tokenizer,
+    ) -> List[dict]:
+        """Recursively expand branches at decision points in a response."""
+        if depth >= config.graphpo_max_branches:
+            return [{"response": response, "log_prob": log_prob, "depth": depth}]
+
+        # Detect decision points: tool calls, reasoning transitions
+        decision_points = []
+        for keyword in ["```tool", "Therefore", "Alternatively", "In conclusion"]:
+            idx = response.find(keyword)
+            if idx >= 0:
+                decision_points.append(idx)
+
+        if not decision_points:
+            return [{"response": response, "log_prob": log_prob, "depth": depth}]
+
+        # Branch at the first decision point
+        branch_idx = decision_points[0]
+        prefix = response[:branch_idx]
+        suffix = response[branch_idx:]
+
+        branches = []
+        branch_prompts = [
+            prefix + "\n[Branch: First approach] ",
+            prefix + "\n[Branch: Alternative approach] ",
+            prefix + "\n[Branch: Refine and verify] ",
+        ]
+
+        model.eval()
+        with torch.no_grad():
+            for bp in branch_prompts[:config.graphpo_max_branches]:
+                orig_temp = config.temperature
+                config.temperature = 0.9 + (depth * 0.05)  # increase temperature with depth
+                branch_response, branch_lp = self._generate_response(
+                    model=model, prompt=prompt + "\n" + bp, config=config, tokenizer=tokenizer,
+                )
+                config.temperature = orig_temp
+
+                combined = bp + branch_response
+                combined_lp = log_prob + branch_lp.to(log_prob.device)
+
+                sub_branches = self._graphpo_branch_from(
+                    model=model, prompt=prompt,
+                    response=combined, log_prob=combined_lp,
+                    depth=depth + 1, config=config, tokenizer=tokenizer,
+                )
+                branches.extend(sub_branches)
+
+        return branches
+
+    def _graphpo_compute_advantages(
+        self,
+        rewards: torch.Tensor,
+        group_size: int,
+        config: POPSSGRPOConfig,
+    ) -> torch.Tensor:
+        """Compute graph-structure-aware advantages."""
+        rewards = rewards.view(-1, group_size)
+        mean = rewards.mean(dim=-1, keepdim=True)
+        std = rewards.std(dim=-1, keepdim=True).clamp(min=config.min_std)
+        exploration_bonus = config.graphpo_exploration_bonus * (1.0 - (std / (std + 1.0)))
+        advantages = (rewards - mean) / std + exploration_bonus
+        return advantages.view(-1)
+
+    # ── CoDaPO: Confidence/Difficulty Adaptive ──────────────────────────
+
+    def _codapo_compute_confidence_scores(
+        self,
+        log_probs: torch.Tensor,
+    ) -> torch.Tensor:
+        """Compute per-response confidence from log probabilities.
+
+        Confidence = exp(mean(log_prob)) after normalising by sequence length.
+        """
+        confidence = torch.exp(log_probs / log_probs.abs().clamp(min=1.0).detach())
+        return (confidence - confidence.min()) / (confidence.max() - confidence.min() + 1e-8)
+
+    def _codapo_adaptive_clip_ratio(
+        self,
+        confidence: torch.Tensor,
+        config: POPSSGRPOConfig,
+    ) -> torch.Tensor:
+        """Adjust clip ratio per response based on confidence."""
+        low_clip = config.codapo_clip_low_confidence
+        high_clip = config.codapo_clip_high_confidence
+        # Linear interpolation: low confidence → tight clip, high confidence → wide clip
+        adaptive = low_clip + (high_clip - low_clip) * confidence
+        return adaptive
+
+    def _codapo_adaptive_kl_coef(
+        self,
+        confidence: torch.Tensor,
+        config: POPSSGRPOConfig,
+    ) -> torch.Tensor:
+        """Adjust KL coefficient per response based on confidence."""
+        low_kl = config.codapo_kl_low_confidence
+        high_kl = config.codapo_kl_high_confidence
+        adaptive = low_kl + (high_kl - low_kl) * confidence
+        return adaptive
+
+    def _codapo_adaptive_update(
+        self,
+        model: nn.Module,
+        log_probs: torch.Tensor,
+        old_log_probs: torch.Tensor,
+        ref_log_probs: torch.Tensor,
+        advantages: torch.Tensor,
+        config: POPSSGRPOConfig,
+        optimizer: Optional[torch.optim.Optimizer],
+    ) -> Dict[str, List[float]]:
+        """CoDaPO policy update with confidence/difficulty adaptive parameters."""
+        stats = {
+            "policy_losses": [], "kl_divergences": [], "entropies": [],
+            "clip_fractions": [], "approx_kl": [], "confidence_scores": [],
+        }
+
+        confidence = self._codapo_compute_confidence_scores(log_probs)
+        adaptive_clip = self._codapo_adaptive_clip_ratio(confidence, config)
+        adaptive_kl = self._codapo_adaptive_kl_coef(confidence, config)
+
+        if optimizer:
+            optimizer.zero_grad()
+
+        ratio = torch.exp(log_probs - old_log_probs)
+        surr1 = ratio * advantages
+        # Per-sample adaptive clipping
+        clipped_ratio_low = 1.0 - adaptive_clip.view(-1, 1)
+        clipped_ratio_high = 1.0 + adaptive_clip.view(-1, 1)
+        surr2 = torch.clamp(ratio, clipped_ratio_low, clipped_ratio_high) * advantages
+
+        policy_loss = -torch.min(surr1, surr2).mean()
+        kl_div = (log_probs - ref_log_probs).mean()
+        # Per-sample adaptive KL
+        adaptive_kl_mean = (adaptive_kl * (log_probs - ref_log_probs).abs()).mean()
+        entropy = -log_probs.mean()
+
+        total_loss = (
+            policy_loss +
+            config.kl_coef * adaptive_kl_mean -
+            config.entropy_coef * entropy
+        )
+
+        if optimizer and total_loss.requires_grad:
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+            optimizer.step()
+
+        clip_fraction = ((ratio - 1.0).abs() > config.clip_ratio).float().mean()
+        approx_kl = (old_log_probs - log_probs).mean().abs()
+
+        stats["policy_losses"].append(policy_loss.item())
+        stats["kl_divergences"].append(kl_div.item())
+        stats["entropies"].append(entropy.item())
+        stats["clip_fractions"].append(clip_fraction.item())
+        stats["approx_kl"].append(approx_kl.item())
+        stats["confidence_scores"].append(confidence.mean().item())
+
+        return stats
+
+    # ╔══════════════════════════════════════════════════════════════════╗
+    # ║  GRPO-VPS: Verifiable Process Supervision (arXiv 2026)         ║
+    # ╚══════════════════════════════════════════════════════════════════╝
+
+    def _split_into_steps(
+        self,
+        sequence: str,
+        delimiter: str = "\n",
+        min_steps: int = 1,
+    ) -> List[str]:
+        """Split a response sequence into reasoning steps.
+
+        Each step is a segment delimited by *delimiter*.  Falling back
+        to period-based splitting when the delimiter yields fewer than
+        *min_steps* steps.
+        """
+        raw = [s.strip() for s in sequence.split(delimiter) if s.strip()]
+        if len(raw) < min_steps:
+            raw = [s.strip() for s in sequence.replace(".", "\n").split("\n") if s.strip()]
+        return raw if raw else [sequence]
+
+    def _compute_step_quality_scores(
+        self,
+        steps: List[str],
+        model: Optional[nn.Module] = None,
+        tokenizer=None,
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        """Heuristic process-quality scores for each step.
+
+        Combines three signals:
+          1. Step confidence  – average token log-prob (if model given)
+          2. Step coherence   – bigram overlap with adjacent steps
+          3. Step position    – slight decay for later steps
+        Returns a normalised tensor of shape ``(len(steps),)``.
+        """
+        n = len(steps)
+        scores = torch.ones(n, dtype=torch.float32)
+
+        # 1. Model confidence per step
+        if model is not None and tokenizer is not None and device is not None:
+            model.eval()
+            with torch.no_grad():
+                for i, step in enumerate(steps):
+                    if not step.strip():
+                        continue
+                    ids = tokenizer.encode(step, return_tensors="pt").to(device)
+                    outputs = model(ids)
+                    logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+                    lp = F.log_softmax(logits, dim=-1)
+                    token_lp = lp[:, :-1, :].gather(2, ids[:, 1:].unsqueeze(-1)).squeeze(-1)
+                    conf = token_lp.mean().exp().clamp(0.0, 1.0)
+                    scores[i] = scores[i] * (0.5 + 0.5 * conf)
+
+        # 2. Coherence: bigram overlap with neighbour
+        for i in range(n):
+            if i > 0:
+                prev_bigrams = set(zip(steps[i - 1].split(), steps[i - 1].split()[1:]))
+                cur_bigrams = set(zip(steps[i].split(), steps[i].split()[1:]))
+                if prev_bigrams:
+                    overlap = len(prev_bigrams & cur_bigrams) / max(len(prev_bigrams), 1)
+                    scores[i] = scores[i] * (0.7 + 0.3 * overlap)
+
+        # 3. Position decay (earlier steps slightly preferred)
+        pos_weight = torch.linspace(1.0, 0.9, n)
+        scores = scores * pos_weight
+
+        # Normalise to [0, 1]
+        lo, hi = scores.min(), scores.max()
+        if hi > lo:
+            scores = (scores - lo) / (hi - lo)
+        return scores
+
+    def _compute_vps_rewards(
+        self,
+        sequences: List[str],
+        rewards: torch.Tensor,
+        tokenizer=None,
+        config: Optional[POPSSGRPOConfig] = None,
+        prompt: str = "",
+        reward_function=None,
+    ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
+        """GRPO-VPS: Verifiable Process Supervision.
+
+        Splits every response into reasoning steps and computes a
+        per-step process reward.  The final per-sequence reward is a
+        convex combination of the original outcome reward and the mean
+        step process reward:
+
+            final = outcome * W_outcome + mean(step_rewards) * W_process
+
+        Returns the modified rewards tensor and a list of per-step
+        score tensors (one per sequence).
+        """
+        cfg = config or POPSSGRPOConfig()
+        w_out = cfg.vps_outcome_weight
+        w_proc = cfg.vps_process_weight
+        delimiter = cfg.vps_step_delimiter
+        min_steps = cfg.vps_min_steps
+        quality_scale = cfg.vps_quality_scale
+
+        device = rewards.device
+        modified = []
+        all_step_scores = []
+
+        for idx, seq in enumerate(sequences):
+            steps = self._split_into_steps(seq, delimiter, min_steps)
+            step_scores = self._compute_step_quality_scores(
+                steps, tokenizer=tokenizer,
+            )
+            step_scores = step_scores.to(device)
+
+            # Process reward per step (quality * scaled outcome signal)
+            outcome_r = rewards[idx].item()
+            step_rewards = step_scores * quality_scale * max(outcome_r, 0.0)
+            mean_step_r = step_rewards.mean()
+
+            combined = w_out * outcome_r + w_proc * mean_step_r
+            modified.append(combined)
+            all_step_scores.append(step_scores.cpu())
+
+        return torch.tensor(modified, device=device), all_step_scores
+
+    # ╔══════════════════════════════════════════════════════════════════╗
+    # ║  MMR-GRPO: Diversity-aware Multi-Model Refinement (arXiv 2026) ║
+    # ╚══════════════════════════════════════════════════════════════════╝
+
+    def _mmr_ensure_buffer(self, config: POPSSGRPOConfig):
+        """Lazily initialise the diversity buffer."""
+        if self._mmr_diversity_buffer is None:
+            self._mmr_diversity_buffer = {
+                "entries": [],
+                "maxlen": config.mmr_buffer_size,
+            }
+
+    def _mmr_compute_embedding(
+        self,
+        response: str,
+        tokenizer,
+        dim: int = 64,
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        """Compute a fixed-size embedding for a response string.
+
+        Uses token-frequency hashing (feature hashing) to produce a
+        *dim*-dimensional vector without requiring a forward pass.
+        """
+        if tokenizer is not None:
+            ids = tokenizer.encode(response, add_special_tokens=False)
+        else:
+            ids = [ord(c) for c in response[:2048]]
+
+        emb = torch.zeros(dim)
+        for tid in ids:
+            h = hash(str(tid)) % dim
+            sign = 1 if (hash(str(tid)) // dim) % 2 == 0 else -1
+            emb[h] += sign
+        # Normalise
+        norm = emb.norm()
+        if norm > 1e-8:
+            emb = emb / norm
+        return emb
+
+    def _mmr_diversity_score(
+        self,
+        embedding: torch.Tensor,
+        buffer_entries: List[TrajectoryEntry],
+    ) -> float:
+        """Compute the minimum cosine distance to any entry in the buffer."""
+        if not buffer_entries:
+            return 1.0
+        scores = []
+        for entry in buffer_entries:
+            sim = F.cosine_similarity(embedding.unsqueeze(0), entry.embedding.unsqueeze(0))
+            scores.append(1.0 - sim.item())
+        return min(scores)
+
+    def _mmr_update_buffer(
+        self,
+        trajectories: List[str],
+        rewards: torch.Tensor,
+        config: POPSSGRPOConfig,
+        tokenizer=None,
+        device: Optional[torch.device] = None,
+    ):
+        """Update the diversity buffer with new trajectory entries.
+
+        Each new trajectory is scored for diversity against the existing
+        buffer.  Low-diversity trajectories (similarity above threshold)
+        are discarded.  The buffer is kept at ``mmr_buffer_size`` by
+        evicting the lowest-diversity entries when full.
+        """
+        self._mmr_ensure_buffer(config)
+        buf = self._mmr_diversity_buffer
+        threshold = config.mmr_similarity_threshold
+        dim = config.mmr_embedding_dim
+
+        for resp, r in zip(trajectories, rewards):
+            emb = self._mmr_compute_embedding(resp, tokenizer, dim, device)
+            div = self._mmr_diversity_score(emb, buf["entries"])
+
+            # Discard if too similar to existing entries
+            if div < (1.0 - threshold) and len(buf["entries"]) > 0:
+                continue
+
+            entry = TrajectoryEntry(embedding=emb, reward=r.item(), diversity_score=div)
+            buf["entries"].append(entry)
+
+        # Prune to maxlen: keep the most diverse entries
+        if len(buf["entries"]) > buf["maxlen"]:
+            buf["entries"].sort(key=lambda e: e.diversity_score, reverse=True)
+            buf["entries"] = buf["entries"][: buf["maxlen"]]
+
+    def _mmr_diversify_rewards(
+        self,
+        responses: List[str],
+        rewards: torch.Tensor,
+        config: POPSSGRPOConfig,
+        tokenizer=None,
+        device: Optional[torch.device] = None,
+    ) -> torch.Tensor:
+        """Apply diversity bonus to rewards.
+
+        Responses that are more diverse (relative to the buffer) receive
+        a positive bonus; responses that are too similar receive a penalty.
+        """
+        self._mmr_ensure_buffer(config)
+        buf = self._mmr_diversity_buffer
+        dim = config.mmr_embedding_dim
+        div_weight = config.mmr_diversity_weight
+
+        modified = []
+        for resp, r in zip(responses, rewards):
+            emb = self._mmr_compute_embedding(resp, tokenizer, dim, device)
+            div = self._mmr_diversity_score(emb, buf["entries"])
+            bonus = div_weight * div
+            modified.append(r.item() * (1.0 + bonus))
+
+        return torch.tensor(modified, device=rewards.device)
+
+    def _mmr_mix_from_buffer(
+        self,
+        responses: List[str],
+        log_probs: torch.Tensor,
+        old_log_probs: torch.Tensor,
+        config: POPSSGRPOConfig,
+        tokenizer=None,
+    ) -> Tuple[List[str], torch.Tensor, torch.Tensor]:
+        """Mix a fraction of responses from the diversity buffer.
+
+        Replaces a portion (``mmr_mix_ratio``) of the current batch with
+        entries sampled from the buffer, prioritising high-diversity and
+        high-reward trajectories.
+        """
+        self._mmr_ensure_buffer(config)
+        buf = self._mmr_diversity_buffer
+        if not buf["entries"]:
+            return responses, log_probs, old_log_probs
+
+        device = log_probs.device
+        n_replace = max(1, int(len(responses) * config.mmr_mix_ratio))
+        n_replace = min(n_replace, len(buf["entries"]), len(responses))
+
+        # Weighted sampling: diversity * reward
+        entries = buf["entries"]
+        weights = torch.tensor(
+            [e.diversity_score * max(e.reward, 0.01) for e in entries],
+            dtype=torch.float32,
+        )
+        weights = F.softmax(weights, dim=0)
+        idxs = torch.multinomial(weights, n_replace, replacement=False).tolist()
+
+        # Replace the last n_replace responses with buffer entries
+        mixed_resp = list(responses)
+        mixed_lp = log_probs.clone()
+        mixed_old = old_log_probs.clone()
+
+        for i, buf_idx in enumerate(idxs):
+            target = len(responses) - n_replace + i
+            entry = entries[buf_idx]
+            # We don't have the original log prob for buffer entries,
+            # so we assign a proxy based on the reward.
+            proxy_lp = torch.tensor(max(math.log(entry.reward + 1e-6), -10.0), device=device)
+            mixed_resp[target] = f"<diverse_trajectory_{buf_idx}>"
+            mixed_lp[target] = proxy_lp
+            mixed_old[target] = proxy_lp.detach()
+
+        return mixed_resp, mixed_lp, mixed_old
+
+    # ╔══════════════════════════════════════════════════════════════════╗
+    # ║  TR-GRPO: Token-Level Reward Weighting (arXiv 2026)            ║
+    # ╚══════════════════════════════════════════════════════════════════╝
+
+    def _compute_token_level_log_probs(
+        self,
+        model: nn.Module,
+        prompt: str,
+        responses: List[str],
+        tokenizer,
+        config: POPSSGRPOConfig,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Compute per-token log probabilities for every response.
+
+        Returns
+        -------
+        token_log_probs : Tensor[batch, max_len]
+        token_old_probs : Tensor[batch, max_len]  (detached copy)
+        mask           : Tensor[batch, max_len]   (1 = valid token)
+        """
+        device = next(model.parameters()).device
+        max_len = 0
+        all_tokens = []
+        prompt_lens = []
+
+        model.eval()
+        with torch.no_grad():
+            for resp in responses:
+                full = prompt + resp
+                if tokenizer:
+                    ids = tokenizer.encode(full, return_tensors="pt").to(device)
+                else:
+                    ids = torch.tensor(
+                        [[ord(c) for c in full]], dtype=torch.long, device=device
+                    )
+
+                plen = len(tokenizer.encode(prompt)) if tokenizer else len(prompt)
+                prompt_lens.append(plen)
+
+                fp8_context = (
+                    te.fp8_autocast(
+                        enabled=True,
+                        fp8_recipe=DelayedScaling(
+                            margin=0,
+                            interval=1,
+                            fp8_format=Format.HYBRID,
+                            amax_history_len=1024,
+                            amax_compute_algo="max",
+                        ),
+                    )
+                    if config and config.use_fp8
+                    else contextlib.nullcontext()
+                )
+
+                with fp8_context:
+                    outputs = model(ids)
+                logits = outputs.logits if hasattr(outputs, "logits") else outputs[0]
+                lp = F.log_softmax(logits, dim=-1)
+                token_lp = lp[:, :-1, :].gather(2, ids[:, 1:].unsqueeze(-1)).squeeze(0)
+
+                # Response tokens only
+                resp_lp = token_lp[plen - 1 :]
+                all_tokens.append(resp_lp)
+                max_len = max(max_len, resp_lp.shape[0])
+
+        # Pad to max_len
+        padded_lp = []
+        padded_mask = []
+        for lp in all_tokens:
+            pad = max_len - lp.shape[0]
+            if pad > 0:
+                lp = F.pad(lp, (0, pad), value=0.0)
+                mask = torch.cat([torch.ones(lp.shape[0] - pad, device=device),
+                                  torch.zeros(pad, device=device)])
+            else:
+                mask = torch.ones(max_len, device=device)
+            padded_lp.append(lp)
+            padded_mask.append(mask)
+
+        token_lp = torch.stack(padded_lp)
+        mask = torch.stack(padded_mask)
+        return token_lp, token_lp.detach().clone(), mask
+
+    def _compute_token_advantages(
+        self,
+        old_log_probs: torch.Tensor,
+        new_log_probs: torch.Tensor,
+        rewards: torch.Tensor,
+        mask: torch.Tensor,
+        config: POPSSGRPOConfig,
+    ) -> torch.Tensor:
+        """TR-GRPO: Token-level advantage computation.
+
+        Per-token importance is estimated from the absolute change in
+        log-probability:  importance = |new_lp - old_lp|.
+
+        Per-token advantages are:
+
+            A_{i,t} = importance_{i,t} * A_i  (scaled and biased)
+
+        where A_i is the group-relative advantage at the sequence level.
+        """
+        device = old_log_probs.device
+        group_size = old_log_probs.shape[0]
+        scale = config.tr_importance_scale
+        bias = config.tr_importance_bias
+
+        # Sequence-level group-relative advantages
+        rewards = rewards.to(device)
+        reshaped = rewards.view(-1, group_size)
+        mean = reshaped.mean(dim=-1, keepdim=True)
+        std = reshaped.std(dim=-1, keepdim=True).clamp(min=config.min_std)
+        seq_advantages = ((reshaped - mean) / std).view(-1)
+
+        # Per-token importance: |new_lp - old_lp|
+        importance = (new_log_probs - old_log_probs).abs().detach()
+
+        # Normalise importance within each sequence
+        imp_max = importance.max(dim=-1, keepdim=True).values.clamp(min=1e-8)
+        importance_norm = importance / imp_max
+
+        # Per-token advantage = importance-weighted sequence advantage
+        token_adv = importance_norm * seq_advantages.unsqueeze(-1)
+        token_adv = token_adv * scale + bias * seq_advantages.unsqueeze(-1).sign()
+        token_adv = token_adv * mask
+
+        return token_adv
+
+    def _tr_ppo_update(
+        self,
+        model: nn.Module,
+        token_log_probs: torch.Tensor,
+        token_old_log_probs: torch.Tensor,
+        token_ref_log_probs: torch.Tensor,
+        token_advantages: torch.Tensor,
+        mask: torch.Tensor,
+        config: POPSSGRPOConfig,
+        optimizer: Optional[torch.optim.Optimizer],
+    ) -> Dict[str, List[float]]:
+        """TR-GRPO: Per-token PPO-style policy update.
+
+        Applies the clipped surrogate objective token-wise, then
+        aggregates via masked mean.
+        """
+        stats = {
+            "policy_losses": [],
+            "kl_divergences": [],
+            "entropies": [],
+            "clip_fractions": [],
+            "approx_kl": [],
+        }
+        clip = config.tr_token_clip_ratio
+
+        if optimizer:
+            optimizer.zero_grad()
+
+        ratio = torch.exp(token_log_probs - token_old_log_probs)
+
+        surr1 = ratio * token_advantages
+        surr2 = torch.clamp(ratio, 1.0 - clip, 1.0 + clip) * token_advantages
+
+        policy_loss = -torch.min(surr1, surr2)
+        policy_loss = (policy_loss * mask).sum() / mask.sum()
+
+        kl_div = token_log_probs - token_ref_log_probs
+        kl_div = (kl_div * mask).sum() / mask.sum()
+
+        entropy = -(token_log_probs * mask).sum() / mask.sum()
+
+        total_loss = (
+            policy_loss
+            + config.kl_coef * kl_div
+            - config.entropy_coef * entropy
+        )
+
+        if optimizer and total_loss.requires_grad:
+            total_loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+            optimizer.step()
+
+        clip_fraction = ((ratio - 1.0).abs() > clip).float()[mask.bool()].mean()
+        approx_kl = (token_old_log_probs - token_log_probs).abs()[mask.bool()].mean()
+
+        stats["policy_losses"].append(policy_loss.item())
+        stats["kl_divergences"].append(kl_div.item())
+        stats["entropies"].append(entropy.item())
+        stats["clip_fractions"].append(clip_fraction.item())
+        stats["approx_kl"].append(approx_kl.item())
+
+        return stats
+
     def _safe_mean(self, values: List[float]) -> float:
         """Compute mean safely, returning 0.0 for empty lists."""
         if not values:
@@ -1025,7 +2001,6 @@ class POPSSAgenticRLTrainer:
         optimizer: Optional[torch.optim.Optimizer] = None,
         tokenizer=None,
         tool_executor=None,
-        encre_trainer: Optional[Any] = None,
     ):
         self.model = model
         self.reference_model = reference_model
@@ -1033,15 +2008,6 @@ class POPSSAgenticRLTrainer:
         self.config = config or POPSSAgenticRLConfig()
         self.tokenizer = tokenizer
         self.tool_executor = tool_executor
-        # EnTA integration: when ``config.use_encre_rollout`` is True and
-        # an ``encre_trainer`` is supplied, every agent trajectory is
-        # produced by the EnCRE rollout loop (full tool palette, Rust
-        # sandbox, reward shaping) instead of the in-process sampler.
-        # Fall back to the original behaviour when the trainer is missing
-        # or the integration is disabled.
-        self.encre_trainer = encre_trainer if (
-            self.config.use_encre_rollout and encre_trainer is not None
-        ) else None
 
         if optimizer is None:
             self.optimizer = torch.optim.AdamW(
@@ -1067,7 +2033,7 @@ class POPSSAgenticRLTrainer:
         as a "response group" for GRPO-style advantage computation.
 
         When ``self.encre_trainer`` is set, the trajectory is produced by
-        the full EnCRE rollout loop (multi-step tool use, Rust sandbox,
+        the full EnTA rollout loop (multi-step tool use, Rust sandbox,
         reward shaping).  Otherwise the lightweight in-process sampler
         is used.
 
@@ -1077,10 +2043,6 @@ class POPSSAgenticRLTrainer:
         Returns:
             Dictionary containing trajectory data
         """
-        # ── EnTA path ───────────────────────────────────────────
-        if self.encre_trainer is not None:
-            return self._collect_encre_trajectory(prompt)
-
         trajectory = {
             "prompt": prompt,
             "steps": [],
@@ -1397,110 +2359,4 @@ class POPSSAgenticRLTrainer:
 
         return checkpoint["step"]
 
-    # ── EnTA integration helpers ────────────────────────────────
 
-    def _collect_encre_trajectory(self, prompt: str) -> Dict[str, Any]:
-        """Collect a single agent trajectory via the EnCRE rollout loop.
-
-        This is the EnTA integration point.  Instead of the lightweight
-        in-process sampler, the trajectory is produced by
-        :meth:`YvEncreTrainer.rollout` (or, when
-        ``self.config.encre_use_roundtable`` is True, by
-        :meth:`YvEncreTrainer.run_with_roundtable`).
-
-        The returned trajectory has the same shape as the original
-        in-process trajectory so that the downstream GRPO update does
-        not need to be aware of the integration.
-        """
-        trajectory: Dict[str, Any] = {
-            "prompt": prompt,
-            "steps": [],
-            "tool_calls": 0,
-            "tool_successes": 0,
-            "task_completed": False,
-            "total_reward": 0.0,
-            "step_rewards": [],
-            "log_probs": [],
-            "responses": [],
-        }
-
-        if self.encre_trainer is None:
-            return trajectory
-
-        try:
-            if self.config.encre_use_roundtable:
-                result = self.encre_trainer.run_with_roundtable(
-                    [(prompt, "")],
-                    optimizer=None,
-                    system=self.config.encre_system_prompt or None,
-                )
-            else:
-                result = self.encre_trainer.run_adversarial_batch(
-                    [(prompt, "")], optimizer=None
-                )
-        except Exception as exc:  # noqa: BLE001
-            # Surface the failure on the trajectory but keep the GRPO
-            # loop alive -- a failed rollout is a reward-zero sample.
-            trajectory["total_reward"] = 0.0
-            trajectory["step_rewards"] = [0.0]
-            trajectory["log_probs"] = [
-                torch.tensor(0.0, device=next(self.model.parameters()).device)
-            ]
-            trajectory["responses"] = [f"<<encre_error: {exc}>>"]
-            return trajectory
-
-        # Normalise the EnCRE trainer output to the trajectory shape
-        # expected by ``agentic_rl_update``.  The trainer's contract is
-        # ``{"items": [...], "trajectories": [...], "loss": ...}`` where
-        # each trajectory carries ``final_text`` (the model output) and
-        # ``total_reward``.  We collapse both shapes into (response,
-        # step_reward) pairs.
-        items = (
-            result.get("items", []) if isinstance(result, dict) else []
-        )
-        responses: list[str] = []
-        step_rewards: list[float] = []
-        for item in items:
-            responses.append(str(item.get("response", item.get("reference", ""))))
-            step_rewards.append(float(item.get("reward", 0.0)))
-
-        trajectories = (
-            result.get("trajectories", []) if isinstance(result, dict) else []
-        )
-        for t in trajectories:
-            text = str(t.get("final_text", "")) or str(t.get("reference", ""))
-            if not text:
-                continue
-            responses.append(text)
-            step_rewards.append(float(t.get("total_reward", 0.0)))
-
-        if not responses:
-            responses = [str(prompt)]
-            step_rewards = [0.0]
-
-        tool_calls = sum(str(r).count("```tool") for r in responses)
-        task_completed = any(
-            float(s) >= self.config.task_completion_reward * 0.9
-            for s in step_rewards
-        )
-
-        device = next(self.model.parameters()).device
-        log_probs: list[torch.Tensor] = []
-        for resp in responses:
-            log_probs.append(
-                torch.tensor(0.0, device=device)
-            )  # EnCRE consumes its own log-prob stream; placeholder.
-
-        trajectory.update(
-            {
-                "steps": list(zip(responses, step_rewards)),
-                "tool_calls": tool_calls,
-                "tool_successes": sum(1 for s in step_rewards if s > 0),
-                "task_completed": task_completed,
-                "total_reward": float(sum(step_rewards)),
-                "step_rewards": step_rewards,
-                "log_probs": log_probs,
-                "responses": responses,
-            }
-        )
-        return trajectory

@@ -26,6 +26,19 @@ n_layer: 16
 n_head: 14
 n_kv_head: 7
 
+# ========================================
+# Lookup Split Configuration (1.5B)
+# ========================================
+# 1.5B uses a unified compute architecture with the FAISS knowledge
+# field as an auxiliary store (not full memory separation).
+# compute_params_total: 1.5B in active MoE params
+# lookup_params_total: 3B in FAISS-indexed knowledge store
+# ========================================
+compute_params_total: 1500000000
+lookup_params_total: 3000000000
+use_dual_inject: false
+use_subconscious: false
+
 moe_num_experts: 6
 moe_top_k: 2
 moe_capacity_factor: 1.3
@@ -116,6 +129,56 @@ attn_res_max_blocks: 32
 attn_res_learnable_query: true
 attn_res_use_rmsnorm: true
 
+# Manifold-Constrained Hyper-Connections (mHC, DeepSeek-V4 Pro, 2026)
+# Replaces standard residual with expanded stream + Birkhoff polytope constraint
+use_mhc: true
+mhc_n_hc: 4
+mhc_sinkhorn_iters: 20
+
+# PathMoE: Cross-layer shared routing (2026)
+# Shares router parameters across stages of MoE layers for improved efficiency
+use_path_moe: true
+path_moe_stage_size: 4
+
+# Phi-Balancing: Population-level mirror descent load balancing (2026)
+# EMA-based expert load balancing without auxiliary loss
+use_phi_balancing: true
+phi_balancing_momentum: 0.95
+phi_balancing_lr: 0.01
+phi_balancing_ema_decay: 0.99
+
+# HydraHead: Head-level FA/LA hybrid attention (2026)
+# Splits heads into softmax (FA) and linear (LA) attention groups
+use_hydra_head: true
+hydra_head_la_ratio: 0.5
+hydra_head_learnable_assignment: true
+hydra_head_temperature: 1.0
+
+# LCA: Latent-Condensed Attention (2026)
+# Condenses KV representations into lower-dimensional latent space
+use_lca: true
+lca_latent_dim: 512
+lca_condense_factor: 0.25
+lca_use_residual: true
+
+# DSpark: Parallel speculative decoding with Markov head (2026)
+# Parallel draft generation + confidence scheduling
+use_dspark: true
+dspark_markov_order: 5
+dspark_parallel_candidates: 3
+dspark_confidence_window: 10
+
+# MoVE: Multi-Encoder Vision Ensemble (2026)
+# Routes tokens through multiple vision backbones with learned gating
+use_move_encoder: true
+move_encoder_list: ["siglip"]
+move_top_k: 1
+
+# SparseCut: Token pruning for vision (2026)
+# Post-encoder token reduction via learned importance scoring
+use_sparse_cut: true
+sparse_cut_ratio: 0.5
+
 # Distributed Training (auto-enabled when multiple GPUs detected)
 # Use --distributed flag or set enabled: true for multi-GPU training
 distributed:
@@ -170,6 +233,24 @@ training_config:
     enabled: false
   multitask:
     enabled: false
+  # GRPO Upgrades (2026): VPS, MMR-GRPO, TR-GRPO
+  use_vps: true
+  vps_outcome_weight: 0.7
+  vps_process_weight: 0.3
+  vps_step_delimiter: "\n\n"
+  vps_min_steps: 2
+  vps_quality_scale: 1.0
+  use_mmr_grpo: true
+  mmr_buffer_size: 128
+  mmr_diversity_weight: 0.3
+  mmr_similarity_threshold: 0.8
+  mmr_mix_ratio: 0.5
+  mmr_embedding_dim: 256
+  use_tr_grpo: true
+  tr_importance_scale: 1.0
+  tr_importance_bias: 0.0
+  tr_token_clip_ratio: 0.2
+
 
 inference_config:
   force_quant: null
@@ -468,10 +549,5 @@ memory_store_path: ""
 
 
 # ========================================
-# EnTA Training Pipeline (Multi-Teacher Roundtable)
-# All EnTA-specific configuration (teachers, judge, reward weights,
-# rollout parameters, SFT/GRPO integration) lives in a separate file
-# so this model YAML stays focused on the architecture.
-# ========================================
-encre:
-  config_path: configs/enta/1.5B.yaml
+# External Training Pipeline (Multi-Teacher Roundtable)
+

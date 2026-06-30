@@ -1,29 +1,32 @@
 # ========================================
-# EnTA Training Pipeline (7B Edition)
+# EnTA Training Pipeline — Unified Teacher Configuration
 # ========================================
-# All EnTA runtime configuration (teachers, judge, rollouts, reward
-# weights, SFT/GRPO integration) is driven by this YAML file.
+# This is a SINGLE configuration for ALL model sizes.
+# Teachers, judge, rollout, and reward params are size-independent.
+# The student model is selected by manage.py --model_size.
 # ========================================
 
 # ========================================
 # Student Model Rollout Backend
 # ========================================
+# model_name and server_model are overridden by manage.py at runtime.
+# The defaults here are fallbacks only.
 backend: local
-model_name: Qwen/Qwen2.5-1.5B-Instruct
+model_name: ""                    # Overridden by --model_size
 device: cpu
 base_url: http://127.0.0.1:8000/v1
 api_key: EMPTY
-server_model: Qwen/Qwen2.5-1.5B-Instruct
+server_model: ""                  # Overridden by --model_size
 
 # ========================================
-# Teacher Panel Default (overridable)
+# Teacher Panel
 # ========================================
-# The user is free to add, remove, or modify any teacher entry.
-# Each teacher must provide base_url, model, and optionally api_key.
-# Roles are arbitrary strings; the roundtable scorer uses them as
-# labels only (no hard-coded semantics).
+# Add or remove teachers as needed.  Each teacher has:
+#   - name:   arbitrary label
+#   - role:   used by roundtable scorer (no hard-coded semantics)
+#   - weight: relative influence in roundtable scoring
+#   - base_url, model, api_key: teacher endpoint
 # ========================================
-panel_file: ""
 teachers:
   - name: generalist
     role: general
@@ -45,11 +48,9 @@ teachers:
     api_key: ""
 
 # ========================================
-# Judge (overridable)
+# Judge
 # ========================================
 # If null, the first teacher in the panel is used as judge.
-# Users can configure a dedicated judge with their own model endpoint.
-# ========================================
 judge: null
 
 # ========================================

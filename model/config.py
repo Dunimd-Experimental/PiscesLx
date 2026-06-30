@@ -145,6 +145,7 @@ class YvAttentionType(Enum):
     LINEAR = "linear"
     SPARSE = "sparse"
     RING = "ring"
+    EG_MLA = "eg_mla"
 
 
 class YvPositionEmbeddingType(Enum):
@@ -214,7 +215,6 @@ class YvConfig:
         moe_min_capacity (int): Minimum routing capacity per expert. Defaults to ``4``.
         moe_prediction_horizon (int): Horizon length for predictive capacity tuning. Defaults to ``8``.
         moe_shared_experts (int): Number of shared experts in MoE layers. Defaults to ``1``.
-        moe_num_shared_experts (int): Alias for shared expert count. Defaults to ``1``.
         moe_fine_grained (bool): Enable fine-grained expert segmentation. Defaults to ``True``.
         moe_num_sub_experts (int): Sub-experts per group when fine-grained. Defaults to ``4``.
         moe_aux_loss_free (bool): Use auxiliary loss-free load balancing. Defaults to ``True``.
@@ -305,7 +305,6 @@ class YvConfig:
     moe_l2_smooth_8k: float = 0.01
     moe_layers: List[int] = field(default_factory=list)
     moe_shared_experts: int = 1
-    moe_num_shared_experts: int = 1
     moe_fine_grained: bool = True
     moe_num_sub_experts: int = 4
     moe_aux_loss_free: bool = True
@@ -314,6 +313,51 @@ class YvConfig:
     moe_anticipatory_routing: bool = True
     moe_expert_parallel: bool = False
     moe_token_dispatcher: str = "allgather"
+
+    # ========================================
+    # PathMoE Configuration (arXiv 2026)
+    # Shared router across MoE layers in a stage, eliminating aux loss
+    # ========================================
+    use_path_moe: bool = True
+    path_moe_stage_size: int = 4
+    path_moe_use_shared_gate: bool = True
+
+    # ========================================
+    # ϕ-Balancing Configuration (arXiv 2026)
+    # Population-level mirror descent for load balancing
+    # ========================================
+    use_phi_balancing: bool = True
+    phi_balancing_momentum: float = 0.95
+    phi_balancing_lr: float = 0.01
+    phi_balancing_ema_decay: float = 0.99
+
+    # ========================================
+    # HydraHead Configuration (arXiv 2026)
+    # Head-level FA/LA attention hybridization
+    # ========================================
+    use_hydra_head: bool = True
+    hydra_head_la_ratio: float = 0.5
+    hydra_head_learnable_assignment: bool = True
+    hydra_head_temperature: float = 1.0
+
+    # ========================================
+    # LCA Configuration (arXiv 2026)
+    # Latent-Condensed Attention for MLA space compression
+    # ========================================
+    use_lca: bool = True
+    lca_latent_dim: int = 512
+    lca_condense_factor: float = 0.25
+    lca_use_residual: bool = True
+
+    # ========================================
+    # DSpark Configuration (arXiv 2026)
+    # Parallel draft + Markov head + confidence scheduling
+    # ========================================
+    use_dspark: bool = True
+    dspark_draft_len: int = 5
+    dspark_markov_order: int = 3
+    dspark_confidence_threshold: float = 0.7
+    dspark_parallel_candidates: int = 8
 
     intermediate_size: int = 5632
     max_position_embeddings: int = 8192
@@ -351,7 +395,7 @@ class YvConfig:
     residual_alpha: float = 2.0
     embedding_norm_weight: float = 0.01
 
-    use_attn_res: bool = False
+    use_attn_res: bool = True
     attn_res_block_size: int = 8
     attn_res_use_two_phase: bool = True
     attn_res_use_online_softmax: bool = True
@@ -359,6 +403,10 @@ class YvConfig:
     attn_res_max_blocks: int = 32
     attn_res_learnable_query: bool = True
     attn_res_use_rmsnorm: bool = True
+
+    # Mixture-of-Depths: per-token layer-skip routing
+    mixture_of_depths: bool = True
+    mod_routing_weight: float = 0.1
 
     enable_dynamic_fusion: bool = True
     fusion_quality_threshold: float = 0.3
@@ -399,7 +447,7 @@ class YvConfig:
     use_3d_spatio_temporal_rope: bool = False
     max_temporal_frames: int = 64
 
-    attention_type: str = "standard"
+    attention_type: str = "eg_mla"
     use_h2o_attention: bool = True
     streaming_window: int = 16384
     compression_ratio: int = 8
@@ -429,7 +477,7 @@ class YvConfig:
     enable_debug_outputs: bool = False
     debug_verbose: bool = False
 
-    use_mamba3: bool = False
+    use_mamba3: bool = True
     mamba3_layers: List[int] = field(default_factory=list)
     mamba3_d_state: int = 128
     mamba3_d_conv: int = 4
@@ -488,7 +536,7 @@ class YvConfig:
     # Enable dual-path knowledge injection from both memory separation and
     # subconscious systems into the compute stream. Requires at least one of
     # use_memory_separation or use_subconscious to be active.
-    use_dual_inject: bool = False
+    use_dual_inject: bool = True
 
     galore_enabled: bool = False
     galore_rank: int = 128
@@ -613,7 +661,7 @@ class YvConfig:
     # ========================================
 
     # EG-MLA: Embedding-Gated Multi-Head Latent Attention
-    use_eg_mla: bool = False
+    use_eg_mla: bool = True
     eg_mla_compression_ratio: float = 0.916
 
     # DuoAttention: Retrieval vs Streaming Heads
@@ -622,7 +670,7 @@ class YvConfig:
     duo_attention_buffer_size: int = 1024
 
     # Test-Time Training (TTT-E2E)
-    use_ttt_e2e: bool = False
+    use_ttt_e2e: bool = True
     ttt_update_layers: int = 2
     ttt_learning_rate: float = 1e-5
     ttt_max_steps: int = 5
@@ -630,21 +678,21 @@ class YvConfig:
     ttt_complexity_threshold: float = 0.7
 
     # Expert Evolution
-    use_expert_evolution: bool = False
+    use_expert_evolution: bool = True
     expert_evolution_base_lr: float = 1e-5
     expert_evolution_decay: float = 0.99
 
     # EWC: Elastic Weight Consolidation
-    use_ewc: bool = False
+    use_ewc: bool = True
     ewc_lambda: float = 1000.0
 
     # SEAL: Self-Adapting LLMs
-    use_seal: bool = False
+    use_seal: bool = True
     seal_confidence_threshold: float = 0.85
     seal_max_synthetic_samples: int = 100
 
     # DAPO: Decoupled Clipping Policy Optimization
-    use_dapo: bool = False
+    use_dapo: bool = True
     dapo_epsilon_low: float = 0.2
     dapo_epsilon_high: float = 0.4
     dapo_diversity_threshold: float = 0.3
@@ -656,32 +704,32 @@ class YvConfig:
     otv_quality_threshold: float = 0.6
 
     # SyncFusion: Audio-Video Synchronous Understanding
-    use_sync_fusion: bool = False
+    use_sync_fusion: bool = True
     sync_fusion_temporal_bins: int = 16
 
     # Coupled Mamba Fusion
-    use_coupled_mamba_fusion: bool = False
+    use_coupled_mamba_fusion: bool = True
     coupled_mamba_coupling_strength: float = 0.3
 
     # SparseSSM: Training-Free Mamba Pruning
-    use_sparse_ssm: bool = False
+    use_sparse_ssm: bool = True
     sparse_ssm_ratio: float = 0.5
 
     # Gated Delta Networks
-    use_gated_delta: bool = False
+    use_gated_delta: bool = True
 
     # OOMB: Million-Token Context
-    use_oomb_context: bool = False
+    use_oomb_context: bool = True
     oomb_chunk_size: int = 32768
     oomb_max_context: int = 4194304
 
     # REFORM: Compress-Gather-Recompute
-    use_reform: bool = False
+    use_reform: bool = True
     reform_compression_ratio: int = 4
     reform_importance_threshold: float = 0.1
 
     # Quartet: End-to-End FP4 Training
-    use_quartet: bool = False
+    use_quartet: bool = True
 
     # Long Context Extensions
     max_context_length: int = 1048576  # 1M default, extensible to 4M+
@@ -710,7 +758,7 @@ class YvConfig:
     pad_token_id: int = 0
     unk_token_id: int = 3
 
-    tie_word_embeddings: bool = False
+    tie_word_embeddings: bool = True
 
     use_cache: bool = True
 
@@ -843,7 +891,7 @@ class YvConfig:
     # Knowledge Builder: Offline 0.5B encoder builds knowledge store
     #   from raw corpora, independent of main model size.
     # ========================================
-    use_memory_separation: bool = False
+    use_memory_separation: bool = True
     memory_read_interval: int = 4
     memory_top_k: int = 8
     memory_cache_tokens: int = 4096
@@ -871,7 +919,7 @@ class YvConfig:
     # codebooks for massive virtual capacity (K^M combinations) with
     # only ~0.27B actual params for the field + ~0.23B for the head.
     # ========================================
-    use_subconscious: bool = False
+    use_subconscious: bool = True
     subconscious_knowledge_dim: int = 256
     subconscious_num_codebooks: int = 16
     subconscious_codebook_size: int = 131072
@@ -882,6 +930,19 @@ class YvConfig:
     subconscious_head_num_attn_heads: int = 4
     subconscious_read_interval: int = 1
     subconscious_prefetch_depth: int = 2
+
+    # ========================================
+    # MoVE (Mixture of Vision Encoders)
+    # ========================================
+    use_move_encoder: bool = False
+    move_encoder_list: List[str] = field(default_factory=lambda: ["siglip"])
+    move_top_k: int = 1
+
+    # ========================================
+    # SparseCut — Token-level sparse routing
+    # ========================================
+    use_sparse_cut: bool = True
+    sparse_cut_ratio: float = 0.5
 
     def __post_init__(self):
         """Initialize computed fields after dataclass construction.
@@ -896,6 +957,10 @@ class YvConfig:
         """
         if self.head_dim is None:
             self.head_dim = self.hidden_size // self.n_head
+
+        # Auto-populate mamba3_layers for every 4th layer
+        if self.use_mamba3 and not self.mamba3_layers:
+            self.mamba3_layers = list(range(0, self.n_layer, 4))
 
         if isinstance(self.attention_type, YvAttentionType):
             self.attention_type = self.attention_type.value
@@ -1388,7 +1453,7 @@ class YvConfig:
             use_mamba3=True,
             mamba3_layers=[i for i in range(28) if i % 4 == 0],
             mamba3_use_flash_ssm=True,
-            use_hisa_attention=True,
+            use_hisa_attention=False,
             flagship_level=0.85,
         )
 

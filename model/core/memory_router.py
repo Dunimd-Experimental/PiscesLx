@@ -147,6 +147,12 @@ class YvMemoryRouter(nn.Module):
         # Prefetch state for asynchronous retrieval
         self._prefetch_state: Optional[Dict[str, Any]] = None
 
+        if not memory_store_path:
+            _LOG.warning(
+                "YvMemoryRouter: memory_store_path is empty, FAISS knowledge "
+                "retrieval will be disabled. Set memory_store_path to a valid "
+                "directory containing knowledge_index.* and knowledge_store.npy"
+            )
         _LOG.info(
             f"YvMemoryRouter initialized: hidden={hidden_size}, "
             f"router_dim={memory_router_dim}, top_k={memory_top_k}, "

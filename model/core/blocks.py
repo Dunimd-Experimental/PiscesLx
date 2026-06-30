@@ -1062,7 +1062,8 @@ class YvParallelBlock(nn.Module):
         self,
         cfg,
         device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None
+        dtype: Optional[torch.dtype] = None,
+        gate: Optional[nn.Module] = None
     ):
         """Initialize parallel block.
         
@@ -1070,21 +1071,71 @@ class YvParallelBlock(nn.Module):
             cfg: Configuration object.
             device: Device for parameters.
             dtype: Data type for parameters.
+            gate: Optional pre-built MoE gate for PathMoE stage sharing.
         """
         super().__init__()
         self.cfg = cfg
         
         self.attn = YvAttention(cfg, device=device, dtype=dtype)
-        
+
+        # HydraHead: head-level FA/LA hybridization
+        if getattr(cfg, 'use_hydra_head', False):
+            from ..core.attention import YvHydraHeadAttention
+            self.hydra_attn = YvHydraHeadAttention(
+                hidden_size=cfg.hidden_size,
+                num_heads=cfg.n_head,
+                head_dim=cfg.hidden_size // cfg.n_head,
+                la_ratio=getattr(cfg, 'hydra_head_la_ratio', 0.5),
+                learnable_assignment=getattr(cfg, 'hydra_head_learnable_assignment', True),
+                temperature=getattr(cfg, 'hydra_head_temperature', 1.0),
+                causal=True,
+                device=device, dtype=dtype
+            )
+        else:
+            self.hydra_attn = None
+
+        # LCA: latent-condensed attention
+        if getattr(cfg, 'use_lca', False):
+            from ..core.attention import YvLatentCondensedAttention
+            self.lca = YvLatentCondensedAttention(
+                hidden_size=cfg.hidden_size,
+                num_heads=cfg.n_head,
+                head_dim=cfg.hidden_size // cfg.n_head,
+                latent_dim=getattr(cfg, 'lca_latent_dim', 512),
+                condense_factor=getattr(cfg, 'lca_condense_factor', 0.25),
+                use_residual=getattr(cfg, 'lca_use_residual', True),
+                num_kv_heads=getattr(cfg, 'n_kv_head', None),
+                device=device, dtype=dtype
+            )
+        else:
+            self.lca = None
+
         use_stable_gate = getattr(cfg, 'moe_use_stable_gate', True)
+        gate_kwargs = {}
+        if gate is not None:
+            gate_kwargs['gate'] = gate
         if use_stable_gate:
             self.mlp = MoELayer(
                 cfg, device=device, dtype=dtype,
                 max_gpu_experts=getattr(cfg, 'max_gpu_experts', 4),
-                use_stable_gate=True
+                use_stable_gate=True,
+                **gate_kwargs
             )
         else:
             self.mlp = YvDynamicMoELayer(cfg, device=device, dtype=dtype)
+
+        # Phi-Balancing: population-level mirror descent load balancer
+        if getattr(cfg, 'use_phi_balancing', False):
+            from ..moe.gate import YvPhiBalancing
+            self.phi_balancing = YvPhiBalancing(
+                num_experts=getattr(cfg, 'moe_num_experts', 8),
+                momentum=getattr(cfg, 'phi_balancing_momentum', 0.95),
+                lr=getattr(cfg, 'phi_balancing_lr', 0.01),
+                ema_decay=getattr(cfg, 'phi_balancing_ema_decay', 0.99),
+                device=device, dtype=dtype
+            )
+        else:
+            self.phi_balancing = None
             
         self.norm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
         
@@ -1135,7 +1186,10 @@ class YvParallelBlock(nn.Module):
         residual = x
         x_norm = self.norm(x)
 
-        if use_cache:
+        if self.hydra_attn is not None and not use_cache:
+            attn_out = self.hydra_attn(x_norm, mask)
+            present_kv = None
+        elif use_cache:
             attn_out, present_kv = self.attn(
                 x_norm, mask, past_key_values=past_key_values, use_cache=True,
                 extra_kv=subconscious_kv,
@@ -1147,6 +1201,10 @@ class YvParallelBlock(nn.Module):
             )
 
         mlp_out, aux_loss = self.mlp(x_norm)
+
+        # Apply phi-balancing to aux_loss
+        if self.phi_balancing is not None and self.training:
+            aux_loss = aux_loss + self.phi_balancing.get_regularization_loss()
 
         output = residual + self.residual_dropout(self.attn_scale(attn_out) + self.mlp_scale(mlp_out))
 
@@ -1166,7 +1224,8 @@ class YvDeepNormBlock(nn.Module):
         self,
         cfg,
         device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None
+        dtype: Optional[torch.dtype] = None,
+        gate: Optional[nn.Module] = None
     ):
         """Initialize DeepNorm block.
         
@@ -1174,18 +1233,39 @@ class YvDeepNormBlock(nn.Module):
             cfg: Configuration object.
             device: Device for parameters.
             dtype: Data type for parameters.
+            gate: Optional pre-built MoE gate for PathMoE stage sharing.
         """
         super().__init__()
         self.cfg = cfg
         
         self.attn = YvAttention(cfg, device=device, dtype=dtype)
-        
+
+        # HydraHead: head-level FA/LA hybridization
+        if getattr(cfg, 'use_hydra_head', False):
+            from ..core.attention import YvHydraHeadAttention
+            self.hydra_attn = YvHydraHeadAttention(
+                hidden_size=cfg.hidden_size,
+                num_heads=cfg.n_head,
+                head_dim=cfg.hidden_size // cfg.n_head,
+                la_ratio=getattr(cfg, 'hydra_head_la_ratio', 0.5),
+                learnable_assignment=getattr(cfg, 'hydra_head_learnable_assignment', True),
+                temperature=getattr(cfg, 'hydra_head_temperature', 1.0),
+                causal=True,
+                device=device, dtype=dtype
+            )
+        else:
+            self.hydra_attn = None
+
         use_stable_gate = getattr(cfg, 'moe_use_stable_gate', True)
+        gate_kwargs = {}
+        if gate is not None:
+            gate_kwargs['gate'] = gate
         if use_stable_gate:
             self.mlp = MoELayer(
                 cfg, device=device, dtype=dtype,
                 max_gpu_experts=getattr(cfg, 'max_gpu_experts', 4),
-                use_stable_gate=True
+                use_stable_gate=True,
+                **gate_kwargs
             )
         else:
             self.mlp = YvDynamicMoELayer(cfg, device=device, dtype=dtype)
@@ -1198,6 +1278,19 @@ class YvDeepNormBlock(nn.Module):
         )
         
         self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
+
+        # Phi-Balancing: population-level mirror descent load balancer
+        if getattr(cfg, 'use_phi_balancing', False):
+            from ..moe.gate import YvPhiBalancing
+            self.phi_balancing = YvPhiBalancing(
+                num_experts=getattr(cfg, 'moe_num_experts', 8),
+                momentum=getattr(cfg, 'phi_balancing_momentum', 0.95),
+                lr=getattr(cfg, 'phi_balancing_lr', 0.01),
+                ema_decay=getattr(cfg, 'phi_balancing_ema_decay', 0.99),
+                device=device, dtype=dtype
+            )
+        else:
+            self.phi_balancing = None
         
     def forward(
         self,
@@ -1228,7 +1321,10 @@ class YvDeepNormBlock(nn.Module):
 
         residual = x
 
-        if use_cache:
+        if self.hydra_attn is not None and not use_cache:
+            attn_out = self.hydra_attn(x, mask)
+            present_kv = None
+        elif use_cache:
             attn_out, present_kv = self.attn(
                 x, mask, past_key_values=past_key_values, use_cache=True,
                 extra_kv=subconscious_kv,
@@ -1243,6 +1339,11 @@ class YvDeepNormBlock(nn.Module):
         
         residual = x
         mlp_out, aux_loss = self.mlp(x)
+
+        # Apply phi-balancing to aux_loss
+        if self.phi_balancing is not None and self.training:
+            aux_loss = aux_loss + self.phi_balancing.get_regularization_loss()
+
         x = self.deep_norm_mlp(residual, self.residual_dropout(mlp_out))
         
         if use_cache:
@@ -1362,7 +1463,7 @@ class YvTransformerBlock(nn.Module):
     - Quantization support
     """
 
-    def __init__(self, cfg, device=None, dtype=None, quantization_config=None):
+    def __init__(self, cfg, device=None, dtype=None, quantization_config=None, gate=None):
         """Initialize the transformer block.
 
         Args:
@@ -1370,6 +1471,7 @@ class YvTransformerBlock(nn.Module):
             device: Device to place the module on.
             dtype: Data type for the module parameters.
             quantization_config: Configuration for model quantization.
+            gate: Optional pre-built MoE gate for PathMoE stage sharing.
 
         Raises:
             RuntimeError: If quantization setup fails and fallback also fails.
@@ -1378,6 +1480,7 @@ class YvTransformerBlock(nn.Module):
         self.cfg = cfg
         self.cache_manager = None
         self.layer_idx = -1
+        self._moe_gate = gate
         
         self.block_type = getattr(cfg, 'block_type', 'standard')
         self.use_parallel = getattr(cfg, 'use_parallel', False)
@@ -1426,12 +1529,32 @@ class YvTransformerBlock(nn.Module):
         """
         self.attn = YvAttention(cfg, device=device, dtype=dtype)
 
+        # HydraHead: head-level FA/LA hybridization
+        if getattr(cfg, 'use_hydra_head', False):
+            from ..core.attention import YvHydraHeadAttention
+            self.hydra_attn = YvHydraHeadAttention(
+                hidden_size=cfg.hidden_size,
+                num_heads=cfg.n_head,
+                head_dim=cfg.hidden_size // cfg.n_head,
+                la_ratio=getattr(cfg, 'hydra_head_la_ratio', 0.5),
+                learnable_assignment=getattr(cfg, 'hydra_head_learnable_assignment', True),
+                temperature=getattr(cfg, 'hydra_head_temperature', 1.0),
+                causal=True,
+                device=device, dtype=dtype
+            )
+        else:
+            self.hydra_attn = None
+
         use_stable_gate = getattr(cfg, 'moe_use_stable_gate', True)
+        gate_kwargs = {}
+        if getattr(self, '_moe_gate', None) is not None:
+            gate_kwargs['gate'] = self._moe_gate
         if use_stable_gate:
             self.mlp = MoELayer(
                 cfg, device=device, dtype=dtype,
                 max_gpu_experts=getattr(cfg, 'max_gpu_experts', 4),
-                use_stable_gate=True
+                use_stable_gate=True,
+                **gate_kwargs
             )
         else:
             self.mlp = YvDynamicMoELayer(cfg, device=device, dtype=dtype)
@@ -1577,6 +1700,19 @@ class YvTransformerBlock(nn.Module):
         self.use_subconscious = getattr(cfg, 'use_subconscious', False)
         self._subconscious_system = None
 
+        # Phi-Balancing: population-level mirror descent load balancer
+        if getattr(cfg, 'use_phi_balancing', False):
+            from ..moe.gate import YvPhiBalancing
+            self.phi_balancing = YvPhiBalancing(
+                num_experts=getattr(cfg, 'moe_num_experts', 8),
+                momentum=getattr(cfg, 'phi_balancing_momentum', 0.95),
+                lr=getattr(cfg, 'phi_balancing_lr', 0.01),
+                ema_decay=getattr(cfg, 'phi_balancing_ema_decay', 0.99),
+                device=device, dtype=dtype
+            )
+        else:
+            self.phi_balancing = None
+
     def _set_subconscious_system(self, system: Optional[object]) -> None:
         """Set reference to the subconscious system for this forward pass.
 
@@ -1635,7 +1771,10 @@ class YvTransformerBlock(nn.Module):
             device: Device for parameters.
             dtype: Data type for parameters.
         """
-        self.parallel_block = YvParallelBlock(cfg, device=device, dtype=dtype)
+        gate_kwargs = {}
+        if getattr(self, '_moe_gate', None) is not None:
+            gate_kwargs['gate'] = self._moe_gate
+        self.parallel_block = YvParallelBlock(cfg, device=device, dtype=dtype, **gate_kwargs)
 
     def _init_hybrid_ssm(self, cfg, device, dtype):
         """Initialize hybrid SSM layer for linear complexity on long sequences.
@@ -1695,7 +1834,10 @@ class YvTransformerBlock(nn.Module):
             device: Device for parameters.
             dtype: Data type for parameters.
         """
-        self.deepnorm_block = YvDeepNormBlock(cfg, device=device, dtype=dtype)
+        gate_kwargs = {}
+        if getattr(self, '_moe_gate', None) is not None:
+            gate_kwargs['gate'] = self._moe_gate
+        self.deepnorm_block = YvDeepNormBlock(cfg, device=device, dtype=dtype, **gate_kwargs)
 
     def _apply_quantization(self):
         """Apply quantization to linear layers."""
@@ -2037,7 +2179,11 @@ class YvTransformerBlock(nn.Module):
             if got is not None:
                 past_for_attn = got
 
-        if use_cache:
+        if getattr(self, 'hydra_attn', None) is not None and not use_cache:
+            attn_out = self.hydra_attn(x_norm, mask)
+            attn_cache = None
+            present_kv = None
+        elif use_cache:
             attn_out, present_kv = self.attn(
                 x_norm,
                 mask,
@@ -2114,6 +2260,10 @@ class YvTransformerBlock(nn.Module):
                 )
 
         mlp_out, aux_loss = self.mlp(x_norm)
+
+        # Apply phi-balancing to aux_loss
+        if getattr(self, 'phi_balancing', None) is not None and self.training:
+            aux_loss = aux_loss + self.phi_balancing.get_regularization_loss()
         
         if self.use_layerscale:
             mlp_out = self.mlp_layerscale(mlp_out)

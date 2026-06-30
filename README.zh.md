@@ -40,9 +40,7 @@
 <a href="https://modelscope.cn/organization/dunimd" target="_blank">
     <img alt="ModelScope" src="https://img.shields.io/badge/ModelScope-Dunimd-1E6CFF?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTQiIGhlaWdodD0iMTQiIHZpZXdCb3g9IjAgMCAxNCAxNCIgZmlsbD0ibm9uZSIgeG1sbmFtZT0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciPjxwYXRoIGQ9Ik03LjAwNiAwQzMuMTQyIDAgMCAzLjE0MiAwIDcuMDA2UzMuMTQyIDE0LjAxMiA3LjAwNiAxNC4wMTJDMTAuODcgMTQuMDEyIDE0LjAxMiAxMC44NyAxNC4wMTIgNy4wMDZDMTQuMDEyIDMuMTQyIDEwLjg3IDAgNy4wMDYgMFoiIGZpbGw9IiMxRTZDRkYiLz48L3N2Zz4K"/>
 </a>
-<a href="https://gitee.com/dunimd/encre.git" target="_blank">
-    <img alt="Encre Agent" src="https://img.shields.io/badge/Encre_Agent-C71D23?style=flat-square&logo=gitee"/>
-</a>
+
 
 采用 **Yv架构** 的多模态混合专家模型（MoE）框架，支持文本、图像、音频、视频、文档与智能体模态。PiscesL1（PiscesLx 系列，Dunimd团队）提供从 0.5B 到 1T 的可配置架构。本仓库为参考架构设计与可配置超参数的代码实现，不包含已训练的模型权重。
 
@@ -152,7 +150,6 @@ Token级多模态融合系统：
 
 训练支持：
 
-- **EnTA（Encre Train Agent）**：自动化多教师蒸馏管线（Rust 原生后端）
 - **GaLore**：低秩梯度投影，实现内存高效的训练
 - **多比特量化（FP4/INT4/INT8）**：减少内存占用的量化方案
 - **LoRA/QLoRA**：用于微调的低秩适配
@@ -240,7 +237,6 @@ python manage.py help
 | 命令      | 描述                                           |
 |-----------|------------------------------------------------|
 | setup     | 环境安装与依赖配置                             |
-| enta      | **EnTA 自主训练循环**（LLM驱动，多教师）       |
 | train     | 模型训练（支持量化/LoRA/RLHF/GaLore）         |
 | serve     | 启动 OpenAI 兼容的后端推理服务                 |
 | test      | 项目健康检查（8阶段验证）                      |
@@ -254,29 +250,6 @@ python manage.py help
 | cache     | .pisceslx 目录缓存管理                         |
 | publish   | 将模型打包为 Docker 镜像发布                   |
 | help      | 查看帮助信息                                   |
-
-### EnTA 训练
-```bash
-# 列出已配置的教师模型
-python manage.py enta --list_models
-
-# 干跑验证管线
-python manage.py enta --dry_run
-
-# 完整训练（指定教师模型和学生检查点）
-python manage.py enta --teacher deepseek-r1 --model_path ./ckpt/7B.pt
-
-# 启用圆桌讨论和潜意识训练
-python manage.py enta --teacher deepseek-r1 \
-  --aux_teachers "deepseek-v3.2,qwen3.6,agens-2.0-flash" \
-  --model_path ./ckpt/7B.pt
-
-# 从高级阶段开始
-python manage.py enta --enta_stage advanced --max_tasks 10000
-
-# 关闭潜意识（仅训练7B核心）
-python manage.py enta --no_subconscious
-```
 
 ### 快速体验
 ```bash
@@ -413,8 +386,7 @@ python manage.py download
 - 如何恢复训练？`--resume_ckpt path/to/ckpt.pt`（可选 `--reset_lr`）
 - 只有 CPU？可使用 `--device cpu`（性能较慢）。
 - 如何评估模型？`python manage.py benchmark ...`，配合 `--config`、`--seq_len`、`--model` 等参数。
-- EnTA 如何工作？EnTA 是一个 LLM 驱动的多教师蒸馏编排智能体。详见[训练管线](#-训练管线与优化)。
-- 本仓库是否包含训练好的模型权重？不包含。本仓库提供架构、训练管线和推理代码。模型权重需使用 EnTA 管线另行训练。
+- 本仓库是否包含训练好的模型权重？不包含。本仓库提供架构与推理代码。模型权重需另行训练。
 
 ---
 

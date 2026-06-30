@@ -1372,3 +1372,394 @@ class YvMedusaDecoder(nn.Module):
                 pass
         
         return generated_ids, stats
+
+
+class YvDSparkHead(nn.Module):
+    """Markov prediction head for DSpark-style speculative decoding.
+
+    Predicts next token distribution from n-gram history using a lightweight
+    embedding + MLP predictor. Much faster than a full model forward pass.
+
+    Architecture:
+        - nn.Embedding(vocab_size, embed_dim) for token representation
+        - MLP: Linear(embed_dim * markov_order, 512) -> SiLU -> Linear(512, vocab_size)
+
+    Attributes:
+        markov_order (int): N-gram context length for prediction.
+        embedding (nn.Embedding): Token embedding layer.
+        predictor (nn.Sequential): MLP for distribution prediction.
+    """
+
+    def __init__(
+        self,
+        vocab_size: int,
+        markov_order: int = 3,
+        embed_dim: int = 256,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None
+    ):
+        super().__init__()
+        self.markov_order = markov_order
+        self.embedding = nn.Embedding(vocab_size, embed_dim, device=device, dtype=dtype)
+        self.predictor = nn.Sequential(
+            nn.Linear(embed_dim * markov_order, 512, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(512, vocab_size, bias=False, device=device, dtype=dtype)
+        )
+        self._init_weights()
+
+    def _init_weights(self):
+        for module in self.modules():
+            if isinstance(module, nn.Linear):
+                nn.init.normal_(module.weight, std=0.02)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.Embedding):
+                nn.init.normal_(module.weight, std=0.02)
+
+    def forward(self, tokens: torch.Tensor) -> torch.Tensor:
+        """Predict next-token logits from n-gram token history.
+
+        Args:
+            tokens: Token IDs of shape [batch_size, markov_order].
+
+        Returns:
+            Logits of shape [batch_size, vocab_size].
+        """
+        embeds = self.embedding(tokens).view(tokens.size(0), -1)
+        logits = self.predictor(embeds)
+        return logits
+
+
+class YvDSparkSpeculativeDecoder(nn.Module):
+    """DSpark-style speculative decoder with parallel draft generation,
+    Markov prediction head, and confidence-based adaptive draft length.
+
+    Three key innovations over standard speculative decoding:
+      1. Parallel draft generation: generates multiple draft sequences via
+         a lightweight Markov head (not sequential draft model forwards)
+      2. Markov prediction head: predicts next-token distribution from
+         n-gram history — much faster than a full model forward pass
+      3. Confidence scheduling: adjusts draft length based on recent
+         acceptance rate
+
+    Works alongside YvSpeculativeDecoder / YvAdaptiveSpeculativeDecoder;
+    gated by the ``use_dspark`` flag in YvConfig.
+
+    Attributes:
+        markov_head (YvDSparkHead): Fast n-gram prediction head.
+        verifier (YvParallelVerifier): Parallel verification module.
+        current_draft_len (int): Dynamically adjusted draft length.
+        performance_history (List[Dict]): Recent acceptance statistics.
+    """
+
+    def __init__(
+        self,
+        config: Any,
+        model: nn.Module,
+        tokenizer: Optional[Any] = None,
+        on_stats: Optional[Callable[[Dict[str, Any]], None]] = None
+    ):
+        super().__init__()
+        self.config = config
+        self.model = model
+        self.tokenizer = tokenizer
+        self.on_stats = on_stats
+
+        self.dspark_draft_len: int = getattr(config, 'dspark_draft_len', 5)
+        self.dspark_markov_order: int = getattr(config, 'dspark_markov_order', 3)
+        self.dspark_confidence_threshold: float = getattr(config, 'dspark_confidence_threshold', 0.7)
+        self.dspark_parallel_candidates: int = getattr(config, 'dspark_parallel_candidates', 8)
+
+        self.temperature: float = getattr(config, 'speculative_temperature', 0.7)
+        self.top_k: int = getattr(config, 'speculative_top_k', 50)
+        self.top_p: float = getattr(config, 'speculative_top_p', 0.9)
+
+        self.temperature = max(0.1, min(2.0, self.temperature))
+        self.top_k = max(1, min(1000, self.top_k))
+        self.top_p = max(0.1, min(1.0, self.top_p))
+
+        vocab_size = getattr(model.config, 'vocab_size', 65536)
+        device = next(model.parameters()).device
+        dtype = next(model.parameters()).dtype
+
+        self.markov_head = YvDSparkHead(
+            vocab_size=vocab_size,
+            markov_order=self.dspark_markov_order,
+            embed_dim=256,
+            device=device,
+            dtype=dtype,
+        )
+
+        self.verifier = YvParallelVerifier(
+            YvSpeculativeConfig(acceptance_threshold=self.dspark_confidence_threshold),
+            model
+        )
+
+        self.current_draft_len: int = self.dspark_draft_len
+        self.performance_history: List[Dict[str, float]] = []
+
+    @torch.no_grad()
+    def _generate_parallel_drafts(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Generate multiple draft sequences in parallel using the Markov head.
+
+        For each of ``dspark_parallel_candidates`` attempts, auto-regressively
+        generates a full draft sequence with the Markov head.  The candidate
+        with the highest average log-probability (under the Markov head) is
+        selected.
+
+        Args:
+            input_ids: Current sequence [batch_size, seq_len].
+
+        Returns:
+            Best draft sequence [batch_size, draft_len].
+        """
+        batch_size = input_ids.shape[0]
+        draft_len = max(1, self.current_draft_len)
+        context = input_ids[:, -self.dspark_markov_order:]
+
+        all_candidates: List[torch.Tensor] = []
+        all_scores: List[float] = []
+
+        for _ in range(self.dspark_parallel_candidates):
+            draft_tokens: List[torch.Tensor] = []
+            total_log_prob = 0.0
+            cur_context = context.clone()
+
+            for _ in range(draft_len):
+                logits = self.markov_head(cur_context)
+                logits = self._apply_sampling(logits)
+                probs = F.softmax(logits, dim=-1)
+                token = torch.multinomial(probs, num_samples=1)
+                draft_tokens.append(token)
+                tok_prob = probs.gather(1, token).squeeze(-1)
+                total_log_prob = total_log_prob + tok_prob.log().sum().item()
+                cur_context = torch.cat([cur_context[:, 1:], token], dim=1)
+
+            draft_seq = torch.cat(draft_tokens, dim=1)
+            all_candidates.append(draft_seq)
+            all_scores.append(total_log_prob / max(1, draft_len))
+
+        best_idx = max(range(len(all_scores)), key=lambda i: all_scores[i])
+        return all_candidates[best_idx]
+
+    def _apply_sampling(self, logits: torch.Tensor) -> torch.Tensor:
+        """Apply temperature, top-k, and top-p filtering to logits."""
+        if self.temperature > 0:
+            logits = logits / self.temperature
+        if self.top_k > 0:
+            k = min(self.top_k, logits.size(-1))
+            top_k_logits, top_k_indices = torch.topk(logits, k)
+            logits = torch.full_like(logits, float('-inf'))
+            logits.scatter_(-1, top_k_indices, top_k_logits)
+        if self.top_p < 1.0:
+            sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+            cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+            sorted_indices_to_remove = cumulative_probs > self.top_p
+            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
+            sorted_indices_to_remove[..., 0] = 0
+            indices_to_remove = torch.zeros_like(sorted_indices_to_remove, dtype=torch.bool)
+            indices_to_remove.scatter_(-1, sorted_indices, sorted_indices_to_remove)
+            logits[indices_to_remove] = float('-inf')
+        return logits
+
+    @torch.no_grad()
+    def speculative_generate(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        max_length: int = 100,
+        cache_manager: Optional[Any] = None,
+        **model_kwargs
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        """Generate tokens using DSpark-style speculative decoding.
+
+        Main generation loop that:
+          1. Warms up with standard generation until markov_order tokens exist
+          2. Generates parallel draft candidates via Markov head
+          3. Verifies with the target model
+          4. Adjusts draft length via confidence scheduling
+
+        Args:
+            input_ids: Input token IDs [batch_size, seq_len].
+            attention_mask: Optional attention mask.
+            max_length: Maximum sequence length to generate.
+            cache_manager: Optional cache manager.
+            **model_kwargs: Additional model arguments.
+
+        Returns:
+            Tuple of (generated_ids, stats_dict).
+        """
+        batch_size = input_ids.shape[0]
+        device = input_ids.device
+
+        generated_ids = input_ids.clone()
+        stats = {
+            'method': 'dspark',
+            'total_draft_tokens': 0,
+            'accepted_tokens': 0,
+            'rejected_tokens': 0,
+            'draft_acceptance_rate': 0.0,
+            'speedup': 1.0,
+            'iter_accept': [],
+            'total_time_ms': 0.0,
+            'avg_accept_per_iter': 0.0,
+            'max_accept_in_iter': 0,
+            'batch_size': batch_size,
+        }
+        start_time = time.time()
+        past_key_values = None
+        zero_accept_streak = 0
+
+        while generated_ids.shape[1] < max_length:
+            if cache_manager is not None:
+                cached = cache_manager.get_speculative_cache(self.current_draft_len)
+                if cached is not None:
+                    return cached, {'from_cache': True}
+
+            # Warm-up: need at least markov_order context tokens for the head
+            if generated_ids.shape[1] < self.dspark_markov_order:
+                outputs = self.model(generated_ids, attention_mask=attention_mask, **model_kwargs)
+                logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                probs = F.softmax(logits[:, -1, :], dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+                generated_ids = torch.cat([generated_ids, next_token], dim=1)
+                attention_mask = self._extend_attention_mask(attention_mask, generated_ids, device)
+                continue
+
+            draft_ids = self._generate_parallel_drafts(generated_ids)
+            result = self.verifier(generated_ids, draft_ids, past_key_values)
+
+            accepted_ids = result.accepted_ids
+            num_accepted = result.num_accepted
+            past_key_values = result.new_past_key_values
+            generated_ids = torch.cat([generated_ids, accepted_ids], dim=1)
+            attention_mask = self._extend_attention_mask(attention_mask, generated_ids, device, accepted_ids.shape[1])
+
+            stats['total_draft_tokens'] += draft_ids.shape[1]
+            stats['accepted_tokens'] += num_accepted
+            stats['rejected_tokens'] += max(0, draft_ids.shape[1] - num_accepted)
+            stats['iter_accept'].append(int(num_accepted))
+            stats['max_accept_in_iter'] = max(stats['max_accept_in_iter'], int(num_accepted))
+
+            self._confidence_schedule(num_accepted, draft_ids.shape[1])
+
+            if num_accepted == 0:
+                zero_accept_streak += 1
+                if zero_accept_streak >= 3:
+                    fallback_ids, fallback_stats = self._standard_generate(
+                        generated_ids, attention_mask, max_length, **model_kwargs
+                    )
+                    stats.update({k: v for k, v in fallback_stats.items() if k not in stats})
+                    generated_ids = fallback_ids
+                    break
+
+                outputs = self.model(generated_ids, attention_mask=attention_mask, **model_kwargs)
+                logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                probs = F.softmax(logits[:, -1, :], dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+                generated_ids = torch.cat([generated_ids, next_token], dim=1)
+                attention_mask = self._extend_attention_mask(attention_mask, generated_ids, device)
+                stats['accepted_tokens'] += 1
+                stats['iter_accept'][-1] = 1
+                zero_accept_streak = 0
+                continue
+
+            zero_accept_streak = 0
+
+            if generated_ids.shape[1] >= max_length:
+                break
+
+        if stats['total_draft_tokens'] > 0:
+            stats['draft_acceptance_rate'] = stats['accepted_tokens'] / stats['total_draft_tokens']
+            avg_accept = sum(stats['iter_accept']) / max(1, len(stats['iter_accept']))
+            stats['avg_accept_per_iter'] = avg_accept
+            stats['speedup'] = 1.0 + (stats['accepted_tokens'] / max(1, stats['rejected_tokens']))
+
+        stats['total_time_ms'] = (time.time() - start_time) * 1000.0
+        stats['num_iterations'] = len(stats['iter_accept'])
+
+        if cache_manager is not None:
+            cache_manager.set_speculative_cache(self.current_draft_len, generated_ids)
+
+        _LOG.debug(
+            f"[DSpark] draft_len={self.current_draft_len}, "
+            f"accept_rate={stats['draft_acceptance_rate']:.3f}, "
+            f"avg_accept={stats['avg_accept_per_iter']:.1f}, "
+            f"speedup={stats['speedup']:.2f}, "
+            f"time_ms={stats['total_time_ms']:.1f}"
+        )
+
+        if self.on_stats is not None:
+            try:
+                self.on_stats(stats)
+            except Exception:
+                pass
+
+        return generated_ids, stats
+
+    def _confidence_schedule(self, num_accepted: int, draft_len: int):
+        """Adjust draft length based on recent acceptance rate.
+
+        High acceptance increases draft length for higher speedup;
+        low acceptance reduces it to avoid wasted computation.
+        """
+        if draft_len == 0:
+            return
+        accept_rate = num_accepted / draft_len
+        self.performance_history.append({'acceptance_rate': accept_rate})
+        if len(self.performance_history) > 10:
+            self.performance_history.pop(0)
+        avg_rate = sum(h['acceptance_rate'] for h in self.performance_history) / max(1, len(self.performance_history))
+
+        if avg_rate > 0.8:
+            self.current_draft_len = min(self.dspark_draft_len + 3, self.current_draft_len + 1)
+        elif avg_rate < 0.4:
+            self.current_draft_len = max(2, self.current_draft_len - 1)
+
+    def _extend_attention_mask(
+        self,
+        mask: Optional[torch.Tensor],
+        ids: torch.Tensor,
+        device: torch.device,
+        add_len: Optional[int] = None
+    ) -> torch.Tensor:
+        """Extend or create an attention mask."""
+        if mask is None:
+            return torch.ones_like(ids, dtype=torch.long, device=device)
+        if add_len is None:
+            add_len = ids.shape[1] - mask.shape[1]
+        if add_len <= 0:
+            return mask
+        return torch.cat([
+            mask,
+            torch.ones((mask.shape[0], add_len), device=device, dtype=mask.dtype)
+        ], dim=1)
+
+    def _standard_generate(
+        self,
+        input_ids: torch.Tensor,
+        attention_mask: torch.Tensor,
+        max_length: int,
+        **model_kwargs
+    ) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        """Fallback to standard autoregressive generation."""
+        stats: Dict[str, Any] = {'method': 'standard_fallback'}
+        start_time = time.time()
+        current_ids = input_ids
+        current_mask = attention_mask
+
+        while current_ids.shape[1] < max_length:
+            with torch.no_grad():
+                outputs = self.model(current_ids, attention_mask=current_mask, **model_kwargs)
+                logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                probs = F.softmax(logits[:, -1, :], dim=-1)
+                next_token = torch.multinomial(probs, num_samples=1)
+                current_ids = torch.cat([current_ids, next_token], dim=1)
+                current_mask = torch.cat([
+                    current_mask,
+                    torch.ones((current_mask.shape[0], 1), device=current_ids.device, dtype=current_mask.dtype)
+                ], dim=1)
+
+        stats['total_time_ms'] = (time.time() - start_time) * 1000.0
+        return current_ids, stats

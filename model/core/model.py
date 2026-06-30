@@ -214,10 +214,12 @@ from .subconscious import YvSubconsciousSystem
 from .dual_injector import YvDualInjector
 from typing import Optional, Tuple, Dict, Any, List, Union
 from ..reasoning import YvMultiModalReasoningEnhancer
-from ..generation.speculative import YvAdaptiveSpeculativeDecoder, YvSpeculativeConfig
+from ..generation.speculative import YvAdaptiveSpeculativeDecoder, YvDSparkSpeculativeDecoder, YvSpeculativeConfig
 from ..multimodal import (
     YvUnifiedReasoner,
     YvVisionEncoder,
+    YvMoVEVisionEncoder,
+    YvSparseCutRouter,
     YvAudioEncoder,
     YvDocEncoder,
     YvVideoEncoder,
@@ -643,7 +645,7 @@ class YvModel(nn.Module):
                 getattr(self.config, 'n_kv_head', getattr(self.config, 'n_head', 0))
             )
 
-        if getattr(self.config, 'max_position_embeddings', 0) >= 1_048_576 and not hasattr(self.config, 'use_h2o_attention'):
+        if getattr(self.config, 'max_position_embeddings', 0) >= 1_048_576 and not getattr(self.config, 'use_h2o_attention', False):
             setattr(self.config, 'use_h2o_attention', True)
 
         self.quantization_config = quantization_config
@@ -672,10 +674,31 @@ class YvModel(nn.Module):
             self.rotary_emb = None
 
         _LOG.debug(f"YvModel: initializing {cfg.n_layer} transformer layers...")
+
+        # PathMoE: shared gate across layer stages
+        use_path_moe = getattr(cfg, 'use_path_moe', False)
+        path_moe_stage_size = getattr(cfg, 'path_moe_stage_size', 4)
+        path_moe_stage_gate = None
+
         self.layers = nn.ModuleList([])
         for i in range(cfg.n_layer):
             if (i % 4 == 0) or (i == cfg.n_layer - 1):
                 _LOG.debug(f"YvModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
+
+            # PathMoE: (re)create shared gate at stage boundaries
+            if use_path_moe:
+                if i % path_moe_stage_size == 0:
+                    from ..moe.gate import YvStableMoEGate
+                    path_moe_stage_gate = YvStableMoEGate(
+                        cfg.hidden_size, getattr(cfg, 'moe_num_experts', 8),
+                        top_k=getattr(cfg, 'moe_top_k', 2),
+                        device=device, dtype=dtype,
+                        capacity_factor=getattr(cfg, 'moe_capacity_factor', 1.0),
+                        min_capacity=getattr(cfg, 'moe_min_capacity', 4),
+                        prediction_horizon=getattr(cfg, 'moe_prediction_horizon', 10),
+                        enable_dynamic_capacity=getattr(cfg, 'enable_dynamic_capacity', True),
+                        enable_cognitive_density=getattr(cfg, 'enable_cognitive_density', False)
+                    )
 
             layer_config = self.layer_router.get_layer_config(i)
 
@@ -688,21 +711,23 @@ class YvModel(nn.Module):
                         cfg,
                         device=device,
                         dtype=dtype,
-                        quantization_config=self.quantization_config
+                        quantization_config=self.quantization_config,
                     )
                 else:
                     block = YvTransformerBlock(
                         cfg,
                         device=device,
                         dtype=dtype,
-                        quantization_config=self.quantization_config
+                        quantization_config=self.quantization_config,
+                        gate=path_moe_stage_gate if use_path_moe else None,
                     )
             else:
                 block = YvTransformerBlock(
                     cfg,
                     device=device,
                     dtype=dtype,
-                    quantization_config=self.quantization_config
+                    quantization_config=self.quantization_config,
+                    gate=path_moe_stage_gate if use_path_moe else None,
                 )
 
             block.cache_manager = self.cache_manager
@@ -793,7 +818,10 @@ class YvModel(nn.Module):
             self._vision_encoder = None
             self.vision = None
         else:
-            self.vision = YvVisionEncoder(cfg, device=device, dtype=dtype)
+            base_vision = YvVisionEncoder(cfg, device=device, dtype=dtype)
+            self.vision = YvMoVEVisionEncoder(cfg, base_encoder=base_vision, device=device, dtype=dtype) if getattr(cfg, 'use_move_encoder', False) else base_vision
+
+        self.sparse_cut_router = YvSparseCutRouter(cfg) if getattr(cfg, 'use_sparse_cut', False) else None
 
         if self._lazy_init_flags.get('video', False):
             self._video_encoder = None
@@ -891,6 +919,7 @@ class YvModel(nn.Module):
             pass
 
         _LOG.debug("YvModel: initializing speculative decoder...")
+        use_dspark = getattr(cfg, 'use_dspark', False)
         self.speculative_config = YvSpeculativeConfig(
             num_candidates=getattr(cfg, 'speculative_candidates', 4),
             draft_length=getattr(cfg, 'speculative_draft_length', 5),
@@ -901,7 +930,18 @@ class YvModel(nn.Module):
             tree_width=getattr(cfg, 'speculative_tree_width', 4),
             tree_depth=getattr(cfg, 'speculative_tree_depth', 5)
         )
-        self.speculative_decoder = YvAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
+        if use_dspark:
+            from ..generation.speculative import YvDSparkSpeculativeDecoder
+            self.speculative_decoder = YvDSparkSpeculativeDecoder(
+                self.speculative_config,
+                self,
+                ngram_vocab_size=getattr(cfg, 'dspark_ngram_vocab_size', cfg.vocab_size),
+                markov_order=getattr(cfg, 'dspark_markov_order', 5),
+                parallel_candidates=getattr(cfg, 'dspark_parallel_candidates', 3),
+                draft_length=getattr(cfg, 'speculative_draft_length', 5),
+            )
+        else:
+            self.speculative_decoder = YvAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
 
         try:
             for k in ("speculative_decoder",):
@@ -926,6 +966,8 @@ class YvModel(nn.Module):
         if use_scaled_init and initializer_range != 0.02:
             scaled_std = initializer_range / math.sqrt(cfg.n_layer)
             for module in self.modules():
+                if isinstance(module, (nn.LayerNorm, nn.Embedding)):
+                    continue
                 if hasattr(module, 'weight') and module.weight is not None:
                     if module.weight.dim() >= 2:
                         nn.init.normal_(module.weight, mean=0, std=scaled_std)
@@ -994,7 +1036,8 @@ class YvModel(nn.Module):
     def _lazy_get_vision_encoder(self):
         if self.vision is None and self._lazy_init_flags.get('vision', False):
             if not self._lazy_initialized.get('vision', False):
-                self.vision = YvVisionEncoder(self.cfg, device=self._device, dtype=self._dtype)
+                base_vision = YvVisionEncoder(self.cfg, device=self._device, dtype=self._dtype)
+                self.vision = YvMoVEVisionEncoder(self.cfg, base_encoder=base_vision, device=self._device, dtype=self._dtype) if getattr(self.cfg, 'use_move_encoder', False) else base_vision
                 self._lazy_initialized['vision'] = True
         return self.vision
 
@@ -1046,6 +1089,7 @@ class YvModel(nn.Module):
             getattr(self, 'reasoner', None),
             getattr(self, 'mm_reasoning_enhancer', None),
             getattr(self, 'cache_manager', None),
+            getattr(self, 'sparse_cut_router', None),
         ]
 
         for m in modules:
@@ -1100,6 +1144,9 @@ class YvModel(nn.Module):
         )
         new_lm_head.weight.data[:num_to_copy, :] = old_lm_head.weight.data[:num_to_copy, :]
         self.lm_head = new_lm_head
+
+        if getattr(self.cfg, 'tie_word_embeddings', False):
+            self.lm_head.weight = self.embed.weight
 
         if hasattr(self.reasoner, 'resize_vocab'):
             self.reasoner.resize_vocab(new_num_tokens)
@@ -1574,6 +1621,8 @@ class YvModel(nn.Module):
 
         if images is not None:
             img_out = self.vision(images)
+            if self.sparse_cut_router is not None:
+                img_out = self.sparse_cut_router(img_out)
             modal_features['image'] = (
                 img_out['features'] if isinstance(img_out, dict) and 'features' in img_out else img_out
             )
@@ -1742,7 +1791,7 @@ class YvModel(nn.Module):
 
                 if self.use_dual_inject and self.dual_injector is not None:
                     pass
-                elif self.use_subconscious and self.subconscious is not None and i == 0:
+                elif self.use_subconscious and self.subconscious is not None:
                     self.subconscious(x_chunk)
                     for layer in self.layers:
                         if hasattr(layer, '_set_subconscious_system'):

@@ -27,7 +27,7 @@ CLAUDE.md
 .vscode/
 .idea/
 .pisceslx/
-.encre/
+
 temp_filelist.txt
 *.swp
 *.swo

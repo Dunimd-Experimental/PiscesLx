@@ -48,7 +48,7 @@ Key Design:
     - Volatile: knowledge is retrieved fresh each forward pass (like RAM)
     - Navigation-based: 0.5B head learns to "go to" the right knowledge
     - Parallel to context: subconscious channel is orthogonal to 1M context
-    - Trainable via RL (EnTA): reward = improvement in 7B reasoning quality
+    - Trainable via RL: reward = improvement in 7B reasoning quality
 
 Memory Addressing Analogy:
     1M context = RAM (persistent, organized, addressable by position)
@@ -126,7 +126,7 @@ class YvImplicitKnowledgeField(nn.Module):
 
         # Codebook parameters: [num_heads, num_codebooks, codebook_size, codebook_dim]
         # Total params: num_heads * num_codebooks * codebook_size * codebook_dim
-        # = 8 * 16 * 131072 * 128 ≈ 0.214B
+        # = 8 * 16 * 131072 * 128 ≈ 2.147B
         self.codebooks = nn.Parameter(
             torch.randn(num_heads, num_codebooks, codebook_size, codebook_dim, device=device, dtype=dtype)
             * 0.02

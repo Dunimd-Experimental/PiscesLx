@@ -5253,6 +5253,16 @@ class YvAttention(nn.Module):
         self.use_eg_mla = bool(getattr(cfg, 'use_eg_mla', False))
         self.use_duo_attention = bool(getattr(cfg, 'use_duo_attention', False))
 
+        self.use_hydra_head = bool(getattr(cfg, 'use_hydra_head', False))
+        self.hydra_head_la_ratio = float(getattr(cfg, 'hydra_head_la_ratio', 0.5))
+        self.hydra_head_learnable_assignment = bool(getattr(cfg, 'hydra_head_learnable_assignment', True))
+        self.hydra_head_temperature = float(getattr(cfg, 'hydra_head_temperature', 1.0))
+
+        self.use_lca = bool(getattr(cfg, 'use_lca', False))
+        self.lca_latent_dim = int(getattr(cfg, 'lca_latent_dim', 512))
+        self.lca_condense_factor = float(getattr(cfg, 'lca_condense_factor', 0.25))
+        self.lca_use_residual = bool(getattr(cfg, 'lca_use_residual', True))
+
         if self.use_moba_attention:
             assert not (self.use_mla or self.use_eg_mla or self.use_duo_attention), (
                 "MoBA is mutually exclusive with MLA/EG-MLA/DuoAttention in YvAttention"
@@ -5338,6 +5348,33 @@ class YvAttention(nn.Module):
                 streaming_buffer_size=getattr(cfg, 'duo_attention_buffer_size', 1024),
                 device=device,
                 dtype=dtype
+            )
+
+        if self.use_hydra_head:
+            self.hydra_attention = YvHydraHeadAttention(
+                hidden_size=cfg.hidden_size,
+                num_heads=cfg.n_head,
+                head_dim=self.head_dim,
+                la_ratio=self.hydra_head_la_ratio,
+                learnable_assignment=self.hydra_head_learnable_assignment,
+                temperature=self.hydra_head_temperature,
+                causal=True,
+                attention_dropout=getattr(cfg, 'attention_dropout', 0.0),
+                device=device,
+                dtype=dtype,
+            )
+
+        if self.use_lca:
+            self.lca_attention = YvLatentCondensedAttention(
+                hidden_size=cfg.hidden_size,
+                num_heads=cfg.n_head,
+                head_dim=self.head_dim,
+                latent_dim=self.lca_latent_dim,
+                condense_factor=self.lca_condense_factor,
+                use_residual=self.lca_use_residual,
+                num_kv_heads=self.n_kv_head,
+                device=device,
+                dtype=dtype,
             )
 
         self.fused_qkv = bool(getattr(cfg, 'fused_qkv', True))
@@ -5633,6 +5670,15 @@ class YvAttention(nn.Module):
                 return duo_result
             return duo_result[0]
 
+        if self.use_hydra_head:
+            hydra_out = self.hydra_attention(
+                hidden_states=x,
+                attention_mask=mask,
+            )
+            if use_cache:
+                return hydra_out, None
+            return hydra_out
+
         if self.use_moba_attention:
             moba_out = self.moba_attention(
                 hidden_states=x,
@@ -5745,6 +5791,14 @@ class YvAttention(nn.Module):
             # Decompress keys and values from the shared low-rank latent
             k = self.k_decompress(kv_latent).view(b, kv_len, self.n_kv_head, self.head_dim).transpose(1, 2)
             v = self.v_decompress(kv_latent).view(b, kv_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+
+            # LCA: optional latent condensation for KV cache reduction
+            if self.use_lca and hasattr(self, 'lca_attention'):
+                from torch.nn.functional import scaled_dot_product_attention as _sdpa
+                k_condensed, v_condensed = self.lca_attention.condense_kv(k, v, hidden_states=x)
+                k = k_condensed
+                v = v_condensed
+                kv_len = k.shape[2]
 
             # Hard knowledge injection: prepend extra KV tokens to the keys/values.
             # These tokens participate in attention but are NOT written to KV cache.
@@ -6040,3 +6094,285 @@ class YvAttention(nn.Module):
             return out, (k_cache, v_cache)
 
         return out
+
+
+class YvHydraHeadAttention(nn.Module):
+    """
+    HydraHead: Head-level FA/LA hybridization.
+
+    Splits attention heads into Flash Attention (FA) and Linear Attention (LA)
+    groups. FA heads use standard softmax attention (O(n^2)) for local precision,
+    LA heads use linear attention (O(n)) for long-range patterns.
+
+    The assignment can be:
+      - Static: first N heads are LA based on hydra_head_la_ratio
+      - Learned: per-token gating via a learnable assignment network
+
+    Reference:
+        "HydraHead: Dynamic Head-Level Attention Hybridization" (arXiv 2026, DeepSeek)
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        head_dim: int,
+        la_ratio: float = 0.5,
+        learnable_assignment: bool = True,
+        temperature: float = 1.0,
+        causal: bool = True,
+        attention_dropout: float = 0.0,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.la_ratio = la_ratio
+        self.learnable_assignment = learnable_assignment
+        self.temperature = temperature
+        self.causal = causal
+        self.attention_dropout = attention_dropout
+        self.scale = head_dim ** -0.5
+
+        self.num_la_heads = max(1, int(num_heads * la_ratio))
+        self.num_fa_heads = num_heads - self.num_la_heads
+
+        self.fa_q_proj = nn.Linear(hidden_size, self.num_fa_heads * head_dim, bias=False, device=device, dtype=dtype)
+        self.fa_k_proj = nn.Linear(hidden_size, self.num_fa_heads * head_dim, bias=False, device=device, dtype=dtype)
+        self.fa_v_proj = nn.Linear(hidden_size, self.num_fa_heads * head_dim, bias=False, device=device, dtype=dtype)
+
+        self.la_q_proj = nn.Linear(hidden_size, self.num_la_heads * head_dim, bias=False, device=device, dtype=dtype)
+        self.la_k_proj = nn.Linear(hidden_size, self.num_la_heads * head_dim, bias=False, device=device, dtype=dtype)
+        self.la_v_proj = nn.Linear(hidden_size, self.num_la_heads * head_dim, bias=False, device=device, dtype=dtype)
+
+        self.o_proj = nn.Linear(num_heads * head_dim, hidden_size, bias=False, device=device, dtype=dtype)
+
+        if learnable_assignment:
+            self.head_gate = nn.Sequential(
+                nn.Linear(hidden_size, num_heads, bias=False, device=device, dtype=dtype),
+            )
+        else:
+            self.head_gate = None
+
+    def _linear_attention(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """Linear attention with ELU+1 feature map (O(n) complexity)."""
+        q = F.elu(q) + 1.0
+        k = F.elu(k) + 1.0
+
+        if self.causal:
+            kv = torch.einsum("bhnk,bhnd->bnhd", k, v)
+            denom = k.sum(dim=-2)
+            output = []
+            for i in range(q.shape[-2]):
+                if i > 0:
+                    kv = kv + torch.einsum("bhnk,bhnd->bnhd", k[:, :, i : i + 1], v[:, :, i : i + 1])
+                    denom = denom + k[:, :, i : i + 1].squeeze(-2)
+                output.append(torch.einsum("bhnk,bhnd->bnhd", q[:, :, i : i + 1], kv) / (denom.unsqueeze(-2) + 1e-6))
+            out = torch.cat(output, dim=-2)
+        else:
+            kv = torch.einsum("bhnk,bhnd->bkhd", k, v)
+            denom = k.sum(dim=-2)
+            out = torch.einsum("bhnk,bhnd->bnhd", q, kv) / (denom.unsqueeze(-2) + 1e-6)
+
+        return out
+
+    def forward(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        batch, seq_len, _ = hidden_states.shape
+
+        if self.learnable_assignment and self.head_gate is not None:
+            gate_logits = self.head_gate(hidden_states.mean(dim=1))
+            gate_logits[:, : self.num_la_heads] = gate_logits[:, : self.num_la_heads] + self.temperature
+            assignment = torch.softmax(gate_logits / self.temperature, dim=-1)
+            la_weights = assignment[:, : self.num_la_heads]
+            fa_weights = assignment[:, self.num_la_heads :]
+        else:
+            la_weights = None
+            fa_weights = None
+
+        fa_out = None
+        if self.num_fa_heads > 0:
+            fq = self.fa_q_proj(hidden_states).view(batch, seq_len, self.num_fa_heads, self.head_dim).transpose(1, 2)
+            fk = self.fa_k_proj(hidden_states).view(batch, seq_len, self.num_fa_heads, self.head_dim).transpose(1, 2)
+            fv = self.fa_v_proj(hidden_states).view(batch, seq_len, self.num_fa_heads, self.head_dim).transpose(1, 2)
+
+            fq_flat = fq.reshape(batch * self.num_fa_heads, seq_len, self.head_dim)
+            fk_flat = fk.reshape(batch * self.num_fa_heads, seq_len, self.head_dim)
+            fv_flat = fv.reshape(batch * self.num_fa_heads, seq_len, self.head_dim)
+
+            fa_out_flat = F.scaled_dot_product_attention(
+                fq_flat, fk_flat, fv_flat,
+                attn_mask=attention_mask,
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                is_causal=self.causal and attention_mask is None,
+                scale=self.scale,
+            )
+            fa_out = fa_out_flat.view(batch, self.num_fa_heads, seq_len, self.head_dim).transpose(1, 2).reshape(batch, seq_len, -1)
+
+        la_out = None
+        if self.num_la_heads > 0:
+            lq = self.la_q_proj(hidden_states).view(batch, seq_len, self.num_la_heads, self.head_dim).transpose(1, 2)
+            lk = self.la_k_proj(hidden_states).view(batch, seq_len, self.num_la_heads, self.head_dim).transpose(1, 2)
+            lv = self.la_v_proj(hidden_states).view(batch, seq_len, self.num_la_heads, self.head_dim).transpose(1, 2)
+
+            la_out_raw = self._linear_attention(lq, lk, lv, attention_mask)
+            la_out = la_out_raw.transpose(1, 2).reshape(batch, seq_len, -1)
+
+        if fa_out is not None and la_out is not None:
+            output = torch.cat([fa_out, la_out], dim=-1)
+        elif fa_out is not None:
+            output = F.pad(fa_out, (0, self.num_la_heads * self.head_dim))
+        else:
+            output = F.pad(la_out, (self.num_fa_heads * self.head_dim, 0))
+
+        if la_weights is not None or fa_weights is not None:
+            if la_weights is not None and la_out is not None and fa_out is not None:
+                fa_part = output[:, :, : self.num_fa_heads * self.head_dim]
+                la_part = output[:, :, self.num_fa_heads * self.head_dim :]
+                fa_scale = fa_weights.mean(dim=-1, keepdim=True).unsqueeze(-1)
+                la_scale = la_weights.mean(dim=-1, keepdim=True).unsqueeze(-1)
+                output = torch.cat([fa_part * fa_scale, la_part * la_scale], dim=-1)
+
+        output = self.o_proj(output)
+        return output
+
+
+class YvLatentCondensedAttention(nn.Module):
+    """
+    LCA: Latent-Condensed Attention for efficient long-context LLMs.
+
+    Condenses K,V into a smaller latent space via a learned projection,
+    computes attention in the condensed latent space, then expands back
+    to the original space. This reduces prefill cost and KV cache size.
+
+    Works in MLA (Multi-head Latent Attention) space as a pre/post processor.
+
+    Reference:
+        "LCA: Latent-Condensed Attention for Efficient Long-Context LLMs" (arXiv 2026)
+    """
+
+    def __init__(
+        self,
+        hidden_size: int,
+        num_heads: int,
+        head_dim: int,
+        latent_dim: int = 512,
+        condense_factor: float = 0.25,
+        use_residual: bool = True,
+        num_kv_heads: Optional[int] = None,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+    ):
+        super().__init__()
+        self.hidden_size = hidden_size
+        self.num_heads = num_heads
+        self.head_dim = head_dim
+        self.latent_dim = latent_dim
+        self.condense_factor = condense_factor
+        self.use_residual = use_residual
+        self.num_kv_heads = num_kv_heads or num_heads
+        self.scale = head_dim ** -0.5
+
+        self.kv_condense = nn.Linear(
+            self.num_kv_heads * head_dim, latent_dim, bias=False, device=device, dtype=dtype
+        )
+        self.k_expand = nn.Linear(
+            latent_dim, self.num_kv_heads * head_dim, bias=False, device=device, dtype=dtype
+        )
+        self.v_expand = nn.Linear(
+            latent_dim, self.num_kv_heads * head_dim, bias=False, device=device, dtype=dtype
+        )
+
+        if use_residual:
+            self.residual_gate = nn.Linear(
+                hidden_size, latent_dim, bias=False, device=device, dtype=dtype
+            )
+
+    def condense_kv(
+        self,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        hidden_states: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Condense K,V into latent space.
+
+        Args:
+            k: Key tensor [batch, n_kv_heads, seq_len, head_dim].
+            v: Value tensor [batch, n_kv_heads, seq_len, head_dim].
+            hidden_states: Optional original hidden states for residual connection.
+
+        Returns:
+            Tuple of (condensed_k, condensed_v) in latent space [batch, seq_len, latent_dim].
+        """
+        batch, n_kv, seq_len, hd = k.shape
+        k_flat = k.transpose(1, 2).reshape(batch, seq_len, n_kv * hd)
+        v_flat = v.transpose(1, 2).reshape(batch, seq_len, n_kv * hd)
+
+        kv_combined = (k_flat + v_flat) / 2.0
+        latent = self.kv_condense(kv_combined)
+
+        if self.use_residual and hidden_states is not None:
+            gate = torch.sigmoid(self.residual_gate(hidden_states))
+            latent = latent + gate * latent
+
+        k_latent = self.k_expand(latent).view(batch, seq_len, n_kv, hd).transpose(1, 2)
+        v_latent = self.v_expand(latent).view(batch, seq_len, n_kv, hd).transpose(1, 2)
+
+        return k_latent, v_latent
+
+    def forward(
+        self,
+        query: torch.Tensor,
+        key: torch.Tensor,
+        value: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        hidden_states: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Forward pass with latent condensation.
+
+        Args:
+            query: Query tensor [batch, n_head, seq_len, head_dim].
+            key: Key tensor [batch, n_kv_heads, seq_len, head_dim].
+            value: Value tensor [batch, n_kv_heads, seq_len, head_dim].
+            attention_mask: Optional attention mask.
+            hidden_states: Optional original hidden states for residual.
+
+        Returns:
+            Tuple of (output, condensed_key, condensed_value).
+            output has shape [batch, n_head, seq_len, head_dim].
+        """
+        k_latent, v_latent = self.condense_kv(key, value, hidden_states)
+
+        b, n_h, t, hd = query.shape
+        n_kv = k_latent.shape[1]
+
+        if n_kv != n_h:
+            repeat = n_h // n_kv
+            k_latent = k_latent.repeat_interleave(repeat, dim=1)
+            v_latent = v_latent.repeat_interleave(repeat, dim=1)
+
+        q_flat = query.reshape(b * n_h, t, hd)
+        k_flat = k_latent.reshape(b * n_h, k_latent.shape[2], hd)
+        v_flat = v_latent.reshape(b * n_h, v_latent.shape[2], hd)
+
+        output_flat = F.scaled_dot_product_attention(
+            q_flat, k_flat, v_flat,
+            attn_mask=attention_mask,
+            dropout_p=0.0,
+            is_causal=attention_mask is None,
+            scale=self.scale,
+        )
+        output = output_flat.view(b, n_h, t, hd)
+
+        return output, k_latent, v_latent

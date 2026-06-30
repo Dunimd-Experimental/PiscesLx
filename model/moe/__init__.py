@@ -117,7 +117,7 @@ Note:
     Expert count and top-k should be tuned based on computational budget.
 """
 
-from .gate import YvMoEGate, moe_init_weights
+from .gate import YvMoEGate, YvPathMoEGate, YvPhiBalancing, moe_init_weights
 from .layer import (
     YvDynamicMoELayer,
     YvExpertChoiceRouter,
@@ -152,6 +152,8 @@ from .regularization import YvRegularizationConfig, YvExpertDiversityRegularizer
 
 __all__ = [
     "YvMoEGate",
+    "YvPathMoEGate",
+    "YvPhiBalancing",
     "moe_init_weights",
     "YvDynamicMoELayer",
     "YvExpertChoiceRouter",

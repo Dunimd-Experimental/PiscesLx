@@ -1,0 +1,65 @@
+{
+  "name": "EnTA",
+  "background": "An agentic environment with 31 built-in tools for file operations, code search, bash execution, git operations, web search/fetch, task management, memory, and more. The model learns to plan, reason, and act using these tools in a sandboxed execution environment.",
+  "entities": [
+    {
+      "name": "file_read",
+      "description": "Read file contents from the filesystem",
+      "attrs": {},
+      "opts": [{"name": "file_read", "description": "Read a file with optional offset/limit"}]
+    },
+    {
+      "name": "file_write",
+      "description": "Write content to a file",
+      "attrs": {},
+      "opts": [{"name": "file_write", "description": "Create or overwrite a file"}]
+    },
+    {
+      "name": "file_edit",
+      "description": "Apply edits to existing files",
+      "attrs": {},
+      "opts": [{"name": "file_edit", "description": "Apply a partial edit to a file"}]
+    },
+    {
+      "name": "bash",
+      "description": "Execute shell commands in a sandbox",
+      "attrs": {},
+      "opts": [{"name": "bash", "description": "Run a command with optional timeout"}]
+    },
+    {
+      "name": "web_search",
+      "description": "Search the web for information",
+      "attrs": {},
+      "opts": [{"name": "web_search", "description": "Query a web search engine"}]
+    },
+    {
+      "name": "web_fetch",
+      "description": "Fetch content from a URL",
+      "attrs": {},
+      "opts": [{"name": "web_fetch", "description": "Download and parse a URL"}]
+    },
+    {
+      "name": "git_tool",
+      "description": "Execute git operations",
+      "attrs": {},
+      "opts": [{"name": "git_tool", "description": "Run git commands"}]
+    },
+    {
+      "name": "glob",
+      "description": "Find files by glob pattern",
+      "attrs": {},
+      "opts": [{"name": "glob", "description": "Search files with a pattern"}]
+    },
+    {
+      "name": "grep",
+      "description": "Search file contents with regex",
+      "attrs": {},
+      "opts": [{"name": "grep", "description": "Search files for a pattern"}]
+    }
+  ],
+  "task_preference": {
+    "num_entities": 5,
+    "num_opts": 10,
+    "relation_difficulty": 3
+  }
+}

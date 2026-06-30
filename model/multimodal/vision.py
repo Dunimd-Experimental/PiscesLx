@@ -2205,3 +2205,148 @@ class YvVideoUnderstandingProcessor(nn.Module):
             'spatial_shape': (H // encoder.patch_size, W // encoder.patch_size),
         }
         return result
+
+
+class YvMoVEVisionEncoder(nn.Module):
+    """Mixture of Vision Encoders (MoVE) — runs multiple vision backbones
+    and routes each token to the best encoder via learned gating.
+
+    When only one encoder is configured, acts as a zero-overhead pass-through.
+
+    Config flags:
+        use_move_encoder (bool): Enable MoVE wrapping.
+        move_encoder_list (List[str]): Names of encoders to ensemble,
+            e.g. ["siglip", "vit"] or ["siglip"].
+        move_top_k (int): Number of top experts to route each token to.
+    """
+
+    _ENCODER_REGISTRY: Dict[str, type] = {
+        'siglip': YvSigLIPVisionEncoder,
+        'vit': YvVisionEncoder,
+    }
+
+    def __init__(self, cfg, base_encoder: Optional[nn.Module] = None,
+                 device: Optional[torch.device] = None,
+                 dtype: Optional[torch.dtype] = None):
+        super().__init__()
+        self.cfg = cfg
+        self.enabled = getattr(cfg, 'use_move_encoder', False)
+        self.encoder_names: List[str] = list(dict.fromkeys(
+            getattr(cfg, 'move_encoder_list', ['siglip'])
+        ))
+        self.top_k = min(
+            getattr(cfg, 'move_top_k', 1),
+            len(self.encoder_names)
+        )
+
+        self.base_encoder = base_encoder
+        self.extra_encoders = nn.ModuleDict()
+
+        if not self.enabled or len(self.encoder_names) <= 1:
+            return
+
+        for name in self.encoder_names:
+            if name not in self._ENCODER_REGISTRY:
+                raise ValueError(
+                    f"Unknown vision encoder '{name}'. "
+                    f"Available: {list(self._ENCODER_REGISTRY)}"
+                )
+        default_name = self.encoder_names[0]
+
+        for name in self.encoder_names:
+            if name == default_name and base_encoder is not None:
+                self.extra_encoders[name] = base_encoder
+            else:
+                cls = self._ENCODER_REGISTRY[name]
+                self.extra_encoders[name] = cls(cfg)
+
+        hidden = getattr(cfg, 'hidden_size', 1536)
+        self.gate = nn.Sequential(
+            nn.Linear(hidden, hidden // 4),
+            nn.GELU(),
+            nn.Linear(hidden // 4, len(self.encoder_names)),
+        )
+
+    def forward(self, pixel_values: torch.Tensor, **kwargs) -> Dict[str, torch.Tensor]:
+        if not self.enabled or len(self.encoder_names) <= 1:
+            if self.base_encoder is not None:
+                return self.base_encoder(pixel_values, **kwargs)
+            single = self.extra_encoders[list(self.extra_encoders.keys())[0]]
+            return single(pixel_values, **kwargs)
+
+        encoder_outputs = {}
+        for name, enc in self.extra_encoders.items():
+            out = enc(pixel_values, **kwargs)
+            encoder_outputs[name] = out
+
+        ref_out = encoder_outputs[self.encoder_names[0]]
+        features = ref_out['patch_features']
+        B, N, D = features.shape
+
+        routing_logits = self.gate(features)
+        routing_weights = torch.sigmoid(routing_logits)
+
+        top_k_weights, top_k_indices = torch.topk(routing_weights, self.top_k, dim=-1)
+        routing_mask = torch.zeros_like(routing_weights)
+        routing_mask.scatter_(-1, top_k_indices, top_k_weights)
+
+        routed = torch.zeros_like(features)
+        names_list = self.encoder_names
+        for i, name in enumerate(names_list):
+            enc_out = encoder_outputs[name]
+            enc_feat = enc_out['patch_features']
+            weight = routing_mask[..., i:i+1]
+            routed = routed + weight * enc_feat
+
+        result = dict(ref_out)
+        glob = routed.mean(dim=1, keepdim=True)
+        result['features'] = glob
+        result['patch_features'] = routed
+        return result
+
+
+class YvSparseCutRouter(nn.Module):
+    """SparseCut — token-level sparse routing that retains only the top-K
+    most informative visual tokens after vision encoding.
+
+    Uses a learned scalar importance score per token and keeps the highest-
+    scoring tokens for downstream processing.
+
+    Config flags:
+        use_sparse_cut (bool): Enable SparseCut routing.
+        sparse_cut_ratio (float): Fraction of tokens to keep (default 0.5).
+    """
+
+    def __init__(self, cfg, hidden_size: Optional[int] = None):
+        super().__init__()
+        self.enabled = getattr(cfg, 'use_sparse_cut', False)
+        self.ratio = getattr(cfg, 'sparse_cut_ratio', 0.5)
+        hs = hidden_size or getattr(cfg, 'hidden_size', 1536)
+        self.scorer = nn.Linear(hs, 1)
+
+    def forward(self, encoder_output: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+        if not self.enabled:
+            return encoder_output
+
+        patch_feats = encoder_output.get('patch_features', encoder_output.get('features'))
+        if patch_feats is None:
+            return encoder_output
+
+        B, N, D = patch_feats.shape
+        k = max(1, int(N * self.ratio))
+
+        scores = self.scorer(patch_feats).squeeze(-1)
+        importance = torch.sigmoid(scores)
+
+        topk_vals, topk_idx = torch.topk(importance, k, dim=-1, sorted=False)
+        selected = torch.stack([
+            patch_feats[b, topk_idx[b], :] for b in range(B)
+        ], dim=0)
+
+        result = dict(encoder_output)
+        result['patch_features'] = selected
+        result['sparse_cut_indices'] = topk_idx
+        result['sparse_cut_scores'] = topk_vals
+        if 'features' in result:
+            result['features'] = selected.mean(dim=1, keepdim=True)
+        return result
