@@ -38,7 +38,7 @@ Key Innovation:
 
 Reference:
     OpenAI o1/o3 Technical Reports (2025)
-    DeepSeek R1 Technical Report (arXiv:2402.03300)
+    DeepSeek R1 Technical Report (arXiv:2501.12948)
 
 Supported Verifiers:
     - Code: Execute test cases, check outputs

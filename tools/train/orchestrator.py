@@ -1314,38 +1314,188 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         3. Creates a YvEntaTrainer
         4. Enters the outer loop: generate -> train -> evaluate -> update
         5. Returns a summary dict with training results
+
+        When ``--jsonlines`` is set in params, structured JSON progress
+        messages are written to stdout for consumption by the EnTA CLI.
+        Supports stdin command protocol: pause/resume/stop/talk/endtalk.
         """
+        jsonlines = bool(params.get("jsonlines", False))
+        if jsonlines:
+            self._enable_jsonlines_mode()
+
         _LOG.info("=== EnTA outer training loop started ===")
+        self._emit_jsonline(jsonlines, {
+            "type": "log", "level": "info",
+            "message": "EnTA outer training loop started",
+        })
+        self._emit_jsonline(jsonlines, {
+            "type": "status", "status": "initializing",
+            "detail": "Starting EnTA training pipeline...",
+        })
+
+        # ── Stdin command listener (background thread) ─────────────
+        import threading
+        import sys as _sys
+
+        _paused = threading.Event()
+        _stopped = threading.Event()
+        _talk_target: list[str | None] = [None]  # thread-safe box
+        _talk_buffer: list[str] = []
+
+        def _stdin_listener():
+            """Read JSON command lines from stdin and set flags."""
+            try:
+                for _raw in _sys.stdin:
+                    _raw = _raw.strip()
+                    if not _raw:
+                        continue
+                    try:
+                        import json as _json
+                        _cmd = _json.loads(_raw)
+                    except Exception:
+                        continue
+                    _ctype = _cmd.get("type")
+                    if _ctype == "command":
+                        _c = _cmd.get("command", "")
+                        if _c == "pause":
+                            _paused.set()
+                        elif _c == "resume":
+                            _paused.clear()
+                        elif _c == "stop":
+                            _stopped.set()
+                        elif _c == "talk":
+                            _talk_target[0] = _cmd.get("target", "main")
+                            _LOG.info("Entered talk mode with target: %s", _talk_target[0])
+                        elif _c == "endtalk":
+                            _talk_target[0] = None
+                            _LOG.info("Exited talk mode")
+                    elif _ctype == "talk" and _talk_target[0] is not None:
+                        _talk_buffer.append(_cmd.get("text", ""))
+            except Exception:
+                pass
+
+        _listener = threading.Thread(target=_stdin_listener, daemon=True)
+        _listener.start()
 
         # Step 1: Startup questionnaire for model layout
+        self._emit_jsonline(jsonlines, {
+            "type": "status", "status": "initializing",
+            "detail": "Running EntaIntake startup questionnaire...",
+        })
         from model.agentic.enta.intake import EntaIntake
         intake = EntaIntake(config_path=params.get("enta_config", "configs/teachers.yaml"))
         intake.ensure_layout()
 
         # Step 2: Load EnTA config from teachers.yaml
+        self._emit_jsonline(jsonlines, {
+            "type": "status", "status": "initializing",
+            "detail": "Loading EnTA config from teachers.yaml...",
+        })
         from model.config import YvEntaConfig
         enta_cfg = YvEntaConfig.from_yaml(params.get("enta_config", "configs/teachers.yaml"))
 
         # Step 3: Create YvEntaTrainer (outer-loop mode -- no model attached)
+        self._emit_jsonline(jsonlines, {
+            "type": "status", "status": "initializing",
+            "detail": "Creating YvEntaTrainer...",
+        })
         from model.agentic.enta import YvEntaTrainer
         trainer = YvEntaTrainer(cfg=enta_cfg)
+
+        total_iterations = getattr(enta_cfg, "max_iterations", 8)
+        self._emit_jsonline(jsonlines, {
+            "type": "phase", "phase": "init",
+            "iteration": 0, "total_iterations": total_iterations,
+        })
+        self._emit_jsonline(jsonlines, {
+            "type": "status", "status": "model_ready",
+            "detail": f"EnTA ready. Planning {total_iterations} iterations...",
+        })
+
+        # Generate and emit the training plan
+        _plan = self._generate_enta_plan(trainer, total_iterations)
+        self._emit_jsonline(jsonlines, {
+            "type": "plan", "plan": _plan, "iteration": 0,
+        })
+        self._emit_jsonline(jsonlines, {
+            "type": "engine", "action": "started",
+            "detail": "EnTA training engine started",
+        })
 
         # Step 4: Outer training loop
         loop_iteration = 0
         total_batches = 0
         profiles = []
 
-        while not trainer.should_stop():
+        while not trainer.should_stop() and not _stopped.is_set():
             loop_iteration += 1
+
+            # Handle pause (block until resumed or stopped)
+            while _paused.is_set() and not _stopped.is_set():
+                self._emit_jsonline(jsonlines, {
+                    "type": "engine", "action": "paused",
+                    "detail": f"Training paused at iteration {loop_iteration}",
+                })
+                _paused.wait(1.0)
+            if _stopped.is_set():
+                self._emit_jsonline(jsonlines, {
+                    "type": "engine", "action": "stopped",
+                    "detail": "Training stopped by user",
+                })
+                break
+
+            # Handle talk mode (drain any pending messages)
+            while _talk_target[0] is not None:
+                self._emit_jsonline(jsonlines, {
+                    "type": "status", "status": "talk",
+                    "detail": f"Conversation with {_talk_target[0]}",
+                })
+                # Check for incoming talk messages.
+                while _talk_buffer:
+                    _msg = _talk_buffer.pop(0)
+                    # Forward to the talk target (echo back for now).
+                    self._emit_jsonline(jsonlines, {
+                        "type": "talk",
+                        "from": _talk_target[0],
+                        "text": _msg,
+                    })
+                _paused.wait(0.5)
+                if _talk_target[0] is None:
+                    break
+                if _stopped.is_set():
+                    break
+                # Continue draining talk buffer.
+
             _LOG.info(f"EnTA loop iteration {loop_iteration}")
+            self._emit_jsonline(jsonlines, {
+                "type": "phase", "phase": "generate_batch",
+                "iteration": loop_iteration, "total_iterations": total_iterations,
+            })
+            self._emit_jsonline(jsonlines, {
+                "type": "status", "status": "training",
+                "detail": f"Generating training batch {loop_iteration}/{total_iterations}...",
+            })
 
             # 4a. Generate a batch of training data
             dataset_path = trainer.generate_batch()
             if not dataset_path:
                 _LOG.warning("generate_batch returned empty path; stopping")
+                self._emit_jsonline(jsonlines, {
+                    "type": "error",
+                    "message": "generate_batch returned empty path; stopping",
+                })
                 break
 
             # 4b. Train with the generated data
+            self._emit_jsonline(jsonlines, {
+                "type": "phase", "phase": "training",
+                "iteration": loop_iteration, "total_iterations": total_iterations,
+                "dataset_path": dataset_path,
+            })
+            self._emit_jsonline(jsonlines, {
+                "type": "status", "status": "training",
+                "detail": f"Training on batch {loop_iteration} ({dataset_path})...",
+            })
             checkpoint_path = self._run_enta_training_batch(
                 dataset_path=dataset_path,
                 enta_cfg=enta_cfg,
@@ -1354,12 +1504,27 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             total_batches += 1
 
             # 4c. Evaluate the checkpoint
+            self._emit_jsonline(jsonlines, {
+                "type": "phase", "phase": "evaluate",
+                "iteration": loop_iteration, "total_iterations": total_iterations,
+            })
+            self._emit_jsonline(jsonlines, {
+                "type": "status", "status": "training",
+                "detail": f"Evaluating checkpoint {loop_iteration}...",
+            })
             profile = trainer.evaluate(checkpoint_path)
             profiles.append(profile)
+            capability_score = profile.get("capability_score", 0.0)
             _LOG.info(
                 f"Iter {loop_iteration} | checkpoint={checkpoint_path} "
-                f"capability_score={profile.get('capability_score', 'N/A')}"
+                f"capability_score={capability_score}"
             )
+            self._emit_jsonline(jsonlines, {
+                "type": "reward",
+                "reward": profile.get("avg_loss", 0.0),
+                "capability_score": capability_score,
+                "iteration": loop_iteration,
+            })
 
             # 4d. Advance curriculum
             trainer.update(profile)
@@ -1367,17 +1532,63 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             # 4e. Offload model to free memory for next generate_batch
             self._offload_model()
 
-        _LOG.info(
-            f"=== EnTA outer training loop completed ==="
-            f"  iterations={loop_iteration} batches={total_batches}"
-        )
-
         return {
             "status": "enta_completed",
             "loop_iterations": loop_iteration,
             "total_batches": total_batches,
             "profiles": profiles,
         }
+
+    def _generate_enta_plan(self, trainer, total_iterations: int) -> str:
+        """Generate a textual training plan summary for the CLI dashboard.
+
+        Args:
+            trainer: The YvEntaTrainer instance.
+            total_iterations: Total number of planned iterations.
+
+        Returns:
+            A multi-line string describing the training plan.
+        """
+        import datetime
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+        lines = [
+            f"EnTA Training Plan — {total_iterations} iterations  ({now})",
+            f"  Phase 1: Generate seed training data via roundtable",
+            f"  Phase 2: SFT on generated data",
+            f"  Phase 3: GRPO with agent rollout",
+            f"  Phase 4: Evaluate capability and advance curriculum",
+        ]
+        return "\n".join(lines)
+
+    # ── JSON-lines helpers (consumed by enta/cli/) ────────────────
+
+    @staticmethod
+    def _enable_jsonlines_mode() -> None:
+        """Redirect standard log output into JSON lines as well.
+
+        After calling this, every ``_LOG.info`` etc. is also emitted
+        as a JSON-line ``{"type":"log","level":"...","message":"..."}``
+        so the CLI sees it.
+        """
+        # Signal to the ``PiscesLxLogger`` that we want JSON-line forwarding.
+        import os
+        os.environ["ENTA_JSONLINES"] = "1"
+
+    @staticmethod
+    def _emit_jsonline(enabled: bool, msg: dict) -> None:
+        """Write a single JSON line to stdout when jsonlines mode is active.
+
+        Args:
+            enabled: Whether jsonlines mode is on.
+            msg: The message dict to serialize. Must be JSON-serializable.
+        """
+        if not enabled:
+            return
+        import json
+        # Use sys.stdout.write + flush to avoid extra newlines.
+        import sys
+        sys.stdout.write(json.dumps(msg, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
 
     def _run_enta_training_batch(
         self,

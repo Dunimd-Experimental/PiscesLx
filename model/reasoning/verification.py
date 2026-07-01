@@ -27,7 +27,7 @@ from __future__ import annotations
 
 Implements:
 - CRV: Circuit-based white-box CoT verification (arXiv 2510.09312)
-- OTV: One-token forward verification (OpenReview 2025)
+- OTV: One-token verification for reasoning correctness estimation (arXiv 2603.01025)
 - ARES: Autoregressive reasoning entailment stability (EMNLP 2025)
 - CoT Failure Mode Detection
 """

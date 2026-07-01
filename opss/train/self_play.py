@@ -44,7 +44,7 @@ Key Design:
 
 Reference:
     SPIN: Self-Play Fine-Tuning (arXiv:2401.01335, 2024)
-    Self-Rewarding Language Models (NeurIPS 2024)
+    Self-Rewarding Language Models (ICML 2024 / NeurIPS 2024)
 """
 
 from dataclasses import dataclass, field

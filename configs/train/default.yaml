@@ -114,7 +114,7 @@ lora:
 
 # ========================================
 # Memory Separation Training (Engram-style Lookup-Computation Separation)
-# Reference: Liang Wenfeng et al., arXiv:2601.07372, 2026
+# Reference: Cheng et al., "Conditional Memory via Scalable Lookup", arXiv:2601.07372, 2026
 #
 # Three-phase training pipeline:
 #   Phase 1 (core_reasoning): Backbone only, gate=0, no knowledge injection.

@@ -413,15 +413,15 @@ class YvConfig:
     backbone_allow_legacy_blocks: bool = False
 
     # ========================================
-    # PathMoE Configuration (arXiv 2026)
-    # Shared router across MoE layers in a stage, eliminating aux loss
+    # PathMoE Configuration (arXiv 2603.18297, 2026)
+    # Path-constrained MoE with shared router across consecutive layers
     # ========================================
     use_path_moe: bool = True
     path_moe_stage_size: int = 4
     path_moe_use_shared_gate: bool = True
 
     # ========================================
-    # ϕ-Balancing Configuration (arXiv 2026)
+    # ϕ-Balancing Configuration (arXiv 2605.15403, 2026)
     # Population-level mirror descent for load balancing
     # ========================================
     use_phi_balancing: bool = True
@@ -430,8 +430,8 @@ class YvConfig:
     phi_balancing_ema_decay: float = 0.99
 
     # ========================================
-    # HydraHead Configuration (arXiv 2026)
-    # Head-level FA/LA attention hybridization
+    # HydraHead Configuration (arXiv 2606.20097, 2026)
+    # Head-level FA/LA attention hybridization (Alibaba Group)
     # ========================================
     use_hydra_head: bool = True
     hydra_head_la_ratio: float = 0.5
@@ -439,7 +439,7 @@ class YvConfig:
     hydra_head_temperature: float = 1.0
 
     # ========================================
-    # LCA Configuration (arXiv 2026)
+    # LCA Configuration (arXiv 2604.12452, ACL 2026)
     # Latent-Condensed Attention for MLA space compression
     # ========================================
     use_lca: bool = True
@@ -448,8 +448,8 @@ class YvConfig:
     lca_use_residual: bool = True
 
     # ========================================
-    # DSpark Configuration (arXiv 2026)
-    # Parallel draft + Markov head + confidence scheduling
+    # DSpark Configuration (DeepSeek 2026, alphaXiv: 2026.dspark)
+    # DeepSeek speculative decoding: Semi-autoregressive draft + confidence scheduling
     # ========================================
     use_dspark: bool = True
     dspark_draft_len: int = 5
@@ -871,10 +871,10 @@ class YvConfig:
     spell_proj_dim: int = 512
     spell_ramp_steps: int = 1000
 
-    # Seirênes: Adversarial Self-Play with distractions (arXiv May 2026)
+    # Seirênes: Adversarial Self-Play with evolving distractions (arXiv:2605.11636, May 2026)
     use_seirenes: bool = False
 
-    # Tactic: Adaptive Sparse Attention with clustering (ICLR 2026)
+    # Tactic: Adaptive Sparse Attention with clustering (Kan Zhu et al., ICLR 2026, arXiv:2502.12216)
     use_tactic: bool = False
     tactic_cumulative_target: float = 0.8
     tactic_n_bins: int = 64
@@ -1041,7 +1041,7 @@ class YvConfig:
 
     # ========================================
     # Memory Separation (Engram-style Lookup-Computation Separation)
-    # Reference: Liang Wenfeng et al., "Engram: Conditional Memory via
+    # Reference: Cheng et al., "Engram: Conditional Memory via
     #   Scalable Lookup", arXiv:2601.07372, 2026.
     #
     # Separates static factual knowledge from reasoning/tool-operation

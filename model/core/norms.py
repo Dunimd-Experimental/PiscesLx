@@ -168,8 +168,8 @@ def _depth_aware_init_weights(m: nn.Module, n_layer: int, hidden_size: int):
         hidden_size: Model hidden dimension.
     
     Reference:
-        - DeepNet: Stable Transformers for Deeper Models (arXiv:2203.00555)
-        - LayerScale: Very Deep Transformers (arXiv:2010.11929)
+        - DeepNorm for very deep transformers (arXiv:2203.00555)
+        - LayerScale: Going Deeper With Image Transformers (ICCV 2021, arXiv:2103.17239)
     """
     depth_std = 1.0 / math.sqrt(2 * n_layer * hidden_size)
     

@@ -25,17 +25,8 @@ from __future__ import annotations
 
 """Embedding-Gated Multi-Head Latent Attention (EG-MLA) for Yv Models.
 
-Based on: "EG-MLA: Embedding-Gated Multi-Head Latent Attention for Large Language Models"
-NeurIPS 2025. Reduces KV cache by 91.6% via embedding-gated compression.
-
-Architecture:
-    Standard MLA: KV_compressed = W_kv @ x
-    EG-MLA:       gate = sigmoid(W_gate @ x)
-                  KV_compressed = gate * (W_kv @ x)
-
-The embedding gate dynamically controls the compression ratio per token,
-enabling higher compression for unimportant tokens and lower compression
-for critical tokens.
+Original contribution by the Dunimd Team. Extends DeepSeek-V2 MLA with
+embedding-gated dynamic KV compression.
 """
 
 import math

@@ -46,13 +46,13 @@ _TOPIC_TEMPLATES: Dict[str, str] = {
         "Generate a complete {module_type} module that integrates with an "
         "external API and handles errors gracefully."
     ),
-    "knowledge_retrieval": (
-        "Explain how {field_scale}x scaled knowledge fields encode and retrieve "
-        "information in a neural architecture."
+    "knowledge_explanation": (
+        "Explain how large-scale knowledge representation works in modern "
+        "intelligent systems."
     ),
-    "dynamic_head": (
-        "Describe how a dynamic head with param scale {head_scale}, hidden dim "
-        "{hidden_dim}, and {num_codebooks} codebooks processes variable-length inputs."
+    "dynamic_reasoning": (
+        "Describe how an adaptive reasoning system handles variable-complexity "
+        "inputs with different reasoning depths."
     ),
 }
 
@@ -61,7 +61,8 @@ class EntaTaskGenerator:
     """Decides what training data to generate next in the outer loop.
 
     Uses ``enta_model_layout`` fields to bias topic selection toward
-    exercising the dynamic head and knowledge field at their configured scales.
+    reasoning, tool use, and knowledge explanation without leaking
+    internal architecture terminology.
     """
 
     def __init__(self, seed: int = 42) -> None:
@@ -70,10 +71,14 @@ class EntaTaskGenerator:
     def generate_topic(self, enta_model_layout: dict) -> str:
         """Return a topic description string guided by the model layout.
 
+        Topic generation avoids internal terminology (param scales, hidden
+        dimensions, codebooks, etc.) to prevent teacher or student models
+        from being prompted with system-internal details.
+
         Args:
-            enta_model_layout: Dict with fields like
-                ``dynamic_head_param_scale``, ``knowledge_field_param_scale``,
-                ``dynamic_head_hidden_dim``, ``dynamic_head_num_codebooks``.
+            enta_model_layout: Dict with layout metadata. Values are
+                used only to bias topic selection, never interpolated
+                into prompts.
 
         Returns:
             A free-form topic string suitable for passing to
@@ -82,18 +87,16 @@ class EntaTaskGenerator:
         if not enta_model_layout or not isinstance(enta_model_layout, dict):
             return self._fallback_topic()
 
-        dh_scale = enta_model_layout.get("dynamic_head_param_scale", 1.0)
-        kf_scale = enta_model_layout.get("knowledge_field_param_scale", 1.0)
-        hidden_dim = enta_model_layout.get("dynamic_head_hidden_dim", 4096)
-        num_codebooks = enta_model_layout.get("dynamic_head_num_codebooks", 4)
+        dh_scale = float(enta_model_layout.get("dynamic_head_param_scale", 1.0))
+        kf_scale = float(enta_model_layout.get("knowledge_field_param_scale", 1.0))
 
-        # Select topic category biased by scale.
-        # Higher param scales → more emphasis on dynamic-head / knowledge-field topics.
-        scale = float(dh_scale) + float(kf_scale)
+        # Higher combined scale → more emphasis on adaptive reasoning
+        # and knowledge topics; lower scale → focus on tool use and reasoning.
+        scale = dh_scale + kf_scale
         if scale > 2.0:
-            candidates = ["dynamic_head", "knowledge_retrieval"]
+            candidates = ["dynamic_reasoning", "knowledge_explanation"]
         elif scale > 1.0:
-            candidates = ["tool_use", "code_generation", "dynamic_head"]
+            candidates = ["tool_use", "code_generation", "dynamic_reasoning"]
         else:
             candidates = ["tool_use", "reasoning", "code_generation"]
 
@@ -104,10 +107,6 @@ class EntaTaskGenerator:
             n_tools=self._rng.randint(3, 6),
             n_steps=self._rng.randint(3, 5),
             module_type=self._rng.choice(["data", "network", "async"]),
-            field_scale=float(kf_scale),
-            head_scale=float(dh_scale),
-            hidden_dim=int(hidden_dim),
-            num_codebooks=int(num_codebooks),
         )
 
     def _fallback_topic(self) -> str:

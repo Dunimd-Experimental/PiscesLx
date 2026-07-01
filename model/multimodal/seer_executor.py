@@ -24,17 +24,12 @@
 from __future__ import annotations
 
 """
-SAGE: Multi-Agent Self-Evolution for LLM Reasoning
-(arXiv:2603.15255, Mar 2026).
+SEER: Self-Guided Experience-Enhanced Reasoning
+(arXiv:2508.15214, EMNLP 2025).
 
-Closed-loop framework with four agents sharing a single LLM backbone:
-- Challenger: generates increasingly difficult tasks from a seed set
-- Planner: converts each task into structured multi-step plans
-- Solver: follows the plan to produce answers
-- Critic: scores & filters questions/plans to prevent curriculum drift
-
-Reference: Peng et al. "SAGE: Multi-Agent Self-Evolution for LLM
-Reasoning." arXiv:2603.15255, 2026.
+Self-guided method for enhancing LLM function calling in multi-step tool-use
+scenarios, using stepwise retrieval from a continually updated experience pool
+of past successful trajectories.
 """
 
 import math
@@ -154,12 +149,12 @@ class YvSEERVerificationTool(YvSEERToolBase):
         return YvSEERResult(True, f"verified:{result}", 0.1, self.name)
 
 
-# Paper: Peng et al., "SAGE: Multi-Agent Self-Evolution for LLM Reasoning," arXiv:2603.15255, 2026.
+# Paper: Cui et al., "Self-Guided Function Calling in Large Language Models via Stepwise Experience Recall," EMNLP 2025, arXiv:2508.15214
 class YvSEERExecutor(nn.Module):
     """
-    SAGE multi-agent self-evolution framework.
-    Four agents (Challenger/Planner/Solver/Critic) share a single
-    backbone and co-evolve from a small seed set.
+    SEER: Self-Guided Experience-Enhanced Reasoning (arXiv:2508.15214, EMNLP 2025).
+    Stepwise experience recall from a continually updated pool of successful
+    trajectories for multi-step tool-use and reasoning scenarios.
     """
 
     def __init__(self, config):

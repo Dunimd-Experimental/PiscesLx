@@ -24,17 +24,13 @@
 from __future__ import annotations
 
 """
-Seirênes: Adversarial Self-Play with Evolving Distractions for LLM Reasoning
-(arXiv:2605.11636, May 2026).
+CoMeT: Collaborative Memory Transformer for Efficient Long Context Modeling
+(arXiv:2602.01766, ACL 2026).
 
-Transforms contextual interference from a failure mode into an internal
-training signal. Single parameter-shared model acts as both adversary
-(constructs distracting contexts) and solver (disambiguates core task).
-Co-evolving curriculum drives robust reasoning. +7-10 points on math
-reasoning benchmarks across 4B-30B scales.
-
-Reference: Zhang et al. "Seirênes: Adversarial Self-Play with Evolving
-Distractions for LLM Reasoning." arXiv:2605.11636, 2026.
+Dual-memory architecture with a global memory (gated update rule for long-range
+dependencies) and a temporary memory (FIFO queue for recent events). Processes
+arbitrarily long sequences with constant memory usage and linear time complexity,
+as a plug-in module requiring minimal fine-tuning.
 """
 
 import torch
@@ -43,12 +39,11 @@ import torch.nn.functional as F
 from typing import Optional
 
 
-# Paper: Zhang et al. "Seirênes: Adversarial Self-Play with Evolving Distractions for LLM Reasoning." arXiv:2605.11636, 2026.
 class YvCoMeTMemory(nn.Module):
     """
-    Seirênes adversarial memory: maintains a pool of distracting contexts
-    that target the model's current reasoning blind spots. As the model
-    learns to solve harder problems, the distractions co-evolve.
+    CoMeT collaborative memory module: maintains a dual memory pool with
+    global gated storage and a temporary FIFO buffer for collaborative
+    cross-sequence information exchange.
     """
 
     def __init__(self, config, device=None, dtype=None):
@@ -149,7 +144,7 @@ class YvCoMeTMemory(nn.Module):
 
 # Paper: Zhang et al., "Seirênes: Adversarial Self-Play with Evolving Distractions for LLM Reasoning," arXiv:2605.11636, 2026.
 class YvCoMeTLayer(nn.Module):
-    """Seirênes layer with adversarial distraction filtering."""
+    """CoMeT collaborative memory layer with global and temporary memory fusion."""
 
     def __init__(self, config, layer_idx: int, device=None, dtype=None):
         super().__init__()

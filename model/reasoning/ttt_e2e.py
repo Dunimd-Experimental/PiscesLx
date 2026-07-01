@@ -25,9 +25,10 @@ from __future__ import annotations
 
 """Test-Time Training (TTT-E2E) for Yv Reasoning.
 
-Based on arXiv 2512.23675. End-to-end test-time training during inference
-with self-supervised loss (LM + consistency + uncertainty regularization).
+Based on arXiv 2512.23675 "End-to-End Test-Time Training for Long Context"
+(by Tandon, Dalal et al., Astera Institute / NVIDIA / Stanford / UC Berkeley).
 
+End-to-end test-time training during inference with self-supervised loss.
 Performs 3-5 gradient steps on last N layers with very small learning rate
 to adapt to new domains without catastrophic forgetting.
 """
@@ -38,7 +39,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple, Dict
 
 
-# Paper: Sun et al., "Test-Time Training with Self-Supervision for Generalization under Distribution Shifts", ICML 2020; Gandelsman et al., "Test-Time Training with Masked Autoencoders", NeurIPS 2024
+# Paper: Tandon et al., "End-to-End Test-Time Training for Long Context", arXiv:2512.23675, 2025
 class YvTestTimeTrainer:
     """Test-time training for online model adaptation.
 

@@ -36,7 +36,7 @@ Key Innovation:
     - KL divergence constraint to prevent deviation from reference model
 
 Reference:
-    DeepSeek R1 Technical Report (arXiv:2402.03300)
+    DeepSeek R1 Technical Report (arXiv:2501.12948)
 
 Algorithm:
     1. Sample group_size responses for each prompt
@@ -126,7 +126,7 @@ class POPSSGRPOConfig(PiscesLxOperatorConfig):
     dapo_epsilon_high: float = 0.4
     dapo_diversity_threshold: float = 0.3
 
-    # ── iGRPO: Two-Stage Self-Conditioning (arXiv 2026) ─────────
+    # ── iGRPO: Two-Stage Self-Conditioning (Yv Architecture, Dunimd Team) ──
     # First stage generates draft trajectories; second stage conditions
     # on the best draft to produce refined trajectories.  Advantage is
     # computed relative to the best draft (self-conditioned baseline).
@@ -149,7 +149,7 @@ class POPSSGRPOConfig(PiscesLxOperatorConfig):
     graphpo_reward_discount: float = 0.95   # discount factor for backprop
     graphpo_top_paths: int = 5          # keep top-K paths for training
 
-    # ── CoDaPO: Confidence/Difficulty Adaptive (arXiv 2026) ──────
+    # ── CoDaPO: Confidence/Difficulty Adaptive (Yv Architecture, Dunimd Team) ──
     # Dynamically adjusts clipping range, KL penalty, and temperature
     # based on per-response confidence scores and task difficulty.
     use_codapo: bool = False
@@ -161,7 +161,7 @@ class POPSSGRPOConfig(PiscesLxOperatorConfig):
     codapo_kl_high_confidence: float = 0.15    # higher KL for confident responses
     codapo_difficulty_adapt_temperature: bool = True
 
-    # ── GRPO-VPS: Verifiable Process Supervision (arXiv 2026) ──────
+    # ── GRPO-VPS: Verifiable Process Supervision (Yv Architecture, Dunimd Team) ──
     # Splits responses into reasoning steps, assigns per-step verifiable
     # rewards (correctness + process quality), and combines with outcome
     # reward for finer-grained supervision.
@@ -172,7 +172,7 @@ class POPSSGRPOConfig(PiscesLxOperatorConfig):
     vps_min_steps: int = 1
     vps_quality_scale: float = 1.0
 
-    # ── MMR-GRPO: Diversity-aware Multi-Model Refinement (arXiv 2026) ──
+    # ── MMR-GRPO: Diversity-aware Multi-Model Refinement (Yv Architecture, Dunimd Team) ──
     # Maintains a diversity buffer of recent successful trajectories.
     # During training, mixes current policy trajectories with diverse
     # historical ones and rewards diverse trajectories to prevent mode
@@ -184,7 +184,7 @@ class POPSSGRPOConfig(PiscesLxOperatorConfig):
     mmr_mix_ratio: float = 0.3
     mmr_embedding_dim: int = 64
 
-    # ── TR-GRPO: Token-Level Reward Weighting (arXiv 2026) ──────────
+    # ── TR-GRPO: Token-Level Reward Weighting (Yv Architecture, Dunimd Team) ──
     # Assigns per-token advantages based on token importance/surprise
     # estimated from policy probability change.  Provides more fine-grained
     # credit assignment than sequence-level GRPO.
@@ -1353,7 +1353,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         return stats
 
     # ╔══════════════════════════════════════════════════════════════════╗
-    # ║  GRPO-VPS: Verifiable Process Supervision (arXiv 2026)         ║
+    # ║  GRPO-VPS: Verifiable Process Supervision (Yv Architecture, Dunimd Team)         ║
     # ╚══════════════════════════════════════════════════════════════════╝
 
     def _split_into_steps(
@@ -1476,7 +1476,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         return torch.tensor(modified, device=device), all_step_scores
 
     # ╔══════════════════════════════════════════════════════════════════╗
-    # ║  MMR-GRPO: Diversity-aware Multi-Model Refinement (arXiv 2026) ║
+    # ║  MMR-GRPO: Diversity-aware Multi-Model Refinement (Yv Architecture, Dunimd Team) ║
     # ╚══════════════════════════════════════════════════════════════════╝
 
     def _mmr_ensure_buffer(self, config: POPSSGRPOConfig):
@@ -1642,7 +1642,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         return mixed_resp, mixed_lp, mixed_old
 
     # ╔══════════════════════════════════════════════════════════════════╗
-    # ║  TR-GRPO: Token-Level Reward Weighting (arXiv 2026)            ║
+    # ║  TR-GRPO: Token-Level Reward Weighting (Yv Architecture, Dunimd Team)            ║
     # ╚══════════════════════════════════════════════════════════════════╝
 
     def _compute_token_level_log_probs(

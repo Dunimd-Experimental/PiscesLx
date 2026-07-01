@@ -25,15 +25,11 @@ from __future__ import annotations
 
 """
 Tactic: Adaptive Sparse Attention with Clustering and Distribution Fitting
-(Original contribution by Dunimd Team).
+(arXiv:2502.12216, ICLR 2026).
 
-Replaces fixed-budget sparse attention with dynamic token selection based
-on cumulative attention score threshold. Uses clustering-based sorting and
-distribution fitting to estimate token importance efficiently.
-
-Key innovation: Instead of "keep top-K tokens", uses "keep tokens covering
-target fraction of total attention mass" — adapts naturally to varying
-sparsity across heads, layers, and contexts.
+Sparsity-adaptive, calibration-free sparse attention for long-context LLMs.
+Dynamically selects tokens based on cumulative attention score threshold,
+using clustering-based sorting and distribution fitting for efficiency.
 """
 
 import torch
@@ -42,7 +38,7 @@ import torch.nn.functional as F
 from typing import Optional
 
 
-# Paper: Original contribution by Dunimd Team (Yv Architecture — Tactic sparse attention)
+# Paper: Zhu et al., "Tactic: Adaptive Sparse Attention with Clustering and Distribution Fitting for Long-Context LLMs," ICLR 2026, arXiv:2502.12216
 class YvTokenSparseAttention(nn.Module):
     """Tactic adaptive sparse attention with cumulative attention threshold.
 

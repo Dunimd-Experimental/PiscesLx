@@ -45,7 +45,7 @@ Three-Phase Training:
         Builds FAISS IVF-PQ index and mmap knowledge store.
 
 Architecture inspired by:
-    Liang Wenfeng et al., "Engram: Conditional Memory via Scalable
+    Cheng et al., "Engram: Conditional Memory via Scalable
     Lookup", arXiv:2601.07372, 2026.
 """
 

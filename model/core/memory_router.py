@@ -31,7 +31,7 @@ for top-K knowledge slots, and routes retrieved knowledge embeddings
 back to the model via cross-attention injection.
 
 Architecture inspired by:
-    Liang Wenfeng et al., "Engram: Conditional Memory via Scalable
+    Cheng et al., "Engram: Conditional Memory via Scalable
     Lookup", arXiv:2601.07372, 2026.
 
 Key Design:

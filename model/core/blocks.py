@@ -322,7 +322,7 @@ class YvBlockConfig:
     attn_res_use_rmsnorm: bool = True
 
 
-# Paper: Touvron et al., "Going deeper with Image Transformers" (LayerScale), arXiv:2010.11929, 2020
+# Paper: Touvron et al., "Going Deeper With Image Transformers" (LayerScale), ICCV 2021, arXiv:2103.17239
 class YvLayerScale(nn.Module):
     """LayerScale for improved training stability in deep networks.
     
@@ -1161,6 +1161,7 @@ class YvParallelBlock(nn.Module):
         use_cache: bool = False,
         subconscious_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         film_params: Optional[Dict[str, torch.Tensor]] = None,
+        modal_id: Optional[torch.Tensor] = None,
     ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Forward pass with parallel attention and MLP.
 
@@ -1204,7 +1205,7 @@ class YvParallelBlock(nn.Module):
             if hydra_out is not None:
                 attn_out = attn_out + hydra_out
 
-        mlp_out, aux_loss = self.mlp(x_norm)
+        mlp_out, aux_loss = self.mlp(x_norm, modal_id=modal_id)
 
         # Apply phi-balancing to aux_loss
         if self.phi_balancing is not None and self.training:
@@ -1293,6 +1294,7 @@ class YvDeepNormBlock(nn.Module):
         use_cache: bool = False,
         subconscious_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
         film_params: Optional[Dict[str, torch.Tensor]] = None,
+        modal_id: Optional[torch.Tensor] = None,
     ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, torch.Tensor]]:
         """Forward pass with DeepNorm.
 
@@ -1337,7 +1339,7 @@ class YvDeepNormBlock(nn.Module):
         x = self.deep_norm_attn(residual, self.residual_dropout(attn_out))
         
         residual = x
-        mlp_out, aux_loss = self.mlp(x)
+        mlp_out, aux_loss = self.mlp(x, modal_id=modal_id)
 
         # Apply phi-balancing to aux_loss
         if self.phi_balancing is not None and self.training:
@@ -1396,7 +1398,8 @@ class YvCrossAttentionBlock(nn.Module):
         self_attn_mask: Optional[torch.Tensor] = None,
         cross_attn_mask: Optional[torch.Tensor] = None,
         past_key_values: Optional[Tuple] = None,
-        use_cache: bool = False
+        use_cache: bool = False,
+        modal_id: Optional[torch.Tensor] = None,
     ) -> Union[Tuple[torch.Tensor, torch.Tensor], Tuple[torch.Tensor, torch.Tensor, Tuple]]:
         """Forward pass with cross-attention.
         
@@ -1430,7 +1433,7 @@ class YvCrossAttentionBlock(nn.Module):
         
         residual = x
         x = self.norm3(x)
-        mlp_out, aux_loss = self.mlp(x)
+        mlp_out, aux_loss = self.mlp(x, modal_id=modal_id)
         x = residual + self.residual_dropout(mlp_out)
         
         if use_cache:
@@ -1676,7 +1679,7 @@ class YvTransformerBlock(nn.Module):
             self.register_buffer('_partial_block_count', torch.tensor(0, dtype=torch.long), persistent=False)
 
         # MemSep: Knowledge injection via cross-attention from retrieved memory slots
-        # Based on Engram (Liang Wenfeng et al., arXiv:2601.07372, 2026)
+        # Based on Engram (Cheng et al., arXiv:2601.07372, 2026)
         # Only initialized when use_memory_separation=True in config
         self.use_memory_separation = getattr(cfg, 'use_memory_separation', False)
         if self.use_memory_separation:
@@ -1796,8 +1799,8 @@ class YvTransformerBlock(nn.Module):
         
         Reference:
             Gu & Dao, "Mamba: Linear-Time Sequence Modeling with Selective
-            State Spaces", arXiv 2023.
-            Dao et al., "Mamba-2: Transforming Transformers", arXiv 2024.
+            State Spaces", arXiv:2312.00752, 2023.
+            Dao & Gu, "Mamba-2: State Space Duality", arXiv:2405.21060, 2024.
         """
         if cfg.hidden_size >= 2048:
             # Derive SSM configuration from model config
@@ -2106,6 +2109,7 @@ class YvTransformerBlock(nn.Module):
         use_cache=False,
         subconscious_kv=None,
         film_params=None,
+        modal_id=None,
     ):
         """Forward pass through the transformer block.
 
@@ -2279,7 +2283,7 @@ class YvTransformerBlock(nn.Module):
                     knowledge=memory_context["knowledge_projected"],
                 )
 
-        mlp_out, aux_loss = self.mlp(x_norm)
+        mlp_out, aux_loss = self.mlp(x_norm, modal_id=modal_id)
 
         # Apply phi-balancing to aux_loss
         if getattr(self, 'phi_balancing', None) is not None and self.training:

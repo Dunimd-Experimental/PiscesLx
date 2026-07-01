@@ -455,7 +455,7 @@ rdt_loops_per_layer: 2
 
 # ========================================
 # Memory Separation (Engram-style Lookup-Computation Separation)
-# Reference: Liang Wenfeng et al., arXiv:2601.07372, 2026
+# Reference: Cheng et al., arXiv:2601.07372, 2026
 # 0.5B Dynamic Head: ENABLED â?the 314B-equivalent knowledge field
 # (FAISS IVF-PQ indexed) is accessed via memory separation, while
 # the 0.5B compute core handles reasoning and tool orchestration.

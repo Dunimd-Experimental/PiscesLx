@@ -548,7 +548,7 @@ class YvAttentionSink(nn.Module):
         Xiao et al., "Efficient Streaming Language Models with Attention Sinks",
         ICLR 2024.
     """
-    
+
     def __init__(
         self,
         hidden_size: int,
@@ -669,7 +669,7 @@ class YvQKNormalizer(nn.Module):
         The normalization is applied independently to each head.
     
     Reference:
-        Henry et al., "Query-Key Normalization for Transformers", ICLR 2020.
+        Henry et al., "Query-Key Normalization for Transformers", Findings of EMNLP 2020.
     """
     
     def __init__(
@@ -1210,7 +1210,7 @@ class YvCirculantAttention(nn.Module):
         - Adaptive bandwdith based on sequence length
 
     Reference:
-        AAAI 2026: "Circulant Attention: Efficient Attention via FFT"
+        AAAI 2026: "Vision Transformers are Circulant Attention Learners" (Han et al., Tsinghua, arXiv:2512.21542)
 
     Attributes:
         hidden_size: Model hidden dimension.
@@ -1502,7 +1502,7 @@ class YvSlidingWindowAttention(nn.Module):
         tasks requiring both local and global context.
     
     Reference:
-        Beltagy et al., "Longformer: The Long-Document Transformer", 2020.
+        Beltagy et al., "Longformer: The Long-Document Transformer", ICLR 2020.
     """
     
     def __init__(
@@ -2513,7 +2513,7 @@ class YvLocalGlobalAttention(nn.Module):
         while tasks requiring global reasoning need more global heads.
     
     Reference:
-        Beltagy et al., "Longformer: The Long-Document Transformer", 2020.
+        Beltagy et al., "Longformer: The Long-Document Transformer", ICLR 2020.
     """
     
     def __init__(
@@ -3312,7 +3312,7 @@ class YvDynamicH2OAttention(nn.Module):
     
     Reference:
         Zhang et al., "H2O: Heavy-Hitter Oracle for Efficient Generative
-        Inference of Large Language Models", ICLR 2024.
+        Inference of Large Language Models", NeurIPS 2023.
     """
     
     def __init__(
@@ -3799,7 +3799,7 @@ class YvH2OAttention(nn.Module):
     
     Reference:
         Zhang et al., "H2O: Heavy-Hitter Oracle for Efficient Generative
-        Inference of Large Language Models", ICLR 2024.
+        Inference of Large Language Models", NeurIPS 2023.
     """
     
     def __init__(
@@ -5636,8 +5636,8 @@ class YvAttention(nn.Module):
             Tuple of (adjusted_q, adjusted_k) with CoPE applied.
         
         Reference:
-            Yang et al., "Context-aware Position Encoding for Better Length
-            Extrapolation", arXiv 2024.
+            Zheng et al., "CAPE: Context-Adaptive Positional Encoding for Length
+            Extrapolation", arXiv:2405.14722, 2024.
         """
         batch, n_head, seq_len, head_dim = q.shape
         
@@ -6193,7 +6193,7 @@ class YvHydraHeadAttention(nn.Module):
       - Learned: per-token gating via a learnable assignment network
 
     Reference:
-        "HydraHead: Dynamic Head-Level Attention Hybridization" (arXiv 2026, DeepSeek)
+        "HydraHead: From Head-Level Functional Heterogeneity to Specialized Attention Hybridization" (arXiv 2606.20097, Alibaba Group)
     """
 
     def __init__(
@@ -6343,7 +6343,7 @@ class YvLatentCondensedAttention(nn.Module):
     Works in MLA (Multi-head Latent Attention) space as a pre/post processor.
 
     Reference:
-        "LCA: Latent-Condensed Attention for Efficient Long-Context LLMs" (arXiv 2026)
+        "LCA: Latent-Condensed Transformer for Efficient Long Context Modeling" (arXiv 2604.12452, ACL 2026)
     """
 
     def __init__(

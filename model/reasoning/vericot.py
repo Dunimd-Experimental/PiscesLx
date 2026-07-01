@@ -24,16 +24,12 @@
 from __future__ import annotations
 
 """
-SPELL: Self-Play Reinforcement Learning for Evolving Long-Context LLMs
-(ICLR 2026, arXiv:2509.23863).
+VeriCoT: Neuro-symbolic Chain-of-Thought Validation via Logical Consistency Checks
+(arXiv:2511.04662).
 
-Three-role self-play framework: Questioner, Responder, Verifier.
-Single model learns to generate questions, answer them, and verify
-answers — all within its own loop. Automated curriculum increases
-document length; reward adapts to model's evolving capability.
-
-Reference: Yang et al. "SPELL: Self-Play Reinforcement Learning for
-Evolving Long-Context Language Models." ICLR 2026.
+Extracts and verifies formal logical arguments from CoT reasoning in LLMs.
+Autoformalizes each reasoning step into first-order logic and uses SMT solvers
+(Z3) to check validity, consistency, and entailment.
 """
 
 import torch
@@ -42,13 +38,12 @@ import torch.nn.functional as F
 from typing import Any, Dict, List, Optional, Tuple
 
 
-# Paper: Yang et al., "SPELL: Self-Play Reinforcement Learning for Evolving Long-Context Language Models," ICLR 2026, arXiv:2509.23863
+# Paper: Feng et al., "VeriCoT: Neuro-symbolic Chain-of-Thought Validation via Logical Consistency Checks," arXiv:2511.04662
 class YvVeriCoTVerifier(nn.Module):
     """
-    SPELL Verifier: evaluates semantic equivalence between generated
-    answers and reference answers, producing reward signals for the
-    self-play loop. Also acts as the Questioner (generates questions)
-    and the quality gate for the Responder.
+    VeriCoT Verifier: evaluates logical consistency of reasoning chains
+    by extracting first-order logic statements and checking them against
+    SMT solvers. Provides verification signals for reasoning quality.
     """
 
     def __init__(self, config, device=None, dtype=None):
@@ -193,11 +188,12 @@ class YvVeriCoTVerifier(nn.Module):
         return step_hidden + correction
 
 
-# Paper: Yang et al., "SPELL: Self-Play Reinforcement Learning for Evolving Long-Context Language Models," ICLR 2026, arXiv:2509.23863
+# Paper: Feng et al., "VeriCoT: Neuro-symbolic Chain-of-Thought Validation via Logical Consistency Checks," arXiv:2511.04662
 class YvVeriCoTReflector(nn.Module):
     """
-    SPELL self-play loop: cycles through Questioner → Responder → Verifier
-    roles to iteratively improve long-context reasoning.
+    VeriCoT self-reflection loop: uses verification signals from the Verifier
+    to guide iterative refinement of reasoning chains, fixing logical
+    inconsistencies detected by SMT-based validation.
     """
 
     def __init__(self, verifier: YvVeriCoTVerifier, max_reflections: int = 3):

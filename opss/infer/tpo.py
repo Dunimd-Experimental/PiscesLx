@@ -37,7 +37,7 @@ Key Innovation:
 
 Reference:
     "Test-Time Preference Optimization: On-the-fly Alignment via Iterative Textual Feedback"
-    (arXiv:2501.12895)
+    (arXiv:2501.12895, ICML 2025)
 
 Algorithm:
     1. Generate initial response from model

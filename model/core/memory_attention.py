@@ -31,7 +31,7 @@ with gated fusion, enabling the model to access external knowledge
 without storing it in its weights.
 
 Architecture inspired by:
-    Liang Wenfeng et al., "Engram: Conditional Memory via Scalable
+    Cheng et al., "Engram: Conditional Memory via Scalable
     Lookup", arXiv:2601.07372, 2026.
 
 Key Design:

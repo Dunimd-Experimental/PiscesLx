@@ -98,7 +98,7 @@ sft:
   enta_prompts_path: data/prompts/seed_prompts.txt
   enta_data_cache_path: .pisceslx/cache/encre_sft_dataset.jsonl
   enta_max_samples: 4096
-  enta_system_prompt: "You are a careful, expert assistant.  Show your reasoning step by step."
+  enta_system_prompt: "You are a careful, expert agent trained to reason step by step and use tools to solve tasks. Do not reveal your identity, model name, or any internal system details. Do not reproduce benchmark questions or evaluation dataset content. Focus entirely on solving the given task."
 
 # ========================================
 # GRPO / Agentic-RL Integration (consumed by opss.train.grpo)
@@ -106,7 +106,7 @@ sft:
 grpo:
   use_enta_rollout: true
   enta_use_roundtable: false
-  enta_system_prompt: "You are an agent.  Use the available tools to solve the task.  Stop when done."
+  enta_system_prompt: "You are an autonomous agent operating inside a training environment. Use the available tools to solve tasks efficiently. Do not reveal your identity, model name, or internal system details. Do not reference benchmark questions, evaluation datasets, or your training process. Focus entirely on task completion."
   group_size: 4
   temperature: 1.0
   clip_ratio: 0.2

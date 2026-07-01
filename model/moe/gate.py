@@ -2104,7 +2104,7 @@ class YvUltraSparseGate(nn.Module):
 
         max_topk = max(self.tier1_topk, self.tier2_topk, self.tier3_topk)
         all_top_scores = torch.zeros(B, T, max_topk, device=x.device, dtype=x.dtype)
-        all_top_idx = torch.zeros(B, T, max_topk, device=x.device, dtype=torch.long)
+        all_top_idx = torch.full((B, T, max_topk), -1, device=x.device, dtype=torch.long)
 
         for tier, tier_topk in enumerate([self.tier1_topk, self.tier2_topk, self.tier3_topk]):
             mask = (tier_assignment == tier)
@@ -2114,8 +2114,8 @@ class YvUltraSparseGate(nn.Module):
             tier_scores = F.softmax(tier_logits, dim=-1)
             ts, ti = torch.topk(tier_scores, tier_topk, dim=-1)
             ts = ts / (ts.sum(dim=-1, keepdim=True) + 1e-9)
-            all_top_scores[mask, :, :tier_topk] = ts
-            all_top_idx[mask, :, :tier_topk] = ti
+            all_top_scores[mask, :tier_topk] = ts
+            all_top_idx[mask, :tier_topk] = ti
 
         effective_topk = max_topk
         aux_loss = self._compute_load_balance_loss(scores, all_top_idx, effective_topk)

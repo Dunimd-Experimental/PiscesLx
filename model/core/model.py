@@ -235,9 +235,9 @@ from ..multimodal.seer_executor import YvSEERExecutor
 from ..reasoning.vericot import YvVeriCoTVerifier, YvVeriCoTReflector
 # CRV: Circuit-based Reasoning Verification (Zhao et al., ICLR 2026 Oral, arXiv:2510.09312)
 from ..reasoning.verification import YvCRVIntegration
-# CoMeT: Collaborative Memory Transformer (ACL 2026)
+# CoMeT: Collaborative Memory Transformer (arXiv:2602.01766, ACL 2026)
 from .comet import YvCoMeTMemory
-# Token Sparse Attention (ICML 2026)
+# Token Sparse Attention / Tactic (Kan Zhu et al., ICLR 2026, arXiv:2502.12216)
 from .token_sparse_attn import YvTokenSparseAttention
 # mHC-lite (arXiv:2601.05732)
 from .mhc_lite import YvMHCLiteHyperConnection
@@ -685,17 +685,7 @@ class YvModel(nn.Module):
                 getattr(self.config, 'n_kv_head', getattr(self.config, 'n_head', 0))
             )
 
-        if getattr(self.config, 'max_position_embeddings', 0) >= 1_048_576 and not getattr(self.config, 'use_h2o_attention', False):
-            setattr(self.config, 'use_h2o_attention', True)
-
-        if not getattr(self.config, 'backbone_allow_legacy_blocks', False):
-            setattr(self.config, 'use_mamba3', True)
-            setattr(self.config, 'mamba3_layers', list(range(getattr(self.config, 'n_layer', 0))))
-
-        if getattr(self.config, 'use_oomb_context', False):
-            setattr(self.config, 'use_h2o_attention', True)
-            if not hasattr(self.config, 'cache_type'):
-                setattr(self.config, 'cache_type', 'hybrid')
+        self._apply_backbone_defaults()
 
         self.quantization_config = quantization_config
         self.lora_config = lora_config
@@ -732,6 +722,7 @@ class YvModel(nn.Module):
         use_path_moe = getattr(cfg, 'use_path_moe', False)
         path_moe_stage_size = getattr(cfg, 'path_moe_stage_size', 4)
         path_moe_stage_gate = None
+        setattr(cfg, '_path_moe_model_id', id(self))
 
         self.layers = nn.ModuleList([])
         for i in range(cfg.n_layer):
@@ -752,45 +743,16 @@ class YvModel(nn.Module):
                         enable_dynamic_capacity=getattr(cfg, 'enable_dynamic_capacity', True),
                         enable_cognitive_density=getattr(cfg, 'enable_cognitive_density', False)
                     )
+                setattr(cfg, '_path_moe_stage_idx', i // path_moe_stage_size)
 
-            layer_config = self.layer_router.get_layer_config(i)
-
-            allow_legacy_blocks = bool(getattr(cfg, 'backbone_allow_legacy_blocks', False))
-            use_hybrid = getattr(cfg, 'use_mamba3', False)
-            if not allow_legacy_blocks:
-                _LOG.debug(f"YvModel: using YvHybridBlock for layer {i+1}")
-                block = YvHybridBlock(
-                    cfg,
-                    device=device,
-                    dtype=dtype,
-                    quantization_config=self.quantization_config,
-                )
-            elif use_hybrid:
-                mamba3_layers = getattr(cfg, 'mamba3_layers', [])
-                if not mamba3_layers or i in mamba3_layers:
-                    _LOG.debug(f"YvModel: using YvHybridBlock for layer {i+1}")
-                    block = YvHybridBlock(
-                        cfg,
-                        device=device,
-                        dtype=dtype,
-                        quantization_config=self.quantization_config,
-                    )
-                else:
-                    block = YvTransformerBlock(
-                        cfg,
-                        device=device,
-                        dtype=dtype,
-                        quantization_config=self.quantization_config,
-                        gate=path_moe_stage_gate if use_path_moe else None,
-                    )
-            else:
-                block = YvTransformerBlock(
-                    cfg,
-                    device=device,
-                    dtype=dtype,
-                    quantization_config=self.quantization_config,
-                    gate=path_moe_stage_gate if use_path_moe else None,
-                )
+            _ = self.layer_router.get_layer_config(i)
+            block = self._build_backbone_block(
+                cfg,
+                i,
+                device,
+                dtype,
+                path_moe_stage_gate if use_path_moe else None,
+            )
 
             block.cache_manager = self.cache_manager
             block.layer_idx = i
@@ -947,14 +909,6 @@ class YvModel(nn.Module):
                 device=device, dtype=dtype,
             )
 
-        # REFORM: Compress-Gather-Recompute for long context
-        self.reform_processor = None
-        if getattr(cfg, 'use_reform', False):
-            self.reform_processor = YvREFORM(
-                compression_ratio=getattr(cfg, 'reform_compression_ratio', 4),
-                importance_threshold=getattr(cfg, 'reform_importance_threshold', 0.1),
-            )
-
         if self.cfg.use_rca_fusion:
             _LOG.debug("YvModel: initializing RCA fusion...")
             self.rca_fusion = YvRecursiveCrossModalFusion(cfg, device=device, dtype=dtype)
@@ -981,26 +935,7 @@ class YvModel(nn.Module):
             _LOG.debug("YvModel: initializing CoMeT/Seirênes memory...")
             self.comet_memory = YvCoMeTMemory(cfg, device=device, dtype=dtype)
 
-        if getattr(self.cfg, 'use_oomb_context', True):
-            _LOG.debug("YvModel: initializing OOMB processor...")
-            self.oomb_processor = YvOOMBContext(
-                chunk_size=getattr(self.cfg, 'oomb_chunk_size', 32768),
-                max_context_length=getattr(self.cfg, 'max_position_embeddings', 4194304)
-            )
-        else:
-            self.oomb_processor = None
-
-        if getattr(self.cfg, 'use_token_sparse_attn', False) or getattr(self.cfg, 'use_tactic', False):
-            _LOG.debug("YvModel: initializing Token Sparse Attention / Tactic...")
-            self.token_sparse_attn = YvTokenSparseAttention(cfg, device=device, dtype=dtype)
-
-        if self.cfg.use_mhc_lite:
-            _LOG.debug("YvModel: initializing mHC-lite...")
-            self.mhc_lite = YvMHCLiteHyperConnection(
-                num_streams=getattr(cfg, 'mhc_streams', 4),
-                num_permutations=getattr(cfg, 'mhc_permutations', 8),
-                device=device, dtype=dtype,
-            )
+        self._init_long_context_stack(cfg, device, dtype)
 
         _LOG.debug("YvModel: initializing output heads...")
         self.lm_head = nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
@@ -2060,6 +1995,7 @@ class YvModel(nn.Module):
                         h_chunk, aux_loss = layer(
                             h_chunk, chunk_mask, past_key_values=past_kv, use_cache=False,
                             subconscious_kv=extra_kv, film_params=film_params,
+                            modal_id=modal_id,
                         )
                         aux_loss_bucket[0] = aux_loss_bucket[0] + (aux_loss if aux_loss is not None else 0.0)
 
@@ -2105,6 +2041,7 @@ class YvModel(nn.Module):
                     h, aux_loss = layer(
                         h, mask, past_key_values=past_kv, use_cache=False,
                         subconscious_kv=extra_kv, film_params=film_params,
+                        modal_id=modal_id,
                     )
                     total_aux_loss = total_aux_loss + (aux_loss if aux_loss is not None else 0.0)
 
@@ -2203,6 +2140,7 @@ class YvModel(nn.Module):
                         h, aux_loss, cache = layer(
                             h, msk, past_key_values=past_kv, use_cache=True,
                             subconscious_kv=extra_kv, film_params=film_params,
+                            modal_id=modal_id,
                         )
 
                         if cache is not None:

@@ -1290,7 +1290,7 @@ class YvHybridBlock(nn.Module):
             
         return ssm_out
 
-    def _forward_mlp(self, x: torch.Tensor):
+    def _forward_mlp(self, x: torch.Tensor, modal_id: Optional[torch.Tensor] = None):
         """Forward pass through MoE MLP layer.
 
         Args:
@@ -1300,7 +1300,10 @@ class YvHybridBlock(nn.Module):
             Tuple of (output, auxiliary_loss).
         """
         x_norm = self.norm_mlp(x)
-        mlp_out, aux_loss = self.mlp(x_norm)
+        if modal_id is not None:
+            mlp_out, aux_loss = self.mlp(x_norm, modal_id=modal_id)
+        else:
+            mlp_out, aux_loss = self.mlp(x_norm)
         return mlp_out, aux_loss
 
     def forward(
@@ -1308,7 +1311,8 @@ class YvHybridBlock(nn.Module):
         hidden_states: torch.Tensor,
         attention_mask: Optional[torch.Tensor] = None,
         past_key_values=None,
-        use_cache=False
+        use_cache=False,
+        modal_id: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
         """Forward pass of the hybrid block.
 
@@ -1367,7 +1371,7 @@ class YvHybridBlock(nn.Module):
         mlp_residual = hybrid_out
         hybrid_out = self.norm_fusion(hybrid_out)
 
-        mlp_out, aux_loss = self._forward_mlp(hybrid_out)
+        mlp_out, aux_loss = self._forward_mlp(hybrid_out, modal_id=modal_id)
 
         output = mlp_residual + self.residual_dropout(
             self.residual_scale_mlp * mlp_out

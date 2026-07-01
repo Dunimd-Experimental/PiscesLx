@@ -561,10 +561,10 @@ class EvolutionConfig:
     - Weak-to-strong training for final model
     
     Based on NeurIPS/ICML/ICLR 2024-2025 papers:
-    - NeurIPS 2024: Gstack (Stacking Your Transformers)
-    - ICML 2024: SPIN (Self-Play Fine-Tuning)
-    - ICML 2024: Weak-to-Strong Generalization (OpenAI)
-    - ICLR 2025: Architect Thyself (Neural Darwinism)
+    - Gstack: Stacking Your Transformers (NeurIPS 2024, arXiv:2405.15319)
+    - SPIN: Self-Play Fine-Tuning (ICML 2024, arXiv:2401.01335)
+    - Weak-to-Strong Generalization (Burns et al., ICML 2024, arXiv:2312.09390)
+    - Architect Thyself: Neural Darwinism and Self-Evolving Multimodal Networks (ICLR 2025)
     
     Attributes:
         enabled: Enable evolution training mode.

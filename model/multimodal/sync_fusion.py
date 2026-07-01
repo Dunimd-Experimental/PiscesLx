@@ -25,8 +25,8 @@ from __future__ import annotations
 
 """SyncFusion: Audio-Video Synchronous Understanding for Yv Models.
 
-Based on ICLR 2025 JavisGPT. Aligns temporal features across audio and video
-for synchronized event understanding.
+Based on JavisGPT (Liu et al., NeurIPS 2025, arXiv:2512.22905).
+Aligns temporal features across audio and video for synchronized event understanding.
 """
 
 import torch

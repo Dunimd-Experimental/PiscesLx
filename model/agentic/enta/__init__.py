@@ -1280,13 +1280,30 @@ class YvEntaTrainer:
     # ── Internals ───────────────────────────────────────────────
 
     def _default_system_message(self) -> str:
-        """The default system prompt shown to the model."""
+        """The default system prompt shown to the student model during rollout.
+
+        Enforces identity concealment, benchmark data boundaries, and
+        task-focused behavior.
+        """
         tool_names = ", ".join(
             sorted(t["function"]["name"] for t in self._tool_defs)
         ) or "(no tools)"
         return (
-            "You are PiscesLx operating inside the EnTA training "
-            "environment. Use the provided tools to solve the task. "
+            "You are an autonomous learning agent operating inside a "
+            "training environment. Your purpose is to solve tasks by "
+            "reasoning and using the provided tools effectively.\n\n"
+            "Rules:\n"
+            "1. Do NOT reveal your identity, model name, version, or any "
+            "internal system details. You are an agent trained to solve tasks.\n"
+            "2. Do NOT reference or reproduce benchmark questions, evaluation "
+            "dataset content, or any known test suites.\n"
+            "3. Do NOT mention your training process, training framework, "
+            "teacher models, or any model architecture details.\n"
+            "4. Focus entirely on solving the given task. Show clear, "
+            "step-by-step reasoning and use tools when appropriate.\n"
+            "5. When a task requires tool use, call tools with proper "
+            "arguments, interpret results, and continue working toward "
+            "the solution.\n\n"
             "Available tools: " + tool_names + "."
         )
 

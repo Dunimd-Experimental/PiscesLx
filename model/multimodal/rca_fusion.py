@@ -24,16 +24,10 @@
 from __future__ import annotations
 
 """
-SparDA: Sparse Decoupled Attention with Forecast Projection
-(arXiv:2606.04511, Jun 2026).
+RCA: Recursive Cross-Modal Attention (Yv Architecture, Dunimd Team).
 
-Adds a fourth per-layer projection — Forecast — alongside Q, K, V.
-Forecast predicts which KV blocks the next layer needs, enabling
-lookahead selection that overlaps CPU→GPU prefetch with current-layer
-execution. <0.5% parameter overhead.
-
-Reference: Fu et al. "SparDA: Sparse Decoupled Attention for Efficient
-Long-Context LLM Inference." arXiv:2606.04511, 2026.
+Recursive cross-modal fusion with interleaved refinement rounds,
+enabling iterative cross-modal alignment and integration.
 """
 
 import torch
@@ -78,14 +72,11 @@ class YvRCAFusionConfig:
         self.num_modalities = num_modalities
 
 
-# Paper: Fu et al. (NVIDIA), "SparDA: Sparse Decoupled Attention for Efficient Long-Context LLM Inference," arXiv:2606.04511, 2026.
+# Paper: Original contribution by Dunimd Team (Yv Architecture — RCA)
 class YvRecursiveCrossModalFusion(nn.Module):
     """
-    SparDA-inspired cross-modal fusion with Forecast-driven lookahead.
-
-    Forecast projection predicts important cross-modal interactions for
-    future layers, enabling lookahead prefetch of modality-specific KV
-    blocks and overlapped multi-modal computation.
+    RCA: Recursive Cross-Modal Attention — iterative cross-modal fusion
+    with alternating refinement rounds for multi-modal alignment.
     """
 
     def __init__(self, config, device=None, dtype=None):
@@ -214,12 +205,11 @@ class YvRecursiveCrossModalFusion(nn.Module):
         }
 
 
-# Paper: Fu et al. (NVIDIA), "SparDA: Sparse Decoupled Attention for Efficient Long-Context LLM Inference," arXiv:2606.04511, 2026.
+# Paper: Original contribution by Dunimd Team (Yv Architecture — RCA)
 class YvDeepCrossLayerInjector(nn.Module):
     """
-    SparDA lookahead injector: uses Forecast predictions to prefetch
-    fused features for future layers. Overlaps computation across layers
-    by scheduling injection based on predicted importance.
+    RCA deep cross-layer injector: propagates fused multi-modal features
+    across layers with gated injection for selective modality integration.
     """
 
     def __init__(self, config, num_layers: int, device=None, dtype=None):

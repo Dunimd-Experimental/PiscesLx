@@ -31,7 +31,7 @@ through a fixed small encoder (0.5B-scale, 640-dim) to produce
 an mmap-backed knowledge store for low-latency retrieval at inference.
 
 Architecture inspired by:
-    Liang Wenfeng et al., "Engram: Conditional Memory via Scalable
+    Cheng et al., "Engram: Conditional Memory via Scalable
     Lookup", arXiv:2601.07372, 2026.
 
 Pipeline:
