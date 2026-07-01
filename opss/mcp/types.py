@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Callable, Set, Union, TypeVar
@@ -37,7 +39,7 @@ class POPSSMCPModuleStatus(Enum):
     INCOMPATIBLE = "incompatible"
 
 class POPSSMCPToolCategory(Enum):
-    PISCESL1_EXTENSION = "PiscesL1 Extension"
+    PISCESL1_EXTENSION = "PiscesLx Extension"
     FASTMCP_COMPATIBLE = "FastMCP Compatible"
     CUSTOM = "custom"
     UTILITY = "utility"
@@ -55,7 +57,7 @@ class POPSSMCPToolMetadata:
     description: str
     category: str
     version: str = VERSION
-    author: str = "PiscesL1 Team"
+    author: str = "PiscesLx Team"
     last_updated: datetime = field(default_factory=datetime.now)
     dependencies: List[str] = field(default_factory=list)
     performance_score: float = 1.0

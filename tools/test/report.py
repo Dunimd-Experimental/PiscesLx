@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Test Report Module for PiscesL1.
+Test Report Module for PiscesLx.
 
 This module provides the PiscesLxTestReport class for collecting,
 aggregating, and displaying test results with Cargo-style dynamic
@@ -172,7 +174,7 @@ class PiscesLxTestReport:
         
         print()
         print(f"{self._color('BOLD')}{'═' * 55}{self._reset()}")
-        print(f"{self._color('BOLD')}        PiscesL1 Project Health Check{self._reset()}")
+        print(f"{self._color('BOLD')}        PiscesLx Project Health Check{self._reset()}")
         print(f"{self._color('BOLD')}{'═' * 55}{self._reset()}")
         print()
     

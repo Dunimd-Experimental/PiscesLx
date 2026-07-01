@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Core multi-path reasoning engine for Yv multimodal agents.
 
 This module provides the core multi-path reasoning engine and related components
@@ -104,6 +106,7 @@ import torch.nn.functional as F
 from typing import Any, Dict, Tuple
 
 
+# Paper: Wang et al., "Self-Consistency Improves Chain of Thought Reasoning in Language Models", ICLR 2023
 class YvMultiPathReasoningEngine(nn.Module):
     """Execute multi-path chain-of-thought reasoning with adaptive abstraction.
     
@@ -302,16 +305,13 @@ class YvMultiPathReasoningEngine(nn.Module):
                 or misconfigured, fallback defaults are applied.
         """
         if tokenizer is not None:
-            try:
-                self.reasoning_tokens = {
-                    'start_hypothesis': tokenizer.convert_tokens_to_ids('<|start_hypothesis|>'),
-                    'start_evidence': tokenizer.convert_tokens_to_ids('<|start_evidence|>'),
-                    'start_conclusion': tokenizer.convert_tokens_to_ids('<|start_conclusion|>'),
-                    'hypothesis_split': tokenizer.convert_tokens_to_ids('<|hypothesis_split|>'),
-                    'hypothesis_merge': tokenizer.convert_tokens_to_ids('<|hypothesis_merge|>')
-                }
-            except Exception:
-                self._set_default_reasoning_tokens()
+            self.reasoning_tokens = {
+                'start_hypothesis': tokenizer.convert_tokens_to_ids('<|start_hypothesis|>'),
+                'start_evidence': tokenizer.convert_tokens_to_ids('<|start_evidence|>'),
+                'start_conclusion': tokenizer.convert_tokens_to_ids('<|start_conclusion|>'),
+                'hypothesis_split': tokenizer.convert_tokens_to_ids('<|hypothesis_split|>'),
+                'hypothesis_merge': tokenizer.convert_tokens_to_ids('<|hypothesis_merge|>')
+            }
         else:
             self._set_default_reasoning_tokens()
 
@@ -621,20 +621,10 @@ class YvMultiPathReasoningEngine(nn.Module):
                     "reflection_logits": reflection_logits
                 }
 
-        # Fallback path
-        uncertainty_scores = self.uncertainty_head(hidden_states)
-        collapsed_output = self._efficient_path_collapse({}, uncertainty_scores, [], input_ids, None)
-        reflection_logits = self.reasoning_streams['reflection'](hidden_states.mean(dim=1))
-        loss = None
-        fact_consistency = torch.ones(batch_size, 1, device=device) * 0.8
-        return {
-            "thinking_logits": self.thinking_head(collapsed_output),
-            "loss": loss,
-            "uncertainty_scores": uncertainty_scores,
-            "fact_consistency": fact_consistency,
-            "reasoning_outputs": {},
-            "reflection_logits": reflection_logits
-        }
+        raise ValueError(
+            "YvMultiPathReasoningEngine full reasoning path is disabled by configuration. "
+            "Synthetic fallback collapse is not allowed in strict model-closure mode."
+        )
 
     def _efficient_path_collapse(self, reasoning_outputs, uncertainty_scores, verification_scores, input_ids, path_importance=None):
         """
@@ -658,7 +648,9 @@ class YvMultiPathReasoningEngine(nn.Module):
 
         output_list = [output for stream_name, output in reasoning_outputs.items() if stream_name != 'reflection']
         if len(output_list) == 0:
-            return uncertainty_scores.expand(-1, -1, 1)
+            raise ValueError(
+                "YvMultiPathReasoningEngine path collapse requires at least one reasoning stream output."
+            )
 
         stacked_outputs = torch.stack(output_list, dim=0)
         weighted_outputs = stacked_outputs * weights.unsqueeze(-1).unsqueeze(-1)
@@ -762,7 +754,7 @@ class YvMultiPathReasoningEngine(nn.Module):
             torch.Tensor or None: Tensor containing key positions if sequence length is greater than 128, None otherwise.
         """
         if seq_len <= 128:
-            return None
+            return torch.arange(seq_len, device=states.device)
         num_key_positions = max(32, int(seq_len * ratio))
         step = seq_len // num_key_positions
         key_positions = torch.arange(0, seq_len, step, device=states.device)
@@ -791,7 +783,12 @@ class YvMultiPathReasoningEngine(nn.Module):
         device = query.device
         query_proj = self.chunked_attention['lsh_proj'](query)
         key_proj = self.chunked_attention['lsh_proj'](key)
-        hash_matrix = torch.randn(num_hashes, hidden_size // 4, device=device)
+        proj_dim = query_proj.size(-1)
+        base_matrix = self.chunked_attention['lsh_proj'].weight[:, :proj_dim].detach().to(device=device, dtype=query_proj.dtype)
+        if base_matrix.size(0) < num_hashes:
+            repeats = math.ceil(num_hashes / base_matrix.size(0))
+            base_matrix = base_matrix.repeat(repeats, 1)
+        hash_matrix = base_matrix[:num_hashes]
         query_hashes = torch.sign(torch.matmul(query_proj, hash_matrix.t()))
         key_hashes = torch.sign(torch.matmul(key_proj, hash_matrix.t()))
         query_buckets = torch.sum(query_hashes * (2 ** torch.arange(num_hashes, device=device)), dim=-1)
@@ -880,6 +877,7 @@ class YvMultiPathReasoningEngine(nn.Module):
         return total_loss
 
 
+# Paper: Original contribution by Dunimd Team (Deep Multi-Path Extension)
 class YvDeepMultiPathReasoningEngine(nn.Module):
     """
     Deep Multi-Path Reasoning Engine with extended abstraction depth.
@@ -1127,6 +1125,7 @@ class YvDeepMultiPathReasoningEngine(nn.Module):
         }
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvMultiDimensionalFactVerifier(nn.Module):
     """
     Multi-Dimensional Fact Verifier for comprehensive reasoning validation.
@@ -1223,6 +1222,7 @@ class YvMultiDimensionalFactVerifier(nn.Module):
         }
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvRLDrivenMetacognition(nn.Module):
     """
     Reinforcement Learning Driven Metacognition for self-improvement.
@@ -1405,10 +1405,14 @@ class YvRLDrivenMetacognition(nn.Module):
         self.memory_ptr += 1
     
     def _sample_experience(self, batch_size: int = 32) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        if int(self.memory_ptr) < batch_size:
-            return None, None, None
-        
-        indices = torch.randperm(min(int(self.memory_ptr), self.memory_state.size(0)))[:batch_size]
+        available = min(int(self.memory_ptr), self.memory_state.size(0))
+        if available <= 0:
+            raise RuntimeError(
+                "YvMultiPathReasoningEngine._sample_experience requires at least one stored transition."
+            )
+
+        effective_batch = min(batch_size, available)
+        indices = torch.randperm(available)[:effective_batch]
         return (
             self.memory_state[indices],
             self.memory_action[indices],
@@ -1437,9 +1441,6 @@ class YvRLDrivenMetacognition(nn.Module):
         self._store_transition(state, action, reward)
         
         sampled_state, sampled_action, sampled_reward = self._sample_experience()
-        
-        if sampled_state is None:
-            return {'loss': 0.0}
         
         current_q = self.critic_network(sampled_state)
         target_q = sampled_reward + self.gamma * self.critic_network(sampled_state).detach()
@@ -1508,6 +1509,7 @@ class YvRLDrivenMetacognition(nn.Module):
         }
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvAdaptiveReasoningController(nn.Module):
     """
     Adaptive Reasoning Controller with learned depth strategy network.

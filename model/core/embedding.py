@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Advanced Embedding Module for Yv Model.
 
@@ -158,6 +160,7 @@ class YvEmbeddingConfig:
     num_modalities: int = 6
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvAdaptiveEmbeddingScaling(nn.Module):
     """Adaptive scaling for embedding outputs with learned parameters.
     
@@ -236,6 +239,7 @@ class YvAdaptiveEmbeddingScaling(nn.Module):
         return x * self.scale + self.bias
 
 
+# Paper: Vaswani et al. "Attention Is All You Need." NeurIPS 2017.
 class YvSinusoidalPositionEmbedding(nn.Module):
     """Sinusoidal positional embeddings with extrapolation support.
     
@@ -516,6 +520,7 @@ class YvLearnedPositionEmbedding(nn.Module):
         return self.embedding(scaled_ids)
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvModalityEmbedding(nn.Module):
     """Modality-aware embeddings for multimodal input support.
     
@@ -845,6 +850,7 @@ class YvTokenEmbedding(nn.Module):
         return embeddings
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvUnifiedEmbedding(nn.Module):
     """Unified embedding module combining token, position, and modality embeddings.
     

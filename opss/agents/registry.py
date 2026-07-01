@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Agent Registry - Operator-based Agent Registration
 
@@ -112,7 +114,7 @@ class POPSSAggregentMetadata:
     name: str
     description: str
     version: str = VERSION
-    author: str = "PiscesL1"
+    author: str = "PiscesLx"
     created_at: datetime = field(default_factory=datetime.now)
     updated_at: datetime = field(default_factory=datetime.now)
     capabilities: Set[POPSSAgentCapability] = field(default_factory=set)

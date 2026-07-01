@@ -8,14 +8,20 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-# MegaMoE — Wave-based expert scheduling for PiscesL1.
-# Based on DeepSeek-V4 Pro technical report (2026).
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Key ideas:
-# - Wave scheduling: process experts in waves to maximize GPU utilization
-# - Fused kernel: single mega-kernel for expert computation + reduction
-# - 1.5-1.96x speedup vs per-expert dispatch
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# DISCLAIMER: Users must comply with applicable AI regulations.
+# Non-compliance may result in service termination or legal liability.
+
+from __future__ import annotations
 
 import torch
 import torch.nn as nn
@@ -146,6 +152,7 @@ def _mega_moe_forward(
     return output
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvMegaMoE(nn.Module):
     """MegaMoE layer with wave-based expert scheduling.
 

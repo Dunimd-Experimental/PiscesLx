@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Model Growth Operators for Progressive Network Expansion
 
@@ -453,6 +455,7 @@ class POPSSWidthGrower:
                 model.config.hidden_size = new_size
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class POPSSExpertGrower:
     """MoE expert growth for capacity scaling.
     
@@ -637,6 +640,7 @@ class _ModelGrowthOperatorImpl(PiscesLxOperatorInterface):
             )
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class POPSSModelGrowthOperator:
     """Facade for model growth operator.
     

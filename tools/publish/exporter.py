@@ -24,7 +24,7 @@
 """
 Model Exporter
 
-This module handles the export of PiscesL1 model checkpoints to various formats
+This module handles the export of PiscesLx model checkpoints to various formats
 for distribution and deployment. It provides functionality to export model weights,
 configurations, tokenizer files, and generation settings.
 
@@ -99,7 +99,7 @@ _LOG = PiscesLxLogger("PiscesLx.Publish.Exporter", file_path=get_log_file("Pisce
 
 
 class PiscesLxPublishExporter:
-    """Model Exporter for PiscesL1.
+    """Model Exporter for PiscesLx.
 
     Handles the export of model checkpoints, configurations, tokenizers,
     and generation settings to a publish-ready format.

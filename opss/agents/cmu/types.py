@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 CMU Type Definitions - Computer Use Agent Type System
 
@@ -51,8 +53,6 @@ Key Features:
     - Safety level classification
     - Comprehensive action result tracking
 """
-
-from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field

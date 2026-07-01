@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Expert Diversity Regularization for Mixture-of-Experts Models.
 
 This module implements comprehensive diversity regularization techniques
@@ -130,6 +132,7 @@ class YvRegularizationConfig:
             self.target_entropy = math.log(self.num_experts)
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvExpertDiversityRegularizer(nn.Module):
     """Comprehensive diversity regularizer for MoE expert networks.
     

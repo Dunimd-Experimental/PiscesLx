@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Direct Preference Optimization (DPO) Operator Implementation
 
 Complete implementation of DPO training as a standardized operator.
-Based on the original PiscesL1 DPO training pipeline.
+Based on the original PiscesLx DPO training pipeline.
 
 DPO Algorithm Overview:
     DPO directly optimizes language models to align with human preferences
@@ -531,6 +533,7 @@ class POPSSDPOLoggingCallback:
             )
 
 
+# Paper: Rafailov et al., "Direct Preference Optimization: Your Language Model is Secretly a Reward Model", NeurIPS 2023, arXiv:2305.18290
 class POPSSDPOTrainingOperator(PiscesLxOperatorInterface):
     """
     Direct Preference Optimization Training Operator.

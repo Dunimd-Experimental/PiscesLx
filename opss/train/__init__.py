@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Training Operators - Flagship-level Training Optimization Components
 
@@ -163,6 +165,10 @@ _LAZY_SYMBOLS = {
     "MemSepGateScheduler": (".memsep", "MemSepGateScheduler"),
     "POPSSMemoryAlignmentLoss": (".memsep", "POPSSMemoryAlignmentLoss"),
     "create_memsep_trainer": (".memsep", "create_memsep_trainer"),
+    "POPSSSelfPlayConfig": (".self_play", "POPSSSelfPlayConfig"),
+    "POPSSSelfPlayTrainer": (".self_play", "POPSSSelfPlayTrainer"),
+    "POPSSGaLoreOperator": ("opss.optim.galore", "POPSSGaLoreOperator"),
+    "POPSSGaLoreConfig": ("opss.optim.galore", "POPSSGaLoreConfig"),
 }
 
 
@@ -267,6 +273,10 @@ __all__ = [
     "MemSepGateScheduler",
     "POPSSMemoryAlignmentLoss",
     "create_memsep_trainer",
+    "POPSSSelfPlayConfig",
+    "POPSSSelfPlayTrainer",
+    "POPSSGaLoreOperator",
+    "POPSSGaLoreConfig",
 
     "SubconsciousTrainer",
     "SubconsciousTrainingConfig",

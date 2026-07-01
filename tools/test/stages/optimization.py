@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-Optimization Checker Module for PiscesL1.
+Optimization Checker Module for PiscesLx.
 
 This module provides the PiscesLxOptimizationChecker class for validating
 inference optimization features.

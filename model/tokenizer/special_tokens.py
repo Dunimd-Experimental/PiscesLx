@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Special tokens definition for Yv tokenizer with comprehensive categorization.
 
 This module defines all special tokens used across the Yv model architecture,

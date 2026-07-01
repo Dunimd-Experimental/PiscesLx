@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-Module Import Checker for PiscesL1.
+Module Import Checker for PiscesLx.
 
 This module provides the PiscesLxImportChecker class for validating
 that all project modules can be imported correctly.

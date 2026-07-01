@@ -21,12 +21,14 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Agent Protocol - Inter-Agent Communication Protocol
 
 This module provides a comprehensive protocol system for inter-agent communication,
 enabling structured message passing, request-response patterns, and event-driven
-coordination between agents in the PiscesL1 multi-agent system.
+coordination between agents in the PiscesLx multi-agent system.
 
 Key Components:
     - POPSSProtocolMessageType: Enumeration of message types (REQUEST, RESPONSE, etc.)
@@ -99,7 +101,7 @@ class POPSSProtocolMessageType(Enum):
     Enumeration of protocol message types for inter-agent communication.
     
     This enum defines the types of messages that can be exchanged between
-    agents in the PiscesL1 multi-agent system. Each type has specific
+    agents in the PiscesLx multi-agent system. Each type has specific
     semantics and handling requirements.
     
     Attributes:
@@ -223,7 +225,7 @@ class POPSSProtocolHandler:
     Main protocol handler for inter-agent message routing and processing.
     
     This class provides a comprehensive message handling system for the
-    PiscesL1 multi-agent architecture, supporting request-response patterns,
+    PiscesLx multi-agent architecture, supporting request-response patterns,
     notifications, and streaming communication.
     
     Key Features:

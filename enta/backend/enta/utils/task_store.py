@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
-# This file is part of EnTA.
-# The EnTA project belongs to the Dunimd Team.
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -20,9 +21,9 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
 
-
-"""In-process task store backing the EnCRE ``task_*`` tool family.
+"""In-process task store backing the EnTA ``task_*`` tool family.
 
 The previous implementation lived in ``enta.task.manager`` which has been
 removed during the EnTA core slim-down.  This module is a complete,
@@ -31,8 +32,6 @@ on.  Tasks are kept in a thread-safe in-memory dict keyed by task id; the
 store is intentionally minimal so it can be used as-is from training
 rollouts without any extra infrastructure.
 """
-
-from __future__ import annotations
 
 import threading
 import time

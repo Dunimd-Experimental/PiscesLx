@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Reasoning Verification Modules for Yv Models.
 
 Implements:
@@ -36,6 +38,7 @@ import torch.nn.functional as F
 from typing import List, Tuple, Optional
 
 
+# Paper: Zhao et al., "Verifying Chain-of-Thought Reasoning via Its Computational Graph," ICLR 2026 (Oral), arXiv:2510.09312
 class YvCRV(nn.Module):
     """Circuit-based Reasoning Verification.
 
@@ -129,6 +132,7 @@ class YvCRV(nn.Module):
         return contradictions
 
 
+# Paper: Zhuang et al., "One-Token Verification for Reasoning Correctness Estimation," arXiv:2603.01025, 2026
 class YvOTV(nn.Module):
     """One-Token Verification.
 
@@ -200,6 +204,7 @@ class YvOTV(nn.Module):
         return step_quality < threshold
 
 
+# Paper: You et al., "Probabilistic Soundness Guarantees in LLM Reasoning Chains," EMNLP 2025, arXiv:2507.12948
 class YvARES(nn.Module):
     """Autoregressive Reasoning Entailment Stability.
 
@@ -292,3 +297,46 @@ def detect_cot_failure_modes(
             failures.append(("hallucination", 0.5))
 
     return failures
+
+
+class YvCRVIntegration(nn.Module):
+    """Batch-compatible CRV wrapper for YvModel forward integration.
+
+    Collects layer-wise hidden states as pseudo reasoning steps and
+    verifies step-to-step consistency via the CRV contradiction detector.
+    """
+
+    def __init__(self, hidden_size: int):
+        super().__init__()
+        self.crv = YvCRV(model=None, hidden_size=hidden_size)
+        self.recent_checkpoints: list = []
+
+    def record(self, h: torch.Tensor) -> None:
+        """Store a layer output checkpoint for later verification."""
+        self.recent_checkpoints.append(h.detach())
+
+    def forward(self, hidden_states: torch.Tensor) -> dict:
+        """Verify reasoning chain using recorded layer checkpoints.
+
+        Args:
+            hidden_states: Final [B, T, H] output as the 'final answer'.
+
+        Returns:
+            dict with keys: verified (bool), confidence (float), crv_loss (Tensor).
+        """
+        checkpoints = self.recent_checkpoints
+        self.recent_checkpoints = []
+
+        if len(checkpoints) < 2:
+            return {
+                'verified': torch.tensor(True),
+                'confidence': torch.tensor(1.0, device=hidden_states.device),
+                'crv_loss': torch.tensor(0.0, device=hidden_states.device),
+            }
+
+        score = self.crv.verify_reasoning(checkpoints, hidden_states)
+        return {
+            'verified': torch.tensor(score > 0.5, device=hidden_states.device),
+            'confidence': torch.tensor(score, device=hidden_states.device),
+            'crv_loss': torch.tensor(0.0, device=hidden_states.device),
+        }

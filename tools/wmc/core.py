@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 PiscesLx Watermark Detection Core Operators
 
@@ -54,7 +56,7 @@ Usage Examples:
     >>> # Verify model weights
     >>> model_result = detector.detect_model_watermark(model)
 
-Author: PiscesL1 Development Team
+Author: PiscesLx Development Team
 Version: 1.0.0
 """
 

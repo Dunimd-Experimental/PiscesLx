@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Model Context Protocol integration helpers for Yv multimodal agents.
 
 This module provides comprehensive MCP (Model Context Protocol) integration
@@ -85,20 +87,7 @@ from opss.mcp import (
 )
 import opss.mcp
 from opss.mcp.execution import POPSSMCPExecutionResult, POPSSMCPExecutionManager
-# Import types with fallback for standalone testing
-try:
-    from ..reasoning import YvMultiPathReasoningEngine
-except ImportError:
-    # Fallback for standalone testing
-    import sys
-    import os
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    parent_dir = os.path.dirname(current_dir)
-    sys.path.insert(0, parent_dir)
-    try:
-        from reasoning import YvMultiPathReasoningEngine
-    except ImportError:
-        YvMultiPathReasoningEngine = None
+from ..reasoning import YvMultiPathReasoningEngine
 
 class YvMCPToolRegistry:
     """Registry bridging Yv tools with the shared Pisces MCP ecosystem.
@@ -373,30 +362,19 @@ class YvCoreMCPProtocol:
     async def execute_tool_with_fallback(self, tool_name: str, arguments: Dict[str, Any], 
                                        receiver_id: str) -> Dict[str, Any]:
         """Execute a tool, falling back to external routing when native execution fails."""
-        try:
-            # Attempt native execution first when a handler is available.
-            if self.tool_registry and tool_name in self.tool_registry._native_tools:
-                result = await self.tool_registry.handle_tool_call(tool_name, **arguments)
-                return {
-                    "success": True,
-                    "result": result,
-                    "execution_mode": "native",
-                    "execution_time": 0.0
-                }
-            
-            # Fallback: create an external execution message when native execution is unavailable.
-            message = await self.create_tool_call_message(tool_name, arguments, receiver_id, "external")
+        if self.tool_registry and tool_name in self.tool_registry._native_tools:
+            result = await self.tool_registry.handle_tool_call(tool_name, **arguments)
             return {
                 "success": True,
-                "message": message,
-                "execution_mode": "external",
-                "execution_time": None
-            }
-            
-        except Exception as e:
-            return {
-                "success": False,
-                "error": str(e),
-                "execution_mode": "failed",
+                "result": result,
+                "execution_mode": "native",
                 "execution_time": 0.0
             }
+
+        message = await self.create_tool_call_message(tool_name, arguments, receiver_id, "external")
+        return {
+            "success": True,
+            "message": message,
+            "execution_mode": "external",
+            "execution_time": None
+        }

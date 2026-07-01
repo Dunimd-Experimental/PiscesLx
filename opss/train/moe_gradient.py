@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 MoE Expert Gradient Optimization Operator
 
@@ -111,6 +113,7 @@ from typing import Any, Dict, Optional, List, Union, Tuple
 from dataclasses import dataclass, field
 from enum import Enum
 import math
+import numpy as np
 import time
 
 from configs.version import VERSION
@@ -476,9 +479,12 @@ class POPSSMoEGradientOperator(PiscesLxOperatorInterface):
         Returns:
             Dictionary with 'expert' and 'non_expert' parameter name lists.
         """
+        self.expert_params.clear()
+        self.non_expert_params.clear()
+        self.gating_params.clear()
         classification = {
             'expert': {'ffn': [], 'attention': [], 'embedding': [], 
-                      'cross_modal': [], 'unified': []},
+                       'cross_modal': [], 'unified': []},
             'non_expert': []
         }
         
@@ -554,7 +560,6 @@ class POPSSMoEGradientOperator(PiscesLxOperatorInterface):
         clip_threshold = self.config.expert_clip_threshold
         
         if self.config.enable_adaptive_clip and self.clip_history:
-            import numpy as np
             try:
                 history_array = np.array(self.clip_history)
                 if len(history_array) >= 10:
@@ -566,7 +571,7 @@ class POPSSMoEGradientOperator(PiscesLxOperatorInterface):
                         clip_threshold,
                         target_percentile * 1.2
                     )
-            except (ImportError, ValueError):
+            except (ValueError, RuntimeError):
                 pass
         
         total_norm = 0.0

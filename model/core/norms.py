@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Advanced Normalization and Position Embedding Module for Yv Model.
 
@@ -203,6 +205,7 @@ def _residual_alpha_for_depth(n_layer: int) -> float:
     return (2 * n_layer) ** 0.25
 
 
+# Paper: Zhang & Sennrich, "Root Mean Square Layer Normalization", NeurIPS 2019, arXiv:1910.07467
 class YvRMSNorm(nn.Module):
     """Root Mean Square Layer Normalization for efficient normalization.
     
@@ -395,6 +398,7 @@ class YvLayerNorm(nn.Module):
             return F.layer_norm(x, (x.shape[-1],), self.weight, self.bias, self.eps)
 
 
+# Paper: Perez et al., "FiLM: Visual Reasoning with a General Conditioning Layer", NeurIPS 2017, arXiv:1709.07871; DiT: Peebles & Xie, arXiv:2212.09748
 class YvAdaptiveLayerNorm(nn.Module):
     """Adaptive Layer Normalization with external conditioning.
     
@@ -508,6 +512,7 @@ class YvAdaptiveLayerNorm(nn.Module):
         return x_norm * (1 + scale) + shift
 
 
+# Paper: Wu & He, "Group Normalization", ECCV 2018, arXiv:1803.08494
 class YvGroupNorm(nn.Module):
     """Group Normalization with optional RMS-style computation.
     
@@ -603,6 +608,7 @@ class YvGroupNorm(nn.Module):
             return F.group_norm(x, self.num_groups, self.weight, self.bias, self.eps)
 
 
+# Paper: Su et al., "RoFormer: Enhanced Transformer with Rotary Position Embedding", arXiv:2104.09864, 2021
 class YvRotaryEmbedding(nn.Module):
     """Rotary Position Embedding (RoPE) for position-aware attention.
     
@@ -744,6 +750,7 @@ class YvRotaryEmbedding(nn.Module):
         self.max_seq_len = seq_len
 
 
+# Paper: Peng et al., "YaRN: Efficient Context Window Extension of Large Language Models", arXiv:2309.00071, 2023
 class YvYaRNRotaryEmbedding(nn.Module):
     """YaRN (Yet Another RoPE extensioN) for ultra-long context support.
     
@@ -1183,6 +1190,7 @@ class YvDynamicYaRNRotaryEmbedding(YvYaRNRotaryEmbedding):
         return self._rotate_half(x, cos, sin)
 
 
+# Paper: Wang et al., "DeepNet: Scaling Transformers to 1,000 Layers", arXiv:2203.00555, 2022
 class YvDeepNorm(nn.Module):
     """Deep Normalization for training stability in very deep networks.
     
@@ -1284,6 +1292,7 @@ class YvDeepNorm(nn.Module):
         return self.norm(residual * self.alpha + new_value)
 
 
+# Paper: Wang et al., "DeepNet: Scaling Transformers to 1,000 Layers", arXiv:2203.00555, 2022; parallel residual variant
 class YvParallelResidualNorm(nn.Module):
     """Parallel Residual Normalization for improved gradient flow.
     

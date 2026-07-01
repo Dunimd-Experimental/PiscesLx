@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Training Orchestrator
 
@@ -693,6 +695,46 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         
         _LOG.info("Applied top-level config from model config file")
 
+    def _bridge_model_flags_to_engine(self, model_cfg: Any) -> None:
+        if model_cfg is None:
+            return
+        _LOG.info("--- Model Flagship Feature Audit ---")
+        use_flags = []
+        for attr in sorted(dir(model_cfg)):
+            if attr.startswith('use_') and not attr.startswith('__'):
+                val = getattr(model_cfg, attr, None)
+                if isinstance(val, bool):
+                    use_flags.append((attr, val))
+                    if val:
+                        _LOG.info(f"  [+] {attr} = True  (active)")
+                    else:
+                        _LOG.debug(f"  [-] {attr} = False (inactive)")
+        active = sum(1 for _, v in use_flags if v)
+        _LOG.info(f"  Active flagship features: {active}/{len(use_flags)}")
+
+        top_level_map = {
+            'use_fp4': 'optimizer.use_fp4',
+            'use_gradient_checkpointing': 'gradient_checkpointing',
+            'use_self_play': 'self_play',
+            'use_graph_of_tokens': 'graph_of_tokens',
+            'use_soft_moe': 'soft_moe',
+            'use_roma': 'roma',
+            'use_spell': 'spell',
+            'use_seirenes': 'seirenes',
+            'use_tactic': 'tactic',
+            'use_seer_executor': 'seer_executor',
+            'use_vericot': 'vericot',
+            'use_comet_memory': 'comet_memory',
+            'use_token_sparse_attn': 'token_sparse_attn',
+        }
+        for flag, target in top_level_map.items():
+            val = getattr(model_cfg, flag, None)
+            if isinstance(val, bool) and val:
+                _LOG.info(f"  Engine-aware flag: {flag} → {target} (active)")
+        all_enabled = [f for f, v in use_flags if v]
+        _LOG.info(f"  All enabled flags: {all_enabled}")
+        _LOG.info("--- End Model Flagship Feature Audit ---")
+
     def _apply_training_moe_overrides_to_model_config(self, model_cfg: Any) -> Any:
         moe_cfg = getattr(self.train_config, "moe", None)
         if not isinstance(moe_cfg, dict) or not moe_cfg:
@@ -790,6 +832,10 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 params = dict(vars(args))
         except Exception:
             params = {}
+
+        # ── EnTA outer-loop branch ──
+        if params.get("enta"):
+            return self._run_enta_loop(params)
 
         train_cfg_path = params.get("train_config")
         if isinstance(train_cfg_path, str) and train_cfg_path.strip():
@@ -922,6 +968,9 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         # Apply top-level config (galore_enabled, use_h2o_attention, etc.)
         self._apply_top_level_config(model_cfg)
+
+        # Bridge model use_xxx flags → training engine
+        self._bridge_model_flags_to_engine(model_cfg)
 
         # Apply training_config from raw YAML. Do not rely on YvConfig having a training_config field,
         # because YvConfig.from_yaml filters unknown keys.
@@ -1256,6 +1305,209 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         return {"status": "ok", "mode": "standard", "results": results}
 
+    def _run_enta_loop(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Run the EnTA outer training loop.
+
+        This method:
+        1. Runs the EntaIntake startup questionnaire (if needed)
+        2. Loads the EnTA config from teachers.yaml
+        3. Creates a YvEntaTrainer
+        4. Enters the outer loop: generate -> train -> evaluate -> update
+        5. Returns a summary dict with training results
+        """
+        _LOG.info("=== EnTA outer training loop started ===")
+
+        # Step 1: Startup questionnaire for model layout
+        from model.agentic.enta.intake import EntaIntake
+        intake = EntaIntake(config_path=params.get("enta_config", "configs/teachers.yaml"))
+        intake.ensure_layout()
+
+        # Step 2: Load EnTA config from teachers.yaml
+        from model.config import YvEntaConfig
+        enta_cfg = YvEntaConfig.from_yaml(params.get("enta_config", "configs/teachers.yaml"))
+
+        # Step 3: Create YvEntaTrainer (outer-loop mode -- no model attached)
+        from model.agentic.enta import YvEntaTrainer
+        trainer = YvEntaTrainer(cfg=enta_cfg)
+
+        # Step 4: Outer training loop
+        loop_iteration = 0
+        total_batches = 0
+        profiles = []
+
+        while not trainer.should_stop():
+            loop_iteration += 1
+            _LOG.info(f"EnTA loop iteration {loop_iteration}")
+
+            # 4a. Generate a batch of training data
+            dataset_path = trainer.generate_batch()
+            if not dataset_path:
+                _LOG.warning("generate_batch returned empty path; stopping")
+                break
+
+            # 4b. Train with the generated data
+            checkpoint_path = self._run_enta_training_batch(
+                dataset_path=dataset_path,
+                enta_cfg=enta_cfg,
+                params=params,
+            )
+            total_batches += 1
+
+            # 4c. Evaluate the checkpoint
+            profile = trainer.evaluate(checkpoint_path)
+            profiles.append(profile)
+            _LOG.info(
+                f"Iter {loop_iteration} | checkpoint={checkpoint_path} "
+                f"capability_score={profile.get('capability_score', 'N/A')}"
+            )
+
+            # 4d. Advance curriculum
+            trainer.update(profile)
+
+            # 4e. Offload model to free memory for next generate_batch
+            self._offload_model()
+
+        _LOG.info(
+            f"=== EnTA outer training loop completed ==="
+            f"  iterations={loop_iteration} batches={total_batches}"
+        )
+
+        return {
+            "status": "enta_completed",
+            "loop_iterations": loop_iteration,
+            "total_batches": total_batches,
+            "profiles": profiles,
+        }
+
+    def _run_enta_training_batch(
+        self,
+        dataset_path: str,
+        enta_cfg: Any,
+        params: Dict[str, Any],
+    ) -> str:
+        """Run one training batch using the training engine.
+
+        Args:
+            dataset_path: Path to the generated dataset JSONL file.
+            enta_cfg: The ``YvEntaConfig`` instance with model layout params.
+            params: Original CLI args dict.
+
+        Returns:
+            Path to the checkpoint directory produced by training.
+        """
+        import os
+        import tempfile
+
+        _LOG.info(f"Training batch starting | dataset={dataset_path}")
+
+        # Build a checkpoint output dir.
+        ckpt_dir = os.path.join(
+            tempfile.gettempdir(),
+            f"enta_ckpt_{os.path.basename(dataset_path).replace('.jsonl', '')}",
+        )
+        os.makedirs(ckpt_dir, exist_ok=True)
+
+        # Read the dataset.
+        import json
+        samples: List[Dict[str, str]] = []
+        with open(dataset_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    samples.append(json.loads(line))
+
+        if not samples:
+            _LOG.warning("Empty dataset; skipping training batch")
+            return ckpt_dir
+
+        # Build a minimal training config that points to the generated data.
+        from .config import TrainingConfig
+        from .core import PiscesLxTrainingOperator
+
+        train_cfg = TrainingConfig(
+            output_dir=ckpt_dir,
+            num_train_epochs=1,
+            per_device_train_batch_size=1,
+            save_steps=50,
+            logging_steps=10,
+        )
+
+        # Load model config from the enta_model_layout parameters.
+        from model import YvConfig, YvModel
+        from model.tokenizer import YvTokenizer
+
+        model_cfg = YvConfig()
+        if hasattr(enta_cfg, "dynamic_head_hidden_dim") and enta_cfg.dynamic_head_hidden_dim:
+            try:
+                model_cfg.hidden_size = int(enta_cfg.dynamic_head_hidden_dim)
+            except (ValueError, TypeError):
+                pass
+
+        tokenizer = YvTokenizer()
+        model = YvModel(model_cfg)
+
+        # Create a simple DataLoader from samples.
+        from torch.utils.data import DataLoader, Dataset
+
+        class _ListDataset(Dataset):
+            def __init__(self, data: List[Dict[str, str]]) -> None:
+                self._data = data
+            def __len__(self) -> int:
+                return len(self._data)
+            def __getitem__(self, idx: int) -> Dict[str, Any]:
+                return self._data[idx]
+
+        train_dataset = _ListDataset(samples)
+        train_loader = DataLoader(
+            train_dataset,
+            batch_size=1,
+            shuffle=True,
+        )
+
+        # Run training.
+        operator = PiscesLxTrainingOperator(train_cfg)
+        operator.model = model
+        operator.tokenizer = tokenizer
+        operator.train_dataloader = train_loader
+
+        try:
+            operator.train()
+        except Exception as exc:
+            _LOG.error(f"Training batch failed: {exc}")
+            # Save whatever we have.
+        finally:
+            # Save a minimal metadata file so EntaEvaluator can read it.
+            meta_path = os.path.join(ckpt_dir, "training_meta.json")
+            try:
+                with open(meta_path, "w", encoding="utf-8") as f:
+                    json.dump({"step": operator.global_step if hasattr(operator, "global_step") else 0}, f)
+            except Exception:
+                pass
+
+        _LOG.info(f"Training batch completed | checkpoint={ckpt_dir}")
+        return ckpt_dir
+
+    def _offload_model(self) -> None:
+        """Offload the training engine model from GPU to free memory.
+
+        Called between EnTA loop iterations so the next
+        ``generate_batch()`` call can run without OOM.
+        """
+        import gc
+        import torch
+
+        if hasattr(self, "trainer") and self.trainer is not None:
+            model = getattr(self.trainer, "model", None)
+            if model is not None:
+                model.cpu()
+                _LOG.info("Training engine model offloaded to CPU")
+
+        # Also clear any cached CUDA memory.
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        _LOG.info("Memory cleaned after training batch")
+
     def _run_preference(self, params: Dict[str, Any]) -> Dict[str, Any]:
         import torch
         from pathlib import Path
@@ -1517,6 +1769,8 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if getattr(self.train_config, 'enable_distillation', False):
             self._setup_distillation()
         
+        self._encre_trainer = self._setup_encre_trainer()
+        
         self._setup_optimizers()
         
         if self.train_config.quantization.enable_quantization:
@@ -1617,6 +1871,91 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         except Exception as e:
             _LOG.error(f"Failed to setup distillation: {e}")
     
+    def _setup_encre_trainer(self):
+        """Create YvEncreTrainer from the model's YvConfig if encre config is present."""
+        if self.trainer is None or self.trainer.model is None:
+            return None
+        model_cfg = getattr(self.trainer.model, "config", None)
+        if model_cfg is None:
+            return None
+        teachers = getattr(model_cfg, "encre_teachers", None) or []
+        if not teachers:
+            return None
+        try:
+            from model import YvEncreTrainer
+            tokenizer = getattr(self, "_tokenizer", None)
+            return YvEncreTrainer.from_yvconfig(
+                model_cfg,
+                tokenizer=tokenizer,
+                model=self.trainer.model,
+            )
+        except Exception as e:
+            _LOG.warning(f"Failed to setup EnTA trainer: {e}")
+            return None
+
+    def _run_pre_training_phases(self, train_loader=None):
+        """Run pre-training phases: knowledge store build, subconscious warmup, expert evolution."""
+        self._maybe_build_knowledge_store()
+        self._maybe_run_subconscious_warmup(train_loader)
+
+    def _maybe_build_knowledge_store(self):
+        """Build FAISS knowledge store if configured in the model config."""
+        model_cfg = getattr(self.trainer.model, "config", None) if self.trainer else None
+        if model_cfg is None:
+            return
+        store_path = getattr(model_cfg, "memory_store_path", None) or getattr(model_cfg, "knowledge_store_path", None)
+        if not store_path:
+            return
+        if os.path.isdir(store_path):
+            _LOG.info(f"Knowledge store already exists at {store_path}, skipping build")
+            return
+        _LOG.info(f"Building knowledge store at {store_path}")
+        try:
+            from opss.knowledge.builder import POPSSKnowledgeBuilder
+            cfg = {
+                "store_path": store_path,
+                "slots": getattr(model_cfg, "knowledge_store_slots", None) or getattr(model_cfg, "memory_knowledge_slots", 4096),
+                "chunk_size": getattr(model_cfg, "knowledge_store_chunk_size", 512),
+                "chunk_overlap": getattr(model_cfg, "knowledge_store_chunk_overlap", 64),
+                "hidden_size": model_cfg.hidden_size,
+                "index_type": getattr(model_cfg, "knowledge_store_index_type", "ivfpq"),
+                "index_nlist": getattr(model_cfg, "knowledge_store_index_nlist", 4096),
+                "index_m": getattr(model_cfg, "knowledge_store_index_m", 32),
+            }
+            builder = POPSSKnowledgeBuilder(cfg)
+            builder.build()
+            _LOG.info("Knowledge store build completed")
+        except Exception as e:
+            _LOG.warning(f"Failed to build knowledge store (non-fatal): {e}")
+
+    def _maybe_run_subconscious_warmup(self, train_loader=None):
+        """Warm-start the subconscious knowledge field using teacher embeddings from the data."""
+        if self.trainer is None:
+            return
+        model = self.trainer.model
+        model_cfg = getattr(model, "config", None)
+        if model_cfg is None:
+            return
+        if not getattr(model_cfg, "use_subconscious", False) and not getattr(model_cfg, "use_dual_inject", True):
+            return
+        subconscious = getattr(model, "subconscious", None)
+        if subconscious is None:
+            return
+        if train_loader is None:
+            return
+        _LOG.info("Starting subconscious knowledge field warm-start")
+        try:
+            from opss.subconscious_trainer import YvSubconsciousTrainer
+            trainer = YvSubconsciousTrainer(subconscious, cfg=model_cfg)
+            sample_batch = next(iter(train_loader))
+            hidden = getattr(self.trainer, "get_hidden_states", None)
+            if hidden is not None:
+                teacher_embs = hidden(sample_batch)
+                trainer.warm_start_knowledge_field(teacher_embs)
+                _LOG.info("Subconscious knowledge field warm-start completed")
+        except Exception as e:
+            _LOG.warning(f"Subconscious warm-start skipped (non-fatal): {e}")
+
     def _setup_optimizers(self):
         """Setup optimizer components."""
         if self.trainer is None:
@@ -1720,6 +2059,8 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             if self._check_dev_mode_pause():
                 _LOG.info("Training paused via developer mode before start")
                 self._wait_dev_mode_resume()
+
+            self._run_pre_training_phases(train_loader)
 
             training_results = self.pipeline.fit(
                 train_dataloader=train_loader,

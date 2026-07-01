@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 ROOT (Robust Orthogonalized Optimizer) Implementation
 
@@ -122,6 +124,7 @@ class POPSSROOTConfig(PiscesLxOperatorConfig):
             raise ValueError(f"Invalid beta2: {self.beta2}")
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class POPSSROOTOperator(PiscesLxOperatorInterface):
     """
     ROOT (Robust Orthogonalized Optimizer) Operator.

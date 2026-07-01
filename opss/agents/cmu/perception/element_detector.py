@@ -21,14 +21,14 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 CMU Element Detector - UI Element Detection Module
 
 This module provides UI element detection capabilities for the Computer Use Agent,
 using visual analysis and pattern matching to identify interactive elements.
 """
-
-from __future__ import annotations
 
 import asyncio
 import re

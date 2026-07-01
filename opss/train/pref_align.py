@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Preference Alignment Operator - Advanced RLHF Training Framework
 Complete implementation of DPO, PPO, KTO, and BCO alignment algorithms

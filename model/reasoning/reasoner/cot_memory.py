@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Chain-of-thought reasoning module with adaptive memory integration.
 
 This module provides the YvCoTMemoryReasoner class which implements
@@ -89,6 +91,7 @@ from torch import nn
 import torch.nn.functional as F
 
 
+# Paper: Wei et al., "Chain-of-Thought Prompting Elicits Reasoning in Large Language Models", NeurIPS 2022
 class YvCoTMemoryReasoner(nn.Module):
     """Execute multi-step CoT reasoning with adaptive depth and memory fusion.
     
@@ -350,7 +353,7 @@ class YvCoTMemoryReasoner(nn.Module):
         
         Args:
             input_ids (torch.Tensor | None): Pre-computed hidden states or token
-                embeddings. Random noise is used when None is provided.
+                embeddings.
             attention_mask (torch.Tensor | None): Unused placeholder included for
                 API compatibility. Default: None.
             memory_context (Sequence[torch.Tensor] | torch.Tensor | None): Optional
@@ -370,7 +373,7 @@ class YvCoTMemoryReasoner(nn.Module):
                 - final_state (torch.Tensor): [B, H] pooled final representation
         
         Processing Pipeline:
-            1. Input handling with random fallback
+            1. Input handling with real hidden states only
             2. Memory integration via key-value attention
             3. Complexity-based depth selection
             4. Multi-step reasoning with early stopping
@@ -388,7 +391,10 @@ class YvCoTMemoryReasoner(nn.Module):
         if torch.is_tensor(input_ids):
             hidden_states = input_ids
         else:
-            hidden_states = torch.randn(1, 1, self.cfg.hidden_size)
+            raise ValueError(
+                "YvCoTMemoryReasoner requires real hidden states as tensor input. "
+                "Random fallback tensors are disabled."
+            )
 
         batch_size, seq_len, _ = hidden_states.shape
 

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Advanced Hybrid Transformer Blocks Module for Yv Model.
 
@@ -184,6 +186,7 @@ from enum import Enum
 from .norms import YvRMSNorm, YvDeepNorm
 from .attention import YvAttention
 from .mamba3 import YvMamba3Integration, YvMamba3Config
+from ..moe import YvDeepSeekMoELayer
 from utils.dc import PiscesLxLogger
 
 from utils.paths import get_log_file
@@ -325,6 +328,7 @@ class YvHybridConfig:
             self.attention_layers = list(range(0, self.n_layer // 2))
 
 
+# Paper: Gu & Dao, "Mamba: Linear-Time Sequence Modeling with Selective State Spaces", arXiv:2312.00752, 2023
 class YvSelectiveSSM(nn.Module):
     """Selective State Space Model with input-dependent selection mechanism.
     
@@ -544,6 +548,7 @@ class YvSelectiveSSM(nn.Module):
         return y
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvProgressiveHybridGate(nn.Module):
     """Progressive hybrid gating mechanism for stable Transformer-SSM training.
     
@@ -721,6 +726,7 @@ class YvProgressiveHybridGate(nn.Module):
         }
 
 
+# Paper: Shazeer et al., "Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer", ICLR 2017 (MoE routing inspiration)
 class YvAdaptiveRouter(nn.Module):
     """Adaptive router for dynamic attention-SSM routing.
     
@@ -869,6 +875,7 @@ class YvAdaptiveRouter(nn.Module):
         return balance_loss * 0.1
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvHierarchicalFusion(nn.Module):
     """Hierarchical fusion for multi-level attention-SSM combination.
     
@@ -951,6 +958,7 @@ class YvHierarchicalFusion(nn.Module):
         return fused_output
 
 
+# Paper: Lieber et al., "Jamba: A Hybrid Transformer-Mamba Language Model", arXiv:2403.19887, 2024
 class YvJambaBlock(nn.Module):
     """Hybrid block combining attention and SSM.
     
@@ -1004,17 +1012,10 @@ class YvJambaBlock(nn.Module):
                 nn.Softmax(dim=-1)
             )
             
-        use_stable_gate = getattr(cfg, 'moe_use_stable_gate', True)
-        if use_stable_gate:
-            from ..moe import YvMoELayer as MoELayer
-            self.mlp = MoELayer(
-                cfg, device=device, dtype=dtype,
-                max_gpu_experts=getattr(cfg, 'max_gpu_experts', 4),
-                use_stable_gate=True
-            )
-        else:
-            from ..moe_dynamic import YvDynamicMoELayer
-            self.mlp = YvDynamicMoELayer(cfg, device=device, dtype=dtype)
+        # Route every flagship backbone block through the same DeepSeek-style
+        # expert stack so shared experts, fine-grained routing, aux-loss-free
+        # balancing, and anticipatory routing stay on one paper-aligned path.
+        self.mlp = YvDeepSeekMoELayer(cfg, device=device, dtype=dtype)
             
         self.mlp_norm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
         self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
@@ -1080,6 +1081,7 @@ class YvJambaBlock(nn.Module):
         return output, aux_loss
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — hybrid attention-SSM block)
 class YvHybridBlock(nn.Module):
     """Unified Hybrid Block combining attention and state space models.
 
@@ -1160,17 +1162,9 @@ class YvHybridBlock(nn.Module):
         self.norm_ssm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
         self.norm_fusion = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
 
-        use_stable_gate = getattr(cfg, 'moe_use_stable_gate', True)
-        if use_stable_gate:
-            from ..moe import YvMoELayer as MoELayer
-            self.mlp = MoELayer(
-                cfg, device=device, dtype=dtype,
-                max_gpu_experts=getattr(cfg, 'max_gpu_experts', 4),
-                use_stable_gate=True
-            )
-        else:
-            from ..moe_dynamic import YvDynamicMoELayer
-            self.mlp = YvDynamicMoELayer(cfg, device=device, dtype=dtype)
+        # Keep the backbone on a single MoE lane aligned with the latest
+        # DeepSeek-style shared/fine-grained expert design.
+        self.mlp = YvDeepSeekMoELayer(cfg, device=device, dtype=dtype)
 
         self.norm_mlp = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
 

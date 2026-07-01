@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 import asyncio
 import json
 import re
@@ -81,21 +83,9 @@ class YvSearchTool:
                 }
             )
             
-            results = []
-            try:
-                with urllib.request.urlopen(req, timeout=10) as response:
-                    html_content = response.read().decode('utf-8', errors='ignore')
-                    
-                    # Parse results from HTML
-                    results = self._parse_duckduckgo_html(html_content, query)
-            except urllib.error.URLError:
-                # Fallback: return structured response indicating search unavailable
-                results = [{
-                    "title": "Search Unavailable",
-                    "snippet": f"Web search for '{query}' is currently unavailable. Please try again later.",
-                    "url": "",
-                    "relevance": 0.5
-                }]
+            with urllib.request.urlopen(req, timeout=10) as response:
+                html_content = response.read().decode('utf-8', errors='ignore')
+                results = self._parse_duckduckgo_html(html_content, query)
             
             execution_time = time.time() - start_time
             return YvToolResult(
@@ -104,7 +94,7 @@ class YvSearchTool:
                 execution_time=execution_time,
                 metadata={"result_count": len(results)}
             )
-        except Exception as e:
+        except (urllib.error.URLError, ValueError, RuntimeError, TypeError, AttributeError) as e:
             return YvToolResult(
                 success=False,
                 output=None,
@@ -150,14 +140,8 @@ class YvSearchTool:
                 "relevance": round(relevance, 3)
             })
         
-        # If no results from parsing, create a fallback
         if not results:
-            results.append({
-                "title": f"Search results for: {query}",
-                "snippet": "Search completed but no results could be parsed.",
-                "url": f"https://duckduckgo.com/?q={urllib.parse.quote(query)}",
-                "relevance": 0.5
-            })
+            raise RuntimeError(f"YvSearchTool could not parse search results for query: {query}")
         
         return results
 
@@ -209,7 +193,7 @@ class YvFetchTool:
                 error_type="http_error",
                 error_message=f"HTTP {e.code}: {e.reason}"
             )
-        except Exception as e:
+        except (urllib.error.URLError, UnicodeDecodeError, ValueError, RuntimeError, TypeError, AttributeError) as e:
             return YvToolResult(
                 success=False,
                 output=None,
@@ -318,7 +302,7 @@ class YvCodeExecTool:
                 error_type="syntax_error",
                 error_message=f"Syntax error at line {e.lineno}: {e.msg}"
             )
-        except Exception as e:
+        except (RuntimeError, ValueError, TypeError, AttributeError, subprocess.SubprocessError) as e:
             return YvToolResult(
                 success=False,
                 output=None,
@@ -370,7 +354,7 @@ class YvFileTool:
                 execution_time=execution_time,
                 metadata={"filepath": filepath, "size": len(content)}
             )
-        except Exception as e:
+        except (OSError, UnicodeDecodeError, ValueError, RuntimeError, TypeError, AttributeError) as e:
             return YvToolResult(
                 success=False,
                 output=None,
@@ -406,7 +390,7 @@ class YvFileTool:
                 execution_time=execution_time,
                 metadata={"filepath": filepath, "size": len(content)}
             )
-        except Exception as e:
+        except (OSError, UnicodeEncodeError, ValueError, RuntimeError, TypeError, AttributeError) as e:
             return YvToolResult(
                 success=False,
                 output=None,
@@ -445,7 +429,7 @@ class YvCalculateTool:
                 execution_time=execution_time,
                 metadata={"expression": expression}
             )
-        except Exception as e:
+        except (ArithmeticError, ValueError, SyntaxError, NameError, TypeError) as e:
             return YvToolResult(
                 success=False,
                 output=None,
@@ -504,7 +488,7 @@ class YvHTTPTool:
                 error_type="http_error",
                 error_message=f"HTTP {e.code}: {e.reason}"
             )
-        except Exception as e:
+        except (urllib.error.URLError, UnicodeDecodeError, ValueError, RuntimeError, TypeError, AttributeError) as e:
             return YvToolResult(
                 success=False,
                 output=None,
@@ -606,19 +590,10 @@ class YvToolExecutor:
         handler = self._tools[tool_name]
         start_time = time.time()
         
-        try:
-            if hasattr(handler, 'execute'):
-                result = await handler.execute(**kwargs)
-            else:
-                result = await handler(**kwargs)
-        except Exception as e:
-            result = YvToolResult(
-                success=False,
-                output=None,
-                execution_time=time.time() - start_time,
-                error_type="execution_error",
-                error_message=str(e)
-            )
+        if hasattr(handler, 'execute'):
+            result = await handler.execute(**kwargs)
+        else:
+            result = await handler(**kwargs)
         
         self._tool_stats[tool_name]["total_calls"] += 1
         self._tool_stats[tool_name]["total_time"] += result.execution_time
@@ -632,7 +607,7 @@ class YvToolExecutor:
     
     def get_tool_info(self, tool_name: str) -> Optional[Dict[str, Any]]:
         if tool_name not in self._tools:
-            return None
+            raise KeyError(f"Tool '{tool_name}' is not registered.")
         
         stats = self._tool_stats.get(tool_name, {})
         avg_time = stats.get("total_time", 0) / max(stats.get("total_calls", 1), 1)

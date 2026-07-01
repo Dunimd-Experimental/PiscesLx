@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Project Structure Checker Module for PiscesL1.
+Project Structure Checker Module for PiscesLx.
 
 This module provides the PiscesLxStructureChecker class for validating
 the project file structure, including core modules, configuration files,
@@ -46,7 +48,7 @@ class PiscesLxStructureChecker:
     Project structure validation checker.
     
     Validates that all required files and directories exist and are
-    accessible for the PiscesL1 project.
+    accessible for the PiscesLx project.
     
     Attributes:
         root_path: Project root directory

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 K-FAC Natural Gradient Preconditioning Operator
 
@@ -224,6 +226,7 @@ class POPSSKFacConfig(PiscesLxOperatorConfig):
         self.version = VERSION
 
 
+# Paper: Martens & Grosse, "Optimizing Neural Networks with Kronecker-factored Approximate Curvature", ICML 2015
 class POPSSKFacOperator(PiscesLxOperatorInterface):
     """
     K-FAC natural gradient preconditioning operator.

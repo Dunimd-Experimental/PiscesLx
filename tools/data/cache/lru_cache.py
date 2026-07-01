@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Thread-safe LRU Cache Implementation for PiscesL1 Data Module.
+Thread-safe LRU Cache Implementation for PiscesLx Data Module.
 
 This module provides a high-performance, thread-safe LRU (Least Recently Used)
 cache implementation optimized for data caching in machine learning workflows.

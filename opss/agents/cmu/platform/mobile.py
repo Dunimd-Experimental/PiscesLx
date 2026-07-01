@@ -21,14 +21,14 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 CMU Mobile Platform - Android/iOS Mobile Device Control
 
 This module provides mobile device control using ADB for Android
 and WebDriverAgent/IDB for iOS devices.
 """
-
-from __future__ import annotations
 
 import asyncio
 import subprocess

@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Test Command Entry Point for PiscesL1.
+Test Command Entry Point for PiscesLx.
 
 This module provides the test() function that serves as the entry point
 for the `python manage.py test` command.

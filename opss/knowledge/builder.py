@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Offline Knowledge Builder for Engram-style Lookup-Computation Separation.
 
 Implements the POPSSKnowledgeBuilder that processes raw text corpora

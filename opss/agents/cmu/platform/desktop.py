@@ -21,14 +21,14 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 CMU Desktop Platform - Windows/macOS/Linux Desktop Control
 
 This module provides desktop platform control using PyAutoGUI and
 platform-specific APIs for comprehensive mouse and keyboard control.
 """
-
-from __future__ import annotations
 
 import asyncio
 import platform as sys_platform

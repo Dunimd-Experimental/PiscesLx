@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Compliance Operator
 
@@ -59,7 +61,7 @@ Usage Examples:
     >>> 
     >>> # Generate compliance metadata
     >>> metadata = operator.generate_metadata(
-    ...     model_id="PiscesL1-1.5B",
+    ...     model_id="PiscesLx-1.5B",
     ...     risk_level="medium"
     ... )
 """
@@ -384,7 +386,7 @@ class POPSSComplianceOperator(PiscesLxBaseOperator):
         
         Args:
             inputs: Dictionary containing metadata generation parameters
-                - model_id (str): Model identifier (default: "PiscesL1-1.5B")
+                - model_id (str): Model identifier (default: "PiscesLx-1.5B")
                 - risk_level (str): Risk classification (low/medium/high)
                 - jurisdiction (str | POPSSWatermarkJurisdiction): Target jurisdiction
         
@@ -394,7 +396,7 @@ class POPSSComplianceOperator(PiscesLxBaseOperator):
                   compliance info, and watermark_capabilities
                 - metadata: Dict with action and jurisdiction
         """
-        model_id = inputs.get("model_id", "PiscesL1-1.5B")
+        model_id = inputs.get("model_id", "PiscesLx-1.5B")
         risk_level = inputs.get("risk_level", "medium")
         jurisdiction_input = inputs.get("jurisdiction", "GLOBAL")
         
@@ -909,7 +911,7 @@ class POPSSWatermarkComplianceOperator(PiscesLxBaseOperator):
     This class combines all compliance validation functions into a cohesive
     operator with factory methods. It provides the same functionality as
     PiscesLxComplianceOperator but with a standardized naming convention
-    for the POPSS (PiscesL1 Operations) module.
+    for the POPSS (PiscesLx Operations) module.
     
     This operator serves as the primary interface for compliance validation
     in production environments, offering:

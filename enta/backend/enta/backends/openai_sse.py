@@ -3,8 +3,8 @@
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
-# This file is part of EnTA.
-# The EnTA project belongs to the Dunimd Team.
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-
+from __future__ import annotations
 
 """
 Shared SSE (Server-Sent Events) streaming backend for OpenAI-compatible APIs.
@@ -60,12 +60,16 @@ of the streaming setting.
 """
 
 import json
-import logging
 import time
 from collections.abc import AsyncGenerator
 from typing import Any
 
 import httpx
+
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
+_LOG = PiscesLxLogger("EnTA.Backend", file_path=get_log_file("EnTA.Backend"), enable_file=True)
 
 from enta.backends.base import BaseBackend
 from enta.backends.retry import DEFAULT_RETRY_CONFIG, RetryConfig, retry_with_backoff
@@ -395,7 +399,6 @@ class OpenAISSEBackend(BaseBackend):
         @retry_with_backoff(config=self.retry_config)
         async def _do_stream() -> AsyncGenerator[BackendEvent, None]:
             _t_req = time.time()
-            _log = logging.getLogger("enta.backend")
             _msg_count = len(data.get("messages", []))
             _sys_len = len(str([m for m in data.get("messages", []) if m.get("role") == "system"]))
             _log.info("[http] POST %s/chat/completions model=%s msgs=%d sys_chars=%d thinking=%s timeout=%.0fs",  # noqa: E501

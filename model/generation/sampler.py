@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Sampling strategies for Yv model generation.
 
@@ -246,6 +248,7 @@ class YvSamplingConfig:
             self.strategy = YvSamplingStrategy(self.strategy)
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvSampler:
     """Unified sampler for text generation with multiple sampling strategies.
     

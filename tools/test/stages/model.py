@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-Model Instantiation Checker Module for PiscesL1.
+Model Instantiation Checker Module for PiscesLx.
 
 This module provides the PiscesLxModelChecker class for validating
 model creation and initialization.

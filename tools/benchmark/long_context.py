@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Copyright © 2025-2026 Wenze Wei & Annian Wang. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Long context benchmark evaluation suite for PiscesL1.
+Long context benchmark evaluation suite for PiscesLx.
 
 This module provides comprehensive long context evaluation including:
 - LongBench: Long context understanding benchmark
@@ -58,7 +60,7 @@ _LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark.LongContext", file_path=get_log_
 class PiscesLxToolsLongContextConfig:
     """Configuration for long context benchmark evaluation.
     
-    PiscesL1 1T model supports up to 10M (10,000,000) tokens context.
+    PiscesLx 1T model supports up to 10M (10,000,000) tokens context.
     This is world-leading long context capability, surpassing:
     - Kimi K2.5: ~2M tokens
     - Gemini 3: ~2M tokens
@@ -143,7 +145,7 @@ class PiscesLxToolsLongContextMetrics:
 
 
 class PiscesLxToolsLongContextEvaluator:
-    """Long context benchmark evaluator for PiscesL1 model."""
+    """Long context benchmark evaluator for PiscesLx model."""
     
     def __init__(
         self,
@@ -612,7 +614,7 @@ class PiscesLxToolsLongContextEvaluator:
     def evaluate_ultra_long_needle(self) -> Dict[str, Any]:
         """Evaluate ultra-long context (1M-10M tokens) needle retrieval.
         
-        This tests PiscesL1's world-leading 10M token context capability.
+        This tests PiscesLx's world-leading 10M token context capability.
         Surpasses Kimi K2.5 (~2M) and Gemini 3 (~2M).
         """
         _LOG.info("Evaluating Ultra-Long Needle Retrieval (1M-10M tokens)...")
@@ -984,7 +986,7 @@ class PiscesLxToolsLongContextBenchmarkRunner:
     def print_summary(self) -> None:
         """Print benchmark summary."""
         print("\n" + "=" * 60)
-        print("PiscesL1 Long Context Benchmark Results")
+        print("PiscesLx Long Context Benchmark Results")
         print("=" * 60)
         
         if "long_context_summary" in self.results:

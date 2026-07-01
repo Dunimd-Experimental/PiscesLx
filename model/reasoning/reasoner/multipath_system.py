@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Orchestrated multi-path reasoning system for Yv agents.
 
 This module provides a unified reasoning system that integrates multiple reasoning
@@ -110,6 +112,7 @@ from .enhancer import YvMultiModalReasoningEnhancer
 from .multipath_core import YvMultiPathReasoningEngine
 from .multipath_infer import YvMultiPathInferenceEngine
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvUnifiedMultiPathReasoningSystem:
     """Runtime container integrating core reasoning, inference, and meta-learning.
     

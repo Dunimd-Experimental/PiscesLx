@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 from .core import Dataset
 from .registry import REGISTRY as DATASETS
 from typing import List, Optional, Dict, Any

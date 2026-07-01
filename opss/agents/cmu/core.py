@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 CMU Core Engine - Main Computer Use Agent Engine
 
@@ -60,8 +62,6 @@ Usage Example:
     >>> # Or use as agent
     >>> agent_result = await engine.execute_async({"task": "Click the submit button"})
 """
-
-from __future__ import annotations
 
 import asyncio
 import platform as sys_platform

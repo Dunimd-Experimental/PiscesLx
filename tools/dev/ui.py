@@ -183,7 +183,7 @@ class PiscesLxDevModeUI:
         self._lock = threading.RLock()
 
         self._help_lines: List[str] = [
-            "=== PiscesL1 Developer Mode (Vim-style) ===",
+            "=== PiscesLx Developer Mode (Vim-style) ===",
             "Navigation: j/k (down/up), gg/G (top/bottom)",
             "Search: / (forward), n/N (next/prev match)",
             "Commands: q(quit), pause, resume, status",

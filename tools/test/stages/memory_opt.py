@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-Memory Optimization Checker Module for PiscesL1.
+Memory Optimization Checker Module for PiscesLx.
 
 This module provides the PiscesLxMemoryOptChecker class for validating
 memory optimization techniques are correctly configured.

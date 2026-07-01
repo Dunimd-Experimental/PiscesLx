@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Training Configuration Management System
 
@@ -130,6 +132,11 @@ class TrainingStage(str, Enum):
         ALIGNMENT_PPO: PPO-based reinforcement learning alignment
         ALIGNMENT_ORPO: ORPO (Odds Ratio Preference Optimization) alignment
         SPECIALIZED: Task-specific fine-tuning
+        RL_GRPO: Group Relative Policy Optimization (DeepSeek R1 style)
+        RL_RLVR: Verifier-based Reinforcement Learning (code/math/logic)
+        RL_DAPO: Decoupled Clip + Dynamic Sampling Policy Optimization
+        RL_SELF_PLAY: Self-Play RL with self-generation → self-critique
+        RL_MEMSEP: Memory Separation (Engram-style 3-phase training)
     """
     PRETRAIN = "pretrain"
     CONTINUED_PRETRAIN = "continued_pretrain"
@@ -138,6 +145,11 @@ class TrainingStage(str, Enum):
     ALIGNMENT_PPO = "alignment_ppo"
     ALIGNMENT_ORPO = "alignment_orpo"
     SPECIALIZED = "specialized"
+    RL_GRPO = "rl_grpo"
+    RL_RLVR = "rl_rlvr"
+    RL_DAPO = "rl_dapo"
+    RL_SELF_PLAY = "rl_self_play"
+    RL_MEMSEP = "rl_memsep"
 
 
 def get_stage_config_path(stage: TrainingStage) -> Path:
@@ -718,16 +730,16 @@ class TrainingConfig:
         "expert_temperature_max": 5.00,
         "expert_load_balance_threshold": 0.15,
     })
-    kfac: Dict[str, Any] = field(default_factory=lambda: {"enabled": False})
-    multitask: Dict[str, Any] = field(default_factory=lambda: {"enabled": False})
-    watermark: Dict[str, Any] = field(default_factory=lambda: {"enabled": False})
-    modality_scheduler: Dict[str, Any] = field(default_factory=lambda: {"enabled": False})
+    kfac: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
+    multitask: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
+    watermark: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
+    modality_scheduler: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
     
-    enable_dpo: bool = False
-    enable_sft: bool = False
-    enable_pref_align: bool = False
-    enable_multitask: bool = False
-    enable_distillation: bool = False
+    enable_dpo: bool = True
+    enable_sft: bool = True
+    enable_pref_align: bool = True
+    enable_multitask: bool = True
+    enable_distillation: bool = True
     
     distill_teacher_path: Optional[str] = None
     distill_teacher_name: Optional[str] = None
@@ -737,7 +749,7 @@ class TrainingConfig:
     distill_temperature: float = 2.0
     
     parallel_3d: Dict[str, Any] = field(default_factory=lambda: {
-        "enabled": False,
+        "enabled": True,
         "dp_size": 1,
         "tp_size": 1,
         "pp_size": 1,
@@ -746,6 +758,18 @@ class TrainingConfig:
         "overlap_communication": True,
         "gradient_checkpointing": False,
         "zero_stage": 0
+    })
+    fsdp: Dict[str, Any] = field(default_factory=lambda: {
+        "enabled": True,
+        "sharding_strategy": "full_shard",
+        "mixed_precision": True,
+        "cpu_offload": False,
+    })
+    fp8: Dict[str, Any] = field(default_factory=lambda: {
+        "enabled": True,
+        "format": "e4m3",
+        "amax_history_len": 1024,
+        "amax_compute_algo": "max",
     })
     
     def __post_init__(self):
@@ -877,6 +901,11 @@ class TrainingConfig:
                 self.world_size = dist["world_size"]
             if "parallel_3d" in dist:
                 self.parallel_3d = dist["parallel_3d"]
+            if "fsdp" in dist:
+                self.fsdp = dist["fsdp"]
+        
+        if "fp8" in config:
+            self.fp8 = config["fp8"]
         
         if "lora" in config:
             lora = config["lora"]

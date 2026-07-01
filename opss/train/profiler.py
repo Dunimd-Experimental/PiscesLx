@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Training Profiler Operator - Performance Analysis and Optimization
 Based on tools/train/profiler.py
@@ -41,7 +43,7 @@ import torch
 import time
 from typing import Any, Dict, Optional, List, Tuple
 from configs.version import VERSION
-from ops.core.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorConfig
+from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorConfig
 
 
 class ProfilingConfig(PiscesLxOperatorConfig):

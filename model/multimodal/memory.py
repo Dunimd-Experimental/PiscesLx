@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Unified Memory System for Yv Agentic Architecture.
 
 This module provides comprehensive memory management components for the Yv
@@ -284,20 +286,16 @@ class YvVectorStore:
         """Setup vector database backend (FAISS or NumPy).
         
         Attempts to initialize FAISS backend for efficient similarity search.
-        Falls back to NumPy brute force if FAISS is unavailable.
         
         Note:
             Sets _use_faiss flag based on availability.
             Logs backend initialization status.
         """
         if self.config.vector_backend == "faiss":
-            try:
-                import faiss
-                self._faiss = faiss
-                self._use_faiss = True
-                _LOG.info("FAISS backend initialized")
-            except ImportError:
-                self._use_faiss = False
+            import faiss
+            self._faiss = faiss
+            self._use_faiss = True
+            _LOG.info("FAISS backend initialized")
         else:
             self._use_faiss = False
             _LOG.info("NumPy backend initialized")
@@ -306,24 +304,19 @@ class YvVectorStore:
         """Setup sentence encoder for text embeddings.
         
         Attempts to load SentenceTransformer model for semantic embeddings.
-        Falls back to None if unavailable, triggering hash-based encoding.
         
         Note:
             Default model: all-MiniLM-L6-v2 (384 dimensions).
             Logs encoder initialization status.
         """
-        try:
-            from sentence_transformers import SentenceTransformer
-            self._encoder = SentenceTransformer(self.config.embedding_model)
-            _LOG.info(f"SentenceTransformer loaded: {self.config.embedding_model}")
-        except ImportError:
-            self._encoder = None
+        from sentence_transformers import SentenceTransformer
+        self._encoder = SentenceTransformer(self.config.embedding_model)
+        _LOG.info(f"SentenceTransformer loaded: {self.config.embedding_model}")
     
     def encode(self, text: str) -> np.ndarray:
         """Encode text to vector embedding.
         
-        Uses SentenceTransformer for semantic embeddings when available,
-        otherwise falls back to deterministic hash-based encoding.
+        Uses SentenceTransformer for semantic embeddings.
         
         Args:
             text (str): Text to encode.
@@ -332,23 +325,14 @@ class YvVectorStore:
             np.ndarray: Vector embedding with shape [embedding_dim].
         
         Note:
-            Hash-based encoding uses SHA256 for deterministic results.
             Embeddings are L2 normalized for cosine similarity.
         """
-        if self._encoder is not None:
-            embedding = self._encoder.encode(text, convert_to_numpy=True)
-            return embedding.astype(np.float32)
-        else:
-            text_bytes = text.encode('utf-8')
-            hash_digest = hashlib.sha256(text_bytes).digest()
-            embedding = np.zeros(self.config.embedding_dim, dtype=np.float32)
-            for i in range(self.config.embedding_dim):
-                byte_idx = i % len(hash_digest)
-                embedding[i] = (hash_digest[byte_idx] - 128) / 128.0
-            norm = np.linalg.norm(embedding)
-            if norm > 0:
-                embedding = embedding / norm
-            return embedding
+        if self._encoder is None:
+            raise RuntimeError(
+                "YvMemoryVectorStore.encode requires a loaded SentenceTransformer encoder."
+            )
+        embedding = self._encoder.encode(text, convert_to_numpy=True)
+        return embedding.astype(np.float32)
     
     def add(self, id: str, embedding: np.ndarray) -> None:
         """Add vector to store with thread-safe indexing.
@@ -418,11 +402,11 @@ class YvVectorStore:
         
         Note:
             Thread-safe via lock mechanism.
-            Returns empty list if no embeddings stored.
+            Raises if no embeddings are stored.
         """
         with self._lock:
             if len(self._embeddings) == 0:
-                return []
+                raise RuntimeError("YvMemoryVectorStore.search requires at least one stored embedding.")
             
             query_embedding = query_embedding.astype(np.float32).reshape(1, -1)
             
@@ -1033,6 +1017,7 @@ class YvMemory:
             
         except Exception as e:
             _LOG.error(f"Failed to load memories: {e}")
+            raise RuntimeError(f"Failed to load memories: {e}") from e
     
     # ==================== Background Tasks ====================
     
@@ -1063,19 +1048,15 @@ class YvMemory:
     def _monitor_memory(self) -> None:
         """Background memory monitoring loop."""
         while not self._stop_monitoring.is_set():
-            try:
-                process = psutil.Process()
-                memory_percent = process.memory_percent()
-                
-                if memory_percent > self.config.memory_critical_threshold:
-                    _LOG.warning(f"Critical memory usage: {memory_percent:.1f}%")
-                    gc.collect()
-                    self.compress()
-                elif memory_percent > self.config.memory_warning_threshold:
-                    _LOG.debug(f"High memory usage: {memory_percent:.1f}%")
-                
-            except Exception as e:
-                _LOG.error(f"Memory monitoring error: {e}")
+            process = psutil.Process()
+            memory_percent = process.memory_percent()
+            
+            if memory_percent > self.config.memory_critical_threshold:
+                _LOG.warning(f"Critical memory usage: {memory_percent:.1f}%")
+                gc.collect()
+                self.compress()
+            elif memory_percent > self.config.memory_warning_threshold:
+                _LOG.debug(f"High memory usage: {memory_percent:.1f}%")
             
             self._stop_monitoring.wait(timeout=self.config.monitoring_interval)
     
@@ -1108,10 +1089,7 @@ class YvMemory:
         while not self._stop_persist.is_set():
             self._stop_persist.wait(timeout=self.config.persist_interval)
             if not self._stop_persist.is_set():
-                try:
-                    self.persist()
-                except Exception as e:
-                    _LOG.error(f"Auto-persist error: {e}")
+                self.persist()
     
     # ==================== Tensor Registry ====================
     
@@ -1125,27 +1103,23 @@ class YvMemory:
         if tensor is None:
             return
         
-        try:
-            info = {
-                "name": name,
-                "bytes": tensor.numel() * tensor.element_size(),
-                "device": str(tensor.device),
-                "shape": tuple(tensor.shape),
-                "created_at": time.time(),
-            }
-            
+        info = {
+            "name": name,
+            "bytes": tensor.numel() * tensor.element_size(),
+            "device": str(tensor.device),
+            "shape": tuple(tensor.shape),
+            "created_at": time.time(),
+        }
+        
+        with self._tensor_lock:
+            self._tensor_registry[name] = info
+        
+        # Auto-cleanup on GC
+        def cleanup(n=name):
             with self._tensor_lock:
-                self._tensor_registry[name] = info
-            
-            # Auto-cleanup on GC
-            def cleanup(n=name):
-                with self._tensor_lock:
-                    self._tensor_registry.pop(n, None)
-            
-            weakref.finalize(tensor, cleanup)
-            
-        except Exception as e:
-            _LOG.debug(f"Tensor registration failed: {e}")
+                self._tensor_registry.pop(n, None)
+        
+        weakref.finalize(tensor, cleanup)
     
     # ==================== Statistics ====================
     
@@ -1185,10 +1159,7 @@ class YvMemory:
     
     def __del__(self):
         """Cleanup on deletion."""
-        try:
-            self.shutdown()
-        except Exception:
-            pass
+        self.shutdown()
 
 
 # ==================== Factory Function ====================

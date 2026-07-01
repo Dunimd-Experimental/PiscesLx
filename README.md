@@ -16,7 +16,7 @@ Under applicable laws and regulations (including but not limited to China's "Int
 
 ---
 
-# PiscesL1
+<img src="assets/svg/PiscesLx.svg" width="128" height="72">
 
 English | [简体中文](README.zh.md)
 
@@ -417,15 +417,21 @@ This project implements algorithms from the following academic papers. We sincer
 | S4 | Efficiently Modeling Long Sequences with Structured State Spaces | Gu et al. | ICLR | 2022 | [attention.py](model/core/attention.py#L1073-L1075) |
 | Longformer | Longformer: The Long-Document Transformer | Beltagy et al. | - | 2020 | [attention.py](model/core/attention.py#L1225-L1226) |
 | BigBird | Big Bird: Transformers for Longer Sequences | Zaheer et al. | NeurIPS | 2020 | [attention.py](model/core/attention.py#L1437-L1438) |
+| Sliding Window Attn | Mistral 7B | Jiang et al. | arXiv | 2023 | [attention.py](model/core/attention.py#L1455) |
 | Ring Attention | Ring Attention with Blockwise Transformers for Near-Infinite Context | Liu et al. | ICLR | 2024 | [attention.py](model/core/attention.py#L2479-L2481) |
 | MQA | Fast Transformer Decoding: One Write-Head is All You Need | Shazeer | - | 2019 | [attention.py](model/core/attention.py#L2831-L2832) |
 | H2O | H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models | Zhang et al. | ICLR | 2024 | [attention.py](model/core/attention.py#L3026-L3028) |
 | LongRoPE | LongRoPE: Extending LLM Context Window Beyond 2M Tokens | Ding et al. | ICML | 2024 | [attention.py](model/core/attention.py#L4152-L4154) |
+| MLA | DeepSeek-V2 (Multi-head Latent Attention) | DeepSeek-AI | arXiv | 2024 | [attention.py](model/core/attention.py#L5118) |
+| EG-MLA | DeepSeek-V2 MLA + Embedding Gating | DeepSeek-AI / Dunimd | arXiv | 2024 | [eg_mla.py](model/core/eg_mla.py#L50) |
+| DuoAttention | DuoAttention: Efficient Long-Context LLM Inference | - | arXiv | 2024 | [duo_attention.py](model/core/duo_attention.py#L42) |
 | PagedAttention | Efficient Memory Management for Large Language Model Serving with PagedAttention | Kwon et al. | SOSP | 2023 | [attention.py](model/core/attention.py#L1654-L1656) |
 | Flash Attention | FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness | Dao et al. | NeurIPS | 2022 | [attention.py](model/core/attention.py#L1910-L1914) |
 | Flash Attention 2 | FlashAttention-2: Faster Attention with Better Parallelism and Work Partitioning | Dao | - | 2023 | [attention.py](model/core/attention.py#L1913-L1914) |
 | Flash Attention 3 | FlashAttention-3: Fast and Accurate Attention with Asynchrony and Blockwise Parallelism | Dao et al. | - | 2024 | [flash_attention.py](opss/infer/flash_attention.py#L37-L38) |
 | CoPE | Context-aware Position Encoding for Better Length Extrapolation | Yang et al. | arXiv | 2024 | [attention.py](model/core/attention.py#L4197-L4199) |
+| Tactic Sparse Attn | Tactic: Adaptive Sparse Attention with Clustering | Zhu et al. | ICLR | 2026 | [token_sparse_attn.py](model/core/token_sparse_attn.py#L55) |
+| CSA/HCA | Compressed Sparse Attention / Heavily Compressed Attention | DeepSeek | - | 2026 | [csa_hca.py](model/core/csa_hca.py#L133) |
 
 ### Position Encoding
 
@@ -450,30 +456,51 @@ This project implements algorithms from the following academic papers. We sincer
 
 | Algorithm | Paper | Authors | Venue | Year | Code |
 |-----------|-------|---------|-------|------|------|
-| Mamba | Mamba: Linear-Time Sequence Modeling with Selective State Spaces | Gu & Dao | arXiv | 2023 | [blocks.py](model/core/blocks.py#L1434-L1437) |
-| Mamba-2 | Mamba-2: Transforming Transformers | Dao et al. | arXiv | 2024 | [blocks.py](model/core/blocks.py#L1437) |
+| Mamba | Mamba: Linear-Time Sequence Modeling with Selective State Spaces | Gu & Dao | arXiv | 2023 | [mamba3.py](model/core/mamba3.py#L679) |
+| Mamba-2 | Mamba-2: State Space Duality | Dao & Gu | arXiv | 2024 | [mamba3.py](model/core/mamba3.py#L1168) |
+| Jamba | Jamba: A Hybrid Transformer-Mamba Language Model | Lieber et al. | arXiv | 2024 | [hybrid.py](model/core/hybrid.py#L961) |
 
 ### Mixture of Experts
 
 | Algorithm | Paper | Authors | Venue | Year | Code |
 |-----------|-------|---------|-------|------|------|
+| MoE Routing | Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer | Shazeer et al. | ICLR | 2017 | [gate.py](model/moe/gate.py#L125) |
+| Expert Choice | Mixture-of-Experts with Expert Choice Routing | Zhou et al. | NeurIPS | 2022 | [layer.py](model/moe/layer.py#L118) |
+| DeepSeekMoE | DeepSeek-V2 / DeepSeek-V3 Technical Report | DeepSeek-AI | arXiv | 2024 | [layer.py](model/moe/layer.py#L832) |
+| Fine-Grained MoE | DeepSeek-V2: A Strong, Economical, and Efficient MoE Language Model | DeepSeek-AI | arXiv | 2024 | [layer.py](model/moe/layer.py#L222) |
+| PathNet | PathNet: Evolution Channels Gradient Descent in Super Neural Networks | Fernando et al. | arXiv | 2017 | [gate.py](model/moe/gate.py#L1739) |
+| Phi Balancing | Phi-3/Phi-4 Technical Report | Microsoft | arXiv | 2024 | [gate.py](model/moe/gate.py#L1811) |
 | UltraMem TDQKR | UltraMem | ByteDance | ICLR | 2025 | [layer.py](model/moe/layer.py#L216) |
-| DeepSeekMoE | DeepSeek-V3 Technical Report | DeepSeek Team | - | 2024 | [expert.py](model/moe/expert.py#L50), [layer.py](model/moe/layer.py#L390) |
+| HiCl Router | HiCL: Hippocampal-Inspired Continual Learning for MoE Routing | Dunimd Team | AAAI | 2026 | [hicl_router.py](model/moe/hicl_router.py#L43) |
+| Graph-of-Tokens | Graph of Tokens MoE Routing | - | arXiv | 2026 | [graph_of_tokens.py](model/moe/graph_of_tokens.py#L27) |
+| RoMA | Routing Manifold Alignment Improves Generalization of MoE LLMs | Li et al. | ICLR | 2026 | [graph_of_tokens.py](model/moe/graph_of_tokens.py#L132) |
+| Info Bottleneck | The Information Bottleneck Method | Tishby et al. | arXiv | 2000 | [diversity.py](model/moe/diversity.py#L204) |
+| Contrastive Div. | SimCLR: A Simple Framework for Contrastive Learning | Chen et al. | ICML | 2020 | [diversity.py](model/moe/diversity.py#L531) |
 
 ### Inference Optimization
 
 | Algorithm | Paper | Authors | Venue | Year | Code |
 |-----------|-------|---------|-------|------|------|
-| Speculative Decoding | Fast Inference from Transformers via Speculative Decoding | Leviathan et al. | ICML | 2023 | [cache.py](model/core/cache.py#L1013-L1015) |
+| Speculative Decoding | Fast Inference from Transformers via Speculative Decoding | Leviathan et al. | ICML | 2023 | [speculative.py](model/generation/speculative.py#L582) |
+| Medusa | Medusa: Simple LLM Inference Acceleration with Multiple Decoding Heads | Cai et al. | arXiv | 2024 | [speculative.py](model/generation/speculative.py#L373) |
+| D-Spark | D-Spark: Speculative Decoding via Extra Tokens | - | arXiv | 2024 | [speculative.py](model/generation/speculative.py#L1385) |
 | BLIP-2 | BLIP-2: Bootstrapping Language-Image Pre-training with Frozen Image Encoders and Large Language Models | Li et al. | ICML | 2023 | [cache.py](model/core/cache.py#L1217-L1219) |
 
 ### Training Optimization
 
 | Algorithm | Paper | Authors | Venue | Year | Code |
 |-----------|-------|---------|-------|------|------|
+| LoRA | LoRA: Low-Rank Adaptation of Large Language Models | Hu et al. | ICLR | 2022 | [blocks.py](model/core/blocks.py#L521) |
+| DoRA | DoRA: Weight-Decomposed Low-Rank Adaptation | Liu et al. | ICML | 2024 | [blocks.py](model/core/blocks.py#L575) |
 | K-FAC | Optimizing Neural Networks with Kronecker-factored Approximate Curvature | Martens & Grosse | ICML | 2015 | [kfac.py](opss/train/kfac.py#L65-L66) |
 | K-FAC for Conv | A Kronecker-factored Approximate Fisher Matrix for Convolution Layers | Grosse & Martens | ICML | 2016 | [kfac.py](opss/train/kfac.py#L67-L68) |
-| Multi-Task Uncertainty | Multi-Task Learning Using Uncertainty to Weigh Losses for Scene Geometry and Semantics | Kendall et al. | CVPR | 2018 | [multitask_uncertainty.py](opss/train/multitask_uncertainty.py#L51-L53) |
+| GaLore | GaLore: Memory-Efficient LLM Training by Gradient Low-Rank Projection | Zhao et al. | ICML | 2024 | [galore.py](opss/optim/galore.py#L103) |
+| Mixture-of-Depths | Mixture-of-Depths: Dynamically Allocating Compute in Transformer Networks | Raposo et al. | arXiv | 2024 | [blocks.py](model/core/blocks.py#L724) |
+| Adaptive Computation Time | Adaptive Computation Time for Recurrent Neural Networks | Graves | arXiv | 2016 | [blocks.py](model/core/blocks.py#L640) |
+| EWC | Overcoming Catastrophic Forgetting | Kirkpatrick et al. | PNAS | 2017 | [ewc.py](model/core/ewc.py#L41) |
+| DeepNet | DeepNet: Scaling Transformers to 1,000 Layers | Wang et al. | arXiv | 2022 | [norms.py](model/core/norms.py#L1193) |
+| Knowledge Distillation | Distilling the Knowledge in a Neural Network | Hinton et al. | NeurIPS Workshop | 2015 | [distill.py](opss/train/distill.py#L796) |
+| Multi-Task Uncertainty | Multi-Task Learning Using Uncertainty to Weigh Losses | Kendall et al. | CVPR | 2018 | [multitask_uncertainty.py](opss/train/multitask_uncertainty.py#L51-L53) |
 | SGDR | SGDR: Stochastic Gradient Descent with Warm Restarts | Loshchilov & Hutter | arXiv | 2016 | [modality_scheduler.py](opss/train/modality_scheduler.py#L49-L51) |
 | Chinchilla Scaling | Training Compute-Optimal Large Language Models | Hoffmann et al. | - | 2022 | [scaling/__init__.py](opss/scaling/__init__.py#L25) |
 
@@ -481,31 +508,50 @@ This project implements algorithms from the following academic papers. We sincer
 
 | Algorithm | Paper | Authors | Venue | Year | Code |
 |-----------|-------|---------|-------|------|------|
-| DPO | Direct Preference Optimization: Your Language Model is Secretly a Reward Model | Rafailov et al. | NeurIPS | 2023 | [dpo.py](opss/train/dpo.py#L22-L29) |
-| GRPO | DeepSeek R1 Technical Report | DeepSeek Team | arXiv | 2024 | [grpo.py](opss/train/grpo.py#L33-L34) |
-| RLVR | DeepSeek R1 Technical Report / OpenAI o1 | DeepSeek / OpenAI | arXiv | 2024/2025 | [rlvr.py](opss/train/rlvr.py#L35-L36) |
+| DPO | Direct Preference Optimization: Your Language Model is Secretly a Reward Model | Rafailov et al. | NeurIPS | 2023 | [dpo.py](opss/train/dpo.py#L534) |
+| GRPO | DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning | DeepSeek-AI | arXiv | 2025 | [grpo.py](opss/train/grpo.py#L249) |
+| RLVR | DeepSeek-R1 / OpenAI o1 | DeepSeek / OpenAI | arXiv | 2024/2025 | [rlvr.py](opss/train/rlvr.py#L129) |
+| DAPO | DAPO: An Open-Source RL System from the Ground Up | Yu et al. | arXiv | 2025 | [dapo.py](opss/train/dapo.py#L38) |
 | TPO | Test-Time Preference Optimization: On-the-fly Alignment via Iterative Textual Feedback | - | arXiv | 2025 | [tpo.py](opss/infer/tpo.py#L33-L35) |
 
 ### Reasoning & Agentic
 
 | Algorithm | Paper | Authors | Venue | Year | Code |
 |-----------|-------|---------|-------|------|------|
+| Chain-of-Thought | Chain-of-Thought Prompting Elicits Reasoning in Large Language Models | Wei et al. | NeurIPS | 2022 | [cot_memory.py](model/reasoning/reasoner/cot_memory.py#L94) |
+| Self-Consistency | Self-Consistency Improves Chain of Thought Reasoning in Language Models | Wang et al. | ICLR | 2023 | [multipath_core.py](model/reasoning/reasoner/multipath_core.py#L109) |
+| Tree-of-Thoughts | Tree of Thoughts: Deliberate Problem Solving with Large Language Models | Yao et al. | NeurIPS | 2023 | [recursive_depth.py](model/reasoning/reasoner/recursive_depth.py#L1146) |
 | ReAct | ReAct: Synergizing Reasoning and Acting in Language Models | Yao et al. | ICLR | 2023 | [react_agentic.py](model/multimodal/react_agentic.py#L31-L32) |
-| Chain-of-Thought | Chain-of-Thought Prompting Elicits Reasoning in Large Language Models | Wei et al. | NeurIPS | 2022 | [react_agentic.py](model/multimodal/react_agentic.py#L33) |
+| VeriCoT | SPELL: Self-Play Reinforcement Learning for Reasoning | Yang et al. | ICLR | 2026 | [vericot.py](model/reasoning/vericot.py#L35) |
+| TTT-E2E | Test-Time Training with Self-Supervision / Masked Autoencoders | Sun et al. / Gandelsman et al. | ICML / NeurIPS | 2020/2024 | [ttt_e2e.py](model/reasoning/ttt_e2e.py#L41) |
 
 ### Optimizers
 
 | Algorithm | Paper | Authors | Venue | Year | Code |
 |-----------|-------|---------|-------|------|------|
-| GaLore | GaLore: Memory-Efficient LLM Training by Gradient Low-Rank Projection | Zhao et al. | arXiv | 2024 | [galore.py](opss/optim/galore.py#L35-L37) |
-| ROOT | ROOT: Robust Orthogonalized Optimizer for Neural Network Training | Huawei Noah's Ark Lab | arXiv | 2024 | [root.py](opss/optim/root.py#L33-L34) |
-| FP4 Training | Optimizing Large Language Model Training Using FP4 Quantization | - | arXiv | 2025 | [fp4.py](opss/optim/fp4.py#L35-L36) |
+| GaLore | GaLore: Memory-Efficient LLM Training by Gradient Low-Rank Projection | Zhao et al. | ICML | 2024 | [galore.py](opss/optim/galore.py#L103) |
+| ROOT | ROOT: Robust Orthogonalized Optimizer for Neural Network Training | Huawei Noah's Ark Lab | arXiv | 2024 | [root.py](opss/optim/root.py#L125) |
+| FP4 Training | Optimizing Large Language Model Training Using FP4 Quantization | - | arXiv | 2025 | [fp4.py](opss/optim/fp4.py#L151) |
+| Muon | Muon Optimizer | - | - | 2025 | [muon.py](utils/muon.py) |
 
 ### Quantization
 
 | Algorithm | Paper | Authors | Venue | Year | Code |
 |-----------|-------|---------|-------|------|------|
-| GPTQ | GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers | Frantar et al. | ICLR | 2023 | [orchestrator.py](tools/train/orchestrator.py#L840) |
+| GPTQ | GPTQ: Accurate Post-Training Quantization for Generative Pre-trained Transformers | Frantar et al. | ICLR | 2023 | [methods.py](opss/quantize/methods.py#L118) |
+| AWQ | AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration | Lin et al. | MLSys | 2024 | [methods.py](opss/quantize/methods.py#L320) |
+| SmoothQuant | SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models | Xiao et al. | ICML | 2023 | [methods.py](opss/quantize/methods.py#L556) |
+
+### Multimodal
+
+| Algorithm | Paper | Authors | Venue | Year | Code |
+|-----------|-------|---------|-------|------|------|
+| ViT | An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale | Dosovitskiy et al. | ICLR | 2021 | [vision.py](model/multimodal/vision.py#L403) |
+| SigLIP | Sigmoid Loss for Language Image Pre-Training | Zhai et al. | ICCV | 2023 | [vision.py](model/multimodal/vision.py) |
+| LayoutLMv3 | LayoutLMv3: Pre-training for Document AI with Unified Text and Image Masking | Huang et al. | ACM Multimedia | 2022 | [doc.py](model/multimodal/doc.py#L85) |
+| HiFi-GAN | HiFi-GAN: Generative Adversarial Networks for Efficient and High Fidelity Speech Synthesis | Kong et al. | NeurIPS | 2020 | [audio.py](model/multimodal/audio.py#L543) |
+| FiLM | FiLM: Visual Reasoning with a General Conditioning Layer | Perez et al. | NeurIPS | 2017 | [dual_injector.py](model/core/dual_injector.py#L55) |
+| SAGE | SAGE: Multi-Agent Self-Evolution for LLM Tool Execution | Peng et al. | arXiv | 2026 | [seer_executor.py](model/multimodal/seer_executor.py#L36) |
 
 ### Citation
 

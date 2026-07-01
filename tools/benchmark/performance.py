@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Copyright © 2025-2026 Wenze Wei & Annian Wang. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Performance metrics measurement module for PiscesL1.
+Performance metrics measurement module for PiscesLx.
 
 This module provides comprehensive performance measurement including:
 - Latency measurement (TTFT, ITL)
@@ -131,7 +133,7 @@ class PiscesLxToolsPerformanceMetrics:
 
 
 class PiscesLxToolsPerformanceEvaluator:
-    """Performance evaluator for PiscesL1 model."""
+    """Performance evaluator for PiscesLx model."""
     
     def __init__(
         self,
@@ -557,7 +559,7 @@ class PiscesLxToolsPerformanceEvaluator:
     def print_summary(self) -> None:
         """Print performance summary."""
         print("\n" + "=" * 60)
-        print("PiscesL1 Performance Benchmark Results")
+        print("PiscesLx Performance Benchmark Results")
         print("=" * 60)
         
         if "performance_summary" in self.results:

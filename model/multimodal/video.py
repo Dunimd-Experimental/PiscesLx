@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Video encoder utilities for Yv multimodal agents.
 
 This module provides comprehensive video processing components for the Yv
@@ -78,6 +80,7 @@ from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.Multimodal", file_path=get_log_file("Yv.Multimodal"), enable_file=True)
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvVideoEncoder(nn.Module):
     """Encode video frame sequences with optional 3D rotary positional modeling.
     
@@ -230,7 +233,7 @@ class YvVideoEncoder(nn.Module):
         
         Args:
             video_frames (torch.Tensor | None): Input tensor shaped ``[B, T, C, H, W]``
-                containing batched video clips. ``None`` yields a zero tensor placeholder.
+                containing batched video clips.
                 - B: Batch size
                 - T: Number of temporal frames
                 - C: Number of channels (typically 3 for RGB)
@@ -247,7 +250,10 @@ class YvVideoEncoder(nn.Module):
             - Without 3D RoPE: Standard per-frame encoding with temporal pooling
         """
         if video_frames is None:
-            return torch.zeros(1, 1, self.cfg.hidden_size, device=getattr(self.cfg, 'device', 'cpu'))
+            raise ValueError(
+                "YvVideoEncoder.forward requires real video inputs. "
+                "Zero-tensor fallbacks are disabled for strict model closure."
+            )
 
         B, T, C, H, W = video_frames.shape
 

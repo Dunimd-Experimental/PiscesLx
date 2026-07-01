@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Run Controller - Process Lifecycle and State Management
 
 This module provides a controller for managing run lifecycle, state transitions,
-event logging, and process spawning in the PiscesL1 execution framework.
+event logging, and process spawning in the PiscesLx execution framework.
 
 Key Components:
     - POPSSRunController: Main controller class for run management

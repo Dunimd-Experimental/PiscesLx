@@ -21,16 +21,18 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Configuration Package for PiscesL1 Large Language Model Framework.
+Configuration Package for PiscesLx Large Language Model Framework.
 
 This module serves as the central configuration management hub for the entire
-PiscesL1 ecosystem. It provides a unified interface for accessing and managing
+PiscesLx ecosystem. It provides a unified interface for accessing and managing
 all configuration parameters across model architectures, training pipelines,
 dataset specifications, watermarking systems, and system-level settings.
 
 ARCHITECTURAL OVERVIEW:
-    The PiscesL1 configuration system is designed with a hierarchical and
+    The PiscesLx configuration system is designed with a hierarchical and
     modular structure that separates concerns while maintaining tight
     integration across components. This design enables:
 

@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Agentic Module - Unified Entry Point for Autonomous Agent Components.
 
 This module serves as the primary public interface for all agentic (autonomous agent)
-functionality within the PiscesL1 framework. It consolidates imports from the underlying
+functionality within the PiscesLx framework. It consolidates imports from the underlying
 multimodal.agentic subsystem, providing a clean and unified API for external consumers.
 
 Architecture Overview:
@@ -97,7 +99,10 @@ from ..multimodal.state_machine import (
     YvAgenticEvent,
 )
 from ..multimodal.tool_executor import YvToolExecutor, YvToolResult
+from .enta import YvEntaTrainer
+
 __all__ = [
+    "YvEntaTrainer",
     "YvAgentic",
     "YvAgenticEncoder",
     "YvLongTermPlanner",

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 from enum import Enum, auto
 from typing import Dict, Any, List, Optional, Callable
 from dataclasses import dataclass, field
@@ -248,10 +250,7 @@ class YvStateMachine:
     def _trigger_callbacks(self, event: YvAgenticEvent):
         if event in self._transition_callbacks:
             for callback in self._transition_callbacks[event]:
-                try:
-                    callback(self._current_state, event, self._state_metadata)
-                except Exception:
-                    pass
+                callback(self._current_state, event, self._state_metadata)
     
     def remove_callback(self, callback_id: str) -> bool:
         for event, callbacks in self._transition_callbacks.items():
@@ -451,7 +450,7 @@ class YvStateMachine:
             Optional[YvStateSnapshot]: The most recent snapshot, or None.
         """
         if not self._snapshot_stack:
-            return None
+            raise RuntimeError("No recovery snapshot is available.")
         
         latest_id = self._snapshot_stack[-1]
         return self._snapshots.get(latest_id)

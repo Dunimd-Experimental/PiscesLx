@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Online Clustering Router for Mixture-of-Experts.
 
 This module implements an online clustering-based routing mechanism for MoE
@@ -154,6 +156,7 @@ class YvClusterConfig:
     reassignment_threshold: float = 0.1
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvOnlineClusterRouter(nn.Module):
     """Online clustering-based router for Mixture-of-Experts.
     

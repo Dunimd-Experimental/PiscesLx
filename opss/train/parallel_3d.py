@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 3D Parallelism Operator for Large-Scale Training
 
@@ -397,6 +399,18 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
                 error="Missing batch input"
             )
         
+        # Initialize communication-computation overlap optimizer for Zero-Bubble
+        if self.config.overlap_communication and self.config.dp_size > 1:
+            if not hasattr(self, '_overlap_optimizer') or self._overlap_optimizer is None:
+                self._overlap_optimizer = POPSSCommComputeOverlapOptimizer(
+                    model=self._model,
+                    bucket_size_mb=25,
+                    enable_overlap=True,
+                    grad_sync=True,
+                    dp_group=self._dp_group,
+                )
+                self._async_handle = None
+        
         try:
             if self.config.pp_size > 1:
                 loss = self._pipeline_forward_backward(batch, forward_fn)
@@ -430,9 +444,13 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
         micro_batches = self._split_batch(batch, self.config.num_micro_batches)
         
         losses = []
-        
-        if self.config.pipeline_schedule == POPSSPipelineSchedule.ONE_F_ONE_B:
+
+        if self.config.pipeline_schedule == POPSSPipelineSchedule.ZERO_BUBBLE:
+            losses = self._zero_bubble_schedule(micro_batches, forward_fn)
+        elif self.config.pipeline_schedule == POPSSPipelineSchedule.ONE_F_ONE_B:
             losses = self._one_f_one_b_schedule(micro_batches, forward_fn)
+        elif self.config.pipeline_schedule == POPSSPipelineSchedule.INTERLEAVED:
+            losses = self._interleaved_schedule(micro_batches, forward_fn)
         elif self.config.pipeline_schedule == POPSSPipelineSchedule.GPipe:
             losses = self._gpipe_schedule(micro_batches, forward_fn)
         else:
@@ -458,64 +476,172 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
         return [batch] * num_splits
     
     def _one_f_one_b_schedule(self, micro_batches: List, forward_fn) -> List[torch.Tensor]:
-        """1F1B pipeline schedule."""
+        """1F1B pipeline schedule with warmup phase."""
         losses = []
-        num_warmup = self.config.pp_size - 1
+        num_warmup = min(self.config.pp_size - 1, len(micro_batches))
         num_micro_batches = len(micro_batches)
-        
+
         for i in range(num_warmup):
-            if i < num_micro_batches:
-                loss = self._forward_micro_batch(micro_batches[i], forward_fn)
-                losses.append(loss)
-        
+            loss = self._forward_micro_batch(micro_batches[i], forward_fn)
+            losses.append(loss)
+
         for i in range(num_micro_batches):
-            if i + num_warmup < num_micro_batches:
-                loss = self._forward_micro_batch(micro_batches[i + num_warmup], forward_fn)
+            id_fw = i + num_warmup
+            if id_fw < num_micro_batches:
+                loss = self._forward_micro_batch(micro_batches[id_fw], forward_fn)
                 losses.append(loss)
-            
-            if i > 0:
-                self._backward_micro_batch()
-        
+            if i < num_micro_batches - 1:
+                self._backward_micro_batch(losses[i] if i < len(losses) else None)
+
         return losses
-    
+
     def _gpipe_schedule(self, micro_batches: List, forward_fn) -> List[torch.Tensor]:
         """GPipe pipeline schedule."""
         losses = []
-        
+
         for micro_batch in micro_batches:
             loss = self._forward_micro_batch(micro_batch, forward_fn)
             losses.append(loss)
-        
-        for _ in micro_batches:
-            self._backward_micro_batch()
-        
+
+        for loss in losses:
+            self._backward_micro_batch(loss)
+
         return losses
-    
+
     def _interleaved_schedule(self, micro_batches: List, forward_fn) -> List[torch.Tensor]:
-        """Interleaved pipeline schedule."""
-        return self._gpipe_schedule(micro_batches, forward_fn)
+        """Interleaved 1F1B pipeline schedule.
+
+        Splits model into multiple chunks and interleaves forward/backward
+        across chunks to reduce pipeline bubble.
+        """
+        num_chunks = max(2, self.config.pp_size)
+        chunk_size = max(1, len(micro_batches) // num_chunks)
+        chunks = [micro_batches[i:i+chunk_size] for i in range(0, len(micro_batches), chunk_size)]
+
+        losses = []
+        num_warmup = min(num_chunks - 1, len(micro_batches))
+
+        for i in range(num_warmup):
+            if i < len(micro_batches):
+                loss = self._forward_micro_batch(micro_batches[i], forward_fn)
+                losses.append(loss)
+
+        fw_idx = num_warmup
+        for bwd_step in range(len(micro_batches)):
+            for chunk_idx in range(num_chunks):
+                if fw_idx < len(micro_batches):
+                    loss = self._forward_micro_batch(micro_batches[fw_idx], forward_fn)
+                    losses.append(loss)
+                    fw_idx += 1
+                if bwd_step > 0 or chunk_idx > 0:
+                    lidx = min(bwd_step * num_chunks + chunk_idx, len(losses) - 1)
+                    if lidx >= 0 and lidx < len(losses):
+                        self._backward_micro_batch(losses[lidx])
+
+        return losses
+
+    def _zero_bubble_schedule(self, micro_batches: List, forward_fn) -> List[torch.Tensor]:
+        """Zero-Bubble pipeline schedule with computation-communication overlap.
+
+        Key idea: overlap backward computation (gradient computation) with
+        gradient communication (all-reduce) across micro-batches. This
+        eliminates the pipeline bubble that normally exists between
+        forward and backward passes of consecutive micro-batches.
+
+        Strategy:
+        1. Forward all micro-batches (split into warmup + steady)
+        2. During backward of micro-batch i:
+           - async all-reduce gradients of micro-batch i-1
+           - compute gradients of micro-batch i
+           - wait for async all-reduce of i-1 when i's backward done
+        3. Final sync for the last micro-batch
+        """
+        losses = []
+        num_micro_batches = len(micro_batches)
+        num_warmup = min(self.config.pp_size - 1, num_micro_batches)
+
+        # --- Warmup: forward only ---
+        for i in range(num_warmup):
+            loss = self._forward_micro_batch(micro_batches[i], forward_fn)
+            losses.append(loss)
+
+        # --- Steady: interleave forward + backward with overlapped sync ---
+        for i in range(num_micro_batches):
+            # Forward next micro-batch if available
+            fw_idx = i + num_warmup
+            if fw_idx < num_micro_batches:
+                loss_fwd = self._forward_micro_batch(micro_batches[fw_idx], forward_fn)
+                losses.append(loss_fwd)
+
+            # Backward current micro-batch
+            if i < len(losses):
+                losses[i].backward()
+
+            # If previous backward had an async all-reduce, wait + unscale now
+            if i > 0 and hasattr(self, '_async_handle') and self._async_handle is not None:
+                self._wait_and_unscale_last_bucket()
+                self._async_handle = None
+
+            # Launch async all-reduce for current gradients
+            if self._overlap_optimizer is not None:
+                self._async_handle = self._overlap_optimizer.sync_gradients(async_only=True)
+
+        # --- Drain: backward remaining + final sync ---
+        if self._async_handle is not None:
+            self._wait_and_unscale_last_bucket()
+            self._async_handle = None
+        if self._overlap_optimizer is not None:
+            self._overlap_optimizer.sync_gradients()
+
+        return losses
+
+    def _wait_and_unscale_last_bucket(self):
+        """Wait for pending async all-reduce and unscale gradients."""
+        if hasattr(self, '_overlap_optimizer') and self._overlap_optimizer is not None:
+            try:
+                self._overlap_optimizer.sync_gradients()
+            except Exception:
+                pass
     
     def _forward_micro_batch(self, micro_batch: Any, forward_fn) -> torch.Tensor:
-        """Forward pass for single micro-batch."""
-        return self._standard_forward_backward(micro_batch, forward_fn)
-    
-    def _backward_micro_batch(self):
-        """Backward pass for single micro-batch."""
-        pass
-    
+        """Forward pass for single micro-batch (no backward)."""
+        if self._model is None:
+            raise RuntimeError("Model not initialized")
+        return forward_fn(self._model, micro_batch)
+
+    def _backward_micro_batch(self, loss: Optional[torch.Tensor] = None):
+        """Backward pass for single micro-batch with optional immediate sync."""
+        if loss is not None:
+            loss.backward()
+        if self._overlap_optimizer is not None:
+            self._overlap_optimizer.sync_gradients()
+
+    def _standard_forward_backward(self, batch: Any, forward_fn) -> torch.Tensor:
+        """Standard forward-backward pass with overlapped grad sync."""
+        loss = forward_fn(self._model, batch)
+        loss.backward()
+        if self._overlap_optimizer is not None:
+            self._overlap_optimizer.sync_gradients()
+        return loss
+
     def _synchronize_gradients(self):
-        """Synchronize gradients across parallel dimensions."""
+        """Synchronize gradients across parallel dimensions using bucketed all-reduce."""
         import torch.distributed as dist
-        
+
         if not dist.is_initialized():
             return
-        
         if self._model is None:
             return
-        
-        for param in self._model.parameters():
-            if param.grad is not None:
-                if self.config.dp_size > 1 and self._dp_group is not None:
+        if not (self.config.dp_size > 1 and self._dp_group is not None):
+            return
+
+        # Use bucketed async all-reduce if overlap optimizer available
+        if self._overlap_optimizer is not None:
+            self._overlap_optimizer.sync_gradients()
+        else:
+            # Fallback: simple sequential all-reduce per parameter
+            for param in self._model.parameters():
+                if param.grad is not None:
                     dist.all_reduce(param.grad, group=self._dp_group)
                     param.grad.div_(self.config.dp_size)
     

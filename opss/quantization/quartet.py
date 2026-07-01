@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Quartet: End-to-End FP4 Training for Yv Models.
 
 Based on OpenReview 2025. Stores all linear layer weights in FP4

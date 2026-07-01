@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-PiscesL1 Distributed Data Processing Module.
+PiscesLx Distributed Data Processing Module.
 
 This module provides distributed data processing capabilities:
 - RayDistributedCleaner: Parallel data cleaning with Ray

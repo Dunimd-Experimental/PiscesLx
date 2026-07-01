@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-Unified DataModule for PiscesL1 training.
+Unified DataModule for PiscesLx training.
 
 This module provides a unified data loading interface supporting:
 - Text data for language modeling
@@ -149,7 +149,7 @@ class PiscesL1DataConfig:
 
 
 class PiscesL1BaseDataset(Dataset):
-    """Base dataset class for PiscesL1."""
+    """Base dataset class for PiscesLx."""
     
     def __init__(
         self,
@@ -644,7 +644,7 @@ class PiscesL1StreamingDataset(IterableDataset):
 
 
 class PiscesL1DataModule:
-    """Unified DataModule for PiscesL1 training."""
+    """Unified DataModule for PiscesLx training."""
     
     def __init__(
         self,
@@ -812,7 +812,7 @@ def datamodule_main(args):
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="DataModule for PiscesL1")
+    parser = argparse.ArgumentParser(description="DataModule for PiscesLx")
     parser.add_argument("--config", type=str, default=None)
     parser.add_argument("--test", action="store_true", default=False)
     

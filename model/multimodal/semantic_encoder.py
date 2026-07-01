@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Semantic text encoding utilities for Yv multimodal agents.
 
 This module provides semantic text encoding components for the Yv model,
@@ -79,6 +81,7 @@ from typing import Optional, Dict, Any, List
 import hashlib
 import re
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvSemanticEncoder(nn.Module):
     """Semantic text encoder for agent goal and context representation.
     
@@ -391,6 +394,7 @@ class YvSemanticEncoder(nn.Module):
         }
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvHybridEncoder(nn.Module):
     """Hybrid encoder combining semantic text with additional features.
     

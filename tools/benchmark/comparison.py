@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Copyright © 2025-2026 Wenze Wei & Annian Wang. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Flagship model comparison module for PiscesL1.
+Flagship model comparison module for PiscesLx.
 
 This module provides comprehensive comparison with flagship models including:
 - LLaMA 4 (Meta)
@@ -145,7 +147,7 @@ FLAGSHIP_MODELS = {
             "needle_haystack": 98.5,
         }
     },
-    "PiscesL1-1T": {
+    "PiscesLx-1T": {
         "organization": "Dunimd",
         "release_date": "2025-03",
         "parameters": "1T MoE + Mamba-3",
@@ -342,9 +344,9 @@ class PiscesLxToolsFlagshipComparator:
     def compare_with_flagship(
         self,
         piscesl1_results: Dict[str, float],
-        model_name: str = "PiscesL1",
+        model_name: str = "PiscesLx",
     ) -> Dict[str, Any]:
-        """Compare PiscesL1 results with flagship models."""
+        """Compare PiscesLx results with flagship models."""
         comparison = {
             "model_name": model_name,
             "timestamp": datetime.now().isoformat(),
@@ -401,7 +403,7 @@ class PiscesLxToolsFlagshipComparator:
             scores.sort(key=lambda x: x[1], reverse=True)
             
             for rank, (model, _) in enumerate(scores, 1):
-                if model == "PiscesL1":
+                if model == "PiscesLx":
                     rankings[benchmark] = rank
                     break
         
@@ -446,13 +448,13 @@ class PiscesLxToolsFlagshipComparator:
         
         lines = []
         lines.append("\n" + "=" * 100)
-        lines.append("PiscesL1 vs Flagship Models Comparison")
+        lines.append("PiscesLx vs Flagship Models Comparison")
         lines.append("=" * 100)
         
         header = f"{'Benchmark':<15}"
         for model in self.config.reference_models[:5]:
             header += f"{model:<12}"
-        header += f"{'PiscesL1':<12}"
+        header += f"{'PiscesLx':<12}"
         header += f"{'Rank':<6}"
         lines.append(header)
         lines.append("-" * 100)

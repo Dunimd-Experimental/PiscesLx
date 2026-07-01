@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 RLVR (Reinforcement Learning with Verifiable Rewards) Operator
 
@@ -126,6 +128,7 @@ class POPSSRLVRConfig(PiscesLxOperatorConfig):
             self.verifier_type = self.verifier_type.lower()
 
 
+# Paper: DeepSeek-AI, "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", arXiv:2501.12948
 class POPSSRLVROperator(PiscesLxOperatorInterface):
     """
     Reinforcement Learning with Verifiable Rewards (RLVR) Operator.
@@ -763,6 +766,7 @@ class POPSSRLVRDataset:
         return cls(samples)
 
 
+# Paper: DeepSeek-AI, "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", arXiv:2501.12948
 class POPSSRLVRTrainer:
     """
     High-level trainer combining RLVR with GRPO for verifiable reward training.

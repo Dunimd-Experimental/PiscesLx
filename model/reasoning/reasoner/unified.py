@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Unified routing logic for Yv's Chain-of-Thought and multi-path reasoners.
 
 This module provides a unified reasoning interface that intelligently routes
@@ -89,6 +91,7 @@ from .multipath_core import YvMultiPathReasoningEngine
 from ..ttt_e2e import YvTestTimeTrainer
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvUnifiedReasoner(nn.Module):
     """Unified reasoning router between CoT and multi-path engines.
     
@@ -146,7 +149,7 @@ class YvUnifiedReasoner(nn.Module):
         attention_weights, final_state, and loss.
     """
     
-    def __init__(self, cfg: Any):
+    def __init__(self, cfg: Any, device: Optional[torch.device] = None, dtype: Optional[torch.dtype] = None):
         """Initialize sub-components and routing thresholds from configuration.
         
         Creates the CoT reasoner, multi-path engine, and initializes routing
@@ -221,20 +224,23 @@ class YvUnifiedReasoner(nn.Module):
         
         Returns:
             torch.Tensor: Hidden states tensor of shape [batch, seq_len, hidden_size].
-        
-        Note:
-            When no valid hidden states are found, generates random tensor as fallback.
-            This ensures the reasoning pipeline always has valid input for processing.
+
+        Raises:
+            ValueError: If no real hidden states are available. The unified
+                reasoner is a model-side component and must never fabricate
+                synthetic hidden states during production execution.
         """
         hidden_states = None
         if torch.is_tensor(input_ids) and input_ids.dtype in (torch.float16, torch.float32, torch.bfloat16):
             hidden_states = input_ids
         elif "hidden_states" in kwargs and torch.is_tensor(kwargs["hidden_states"]):
             hidden_states = kwargs["hidden_states"]
-        else:
-            # Generate a random tensor fallback to mimic YvReasoner behavior.
-            hidden_size = getattr(self.cfg, "hidden_size", 1024)
-            hidden_states = torch.randn(1, 1, hidden_size, device=next(self.parameters()).device)
+
+        if hidden_states is None:
+            raise ValueError(
+                "YvUnifiedReasoner requires real hidden_states (or float input_ids). "
+                "Random fallback tensors are disabled to preserve model-side closure."
+            )
 
         return hidden_states
 
@@ -260,13 +266,8 @@ class YvUnifiedReasoner(nn.Module):
             The complexity score is normalized to [0, 1] range.
             Higher complexity or longer sequences favor multi-path reasoning.
         """
-        try:
-            # Estimate problem complexity using the CoT reasoner metric.
-            complexity = self.cot_reasoner._calculate_problem_complexity(hidden_states)
-        except Exception:
-            # Fallback heuristic using sequence length.
-            seq_len = hidden_states.shape[1]
-            complexity = min(seq_len / float(self.seq_len_threshold), 1.0)
+        # Estimate problem complexity using the CoT reasoner metric.
+        complexity = self.cot_reasoner._calculate_problem_complexity(hidden_states)
 
         seq_len = hidden_states.shape[1]
         return (self.enable_multi_path_core and
@@ -303,10 +304,7 @@ class YvUnifiedReasoner(nn.Module):
         if hasattr(self, "multi_path_core") and hasattr(self.multi_path_core, "initialize_reasoning_tokens"):
             self.multi_path_core.initialize_reasoning_tokens(tokenizer)
         if hasattr(self, "cot_reasoner") and hasattr(self.cot_reasoner, "initialize_reasoning_tokens"):
-            try:
-                self.cot_reasoner.initialize_reasoning_tokens(tokenizer)  # type: ignore
-            except Exception:
-                pass
+            self.cot_reasoner.initialize_reasoning_tokens(tokenizer)  # type: ignore
 
     def forward(
         self,
@@ -441,20 +439,11 @@ class YvUnifiedReasoner(nn.Module):
                 cot_out["loss"] = torch.tensor(0.0, device=device)
             return cot_out
 
-        # Use the Multi-Path core with fallback to the CoT path if an exception occurs.
-        try:
-            core_out = self.multi_path_core.forward(
-                hidden_states=hidden_states,
-                input_ids=input_ids_tokens,
-                labels=labels
-            )
-        except Exception:
-            return self.cot_reasoner.forward(
-                input_ids=hidden_states,
-                attention_mask=attention_mask,
-                memory_context=memory_context,
-                **kwargs
-            )
+        core_out = self.multi_path_core.forward(
+            hidden_states=hidden_states,
+            input_ids=input_ids_tokens,
+            labels=labels
+        )
 
         # Process thinking logits to align with CoT-style outputs.
         thinking_logits = core_out.get("thinking_logits", None)

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Recursive depth reasoning with subproblem decomposition and verification.
 
 This module implements sophisticated recursive reasoning algorithms that break
@@ -672,6 +674,7 @@ class _BidirectionalVerifier(nn.Module):
         return fused, consistency_score
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvRecursiveDepthReasoner(nn.Module):
     """Main recursive depth reasoning module with adaptive decomposition.
     
@@ -1140,6 +1143,7 @@ class YvRecursiveDepthReasoner(nn.Module):
         return result
 
 
+# Paper: Yao et al., "Tree of Thoughts: Deliberate Problem Solving with Large Language Models", NeurIPS 2023
 class YvThoughtTreeReasoner(nn.Module):
     """Monte Carlo Tree Search-style reasoning with UCB selection.
     

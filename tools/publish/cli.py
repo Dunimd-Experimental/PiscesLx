@@ -24,7 +24,7 @@
 """
 Publish CLI
 
-Command-line interface for the PiscesL1 publishing tool.
+Command-line interface for the PiscesLx publishing tool.
 Provides user-friendly commands for model export, Docker image building,
 and registry publishing.
 
@@ -82,7 +82,7 @@ def create_parser() -> argparse.ArgumentParser:
     """
     parser = argparse.ArgumentParser(
         prog="python -m tools.publish.cli",
-        description="PiscesL1 Model Publishing CLI",
+        description="PiscesLx Model Publishing CLI",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
             For more information, see:
@@ -113,8 +113,8 @@ def create_parser() -> argparse.ArgumentParser:
     )
     common_parser.add_argument(
         "--model-name", "-n",
-        default="PiscesL1",
-        help="Model name. Default: PiscesL1"
+        default="PiscesLx",
+        help="Model name. Default: PiscesLx"
     )
     common_parser.add_argument(
         "--model-path", "-p",

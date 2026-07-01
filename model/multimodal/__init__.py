@@ -21,7 +21,9 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-"""Yv Multimodal Module - Unified Multimodal Processing for PiscesL1.
+from __future__ import annotations
+
+"""Yv Multimodal Module - Unified Multimodal Processing for PiscesLx.
 
 This module provides comprehensive multimodal processing capabilities for the
 Yv model, integrating vision, audio, video, document, and agentic

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Yv Model - Unified Flagship Architecture for Next-Generation AI.
 
 This package provides the complete Yv model implementation, a flagship-level
@@ -266,6 +268,10 @@ from .multimodal import (
     YvVideoEncoder,
     YvAgenticEncoder,
     YvDynamicModalFusion,
+)
+
+from .agentic import (
+    YvEntaTrainer,
 )
 
 from .reasoning import (

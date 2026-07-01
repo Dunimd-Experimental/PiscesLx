@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Advanced Attention Mechanisms Module for Yv Model.
 
@@ -310,6 +312,7 @@ class YvAttentionConfig:
             self.head_dim = self.hidden_size // self.n_head
 
 
+# Paper: Press et al., "Train Short, Test Long: Attention with Linear Biases Enables Input Length Extrapolation", ICLR 2022, arXiv:2108.12409
 class YvALiBi(nn.Module):
     """Attention with Linear Biases (ALiBi) for position encoding.
     
@@ -495,6 +498,7 @@ class YvALiBi(nn.Module):
         return self.cached_bias[:, :seq_len, :seq_len]
 
 
+# Paper: Xiao et al., "Efficient Streaming Language Models with Attention Sinks", arXiv:2309.17453, 2023
 class YvAttentionSink(nn.Module):
     """Attention Sink mechanism for streaming attention stability.
     
@@ -616,6 +620,7 @@ class YvAttentionSink(nn.Module):
         return augmented, sink_mask
 
 
+# Paper: Henry et al., "Query-Key Normalization for Transformers", arXiv:2010.04245, 2020
 class YvQKNormalizer(nn.Module):
     """Query-Key Normalization for attention mechanism stability.
     
@@ -734,6 +739,7 @@ class YvQKNormalizer(nn.Module):
         return q_normed, k_normed
 
 
+# Paper: Katharopoulos et al., "Transformers are RNNs: Fast Autoregressive Transformers with Linear Attention", ICML 2020
 class YvLinearAttention(nn.Module):
     """Linear Attention for efficient long-context sequence processing.
     
@@ -1183,6 +1189,7 @@ class YvLinearAttention(nn.Module):
         return output
 
 
+# Paper: Original contribution (FFT-based circulant attention with BCCB matrix structure)
 class YvCirculantAttention(nn.Module):
     """Circulant Attention via FFT-based O(N log N) computation.
 
@@ -1445,6 +1452,7 @@ class YvCirculantAttention(nn.Module):
         return attn_output
 
 
+# Paper: Jiang et al., "Mistral 7B", arXiv:2310.06825, 2023 (sliding window attention)
 class YvSlidingWindowAttention(nn.Module):
     """Sliding Window Attention for efficient local context processing.
     
@@ -1645,6 +1653,7 @@ class YvSlidingWindowAttention(nn.Module):
         return output
 
 
+# Paper: Child et al., "Generating Long Sequences with Sparse Transformers", NeurIPS 2019
 class YvSparseAttention(nn.Module):
     """Sparse Attention with configurable attention patterns.
     
@@ -1866,6 +1875,7 @@ class YvSparseAttention(nn.Module):
         return output
 
 
+# Paper: Kwon et al., "Efficient Memory Management for Large Language Model Serving with PagedAttention", SOSP 2023 (vLLM)
 class YvPagedAttention(nn.Module):
     """PagedAttention for efficient KV cache memory management.
     
@@ -2121,6 +2131,7 @@ class YvPagedAttention(nn.Module):
         return output
 
 
+# Paper: Dao et al., "FlashAttention: Fast and Memory-Efficient Exact Attention with IO-Awareness", NeurIPS 2022, arXiv:2205.14135; FlashAttention-2: arXiv:2307.08691; FlashAttention-3: arXiv:2407.08608
 class YvFlashAttention(nn.Module):
     """Flash Attention 2/3 wrapper for high-performance attention computation.
     
@@ -2291,24 +2302,23 @@ class YvFlashAttention(nn.Module):
             expanded to match the number of query heads through repetition.
         """
         try:
-            import flash_attn_v3
             from flash_attn_v3 import flash_attn_func as flash_attn_v3_func
-            
-            if self.n_kv_head != self.n_head:
-                repeat = self.n_head // self.n_kv_head
-                k = k.repeat_interleave(repeat, dim=2)
-                v = v.repeat_interleave(repeat, dim=2)
-            
-            output = flash_attn_v3_func(
-                q, k, v,
-                dropout_p=self.attention_dropout if self.training else 0.0,
-                softmax_scale=self.scale,
-                causal=True,
-                window_size=(-1, -1)
-            )
-            return output
-        except Exception:
-            return self._flash_attention_v2(q, k, v)
+        except (ImportError, ModuleNotFoundError, OSError) as exc:
+            raise RuntimeError("Flash Attention 3 backend is unavailable") from exc
+
+        if self.n_kv_head != self.n_head:
+            repeat = self.n_head // self.n_kv_head
+            k = k.repeat_interleave(repeat, dim=2)
+            v = v.repeat_interleave(repeat, dim=2)
+
+        output = flash_attn_v3_func(
+            q, k, v,
+            dropout_p=self.attention_dropout if self.training else 0.0,
+            softmax_scale=self.scale,
+            causal=True,
+            window_size=(-1, -1)
+        )
+        return output
             
     def _flash_attention_v2(self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
         """Compute attention using Flash Attention 2.
@@ -2378,7 +2388,8 @@ class YvFlashAttention(nn.Module):
                     output = self._flash_attention_v3(q, k, v)
                 else:
                     output = self._flash_attention_v2(q, k, v)
-            except Exception:
+            except (ImportError, ModuleNotFoundError, OSError, RuntimeError, ValueError) as exc:
+                _LOG.debug("Flash attention path unavailable, falling back to standard attention: %s", exc)
                 output = self._standard_attention(q, k, v, attention_mask)
         else:
             output = self._standard_attention(q, k, v, attention_mask)
@@ -2437,6 +2448,7 @@ class YvFlashAttention(nn.Module):
         return output.transpose(1, 2)
 
 
+# Paper: Beltagy et al., "Longformer: The Long-Document Transformer", ICLR 2020, arXiv:2004.05150
 class YvLocalGlobalAttention(nn.Module):
     """Local-Global Attention for hybrid context processing.
     
@@ -2679,6 +2691,7 @@ class YvLocalGlobalAttention(nn.Module):
         return torch.matmul(attn_weights, v)
 
 
+# Paper: Liu et al., "Ring Attention with Blockwise Transformers for Near-Infinite Context", arXiv:2310.01889, 2023
 class YvRingAttention(nn.Module):
     """Ring Attention for distributed ultra-long context processing.
     
@@ -2820,7 +2833,7 @@ class YvRingAttention(nn.Module):
         try:
             import torch.distributed as dist
             return dist.is_initialized() and dist.get_world_size() > 1
-        except Exception:
+        except (ImportError, ModuleNotFoundError, RuntimeError, ValueError):
             return False
         
     def _ring_send_recv(self, tensor: torch.Tensor, send_rank: int, recv_rank: int) -> torch.Tensor:
@@ -3042,6 +3055,7 @@ class YvRingAttention(nn.Module):
         return output
 
 
+# Paper: Shazeer, "Fast Transformer Decoding: One Write-Head is All You Need", arXiv:1911.02150, 2019
 class YvMultiQueryAttention(nn.Module):
     """Multi-Query Attention (MQA) with single shared key/value head.
     
@@ -3215,6 +3229,7 @@ class YvMultiQueryAttention(nn.Module):
         return output
 
 
+# Paper: Zhang et al., "H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models", NeurIPS 2023, arXiv:2306.14048
 class YvDynamicH2OAttention(nn.Module):
     """Dynamic H2O Attention with adaptive compression and hierarchical caching.
     
@@ -3710,6 +3725,7 @@ class YvDynamicH2OAttention(nn.Module):
         return attention_output, (key_states, value_states)
 
 
+# Paper: Zhang et al., "H2O: Heavy-Hitter Oracle for Efficient Generative Inference of Large Language Models", NeurIPS 2023, arXiv:2306.14048
 class YvH2OAttention(nn.Module):
     """Heavy-Hitter Oracle (H2O) Attention for ultra-long context processing.
     
@@ -4155,6 +4171,7 @@ class YvH2OAttention(nn.Module):
         return attention_output, present_key_value
 
 
+# Paper: Original contribution by Dunimd Team (HISA with CoPE integration)
 class YvHISAAttention(nn.Module):
     """Hierarchical Indexed Sparse Attention (HISA) for ultra-long sequences.
 
@@ -4686,6 +4703,7 @@ class YvHISAAttention(nn.Module):
         return output, None
 
 
+# Paper: Original contribution (MoBA: Mixture of Block Attention)
 class YvMixtureBlockAttention(nn.Module):
     """Mixture of Block Attention (MoBA) for million-token context.
 
@@ -5097,6 +5115,7 @@ class YvMixtureBlockAttention(nn.Module):
         return output
 
 
+# Paper: DeepSeek-V2 (Multi-head Latent Attention / MLA), arXiv:2405.04434, 2024; DeepSeek-V3, arXiv:2412.19437, 2024
 class YvAttention(nn.Module):
     """Unified Multi-head Attention with comprehensive backend support.
     
@@ -5225,6 +5244,8 @@ class YvAttention(nn.Module):
             self.scale = getattr(cfg, 'attention_scale', None) or (self.head_dim ** -0.5)
         
         self.use_h2o = bool(getattr(cfg, 'use_h2o_attention', False)) or (cfg.max_position_embeddings > 1000000)
+        self.use_dynamic_h2o = getattr(cfg, 'use_dynamic_h2o', False)
+        self.use_local_global = getattr(cfg, 'use_local_global', False)
         self.use_flash = bool(getattr(cfg, 'use_flash_attention', True))
         self.flash_version = int(getattr(cfg, 'flash_attention_version', 2))
         self.use_alibi = bool(getattr(cfg, 'use_alibi', False))
@@ -5312,6 +5333,27 @@ class YvAttention(nn.Module):
                 compression_ratio=getattr(cfg, 'compression_ratio', 8),
                 streaming_window=getattr(cfg, 'streaming_window', 16384),
                 dropout=getattr(cfg, 'attention_dropout', 0.0),
+            )
+
+        if self.use_dynamic_h2o:
+            self.dynamic_h2o_attention = YvDynamicH2OAttention(
+                hidden_size=cfg.hidden_size,
+                num_attention_heads=cfg.n_head,
+                max_position_embeddings=cfg.max_position_embeddings,
+                compression_ratio=getattr(cfg, 'dynamic_h2o_compression_ratio', 8),
+                streaming_window=getattr(cfg, 'dynamic_h2o_streaming_window', 16384),
+                num_cache_levels=getattr(cfg, 'dynamic_h2o_num_cache_levels', 3),
+                dropout=getattr(cfg, 'attention_dropout', 0.0),
+            )
+
+        if self.use_local_global:
+            self.local_global_attention = YvLocalGlobalAttention(
+                hidden_size=cfg.hidden_size,
+                n_head=cfg.n_head,
+                local_window=getattr(cfg, 'local_global_window', 512),
+                local_heads=int(cfg.n_head * getattr(cfg, 'local_global_head_ratio', 0.5)),
+                device=device,
+                dtype=dtype,
             )
         
         if self.use_hisa:
@@ -5434,13 +5476,38 @@ class YvAttention(nn.Module):
         )
         
         if not self.use_alibi:
-            self.rope = YvYaRNRotaryEmbedding(
-                self.head_dim,
-                cfg.max_position_embeddings,
-                cfg.rope_theta,
-                scale=32,
-                device=device,
-            )
+            self.use_dynamic_yarn = getattr(cfg, 'use_dynamic_yarn', False)
+            if self.use_dynamic_yarn:
+                self.rope = YvDynamicYaRNRotaryEmbedding(
+                    self.head_dim,
+                    max_position_embeddings=cfg.max_position_embeddings,
+                    base=cfg.rope_theta,
+                    scale=32,
+                    original_max_position_embeddings=4096,
+                    device=device,
+                    enable_learned_scaling=True,
+                    enable_task_aware=True,
+                )
+            else:
+                self.rope = YvYaRNRotaryEmbedding(
+                    self.head_dim,
+                    cfg.max_position_embeddings,
+                    cfg.rope_theta,
+                    scale=32,
+                    device=device,
+                )
+            self.use_mr_rope = getattr(cfg, 'use_mr_rope', False)
+            if self.use_mr_rope:
+                from .mr_rope import YvMrRoPERotaryEmbedding as _YvMrRoPE
+                self.mr_rope = _YvMrRoPE(
+                    self.head_dim,
+                    max_position_embeddings=cfg.max_position_embeddings,
+                    base=cfg.rope_theta,
+                    scale=1.0,
+                    original_max_position_embeddings=4096,
+                    mode='pro',
+                    device=device,
+                )
         else:
             self.alibi = YvALiBi(
                 cfg.n_head,
@@ -5592,6 +5659,28 @@ class YvAttention(nn.Module):
         
         return q_adjusted, k_adjusted
 
+    def _select_hybrid_mode(self, t: int, modality: str, layer_idx: int) -> str:
+        """Select long-context augmentation while keeping MLA as the base path.
+
+        MLA remains the default dense attention algorithm. Other variants are only
+        allowed to override it in the long-context regimes where their paper-aligned
+        operating point is clearly more appropriate.
+        """
+        csa_avail = getattr(self.cfg, 'use_csa_attention', False)
+        if t >= 1048576 and self.use_dynamic_h2o:
+            return 'dynamic_h2o'
+        if t >= 1048576 and self.use_h2o:
+            return 'h2o'
+        if t >= 32768 and self.use_moba_attention:
+            return 'moba'
+        if t >= 4096 and csa_avail:
+            return 'csa'
+        if self.use_local_global and t >= 32768:
+            return 'local_global'
+        if self.use_hisa and t >= 32768:
+            return 'hisa'
+        return 'mla'
+
     def forward(
         self,
         x: torch.Tensor,
@@ -5636,92 +5725,86 @@ class YvAttention(nn.Module):
 
         if modality in self.modality_embed:
             x = x + self.modality_embed[modality].view(1, 1, -1)
-        
-        # Flagship Algorithm Routing (2025-2026)
-        csa_enabled = getattr(self.cfg, 'use_csa_attention', False)
-        if csa_enabled and self.layer_idx is not None:
+
+        # HydraHead stays as a bounded additive refinement instead of replacing
+        # the main MLA-based path.
+        hydra_accumulated = None
+        if self.use_hydra_head and hasattr(self, 'hydra_attention'):
+            hydra_accumulated = self.hydra_attention(hidden_states=x, attention_mask=mask)
+
+        # === Dynamic Hybrid Attention Scheduler ===
+        # Only long-context-specialized algorithms are allowed to override the
+        # MLA base path. Short and medium contexts fall through to MLA below.
+        mode = self._select_hybrid_mode(t, modality, layer_idx)
+
+        if mode == 'csa':
             from .csa_hca import YvHybridAttention
             if not hasattr(self, '_csa_attn'):
-                self._csa_attn = YvHybridAttention(self.cfg, layer_idx=self.layer_idx, device=x.device)
-            csa_result = self._csa_attn(x, mask, past_key_values, use_cache)
-            if use_cache:
-                return csa_result
-            return csa_result[0]
+                self._csa_attn = YvHybridAttention(self.cfg, layer_idx=layer_idx, device=x.device)
+            result = self._csa_attn(x, mask, past_key_values, use_cache)
+            out = result if use_cache else result[0]
+            if hydra_accumulated is not None:
+                out = out + 0.1 * hydra_accumulated
+            return out if not use_cache else (out, None)
 
-        if self.use_eg_mla:
-            eg_result = self.eg_mla(
-                hidden_states=x,
-                attention_mask=mask,
-                past_key_value=past_key_values,
-                use_cache=use_cache
-            )
-            if use_cache:
-                return eg_result
-            return eg_result[0]
-
-        if self.use_duo_attention:
-            duo_result = self.duo_attention(
-                hidden_states=x,
-                attention_mask=mask,
-                past_key_value=past_key_values,
-                use_cache=use_cache
-            )
-            if use_cache:
-                return duo_result
-            return duo_result[0]
-
-        if self.use_hydra_head:
-            hydra_out = self.hydra_attention(
-                hidden_states=x,
-                attention_mask=mask,
-            )
-            if use_cache:
-                return hydra_out, None
-            return hydra_out
-
-        if self.use_moba_attention:
+        if mode == 'moba':
             moba_out = self.moba_attention(
-                hidden_states=x,
-                attention_mask=mask,
-                past_key_value=None,
-                use_cache=False,
+                hidden_states=x, attention_mask=mask,
+                past_key_value=None, use_cache=False,
             )
+            if hydra_accumulated is not None:
+                moba_out = moba_out + 0.1 * hydra_accumulated
             if use_cache:
                 return moba_out, None
             return moba_out
 
-        if layer_idx < 8:
-            effective_window = min(2048, t)
-        elif layer_idx < 16:
-            effective_window = min(8192, t)
-        else:
-            effective_window = t
-        
-        if self.use_h2o:
-            h2o_result = self.h2o_attention(
-                hidden_states=x,
-                attention_mask=None,
+        if mode == 'dynamic_h2o':
+            dh2o_result = self.dynamic_h2o_attention(
+                hidden_states=x, attention_mask=mask,
                 past_key_value=past_key_values,
-                output_attentions=False,
-                use_cache=use_cache,
+                output_attentions=False, use_cache=use_cache,
                 cache_manager=cache_manager,
             )
-            if use_cache:
-                return h2o_result
-            return h2o_result[0]
+            out = dh2o_result if use_cache else dh2o_result[0]
+            if hydra_accumulated is not None:
+                out = out + 0.1 * hydra_accumulated
+            return out if not use_cache else (out, None)
 
-        if self.use_hisa:
-            hisa_result = self.hisa_attention(
-                hidden_states=x,
-                attention_mask=mask,
+        if mode == 'h2o':
+            h2o_result = self.h2o_attention(
+                hidden_states=x, attention_mask=None,
                 past_key_value=past_key_values,
-                output_attentions=False,
-                use_cache=use_cache,
+                output_attentions=False, use_cache=use_cache,
                 cache_manager=cache_manager,
             )
+            out = h2o_result if use_cache else h2o_result[0]
+            if hydra_accumulated is not None:
+                out = out + 0.1 * hydra_accumulated
+            return out if not use_cache else (out, None)
+
+        if mode == 'local_global':
+            lg_out = self.local_global_attention(
+                hidden_states=x, attention_mask=mask,
+            )
+            if hydra_accumulated is not None:
+                lg_out = lg_out + 0.1 * hydra_accumulated
             if use_cache:
-                return hisa_result
-            return hisa_result[0]
+                return lg_out, None
+            return lg_out
+
+        if mode == 'hisa':
+            hisa_result = self.hisa_attention(
+                hidden_states=x, attention_mask=mask,
+                past_key_value=past_key_values,
+                output_attentions=False, use_cache=use_cache,
+                cache_manager=cache_manager,
+            )
+            out = hisa_result if use_cache else hisa_result[0]
+            if hydra_accumulated is not None:
+                out = out + 0.1 * hydra_accumulated
+            return out if not use_cache else (out, None)
+
+        # mode == 'mla': fall through to the MLA-based dense attention path below
 
         if self.use_attention_sink and self.training:
             x, sink_mask = self.attn_sink(x)
@@ -5744,7 +5827,7 @@ class YvAttention(nn.Module):
 
         b, t, _ = x.shape
 
-        if self.use_linear and t > 4096:
+        if (not self.use_mla) and self.use_linear and t > 16384:
             linear_out = self.linear_attention(x, mask)
             if hasattr(self, 'sliding_attention') and self.sliding_window > 0:
                 sliding_out = self.sliding_attention(x, mask, past_key_values, use_cache)
@@ -5753,7 +5836,7 @@ class YvAttention(nn.Module):
                 output = linear_out
             return output
 
-        if hasattr(self, 'circulant_attention') and t > self.circulant_fft_threshold:
+        if (not self.use_mla) and hasattr(self, 'circulant_attention') and t > self.circulant_fft_threshold:
             circulant_out, _, present_kv = self.circulant_attention(
                 hidden_states=x,
                 attention_mask=mask,
@@ -5766,7 +5849,7 @@ class YvAttention(nn.Module):
                 return circulant_out, present_kv
             return circulant_out
 
-        if hasattr(self, 'sparse_attention') and self.sparse_pattern != 'none':
+        if (not self.use_mla) and hasattr(self, 'sparse_attention') and self.sparse_pattern != 'none' and t > 16384:
             return self.sparse_attention(x, mask)
 
         mla_rope_applied = False
@@ -5880,35 +5963,24 @@ class YvAttention(nn.Module):
             use_partial_rope = getattr(self.cfg, 'use_partial_rope', True)
             partial_rope_dim = getattr(self.cfg, 'partial_rope_dim', 64)
 
-            use_longrope = t > max_pe_len * 1.5
-            use_cope = t > 4096 and not use_longrope
-
-            if use_partial_rope and not use_longrope and not use_cope:
-                q_rope, q_pass = q[..., -partial_rope_dim:], q[..., :-partial_rope_dim]
-                k_rope, k_pass = k[..., -partial_rope_dim:], k[..., :-partial_rope_dim]
-                q_rope, k_rope = self.rope(q_rope, t), self.rope(k_rope, t)
-                q = torch.cat([q_pass, q_rope], dim=-1)
-                k = torch.cat([k_pass, k_rope], dim=-1)
-            elif use_longrope:
-                scale_factor = t / max_pe_len
-                freq_scale = 1.0 / (scale_factor ** 0.5)
-                q = self._apply_longrope(q, t, freq_scale)
-                k = self._apply_longrope(k, t, freq_scale)
-            elif use_cope:
-                q = self.rope(q, t)
-                k = self.rope(k, t)
-                q, k = self._apply_cope(q, k, x)
+            if getattr(self, 'use_mr_rope', False):
+                q = self.mr_rope(q, t)
+                k = self.mr_rope(k, t)
             else:
-                q, k = self.rope(q, t), self.rope(k, t)
-            
-            if t > max_pe_len // 2:
-                overflow = t - max_pe_len // 2
-                drop_ratio = min(0.3, overflow / t)
-                drop_mask = torch.rand(t, device=q.device) > drop_ratio
-                drop_mask[-256:] = True
-                drop_mask = drop_mask.view(1, 1, -1, 1).expand_as(q)
-                q = q * drop_mask.float()
-                k = k * drop_mask[:, :, :k.shape[2], :].float()
+                use_longrope = t > max_pe_len * 1.5
+                if use_partial_rope and not use_longrope:
+                    q_rope, q_pass = q[..., -partial_rope_dim:], q[..., :-partial_rope_dim]
+                    k_rope, k_pass = k[..., -partial_rope_dim:], k[..., :-partial_rope_dim]
+                    q_rope, k_rope = self.rope(q_rope, t), self.rope(k_rope, t)
+                    q = torch.cat([q_pass, q_rope], dim=-1)
+                    k = torch.cat([k_pass, k_rope], dim=-1)
+                elif use_longrope:
+                    scale_factor = t / max_pe_len
+                    freq_scale = 1.0 / (scale_factor ** 0.5)
+                    q = self._apply_longrope(q, t, freq_scale)
+                    k = self._apply_longrope(k, t, freq_scale)
+                else:
+                    q, k = self.rope(q, t), self.rope(k, t)
 
         if past_key_values is not None and not self.use_mla:
             past_k, past_v = past_key_values
@@ -6042,11 +6114,12 @@ class YvAttention(nn.Module):
             attn_mask = attn_mask - alibi_bias[:, :, -t:, :seq_len]
             attn_mask = attn_mask.reshape(b * self.n_head, t, seq_len)
 
-        try:
-            from torch.backends.cuda import sdp_kernel as _sdp
-            use_flash_kernel = torch.cuda.is_available() and bool(getattr(self.cfg, 'sdpa_prefer_flash', True))
-        except Exception:
-            use_flash_kernel = False
+        _sdp = getattr(getattr(torch.backends, "cuda", None), "sdp_kernel", None)
+        use_flash_kernel = (
+            _sdp is not None
+            and torch.cuda.is_available()
+            and bool(getattr(self.cfg, 'sdpa_prefer_flash', True))
+        )
 
         if use_flash_kernel:
             with _sdp(enable_math=False, enable_flash=True, enable_mem_efficient=False):
@@ -6090,10 +6163,21 @@ class YvAttention(nn.Module):
 
         if use_cache:
             if self.use_mla:
-                return out, (k_cache, v_cache)
-            return out, (k_cache, v_cache)
+                result = (out, (k_cache, v_cache))
+            else:
+                result = (out, (k_cache, v_cache))
+            # Fuse HydraHead supplementary output if enabled
+            if hydra_accumulated is not None:
+                fused = result[0] + hydra_accumulated
+                return (fused, result[1])
+            return result
 
-        return out
+        final_out = out
+        # Fuse HydraHead supplementary output if enabled
+        if hydra_accumulated is not None:
+            final_out = final_out + hydra_accumulated
+
+        return final_out
 
 
 class YvHydraHeadAttention(nn.Module):

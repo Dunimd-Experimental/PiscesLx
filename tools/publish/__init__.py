@@ -22,9 +22,9 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-PiscesL1 Publishing Tools
+PiscesLx Publishing Tools
 
-This module provides a complete publishing pipeline for PiscesL1 models,
+This module provides a complete publishing pipeline for PiscesLx models,
 including model export, Docker image building, and registry publishing.
 
 The publishing tools follow a modular architecture:

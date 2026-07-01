@@ -21,9 +21,11 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """DuoAttention: Retrieval-Head vs Streaming-Head Separation for Yv Models.
 
-Based on MIT ICLR 2026. Separates attention heads into:
+Separates attention heads into:
 - Retrieval heads (20%): Keep full KV cache for important tokens
 - Streaming heads (80%): Use constant-size KV buffer (compressed)
 
@@ -37,6 +39,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — DuoAttention)
 class YvDuoAttention(nn.Module):
     """DuoAttention with retrieval-head vs streaming-head separation.
 

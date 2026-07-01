@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 GaLore Optimizer Operator - Gradient Low-Rank Projection for Memory-Efficient Training
 Based on GaLore algorithm from tools/train/impl.py and utils/optim/galore.py
@@ -100,6 +102,7 @@ class POPSSGaLoreConfig(PiscesLxOperatorConfig):
     convergence_threshold: float = 0.01
 
 
+# Paper: Zhao et al., "GaLore: Memory-Efficient LLM Training by Gradient Low-Rank Projection", ICML 2024, arXiv:2403.03507
 class POPSSGaLoreOperator(PiscesLxOperatorInterface):
     """
     GaLore Optimizer Operator - Memory-efficient training via gradient low-rank projection.

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Dual-path knowledge injector for the Yv compute stream.
 
 This module implements the single top-level class that wires the subconscious
@@ -50,6 +52,7 @@ from .subconscious import YvSubconsciousSystem
 from .memory_attention import YvMemorySeparationLayer
 
 
+# Paper: Perez et al., "FiLM: Visual Reasoning with a General Conditioning Layer", NeurIPS 2017 (FiLM conditioning)
 class YvDualInjector(nn.Module):
     """Top-level dual injector combining FiLM and KV knowledge paths.
 

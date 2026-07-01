@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Operator System Core (OPSC) - Comprehensive Operator Abstraction Framework
 
 This module provides a unified framework for operator abstraction, registration,
-scheduling, and execution within the PiscesL1 ecosystem. The OPSC framework
+scheduling, and execution within the PiscesLx ecosystem. The OPSC framework
 implements a plugin-like architecture where computational units (operators) can
 be developed independently and composed dynamically at runtime.
 

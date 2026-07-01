@@ -7,7 +7,7 @@
 # The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
+# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -17,9 +17,14 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+#
+# DISCLAIMER: Users must comply with applicable AI regulations.
+# Non-compliance may result in service termination or legal liability.
+
+from __future__ import annotations
 
 """
-Subconscious Knowledge System for PiscesL1/Yv.
+Subconscious Knowledge System for PiscesLx/Yv.
 
 Implements the 0.5B Dynamic Head + 314B-equivalent Implicit Knowledge Field
 architecture for subconscious knowledge injection. The system separates
@@ -69,6 +74,7 @@ from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.Subconscious", file_path=get_log_file("Yv.Subconscious"), enable_file=True)
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — subconscious system)
 class YvImplicitKnowledgeField(nn.Module):
     """314B-equivalent implicit knowledge field via product-quantized codebooks.
 
@@ -131,6 +137,11 @@ class YvImplicitKnowledgeField(nn.Module):
             torch.randn(num_heads, num_codebooks, codebook_size, codebook_dim, device=device, dtype=dtype)
             * 0.02
         )
+
+        # Structured diversification: each head's codebook entries are
+        # orthonormalised after random init so that the soft-addressing
+        # logits span the full representational space from the start.
+        self.reset_parameters(num_heads, num_codebooks, codebook_size, codebook_dim, device, dtype)
 
         # Output projection: combines multi-head knowledge into knowledge_dim
         self.output_proj = nn.Linear(
@@ -216,6 +227,46 @@ class YvImplicitKnowledgeField(nn.Module):
     def set_training_step(self, step: int):
         self._training_step = step
 
+    def reset_parameters(
+        self,
+        num_heads: int,
+        num_codebooks: int,
+        codebook_size: int,
+        codebook_dim: int,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None,
+    ):
+        """Structured initialisation of the codebook parameters.
+
+        Three strategies applied sequentially:
+
+        1. **Random orthonormal rows** — each codebook matrix is initialised
+           with a random orthogonal matrix so that the K entries span the
+           D-dimensional space uniformly.  This prevents degenerate addressing
+           where all queries collapse to the same logit pattern.
+
+        2. **Per-head diversification** — each head receives an independent
+           random seed, ensuring that different heads learn different
+           knowledge decompositions from the start.
+
+        3. **Zero-mean, unit-variance scaling** — after orthogonalisation the
+           entries are scaled to have roughly unit variance along the
+           codebook_dim axis, matching the query vectors' expected scale.
+        """
+        import math
+        for h in range(num_heads):
+            for m in range(num_codebooks):
+                # Create a random Gaussian matrix
+                W = torch.randn(codebook_size, codebook_dim, device=device, dtype=dtype)
+                # QR decomposition → orthonormal rows (up to K > D tolerance)
+                Q, R = torch.linalg.qr(W)
+                # Ensure Q has the right shape (K x D)
+                Q = Q[:, :codebook_dim]
+                # Scale so that ‖row‖² ≈ codebook_dim (unit variance per dim)
+                scale = math.sqrt(codebook_dim) * 0.02
+                with torch.no_grad():
+                    self.codebooks[h, m].copy_(Q * scale)
+
     def extra_repr(self) -> str:
         return (
             f"num_codebooks={self.num_codebooks}, "
@@ -225,6 +276,7 @@ class YvImplicitKnowledgeField(nn.Module):
         )
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — dynamic navigation head)
 class YvDynamicHead(nn.Module):
     """0.5B dynamic navigation head for implicit knowledge field addressing.
 
@@ -376,6 +428,7 @@ class YvDynamicHead(nn.Module):
         return queries, gate
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — subconscious modulator)
 class YvSubconsciousModulator(nn.Module):
     """Layer-wise subconscious modulation for 7B transformer layers.
 
@@ -509,6 +562,7 @@ class YvSubconsciousModulator(nn.Module):
         return mlp_output * (1.0 + gamma) + beta
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — subconscious system)
 class YvSubconsciousSystem(nn.Module):
     """Complete subconscious knowledge system: 0.5B head + 314B field + injection.
 

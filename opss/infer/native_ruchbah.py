@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -65,12 +67,12 @@ class POPSSNativeInferenceOperator(PiscesLxOperatorInterface):
             use_speculative = bool(generation.get("use_speculative", False))
             mode = str(generation.get("mode") or ("thinking" if use_speculative else "auto"))
 
-            from model import YvConfig, YvModel
+            from model import YvConfig, YvModelForCausalLM
             from model.tokenizer import YvTokenizer
 
             cfg_path = self._resolve_model_cfg_path(model_size=model_size, config_path=inputs.get("model_config"))
-            cfg = YvConfig.from_json(str(cfg_path))
-            model = YvModel(cfg)
+            cfg = YvConfig.from_yaml(str(cfg_path))
+            model = YvModelForCausalLM(cfg)
 
             raw = torch.load(ckpt_path, map_location="cpu")
             if isinstance(raw, dict):
@@ -120,7 +122,9 @@ class POPSSNativeInferenceOperator(PiscesLxOperatorInterface):
         cand = []
         if config_path:
             cand.append(Path(str(config_path)))
+        cand.append(Path("configs") / "model" / f"{model_size}.yaml")
         cand.append(Path("configs") / "model" / f"{model_size}.json")
+        cand.append(Path("configs") / f"{model_size}.yaml")
         cand.append(Path("configs") / f"{model_size}.json")
         p = next((x for x in cand if x.exists()), None)
         if p is None:

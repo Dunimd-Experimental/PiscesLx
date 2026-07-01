@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Copyright © 2025-2026 Wenze Wei & Annian Wang. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-PiscesL1 Benchmark Module - Flagship-level evaluation suite.
+PiscesLx Benchmark Module - Flagship-level evaluation suite.
 
 This module provides comprehensive benchmark evaluation including:
 - Text benchmarks (MMLU, HumanEval, GSM8K, etc.)

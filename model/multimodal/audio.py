@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Audio encoding utilities backing Yv multimodal agents.
 
 This module provides comprehensive audio processing components for the Yv
@@ -77,6 +79,7 @@ from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.Multimodal", file_path=get_log_file("Yv.Multimodal"), enable_file=True)
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvAudioEncoder(nn.Module):
     """Multi-task audio encoder producing modality-aligned embeddings.
     
@@ -366,12 +369,13 @@ class YvAudioEncoder(nn.Module):
         
         Returns:
             torch.Tensor: Discrete token IDs [B, T, num_codebooks].
-                Returns None if encoding fails.
         """
         result = self.forward(audio_input, mode='understand')
-        if result is not None:
-            return self._lfq_encode(result)
-        return None
+        if result is None:
+            raise ValueError(
+                "YvAudioEncoder.encode_to_tokens requires forward() to return real audio features."
+            )
+        return self._lfq_encode(result)
 
     def _create_mel_filters(self):
         """Construct a Mel filter bank parameter for spectrogram projection.
@@ -536,6 +540,7 @@ class YvAudioEncoder(nn.Module):
         return x.unsqueeze(1)
 
 
+# Paper: Kong et al., "HiFi-GAN: Generative Adversarial Networks for Efficient and High Fidelity Speech Synthesis", NeurIPS 2020, arXiv:2010.05646
 class YvNeuralVocoder(nn.Module):
     """Neural vocoder for Mel spectrogram to waveform conversion.
     
@@ -748,6 +753,7 @@ class YvNeuralVocoder(nn.Module):
         return torch.cat(output_chunks, dim=2)
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvTalker(nn.Module):
     """Streaming speech synthesis module (Thinker-Talker architecture).
     

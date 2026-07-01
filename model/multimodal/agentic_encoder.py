@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Compatibility module that bridges legacy Yv agent encoder pipelines.
 
 The shim keeps historical integrations operational while newer flows migrate to
@@ -36,6 +38,7 @@ from .agentic import YvAgentic
 from typing import Any, Dict, List, Tuple
 from .types import YvAgenticObservation
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvAgenticEncoder(nn.Module):
     """Wrapper that preserves the legacy Yv agent encoder interface.
 
@@ -153,8 +156,7 @@ class YvAgenticEncoder(nn.Module):
             return self.obs_text_encoder(tokens)
         
         else:
-            # Provide a zero tensor when the modality is not supported.
-            return torch.zeros(1, 1, self.cfg.hidden_size)
+            raise ValueError(f"Unsupported observation modality: {observation['modality']}")
     
     def encode_memory(self, memory_data):
         """Aggregate encoded memories for observations, actions, and reflections.
@@ -179,7 +181,7 @@ class YvAgenticEncoder(nn.Module):
             obs_tensor = torch.stack(obs_features, dim=1)
             obs_memory, _ = self.memory_encoder['obs_memory'](obs_tensor)
         else:
-            obs_memory = torch.zeros(1, 1, self.cfg.hidden_size)
+            raise ValueError("YvAgenticEncoder.encode_memory requires at least one observation.")
         
         # Transform action history into latent memory features.
         action_features = []
@@ -193,7 +195,7 @@ class YvAgenticEncoder(nn.Module):
             action_tensor = torch.stack(action_features, dim=1)
             action_memory, _ = self.memory_encoder['action_memory'](action_tensor)
         else:
-            action_memory = torch.zeros(1, 1, self.cfg.hidden_size)
+            raise ValueError("YvAgenticEncoder.encode_memory requires at least one action.")
         
         # Encode textual reflections to capture agent reasoning traces.
         reflection_features = []
@@ -206,7 +208,7 @@ class YvAgenticEncoder(nn.Module):
             ref_tensor = torch.stack(reflection_features, dim=1)
             reflection_memory, _ = self.memory_encoder['reflection_memory'](ref_tensor)
         else:
-            reflection_memory = torch.zeros(1, 1, self.cfg.hidden_size)
+            raise ValueError("YvAgenticEncoder.encode_memory requires at least one reflection.")
         
         return obs_memory, action_memory, reflection_memory
     
@@ -239,14 +241,14 @@ class YvAgenticEncoder(nn.Module):
         if 'current_state' in agent_input:
             state_feat = self.state_encoder(agent_input['current_state'])
         else:
-            state_feat = torch.zeros(1, 1, self.cfg.hidden_size)
+            raise ValueError("YvAgenticEncoder.forward requires current_state.")
         
         # Embed the task context description for condition-aware actions.
         if 'task_context' in agent_input:
             task_tokens = torch.tensor([hash(str(agent_input['task_context'])) % self.cfg.vocab_size])
             task_feat = self.obs_text_encoder(task_tokens)
         else:
-            task_feat = torch.zeros(1, 1, self.cfg.hidden_size)
+            raise ValueError("YvAgenticEncoder.forward requires task_context.")
         
         # Concatenate the most recent memories and contextual features.
         combined_features = torch.cat([

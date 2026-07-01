@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Memory Cross-Attention for Knowledge Injection.
 
 Implements the YvMemoryCrossAttention layer that injects retrieved
@@ -53,6 +55,7 @@ from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.MemoryAttention", file_path=get_log_file("Yv.MemoryAttention"), enable_file=True)
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — memory cross-attention)
 class YvMemoryCrossAttention(nn.Module):
     """Cross-attention layer for knowledge injection into hidden flow.
 
@@ -261,6 +264,7 @@ class YvMemoryCrossAttention(nn.Module):
         return torch.sigmoid(self.gate).item()
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — memory separation)
 class YvMemorySeparationLayer(nn.Module):
     """Lookup-computation separation layer producing extra KV pairs.
 
@@ -338,6 +342,7 @@ class YvMemorySeparationLayer(nn.Module):
         return k, v
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — memory fusion gate)
 class YvMemoryFusionGate(nn.Module):
     """Adaptive fusion gate for knowledge injection scheduling.
 

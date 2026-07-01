@@ -19,12 +19,12 @@
 # Non-compliance may result in service termination or legal liability.
 
 # =============================================================================
-# PiscesL1 Dataset Configuration Registry
+# PiscesLx Dataset Configuration Registry
 # =============================================================================
 #
 # PURPOSE:
 #     This file defines the complete registry of datasets used for training
-#     the PiscesL1 large language model. It provides a centralized configuration
+#     the PiscesLx large language model. It provides a centralized configuration
 #     for all data sources across different modalities and domains.
 #
 # DATASET REGISTRY STRUCTURE:

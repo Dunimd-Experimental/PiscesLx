@@ -24,7 +24,7 @@
 """
 Publish Runner
 
-This module provides the main entry point for the PiscesL1 publishing tool.
+This module provides the main entry point for the PiscesLx publishing tool.
 It handles configuration loading, orchestrator initialization, and pipeline execution.
 
 Key Features:
@@ -80,7 +80,7 @@ def _get_logger():
 
 
 class PiscesLxToolsPublish:
-    """Main runner for PiscesL1 publishing tool.
+    """Main runner for PiscesLx publishing tool.
 
     This class serves as the unified entry point for all publishing operations.
     It handles configuration management, orchestrator coordination, and
@@ -343,7 +343,7 @@ class PiscesLxToolsPublish:
             RuntimeError: If pipeline execution fails.
         """
         self.log.info(
-            "Starting PiscesL1 publish",
+            "Starting PiscesLx publish",
             model_size=self.config.model_size,
             model_path=self.config.model_path,
             action=self.config.action
@@ -357,11 +357,11 @@ class PiscesLxToolsPublish:
 
         try:
             results = self.orchestrator.run()
-            self.log.info("PiscesL1 publish completed successfully")
+            self.log.info("PiscesLx publish completed successfully")
             return results
 
         except Exception as e:
-            self.log.error("PiscesL1 publish failed", error=str(e))
+            self.log.error("PiscesLx publish failed", error=str(e))
             raise
 
     def run_export(self) -> Dict[str, Any]:
@@ -478,7 +478,7 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="PiscesL1 Model Publishing Tool",
+        description="PiscesLx Model Publishing Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
             Examples:
@@ -511,8 +511,8 @@ def main():
     )
     parser.add_argument(
         "--model-name", "-n",
-        default="PiscesL1",
-        help="Model name. Default: PiscesL1"
+        default="PiscesLx",
+        help="Model name. Default: PiscesLx"
     )
     parser.add_argument(
         "--action", "-a",

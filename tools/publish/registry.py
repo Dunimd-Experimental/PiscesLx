@@ -91,7 +91,7 @@ _LOG = PiscesLxLogger("PiscesLx.Publish.Registry", file_path=get_log_file("Pisce
 
 
 class PiscesLxPublishRegistry:
-    """Registry Publisher for PiscesL1.
+    """Registry Publisher for PiscesLx.
 
     Handles publishing Docker images to container registries with support
     for multiple registry types and authentication.

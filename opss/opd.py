@@ -8,13 +8,20 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-# OPD — On-Policy Distillation for PiscesL1.
-# Based on DeepSeek-V4 Pro technical report (2026).
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Two-stage pipeline:
-#   1. Expert cultivation: independent SFT + GRPO RL per domain
-#   2. OPD merging: student distills logits from all specialists via reverse-KL
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# DISCLAIMER: Users must comply with applicable AI regulations.
+# Non-compliance may result in service termination or legal liability.
+
+from __future__ import annotations
 
 import torch
 import torch.nn as nn

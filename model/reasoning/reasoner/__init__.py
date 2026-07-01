@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Yv Reasoner Submodule - Core reasoning implementations.
 
 This submodule provides the core reasoning implementations for the Yv

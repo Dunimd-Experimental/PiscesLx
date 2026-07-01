@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Dynamic Mixture-of-Experts Routing Components for Yv Models.
 
 This module provides sophisticated routing mechanisms for MoE layers,
@@ -120,6 +122,7 @@ def moe_init_weights(m):
             nn.init.zeros_(m.bias)
 
 
+# Paper: Shazeer et al., "Outrageously Large Neural Networks: The Sparsely-Gated Mixture-of-Experts Layer", ICLR 2017, arXiv:1701.06538; DeepSeek-AI, "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model", arXiv:2405.04434; DeepSeek-AI, "DeepSeek-V3 Technical Report", arXiv:2412.19437
 class YvMoEGate(nn.Module):
     """Expert routing gate for MoE with top-k selection and load balancing.
     
@@ -199,7 +202,44 @@ class YvMoEGate(nn.Module):
                 moe_attention_mamba_temp, moe_l2_smooth_8k.
         """
         super().__init__()
-        self.gate = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
+        self.use_hicl = getattr(cfg, 'use_hicl_router', False) if cfg is not None else False
+        self.use_graph_of_tokens = getattr(cfg, 'use_graph_of_tokens', False) if cfg is not None else False
+        self.use_soft_moe = getattr(cfg, 'use_soft_moe', False) if cfg is not None else False
+        if self.use_hicl:
+            from .hicl_router import YvHiClRouter as _YvHiCl
+            self.hicl_router = _YvHiCl(
+                hidden_size=hidden_size,
+                num_experts=num_experts,
+                top_k=top_k,
+                load_balance_alpha=load_balance_alpha,
+                device=device, dtype=dtype, cfg=cfg,
+            )
+            self.top_k = top_k
+        elif self.use_graph_of_tokens:
+            from .graph_of_tokens import YvGraphOfTokensRouter as _YvGoT
+            got_top_k = getattr(cfg, 'graph_of_tokens_top_k', top_k)
+            got_n_heads = getattr(cfg, 'graph_of_tokens_n_heads', 4)
+            got_max_clusters = getattr(cfg, 'graph_of_tokens_max_clusters', 8)
+            got_balance_alpha = getattr(cfg, 'graph_of_tokens_load_balance_alpha', 0.01)
+            self.got_router = _YvGoT(
+                hidden_size=hidden_size,
+                num_experts=num_experts,
+                top_k=got_top_k,
+                n_graph_heads=got_n_heads,
+                load_balance_alpha=got_balance_alpha,
+                max_clusters=got_max_clusters,
+            )
+            self.top_k = got_top_k
+        elif self.use_soft_moe:
+            soft_k = getattr(cfg, 'soft_moe_mean_k', top_k)
+            soft_temp = getattr(cfg, 'soft_moe_temperature', 1.0)
+            self.soft_moe_mean_k = soft_k
+            self.soft_moe_temperature = soft_temp
+            self.gate_k = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
+            self.gate_v = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
+            self.register_buffer('soft_moe_budget', torch.tensor(float(soft_k)))
+        else:
+            self.gate = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
         self.top_k = top_k
         self.num_experts = num_experts
         self.load_balance_alpha = load_balance_alpha
@@ -263,7 +303,16 @@ class YvMoEGate(nn.Module):
         """
         batch_size, seq_len, hidden_size = x.shape
         x_flat = x.view(-1, hidden_size)
-        
+
+        if getattr(self, 'use_hicl', False):
+            return self.hicl_router(x)
+
+        if getattr(self, 'use_graph_of_tokens', False):
+            return self.got_router(x)
+
+        if getattr(self, 'use_soft_moe', False):
+            return self._soft_moe_forward(x)
+
         # Apply cognitive density enhancement if enabled
         if self.enable_cognitive_density and hasattr(self, 'cognitive_encoder'):
             # Extract multi-scale features
@@ -392,7 +441,34 @@ class YvMoEGate(nn.Module):
         total_loss = load_balance_loss + z_loss
         
         return top_scores, top_idx, total_loss
-    
+
+    def _soft_moe_forward(self, x: torch.Tensor):
+        """SoftMoE: soft differentiable routing via LapSum relaxation.
+
+        Replaces discrete top-k with continuous soft weighting.
+        Enforces expected active expert count = soft_moe_mean_k via budget loss.
+        """
+        batch_size, seq_len, hidden_size = x.shape
+        x_flat = x.view(-1, hidden_size)
+
+        logits_k = self.gate_k(x_flat)
+        logits_v = self.gate_v(x_flat)
+
+        threshold = logits_k.median(dim=-1, keepdim=True).values
+        soft_weights = torch.sigmoid((logits_k - threshold) / self.soft_moe_temperature)
+        routing_weights = soft_weights * logits_v.softmax(dim=-1)
+        routing_weights = routing_weights / routing_weights.sum(dim=-1, keepdim=True).clamp(min=1e-8)
+
+        active_count = routing_weights.sum(dim=-1).mean()
+        budget_loss = (active_count - self.soft_moe_budget.detach()).square()
+
+        z_loss = self._compute_z_loss(logits_k)
+
+        top_scores, top_idx = torch.topk(routing_weights, min(int(self.soft_moe_budget.item()), self.num_experts), dim=-1)
+
+        total_loss = self.load_balance_alpha * budget_loss + self.z_loss_alpha * z_loss
+        return top_scores, top_idx, total_loss
+
     def _get_dynamic_top_k(self):
         """Get dynamic top-k value based on current load balance.
         
@@ -745,6 +821,7 @@ class YvMoEGate(nn.Module):
         
         return new_top_idx
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvStableMoEGate(nn.Module):
     """Stable MoE routing gate with load prediction and dynamic capacity.
     
@@ -1157,6 +1234,7 @@ class YvStableMoEGate(nn.Module):
         
         return torch.cat(final_scores), torch.cat(final_indices), torch.tensor(0.0, device=x.device)
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvExpertOrientedRouter(nn.Module):
     """Expert-Oriented Router for improved MoE load balancing.
     
@@ -1425,7 +1503,8 @@ class YvMoELayer(nn.Module):
                 device=device, dtype=dtype,
                 load_balance_alpha=getattr(cfg, 'moe_load_balance_alpha', 0.01),
                 noise_std=getattr(cfg, 'moe_noise_std', 0.1),
-                enable_cognitive_density=getattr(cfg, 'enable_cognitive_density', False)
+                enable_cognitive_density=getattr(cfg, 'enable_cognitive_density', False),
+                cfg=cfg,
             )
         
         # Initialize expert modules
@@ -1657,6 +1736,7 @@ class YvMoELayer(nn.Module):
             return y.view(b, t, d), aux_loss
 
 
+# Paper: Fernando et al., "PathNet: Evolution Channels Gradient Descent in Super Neural Networks", arXiv:1701.08734, 2017
 class YvPathMoEGate(nn.Module):
     """
     PathMoE: Shared router across a stage of MoE layers.
@@ -1728,6 +1808,7 @@ class YvPathMoEGate(nn.Module):
         return f"stage_size={self.stage_size}, gate={type(self.gate).__name__}"
 
 
+# Paper: Microsoft, "Phi-3 Technical Report: A Highly Capable Language Model Locally on Your Phone", arXiv:2404.14219; Microsoft, "Phi-4 Technical Report", arXiv:2412.08905
 class YvPhiBalancing(nn.Module):
     """
     Phi-Balancing: Population-level mirror descent for MoE load balancing.
@@ -1813,6 +1894,7 @@ class YvPhiBalancing(nn.Module):
         return f"lr={self.lr}, ema_decay={self.ema_decay}, clamp=[{self.clamp_min}, {self.clamp_max}]"
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvModalAwareRouter(nn.Module):
     """Modal-aware MoE routing gate with cross-modal expert protection.
 
@@ -1919,6 +2001,7 @@ class YvModalAwareRouter(nn.Module):
         return balance_loss * self.load_balance_alpha
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvUltraSparseGate(nn.Module):
     """Ultra-sparse tiered MoE routing gate with modal-aware importance scoring.
 

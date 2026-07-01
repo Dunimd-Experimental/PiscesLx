@@ -110,7 +110,7 @@ class PiscesLxDevModeLogCapture(logging.Handler):
 
 class PiscesLxDevModeManager:
     """
-    Global singleton manager for PiscesL1 developer mode.
+    Global singleton manager for PiscesLx developer mode.
     
     This class provides centralized control over the developer mode feature,
     managing settings persistence, UI lifecycle, and log capture.

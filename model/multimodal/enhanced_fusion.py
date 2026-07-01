@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Enhanced multimodal fusion components for Yv architecture.
 
 This module provides advanced multimodal fusion components for the Yv
@@ -567,6 +569,7 @@ class _QualityAwareFusion(nn.Module):
         return output
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvEnhancedModalFusion(nn.Module):
     def __init__(self, config: Optional[YvModalFusionConfig] = None):
         super().__init__()
@@ -773,6 +776,7 @@ class YvEnhancedModalFusion(nn.Module):
         return result
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvOnlineQualityAdaptation(nn.Module):
     """
     Online Quality Adaptation for modality fusion with reinforcement learning.
@@ -900,6 +904,7 @@ class YvOnlineQualityAdaptation(nn.Module):
         return combined_quality
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvTaskAwareModalityImportance(nn.Module):
     """
     Task-Aware Modality Importance Learner with task embedding modulation.
@@ -1012,6 +1017,7 @@ class YvTaskAwareModalityImportance(nn.Module):
         return result
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvContrastiveCrossModalAligner(nn.Module):
     """
     Contrastive Cross-Modal Aligner with negative sampling.

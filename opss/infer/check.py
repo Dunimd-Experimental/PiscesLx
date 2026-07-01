@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 GPU Health Check Operator
 
 This module provides comprehensive GPU health checking capabilities for the
-PiscesL1 inference system. It validates CUDA availability, GPU status, and
+PiscesLx inference system. It validates CUDA availability, GPU status, and
 performs tensor operation tests to ensure the GPU environment is ready for
 deep learning inference operations.
 
@@ -82,7 +84,7 @@ Usage Examples:
     >>> # Check specific GPU
     >>> result = operator.execute({"device_id": 0})
 
-Author: PiscesL1 Development Team
+Author: PiscesLx Development Team
 Version: 1.0.0
 """
 

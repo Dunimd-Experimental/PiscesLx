@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
-# This file is part of EnTA.
-# The EnTA project belongs to the Dunimd Team.
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -20,7 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-
+from __future__ import annotations
 
 """Memory tools -- persistent, file-based memory ledger for the model.
 
@@ -32,16 +33,16 @@ simple: it is the tool the model uses to remember things across turns
 during adversarial training, not an encrypted persistence engine.
 """
 
-from __future__ import annotations
-
-import logging
 import os
 import re
 from typing import Any
 
-from enta.tools.base import build_tool
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
-logger = logging.getLogger(__name__)
+logger = PiscesLxLogger("EnTA.Tools.Memory", file_path=get_log_file("EnTA.Tools.Memory"), enable_file=True)
+
+from enta.tools.base import build_tool
 
 # The store lives in a single per-process directory; the directory itself
 # is created on first write.  No external service is required.

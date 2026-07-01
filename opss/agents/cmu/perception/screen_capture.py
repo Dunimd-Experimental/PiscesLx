@@ -21,14 +21,14 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 CMU Screen Capture - Cross-Platform Screen Capture Module
 
 This module provides screen capture capabilities for the Computer Use Agent,
 supporting multiple platforms and capture modes.
 """
-
-from __future__ import annotations
 
 import asyncio
 import base64

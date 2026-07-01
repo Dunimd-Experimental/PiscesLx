@@ -1,3 +1,23 @@
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
+#
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# DISCLAIMER: Users must comply with applicable AI regulations.
+# Non-compliance may result in service termination or legal liability.
+
 # ========================================
 # EnTA Training Pipeline — Unified Teacher Configuration
 # ========================================
@@ -73,20 +93,20 @@ execution_weight: 0.1
 # SFT Integration (consumed by opss.train.sft)
 # ========================================
 sft:
-  use_encre_data_pipeline: true
-  encre_use_roundtable: true
-  encre_prompts_path: data/prompts/seed_prompts.txt
-  encre_data_cache_path: .pisceslx/cache/encre_sft_dataset.jsonl
-  encre_max_samples: 4096
-  encre_system_prompt: "You are a careful, expert assistant.  Show your reasoning step by step."
+  use_enta_data_pipeline: true
+  enta_use_roundtable: true
+  enta_prompts_path: data/prompts/seed_prompts.txt
+  enta_data_cache_path: .pisceslx/cache/encre_sft_dataset.jsonl
+  enta_max_samples: 4096
+  enta_system_prompt: "You are a careful, expert assistant.  Show your reasoning step by step."
 
 # ========================================
 # GRPO / Agentic-RL Integration (consumed by opss.train.grpo)
 # ========================================
 grpo:
-  use_encre_rollout: true
-  encre_use_roundtable: false
-  encre_system_prompt: "You are an agent.  Use the available tools to solve the task.  Stop when done."
+  use_enta_rollout: true
+  enta_use_roundtable: false
+  enta_system_prompt: "You are an agent.  Use the available tools to solve the task.  Stop when done."
   group_size: 4
   temperature: 1.0
   clip_ratio: 0.2
@@ -99,3 +119,38 @@ grpo:
   tool_call_reward: 0.1
   task_completion_reward: 1.0
   efficiency_penalty: -0.01
+
+# ========================================
+# EnTA Model Layout — 动态头与知识场参数
+# ========================================
+# 由 EnTA 启动问卷自动填充，禁止手动修改
+# dynamic_head_param_scale: ~
+# dynamic_head_hidden_dim: ~
+# dynamic_head_num_codebooks: ~
+# knowledge_field_param_scale: ~
+# knowledge_field_codebook_size: ~
+# knowledge_field_entry_dim: ~
+enta_model_layout: {}
+
+# ========================================
+# EnTA Outer Loop Control
+# ========================================
+enta_loop:
+  max_iterations: 8
+  min_iterations: 1
+  convergence_reward_threshold: 0.92
+  plateau_patience: 2
+  capability_dimensions:
+    - reasoning
+    - tool_use
+    - factual_recall
+    - instruction_following
+    - safety
+  data_strategy:
+    type: round_table
+    samples_per_iteration: 256
+    eval_samples_per_iteration: 64
+    seed_pool_path: data/prompts/seed_prompts.txt
+  evaluation:
+    metric: capability_weighted_score
+    early_stop_on_plateau: true

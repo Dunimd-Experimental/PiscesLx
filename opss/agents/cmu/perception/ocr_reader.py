@@ -21,14 +21,14 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 CMU OCR Reader - Optical Character Recognition Module
 
 This module provides OCR capabilities for text extraction from screenshots,
 supporting multiple OCR engines and languages.
 """
-
-from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Tokenizer builder for Yv model with tokenizer support.
 
 This module provides utilities for building and configuring tokenizers

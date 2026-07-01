@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Hardware detection utilities for Yv multimodal agents.
 
 This module provides hardware detection and adaptive configuration components

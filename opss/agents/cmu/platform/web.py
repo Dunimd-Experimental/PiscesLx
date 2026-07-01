@@ -21,14 +21,14 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 CMU Web Platform - Browser Automation Control
 
 This module provides web browser control using Playwright for
 comprehensive DOM interaction and browser automation.
 """
-
-from __future__ import annotations
 
 import asyncio
 from typing import Any, Dict, List, Optional, Tuple

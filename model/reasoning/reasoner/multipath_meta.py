@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Meta-learning utilities for Yv multi-path reasoning systems.
 
 This module provides the YvMultiPathMetaLearner class which implements
@@ -104,6 +106,7 @@ from collections import Counter, defaultdict
 from typing import Any, Dict, List, Optional
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvMultiPathMetaLearner:
     """Record, analyze, and adapt multi-path reasoning behavior.
     
@@ -232,28 +235,12 @@ class YvMultiPathMetaLearner:
             query (str): Free-form query string requiring representation.
 
         Returns:
-            torch.Tensor: Query embedding derived from SentenceTransformer or a hash-based fallback.
+            torch.Tensor: Query embedding derived from SentenceTransformer.
         """
-        try:
-            from sentence_transformers import SentenceTransformer
-            model = SentenceTransformer('all-MiniLM-L6-v2')
-            embedding = model.encode(query, convert_to_tensor=True)
-            return embedding
-        except Exception:
-            import hashlib
-            # Generate a deterministic hash for the query content.
-            query_hash = int(hashlib.md5(query.encode()).hexdigest(), 16)
-            # Seed torch RNG to obtain repeatable pseudo-random embeddings.
-            torch.manual_seed(query_hash % 2147483647)
-            # Create a base embedding following a normal distribution.
-            base_embedding = torch.randn(self.hidden_size)
-            # Length factor reflects query verbosity.
-            length_factor = min(len(query) / 100, 1.0)
-            # Complexity captures diversity of unique tokens.
-            complexity_factor = len(set(query.split())) / max(len(query.split()), 1)
-            # Combine base embedding with structural scalars for stability.
-            structured_embedding = base_embedding * (0.5 + 0.5 * length_factor * complexity_factor)
-            return structured_embedding
+        from sentence_transformers import SentenceTransformer
+        model = SentenceTransformer('all-MiniLM-L6-v2')
+        embedding = model.encode(query, convert_to_tensor=True)
+        return embedding
 
     def extract_reasoning_patterns(self) -> Optional[Dict[str, Any]]:
         """Mine recurring reasoning patterns from high-confidence episodes.
@@ -262,10 +249,14 @@ class YvMultiPathMetaLearner:
             Optional[Dict[str, Any]]: Extracted pattern summary or ``None`` when support is insufficient.
         """
         if len(self.reasoning_memory) < 100:
-            return None
+            raise RuntimeError(
+                "YvMultiPathMetaLearner.extract_reasoning_patterns requires at least 100 recorded experiences."
+            )
         successful = [exp for exp in self.reasoning_memory if exp['metadata']['confidence'] > 0.9]
         if len(successful) < 20:
-            return None
+            raise RuntimeError(
+                "YvMultiPathMetaLearner.extract_reasoning_patterns requires at least 20 high-confidence experiences."
+            )
 
         patterns = {
             'optimal_depth_distribution': self._analyze_depth_patterns(successful),
@@ -342,7 +333,9 @@ class YvMultiPathMetaLearner:
     def adapt_reasoning_parameters(self, patterns: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         """Derive updated reasoning thresholds from extracted patterns."""
         if not patterns:
-            return None
+            raise ValueError(
+                "YvMultiPathMetaLearner.adapt_reasoning_parameters requires extracted pattern statistics."
+            )
         new_threshold = max(0.7, patterns['confidence_indicators']['stability_threshold'])
         optimal_depth = patterns['optimal_depth_distribution']['mean_depth']
         new_max_depth = max(3, min(8, int(optimal_depth * 1.2)))
@@ -358,7 +351,9 @@ class YvMultiPathMetaLearner:
     def create_reasoning_prior(self, query: str) -> Optional[Dict[str, Any]]:
         """Construct a reasoning prior leveraging similar historical episodes."""
         if len(self.reasoning_memory) < 50:
-            return None
+            raise RuntimeError(
+                "YvMultiPathMetaLearner.create_reasoning_prior requires at least 50 recorded experiences."
+            )
         query_embedding = self._embed_query(query)
         similarities = []
         for exp in self.reasoning_memory[-500:]:
@@ -367,7 +362,9 @@ class YvMultiPathMetaLearner:
             similarities.append((sim, exp))
         top_experiences = sorted(similarities, key=lambda x: x[0], reverse=True)[:10]
         if not top_experiences:
-            return None
+            raise RuntimeError(
+                "YvMultiPathMetaLearner.create_reasoning_prior could not retrieve similar historical experiences."
+            )
         prior = {
             'expected_depth': float(np.mean([exp[1]['metadata']['reasoning_depth'] for exp in top_experiences])),
             'expected_confidence': float(np.mean([exp[1]['metadata']['confidence'] for exp in top_experiences])),
@@ -383,8 +380,9 @@ class YvMultiPathMetaLearner:
             if 'uncertainty_evolution' in exp['metadata']:
                 uncertainties.append(exp['metadata']['uncertainty_evolution'])
         if not uncertainties:
-
-            return None
+            raise RuntimeError(
+                "YvMultiPathMetaLearner._extract_uncertainty_pattern requires uncertainty_evolution metadata."
+            )
         max_len = max(len(u) for u in uncertainties)
         padded_uncertainties = [u + [u[-1]] * (max_len - len(u)) if u else [0.5] * max_len for u in uncertainties]
         return {

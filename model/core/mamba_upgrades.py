@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Mamba SSM Upgrades for Yv Models.
 
 Implements:
-- SparseSSM: Training-free Mamba pruning (ICLR 2026)
-- Gated Delta Networks: Improved Delta rule (ICLR 2025)
+- SparseSSM: Training-free Mamba pruning
+- Gated Delta Networks: Improved Delta rule
 """
 
 import torch
@@ -34,6 +36,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvSparseSSM(nn.Module):
     """Training-free Mamba pruning.
 
@@ -107,6 +110,7 @@ class YvSparseSSM(nn.Module):
         return zero_params / total_params
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvGatedDeltaNetwork(nn.Module):
     """Gated Delta Network for improved Mamba state updates.
 

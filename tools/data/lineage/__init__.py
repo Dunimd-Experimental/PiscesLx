@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-PiscesL1 Data Lineage Tracking Module.
+PiscesLx Data Lineage Tracking Module.
 
 This module provides data lineage tracking capabilities:
 - LineageTracker: Track data provenance and processing history

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 FP4 (4-bit Floating Point) Training Implementation
 
@@ -148,6 +150,7 @@ class POPSSFP4Config(PiscesLxOperatorConfig):
             raise ValueError(f"Unknown FP4 format: {self.fp4_format}")
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class POPSSFP4Quantizer:
     """
     FP4 Quantization and Dequantization.

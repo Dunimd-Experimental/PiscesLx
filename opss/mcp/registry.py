@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 import os
 import json
 import time
@@ -137,7 +139,7 @@ class POPSSMCPToolRegistry:
                         description=description,
                         category=category_str,
                         version=kwargs.get('version', '1.0.0'),
-                        author=kwargs.get('author', 'PiscesL1 Team'),
+                        author=kwargs.get('author', 'PiscesLx Team'),
                         dependencies=kwargs.get('dependencies', []),
                         performance_score=kwargs.get('performance_score', 1.0),
                         usage_count=0,

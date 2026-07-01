@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
-# This file is part of EnTA.
-# The EnTA project belongs to the Dunimd Team.
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -20,17 +21,17 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-
+from __future__ import annotations
 
 """
-Encre (EnTA Core) -- training-grade tool surface for PiscesL1.
+Encre (EnTA Core) -- training-grade tool surface for PiscesLx.
 
 This package provides the curated tool palette and inference back-ends
 that the model uses during adversarial training.  Every external /
 cloud-LLM gateway, web service, IDE hook, and orchestration system has
 been removed; what remains is:
 
-* the EnCRE builtin tool set (``enta.tools.builtin``) used for
+* the EnTA builtin tool set (``enta.tools.builtin``) used for
   file editing, code search, bash, git, task management, web search,
   memory, etc.  These are the tools the trained model learns to wield.
 * the sandbox subsystem used to safely execute the model's shell
@@ -97,7 +98,7 @@ _aio._EncrePatched = True
 
 # ── Lazy import map ─────────────────────────────────────────────────────────
 # (module_path, attribute_name).  Modules referenced here must exist in
-# the slimmed EnCRE package layout.
+# the slimmed EnTA package layout.
 _LAZY_MAP: dict = {
     # Backends
     "BaseBackend": ("enta.backends.base", "BaseBackend"),
@@ -141,7 +142,7 @@ _LAZY_MAP: dict = {
     "EncreTool": ("enta.tools.base", "EncreTool"),
     "build_tool": ("enta.tools.base", "build_tool"),
     "ToolRegistry": ("enta.tools.registry", "ToolRegistry"),
-    # Tool palette (EnCRE builtin tools -- preserved for adversarial training)
+    # Tool palette (EnTA builtin tools -- preserved for adversarial training)
     "build_default_tool_registry": ("enta.tools.builtin", "build_default_tool_registry"),
     "DEFAULT_BUILTIN_TOOLS": ("enta.tools.builtin", "DEFAULT_BUILTIN_TOOLS"),
     "EncreAgentTool": ("enta.tools.builtin.agent", "EncreAgentTool"),
@@ -272,7 +273,7 @@ def create_default_backend(model_name: str = "Qwen/Qwen2.5-1.5B-Instruct",
 
 
 def build_training_tool_registry():
-    """Return a :class:`ToolRegistry` populated with the EnCRE palette.
+    """Return a :class:`ToolRegistry` populated with the EnTA palette.
 
     The returned registry is what the training loop should hand to the
     model as ``tools=...`` during adversarial rollouts.  It includes

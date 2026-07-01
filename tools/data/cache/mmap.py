@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Memory-Mapped Array Implementation for PiscesL1 Data Module.
+Memory-Mapped Array Implementation for PiscesLx Data Module.
 
 This module provides efficient memory-mapped array storage for large-scale
 data handling in machine learning workflows. Memory mapping enables working

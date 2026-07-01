@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Knowledge Distillation Loss Functions
 
@@ -104,6 +106,7 @@ class POPSSDistillationLossConfig:
     attention_heads: Optional[int] = None
 
 
+# Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
 class POPSSLogitsDistillationLoss(nn.Module):
     """Logits-level knowledge distillation loss.
     
@@ -167,6 +170,7 @@ class POPSSLogitsDistillationLoss(nn.Module):
         return loss
 
 
+# Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
 class POPSSHiddenStateDistillationLoss(nn.Module):
     """Hidden state knowledge distillation loss.
     
@@ -214,6 +218,7 @@ class POPSSHiddenStateDistillationLoss(nn.Module):
         return loss
 
 
+# Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
 class POPSSAttentionDistillationLoss(nn.Module):
     """Attention pattern knowledge distillation loss.
     
@@ -308,6 +313,7 @@ class POPSSAttentionDistillationLoss(nn.Module):
         return loss
 
 
+# Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
 class POPSSLayerWiseDistillationLoss(nn.Module):
     """Layer-wise progressive knowledge distillation loss.
     
@@ -381,6 +387,7 @@ class POPSSLayerWiseDistillationLoss(nn.Module):
         return total_loss
 
 
+# Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
 class POPSSContrastiveDistillationLoss(nn.Module):
     """Contrastive distillation loss for remote API teachers.
     
@@ -427,6 +434,7 @@ class POPSSContrastiveDistillationLoss(nn.Module):
         return loss
 
 
+# Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
 class POPSSDistillationLoss(nn.Module):
     """Comprehensive knowledge distillation loss.
     

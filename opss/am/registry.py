@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Agent-MCP Unified Tool Registry
 
@@ -79,8 +81,6 @@ Thread Safety:
     The registry is designed for concurrent access. Tool registration and
     execution are thread-safe. Statistics updates use atomic operations.
 """
-
-from __future__ import annotations
 
 import asyncio
 import uuid

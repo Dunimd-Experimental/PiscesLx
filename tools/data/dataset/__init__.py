@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 from .manager import PiscesLxToolsDataDatasetManager
 from .loader import PiscesLxToolsDataOptimizedDataLoader, PiscesLxToolsDataBatchConfig
 from .streaming import PiscesLxToolsDataLargeScaleStreamingDataset

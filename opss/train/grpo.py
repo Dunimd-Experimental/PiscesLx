@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 GRPO (Group Relative Policy Optimization) Operator
 
@@ -246,6 +248,7 @@ class TrajectoryEntry:
     diversity_score: float = 0.0
 
 
+# Paper: DeepSeek-AI, "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", arXiv:2501.12948
 class POPSSGRPOOperator(PiscesLxOperatorInterface):
     """
     Group Relative Policy Optimization (GRPO) Operator.
@@ -1841,6 +1844,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         return time.time()
 
 
+# Paper: DeepSeek-AI, "DeepSeek-R1: Incentivizing Reasoning Capability in LLMs via Reinforcement Learning", arXiv:2501.12948
 class POPSSGRPOTrainer:
     """
     High-level GRPO Trainer for preference alignment.

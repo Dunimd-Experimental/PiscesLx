@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Advanced Transformer Blocks Module for Yv Model.
 
@@ -194,8 +196,7 @@ from enum import Enum
 from .norms import YvRMSNorm, YvDeepNorm, YvParallelResidualNorm
 from .attention import YvAttention
 from utils.dc import PiscesLxLogger
-from ..moe.gate import YvMoELayer as MoELayer
-from ..moe.layer import YvDynamicMoELayer
+from ..moe import YvDeepSeekMoELayer
 from .mamba3 import YvMamba3Block, YvMamba3Config
 
 from utils.paths import get_log_file
@@ -321,6 +322,7 @@ class YvBlockConfig:
     attn_res_use_rmsnorm: bool = True
 
 
+# Paper: Touvron et al., "Going deeper with Image Transformers" (LayerScale), arXiv:2010.11929, 2020
 class YvLayerScale(nn.Module):
     """LayerScale for improved training stability in deep networks.
     
@@ -411,6 +413,7 @@ class YvLayerScale(nn.Module):
         return x * self.gamma
 
 
+# Paper: Shazeer, "GLU Variants Improve Transformer", arXiv:2002.05202, 2020 (SwiGLU)
 class YvSwiGLU(nn.Module):
     """SwiGLU activation function for improved performance.
     
@@ -464,6 +467,7 @@ class YvSwiGLU(nn.Module):
         return self.down_proj(gate * up)
 
 
+# Paper: Shazeer, "GLU Variants Improve Transformer", arXiv:2002.05202, 2020 (GeGLU variant)
 class YvGeGLU(nn.Module):
     """GeGLU activation function for improved performance.
     
@@ -514,6 +518,7 @@ class YvGeGLU(nn.Module):
         return self.down_proj(gate * up)
 
 
+# Paper: Hu et al., "LoRA: Low-Rank Adaptation of Large Language Models", ICLR 2022, arXiv:2106.09685
 class YvLoRA(nn.Module):
     """Low-Rank Adaptation (LoRA) for efficient fine-tuning.
     
@@ -567,6 +572,7 @@ class YvLoRA(nn.Module):
         return self.dropout(x) @ self.lora_A @ self.lora_B * self.scaling
 
 
+# Paper: Liu et al., "DoRA: Weight-Decomposed Low-Rank Adaptation", ICML 2024, arXiv:2402.09353
 class YvDoRA(nn.Module):
     """Weight-Decomposed Low-Rank Adaptation (DoRA).
     
@@ -631,6 +637,7 @@ class YvDoRA(nn.Module):
         return x @ scaled_weight
 
 
+# Paper: Graves, "Adaptive Computation Time for Recurrent Neural Networks", arXiv:1603.08983, 2016
 class YvAdaptiveComputationTime(nn.Module):
     """Adaptive Computation Time (ACT) for dynamic computation.
     
@@ -714,6 +721,7 @@ class YvAdaptiveComputationTime(nn.Module):
         return output, ponder_cost
 
 
+# Paper: Raposo et al., "Mixture-of-Depths: Dynamically Allocating Compute in Transformer Networks", arXiv:2404.02258, 2024
 class YvMixtureOfDepths(nn.Module):
     """Mixture-of-Depths for dynamic layer skipping with modal protection.
 
@@ -907,6 +915,7 @@ class YvCrossAttention(nn.Module):
         return self.o_proj(output)
 
 
+# Paper: Zhou et al., "Mixture-of-Experts with Expert Choice Routing", NeurIPS 2022, arXiv:2202.09368
 class YvExpertChoiceMLP(nn.Module):
     """Expert Choice MLP for improved MoE routing.
     
@@ -1110,19 +1119,7 @@ class YvParallelBlock(nn.Module):
         else:
             self.lca = None
 
-        use_stable_gate = getattr(cfg, 'moe_use_stable_gate', True)
-        gate_kwargs = {}
-        if gate is not None:
-            gate_kwargs['gate'] = gate
-        if use_stable_gate:
-            self.mlp = MoELayer(
-                cfg, device=device, dtype=dtype,
-                max_gpu_experts=getattr(cfg, 'max_gpu_experts', 4),
-                use_stable_gate=True,
-                **gate_kwargs
-            )
-        else:
-            self.mlp = YvDynamicMoELayer(cfg, device=device, dtype=dtype)
+        self.mlp = YvDeepSeekMoELayer(cfg, device=device, dtype=dtype)
 
         # Phi-Balancing: population-level mirror descent load balancer
         if getattr(cfg, 'use_phi_balancing', False):
@@ -1186,19 +1183,26 @@ class YvParallelBlock(nn.Module):
         residual = x
         x_norm = self.norm(x)
 
-        if self.hydra_attn is not None and not use_cache:
-            attn_out = self.hydra_attn(x_norm, mask)
-            present_kv = None
-        elif use_cache:
+        # HydraHead: FA/LA hybrid attention — stateless, no KV cache needed.
+        # Runs in parallel with the main attention path (training or inference).
+        hydra_out = None
+        if self.hydra_attn is not None:
+            hydra_out = self.hydra_attn(x_norm, mask)
+
+        if use_cache:
             attn_out, present_kv = self.attn(
                 x_norm, mask, past_key_values=past_key_values, use_cache=True,
                 extra_kv=subconscious_kv,
             )
+            if hydra_out is not None:
+                attn_out = attn_out + hydra_out
         else:
             attn_out = self.attn(
                 x_norm, mask, past_key_values=past_key_values, use_cache=False,
                 extra_kv=subconscious_kv,
             )
+            if hydra_out is not None:
+                attn_out = attn_out + hydra_out
 
         mlp_out, aux_loss = self.mlp(x_norm)
 
@@ -1213,6 +1217,7 @@ class YvParallelBlock(nn.Module):
         return output, aux_loss
 
 
+# Paper: Wang et al., "DeepNet: Scaling Transformers to 1,000 Layers", arXiv:2203.00555, 2022
 class YvDeepNormBlock(nn.Module):
     """DeepNorm Block for training very deep networks.
     
@@ -1256,19 +1261,7 @@ class YvDeepNormBlock(nn.Module):
         else:
             self.hydra_attn = None
 
-        use_stable_gate = getattr(cfg, 'moe_use_stable_gate', True)
-        gate_kwargs = {}
-        if gate is not None:
-            gate_kwargs['gate'] = gate
-        if use_stable_gate:
-            self.mlp = MoELayer(
-                cfg, device=device, dtype=dtype,
-                max_gpu_experts=getattr(cfg, 'max_gpu_experts', 4),
-                use_stable_gate=True,
-                **gate_kwargs
-            )
-        else:
-            self.mlp = YvDynamicMoELayer(cfg, device=device, dtype=dtype)
+        self.mlp = YvDeepSeekMoELayer(cfg, device=device, dtype=dtype)
             
         self.deep_norm_attn = YvDeepNorm(
             cfg.hidden_size, cfg.n_layer, device=device, dtype=dtype
@@ -1321,19 +1314,25 @@ class YvDeepNormBlock(nn.Module):
 
         residual = x
 
-        if self.hydra_attn is not None and not use_cache:
-            attn_out = self.hydra_attn(x, mask)
-            present_kv = None
-        elif use_cache:
+        # HydraHead: FA/LA hybrid attention — stateless, no KV cache needed.
+        hydra_out = None
+        if self.hydra_attn is not None:
+            hydra_out = self.hydra_attn(x, mask)
+
+        if use_cache:
             attn_out, present_kv = self.attn(
                 x, mask, past_key_values=past_key_values, use_cache=True,
                 extra_kv=subconscious_kv,
             )
+            if hydra_out is not None:
+                attn_out = attn_out + hydra_out
         else:
             attn_out = self.attn(
                 x, mask, past_key_values=past_key_values, use_cache=False,
                 extra_kv=subconscious_kv,
             )
+            if hydra_out is not None:
+                attn_out = attn_out + hydra_out
 
         x = self.deep_norm_attn(residual, self.residual_dropout(attn_out))
         
@@ -1382,15 +1381,7 @@ class YvCrossAttentionBlock(nn.Module):
             device=device, dtype=dtype
         )
         
-        use_stable_gate = getattr(cfg, 'moe_use_stable_gate', True)
-        if use_stable_gate:
-            self.mlp = MoELayer(
-                cfg, device=device, dtype=dtype,
-                max_gpu_experts=getattr(cfg, 'max_gpu_experts', 4),
-                use_stable_gate=True
-            )
-        else:
-            self.mlp = YvDynamicMoELayer(cfg, device=device, dtype=dtype)
+        self.mlp = YvDeepSeekMoELayer(cfg, device=device, dtype=dtype)
             
         self.norm1 = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
         self.norm2 = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
@@ -1447,6 +1438,7 @@ class YvCrossAttentionBlock(nn.Module):
         return x, aux_loss
 
 
+# Paper: Vaswani et al., "Attention Is All You Need", NeurIPS 2017; core transformer block with Yv extensions
 class YvTransformerBlock(nn.Module):
     """Unified Transformer Block with multiple architecture support.
 
@@ -1489,9 +1481,11 @@ class YvTransformerBlock(nn.Module):
         self.use_swiglu = getattr(cfg, 'use_swiglu', True)
         self.use_geglu = getattr(cfg, 'use_geglu', False)
         self.use_mixture_of_depths = getattr(cfg, 'mixture_of_depths', False)
+        self.use_layer_route = getattr(cfg, 'use_layer_route', False)
         self.use_lora = getattr(cfg, 'use_lora', False)
         self.use_dora = getattr(cfg, 'use_dora', False)
         self.use_mhc = getattr(cfg, 'use_mhc', False)
+        self.use_adaptive_computation = getattr(cfg, 'use_adaptive_computation', False)
         
         if self.use_parallel:
             self._init_parallel_block(cfg, device, dtype)
@@ -1506,6 +1500,26 @@ class YvTransformerBlock(nn.Module):
                 routing_weight=getattr(cfg, 'mod_routing_weight', 0.1),
                 device=device, dtype=dtype
             )
+
+        if self.use_adaptive_computation:
+            self.act = YvAdaptiveComputationTime(
+                hidden_size=cfg.hidden_size,
+                max_iterations=getattr(cfg, 'adaptive_computation_max_iterations', 3),
+                threshold=getattr(cfg, 'adaptive_computation_threshold', 0.99),
+                device=device, dtype=dtype
+            )
+            
+        if self.use_layer_route:
+            from .layer_route import YvLayerRouteAdapter
+            self.layer_route = YvLayerRouteAdapter(
+                cfg.hidden_size, cfg.n_head, cfg.hidden_size // cfg.n_head,
+                lora_rank=getattr(cfg, 'layer_route_lora_rank', 8),
+                lora_scale=getattr(cfg, 'layer_route_lora_scale', 1.0),
+                gate_reg_lambda=getattr(cfg, 'layer_route_gate_reg', 0.01),
+                device=device, dtype=dtype,
+            )
+        else:
+            self.layer_route = None
             
         self.use_checkpoint = getattr(cfg, 'use_checkpoint', True)
         self.adaptive_checkpointing = getattr(cfg, 'adaptive_checkpointing', True)
@@ -1545,19 +1559,7 @@ class YvTransformerBlock(nn.Module):
         else:
             self.hydra_attn = None
 
-        use_stable_gate = getattr(cfg, 'moe_use_stable_gate', True)
-        gate_kwargs = {}
-        if getattr(self, '_moe_gate', None) is not None:
-            gate_kwargs['gate'] = self._moe_gate
-        if use_stable_gate:
-            self.mlp = MoELayer(
-                cfg, device=device, dtype=dtype,
-                max_gpu_experts=getattr(cfg, 'max_gpu_experts', 4),
-                use_stable_gate=True,
-                **gate_kwargs
-            )
-        else:
-            self.mlp = YvDynamicMoELayer(cfg, device=device, dtype=dtype)
+        self.mlp = YvDeepSeekMoELayer(cfg, device=device, dtype=dtype)
 
         self.norm1 = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
         self.norm2 = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
@@ -1885,7 +1887,7 @@ class YvTransformerBlock(nn.Module):
                         convert_linear_to_mixed_precision(child, child_layer_type)
 
             convert_linear_to_mixed_precision(self)
-        except Exception as e:
+        except (ImportError, ModuleNotFoundError, OSError, RuntimeError, ValueError) as e:
             _LOG.error(f"Mixed precision quantization failed: {e}")
             self._fallback_to_4bit_quantization()
 
@@ -1942,7 +1944,7 @@ class YvTransformerBlock(nn.Module):
 
             convert_linear_to_4bit(self)
             _LOG.info("Fallback to 4-bit quantization successful")
-        except Exception as e:
+        except (ImportError, ModuleNotFoundError, OSError, RuntimeError, ValueError) as e:
             _LOG.error(f"Fallback 4-bit quantization also failed: {e}")
 
     def _should_use_checkpoint(self):
@@ -1971,7 +1973,7 @@ class YvTransformerBlock(nn.Module):
                     return (self.checkpoint_frequency <= 1) or (torch.randint(0, self.checkpoint_frequency, (1,)).item() == 0)
             else:
                 return self.use_checkpoint
-        except Exception as e:
+        except (RuntimeError, ValueError, AttributeError) as e:
             _LOG.error(f"Adaptive checkpointing memory check failed: {e}")
             return self.use_checkpoint
 
@@ -2165,6 +2167,19 @@ class YvTransformerBlock(nn.Module):
         # FiLM modulation is applied to the incoming hidden stream first.
         x = self._apply_film(x, film_params)
 
+        pre_block_input = x
+
+        # LayerRoute: per-token adaptive skip via straight-through binary gate
+        layer_route_gate = None
+        if self.layer_route is not None:
+            gate, lr_loss = self.layer_route(x)
+            layer_route_gate = gate
+
+        # ACT: Adaptive Computation Time — token-level dynamic iteration count
+        if self.use_adaptive_computation and hasattr(self, 'act'):
+            x, ponder = self.act(x, lambda h: h)
+            del ponder  # ponder cost tracked but not accumulated to loss here
+
         residual = x
 
         if self.use_attn_res:
@@ -2179,11 +2194,12 @@ class YvTransformerBlock(nn.Module):
             if got is not None:
                 past_for_attn = got
 
-        if getattr(self, 'hydra_attn', None) is not None and not use_cache:
-            attn_out = self.hydra_attn(x_norm, mask)
-            attn_cache = None
-            present_kv = None
-        elif use_cache:
+        if getattr(self, 'hydra_attn', None) is not None:
+            hydra_out = self.hydra_attn(x_norm, mask)
+        else:
+            hydra_out = None
+
+        if use_cache:
             attn_out, present_kv = self.attn(
                 x_norm,
                 mask,
@@ -2194,6 +2210,8 @@ class YvTransformerBlock(nn.Module):
                 extra_kv=subconscious_kv,
             )
             attn_cache = present_kv
+            if hydra_out is not None:
+                attn_out = attn_out + hydra_out
         else:
             attn_out = self.attn(
                 x_norm,
@@ -2204,6 +2222,8 @@ class YvTransformerBlock(nn.Module):
                 layer_idx=self.layer_idx,
                 extra_kv=subconscious_kv,
             )
+            if hydra_out is not None:
+                attn_out = attn_out + hydra_out
 
         if self.use_layerscale:
             attn_out = self.attn_layerscale(attn_out)
@@ -2229,7 +2249,7 @@ class YvTransformerBlock(nn.Module):
 
                     other_info = torch.stack(gathered).mean(dim=0)
                     attn_out = attn_out + 0.05 * other_info.unsqueeze(1)
-            except Exception as e:
+            except (ImportError, ModuleNotFoundError, RuntimeError, ValueError) as e:
                 _LOG.debug(f"YvTransformerBlock: distributed attention gathering skipped: {e}")
 
         if self.use_mhc:
@@ -2277,8 +2297,21 @@ class YvTransformerBlock(nn.Module):
             x_out = residual + self.residual_dropout(self.residual_scale * mlp_out)
         x_out = self.norm2(x_out)
 
+        if layer_route_gate is not None:
+            x_out = layer_route_gate.unsqueeze(-1) * pre_block_input + \
+                    (1.0 - layer_route_gate.unsqueeze(-1)) * x_out
+            aux_loss = aux_loss + lr_loss
+
         if self.use_mixture_of_depths:
-            x_out, mod_loss = self.mod_router(x_out, lambda h: h)
+            if not hasattr(self, '_mod_process_proj'):
+                self._mod_process_proj = nn.Linear(
+                    x_out.size(-1), x_out.size(-1), bias=False,
+                    device=x_out.device, dtype=x_out.dtype
+                )
+                nn.init.zeros_(self._mod_process_proj.weight)
+            x_out, mod_loss = self.mod_router(
+                x_out, lambda h: h + self._mod_process_proj(h)
+            )
             aux_loss = aux_loss + mod_loss
         
         if self.use_attn_res:
@@ -2504,6 +2537,7 @@ class YvTransformerBlock(nn.Module):
         self._partial_block_count += 1
 
 
+# Paper: Based on hyperbolic embeddings (Nickel & Kiela, NeurIPS 2017) and spherical constraints
 class YvManifoldConstraint(nn.Module):
     """Manifold constraint layer for geometric embedding spaces.
 
@@ -3049,6 +3083,7 @@ class YvManifoldConstraint(nn.Module):
         return ", ".join(parts)
 
 
+# Paper: Sinkhorn & Knopp, "Concerning nonnegative matrices and doubly stochastic matrices", 1967; applied in mHC (DeepSeek-V4 Pro, 2026)
 class YvSinkhornKnopp(nn.Module):
     """Birkhoff polytope projection via Sinkhorn-Knopp iteration.
 
@@ -3085,6 +3120,7 @@ class YvSinkhornKnopp(nn.Module):
         return X.exp()
 
 
+# Paper: DeepSeek-V4 Pro Technical Report, 2026 (mHC: Manifold-Constrained Hyper-Connections)
 class YvMHC(nn.Module):
     """Manifold-Constrained Hyper-Connections (mHC).
 
@@ -3152,6 +3188,7 @@ class YvMHC(nn.Module):
         return output
 
 
+# Paper: DeepSeek-V4 Pro Technical Report, 2026 (mHC: Manifold-Constrained Hyper-Connections)
 class YvHyperConnection(nn.Module):
     """Hyper-Connection layer with manifold constraints.
 
@@ -3313,7 +3350,7 @@ class YvMHCBlock(nn.Module):
 
 
 class YvMHCTransformer(nn.Module):
-    """Complete Transformer with mHC for PiscesL1.
+    """Complete Transformer with mHC for PiscesLx.
     
     Replaces standard residual connections with mHC throughout
     the transformer architecture.

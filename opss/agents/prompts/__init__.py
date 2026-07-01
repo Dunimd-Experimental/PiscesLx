@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-PiscesL1 Expert Prompts Module
+PiscesLx Expert Prompts Module
 
 This module contains YAML-based prompt configurations for expert agents.
 Prompts are organized by category:

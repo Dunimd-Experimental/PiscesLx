@@ -21,13 +21,17 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 MCP Tools Package
 
-All MCP tools for the PiscesL1 system.
+Provides a single tool — WebSearchTool — for the PiscesLx inference engine.
+All other MCP tools have been removed; the inference engine is a pure
+model-serving endpoint, not a development assistant like Claude Code.
 """
 
-from typing import List, Type
+from typing import Any, List, Optional
 
 from .base import (
     POPSSMCPToolBase,
@@ -35,49 +39,28 @@ from .base import (
     POPSSMCPToolRegistry,
 )
 
-from .web_search import WebSearchTool, ImageSearchTool
-from .fetch import FetchTool, URLInfoTool
-from .crypto import CryptoPriceTool, CryptoTrendingTool, CryptoSearchTool
-from .time_tools import CurrentTimeTool, TimeConvertTool, TimezoneListTool, StopwatchTool
-from .document_processor import PDFReaderTool, WordReaderTool, PowerPointReaderTool, TextFileReaderTool
-from .sequential_thinking import SequentialThinkingTool, ProblemDecompositionTool
+from .web_search import WebSearchTool
 
 
-ALL_TOOLS: List[Type[POPSSMCPToolBase]] = [
+ALL_TOOLS: List[type[POPSSMCPToolBase]] = [
     WebSearchTool,
-    ImageSearchTool,
-    FetchTool,
-    URLInfoTool,
-    CryptoPriceTool,
-    CryptoTrendingTool,
-    CryptoSearchTool,
-    CurrentTimeTool,
-    TimeConvertTool,
-    TimezoneListTool,
-    StopwatchTool,
-    PDFReaderTool,
-    WordReaderTool,
-    PowerPointReaderTool,
-    TextFileReaderTool,
-    SequentialThinkingTool,
-    ProblemDecompositionTool,
 ]
 
 
 def register_all_tools(registry: Optional[Any] = None) -> List[str]:
-    """Register all MCP tools to the unified tool registry.
-    
+    """Register all available tools to the unified tool registry.
+
     Args:
         registry: POPSSToolRegistry instance. If None, uses POPSSMCPToolRegistry.
-        
+
     Returns:
-        List of registered tool names
+        List of registered tool names.
     """
-    registered = []
-    
+    registered: List[str] = []
+
     for ToolClass in ALL_TOOLS:
         tool = ToolClass()
-        
+
         if registry is not None:
             try:
                 registry.register_mcp_tool(
@@ -87,40 +70,25 @@ def register_all_tools(registry: Optional[Any] = None) -> List[str]:
                 )
             except Exception:
                 pass
-        
+
         POPSSMCPToolRegistry.register(tool)
         registered.append(tool.name)
-    
+
     return registered
 
 
-def get_tool(name: str) -> POPSSMCPToolBase:
-    """Get a tool by name.
-    
-    Args:
-        name: Tool name
-        
-    Returns:
-        Tool instance
-    """
+def get_tool(name: str) -> Optional[POPSSMCPToolBase]:
+    """Get a tool by name."""
     return POPSSMCPToolRegistry.get(name)
 
 
 def list_tools() -> List[str]:
-    """List all available tool names.
-    
-    Returns:
-        List of tool names
-    """
+    """List all available tool names."""
     return POPSSMCPToolRegistry.list()
 
 
 def list_tools_info() -> List[dict]:
-    """List all tools with their info.
-    
-    Returns:
-        List of tool info dictionaries
-    """
+    """List all tools with their info."""
     return POPSSMCPToolRegistry.list_info()
 
 
@@ -134,20 +102,4 @@ __all__ = [
     "list_tools",
     "list_tools_info",
     "WebSearchTool",
-    "ImageSearchTool",
-    "FetchTool",
-    "URLInfoTool",
-    "CryptoPriceTool",
-    "CryptoTrendingTool",
-    "CryptoSearchTool",
-    "CurrentTimeTool",
-    "TimeConvertTool",
-    "TimezoneListTool",
-    "StopwatchTool",
-    "PDFReaderTool",
-    "WordReaderTool",
-    "PowerPointReaderTool",
-    "TextFileReaderTool",
-    "SequentialThinkingTool",
-    "ProblemDecompositionTool",
 ]

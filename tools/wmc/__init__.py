@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 PiscesLx WMC (Watermark Check) Toolkit
 
@@ -70,7 +72,7 @@ Usage Examples:
     >>> # Video watermark detection
     >>> video_result = detect_video_watermark("video.mp4", verbose=True)
 
-Author: PiscesL1 Development Team
+Author: PiscesLx Development Team
 Version: 1.0.0
 """
 

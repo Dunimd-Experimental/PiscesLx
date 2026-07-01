@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Unified Cache Management Module for Yv Model.
 
@@ -318,6 +320,8 @@ class YvCacheConfig:
     quantization_bits: int = 8
     cache_window_size: int = 2048
     use_h2o_attention: bool = True
+    enable_cache_compression: bool = True
+    cache_compression_ratio: float = 0.5
     eviction_policy: YvEvictionPolicy = YvEvictionPolicy.ADAPTIVE
     enable_offload: bool = False
     offload_threshold: float = 0.8
@@ -523,6 +527,7 @@ class YvCacheBlock:
         self.ref_count = max(0, self.ref_count - 1)
         return self.ref_count
 
+# Paper: Kwon et al. "Efficient Memory Management for Large Language Model Serving with PagedAttention." SOSP 2023.
 class YvPagedCacheManager:
     """Paged attention cache manager with virtual memory-style block management.
     
@@ -656,7 +661,7 @@ class YvPagedCacheManager:
             Eviction policy is determined by config.eviction_policy.
         """
         if not self.blocks:
-            return None
+            raise RuntimeError("YvPagedCacheManager._evict_block requires at least one allocated block.")
 
         candidates = [
             (bid, block) for bid, block in self.blocks.items()
@@ -664,7 +669,7 @@ class YvPagedCacheManager:
         ]
 
         if not candidates:
-            return None
+            raise RuntimeError("YvPagedCacheManager._evict_block found no evictable blocks.")
 
         if self.config.eviction_policy == YvEvictionPolicy.LRU:
             candidates.sort(key=lambda x: x[1].last_access_time)
@@ -789,11 +794,11 @@ class YvPagedCacheManager:
             Tuple of (keys, values) tensors, or None if sequence not found.
         """
         if seq_id not in self.sequence_blocks:
-            return None
+            raise KeyError(f"Sequence {seq_id} not found in paged cache.")
 
         block_ids = self.sequence_blocks[seq_id]
         if not block_ids:
-            return None
+            raise RuntimeError(f"Sequence {seq_id} has no allocated cache blocks.")
 
         keys_list = []
         values_list = []
@@ -841,6 +846,7 @@ class YvPagedCacheManager:
         """
         return self.block_tables.get(seq_id)
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvSSMCacheManager:
     """State Space Model cache manager for Mamba/SSM layers.
     
@@ -1009,6 +1015,7 @@ class YvSSMCacheManager:
         if seq_id in self.sequence_states:
             del self.sequence_states[seq_id]
 
+# Paper: Leviathan et al. "Fast Inference from Transformers via Speculative Decoding." ICML 2023.
 class YvSpeculativeCacheManager:
     """Speculative decoding cache manager for accelerated inference.
     
@@ -1216,6 +1223,7 @@ class YvSpeculativeCacheManager:
         if tree_id in self.tree_cache:
             del self.tree_cache[tree_id]
 
+# Paper: Li et al. "BLIP-2: Bootstrapping Language-Image Pre-training with Frozen Image Encoders and Large Language Models." ICML 2023.
 class YvMultimodalCacheManager:
     """Multimodal cache manager for vision-language models.
     
@@ -1371,6 +1379,7 @@ class YvMultimodalCacheManager:
         if modality in self.modality_caches:
             self.modality_caches[modality].clear()
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvCacheCompressor:
     """Advanced cache compression utilities for memory-efficient inference.
     
@@ -1711,6 +1720,7 @@ class YvCacheCompressor:
         else:
             return self.compress_semantic_aware(keys, values, target_ratio)
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvUnifiedCacheManager:
     """
     Unified cache manager for transformer model inference.
@@ -1733,6 +1743,15 @@ class YvUnifiedCacheManager:
                 cache_quantization=getattr(config, 'quantization_enabled', True),
                 cache_window_size=getattr(config, 'streaming_window', 2048),
                 block_size=getattr(config, 'kv_cache_block_size', 512),
+                use_h2o_attention=getattr(config, 'use_h2o_attention', True),
+                cache_type=getattr(config, 'cache_type', YvCacheType.HYBRID),
+                enable_compression=getattr(config, 'enable_cache_compression', True),
+                compression_ratio=getattr(config, 'cache_compression_ratio', 0.5),
+                n_layers=getattr(config, 'n_layer', getattr(config, 'num_layers', 32)),
+                n_heads=getattr(config, 'n_head', getattr(config, 'num_heads', 32)),
+                head_dim=getattr(config, 'head_dim', 128),
+                dtype=getattr(config, 'dtype', torch.float16),
+                device=str(getattr(config, 'device', 'cuda')),
             )
 
         self._lock = threading.Lock()
@@ -1824,7 +1843,7 @@ class YvUnifiedCacheManager:
                     self.cache_misses += 1
                     return past_key_values
                 self.cache_misses += 1
-                return None
+                raise KeyError(f"No KV cache entry exists for layer {layer_idx}.")
             self.cache_hits += 1
             return self._concat_recent(layer_idx)
 
@@ -1903,7 +1922,7 @@ class YvUnifiedCacheManager:
     def _concat_recent(self, layer_idx: int) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
         entry = self.kv_cache.get(layer_idx, None)
         if entry is None or not entry['blocks']:
-            return None
+            raise KeyError(f"No cached blocks available for layer {layer_idx}.")
         ks = []
         vs = []
         for b in entry['blocks']:
@@ -1919,9 +1938,8 @@ class YvUnifiedCacheManager:
         return (k, v)
 
     def _compact_blocks(self, entry: Dict[str, Any]):
-        try:
-            if not entry['blocks']:
-                return
+        if not entry['blocks']:
+            return
 
             target_total = int(self.config.max_cache_size * 1.1)
             idx = 0
@@ -1979,8 +1997,6 @@ class YvUnifiedCacheManager:
                     entry['blocks'][idx] = (new_k, new_v)
                     entry['total_len'] -= delta
                 idx += 1
-        except Exception as e:
-            _LOG.warning(f"Cache block compaction failed: {e}")
 
     def _delta_encode_block(
         self,
@@ -2126,10 +2142,7 @@ class YvUnifiedCacheManager:
         if seq_len <= self.config.cache_window_size:
             return key_states, value_states
 
-        try:
-            use_fp8_like = torch.cuda.is_available()
-        except Exception:
-            use_fp8_like = False
+        use_fp8_like = torch.cuda.is_available()
 
         if use_fp8_like:
             def fake_fp8_quant(t: torch.Tensor) -> torch.Tensor:
@@ -2181,7 +2194,7 @@ class YvUnifiedCacheManager:
     def read_paged(self, seq_id: int, layer_idx: int) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
         if self.paged_manager is not None:
             return self.paged_manager.read(seq_id, layer_idx)
-        return None
+        raise RuntimeError("Paged cache manager is not initialized.")
 
     def free_paged_sequence(self, seq_id: int):
         if self.paged_manager is not None:
@@ -2209,7 +2222,7 @@ class YvUnifiedCacheManager:
     def get_speculative_draft(self, draft_length: int) -> Optional[Dict[str, torch.Tensor]]:
         if self.speculative_manager is not None:
             return self.speculative_manager.get_draft(draft_length)
-        return None
+        raise RuntimeError("Speculative cache manager is not initialized.")
 
     def get_optimal_draft_length(self) -> int:
         if self.speculative_manager is not None:
@@ -2223,7 +2236,7 @@ class YvUnifiedCacheManager:
     def get_multimodal_cache(self, modality: str, cache_key: str) -> Optional[torch.Tensor]:
         if self.multimodal_manager is not None:
             return self.multimodal_manager.get_modality_cache(modality, cache_key)
-        return None
+        raise RuntimeError("Multimodal cache manager is not initialized.")
 
     def compress_cache(
         self,
@@ -2260,7 +2273,7 @@ class YvUnifiedCacheManager:
             Magarshak, arXiv:2604.15356, 2026, Section 4.
         """
         if self.plt_trie is None:
-            return None
+            raise RuntimeError("PLT trie is not initialized.")
         return self.plt_trie.find_longest_match(token_ids, log_probs)
 
     def insert_plt_prefix(
@@ -2328,14 +2341,10 @@ class YvUnifiedCacheManager:
         kv_lengths = {}
         total_kv_tokens = 0
         for layer_idx, entry in self.kv_cache.items():
-            try:
-                if entry is None or 'total_len' not in entry:
-                    kv_lengths[layer_idx] = 0
-                    continue
-                kv_lengths[layer_idx] = int(entry['total_len'])
-                total_kv_tokens += int(entry['total_len'])
-            except Exception:
-                kv_lengths[layer_idx] = -1
+            if entry is None or 'total_len' not in entry:
+                raise RuntimeError(f"Malformed KV cache entry for layer {layer_idx}.")
+            kv_lengths[layer_idx] = int(entry['total_len'])
+            total_kv_tokens += int(entry['total_len'])
 
         stats = {
             'cache_hits': self.cache_hits,

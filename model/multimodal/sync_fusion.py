@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """SyncFusion: Audio-Video Synchronous Understanding for Yv Models.
 
 Based on ICLR 2025 JavisGPT. Aligns temporal features across audio and video
@@ -33,6 +35,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvSyncFusion(nn.Module):
     """Audio-video synchronous fusion module.
 
@@ -153,6 +156,7 @@ class YvSyncFusion(nn.Module):
         return fused.mean(dim=1, keepdim=True).expand(-1, max_len, -1)
 
 
+# Paper: Gu & Dao, "Mamba: Linear-Time Modeling with Selective State Spaces", 2023, arXiv:2312.00752
 class YvCoupledMambaFusion(nn.Module):
     """Coupled Mamba state-space model for multimodal fusion.
 
@@ -209,7 +213,9 @@ class YvCoupledMambaFusion(nn.Module):
             projected.append(proj)
 
         if not projected:
-            return None
+            raise ValueError(
+                "YvCoupledMambaFusion.forward requires at least one modality feature tensor."
+            )
 
         # Apply cross-modal coupling
         coupled = []

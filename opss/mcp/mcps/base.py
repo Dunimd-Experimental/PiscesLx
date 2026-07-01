@@ -21,10 +21,12 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 MCP Tool Base Classes
 
-Provides the base class for all MCP tools in the PiscesL1 system.
+Provides the base class for all MCP tools in the PiscesLx system.
 """
 
 import asyncio

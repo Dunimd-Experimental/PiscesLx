@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
-# This file is part of EnTA.
-# The EnTA project belongs to the Dunimd Team.
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -20,7 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-
+from __future__ import annotations
 
 """``agent`` tool -- spawn sub-agent sessions.
 
@@ -28,16 +29,18 @@ The training pipeline runs the model in a single, self-contained process
 where there is no parent agent loop to dispatch sub-agents into.  This
 tool therefore returns a structured error so the model learns that
 ``agent`` is not a usable tool inside training rollouts.  In a real
-agent runtime (outside the slimmed EnCRE core) the same tool name would
+agent runtime (outside the slimmed EnTA core) the same tool name would
 be re-implemented to fan out sub-agent invocations.
 """
 
-import logging
 from typing import Any
 
-from enta.tools.base import build_tool
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
-logger = logging.getLogger(__name__)
+logger = PiscesLxLogger("EnTA.Tools.Agent", file_path=get_log_file("EnTA.Tools.Agent"), enable_file=True)
+
+from enta.tools.base import build_tool
 
 
 def _set_parent_loop(loop: Any) -> None:
@@ -57,7 +60,7 @@ async def _agent_execute(**kwargs: Any) -> str:
     )
     return (
         "Error: the 'agent' tool requires a parent agent loop, which is "
-        "not available inside the slimmed EnCRE training core.  Use the "
+        "not available inside the slimmed EnTA training core.  Use the "
         "specialised tools (bash, file_*, glob, grep, git_tool, apply_patch, "
         "task_*, web_*, etc.) to complete the work directly."
     )
@@ -66,7 +69,7 @@ async def _agent_execute(**kwargs: Any) -> str:
 EncreAgentTool = build_tool(
     name="agent",
     description=(
-        "Spawn a sub-agent session.  In the slimmed EnCRE training core "
+        "Spawn a sub-agent session.  In the slimmed EnTA training core "
         "this tool is intentionally disabled: there is no parent loop to "
         "host a sub-agent.  Use specialised tools (bash, file_*, glob, "
         "grep, git_tool, apply_patch, task_*, web_*, etc.) to complete "

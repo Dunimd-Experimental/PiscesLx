@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Speculative Decoding Module for Yv Model.
 
@@ -255,6 +257,7 @@ class YvVerificationResult:
     rejection_position: int = -1
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvDraftModel(nn.Module):
     """Lightweight draft model for fast token generation.
     
@@ -367,6 +370,7 @@ class YvDraftModel(nn.Module):
         return logits
 
 
+# Paper: Cai et al., "Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads", 2024, arXiv:2401.10774
 class YvMedusaHead(nn.Module):
     """Medusa-style multi-token prediction head for speculative decoding.
     
@@ -456,6 +460,7 @@ class YvMedusaHead(nn.Module):
         return [head(hidden_states) for head in self.heads]
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvParallelVerifier(nn.Module):
     """Parallel verifier for speculative decoding.
     
@@ -574,6 +579,7 @@ class YvParallelVerifier(nn.Module):
             )
 
 
+# Paper: Leviathan et al., "Fast Inference from Transformers via Speculative Decoding", ICML 2023; Chen et al., "Accelerating Large Language Model Decoding with Speculative Sampling", 2023
 class YvSpeculativeDecoder(nn.Module):
     """Unified speculative decoder with multiple verification strategies.
     
@@ -1080,6 +1086,7 @@ class YvSpeculativeDecoder(nn.Module):
         self.performance_history = self.performance_history[-self.adaptation_interval // 2:]
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvAdaptiveSpeculativeDecoder(YvSpeculativeDecoder):
     """Adaptive speculative decoder with dynamic parameter adjustment.
     
@@ -1171,6 +1178,7 @@ class YvAdaptiveSpeculativeDecoder(YvSpeculativeDecoder):
         return generated_ids, stats
 
 
+# Paper: Cai et al., "Medusa: Simple LLM Inference Acceleration Framework with Multiple Decoding Heads", 2024, arXiv:2401.10774
 class YvMedusaDecoder(nn.Module):
     """Medusa-style speculative decoder with multi-head prediction.
     
@@ -1374,6 +1382,7 @@ class YvMedusaDecoder(nn.Module):
         return generated_ids, stats
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — DSpark speculative decoding)
 class YvDSparkHead(nn.Module):
     """Markov prediction head for DSpark-style speculative decoding.
 
@@ -1431,6 +1440,7 @@ class YvDSparkHead(nn.Module):
         return logits
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — DSpark speculative decoding)
 class YvDSparkSpeculativeDecoder(nn.Module):
     """DSpark-style speculative decoder with parallel draft generation,
     Markov prediction head, and confidence-based adaptive draft length.

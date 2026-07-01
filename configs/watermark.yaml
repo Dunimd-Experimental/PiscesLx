@@ -19,11 +19,11 @@
 # Non-compliance may result in service termination or legal liability.
 
 # =============================================================================
-# PiscesL1 Watermarking System Configuration
+# PiscesLx Watermarking System Configuration
 # =============================================================================
 #
 # PURPOSE:
-#     This file configures the comprehensive watermarking system for PiscesL1,
+#     This file configures the comprehensive watermarking system for PiscesLx,
 #     enabling traceability and identification of AI-generated content across
 #     text, image, audio, video, and model weight outputs.
 #
@@ -461,7 +461,7 @@ watermark_system:
     owner_id: "dunimd"
 
     # Model family identifier
-    model_id: "PiscesL1"
+    model_id: "PiscesLx"
 
     # Random seed for reproducible watermark generation
     seed: 2025

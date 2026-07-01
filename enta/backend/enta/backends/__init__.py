@@ -3,8 +3,8 @@
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
-# This file is part of EnTA.
-# The EnTA project belongs to the Dunimd Team.
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -21,15 +21,15 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-
+from __future__ import annotations
 
 """
 Backends package -- LLM inference adapters for self-training.
 
 This package provides a unified interface for running LLM inference in the
 self-training pipeline.  All external cloud provider adapters (OpenAI,
-Anthropic, Google, DeepSeek, Kimi, etc.) have been removed; the EnCRE
-framework is dedicated to running PiscesL1 itself and any local /
+Anthropic, Google, DeepSeek, Kimi, etc.) have been removed; the EnTA
+framework is dedicated to running PiscesLx itself and any local /
 OpenAI-compatible serving endpoint.
 
 Available backends

@@ -24,7 +24,7 @@
 """
 Publish Configuration Management System
 
-Centralized configuration management for the PiscesL1 model publishing pipeline.
+Centralized configuration management for the PiscesLx model publishing pipeline.
 This module provides a hierarchical configuration system using dataclasses,
 enabling type-safe, validated, and serializable configuration objects.
 
@@ -53,7 +53,7 @@ Usage Examples:
         >>> from tools.publish.config import PiscesLxPublishConfig
         >>> config = PiscesLxPublishConfig(
         ...     model_size="7B",
-        ...     model_name="PiscesL1",
+        ...     model_name="PiscesLx",
         ...     model_path="./checkpoints/7B"
         ... )
 
@@ -299,7 +299,7 @@ class PiscesLxPublishMetadataConfig:
 
     Example:
         >>> metadata = PiscesLxPublishMetadataConfig(
-        ...     model_name="PiscesL1-7B",
+        ...     model_name="PiscesLx-7B",
         ...     model_version="1.0.0",
         ...     architecture="Yv",
         ...     parameters="7B",
@@ -308,7 +308,7 @@ class PiscesLxPublishMetadataConfig:
         ...     license="Apache-2.0"
         ... )
     """
-    model_name: str = "PiscesL1"
+    model_name: str = "PiscesLx"
     model_version: str = "1.0.0"
     architecture: str = "Yv"
     parameters: str = "7B"
@@ -355,7 +355,7 @@ class PiscesLxPublishMetadataConfig:
 
 @dataclass
 class PiscesLxPublishConfig:
-    """Root configuration for PiscesL1 publishing pipeline.
+    """Root configuration for PiscesLx publishing pipeline.
 
     This is the main configuration class that contains all sub-configurations
     for the publishing workflow including export, docker build, registry publish,
@@ -391,7 +391,7 @@ class PiscesLxPublishConfig:
         Full Configuration:
             >>> config = PiscesLxPublishConfig(
             ...     model_size="7B",
-            ...     model_name="PiscesL1-7B",
+            ...     model_name="PiscesLx-7B",
             ...     model_path="./checkpoints/7B",
             ...     output_dir="./publish",
             ...     action=ExportAction.ALL,
@@ -408,7 +408,7 @@ class PiscesLxPublishConfig:
             ...     ),
             ...     metadata=PiscesLxPublishMetadataConfig(
             ...         license="Apache-2.0",
-            ...         description="PiscesL1 7B model"
+            ...         description="PiscesLx 7B model"
             ...     )
             ... )
 
@@ -417,7 +417,7 @@ class PiscesLxPublishConfig:
         from CLI arguments. See tools.publish.cli for details.
     """
     model_size: str = "7B"
-    model_name: str = "PiscesL1"
+    model_name: str = "PiscesLx"
     action: str = "all"
     model_path: str = ""
     output_dir: str = "./publish"
@@ -512,7 +512,7 @@ class PiscesLxPublishConfig:
         registry_config = PiscesLxPublishRegistryConfig(**registry_data) if registry_data else PiscesLxPublishRegistryConfig()
 
         metadata_config = PiscesLxPublishMetadataConfig(
-            model_name=metadata_data.get('model_name', data.get('model_name', 'PiscesL1')),
+            model_name=metadata_data.get('model_name', data.get('model_name', 'PiscesLx')),
             model_version=metadata_data.get('version', '1.0.0'),
             architecture=metadata_data.get('architecture', 'Yv'),
             parameters=metadata_data.get('parameters', data.get('model_size', '7B')),
@@ -522,7 +522,7 @@ class PiscesLxPublishConfig:
 
         return cls(
             model_size=data.get('model_size', '7B'),
-            model_name=data.get('model_name', 'PiscesL1'),
+            model_name=data.get('model_name', 'PiscesLx'),
             action=data.get('action', 'all'),
             model_path=data.get('model_path', ''),
             output_dir=data.get('output_dir', './publish'),

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 import json
 from typing import Dict, Any, Union, List
 
@@ -41,7 +43,7 @@ _LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("Pisces
 
 
 class PiscesLxToolsBenchmark:
-    """PiscesL1 Benchmark runner with EvalScope integration"""
+    """PiscesLx Benchmark runner with EvalScope integration"""
 
     def __init__(self, config: Union[str, Dict, PiscesLxToolsBenchmarkConfig]):
         self.config = self._load_config(config)

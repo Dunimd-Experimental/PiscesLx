@@ -24,7 +24,7 @@
 """
 Publish Orchestrator
 
-This module serves as the main orchestrator for the PiscesL1 publishing pipeline.
+This module serves as the main orchestrator for the PiscesLx publishing pipeline.
 It coordinates the export, docker build, and registry publish components to
 execute a complete publishing workflow.
 
@@ -89,7 +89,7 @@ _LOG = PiscesLxLogger("PiscesLx.Publish.Orchestrator", file_path=get_log_file("P
 
 
 class PiscesLxPublishOrchestrator:
-    """Main orchestrator for PiscesL1 publishing pipeline.
+    """Main orchestrator for PiscesLx publishing pipeline.
 
     Coordinates all stages of the publishing workflow including export,
     docker build, and registry publish.
@@ -549,7 +549,7 @@ class PiscesLxPublishOrchestrator:
         summary = self.get_results_summary()
 
         print("\n" + "=" * 60)
-        print("PiscesL1 Publishing Pipeline Summary")
+        print("PiscesLx Publishing Pipeline Summary")
         print("=" * 60)
         print(f"Model: {summary.get('model_name', 'N/A')} ({summary.get('model_size', 'N/A')})")
         print(f"Status: {summary.get('status', 'N/A').upper()}")

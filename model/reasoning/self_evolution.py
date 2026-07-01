@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Self-Evolution Frameworks for Yv Models.
 
 Implements:
@@ -35,6 +37,7 @@ import torch.nn.functional as F
 from typing import List, Dict, Optional, Tuple
 
 
+# Paper: Zweiger et al., "Self-Adapting Language Models (SEAL)," arXiv:2506.10943, 2025
 class YvSEAL(nn.Module):
     """Self-Adapting LLM framework.
 
@@ -144,6 +147,7 @@ class YvSEAL(nn.Module):
         return outputs
 
 
+# Paper: Lin et al., "Position: Agentic Evolution is the Path to Evolving LLMs," arXiv:2602.00359, 2026
 class YvAgenticEvolution(nn.Module):
     """Agentic Evolution framework.
 
@@ -229,6 +233,7 @@ class YvAgenticEvolution(nn.Module):
                 param_agent.copy_(param_parent + noise)
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — SOLAR meta-learning)
 class YvSOLAR(nn.Module):
     """Parameter-level meta-learning self-optimization.
 

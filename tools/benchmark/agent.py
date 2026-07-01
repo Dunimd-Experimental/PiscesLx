@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Copyright © 2025-2026 Wenze Wei & Annian Wang. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Agent benchmark evaluation suite for PiscesL1.
+Agent benchmark evaluation suite for PiscesLx.
 
 This module provides comprehensive agent capability evaluation including:
 - AgentBench: Multi-task agent evaluation
@@ -143,7 +145,7 @@ class PiscesLxToolsAgentMetrics:
 
 
 class PiscesLxToolsAgentEvaluator:
-    """Agent benchmark evaluator for PiscesL1 model."""
+    """Agent benchmark evaluator for PiscesLx model."""
     
     def __init__(
         self,
@@ -926,7 +928,7 @@ class PiscesLxToolsAgentBenchmarkRunner:
     def print_summary(self) -> None:
         """Print benchmark summary."""
         print("\n" + "=" * 60)
-        print("PiscesL1 Agent Benchmark Results")
+        print("PiscesLx Agent Benchmark Results")
         print("=" * 60)
         
         if "agent_summary" in self.results:

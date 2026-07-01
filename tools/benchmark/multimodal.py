@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Copyright © 2025-2026 Wenze Wei & Annian Wang. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Multimodal benchmark evaluation suite for PiscesL1.
+Multimodal benchmark evaluation suite for PiscesLx.
 
 This module provides comprehensive multimodal benchmark evaluation including:
 - Vision: VQAv2, GQA, TextVQA, ChartQA, MMMU, RefCOCO
@@ -91,7 +93,7 @@ class PiscesLxToolsMultimodalConfig:
 
 
 class PiscesLxToolsVisionEvaluator:
-    """Vision benchmark evaluator for PiscesL1 multimodal model."""
+    """Vision benchmark evaluator for PiscesLx multimodal model."""
     
     def __init__(
         self,
@@ -725,7 +727,7 @@ class PiscesLxToolsVisionEvaluator:
 
 
 class PiscesLxToolsAudioEvaluator:
-    """Audio benchmark evaluator for PiscesL1 multimodal model."""
+    """Audio benchmark evaluator for PiscesLx multimodal model."""
     
     def __init__(
         self,
@@ -1027,7 +1029,7 @@ class PiscesLxToolsAudioEvaluator:
 
 
 class PiscesLxToolsVideoEvaluator:
-    """Video benchmark evaluator for PiscesL1 multimodal model."""
+    """Video benchmark evaluator for PiscesLx multimodal model."""
     
     def __init__(
         self,
@@ -1440,7 +1442,7 @@ class PiscesLxToolsMultimodalBenchmarkRunner:
     def print_summary(self) -> None:
         """Print benchmark summary."""
         print("\n" + "=" * 60)
-        print("PiscesL1 Multimodal Benchmark Results")
+        print("PiscesLx Multimodal Benchmark Results")
         print("=" * 60)
         
         if "vision" in self.results:

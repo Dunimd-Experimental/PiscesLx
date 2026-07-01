@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 PiscesLx WMC Check API
 
@@ -45,7 +47,7 @@ Usage Examples:
     >>> # Detect video watermark
     >>> video_result = detect_video_watermark(video_tensor, verbose=True)
 
-Author: PiscesL1 Development Team
+Author: PiscesLx Development Team
 Version: 1.0.0
 """
 
@@ -545,7 +547,7 @@ def detect_model_watermark(model_path: str,
             - error: Optional[str] - Error message if detection failed
             
     Example:
-        >>> result = detect_model_watermark("model.pt", expected_owner="PiscesL1", verbose=True)
+        >>> result = detect_model_watermark("model.pt", expected_owner="PiscesLx", verbose=True)
         >>> if result["watermark_detected"]:
         ...     print(f"Owner verified: {result['owner_match']}")
     """

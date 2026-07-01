@@ -21,13 +21,15 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-"""
-Version Information Module for PiscesL1 Large Language Model Framework.
+from __future__ import annotations
 
-This module defines all version identifiers and release metadata for the PiscesL1
+"""
+Version Information Module for PiscesLx Large Language Model Framework.
+
+This module defines all version identifiers and release metadata for the PiscesLx
 project. Version information is critically important for maintaining compatibility,
 tracking changes, managing checkpoint compatibility, and ensuring proper integration
-across the entire PiscesL1 ecosystem.
+across the entire PiscesLx ecosystem.
 
 PURPOSE AND IMPORTANCE:
     Version tracking serves multiple critical functions in a large-scale ML framework:
@@ -53,7 +55,7 @@ PURPOSE AND IMPORTANCE:
        - Enables reproducible research and experiments
 
 SEMANTIC VERSIONING SCHEME:
-    PiscesL1 follows Semantic Versioning (SemVer) with the format: MAJOR.MINOR.PATCH
+    PiscesLx follows Semantic Versioning (SemVer) with the format: MAJOR.MINOR.PATCH
 
     MAJOR Version:
         - Incremented when making incompatible API changes
@@ -79,7 +81,7 @@ SEMANTIC VERSIONING SCHEME:
 VERSION IDENTIFIERS:
 
     VERSION (str):
-        Primary framework version identifier tracking the overall PiscesL1 system.
+        Primary framework version identifier tracking the overall PiscesLx system.
 
         Content Scope:
         - Model architecture implementation and variants
@@ -104,7 +106,7 @@ VERSION IDENTIFIERS:
             use_new_api()
 
         # Logging and diagnostics
-        logger.info(f"PiscesL1 Framework v{VERSION}")
+        logger.info(f"PiscesLx Framework v{VERSION}")
 
         # Dependency management
         requirements = [f"piscesl1=={VERSION}"]
@@ -144,7 +146,7 @@ VERSION IDENTIFIERS:
 VERSION HISTORY AND CHANGELOG:
 
     Version 1.0.0:
-        - Initial stable release of PiscesL1 framework
+        - Initial stable release of PiscesLx framework
         - Flagship model architecture with MoE and knowledge density optimization
         - Complete training pipeline with pre-training, SFT, and alignment stages
         - Support for model sizes: 0.5B, 1.5B, 7B, 32B, 64B, 70B, 128B, 314B, 671B, 1T
@@ -264,7 +266,7 @@ COMPLIANCE AND AUDIT:
 AUTHOR AND MAINTAINANCE:
 
     AUTHOR (str):
-        Project author/maintainer identifier for the PiscesL1 project.
+        Project author/maintainer identifier for the PiscesLx project.
 
         Purpose:
         - Primary contact for project-related inquiries
@@ -283,7 +285,7 @@ BEST PRACTICES:
        assert config['version'] == CVERSION
 
     2. Log Version Information:
-       logger.info(f"PiscesL1 v{VERSION} (Config v{CVERSION})")
+       logger.info(f"PiscesLx v{VERSION} (Config v{CVERSION})")
 
     3. Pin Versions in Production:
        requirements = [f"piscesl1=={VERSION}"]
@@ -323,5 +325,5 @@ REFERENCES:
 """
 
 VERSION = "1.0.0"
-CVERSION = "0.3.2"
+CVERSION = "0.4.0"
 AUTHOR = "Dunimd Team"

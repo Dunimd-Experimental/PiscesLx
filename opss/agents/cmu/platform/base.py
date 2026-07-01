@@ -21,14 +21,14 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 CMU Platform Base - Abstract Platform Adapter
 
 This module provides the abstract base class for all platform adapters,
 defining the unified interface for cross-platform device control.
 """
-
-from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod

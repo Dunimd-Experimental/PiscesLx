@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 CMU Safety Module - Three-Layer Security Sandbox
 
@@ -81,8 +83,6 @@ Usage Example:
     >>> if is_safe:
     ...     result = sandbox.execute_safe(action)
 """
-
-from __future__ import annotations
 
 import asyncio
 import hashlib

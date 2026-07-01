@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Multi-modal reasoning enhancer utilities for Yv agents.
 
 This module provides cross-modal reasoning enhancement capabilities that fuse
@@ -94,6 +96,7 @@ Note:
 import torch
 from torch import nn
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvMultiModalReasoningEnhancer(nn.Module):
     """Enhance reasoning states via cross-modal attention and iterative refinement.
     

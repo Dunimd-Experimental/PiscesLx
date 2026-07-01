@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 WMC Toolkit Validation Test Suite
 
@@ -43,7 +45,7 @@ Usage:
     >>> results = validate_wmc_toolkit()
     >>> print(f"Passed: {results['summary']['passed_tests']}/{results['summary']['total_tests']}")
 
-Author: PiscesL1 Development Team
+Author: PiscesLx Development Team
 Version: 1.0.0
 """
 

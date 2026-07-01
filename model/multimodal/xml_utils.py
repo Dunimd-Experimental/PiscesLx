@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Unified XML utilities for MCP and Agent system.
 
@@ -231,7 +233,7 @@ class YvMCPXMLParser:
                     parameters = json.loads(content.strip())
                     call.parameters = parameters
                 except json.JSONDecodeError:
-                    pass
+                    raise ValueError("Agentic XML content is not valid JSON parameters.")
             
             agentic_calls.append(call)
         
@@ -340,8 +342,8 @@ class YvMCPXMLParser:
             
             return True, None
         
-        except Exception as e:
-            return False, f"XML validation error: {str(e)}"
+        except (ValueError, AttributeError, TypeError, KeyError) as e:
+            raise RuntimeError(f"XML validation error: {str(e)}") from e
     
     def parse_tool_parameters(self, param_text: str) -> Dict[str, Any]:
         try:

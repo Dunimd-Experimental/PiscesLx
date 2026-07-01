@@ -21,10 +21,12 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-"""
-PiscesL1 Management Tool - Command-Line Interface Entry Point.
+from __future__ import annotations
 
-This module serves as the primary entry point for the PiscesL1 Large Language
+"""
+PiscesLx Management Tool - Command-Line Interface Entry Point.
+
+This module serves as the primary entry point for the PiscesLx Large Language
 Model framework's command-line interface. It provides a unified interface for
 all framework operations including training, backend inference service, 
 benchmarking, monitoring, and system management.
@@ -311,6 +313,8 @@ def _build_train_argv_from_args(args) -> list:
         ("resume_ckpt", "--resume_ckpt"),
         ("train_mode", "--train_mode"),
         ("train_config", "--train_config"),
+        ("enta", "--enta"),
+        ("enta_config", "--enta_config"),
         ("dry_run", "--dry_run"),
         ("seq_len", "--seq_len"),
         ("quant", "--quant"),
@@ -391,7 +395,7 @@ def _load_yaml(path: "Path") -> dict:
 # =============================================================================
 def main():
     """
-    Main entry point for the PiscesL1 management tool.
+    Main entry point for the PiscesLx management tool.
     
     This function serves as the primary dispatcher for all CLI commands. It
     parses command-line arguments, validates the requested command, and
@@ -468,7 +472,7 @@ def main():
     # Create the main argument parser with a descriptive help message
     # The parser handles all CLI argument parsing and validation
     parser = argparse.ArgumentParser(
-        description="PiscesL1 Management Tool (manage.py)"
+        description="PiscesLx Management Tool (manage.py)"
     )
     
     # -------------------------------------------------------------------------
@@ -1061,6 +1065,22 @@ def main():
         type=str,  # Config path as string
         default=None,  # None means use default config
         help='Training config file path (JSON/YAML)'
+    )
+    
+    # --enta: Enable EnTA outer training loop
+    parser.add_argument(
+        '--enta', 
+        action='store_true',  # Boolean flag
+        help='Enable EnTA outer training loop'
+    )
+    
+    # --enta_config: Path to EnTA config file
+    # Empty string means auto-discover configs/teachers.yaml
+    parser.add_argument(
+        '--enta_config', 
+        type=str,  # Config path as string
+        default='',  # Empty means auto-discover
+        help='Path to EnTA config file (default: auto-discover configs/teachers.yaml)'
     )
     
     # --dry_run: Flag to resolve configs without executing
@@ -1951,7 +1971,7 @@ def main():
     # -------------------------------------------------------------------------
     # PLXS COMMAND
     # -------------------------------------------------------------------------
-    # Start Xi Studio (graphical workstation for PiscesL1)
+    # Start Xi Studio (graphical workstation for PiscesLx)
     # Launches both the backend API server (port 3140) and the frontend
     elif args.command == 'plxs':
         from xi.xsc import XiServer

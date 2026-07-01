@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-PiscesL1 Large Language Model Framework
+PiscesLx Large Language Model Framework
 
 DMSC-based infrastructure with LLM-specific extensions.
 
@@ -33,7 +35,7 @@ Core Components (DMSC):
     - PiscesLxFilesystem: File operations (DMSC)
     - PiscesLxCoreContext: Service context (DMSC)
 
-LLM-Specific Components (PiscesL1):
+LLM-Specific Components (PiscesLx):
     - PiscesLxTokenManager: Token counting
     - PiscesLxPromptTemplate: Prompt templates
     - PiscesLxLLMClient: LLM client

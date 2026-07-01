@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """DAPO: Decoupled Clipping and Dynamic Sampling Policy Optimization.
 
 Based on 2025 DAPO paper. Upgrades GRPO with:
@@ -35,6 +37,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple, List
 
 
+# Paper: Yu et al., "DAPO: An Open-Source RL System from the Ground Up", arXiv:2503.14476
 class YvDAPO:
     """DAPO policy optimization trainer.
 

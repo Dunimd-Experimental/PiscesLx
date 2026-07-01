@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Environment Setup Module for PiscesL1.
+Environment Setup Module for PiscesLx.
 
 This module provides automated environment setup functionality for the
-PiscesL1 framework, including virtual environment creation, dependency
+PiscesLx framework, including virtual environment creation, dependency
 installation, and system configuration. It ensures a consistent and
 reproducible development environment across different platforms.
 
@@ -281,10 +283,10 @@ def logger_warning(message):
 
 def setup(args):
     """
-    Set up the PiscesL1 development environment automatically.
+    Set up the PiscesLx development environment automatically.
     
     This function orchestrates the complete environment setup process for
-    the PiscesL1 framework. It handles virtual environment creation, pip
+    the PiscesLx framework. It handles virtual environment creation, pip
     upgrades, and dependency installation with robust error handling and
     fallback mechanisms.
     

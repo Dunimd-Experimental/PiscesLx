@@ -85,7 +85,7 @@ from datetime import datetime
 from utils.dc import PiscesLxLogger, PiscesLxSystemMonitor
 
 from .config import InferenceConfig
-from model import YvConfig, YvModel
+from model import YvConfig, YvModelForCausalLM
 from model.tokenizer import YvTokenizer
 from model.multimodal.agentic import YvAgentic
 from opss.am import POPSSToolRegistry, POPSSToolType
@@ -322,8 +322,8 @@ class PiscesLxInferenceEngine(object):
             model_size = getattr(self.config.model, 'model_size', '0.5B')
             cfg_path = self._resolve_ruchbah_config_path(model_size, self.config.model.model_path)
             
-            cfg = YvConfig.from_json(str(cfg_path))
-            self.model = YvModel(cfg)
+            cfg = YvConfig.from_yaml(str(cfg_path))
+            self.model = YvModelForCausalLM(cfg)
             
             ckpt_path = self.config.model.model_path
             if ckpt_path and Path(ckpt_path).exists():
@@ -429,7 +429,10 @@ class PiscesLxInferenceEngine(object):
                 candidates.append(p)
             candidates.append(p / "config.json")
         
+        # Prefer .yaml (new format), fallback to .json (legacy)
+        candidates.append(Path("configs") / "model" / f"{model_size}.yaml")
         candidates.append(Path("configs") / "model" / f"{model_size}.json")
+        candidates.append(Path("configs") / f"{model_size}.yaml")
         candidates.append(Path("configs") / f"{model_size}.json")
         
         for cand in candidates:

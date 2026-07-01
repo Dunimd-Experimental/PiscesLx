@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-Configuration Checker Module for PiscesL1.
+Configuration Checker Module for PiscesLx.
 
 This module provides the PiscesLxConfigChecker class for validating
 model and training configuration files.

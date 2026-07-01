@@ -21,7 +21,9 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-"""Dynamic multimodal fusion utilities for PiscesL1 Yv agents.
+from __future__ import annotations
+
+"""Dynamic multimodal fusion utilities for PiscesLx Yv agents.
 
 This module provides comprehensive multimodal fusion components for the Yv
 model, including dynamic cross-modal attention, modality-specific gating, and
@@ -332,6 +334,7 @@ class YvUnifiedMultimodalTokenizer(nn.Module):
         return unified
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvDynamicModalFusion(nn.Module):
     """Dynamic multimodal fusion backbone for Yv workflows.
 
@@ -683,7 +686,10 @@ class YvDynamicModalFusion(nn.Module):
             tokens.append(tok + pos + modal_emb)
 
         if not tokens:
-            return torch.zeros(1, 1, self.hidden_size, device=device or torch.device("cpu"))
+            raise ValueError(
+                "YvDynamicModalFusion received no valid modality tensors. "
+                "Fusion now requires real modality features instead of zero fallbacks."
+            )
 
         seq = torch.cat(tokens, dim=1)
         fused = self.cross_modal_attn(seq, seq, seq)
@@ -706,7 +712,10 @@ class YvDynamicModalFusion(nn.Module):
         """
         unified = self.native_tokenizer(modal_features)
         if not unified:
-            return torch.zeros(1, self.native_output_tokens, self.hidden_size, device=next(self.parameters()).device)
+            raise ValueError(
+                "YvDynamicModalFusion(native) received no valid modality tensors. "
+                "Native fusion now requires real modality features."
+            )
 
         # Concatenate all modality token sequences into one unified sequence.
         seq = torch.cat(list(unified.values()), dim=1)
@@ -758,7 +767,7 @@ class YvDynamicModalFusion(nn.Module):
         Note:
             Caches output for efficient repeated fusion with same modality config.
             Updates generation cache for modality-specific generation.
-            Returns zero tensor if no modalities are provided.
+            Raises ValueError if no valid modalities are provided.
         """
         # Cache lookup
         sig = self._signature(modal_features)
@@ -823,6 +832,7 @@ from .enhanced_fusion import (
 )
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvRecurrentModalRefiner(nn.Module):
     """Recurrent-Depth Transformer modal refiner (RDT-based).
 

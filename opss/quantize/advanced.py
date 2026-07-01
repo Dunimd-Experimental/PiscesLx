@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Advanced Quantization Operator - Intelligent Quantization and Sensitivity Analysis
 Based on utils/quantization/advanced.py

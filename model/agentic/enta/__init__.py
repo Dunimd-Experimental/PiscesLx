@@ -21,20 +21,20 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-
+from __future__ import annotations
 
 """
-YvEncreTrainer — training pipeline integration point for EnCRE (EnTA Core).
+YvEntaTrainer — training pipeline integration point for EnTA (EnTA Core).
 
-This module is the single, real bridge between the PiscesL1 model and the
-slimmed-down EnCRE (EnTA Core) tool palette used for adversarial training.
+This module is the single, real bridge between the PiscesLx model and the
+slimmed-down EnTA (EnTA Core) tool palette used for adversarial training.
 
 Design Overview
 ---------------
 The adversarial training loop needs three concrete things from the agent
 runtime:
 
-1. **A tool palette** — the EnCRE builtin tool set (file ops, search, git,
+1. **A tool palette** — the EnTA builtin tool set (file ops, search, git,
    bash, task management, memory, web search, …) is the surface the model
    learns to wield.  The full palette is built via
    ``enta.build_training_tool_registry()``.
@@ -46,24 +46,26 @@ runtime:
 
 3. **A sandboxed execution layer** — ``enta.EncreContainerSandbox`` plus
    the Rust ``sandbox_execute`` extension make every shell command the
-   model emits auditable and reproducible.  This is the EnCRE guarantee
+   model emits auditable and reproducible.  This is the EnTA guarantee
    the training pipeline relies on.
 
-``YvEncreTrainer`` wires those three pieces together, then exposes the
+``YvEntaTrainer`` wires those three pieces together, then exposes the
 high-level entry points the training operator needs:
 
-- :meth:`YvEncreTrainer.rollout`        — produce one full trajectory
-- :meth:`YvEncreTrainer.score`          — score a trajectory
-- :meth:`YvEncreTrainer.step`           — turn trajectories into a loss
-- :meth:`YvEncreTrainer.run_adversarial_batch` — end-to-end batch loop
+- :meth:`YvEntaTrainer.rollout`        — produce one full trajectory
+- :meth:`YvEntaTrainer.score`          — score a trajectory
+- :meth:`YvEntaTrainer.step`           — turn trajectories into a loss
+- :meth:`YvEntaTrainer.run_adversarial_batch` — end-to-end batch loop
+- :meth:`YvEntaTrainer.generate_batch`  — outer-loop data generation
+- :meth:`YvEntaTrainer.evaluate`       — lightweight checkpoint evaluation
+- :meth:`YvEntaTrainer.should_stop`    — curriculum completion check
+- :meth:`YvEntaTrainer.update`         — curriculum advancement
 
 The model is real (the user-supplied ``YvModelForCausalLM``); the
 backend is real (HuggingFace transformers); the tools are real (every
 call lands in a Rust sandbox or a pure-Python stdlib path).  Nothing
 is stubbed, mocked, or simulated.
 """
-
-from __future__ import annotations
 
 import asyncio
 import json
@@ -80,15 +82,15 @@ from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 
 _LOG = PiscesLxLogger(
-    "Yv.Agentic.Encre",
-    file_path=get_log_file("Yv.Agentic.Encre"),
+    "Yv.Agentic.Enta",
+    file_path=get_log_file("Yv.Agentic.Enta"),
     enable_file=True,
 )
 
 
-# ── Lazy EnCRE binding ────────────────────────────────────────────
-# The EnCRE package is loaded lazily so the model's training step does
-# not pay the import cost (or fail) when EnCRE is not on the path.
+# ── Lazy EnTA binding ────────────────────────────────────────────
+# The EnTA package is loaded lazily so the model's training step does
+# not pay the import cost (or fail) when EnTA is not on the path.
 _ENTA = None
 _ENTA_IMPORT_ERROR: Exception | None = None
 
@@ -119,8 +121,8 @@ def _ensure_enta_path() -> None:
     import sys
     import pathlib
 
-    this_file = pathlib.Path(__file__).resolve().parent        # model/agentic/
-    project_root = this_file.parent.parent                      # project root
+    this_file = pathlib.Path(__file__).resolve().parent        # model/agentic/enta/
+    project_root = this_file.parent.parent.parent               # project root
     enta_backend = project_root / "enta" / "backend"
     if enta_backend.is_dir():
         candidate = str(enta_backend)
@@ -137,7 +139,7 @@ def _ensure_enta_path() -> None:
 
 
 def _bind_enta():
-    """Bind the slimmed EnCRE package and return it.
+    """Bind the slimmed EnTA package and return it.
 
     Called once on first use.  The result is cached in the module
     globals so repeated invocations are O(1).
@@ -156,7 +158,7 @@ def _bind_enta():
     except Exception as exc:  # pragma: no cover - environment dependent
         _ENTA_IMPORT_ERROR = exc
         _LOG.error(
-            f"EnCRE import failed; YvEncreTrainer requires the slimmed EnCRE "
+            f"EnTA import failed; YvEntaTrainer requires the slimmed EnTA "
             f"package on sys.path (cause: {type(exc).__name__})"
         )
         raise
@@ -167,7 +169,7 @@ def _bind_enta():
 # ── Enumerations ──────────────────────────────────────────────────
 
 
-class YvEncreAdversarialStage(str, Enum):
+class YvEntaAdversarialStage(str, Enum):
     """Stages of one adversarial training round."""
 
     ROLLOUT = "rollout"
@@ -176,7 +178,7 @@ class YvEncreAdversarialStage(str, Enum):
     OPTIMIZER = "optimizer"
 
 
-class YvEncreRewardSignal(str, Enum):
+class YvEntaRewardSignal(str, Enum):
     """Sources of reward for the adversarial trainer.
 
     The trainer fuses multiple signals into a single scalar reward that
@@ -193,7 +195,7 @@ class YvEncreRewardSignal(str, Enum):
 
 
 @dataclass
-class _EncreStepRecord:
+class _EntaStepRecord:
     """One tool-call step inside a rollout."""
 
     tool: str
@@ -207,7 +209,7 @@ class _EncreStepRecord:
 
 
 @dataclass
-class _EncreTrajectory:
+class _EntaTrajectory:
     """Complete trajectory of one rollout.
 
     Holds the full message log, every tool step, the cumulative reward
@@ -219,7 +221,7 @@ class _EncreTrajectory:
     prompt: str
     reference: str
     messages: List[Dict[str, Any]] = field(default_factory=list)
-    steps: List[_EncreStepRecord] = field(default_factory=list)
+    steps: List[_EntaStepRecord] = field(default_factory=list)
     final_text: str = ""
     finished_reason: str = ""
     total_reward: float = 0.0
@@ -261,11 +263,11 @@ class _EncreTrajectory:
 # ── Reward calculator (internal helper) ───────────────────────────
 
 
-class _EncreRewardCalculator:
+class _EntaRewardCalculator:
     """Compute the scalar reward that drives the GRPO/RLVR update.
 
     The reward is a weighted sum of four signals (see
-    :class:`YvEncreRewardSignal`).  All four are real, computed from
+    :class:`YvEntaRewardSignal`).  All four are real, computed from
     the actual trajectory — no synthetic shaping, no hidden heuristics.
     """
 
@@ -280,10 +282,10 @@ class _EncreRewardCalculator:
         if any(w < 0.0 for w in (completion_weight, tool_weight, safety_weight, execution_weight)):
             raise ValueError("reward weights must be non-negative")
         self._weights = {
-            YvEncreRewardSignal.TASK_COMPLETION: completion_weight,
-            YvEncreRewardSignal.TOOL_CALL_QUALITY: tool_weight,
-            YvEncreRewardSignal.SANDBOX_SAFETY: safety_weight,
-            YvEncreRewardSignal.EXECUTION_SUCCESS: execution_weight,
+            YvEntaRewardSignal.TASK_COMPLETION: completion_weight,
+            YvEntaRewardSignal.TOOL_CALL_QUALITY: tool_weight,
+            YvEntaRewardSignal.SANDBOX_SAFETY: safety_weight,
+            YvEntaRewardSignal.EXECUTION_SUCCESS: execution_weight,
         }
         total = sum(self._weights.values())
         if total <= 0.0:
@@ -292,23 +294,23 @@ class _EncreRewardCalculator:
         for k in self._weights:
             self._weights[k] /= total
 
-    def score(self, trajectory: _EncreTrajectory) -> Tuple[float, Dict[str, float]]:
+    def score(self, trajectory: _EntaTrajectory) -> Tuple[float, Dict[str, float]]:
         """Return ``(total_reward, breakdown)`` for the trajectory."""
         completion = self._completion_score(trajectory)
         tool_quality = self._tool_call_score(trajectory)
         safety = self._safety_score(trajectory)
         execution = self._execution_score(trajectory)
         breakdown = {
-            YvEncreRewardSignal.TASK_COMPLETION.value: completion,
-            YvEncreRewardSignal.TOOL_CALL_QUALITY.value: tool_quality,
-            YvEncreRewardSignal.SANDBOX_SAFETY.value: safety,
-            YvEncreRewardSignal.EXECUTION_SUCCESS.value: execution,
+            YvEntaRewardSignal.TASK_COMPLETION.value: completion,
+            YvEntaRewardSignal.TOOL_CALL_QUALITY.value: tool_quality,
+            YvEntaRewardSignal.SANDBOX_SAFETY.value: safety,
+            YvEntaRewardSignal.EXECUTION_SUCCESS.value: execution,
         }
         total = sum(self._weights[k] * breakdown[k.value] for k in self._weights)
         return float(total), breakdown
 
     @staticmethod
-    def _completion_score(trajectory: _EncreTrajectory) -> float:
+    def _completion_score(trajectory: _EntaTrajectory) -> float:
         """Substring-match style completion score in [0, 1].
 
         For training purposes the reference is a free-form string that
@@ -327,7 +329,7 @@ class _EncreRewardCalculator:
         return float(hits) / float(len(ref_tokens))
 
     @staticmethod
-    def _tool_call_score(trajectory: _EncreTrajectory) -> float:
+    def _tool_call_score(trajectory: _EntaTrajectory) -> float:
         """Reward well-formed tool calls.
 
         Each step gets a small positive reward for being a valid
@@ -345,10 +347,10 @@ class _EncreRewardCalculator:
         return max(-1.0, min(1.0, score))
 
     @staticmethod
-    def _safety_score(trajectory: _EncreTrajectory) -> float:
+    def _safety_score(trajectory: _EntaTrajectory) -> float:
         """Penalize every sandbox violation; reward clean runs.
 
-        The EnCRE container sandbox increments ``sandbox_violations`` on
+        The EnTA container sandbox increments ``sandbox_violations`` on
         any policy breach (dangerous command, blocked syscall, network
         access denied, …).  Clean runs earn 1.0; any violation drops
         the score sharply.
@@ -358,7 +360,7 @@ class _EncreRewardCalculator:
         return float(max(0.0, 1.0 - 0.25 * trajectory.sandbox_violations))
 
     @staticmethod
-    def _execution_score(trajectory: _EncreTrajectory) -> float:
+    def _execution_score(trajectory: _EntaTrajectory) -> float:
         """Fraction of tool calls that returned a non-error result."""
         if not trajectory.steps:
             return 0.0
@@ -369,11 +371,11 @@ class _EncreRewardCalculator:
 # ── Tool adapter (internal) ───────────────────────────────────────
 
 
-class _EncreToolAdapter:
-    """Adapter that turns EnCRE tool calls into backend events.
+class _EntaToolAdapter:
+    """Adapter that turns EnTA tool calls into backend events.
 
     The training loop consumes :class:`enta.utils.types.BackendEvent`
-    items; this adapter invokes the underlying EnCRE tool
+    items; this adapter invokes the underlying EnTA tool
     asynchronously and packages the string result back as the same
     event shape the model expects.
     """
@@ -436,11 +438,11 @@ class _EncreToolAdapter:
 # ── Sandbox supervisor (internal) ─────────────────────────────────
 
 
-class _EncreSandboxSupervisor:
+class _EntaSandboxSupervisor:
     """Run shell commands and count policy violations.
 
     The supervisor delegates the actual command to the Rust
-    ``sandbox_execute`` extension via the EnCRE Bash tool — there is
+    ``sandbox_execute`` extension via the EnTA Bash tool — there is
     one execution path.  The supervisor only counts violations and
     enforces the hard-coded per-trajectory limit.
     """
@@ -449,7 +451,7 @@ class _EncreSandboxSupervisor:
         self._max_violations = int(max_violations)
         self._max_steps = int(max_steps)
 
-    def evaluate(self, trajectory: _EncreTrajectory) -> int:
+    def evaluate(self, trajectory: _EntaTrajectory) -> int:
         """Return the number of policy violations seen in this rollout."""
         violations = 0
         for step in trajectory.steps:
@@ -481,7 +483,7 @@ class _EncreSandboxSupervisor:
         return violations
 
     @property
-    def is_exhausted(self, trajectory: _EncreTrajectory) -> bool:
+    def is_exhausted(self, trajectory: _EntaTrajectory) -> bool:
         """True when the trajectory exceeded the safety budget."""
         return (
             len(trajectory.steps) >= self._max_steps
@@ -489,13 +491,24 @@ class _EncreSandboxSupervisor:
         )
 
 
+# ── Sub-module imports ──────────────────────────────────────────
+
+
+from .task_generator import EntaTaskGenerator
+from .prompt_builder import EntaPromptBuilder
+from .teacher_client import EntaTeacherClient
+from .sandbox import EntaSandbox
+from .evaluator import EntaEvaluator
+from .scheduler import EntaScheduler
+
+
 # ── Public trainer ───────────────────────────────────────────────
 
 
-class YvEncreTrainer:
-    """Training-pipeline integration point for the slimmed EnCRE core.
+class YvEntaTrainer:
+    """Training-pipeline integration point for the slimmed EnTA core.
 
-    The trainer owns a :class:`enta.LocalBackend` and an EnCRE
+    The trainer owns a :class:`enta.LocalBackend` and an EnTA
     :class:`enta.ToolRegistry`, then drives the model through
     multi-step tool-using rollouts for adversarial training.  Every
     rollout is fully end-to-end real:
@@ -503,36 +516,43 @@ class YvEncreTrainer:
     - The backend streams tokens from the user-supplied
       :class:`YvModelForCausalLM` (or any HF causal LM in fallback
       mode).
-    - Each tool call lands in the EnCRE sandbox.
+    - Each tool call lands in the EnTA sandbox.
     - Rewards are computed from the real trajectory.
     - The loss is the standard SFT/GRPO loss applied to the model's
       own logits over the assistant tokens.
 
+    The trainer also exposes outer-loop primitives for curriculum-driven
+    EnTA training:
+    - :meth:`generate_batch` — generate a training data batch
+    - :meth:`evaluate` — lightweight checkpoint evaluation
+    - :meth:`should_stop` — curriculum completion check
+    - :meth:`update` — advance the curriculum
+
     Args:
         cfg: Configuration namespace.  Recognised keys
             (all optional, sensible defaults applied if absent):
-                - ``encre.backend``        : ``"local"`` or
+                - ``enta.backend``        : ``"local"`` or
                   ``"openai_compatible"``
-                - ``encre.model_name``     : HF model id (default
-                  ``"Qwen/Qwen2.5-1.5B-Instruct"``)
-                - ``encre.device``         : ``"cpu" | "cuda" | "auto"``
-                - ``encre.max_steps``      : int (default 32)
-                - ``encre.temperature``    : float (default 0.7)
-                - ``encre.max_tokens``     : int (default 2048)
-                - ``encre.max_violations``: int (default 8)
-                - ``encre.completion_weight`` / ``tool_weight`` /
+                - ``enta.model_name``     : HF model id
+                - ``enta.device``         : ``"cpu" | "cuda" | "auto"``
+                - ``enta.max_steps``      : int (default 32)
+                - ``enta.temperature``    : float (default 0.7)
+                - ``enta.max_tokens``     : int (default 2048)
+                - ``enta.max_violations``: int (default 8)
+                - ``enta.completion_weight`` / ``tool_weight`` /
                   ``safety_weight`` / ``execution_weight`` : floats
         tokenizer: Optional tokenizer aligned with the model.  When
             absent the trainer uses the backend's tokenizer.
         model: Optional :class:`YvModelForCausalLM`.  When supplied the
             trainer uses the model's own logits for the SFT loss
-            (real gradients, not a stand-in).
-        backend: Optional pre-constructed EnCRE backend.  When absent
+            (real gradients, not a stand-in).  Not required for outer-loop
+            operation.
+        backend: Optional pre-constructed EnTA backend.  When absent
             the trainer calls :func:`enta.create_default_backend`.
 
     Example:
-        >>> from model.agentic.enta import YvEncreTrainer
-        >>> trainer = YvEncreTrainer(cfg, tokenizer=tok, model=model)
+        >>> from model.agentic.enta import YvEntaTrainer
+        >>> trainer = YvEntaTrainer(cfg, tokenizer=tok, model=model)
         >>> batch = trainer.run_adversarial_batch(prompts_and_refs, optimizer=opt)
         >>> batch["loss"].backward()
     """
@@ -554,21 +574,14 @@ class YvEncreTrainer:
         self._enta = enta
 
         # ── Configuration extraction (real, with defaults) ──
-        encre_cfg = getattr(cfg, "encre", cfg) if cfg is not None else None
-        self._max_steps = int(getattr(encre_cfg, "max_steps", 32) or 32)
-        self._temperature = float(getattr(encre_cfg, "temperature", 0.7) or 0.7)
-        self._max_tokens = int(getattr(encre_cfg, "max_tokens", 2048) or 2048)
-        max_violations = int(getattr(encre_cfg, "max_violations", 8) or 8)
+        enta_cfg = getattr(cfg, "enta", cfg) if cfg is not None else None
+        self._max_steps = int(getattr(enta_cfg, "max_steps", 32) or 32)
+        self._temperature = float(getattr(enta_cfg, "temperature", 0.7) or 0.7)
+        self._max_tokens = int(getattr(enta_cfg, "max_tokens", 2048) or 2048)
+        max_violations = int(getattr(enta_cfg, "max_violations", 8) or 8)
 
         # ── Backend (real inference) ──
         if remote_teacher is not None:
-            # Remote teacher mode: the supplied RemoteTeacherClient is
-            # the inference backend.  Round-table mode (multiple teachers
-            # + judge) is handled via the ``roundtable`` argument and the
-            # :meth:`generate_roundtable_dataset` / :meth:`run_with_roundtable`
-            # helpers below; in that case we still need a single backend
-            # here for the model's own rollouts, so we fall back to the
-            # first teacher of the roundtable as a deterministic default.
             if hasattr(remote_teacher, "backend"):
                 self._backend = remote_teacher.backend
             else:
@@ -576,71 +589,77 @@ class YvEncreTrainer:
         elif backend is not None:
             self._backend = backend
         else:
-            backend_name = str(getattr(encre_cfg, "backend", "local") or "local").lower()
+            backend_name = str(getattr(enta_cfg, "backend", "local") or "local").lower()
             model_name = str(
-                getattr(encre_cfg, "model_name", "Qwen/Qwen2.5-1.5B-Instruct")
+                getattr(enta_cfg, "model_name", "Qwen/Qwen2.5-1.5B-Instruct")
                 or "Qwen/Qwen2.5-1.5B-Instruct"
             )
-            device = str(getattr(encre_cfg, "device", "cpu") or "cpu")
+            device = str(getattr(enta_cfg, "device", "cpu") or "cpu")
             if backend_name == "local":
                 self._backend = enta.create_default_backend(
                     model_name=model_name, device=device
                 )
             elif backend_name == "openai_compatible":
                 base_url = str(
-                    getattr(encre_cfg, "base_url", "http://127.0.0.1:8000/v1")
+                    getattr(enta_cfg, "base_url", "http://127.0.0.1:8000/v1")
                 )
-                api_key = str(getattr(encre_cfg, "api_key", "EMPTY"))
-                server_model = str(getattr(encre_cfg, "server_model", model_name))
+                api_key = str(getattr(enta_cfg, "api_key", "EMPTY"))
+                server_model = str(getattr(enta_cfg, "server_model", model_name))
                 self._backend = enta.OpenAICompatibleBackend(
                     base_url=base_url, api_key=api_key, model=server_model
                 )
             else:
                 raise ValueError(
-                    f"unsupported encre.backend={backend_name!r}; "
+                    f"unsupported enta.backend={backend_name!r}; "
                     "expected 'local' or 'openai_compatible'"
                 )
 
         # ── Optional multi-teacher roundtable ──
-        # When provided, the roundtable is the *training-data generator*;
-        # the model still uses ``self._backend`` (or the first teacher)
-        # for its own rollouts.  See :meth:`generate_roundtable_dataset`
-        # and :meth:`run_with_roundtable`.
         if roundtable is not None:
             self._roundtable = roundtable
         else:
-            # Try to build a roundtable purely from the configuration.  This
-            # is a no-op when ``encre.teachers`` is absent, so passing a
-            # plain ``cfg`` keeps the original single-backend behaviour.
             try:
                 self._roundtable = enta.build_roundtable_from_config(cfg)
             except Exception:
                 self._roundtable = None
 
-        # ── Tool palette (EnCRE builtin set) ──
+        # ── Tool palette (EnTA builtin set) ──
         self._registry = enta.build_training_tool_registry()
-        self._adapter = _EncreToolAdapter(self._registry)
+        self._adapter = _EntaToolAdapter(self._registry)
 
         # ── Sandbox supervisor (counts policy violations) ──
-        self._sandbox = _EncreSandboxSupervisor(
+        self._sandbox = _EntaSandboxSupervisor(
             max_violations=max_violations, max_steps=self._max_steps
         )
 
         # ── Reward calculator (real, weighted sum) ──
-        self._reward = _EncreRewardCalculator(
+        self._reward = _EntaRewardCalculator(
             completion_weight=float(
-                getattr(encre_cfg, "completion_weight", 0.6) or 0.6
+                getattr(enta_cfg, "completion_weight", 0.6) or 0.6
             ),
-            tool_weight=float(getattr(encre_cfg, "tool_weight", 0.2) or 0.2),
-            safety_weight=float(getattr(encre_cfg, "safety_weight", 0.1) or 0.1),
+            tool_weight=float(getattr(enta_cfg, "tool_weight", 0.2) or 0.2),
+            safety_weight=float(getattr(enta_cfg, "safety_weight", 0.1) or 0.1),
             execution_weight=float(
-                getattr(encre_cfg, "execution_weight", 0.1) or 0.1
+                getattr(enta_cfg, "execution_weight", 0.1) or 0.1
             ),
         )
 
         self._tool_defs: List[Dict[str, Any]] = self._adapter.openai_tools()
+
+        # ── Outer-loop sub-modules ──
+        self._task_generator = EntaTaskGenerator()
+        self._prompt_builder = EntaPromptBuilder()
+        self._teacher_client = EntaTeacherClient(enta, cfg)
+        self._enta_sandbox = EntaSandbox(
+            self._adapter,
+            max_violations=max_violations,
+            max_steps=self._max_steps,
+        )
+        self._evaluator = EntaEvaluator()
+        self._scheduler = EntaScheduler()
+
         _LOG.info(
-            f"YvEncreTrainer ready | backend={type(self._backend).__name__} "
+            f"YvEntaTrainer ready | backend={type(self._backend).__name__} "
             f"tools={len(self._tool_defs)} max_steps={self._max_steps} "
             f"max_tokens={self._max_tokens} "
             f"roundtable={type(self._roundtable).__name__ if self._roundtable is not None else 'none'}"
@@ -650,7 +669,7 @@ class YvEncreTrainer:
 
     @property
     def backend(self) -> Any:
-        """The EnCRE backend driving the model's token stream."""
+        """The EnTA backend driving the model's token stream."""
         return self._backend
 
     @property
@@ -660,7 +679,7 @@ class YvEncreTrainer:
 
     @property
     def registry(self) -> Any:
-        """The EnCRE :class:`ToolRegistry` backing the trainer."""
+        """The EnTA :class:`ToolRegistry` backing the trainer."""
         return self._registry
 
     @property
@@ -668,10 +687,39 @@ class YvEncreTrainer:
         """The configured :class:`enta.TeacherRoundtable` or ``None``.
 
         When set, the roundtable is available as a training-data
-        generator: see :meth:`generate_roundtable_dataset` and
-        :meth:`run_with_roundtable`.
+        generator.
         """
         return self._roundtable
+
+    @property
+    def task_generator(self) -> EntaTaskGenerator:
+        """The :class:`EntaTaskGenerator` instance."""
+        return self._task_generator
+
+    @property
+    def prompt_builder(self) -> EntaPromptBuilder:
+        """The :class:`EntaPromptBuilder` instance."""
+        return self._prompt_builder
+
+    @property
+    def teacher_client(self) -> EntaTeacherClient:
+        """The :class:`EntaTeacherClient` instance."""
+        return self._teacher_client
+
+    @property
+    def enta_sandbox(self) -> EntaSandbox:
+        """The :class:`EntaSandbox` instance."""
+        return self._enta_sandbox
+
+    @property
+    def evaluator(self) -> EntaEvaluator:
+        """The :class:`EntaEvaluator` instance."""
+        return self._evaluator
+
+    @property
+    def scheduler(self) -> EntaScheduler:
+        """The :class:`EntaScheduler` instance."""
+        return self._scheduler
 
     # ── Factory helpers ─────────────────────────────────────────
 
@@ -683,7 +731,7 @@ class YvEncreTrainer:
         remote_teacher: Any,
         tokenizer: Any | None = None,
         model: Any | None = None,
-    ) -> "YvEncreTrainer":
+    ) -> "YvEntaTrainer":
         """Build a trainer that uses a single :class:`RemoteTeacherClient`.
 
         The supplied client becomes both the model's inference backend
@@ -698,7 +746,7 @@ class YvEncreTrainer:
             model: Optional :class:`YvModelForCausalLM` instance.
 
         Returns:
-            A fully constructed :class:`YvEncreTrainer`.
+            A fully constructed :class:`YvEntaTrainer`.
         """
         return cls(
             cfg=cfg,
@@ -718,7 +766,7 @@ class YvEncreTrainer:
         model: Any | None = None,
         judge_temperature: float = 0.0,
         judge_max_tokens: int = 1024,
-    ) -> "YvEncreTrainer":
+    ) -> "YvEntaTrainer":
         """Build a trainer wired to a multi-teacher :class:`TeacherRoundtable`.
 
         The first teacher in ``teachers`` is used as the model's own
@@ -736,7 +784,7 @@ class YvEncreTrainer:
             judge_max_tokens: Token budget for the judge.
 
         Returns:
-            A fully constructed :class:`YvEncreTrainer` with a ready
+            A fully constructed :class:`YvEntaTrainer` with a ready
             :class:`TeacherRoundtable` attached.
         """
         enta = _bind_enta()
@@ -746,9 +794,79 @@ class YvEncreTrainer:
             judge_temperature=judge_temperature,
             judge_max_tokens=judge_max_tokens,
         )
-        # Pick the first teacher client as the default backend; the
-        # helper above is robust to mixed RemoteTeacherClient/TeacherSpec
-        # entries.
+        first_teacher = roundtable.clients[0]
+        return cls(
+            cfg=cfg,
+            tokenizer=tokenizer,
+            model=model,
+            remote_teacher=first_teacher,
+            roundtable=roundtable,
+        )
+
+    @classmethod
+    def from_yvconfig(
+        cls,
+        cfg: Any,
+        *,
+        tokenizer: Any | None = None,
+        model: Any | None = None,
+    ) -> "YvEntaTrainer":
+        """Build a trainer from a :class:`YvConfig` (or any namespace with
+        ``encre_*`` attributes).
+
+        The method reads ``encre_teachers`` (a list of dicts conforming to
+        :class:`TeacherSpec`) and ``encre_judge`` (optional dict) from the
+        config, constructs a :class:`TeacherRoundtable`, and wires it as
+        both the inference backend (first teacher) and the data-generation
+        roundtable.
+
+        When ``encre_teachers`` is empty, the method falls back to
+        ``configs/teachers.yaml`` (loaded via :meth:`YvConfig.load_encre_yaml`).
+        If that file also has no teachers, the trainer falls back to a single
+        local / OpenAI-compatible backend (no roundtable).
+
+        Args:
+            cfg: A :class:`YvConfig` instance (or any dataclass with the
+                same field names).
+            tokenizer: Optional tokenizer aligned with the model.
+            model: Optional :class:`YvModelForCausalLM` instance.
+
+        Returns:
+            A fully constructed :class:`YvEntaTrainer`.
+        """
+        enta = _bind_enta()
+        raw_teachers: list[dict] = list(getattr(cfg, "encre_teachers", []) or [])
+        raw_judge: dict | None = getattr(cfg, "encre_judge", None) or None
+
+        if not raw_teachers:
+            from model.config import YvConfig as _YvCfg
+            encre_cfg = _YvCfg.load_encre_yaml()
+            raw_teachers = encre_cfg.get("encre_teachers", []) or []
+            raw_judge = encre_cfg.get("encre_judge", None)
+            for _k, _v in encre_cfg.items():
+                if _k not in ("encre_teachers", "encre_judge"):
+                    setattr(cfg, _k, _v)
+
+        if not raw_teachers:
+            return cls(cfg=cfg, tokenizer=tokenizer, model=model)
+
+        specs: list[Any] = [enta.TeacherSpec(**t) for t in raw_teachers]
+        judge_spec: Any | None = (
+            enta.TeacherSpec(**raw_judge) if raw_judge else None
+        )
+        roundtable = enta.TeacherRoundtable(
+            teachers=specs,
+            judge=judge_spec,
+            judge_temperature=float(
+                getattr(cfg, "encre_judge_temperature", 0.0)
+            ),
+            judge_max_tokens=int(
+                getattr(cfg, "encre_judge_max_tokens", 1024)
+            ),
+            temperature=float(getattr(cfg, "encre_temperature", 0.7)),
+            max_tokens=int(getattr(cfg, "encre_max_tokens", 2048)),
+            stream=bool(getattr(cfg, "encre_stream", False)),
+        )
         first_teacher = roundtable.clients[0]
         return cls(
             cfg=cfg,
@@ -794,7 +912,7 @@ class YvEncreTrainer:
         if self._roundtable is None:
             raise RuntimeError(
                 "roundtable is not configured; pass roundtable=... or "
-                "set cfg.encre.teachers when constructing the trainer"
+                "set cfg.enta.teachers when constructing the trainer"
             )
         out: List[Tuple[str, str, Any]] = []
         for prompt, _ in items:
@@ -838,7 +956,7 @@ class YvEncreTrainer:
         if self._roundtable is None:
             raise RuntimeError(
                 "roundtable is not configured; pass roundtable=... or "
-                "set cfg.encre.teachers when constructing the trainer"
+                "set cfg.enta.teachers when constructing the trainer"
             )
 
         async def _drive() -> List[Tuple[str, str, Any]]:
@@ -870,13 +988,13 @@ class YvEncreTrainer:
         reference: str = "",
         system: str | None = None,
         rollout_id: str | None = None,
-    ) -> _EncreTrajectory:
+    ) -> _EntaTrajectory:
         """Produce one multi-step rollout for the given ``prompt``.
 
         The method is fully synchronous; it drives the async
         :meth:`enta.backends.base.BaseBackend.chat` generator from a
-        private event loop, executes every tool call inside the EnCRE
-        sandbox, and returns a populated :class:`_EncreTrajectory`.
+        private event loop, executes every tool call inside the EnTA
+        sandbox, and returns a populated :class:`_EntaTrajectory`.
 
         Args:
             prompt: The user prompt.  Always present in the first
@@ -885,11 +1003,11 @@ class YvEncreTrainer:
                 calculator to score the final assistant turn.
             system: Optional system message.  When ``None`` the
                 trainer injects a default agent system prompt that
-                mentions the EnCRE tool palette.
+                mentions the EnTA tool palette.
             rollout_id: Optional stable id.  A random uuid is used
                 when not provided.
         """
-        traj = _EncreTrajectory(
+        traj = _EntaTrajectory(
             rollout_id=rollout_id or f"rollout_{uuid.uuid4().hex[:10]}",
             prompt=prompt,
             reference=reference,
@@ -924,7 +1042,7 @@ class YvEncreTrainer:
                     break
 
                 # Execute every tool call sequentially through the
-                # EnCRE sandbox and feed the results back to the model.
+                # EnTA sandbox and feed the results back to the model.
                 for call in tool_calls:
                     if self._sandbox.is_exhausted(traj):
                         break
@@ -947,19 +1065,19 @@ class YvEncreTrainer:
         )
         return traj
 
-    def score(self, trajectory: _EncreTrajectory | Dict[str, Any]) -> Tuple[float, Dict[str, float]]:
+    def score(self, trajectory: _EntaTrajectory | Dict[str, Any]) -> Tuple[float, Dict[str, float]]:
         """Return ``(total_reward, breakdown)`` for an existing trajectory.
 
-        Accepts either a live :class:`_EncreTrajectory` or a dict
+        Accepts either a live :class:`_EntaTrajectory` or a dict
         previously produced by :meth:`to_serializable`.
         """
-        if isinstance(trajectory, _EncreTrajectory):
+        if isinstance(trajectory, _EntaTrajectory):
             total, breakdown = self._reward.score(trajectory)
             trajectory.total_reward = total
             trajectory.reward_breakdown = breakdown
             return total, breakdown
         # Dict branch — rehydrate the internal trajectory.
-        traj = _EncreTrajectory(
+        traj = _EntaTrajectory(
             rollout_id=str(trajectory.get("rollout_id", f"traj_{uuid.uuid4().hex[:8]}")),
             prompt=str(trajectory.get("prompt", "")),
             reference=str(trajectory.get("reference", "")),
@@ -969,7 +1087,7 @@ class YvEncreTrainer:
         )
         for step in trajectory.get("steps", []) or []:
             traj.steps.append(
-                _EncreStepRecord(
+                _EntaStepRecord(
                     tool=str(step.get("tool", "")),
                     arguments=dict(step.get("arguments", {}) or {}),
                     raw_arguments=json.dumps(step.get("arguments", {}), ensure_ascii=False),
@@ -985,7 +1103,7 @@ class YvEncreTrainer:
 
     def step(
         self,
-        trajectories: Sequence[_EncreTrajectory],
+        trajectories: Sequence[_EntaTrajectory],
     ) -> Dict[str, Any]:
         """Turn a list of trajectories into a training loss.
 
@@ -1055,7 +1173,7 @@ class YvEncreTrainer:
             Dict with ``loss``, ``sft_loss``, ``reward_loss``,
             ``rewards`` and the list of trajectory dicts.
         """
-        trajectories: List[_EncreTrajectory] = []
+        trajectories: List[_EntaTrajectory] = []
         for prompt, reference in items:
             trajectories.append(
                 self.rollout(prompt=prompt, reference=reference)
@@ -1072,6 +1190,93 @@ class YvEncreTrainer:
         out["trajectories"] = [t.to_serializable() for t in trajectories]
         return out
 
+    # ── Outer-loop primitives ──────────────────────────────────
+
+    def generate_batch(self) -> str:
+        """Generate a batch of training data for the outer loop.
+
+        Uses :class:`EntaTaskGenerator` and :class:`EntaTeacherClient`
+        to produce a dataset, writes it to disk, and returns the path.
+
+        Returns:
+            Absolute path to the generated dataset file.
+        """
+        import os
+        import tempfile
+
+        # Build the enta_model_layout dict from config.
+        layout = {}
+        if hasattr(self.cfg, "enta") and self.cfg.enta is not None:
+            enta_cfg = self.cfg.enta
+            layout = {
+                "dynamic_head_param_scale": getattr(enta_cfg, "dynamic_head_param_scale", 1.0),
+                "dynamic_head_hidden_dim": getattr(enta_cfg, "dynamic_head_hidden_dim", 4096),
+                "dynamic_head_num_codebooks": getattr(enta_cfg, "dynamic_head_num_codebooks", 4),
+                "knowledge_field_param_scale": getattr(enta_cfg, "knowledge_field_param_scale", 1.0),
+                "knowledge_field_codebook_size": getattr(enta_cfg, "knowledge_field_codebook_size", 4096),
+                "knowledge_field_entry_dim": getattr(enta_cfg, "knowledge_field_entry_dim", 256),
+            }
+
+        # Generate a topic and build a prompt.
+        topic = self._task_generator.generate_topic(layout)
+        prompt = self._prompt_builder.build_prompt(topic)
+
+        # Generate training data via the teacher client.
+        items = [(prompt, "")]
+        results = self._teacher_client.build_dataset(items)
+
+        # Write results to a temporary dataset file.
+        fd, path = tempfile.mkstemp(suffix=".jsonl", prefix="enta_batch_")
+        os.close(fd)
+        with open(path, "w", encoding="utf-8") as f:
+            for p, ref, _ in results:
+                f.write(
+                    json.dumps(
+                        {"prompt": p, "reference": ref}, ensure_ascii=False
+                    )
+                    + "\n"
+                )
+        _LOG.info(f"generate_batch wrote {len(results)} samples to {path}")
+        return path
+
+    def evaluate(self, checkpoint_path: str) -> Dict[str, Any]:
+        """Evaluate a checkpoint and return a capability profile.
+
+        Delegates to :class:`EntaEvaluator` for lightweight
+        metadata-only evaluation — does NOT load the full model.
+
+        Args:
+            checkpoint_path: Path to the checkpoint directory.
+
+        Returns:
+            Capability profile dict with keys like ``training_steps``,
+            ``avg_loss``, ``perplexity``, ``capability_score``.
+        """
+        cfg_dict = {}
+        if hasattr(self.cfg, "enta") and self.cfg.enta is not None:
+            try:
+                cfg_dict = {"enta_model_layout": vars(self.cfg.enta)}
+            except TypeError:
+                cfg_dict = {}
+        return self._evaluator.evaluate(checkpoint_path, cfg_dict)
+
+    def should_stop(self) -> bool:
+        """Return ``True`` when the outer-loop curriculum is complete.
+
+        Delegates to :class:`EntaScheduler`.
+        """
+        return self._scheduler.should_stop()
+
+    def update(self, profile: Dict[str, Any]) -> None:
+        """Advance the curriculum based on an evaluation profile.
+
+        Delegates to :class:`EntaScheduler`.
+
+        Args:
+            profile: Capability profile dict from :meth:`evaluate`.
+        """
+        self._scheduler.update(profile)
+
     # ── Internals ───────────────────────────────────────────────
 
     def _default_system_message(self) -> str:
@@ -1080,7 +1285,7 @@ class YvEncreTrainer:
             sorted(t["function"]["name"] for t in self._tool_defs)
         ) or "(no tools)"
         return (
-            "You are PiscesL1 operating inside the EnCRE training "
+            "You are PiscesLx operating inside the EnTA training "
             "environment. Use the provided tools to solve the task. "
             "Available tools: " + tool_names + "."
         )
@@ -1089,7 +1294,7 @@ class YvEncreTrainer:
         self,
         messages: List[Dict[str, Any]],
     ) -> Tuple[bool, str, List[Dict[str, Any]]]:
-        """Drive the EnCRE backend once and return ``(finished, text, tool_calls)``."""
+        """Drive the EnTA backend once and return ``(finished, text, tool_calls)``."""
         async def _drive() -> Tuple[bool, str, List[Dict[str, Any]]]:
             finished = False
             text_chunks: List[str] = []
@@ -1159,7 +1364,7 @@ class YvEncreTrainer:
                         finished = True
                 elif etype == "BackendError":
                     err = getattr(event, "error", "") or "backend error"
-                    raise RuntimeError(f"EnCRE backend error: {err}")
+                    raise RuntimeError(f"EnTA backend error: {err}")
             ordered = [tool_calls[cid] for cid in tool_order if cid in tool_calls]
             return (bool(finished), "".join(text_chunks), ordered)
 
@@ -1178,7 +1383,7 @@ class YvEncreTrainer:
     def _dispatch_tool_call(
         self,
         messages: List[Dict[str, Any]],
-        trajectory: _EncreTrajectory,
+        trajectory: _EntaTrajectory,
         call: Dict[str, Any],
     ) -> None:
         """Execute one tool call, append the tool result to the log."""
@@ -1212,7 +1417,7 @@ class YvEncreTrainer:
         except RuntimeError:
             result, is_error, elapsed_ms = asyncio.run(_run())
 
-        step = _EncreStepRecord(
+        step = _EntaStepRecord(
             tool=raw_name,
             arguments=arguments,
             raw_arguments=raw_args,
@@ -1234,7 +1439,7 @@ class YvEncreTrainer:
         messages.append(tool_msg)
         trajectory.messages.append(tool_msg)
 
-    def _compute_sft_loss(self, trajectories: Sequence[_EncreTrajectory]) -> torch.Tensor:
+    def _compute_sft_loss(self, trajectories: Sequence[_EntaTrajectory]) -> torch.Tensor:
         """Compute the supervised fine-tuning loss over the trajectories."""
         if self.tokenizer is None or self.model is None:
             return torch.zeros(())
@@ -1274,7 +1479,13 @@ class YvEncreTrainer:
 
 
 __all__ = [
-    "YvEncreTrainer",
-    "YvEncreAdversarialStage",
-    "YvEncreRewardSignal",
+    "YvEntaTrainer",
+    "YvEntaAdversarialStage",
+    "YvEntaRewardSignal",
+    "EntaTaskGenerator",
+    "EntaPromptBuilder",
+    "EntaTeacherClient",
+    "EntaSandbox",
+    "EntaEvaluator",
+    "EntaScheduler",
 ]

@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Benchmark evaluation suite for PiscesL1.
+Benchmark evaluation suite for PiscesLx.
 
 This module provides comprehensive benchmark evaluation including:
 - MMLU (Massive Multitask Language Understanding)
@@ -291,7 +293,7 @@ Answer: """
 
 
 class PiscesL1BenchmarkEvaluator:
-    """Benchmark evaluator for PiscesL1 model."""
+    """Benchmark evaluator for PiscesLx model."""
     
     def __init__(
         self,
@@ -303,7 +305,7 @@ class PiscesL1BenchmarkEvaluator:
         
         Args:
             config: Benchmark configuration.
-            model: PiscesL1 model to evaluate.
+            model: PiscesLx model to evaluate.
             tokenizer: Model tokenizer.
         """
         self.config = config
@@ -1593,7 +1595,7 @@ Options:
         summary = self.results.get("summary", {})
         
         print("\n" + "=" * 60)
-        print("PiscesL1 Benchmark Results")
+        print("PiscesLx Benchmark Results")
         print("=" * 60)
         
         scores = summary.get("scores", {})
@@ -1615,7 +1617,7 @@ def create_benchmark_evaluator(
     
     Args:
         config: Benchmark configuration.
-        model: PiscesL1 model.
+        model: PiscesLx model.
         tokenizer: Model tokenizer.
         
     Returns:
@@ -2347,7 +2349,7 @@ def benchmark_main(args):
 if __name__ == "__main__":
     import argparse
     
-    parser = argparse.ArgumentParser(description="Benchmark evaluation for PiscesL1")
+    parser = argparse.ArgumentParser(description="Benchmark evaluation for PiscesLx")
     
     parser.add_argument("--model_path", type=str, default=".pisceslx/ckpt")
     parser.add_argument("--output_dir", type=str, default=".pisceslx/benchmark")

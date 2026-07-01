@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Memory Router for Engram-style Lookup-Computation Separation.
 
 Implements the YvMemoryRouter class that projects hidden states into a
@@ -53,6 +55,7 @@ from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.MemoryRouter", file_path=get_log_file("Yv.MemoryRouter"), enable_file=True)
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — memory routing)
 class YvMemoryRouter(nn.Module):
     """Knowledge retrieval router for lookup-computation separation.
 
@@ -153,6 +156,12 @@ class YvMemoryRouter(nn.Module):
                 "retrieval will be disabled. Set memory_store_path to a valid "
                 "directory containing knowledge_index.* and knowledge_store.npy"
             )
+        elif not os.path.isdir(memory_store_path):
+            _LOG.info(
+                f"YvMemoryRouter: memory_store_path='{memory_store_path}' does "
+                f"not exist yet — FAISS retrieval will be enabled once the store "
+                f"is built (run `popss_knowledge_build` CLI)."
+            )
         _LOG.info(
             f"YvMemoryRouter initialized: hidden={hidden_size}, "
             f"router_dim={memory_router_dim}, top_k={memory_top_k}, "
@@ -166,12 +175,8 @@ class YvMemoryRouter(nn.Module):
             True if FAISS is importable, False otherwise.
         """
         if self._faiss_available is None:
-            try:
-                import faiss
-                self._faiss_available = True
-            except ImportError:
-                _LOG.warning("FAISS not available, memory separation disabled")
-                self._faiss_available = False
+            import importlib.util
+            self._faiss_available = importlib.util.find_spec("faiss") is not None
         return self._faiss_available
 
     def _ensure_index_loaded(self) -> bool:
@@ -187,38 +192,37 @@ class YvMemoryRouter(nn.Module):
             return True
 
         if not self._check_faiss():
-            return False
+            raise RuntimeError(
+                "YvMemoryRouter requires the `faiss` package in strict model-closure mode."
+            )
 
-        if not self.store_path or not os.path.isdir(self.store_path):
-            return False
+        if not self.store_path:
+            raise RuntimeError(
+                "YvMemoryRouter requires a non-empty memory_store_path in strict model-closure mode."
+            )
+        if not os.path.isdir(self.store_path):
+            raise RuntimeError(
+                f"YvMemoryRouter memory store path does not exist: {self.store_path}"
+            )
 
-        try:
-            import faiss
-            import numpy as np
+        import faiss
+        import numpy as np
 
-            index_path = os.path.join(self.store_path, f"knowledge_index.{self.index_type}")
-            store_path = os.path.join(self.store_path, "knowledge_store.npy")
+        index_path = os.path.join(self.store_path, f"knowledge_index.{self.index_type}")
+        store_path = os.path.join(self.store_path, "knowledge_store.npy")
 
-            if os.path.exists(index_path):
-                self._index = faiss.read_index(index_path)
-                _LOG.info(f"FAISS index loaded from {index_path}: {self._index.ntotal} slots")
-            else:
-                _LOG.warning(f"FAISS index not found at {index_path}")
-                return False
+        if not os.path.exists(index_path):
+            raise RuntimeError(f"FAISS index not found at {index_path}")
+        self._index = faiss.read_index(index_path)
+        _LOG.info(f"FAISS index loaded from {index_path}: {self._index.ntotal} slots")
 
-            if os.path.exists(store_path):
-                self._knowledge_store = np.load(store_path, mmap_mode='r')
-                _LOG.info(f"Knowledge store loaded via mmap: {self._knowledge_store.shape}")
-            else:
-                _LOG.warning(f"Knowledge store not found at {store_path}")
-                return False
+        if not os.path.exists(store_path):
+            raise RuntimeError(f"Knowledge store not found at {store_path}")
+        self._knowledge_store = np.load(store_path, mmap_mode='r')
+        _LOG.info(f"Knowledge store loaded via mmap: {self._knowledge_store.shape}")
 
-            self._index_loaded = True
-            return True
-
-        except Exception as e:
-            _LOG.error(f"Failed to load FAISS index: {e}")
-            return False
+        self._index_loaded = True
+        return True
 
     def _query_knowledge(
         self,
@@ -236,47 +240,44 @@ class YvMemoryRouter(nn.Module):
                 - distances: [B, T, top_k]
         """
         if not self._ensure_index_loaded():
-            return None, None, None, None
-
-        try:
-            import numpy as np
-
-            batch_size, seq_len, _ = queries.shape
-            queries_flat = queries.reshape(-1, self.router_dim)
-
-            # L2 normalize for cosine similarity search
-            queries_norm = F.normalize(queries_flat, p=2, dim=-1)
-            query_np = queries_norm.detach().cpu().float().numpy()
-
-            # FAISS ANN search
-            k = min(self.top_k, self._index.ntotal)
-            distances, indices = self._index.search(query_np, k)
-
-            # Read knowledge embeddings from mmap store
-            embeddings_np = self._knowledge_store[indices]  # [B*T, k, knowledge_dim]
-
-            # Convert to torch tensors on correct device
-            embeddings = torch.from_numpy(embeddings_np).to(
-                device=queries.device, dtype=queries.dtype
+            raise RuntimeError(
+                "YvMemoryRouter knowledge index is not loaded. Retrieval cannot proceed in strict model-closure mode."
             )
-            indices_t = torch.from_numpy(indices).to(device=queries.device, dtype=torch.long)
-            distances_t = torch.from_numpy(distances).to(device=queries.device, dtype=queries.dtype)
 
-            # Reshape back to batched form
-            k_actual = k
-            embeddings = embeddings.view(batch_size, seq_len, k_actual, self.knowledge_dim)
-            indices_t = indices_t.view(batch_size, seq_len, k_actual)
-            distances_t = distances_t.view(batch_size, seq_len, k_actual)
+        import numpy as np
 
-            # Update statistics
-            self._query_count += batch_size * seq_len
-            self._hit_count += batch_size * seq_len  # All queries get results from ANN
+        batch_size, seq_len, _ = queries.shape
+        queries_flat = queries.reshape(-1, self.router_dim)
 
-            return embeddings, indices_t, distances_t, k_actual
+        # L2 normalize for cosine similarity search
+        queries_norm = F.normalize(queries_flat, p=2, dim=-1)
+        query_np = queries_norm.detach().cpu().float().numpy()
 
-        except Exception as e:
-            _LOG.error(f"Knowledge query failed: {e}")
-            return None, None, None, None
+        # FAISS ANN search
+        k = min(self.top_k, self._index.ntotal)
+        distances, indices = self._index.search(query_np, k)
+
+        # Read knowledge embeddings from mmap store
+        embeddings_np = self._knowledge_store[indices]  # [B*T, k, knowledge_dim]
+
+        # Convert to torch tensors on correct device
+        embeddings = torch.from_numpy(embeddings_np).to(
+            device=queries.device, dtype=queries.dtype
+        )
+        indices_t = torch.from_numpy(indices).to(device=queries.device, dtype=torch.long)
+        distances_t = torch.from_numpy(distances).to(device=queries.device, dtype=queries.dtype)
+
+        # Reshape back to batched form
+        k_actual = k
+        embeddings = embeddings.view(batch_size, seq_len, k_actual, self.knowledge_dim)
+        indices_t = indices_t.view(batch_size, seq_len, k_actual)
+        distances_t = distances_t.view(batch_size, seq_len, k_actual)
+
+        # Update statistics
+        self._query_count += batch_size * seq_len
+        self._hit_count += batch_size * seq_len  # All queries get results from ANN
+
+        return embeddings, indices_t, distances_t, k_actual
 
     def forward(
         self,
@@ -302,7 +303,9 @@ class YvMemoryRouter(nn.Module):
             Or None if query fails or index not loaded.
         """
         if not force_query and not self._ensure_index_loaded():
-            return None
+            raise RuntimeError(
+                "YvMemoryRouter forward requires a loaded knowledge index in strict model-closure mode."
+            )
 
         batch_size, seq_len, _ = hidden_states.shape
 
@@ -312,9 +315,6 @@ class YvMemoryRouter(nn.Module):
 
         # Query FAISS index
         knowledge, slot_indices, distances, k_actual = self._query_knowledge(queries)
-
-        if knowledge is None:
-            return None
 
         # Project knowledge embeddings to model hidden size
         # knowledge: [B, T, k_actual, knowledge_dim]
@@ -358,13 +358,13 @@ class YvMemoryRouter(nn.Module):
             Prefetch status string or None if unavailable.
         """
         if not self._ensure_index_loaded():
-            return None
+            raise RuntimeError(
+                "YvMemoryRouter prefetch requires a loaded knowledge index in strict model-closure mode."
+            )
 
         result = self.forward(hidden_states, force_query=True)
-        if result is not None:
-            self._prefetch_state = result
-            return "prefetched"
-        return None
+        self._prefetch_state = result
+        return "prefetched"
 
     def get_prefetch_state(self) -> Optional[Dict[str, torch.Tensor]]:
         """Get prefetched knowledge state and clear it.
@@ -393,6 +393,7 @@ class YvMemoryRouter(nn.Module):
         }
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — knowledge store)
 class YvMemoryKnowledgeStore:
     """Offline-constructed knowledge store metadata handler.
 
@@ -427,18 +428,15 @@ class YvMemoryKnowledgeStore:
         meta_path = os.path.join(self.store_path, "metadata.json")
         if os.path.exists(meta_path):
             import json
-            try:
-                with open(meta_path, 'r', encoding='utf-8') as f:
-                    self.metadata = json.load(f)
-                self.num_slots = self.metadata.get("num_slots", 0)
-                self.slot_dim = self.metadata.get("slot_dim", 256)
-                self.index_type = self.metadata.get("index_type", "ivfpq")
-                _LOG.info(
-                    f"Knowledge store metadata loaded: {self.num_slots} slots, "
-                    f"dim={self.slot_dim}, index={self.index_type}"
-                )
-            except Exception as e:
-                _LOG.warning(f"Failed to load knowledge store metadata: {e}")
+            with open(meta_path, 'r', encoding='utf-8') as f:
+                self.metadata = json.load(f)
+            self.num_slots = self.metadata.get("num_slots", 0)
+            self.slot_dim = self.metadata.get("slot_dim", 256)
+            self.index_type = self.metadata.get("index_type", "ivfpq")
+            _LOG.info(
+                f"Knowledge store metadata loaded: {self.num_slots} slots, "
+                f"dim={self.slot_dim}, index={self.index_type}"
+            )
 
     def is_valid(self) -> bool:
         """Check if knowledge store is valid and accessible.

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
-# This file is part of EnTA.
-# The EnTA project belongs to the Dunimd Team.
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -20,7 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-
+from __future__ import annotations
 
 """``web_search`` tool -- public internet search with stdlib only.
 
@@ -36,16 +37,18 @@ real, honest error.
 from __future__ import annotations
 
 import json
-import logging
 import urllib.error
 import urllib.parse
 import urllib.request
 from html.parser import HTMLParser
 from typing import Any
 
-from enta.tools.base import build_tool
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
 
-logger = logging.getLogger(__name__)
+logger = PiscesLxLogger("EnTA.Tools.WebSearch", file_path=get_log_file("EnTA.Tools.WebSearch"), enable_file=True)
+
+from enta.tools.base import build_tool
 
 _DDG_LITE = "https://lite.duckduckgo.com/lite/"
 
@@ -114,7 +117,7 @@ def _ddg_search(query: str, num: int) -> list[dict[str, str]]:
         url,
         headers={
             "User-Agent": (
-                "Mozilla/5.0 (compatible; PiscesL1-Encre-WebSearch/1.0)"
+                "Mozilla/5.0 (compatible; PiscesLx-Encre-WebSearch/1.0)"
             ),
             "Accept": "text/html",
         },

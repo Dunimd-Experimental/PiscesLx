@@ -21,7 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-
+from __future__ import annotations
 
 from typing import Optional, Dict, Any, List, Callable, Iterator
 from torch.utils.data import DataLoader, Sampler, DistributedSampler as TorchDistributedSampler

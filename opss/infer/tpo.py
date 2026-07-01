@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 TPO (Test-Time Preference Optimization) Implementation
 
@@ -144,6 +146,7 @@ class POPSSTPOConfig(PiscesLxOperatorConfig):
             raise ValueError("max_iterations must be at least 1")
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class POPSSTPOOperator(PiscesLxOperatorInterface):
     """
     Test-Time Preference Optimization (TPO) Operator.

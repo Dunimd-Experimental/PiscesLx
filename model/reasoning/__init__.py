@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Yv Reasoning Module - Comprehensive reasoning capabilities for Yv model.
 
 This module provides advanced reasoning components for the Yv model,

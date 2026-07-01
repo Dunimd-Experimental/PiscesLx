@@ -21,17 +21,19 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-"""
-Path Management and Runtime Configuration Module for PiscesL1.
+from __future__ import annotations
 
-This module provides centralized path management for the PiscesL1 framework,
+"""
+Path Management and Runtime Configuration Module for PiscesLx.
+
+This module provides centralized path management for the PiscesLx framework,
 handling all filesystem operations related to cache directories, working
 directories, and runtime configuration loading. It establishes a consistent
 directory structure for storing model artifacts, checkpoints, logs, and
 temporary files.
 
 Directory Structure:
-    The PiscesL1 framework uses a standardized directory hierarchy under
+    The PiscesLx framework uses a standardized directory hierarchy under
     the home directory (default: .pisceslx/):
     
     .pisceslx/
@@ -51,7 +53,7 @@ Key Responsibilities:
        - Support for environment variable overrides
     
     2. Home Directory Management:
-       - Resolve and create the PiscesL1 home directory
+       - Resolve and create the PiscesLx home directory
        - Ensure directory exists before any operations
        - Cross-platform path handling (Windows/Linux/macOS)
     
@@ -155,9 +157,9 @@ def load_runtime_configuration() -> PiscesLxConfiguration:
 
 def resolve_pisceslx_home() -> str:
     """
-    Resolve the PiscesL1 home directory path.
+    Resolve the PiscesLx home directory path.
     
-    This function returns the path to the PiscesL1 home directory where
+    This function returns the path to the PiscesLx home directory where
     all framework artifacts are stored. The default location is ".pisceslx"
     in the current working directory, but this can be overridden via
     environment variables or configuration.
@@ -173,7 +175,7 @@ def resolve_pisceslx_home() -> str:
         None
     
     Returns:
-        str: The path to the PiscesL1 home directory. This is a relative
+        str: The path to the PiscesLx home directory. This is a relative
             path by default (".pisceslx"), but can be absolute if
             configured via environment variables.
     
@@ -192,9 +194,9 @@ def resolve_pisceslx_home() -> str:
 
 def get_pisceslx_home_dir() -> str:
     """
-    Get the PiscesL1 home directory, creating it if necessary.
+    Get the PiscesLx home directory, creating it if necessary.
     
-    This function ensures the PiscesL1 home directory exists and returns
+    This function ensures the PiscesLx home directory exists and returns
     its path. It combines resolve_pisceslx_home() with directory creation
     to provide a guaranteed-valid directory path.
     
@@ -205,7 +207,7 @@ def get_pisceslx_home_dir() -> str:
         None
     
     Returns:
-        str: The absolute or relative path to the PiscesL1 home directory.
+        str: The absolute or relative path to the PiscesLx home directory.
             The directory is guaranteed to exist when this function returns.
     
     Raises:
@@ -229,9 +231,9 @@ def get_pisceslx_home_dir() -> str:
 
 def get_cache_dir(name: str) -> str:
     """
-    Get or create a named cache directory under the PiscesL1 home.
+    Get or create a named cache directory under the PiscesLx home.
     
-    This function creates and returns a subdirectory within the PiscesL1
+    This function creates and returns a subdirectory within the PiscesLx
     home directory, suitable for storing cached data such as downloaded
     datasets, pre-trained models, or tokenizer files.
     
@@ -247,7 +249,7 @@ def get_cache_dir(name: str) -> str:
     
     Args:
         name (str): The name of the cache subdirectory. This will be
-            created as a subdirectory under the PiscesL1 home directory.
+            created as a subdirectory under the PiscesLx home directory.
             Examples: "datasets", "models", "checkpoints"
     
     Returns:

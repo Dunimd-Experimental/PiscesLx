@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Enhanced reasoning system with routing, uncertainty quantification, and multi-strategy fusion.
 
 This module provides an advanced reasoning system that combines multiple reasoning
@@ -159,6 +161,7 @@ class YvEnhancedReasoningConfig:
     enable_uncertainty_quantification: bool = True
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvEnhancedReasoningRouter(nn.Module):
     """Neural router for adaptive reasoning strategy selection.
     
@@ -312,6 +315,7 @@ class YvEnhancedReasoningRouter(nn.Module):
         }
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvUncertaintyQuantifier(nn.Module):
     """Multi-component uncertainty quantification for reasoning confidence.
     
@@ -476,6 +480,7 @@ class YvUncertaintyQuantifier(nn.Module):
         }
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvEnhancedReasoningSystem(nn.Module):
     """Top-level enhanced reasoning system with multi-strategy fusion.
     

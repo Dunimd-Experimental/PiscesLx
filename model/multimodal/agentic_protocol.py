@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Agentic Protocol Handler for PiscesL1 Model-Agent Communication.
+Agentic Protocol Handler for PiscesLx Model-Agent Communication.
 
 This module provides the core protocol handling for model-agent interactions,
 supporting the unified XML syntax defined in xml_utils.py.

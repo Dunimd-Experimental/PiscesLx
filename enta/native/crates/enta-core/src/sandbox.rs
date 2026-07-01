@@ -1,29 +1,22 @@
-//! Sandbox execution — single, unified entry point for ALL shell commands.
+//! Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 //!
-//! Every bash command in the entire EnTA system flows through this ONE
-//! function.  Platform-specific isolation is applied automatically:
+//! This file is part of PiscesL1.
+//! The PiscesL1 project belongs to the Dunimd Team.
 //!
-//! | Platform  | Mechanism                         | Scope                    |
-//! |-----------|-----------------------------------|--------------------------|
-//! | Linux     | Landlock LSM (kernel 5.13+)      | r/w workspace only,      |
-//! |           | → fork + landlock_restrict_self   | no network, no exec out  |
-//! |           |   + exec                          | of workspace             |
-//! | macOS     | sandbox_init(3) (Sandbox.kext)    | r/w workspace only,      |
-//! |           | → fork + sandbox_init + exec      | no network, no exec out  |
-//! |           |   macOS 10.5+                     | of workspace             |
-//! | Windows   | Job Object (kernel32)             | proc & memory limits,    |
-//! |           | → CreateProcess + AssignJob       | no UI, die on exception  |
+//! Licensed under the Apache License, Version 2.0 (the "License");
+//! You may not use this file except in compliance with the License.
+//! You may obtain a copy of the License at
 //!
-//! Security guarantees (all platforms)
-//! ------------------------------------
-//! * **Linux**: read, write, create, remove files ONLY under workspace.
-//!   No network, no exec outside workspace.  Kernel-level via Landlock.
-//! * **macOS**: identical profile via sandbox_init(3).  Default-deny TBF
-//!   profile with explicit workspace allow + system.sb import.
-//! * **Windows**: Job Object with active-process limit (64), memory cap
-//!   (2 GB), no UI, die-on-unhandled-exception.  Process-level isolation.
-//! * **All**: configurable timeout, clean subprocess lifecycle.
-//! * **No Docker dependency, zero overhead.**
+//!     http://www.apache.org/licenses/LICENSE-2.0
+//!
+//! Unless required by applicable law or agreed to in writing, software
+//! distributed under the License is distributed on an "AS IS" BASIS,
+//! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//! See the License for the specific language governing permissions and
+//! limitations under the License.
+//! 
+//! DISCLAIMER: Users must comply with applicable AI regulations.
+//! Non-compliance may result in service termination or legal liability.
 
 use serde::{Deserialize, Serialize};
 use std::path::Path;

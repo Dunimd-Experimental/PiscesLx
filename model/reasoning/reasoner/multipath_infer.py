@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Inference utilities for Yv multi-path reasoning workflows.
 
 This module provides the YvMultiPathInferenceEngine class which implements
@@ -109,6 +111,7 @@ import torch.nn.functional as F
 from typing import Any, Dict, List, Optional, Union
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvMultiPathInferenceEngine:
     """Perform inference-time multi-path reasoning and confidence evaluation.
     
@@ -359,24 +362,19 @@ class YvMultiPathInferenceEngine:
         Returns:
             float: Factual accuracy score normalized to ``[0.0, 1.0]``.
         """
-        try:
-            from transformers import pipeline
-            fact_checker = pipeline("text-classification", model="microsoft/deberta-v3-base")
-            sentences = [s.strip() + '.' for s in text.split('.') if s.strip()]
-            if not sentences:
-                return 0.5
-            scores = []
-            for sentence in sentences:
-                if len(sentence) > 10:
-                    result = fact_checker(sentence, candidate_labels=["factual", "non-factual"])
-                    scores.append(1.0 if result[0]['label'] == "factual" else 0.0)
-            return float(np.mean(scores)) if scores else 0.5
-        except Exception:
-            factual_indicators = ['is', 'are', 'was', 'were', 'fact', 'data', 'evidence']
-            speculative_indicators = ['might', 'could', 'may', 'possibly', 'perhaps', 'likely']
-            factual_score = sum(1 for w in factual_indicators if w in text.lower()) / len(factual_indicators)
-            speculative_score = sum(1 for w in speculative_indicators if w in text.lower()) / len(speculative_indicators)
-            return max(0.0, float(factual_score - speculative_score * 0.5))
+        from transformers import pipeline
+        fact_checker = pipeline("text-classification", model="microsoft/deberta-v3-base")
+        sentences = [s.strip() + '.' for s in text.split('.') if s.strip()]
+        if not sentences:
+            raise ValueError("YvMultiPathInfer._check_factual_accuracy requires non-empty sentences.")
+        scores = []
+        for sentence in sentences:
+            if len(sentence) > 10:
+                result = fact_checker(sentence, candidate_labels=["factual", "non-factual"])
+                scores.append(1.0 if result[0]['label'] == "factual" else 0.0)
+        if not scores:
+            raise ValueError("YvMultiPathInfer._check_factual_accuracy could not score any sentence.")
+        return float(np.mean(scores))
 
     def _check_logical_validity(self, text: str) -> float:
         """Assess logical validity using either model-based or heuristic signals.
@@ -456,30 +454,15 @@ class YvMultiPathInferenceEngine:
         Returns:
             float: Logical consistency score between ``0.0`` and ``1.0``.
         """
-        try:
-            from transformers import AutoTokenizer, AutoModel
-            tokenizer = AutoTokenizer.from_pretrained('microsoft/deberta-base')
-            model = AutoModel.from_pretrained('microsoft/deberta-base')
-            inputs = tokenizer(text, return_tensors='pt', truncation=True, max_length=512)
-            with torch.no_grad():
-                outputs = model(**inputs)
-                embeddings = outputs.last_hidden_state.mean(dim=1)
-            consistency_score = torch.sigmoid(torch.nn.Linear(embeddings.size(-1), 1)(embeddings)).item()
-            return max(0.0, min(1.0, consistency_score))
-        except Exception:
-            logical_markers = {
-                'premise_indicators': ['because', 'since', 'as', 'given that', 'assuming'],
-                'conclusion_indicators': ['therefore', 'thus', 'hence', 'so', 'consequently'],
-                'contradiction_indicators': ['but', 'however', 'although', 'nevertheless', 'contradiction'],
-                'support_indicators': ['furthermore', 'moreover', 'additionally', 'also']
-            }
-            scores = []
-            tl = text.lower()
-            for category, markers in logical_markers.items():
-                count = sum(1 for m in markers if m in tl)
-                score = min(count / 3.0, 1.0) if 'contradiction' not in category else max(0.0, 1 - count / 2.0)
-                scores.append(score)
-            return float(np.mean(scores)) if scores else 0.5
+        from transformers import AutoTokenizer, AutoModel
+        tokenizer = AutoTokenizer.from_pretrained('microsoft/deberta-base')
+        model = AutoModel.from_pretrained('microsoft/deberta-base')
+        inputs = tokenizer(text, return_tensors='pt', truncation=True, max_length=512)
+        with torch.no_grad():
+            outputs = model(**inputs)
+            embeddings = outputs.last_hidden_state.mean(dim=1)
+        consistency_score = torch.sigmoid(torch.nn.Linear(embeddings.size(-1), 1)(embeddings)).item()
+        return max(0.0, min(1.0, consistency_score))
 
     def _measure_uncertainty_reduction(self, path: Dict[str, Any]) -> float:
         """Quantify uncertainty reduction achieved by a reasoning path.

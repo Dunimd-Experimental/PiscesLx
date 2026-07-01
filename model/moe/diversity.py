@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Information Bottleneck and Contrastive Diversification for MoE Expert Diversity.
 
 This module implements state-of-the-art diversity regularization techniques
@@ -199,6 +201,7 @@ class YvMineStatisticsNetwork(nn.Module):
         return self.network(joint)
 
 
+# Paper: Tishby et al., "The Information Bottleneck Method", arXiv:physics/0004057, 2000; Belghazi et al., "Mutual Information Neural Estimation", ICML 2018, arXiv:1801.04062
 class YvInformationBottleneckExpert(nn.Module):
     """Information Bottleneck regularization for MoE experts.
     
@@ -455,6 +458,7 @@ class YvInformationBottleneckExpert(nn.Module):
             return self.encode(x)
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvExpertEmbedding(nn.Module):
     """Learnable embedding for expert representation in diversity space.
     
@@ -524,6 +528,7 @@ class YvExpertEmbedding(nn.Module):
         return self.embeddings
 
 
+# Paper: Chen et al., "A Simple Framework for Contrastive Learning of Visual Representations", ICML 2020, arXiv:2002.05709
 class YvContrastiveDiversification(nn.Module):
     """Contrastive diversification for MoE expert specialization.
     
@@ -847,6 +852,7 @@ class YvContrastiveDiversification(nn.Module):
             return pairs
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvDiversityRegularizer(nn.Module):
     """Combined diversity regularizer for MoE models.
     

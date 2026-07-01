@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-PiscesL1 Data Deduplication Module.
+PiscesLx Data Deduplication Module.
 
 This module provides deduplication strategies for training data:
 - MinHashDeduplicator: Approximate near-duplicate detection using LSH

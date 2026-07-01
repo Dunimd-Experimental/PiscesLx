@@ -4,7 +4,7 @@
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
-# The PiscesL1 project belongs to Dunimd Team.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -20,6 +20,8 @@
 #
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
+
+from __future__ import annotations
 
 """CMU Action Module Exports."""
 

@@ -137,7 +137,7 @@ class PiscesLxToolsMonitorDisplay:
         current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         return f"""
 +{'='*100}+
-|{'PiscesL1 System Monitor':^100}|
+|{'PiscesLx System Monitor':^100}|
 |{current_time:^100}|
 +{'='*100}+
 """

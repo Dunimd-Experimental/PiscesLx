@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 from .store import POPSSRunStore
 from .id_factory import POPSSRunIdFactory
 from .controller import POPSSRunController

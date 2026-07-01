@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Dynamic Mixture-of-Experts Layer Implementations for Yv Models.
 
 This module provides advanced MoE layer implementations matching the latest
@@ -113,6 +115,7 @@ from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.Moe", file_path=get_log_file("Yv.Moe"), enable_file=True)
 
 
+# Paper: Zhou et al., "Mixture-of-Experts with Expert Choice Routing", NeurIPS 2022, arXiv:2202.09368
 class YvExpertChoiceRouter(nn.Module):
     """Expert-choice router that allocates tokens to experts based on scores.
     
@@ -216,6 +219,7 @@ class YvExpertChoiceRouter(nn.Module):
         return expert_indices, dispatch_mask, load_balancing_loss
 
 
+# Paper: DeepSeek-AI, "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model", arXiv:2405.04434
 class YvFineGrainedRouter(nn.Module):
     """Fine-grained expert router for DeepSeek-V3 style expert segmentation.
     
@@ -447,6 +451,7 @@ class YvFineGrainedRouter(nn.Module):
             self.expert_usage_ema.zero_()
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvDynamicMoELayer(nn.Module):
     """Dynamic Mixture-of-Experts layer with shared expert support.
     
@@ -824,6 +829,7 @@ class YvDynamicMoELayer(nn.Module):
         return final_output, load_balancing_loss
 
 
+# Paper: DeepSeek-AI, "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model", arXiv:2405.04434; DeepSeek-AI, "DeepSeek-V3 Technical Report", arXiv:2412.19437
 class YvDeepSeekMoELayer(YvDynamicMoELayer):
     """DeepSeek-V3 style MoE layer with all flagship features enabled.
     

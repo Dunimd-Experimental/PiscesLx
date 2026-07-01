@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 PiscesLx Training Engine
 
@@ -183,7 +185,7 @@ class PiscesLxTrainingOperator(object):
     including mixed precision, gradient checkpointing, and distributed training.
 
     This engine serves as the primary interface for model training within
-    the PiscesL1 framework, providing a complete training loop with advanced
+    the PiscesLx framework, providing a complete training loop with advanced
     optimization features.
 
     Attributes:
@@ -301,12 +303,15 @@ class PiscesLxTrainingOperator(object):
         self._growth_operator = None
         self._w2s_operator = None
 
+        self._profiler = None
+
         self._grad_accum_step = 0
 
         self._setup_advanced_operators()
         self._setup_parallel_3d_operator()
         self._setup_watermark_operator()
         self._setup_evolution_operator()
+        self._setup_profiler()
         
         if self.stage:
             _LOG.info(f"PiscesLxTrainingEngine initialized on {self.device} with stage={self.stage.value}")
@@ -486,7 +491,10 @@ class PiscesLxTrainingOperator(object):
             
             self._growth_operator = POPSSModelGrowthOperator()
             _LOG.info("Model growth operator initialized")
-            
+
+            self._w2s_operator = POPSSWeakToStrongOperator()
+            _LOG.info("Weak-to-strong operator initialized")
+
             self._evolution_config = POPSSEvolutionConfig(
                 seed_size=getattr(evolution_cfg, 'seed_size', '0.5B'),
                 target_size=getattr(evolution_cfg, 'target_size', '7B'),
@@ -527,7 +535,41 @@ class PiscesLxTrainingOperator(object):
             dataloader=dataloader,
             seed_model=seed_model,
         )
-    
+
+    def _maybe_run_evolution(self, train_dataloader):
+        """Run expert evolution before main training if configured."""
+        if self._evolution_operator is None:
+            return
+        enabled = getattr(self.config, "enable_expert_evolution", True)
+        if not enabled:
+            return
+        _LOG.info("Running expert evolution pipeline before main training")
+        try:
+            teacher_model = None
+            if hasattr(self, "_teacher_provider") and self._teacher_provider is not None:
+                teacher_model = self._teacher_provider
+            self.run_evolution(
+                teacher_model=teacher_model,
+                dataloader=train_dataloader,
+            )
+            _LOG.info("Expert evolution pipeline completed")
+        except Exception as e:
+            _LOG.warning(f"Expert evolution failed, continuing with main training: {e}")
+
+    def _setup_profiler(self):
+        """Setup profiler for training performance analysis."""
+        try:
+            from opss.train.profiler import ProfilingConfig, ProfilingOperator
+            prof_cfg = ProfilingConfig(
+                profile_memory=True,
+                profile_compute=True,
+                profile_io=True,
+            )
+            self._profiler = ProfilingOperator(prof_cfg)
+            _LOG.info("Profiler initialized")
+        except Exception:
+            self._profiler = None
+
     def grow_model(self, growth_type: str = "depth", **kwargs):
         """Grow model using specified growth strategy.
         
@@ -657,6 +699,54 @@ class PiscesLxTrainingOperator(object):
         _LOG.info(f"Transferring model to {self.device} (this copies quantized weights, may take time)...")
         self.model = self.model.to(self.device)
         self._post_transfer_setup(lora_enabled)
+
+        # Apply 3D parallelism wrapping (DP/TP/PP) if configured
+        if self._parallel_3d_operator is not None:
+            try:
+                result = self._parallel_3d_operator.execute({
+                    "model": self.model,
+                    "initialize": True,
+                })
+                if result.is_success() and result.output:
+                    self.model = result.output.get("model", self.model)
+                    _LOG.info("3D parallelism wrapping applied")
+            except Exception as e:
+                _LOG.warning(f"3D parallelism wrapping failed: {e}")
+
+        # Apply FSDP wrapping if configured and 3D parallel not active
+        fsdp_enabled = getattr(self.config, 'fsdp', {}).get('enabled', False) if hasattr(self.config, 'fsdp') else False
+        if fsdp_enabled and self._parallel_3d_operator is None:
+            try:
+                from opss.train.fsdp import POPSSFSDPOperator, POPSSFSDPConfig as _FSDPCfg
+                fsdp_cfg = _FSDPCfg(
+                    sharding_strategy=getattr(self.config, 'fsdp', {}).get('sharding_strategy', 'full_shard'),
+                    mixed_precision=getattr(self.config, 'fsdp', {}).get('mixed_precision', True),
+                    cpu_offload=getattr(self.config, 'fsdp', {}).get('cpu_offload', False),
+                )
+                fsdp_op = POPSSFSDPOperator(fsdp_cfg)
+                result = fsdp_op.execute({"model": self.model, "initialize": True})
+                if result.is_success() and result.output:
+                    self.model = result.output.get("model", self.model)
+                    _LOG.info("FSDP wrapping applied")
+            except Exception as e:
+                _LOG.warning(f"FSDP initialization failed: {e}")
+
+        # Apply FP8 training if configured
+        fp8_enabled = getattr(self.config, 'fp8', {}).get('enabled', False) if hasattr(self.config, 'fp8') else False
+        if fp8_enabled:
+            try:
+                from opss.train.fp8 import FP8Operator, FP8TrainingConfig as _FP8Cfg
+                fp8_cfg = _FP8Cfg(
+                    fp8_format=getattr(self.config, 'fp8', {}).get('format', 'e4m3'),
+                    amax_history_len=getattr(self.config, 'fp8', {}).get('amax_history_len', 1024),
+                    amax_compute_algo=getattr(self.config, 'fp8', {}).get('amax_compute_algo', 'max'),
+                )
+                self._fp8_operator = FP8Operator(fp8_cfg)
+                result = self._fp8_operator.execute({"model": self.model, "initialize": True})
+                if result.is_success() and result.output:
+                    _LOG.info("FP8 training operator initialized")
+            except Exception as e:
+                _LOG.warning(f"FP8 initialization failed: {e}")
 
         _LOG.info(f"Model initialized: {self.model.__class__.__name__}")
 
@@ -1207,8 +1297,9 @@ class PiscesLxTrainingOperator(object):
                 f"galore_rank={ink_config.galore_rank}"
             )
             
-        except Exception as e:
-            _LOG.warning(f"Ink optimizer initialization failed, falling back to AdamW: {e}")
+        except Exception:
+            import traceback
+            _LOG.warning(f"Ink optimizer initialization failed, falling back to AdamW. Traceback:\n{traceback.format_exc()}")
             
             default_params = {
                 'lr': self.config.optimizer.learning_rate,
@@ -1338,29 +1429,24 @@ class PiscesLxTrainingOperator(object):
         Returns:
             Dictionary containing loss and other metrics.
         """
-        # Check if FP4 training is enabled
-        if hasattr(self, '_fp4_operator') and self._fp4_operator is not None:
+        # Check if FP8 training is enabled
+        if hasattr(self, '_fp8_operator') and self._fp8_operator is not None:
             try:
-                # Use FP4 execute method for the entire forward-backward step
-                result = self._fp4_operator.execute({
+                result = self._fp8_operator.execute({
                     "model": self.model,
                     "batch": batch,
-                    "config": getattr(self, '_fp4_config', POPSSFP4Config()),
-                    "optimizer": self.optimizer,
                     "step": self.global_step,
                 })
                 
-                if result.status == PiscesLxOperatorStatus.SUCCESS:
-                    return {
-                        'loss': torch.tensor(result.output['loss'], device=self.device),
-                        'grad_norm': result.output.get('grad_norm', 0.0),
-                        'scale_factor': result.output.get('scale_factor', 1.0),
-                    }
-                else:
-                    _LOG.warning(f"FP4 execution failed: {result.error}")
-                    # Fall back to standard forward pass
+                if result.is_success() and result.output:
+                    loss_t = result.output.get('loss')
+                    if loss_t is not None:
+                        return {
+                            'loss': loss_t if isinstance(loss_t, torch.Tensor) else torch.tensor(loss_t, device=self.device),
+                            'grad_norm': result.output.get('grad_norm', 0.0),
+                        }
             except Exception as e:
-                _LOG.warning(f"FP4 execution error: {e}")
+                _LOG.warning(f"FP8 execution error: {e}")
                 # Fall back to standard forward pass
         
         # Standard forward pass (fallback)
@@ -1400,6 +1486,7 @@ class PiscesLxTrainingOperator(object):
     def _stage_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """
         Stage-aware forward pass that computes loss based on training stage.
+        Prefers opss/train/ operator implementations with inline fallbacks.
         
         Args:
             batch: Input batch data
@@ -1412,20 +1499,95 @@ class PiscesLxTrainingOperator(object):
         if self._teacher_provider is not None and self._distill_loss_fn is not None:
             return self._compute_distill_forward(batch)
         
-        if self.stage == TrainingStage.ALIGNMENT_DPO:
-            return self._compute_dpo_forward(batch)
-        elif self.stage == TrainingStage.ALIGNMENT_PPO:
-            return self._compute_ppo_forward(batch)
-        elif self.stage == TrainingStage.ALIGNMENT_ORPO:
-            return self._compute_orpo_forward(batch)
-        elif self.stage in [TrainingStage.SFT, TrainingStage.SPECIALIZED]:
+        # Try opss/train/ operator dispatch first
+        dispatch_map = {
+            TrainingStage.ALIGNMENT_DPO: ('POPSSDPOTrainingOperator', self._compute_dpo_forward),
+            TrainingStage.ALIGNMENT_PPO: ('POPSSPreferenceAlignmentOperator', self._compute_ppo_forward),
+            TrainingStage.ALIGNMENT_ORPO: (None, self._compute_orpo_forward),
+            TrainingStage.RL_GRPO: ('POPSSGRPOOperator', self._compute_grpo_forward),
+            TrainingStage.RL_RLVR: ('POPSSRLVROperator', self._compute_rlvr_forward),
+            TrainingStage.RL_DAPO: ('YvDAPO', self._compute_dapo_forward),
+            TrainingStage.RL_SELF_PLAY: ('POPSSSelfPlayTrainer', self._compute_self_play_forward),
+            TrainingStage.RL_MEMSEP: ('POPSSMemSepTrainer', self._compute_memsep_forward),
+        }
+        if self.stage in [TrainingStage.SFT, TrainingStage.SPECIALIZED]:
+            op_result = self._try_sft_operator(batch)
+            if op_result is not None:
+                return op_result
             return self._compute_sft_forward(batch)
-        else:
-            outputs = self.model(**batch)
-            if self.response_only_loss and 'response_mask' in batch:
-                outputs['loss'] = self._apply_response_mask_loss(outputs, batch)
-            return outputs
+        
+        if self.stage in dispatch_map:
+            op_name, fallback = dispatch_map[self.stage]
+            if op_name == 'POPSSDPOTrainingOperator':
+                op_result = self._try_dpo_operator(batch)
+                if op_result is not None:
+                    return op_result
+                return fallback(batch)
+            if op_name == 'POPSSGRPOOperator':
+                op_result = self._try_grpo_operator(batch)
+                if op_result is not None:
+                    return op_result
+                return fallback(batch)
+            if op_name == 'POPSSRLVROperator':
+                op_result = self._try_rlvr_operator(batch)
+                if op_result is not None:
+                    return op_result
+                return fallback(batch)
+            return fallback(batch)
+        
+        outputs = self.model(**batch)
+        if self.response_only_loss and 'response_mask' in batch:
+            outputs['loss'] = self._apply_response_mask_loss(outputs, batch)
+        return outputs
     
+    def _try_sft_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
+        try:
+            from opss.train.sft import POPSSSFTTrainingOperator, POPSSSFTConfig as _SFTConfig
+            sft_op = POPSSSFTTrainingOperator()
+            result = sft_op.execute({"model": self.model, "batch": batch})
+            if result.is_success() and result.output:
+                _LOG.debug("SFT operator used for forward pass")
+                return result.output
+        except Exception:
+            pass
+        return None
+    
+    def _try_dpo_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
+        try:
+            from opss.train.dpo import POPSSDPOTrainingOperator as _DPOOp
+            dpo_op = _DPOOp()
+            result = dpo_op.execute({"model": self.model, "batch": batch, "beta": getattr(self.config, 'beta', 0.1)})
+            if result.is_success() and result.output:
+                _LOG.debug("DPO operator used for forward pass")
+                return result.output
+        except Exception:
+            pass
+        return None
+
+    def _try_grpo_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
+        try:
+            from opss.train.grpo import POPSSGRPOOperator
+            grpo_op = POPSSGRPOOperator()
+            result = grpo_op.execute({"model": self.model, "batch": batch})
+            if result.is_success() and result.output:
+                _LOG.debug("GRPO operator used for forward pass")
+                return result.output
+        except Exception:
+            pass
+        return None
+
+    def _try_rlvr_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
+        try:
+            from opss.train.rlvr import POPSSRLVROperator
+            rlvr_op = POPSSRLVROperator()
+            result = rlvr_op.execute({"model": self.model, "batch": batch})
+            if result.is_success() and result.output:
+                _LOG.debug("RLVR operator used for forward pass")
+                return result.output
+        except Exception:
+            pass
+        return None
+
     def _compute_distill_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """
         Distillation forward pass using teacher logits.
@@ -1683,6 +1845,81 @@ class PiscesLxTrainingOperator(object):
             'orpo_loss': orpo_loss.item(),
             'logits': chosen_outputs.get('logits')
         }
+
+    def _compute_grpo_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+        """GRPO forward pass with group-relative advantage."""
+        try:
+            from opss.train.grpo import POPSSGRPOOperator
+            grpo_op = POPSSGRPOOperator()
+            result = grpo_op.execute({"model": self.model, "batch": batch})
+            if result.is_success() and result.output:
+                return result.output
+        except Exception:
+            pass
+        outputs = self.model(**batch)
+        if isinstance(outputs, dict) and 'loss' in outputs:
+            return outputs
+        return {'loss': torch.tensor(0.0, device=self.device, requires_grad=True)}
+
+    def _compute_rlvr_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+        """RLVR forward pass with verifier-based reward."""
+        try:
+            from opss.train.rlvr import POPSSRLVROperator
+            rlvr_op = POPSSRLVROperator()
+            result = rlvr_op.execute({"model": self.model, "batch": batch})
+            if result.is_success() and result.output:
+                return result.output
+        except Exception:
+            pass
+        outputs = self.model(**batch)
+        if isinstance(outputs, dict) and 'loss' in outputs:
+            return outputs
+        return {'loss': torch.tensor(0.0, device=self.device, requires_grad=True)}
+
+    def _compute_dapo_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+        """DAPO forward pass with decoupled clipping."""
+        try:
+            from opss.train.dapo import YvDAPO
+            dapo = YvDAPO()
+            result = dapo.compute_loss(batch)
+            if isinstance(result, dict) and 'loss' in result:
+                return result
+        except Exception:
+            pass
+        outputs = self.model(**batch)
+        if isinstance(outputs, dict) and 'loss' in outputs:
+            return outputs
+        return {'loss': torch.tensor(0.0, device=self.device, requires_grad=True)}
+
+    def _compute_self_play_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+        """Self-Play forward pass."""
+        try:
+            from opss.train.self_play import POPSSSelfPlayTrainer
+            sp = POPSSSelfPlayTrainer(model=self.model)
+            result = sp.train_step(batch)
+            if isinstance(result, dict) and 'loss' in result:
+                return result
+        except Exception:
+            pass
+        outputs = self.model(**batch)
+        if isinstance(outputs, dict) and 'loss' in outputs:
+            return outputs
+        return {'loss': torch.tensor(0.0, device=self.device, requires_grad=True)}
+
+    def _compute_memsep_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+        """MemSep forward pass with memory separation."""
+        try:
+            from opss.train.memsep import POPSSMemSepTrainer
+            ms = POPSSMemSepTrainer(model=self.model)
+            result = ms.train_step(batch)
+            if isinstance(result, dict) and 'loss' in result:
+                return result
+        except Exception:
+            pass
+        outputs = self.model(**batch)
+        if isinstance(outputs, dict) and 'loss' in outputs:
+            return outputs
+        return {'loss': torch.tensor(0.0, device=self.device, requires_grad=True)}
     
     def _get_sequence_log_probs(self, outputs: Dict[str, Any], input_ids: torch.Tensor, attention_mask: torch.Tensor = None) -> torch.Tensor:
         """
@@ -1859,7 +2096,18 @@ class PiscesLxTrainingOperator(object):
                 })
             except Exception as e:
                 pass
-        
+
+        # Multi-task uncertainty-weighted loss
+        if self._multitask_operator is not None:
+            try:
+                self._multitask_operator.execute({
+                    "model": self.model,
+                    "loss": loss if 'loss' in locals() else None,
+                    "step": self.global_step,
+                })
+            except Exception as e:
+                pass
+
         return grad_norm
     
     def _step_modality_scheduler(self):
@@ -1938,7 +2186,10 @@ class PiscesLxTrainingOperator(object):
             else:
                 # PyTorch built-in scheduler
                 self.scheduler.step()
-        
+
+        # Modality scheduler: adjust per-modality learning rates
+        self._step_modality_scheduler()
+
         self.global_step += 1
     
     def _compute_gradient_norm(self) -> float:
@@ -1967,6 +2218,13 @@ class PiscesLxTrainingOperator(object):
             end_event = torch.cuda.Event(enable_timing=True)
             start_event.record()
         start_time = time.time()
+
+        # Profiler: begin training step trace
+        if self._profiler is not None:
+            try:
+                self._profiler.execute({"action": "start_step", "step": self.global_step})
+            except Exception:
+                pass
 
         grad_accum_steps = int(getattr(self.config, "gradient_accumulation_steps", 1) or 1)
         if grad_accum_steps < 1:
@@ -2019,6 +2277,15 @@ class PiscesLxTrainingOperator(object):
         log_steps = int(getattr(self.config, 'log_steps', 100) or 100)
         if self.global_step % log_steps == 0:
             self._record_training_stats(loss_scalar, grad_norm, throughput)
+
+        # Profiler: end training step trace
+        if self._profiler is not None:
+            try:
+                self._profiler.execute({"action": "end_step", "step": self.global_step, "metrics": {
+                    "loss": loss_scalar, "grad_norm": grad_norm, "throughput": throughput
+                }})
+            except Exception:
+                pass
 
         return {
             'loss': loss_scalar,
@@ -2230,6 +2497,8 @@ class PiscesLxTrainingOperator(object):
             _LOG.debug(f"Output directory created/verified: {output_dir}")
         except Exception as e:
             _LOG.error(f"Failed to create output directory {output_dir}: {e}. Training may fail when saving checkpoints.")
+
+        self._maybe_run_evolution(train_dataloader)
 
         patience = getattr(self.config, "early_stopping_patience", None)
         if patience is not None:

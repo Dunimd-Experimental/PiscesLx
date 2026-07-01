@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-ReAct (Reasoning + Acting) Agentic for PiscesL1.
+ReAct (Reasoning + Acting) Agentic for PiscesLx.
 
 Implements the complete Goal -> Plan -> Execute -> Reflect closed loop with:
 - Goal Understanding: Understand user's true intent
@@ -157,7 +159,7 @@ class Plan:
                 )
                 if deps_done:
                     return step
-        return None
+        raise RuntimeError("No executable pending step is available.")
     
     def update_step(self, step_id: int, status: str, result: str = None):
         """Update step status and result."""
@@ -933,7 +935,7 @@ class YvSelfCorrection(nn.Module):
 
 
 class YvReActAgentic(nn.Module):
-    """Complete ReAct Agentic for PiscesL1.
+    """Complete ReAct Agentic for PiscesLx.
     
     Integrates Goal Understanding, Task Decomposition, ReAct Engine,
     and Self-Correction for autonomous task completion.
@@ -1173,15 +1175,12 @@ class YvReActAgentic(nn.Module):
             
             return result
             
-        except Exception as e:
+        except (RuntimeError, ValueError, KeyError, TypeError, AttributeError) as e:
             if enable_recovery:
                 checkpoint_id = self.save_execution_state()
-                return {
-                    "success": False,
-                    "error": str(e),
-                    "checkpoint_id": checkpoint_id,
-                    "can_resume": True,
-                }
+                raise RuntimeError(
+                    f"ReAct agent execution failed; recovery checkpoint saved at {checkpoint_id}: {e}"
+                ) from e
             raise
     
     def resume_from_checkpoint(
@@ -1270,7 +1269,7 @@ class YvReActAgentic(nn.Module):
                 result = self._execute_action(action, tools, model, tokenizer)
                 return result
                 
-            except Exception as e:
+            except (RuntimeError, ValueError, KeyError, TypeError, AttributeError) as e:
                 last_error = str(e)
                 
                 strategy = self.self_correction.determine_retry_strategy(
@@ -1280,9 +1279,9 @@ class YvReActAgentic(nn.Module):
                 if strategy == RetryStrategy.ABORT:
                     break
                 elif strategy == RetryStrategy.SKIP:
-                    return {"skipped": True, "reason": last_error}
+                    raise RuntimeError(f"Action skipped after retry policy due to error: {last_error}")
                 elif strategy == RetryStrategy.ESCALATE:
-                    return {"escalate": True, "error": last_error}
+                    raise RuntimeError(f"Action escalated after retry policy due to error: {last_error}")
                 
                 if strategy == RetryStrategy.BACKOFF:
                     delay = self.self_correction.calculate_backoff_time(
@@ -1294,7 +1293,7 @@ class YvReActAgentic(nn.Module):
                 
                 attempt += 1
         
-        return {"failed": True, "error": last_error, "attempts": attempt}
+        raise RuntimeError(last_error or f"Action failed after {attempt} attempts")
     
     def save_execution_state(self) -> str:
         """Save current execution state as a checkpoint.

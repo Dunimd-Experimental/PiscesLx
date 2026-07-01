@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-PiscesL1 Developer Mode Module - Refactored with Rich Live + Layout.
+PiscesLx Developer Mode Module - Refactored with Rich Live + Layout.
 
 This module provides an interactive developer mode for training debugging,
 featuring a vim-style command interface with true split-screen display.

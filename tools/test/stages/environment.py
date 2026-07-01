@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-Environment Checker Module for PiscesL1.
+Environment Checker Module for PiscesLx.
 
 This module provides the PiscesLxEnvironmentChecker class for validating
 the runtime environment including Python version, PyTorch, CUDA, GPU
@@ -60,7 +60,7 @@ class PiscesLxEnvironmentChecker:
     Environment validation checker.
     
     Performs comprehensive checks on the runtime environment to ensure
-    all prerequisites are met for running PiscesL1.
+    all prerequisites are met for running PiscesLx.
     
     Attributes:
         verbose: Enable verbose output

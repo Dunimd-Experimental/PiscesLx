@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Prompt Loader - YAML-based Prompt Management System
 
@@ -40,8 +42,6 @@ Usage:
     prompt = POPSSPromptLoader.load("code_reviewer")
     system_prompt = POPSSPromptLoader.get_system_prompt("code_reviewer")
 """
-
-from __future__ import annotations
 
 import threading
 import uuid

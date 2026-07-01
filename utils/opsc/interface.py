@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Operator Interface Definitions
 
 This module defines the abstract base classes and data structures that establish
-the contract for all operators in the PiscesL1 OPSC framework. All operators
+the contract for all operators in the PiscesLx OPSC framework. All operators
 must implement these interfaces to ensure interoperability and consistent behavior.
 
 Key Components:

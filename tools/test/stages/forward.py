@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-Forward Pass Checker Module for PiscesL1.
+Forward Pass Checker Module for PiscesLx.
 
 This module provides the PiscesLxForwardChecker class for validating
 model forward propagation.

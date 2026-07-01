@@ -21,10 +21,12 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-"""
-Command-Line Interface Help Module for PiscesL1.
+from __future__ import annotations
 
-This module provides comprehensive help documentation for the PiscesL1
+"""
+Command-Line Interface Help Module for PiscesLx.
+
+This module provides comprehensive help documentation for the PiscesLx
 command-line interface. It displays detailed usage information for all
 available commands, options, and examples to guide users in operating
 the framework effectively.
@@ -47,7 +49,7 @@ Key Responsibilities:
        - Background run management
 
 Command Categories:
-    The PiscesL1 CLI is organized into the following command categories:
+    The PiscesLx CLI is organized into the following command categories:
     
     **Core Commands:**
         - setup: Environment setup and dependency installation
@@ -95,7 +97,7 @@ Usage Examples:
         $ python manage.py help
         
         Output:
-        PiscesL1 - Command Line Interface
+        PiscesLx - Command Line Interface
         
         Usage:
           python manage.py [command] [options]
@@ -130,11 +132,11 @@ Note:
 
 def help():
     """
-    Display comprehensive help information for the PiscesL1 CLI.
+    Display comprehensive help information for the PiscesLx CLI.
     
     This function prints detailed documentation for all available commands,
     their options, default values, and usage examples. It serves as the
-    primary reference for operating the PiscesL1 framework from the
+    primary reference for operating the PiscesLx framework from the
     command line.
     
     The help output is organized into logical sections:
@@ -167,7 +169,7 @@ def help():
         Programmatic usage:
             >>> from tools.help import help
             >>> help()
-            PiscesL1 - Command Line Interface
+            PiscesLx - Command Line Interface
             ...
     
     Note:
@@ -175,7 +177,7 @@ def help():
         command implementations in manage.py. When adding new features,
         update both the implementation and this help text.
     """
-    print("PiscesL1 - Command Line Interface")
+    print("PiscesLx - Command Line Interface")
     print("")
     print("Usage:")
     print("  python manage.py [command] [options]")

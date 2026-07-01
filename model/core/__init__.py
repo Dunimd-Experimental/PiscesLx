@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Yv Core Modeling Module - Unified Entry Point for Model Components.
 
 This module serves as the primary public interface for all core modeling components
-within the PiscesL1 framework. It consolidates imports from various submodules,
+within the PiscesLx framework. It consolidates imports from various submodules,
 providing a clean and unified API for external consumers while maintaining
 strict adherence to the YvXxx naming convention.
 

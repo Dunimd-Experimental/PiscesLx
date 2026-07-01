@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Watermark Protocol Operator
 
@@ -60,7 +62,7 @@ Usage Examples:
     >>> operator = POPSSProtocolOperator()
     >>> 
     >>> # Encode payload to bitstream
-    >>> payload = {"model": "PiscesL1", "timestamp": "2025-01-01"}
+    >>> payload = {"model": "PiscesLx", "timestamp": "2025-01-01"}
     >>> bitstream = operator.encode(payload)
     >>> 
     >>> # Decode bitstream to payload
@@ -146,11 +148,11 @@ class POPSSProtocolOperator(PiscesLxBaseOperator):
     
     Example:
         >>> operator = POPSSProtocolOperator()
-        >>> payload = {"model": "PiscesL1", "user": "test"}
+        >>> payload = {"model": "PiscesLx", "user": "test"}
         >>> bitstream = operator.frame_payload(payload)
         >>> decoded = operator.extract_from_bits(bitstream)
         >>> print(decoded["model"])
-        'PiscesL1'
+        'PiscesLx'
     """
     
     def __init__(self):
@@ -617,7 +619,7 @@ class POPSSProtocolOperator(PiscesLxBaseOperator):
         
         Example:
             >>> operator = POPSSProtocolOperator()
-            >>> bitstream = operator.frame_payload({"model": "PiscesL1"})
+            >>> bitstream = operator.frame_payload({"model": "PiscesLx"})
         """
         result = self._encode({
             "payload": payload,
@@ -645,10 +647,10 @@ class POPSSProtocolOperator(PiscesLxBaseOperator):
         
         Example:
             >>> operator = POPSSProtocolOperator()
-            >>> bitstream = operator.frame_payload({"model": "PiscesL1"})
+            >>> bitstream = operator.frame_payload({"model": "PiscesLx"})
             >>> payload = operator.extract_from_bits(bitstream)
             >>> print(payload["model"])
-            'PiscesL1'
+            'PiscesLx'
         """
         result = self._decode({
             "bitstream": bitstream,
@@ -756,7 +758,7 @@ def create_protocol_operator() -> 'POPSSProtocolOperator':
     
     Example:
         >>> operator = create_protocol_operator()
-        >>> bitstream = operator.frame_payload({"model": "PiscesL1"})
+        >>> bitstream = operator.frame_payload({"model": "PiscesLx"})
     """
     return POPSSProtocolOperator()
 

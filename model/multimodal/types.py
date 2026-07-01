@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Type definitions shared across Yv multimodal subsystems.
 
 This module provides comprehensive type definitions for the Yv multimodal

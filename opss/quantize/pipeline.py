@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Quantization Pipeline Operator - Complete Quantization Pipeline
 End-to-end quantization solution integrating all quantization components.

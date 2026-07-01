@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Test-Time Training (TTT-E2E) for Yv Reasoning.
 
 Based on arXiv 2512.23675. End-to-end test-time training during inference
@@ -36,6 +38,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple, Dict
 
 
+# Paper: Sun et al., "Test-Time Training with Self-Supervision for Generalization under Distribution Shifts", ICML 2020; Gandelsman et al., "Test-Time Training with Masked Autoencoders", NeurIPS 2024
 class YvTestTimeTrainer:
     """Test-time training for online model adaptation.
 

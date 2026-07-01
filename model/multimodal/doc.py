@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Document understanding components for Yv multimodal pipelines.
 
 This module provides comprehensive document processing components for the Yv
@@ -80,6 +82,7 @@ from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.Multimodal", file_path=get_log_file("Yv.Multimodal"), enable_file=True)
 
+# Paper: Huang et al., "LayoutLMv3: Pre-training for Document AI with Unified Text and Image Masking", ACM Multimedia 2022, arXiv:2204.08387
 class YvDocEncoder(nn.Module):
     """Document encoder integrating textual, layout, and handwriting signals.
     

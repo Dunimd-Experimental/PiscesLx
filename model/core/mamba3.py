@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Mamba-3 State Space Model Implementation for Yv Model.
 
@@ -415,6 +417,7 @@ class YvMamba3Config:
         if isinstance(self.ssm_mode, str):
             self.ssm_mode = YvSSMMode(self.ssm_mode)
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — improved discretization)
 class YvTrapezoidalDiscretization(nn.Module):
     """Trapezoidal discretization for state space models.
     
@@ -486,6 +489,7 @@ class YvTrapezoidalDiscretization(nn.Module):
         return discretized
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — complex-valued SSM extension)
 class YvComplexStateSpace(nn.Module):
     """Complex-valued state space model for enhanced expressiveness.
     
@@ -600,6 +604,7 @@ class YvComplexStateSpace(nn.Module):
         return result
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — MIMO SSM extension)
 class YvMIMOStateSpace(nn.Module):
     """Multi-Input Multi-Output state space model.
     
@@ -671,6 +676,7 @@ class YvMIMOStateSpace(nn.Module):
         y = self.C(new_state) + self.D(x)
         return y, new_state
 
+# Paper: Gu & Dao, "Mamba: Linear-Time Sequence Modeling with Selective State Spaces", arXiv:2312.00752, 2023
 class YvSelectiveScan(nn.Module):
     """Selective scan mechanism for state space models.
     
@@ -844,6 +850,7 @@ class YvSelectiveScan(nn.Module):
 
         return output
 
+# Paper: Blelloch, "Prefix Sums and Their Applications", 1990 (parallel scan); Dao & Gu, "Mamba-2", arXiv:2405.21060, 2024
 class YvParallelScan(nn.Module):
     """
     Parallel scan for efficient SSM computation.
@@ -974,6 +981,7 @@ class YvChunkedParallelScan(nn.Module):
 
         return output
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — bidirectional SSM extension)
 class YvBidirectionalSSM(nn.Module):
     """
     Bidirectional State Space Model for encoder tasks.
@@ -1021,6 +1029,7 @@ class YvBidirectionalSSM(nn.Module):
 
         return output
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — gated SSM extension)
 class YvGatedSSM(nn.Module):
     """
     Gated State Space Model with learnable gating mechanism.
@@ -1067,6 +1076,7 @@ class YvGatedSSM(nn.Module):
 
         return output
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — multi-head SSM)
 class YvMultiHeadSSM(nn.Module):
     """
     Multi-Head State Space Model.
@@ -1120,6 +1130,7 @@ class YvMultiHeadSSM(nn.Module):
 
         return output
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — adaptive discretization)
 class YvAdaptiveDiscretization(nn.Module):
     """
     Adaptive discretization for state space models.
@@ -1154,6 +1165,7 @@ class YvAdaptiveDiscretization(nn.Module):
 
         return dt, A
 
+# Paper: Dao & Gu, "Mamba-2: State Space Duality", arXiv:2405.21060, 2024
 class YvVKernel(nn.Module):
     """
     V-Kernel optimization from Mamba-2.
@@ -1212,6 +1224,7 @@ class YvVKernel(nn.Module):
 
         return output
 
+# Paper: Dao & Gu, "Mamba-2: State Space Duality", arXiv:2405.21060, 2024
 class YvSSDuality(nn.Module):
     """
     State Space Duality for efficient training and inference.
@@ -1247,6 +1260,7 @@ class YvSSDuality(nn.Module):
             conv_out = self.conv_mode(x)
             return conv_out
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — hierarchical SSM)
 class YvHierarchicalSSM(nn.Module):
     """
     Hierarchical State Space Model for multi-scale temporal modeling.
@@ -1349,6 +1363,7 @@ class YvStateCache:
         new_cache.conv_state = self.conv_state.clone()
         return new_cache
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — memory-efficient SSM)
 class YvFlashSSM(nn.Module):
     """
     Flash SSM with memory-efficient implementation.
@@ -1420,6 +1435,7 @@ class YvFlashSSM(nn.Module):
 
         return output
 
+# Paper: Gu & Dao, "Mamba" (2023); Dao & Gu, "Mamba-2" (2024); Yv Mamba-3 extension
 class YvMamba3Block(nn.Module):
     """Complete Mamba-3 block implementation with all advanced features.
     
@@ -1665,6 +1681,7 @@ class YvMamba3Block(nn.Module):
         
         return torch.cat(outputs, dim=1)
 
+# Paper: Based on Mamba family (Gu & Dao, 2023; Dao & Gu, 2024)
 class YvMamba3Stack(nn.Module):
     """
     Stack of Mamba-3 blocks with optional layer sharing and gradient checkpointing.
@@ -1695,6 +1712,7 @@ class YvMamba3Stack(nn.Module):
         hidden_states = self.norm(hidden_states)
         return hidden_states
 
+# Paper: Based on Mamba family (Gu & Dao, 2023; Dao & Gu, 2024)
 class YvMamba3Integration(nn.Module):
     """
     High-level integration module for Mamba-3.
@@ -1725,6 +1743,7 @@ class YvMamba3Integration(nn.Module):
         output = self.layer_norm(output + residual)
         return output
 
+# Paper: Based on Mamba family (Gu & Dao, 2023; Dao & Gu, 2024)
 class YvMamba3Encoder(nn.Module):
     """
     Mamba-3 Encoder for bidirectional encoding tasks.
@@ -1766,6 +1785,7 @@ class YvMamba3Encoder(nn.Module):
 
         return hidden_states
 
+# Paper: Based on Mamba family (Gu & Dao, 2023; Dao & Gu, 2024)
 class YvMamba3Decoder(nn.Module):
     """
     Mamba-3 Decoder for autoregressive generation.

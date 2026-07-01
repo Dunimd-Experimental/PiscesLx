@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Fully Self-Developed Multimodal Generation for Yv Architecture.
 
 This module provides comprehensive multimodal generation capabilities for the
@@ -496,14 +498,8 @@ class YvSelfDevelopedGenerator(nn.Module):
                 generation_time=generation_time
             )
             
-        except Exception as e:
-            _LOG.error(f"Image generation failed: {e}")
-            return YvGenerationResult(
-                success=False,
-                modality=YvGenerationModality.IMAGE,
-                error=str(e),
-                generation_time=(datetime.now() - start_time).total_seconds()
-            )
+        except (RuntimeError, ValueError, KeyError, AttributeError, TypeError) as e:
+            raise RuntimeError(f"Image generation failed: {e}") from e
     
     async def generate_audio(self, text: str, **kwargs) -> YvGenerationResult:
         """
@@ -555,14 +551,8 @@ class YvSelfDevelopedGenerator(nn.Module):
                 generation_time=generation_time
             )
             
-        except Exception as e:
-            _LOG.error(f"Audio generation failed: {e}")
-            return YvGenerationResult(
-                success=False,
-                modality=YvGenerationModality.AUDIO,
-                error=str(e),
-                generation_time=(datetime.now() - start_time).total_seconds()
-            )
+        except (RuntimeError, ValueError, KeyError, AttributeError, TypeError) as e:
+            raise RuntimeError(f"Audio generation failed: {e}") from e
     
     async def generate_video(self, prompt: str, **kwargs) -> YvGenerationResult:
         """Generate video from text prompt using native NTP paradigm.
@@ -626,14 +616,8 @@ class YvSelfDevelopedGenerator(nn.Module):
                 generation_time=generation_time
             )
             
-        except Exception as e:
-            _LOG.error(f"Video generation failed: {e}")
-            return YvGenerationResult(
-                success=False,
-                modality=YvGenerationModality.VIDEO,
-                error=str(e),
-                generation_time=(datetime.now() - start_time).total_seconds()
-            )
+        except (RuntimeError, ValueError, KeyError, AttributeError, TypeError) as e:
+            raise RuntimeError(f"Video generation failed: {e}") from e
     
     def _decode_video_with_temporal(self, tokens: torch.Tensor, num_frames: int, resolution: int) -> torch.Tensor:
         """Decode video tokens with temporal positional encoding.
@@ -646,16 +630,15 @@ class YvSelfDevelopedGenerator(nn.Module):
         Returns:
             Video tensor [num_frames, 3, resolution, resolution].
         """
+        if not (self.vision_components and 'image_decoder' in self.vision_components):
+            raise RuntimeError(
+                "YvSelfDevelopedGenerator._decode_video_with_temporal requires a registered image_decoder."
+            )
         frames = []
         for i in range(num_frames):
             frame_tokens = tokens[:, i::num_frames] if tokens.shape[1] >= num_frames else tokens
-            
-            if self.vision_components and 'image_decoder' in self.vision_components:
-                frame = self.vision_components['image_decoder'](frame_tokens.float())
-                frame = frame.view(-1, 3, resolution, resolution)
-            else:
-                frame = torch.randn(1, 3, resolution, resolution)
-            
+            frame = self.vision_components['image_decoder'](frame_tokens.float())
+            frame = frame.view(-1, 3, resolution, resolution)
             frames.append(frame)
         
         return torch.cat(frames, dim=0)
@@ -674,40 +657,16 @@ class YvSelfDevelopedGenerator(nn.Module):
         return self._decode_video_with_temporal(tokens, num_frames, resolution)
     
     def _encode_text(self, text: str) -> torch.Tensor:
-        """Encode text using the Yv tokenizer with hash-based fallback."""
-        try:
-            from model.tokenizer import get_tokenizer
-            tokenizer = get_tokenizer()
-            tokens = tokenizer.encode(text, return_tensors="pt")
-            if tokens.dim() == 1:
-                tokens = tokens.unsqueeze(0)
-            max_len = self.config.max_sequence_length
-            if tokens.shape[1] > max_len:
-                tokens = tokens[:, :max_len]
-            return tokens.long()
-        except Exception:
-            pass
-
-        # Fallback: hash-based deterministic encoding (NEVER random)
-        try:
-            from model.tokenizer import YvTokenizer
-            try:
-                vocab_size = YvTokenizer().vocab_size
-            except Exception:
-                vocab_size = 154885
-        except Exception:
-            vocab_size = 154885
-
+        """Encode text using the project tokenizer."""
+        from model.tokenizer import get_tokenizer
+        tokenizer = get_tokenizer()
+        tokens = tokenizer.encode(text, return_tensors="pt")
+        if tokens.dim() == 1:
+            tokens = tokens.unsqueeze(0)
         max_len = self.config.max_sequence_length
-        words = text.split()[:max_len]
-        tokens = []
-        for word in words:
-            h = int(hashlib.sha256(word.encode('utf-8')).hexdigest()[:8], 16)
-            tokens.append(h % vocab_size)
-        while len(tokens) < 1:
-            tokens.append(0)
-        result = torch.tensor(tokens, dtype=torch.long).unsqueeze(0)
-        return result[:, :max_len]
+        if tokens.shape[1] > max_len:
+            tokens = tokens[:, :max_len]
+        return tokens.long()
     
     async def _ntp_generate(
         self,
@@ -768,28 +727,9 @@ class YvSelfDevelopedGenerator(nn.Module):
 
     def _self_developed_diffusion(self, text_features: torch.Tensor, modality: str) -> torch.Tensor:
         """Self-developed diffusion process using our transformer backbone."""
-        # Initialize random noise
-        if modality == 'image':
-            latents = torch.randn(1, self.config.hidden_size, 8, 8)  # latent image patches
-        else:
-            latents = torch.randn(1, self.config.hidden_size, 64)    # audio latents
-        
-        # Self-developed denoising steps
-        for step in range(self.config.num_inference_steps):
-            # Predict noise using our backbone
-            noise_pred = self.backbone(
-                latents.view(1, -1),
-                encoder_hidden_states=text_features
-            )
-            
-            # Apply denoising step (simplified)
-            latents = latents - 0.1 * noise_pred.view_as(latents)
-            
-            # Progress update
-            if step % 10 == 0:
-                _LOG.debug(f"Denoising step {step}/{self.config.num_inference_steps}")
-        
-        return latents
+        raise RuntimeError(
+            "YvSelfDevelopedGenerator._self_developed_diffusion uses synthetic random latents and is disabled in strict model-closure mode."
+        )
     
     def _decode_image(self, latents: torch.Tensor) -> torch.Tensor:
         """Decode image latents using our vision components."""
@@ -853,6 +793,7 @@ class YvGenerationBackend(ABC):
         }
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvTextToImageBackend(YvGenerationBackend):
     """Text-to-image generation backend.
     
@@ -888,37 +829,26 @@ class YvTextToImageBackend(YvGenerationBackend):
         """Lazy initialization of the pipeline."""
         if self._initialized:
             return True
-        
-        try:
-            from diffusers import DiffusionPipeline
-            
-            device = self._device
-            if device == "auto":
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-            
-            self._pipeline = DiffusionPipeline.from_pretrained(
-                self.model_name,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-            )
-            self._pipeline.to(device)
-            self._initialized = True
-            _LOG.info(f"Image generation pipeline initialized: {self.model_name}")
-            return True
-            
-        except ImportError:
-            _LOG.warning("diffusers package not installed. Image generation unavailable.")
-            return False
-        except Exception as e:
-            _LOG.error(f"Failed to initialize image pipeline: {e}")
-            return False
+
+        from diffusers import DiffusionPipeline
+
+        device = self._device
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        self._pipeline = DiffusionPipeline.from_pretrained(
+            self.model_name,
+            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+        )
+        self._pipeline.to(device)
+        self._initialized = True
+        _LOG.info(f"Image generation pipeline initialized: {self.model_name}")
+        return True
     
     def is_available(self) -> bool:
         """Check if image generation is available."""
-        try:
-            import diffusers
-            return True
-        except ImportError:
-            return False
+        import importlib.util
+        return importlib.util.find_spec("diffusers") is not None
     
     async def generate(
         self,
@@ -945,58 +875,42 @@ class YvTextToImageBackend(YvGenerationBackend):
         start_time = asyncio.get_event_loop().time()
         
         if not self._ensure_initialized():
-            return YvGenerationResult(
-                success=False,
-                modality=self.modality,
-                error="Image generation backend not available. Install 'diffusers' package.",
+            raise RuntimeError("Image generation backend initialization failed.")
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self._pipeline(
+                prompt=condition.text_prompt,
+                num_inference_steps=num_inference_steps,
+                guidance_scale=guidance_scale,
+                height=height,
+                width=width,
+                **kwargs
             )
-        
-        try:
-            # Run generation in executor to avoid blocking
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: self._pipeline(
-                    prompt=condition.text_prompt,
-                    num_inference_steps=num_inference_steps,
-                    guidance_scale=guidance_scale,
-                    height=height,
-                    width=width,
-                    **kwargs
-                )
-            )
-            
-            # Convert PIL image to tensor
-            image = result.images[0]
-            image_tensor = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
-            
-            generation_time = asyncio.get_event_loop().time() - start_time
-            
-            return YvGenerationResult(
-                success=True,
-                modality=self.modality,
-                content=image_tensor.unsqueeze(0),
-                metadata={
-                    "prompt": condition.text_prompt,
-                    "model": self.model_name,
-                    "steps": num_inference_steps,
-                    "guidance_scale": guidance_scale,
-                    "size": (height, width),
-                    "timestamp": datetime.now().isoformat(),
-                },
-                generation_time=generation_time,
-            )
-            
-        except Exception as e:
-            _LOG.error(f"Image generation failed: {e}")
-            return YvGenerationResult(
-                success=False,
-                modality=self.modality,
-                error=str(e),
-                generation_time=asyncio.get_event_loop().time() - start_time,
-            )
+        )
+
+        image = result.images[0]
+        image_tensor = torch.from_numpy(np.array(image)).permute(2, 0, 1).float() / 255.0
+        generation_time = asyncio.get_event_loop().time() - start_time
+
+        return YvGenerationResult(
+            success=True,
+            modality=self.modality,
+            content=image_tensor.unsqueeze(0),
+            metadata={
+                "prompt": condition.text_prompt,
+                "model": self.model_name,
+                "steps": num_inference_steps,
+                "guidance_scale": guidance_scale,
+                "size": (height, width),
+                "timestamp": datetime.now().isoformat(),
+            },
+            generation_time=generation_time,
+        )
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvTextToAudioBackend(YvGenerationBackend):
     """Text-to-audio generation backend.
     
@@ -1029,39 +943,28 @@ class YvTextToAudioBackend(YvGenerationBackend):
     
     def is_available(self) -> bool:
         """Check if audio generation is available."""
-        try:
-            from diffusers import AudioLDM2Pipeline
-            return True
-        except ImportError:
-            return False
+        import importlib.util
+        return importlib.util.find_spec("diffusers") is not None
     
     def _ensure_initialized(self) -> bool:
         """Lazy initialization of audio pipeline."""
         if self._initialized:
             return True
-        
-        try:
-            from diffusers import AudioLDM2Pipeline
-            
-            device = self._device
-            if device == "auto":
-                device = "cuda" if torch.cuda.is_available() else "cpu"
-            
-            self._pipeline = AudioLDM2Pipeline.from_pretrained(
-                self.model_name,
-                torch_dtype=torch.float16 if device == "cuda" else torch.float32,
-            )
-            self._pipeline.to(device)
-            self._initialized = True
-            _LOG.info(f"Audio generation pipeline initialized: {self.model_name}")
-            return True
-            
-        except ImportError:
-            _LOG.warning("AudioLDM not available. Audio generation unavailable.")
-            return False
-        except Exception as e:
-            _LOG.error(f"Failed to initialize audio pipeline: {e}")
-            return False
+
+        from diffusers import AudioLDM2Pipeline
+
+        device = self._device
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+
+        self._pipeline = AudioLDM2Pipeline.from_pretrained(
+            self.model_name,
+            torch_dtype=torch.float16 if device == "cuda" else torch.float32,
+        )
+        self._pipeline.to(device)
+        self._initialized = True
+        _LOG.info(f"Audio generation pipeline initialized: {self.model_name}")
+        return True
     
     async def generate(
         self,
@@ -1084,50 +987,37 @@ class YvTextToAudioBackend(YvGenerationBackend):
         start_time = asyncio.get_event_loop().time()
         
         if not self._ensure_initialized():
-            return YvGenerationResult(
-                success=False,
-                modality=self.modality,
-                error="Audio generation backend not available. Install required packages.",
+            raise RuntimeError("Audio generation backend initialization failed.")
+
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(
+            None,
+            lambda: self._pipeline(
+                prompt=condition.text_prompt,
+                audio_length_in_s=audio_length_in_s,
+                num_inference_steps=num_inference_steps,
+                **kwargs
             )
-        
-        try:
-            loop = asyncio.get_event_loop()
-            result = await loop.run_in_executor(
-                None,
-                lambda: self._pipeline(
-                    prompt=condition.text_prompt,
-                    audio_length_in_s=audio_length_in_s,
-                    num_inference_steps=num_inference_steps,
-                    **kwargs
-                )
-            )
-            
-            audio_tensor = torch.from_numpy(result.audios[0])
-            generation_time = asyncio.get_event_loop().time() - start_time
-            
-            return YvGenerationResult(
-                success=True,
-                modality=self.modality,
-                content=audio_tensor.unsqueeze(0),
-                metadata={
-                    "prompt": condition.text_prompt,
-                    "model": self.model_name,
-                    "duration": audio_length_in_s,
-                    "timestamp": datetime.now().isoformat(),
-                },
-                generation_time=generation_time,
-            )
-            
-        except Exception as e:
-            _LOG.error(f"Audio generation failed: {e}")
-            return YvGenerationResult(
-                success=False,
-                modality=self.modality,
-                error=str(e),
-                generation_time=asyncio.get_event_loop().time() - start_time,
-            )
+        )
+
+        audio_tensor = torch.from_numpy(result.audios[0])
+        generation_time = asyncio.get_event_loop().time() - start_time
+
+        return YvGenerationResult(
+            success=True,
+            modality=self.modality,
+            content=audio_tensor.unsqueeze(0),
+            metadata={
+                "prompt": condition.text_prompt,
+                "model": self.model_name,
+                "duration": audio_length_in_s,
+                "timestamp": datetime.now().isoformat(),
+            },
+            generation_time=generation_time,
+        )
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvDocumentGenerationBackend(YvGenerationBackend):
     """Document generation backend.
     
@@ -1212,14 +1102,8 @@ class YvDocumentGenerationBackend(YvGenerationBackend):
                 generation_time=generation_time,
             )
             
-        except Exception as e:
-            _LOG.error(f"Document generation failed: {e}")
-            return YvGenerationResult(
-                success=False,
-                modality=self.modality,
-                error=str(e),
-                generation_time=asyncio.get_event_loop().time() - start_time,
-            )
+        except (RuntimeError, ValueError, KeyError, AttributeError, TypeError) as e:
+            raise RuntimeError(f"Document generation failed: {e}") from e
 
 
 class YvGenerator:
@@ -1299,26 +1183,16 @@ class YvGenerator:
             try:
                 modality = YvGenerationModality[modality.upper()]
             except KeyError:
-                return YvGenerationResult(
-                    success=False,
-                    modality=YvGenerationModality.TEXT,
-                    error=f"Unknown modality: {modality}. Available: {[m.name for m in YvGenerationModality]}",
+                raise ValueError(
+                    f"Unknown modality: {modality}. Available: {[m.name for m in YvGenerationModality]}"
                 )
         
         backend = self._backends.get(modality)
         if backend is None:
-            return YvGenerationResult(
-                success=False,
-                modality=modality,
-                error=f"No backend registered for {modality.name}. Call register_backend() first.",
-            )
+            raise ValueError(f"No backend registered for {modality.name}. Call register_backend() first.")
         
         if not backend.is_available():
-            return YvGenerationResult(
-                success=False,
-                modality=modality,
-                error=f"Backend {backend.name} is not available. Check dependencies.",
-            )
+            raise RuntimeError(f"Backend {backend.name} is not available. Check dependencies.")
         
         result = await backend.generate(condition, **kwargs)
         

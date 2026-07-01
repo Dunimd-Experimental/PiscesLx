@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Configuration utilities for Yv flagship multimodal models.
 
 This module provides comprehensive configuration management for the Yv
@@ -195,9 +197,104 @@ class YvActivationType(Enum):
     REGLU = "reglu"
     SOFTMAX = "softmax"
 
+
+@dataclass
+class YvEntaConfig:
+    """Configuration for the EnTA outer training loop.
+
+    This config is loaded from ``configs/teachers.yaml`` and contains
+    only EnTA-runtime settings: teacher panel, roundtable rules,
+    sandbox, data generation strategy, evaluation strategy, and loop
+    termination conditions.
+
+    Model architecture parameters (dynamic head, knowledge field) are
+    stored in ``enta_model_layout`` and populated by the startup
+    questionnaire.
+    """
+    # ── EnTA runtime settings ──
+    teachers: List[Dict[str, Any]] = field(default_factory=list)
+    judge: Optional[Dict[str, Any]] = None
+    max_steps: int = 32
+    temperature: float = 0.7
+    max_tokens: int = 2048
+    max_violations: int = 8
+
+    # ── Reward weights ──
+    completion_weight: float = 0.6
+    tool_weight: float = 0.2
+    safety_weight: float = 0.1
+    execution_weight: float = 0.1
+
+    # ── Backend settings ──
+    backend: str = "local"
+    model_name: str = ""
+    device: str = "cpu"
+    base_url: str = "http://127.0.0.1:8000/v1"
+    api_key: str = "EMPTY"
+    server_model: str = ""
+
+    # ── Model layout (populated by EntaIntake questionnaire) ──
+    dynamic_head_param_scale: str = ""
+    dynamic_head_hidden_dim: str = ""
+    dynamic_head_num_codebooks: str = ""
+    knowledge_field_param_scale: str = ""
+    knowledge_field_codebook_size: str = ""
+    knowledge_field_entry_dim: str = ""
+
+    @classmethod
+    def from_yaml(cls, path: str) -> "YvEntaConfig":
+        """Load EnTA configuration from a YAML file.
+
+        Args:
+            path: Path to the YAML file (typically ``configs/teachers.yaml``).
+
+        Returns:
+            A fully populated ``YvEntaConfig`` instance.
+        """
+        import yaml
+        import os
+
+        if not os.path.exists(path):
+            return cls()
+
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+
+        # Extract enta_model_layout fields
+        layout = data.get("enta_model_layout", {}) or {}
+        layout_kwargs = {
+            "dynamic_head_param_scale": str(layout.get("dynamic_head_param_scale", "") or ""),
+            "dynamic_head_hidden_dim": str(layout.get("dynamic_head_hidden_dim", "") or ""),
+            "dynamic_head_num_codebooks": str(layout.get("dynamic_head_num_codebooks", "") or ""),
+            "knowledge_field_param_scale": str(layout.get("knowledge_field_param_scale", "") or ""),
+            "knowledge_field_codebook_size": str(layout.get("knowledge_field_codebook_size", "") or ""),
+            "knowledge_field_entry_dim": str(layout.get("knowledge_field_entry_dim", "") or ""),
+        }
+
+        return cls(
+            teachers=data.get("teachers", []) or [],
+            judge=data.get("judge"),
+            max_steps=int(data.get("max_steps", 32) or 32),
+            temperature=float(data.get("temperature", 0.7) or 0.7),
+            max_tokens=int(data.get("max_tokens", 2048) or 2048),
+            max_violations=int(data.get("max_violations", 8) or 8),
+            completion_weight=float(data.get("completion_weight", 0.6) or 0.6),
+            tool_weight=float(data.get("tool_weight", 0.2) or 0.2),
+            safety_weight=float(data.get("safety_weight", 0.1) or 0.1),
+            execution_weight=float(data.get("execution_weight", 0.1) or 0.1),
+            backend=str(data.get("backend", "local") or "local"),
+            model_name=str(data.get("model_name", "") or ""),
+            device=str(data.get("device", "cpu") or "cpu"),
+            base_url=str(data.get("base_url", "http://127.0.0.1:8000/v1") or ""),
+            api_key=str(data.get("api_key", "EMPTY") or ""),
+            server_model=str(data.get("server_model", "") or ""),
+            **layout_kwargs,
+        )
+
+
 @dataclass
 class YvConfig:
-    """Dataclass encapsulating PiscesL1 model configuration parameters.
+    """Dataclass encapsulating PiscesLx model configuration parameters.
 
     Attributes:
         model_type (str): Human-readable model identifier. Defaults to ``"piscesl1"``.
@@ -313,6 +410,7 @@ class YvConfig:
     moe_anticipatory_routing: bool = True
     moe_expert_parallel: bool = False
     moe_token_dispatcher: str = "allgather"
+    backbone_allow_legacy_blocks: bool = False
 
     # ========================================
     # PathMoE Configuration (arXiv 2026)
@@ -599,7 +697,7 @@ class YvConfig:
     # ========================================
 
     # Manifold-Constrained Hyper-Connections (mHC)
-    use_mhc: bool = False
+    use_mhc: bool = True
     mhc_n_hc: int = 4
     mhc_sinkhorn_iters: int = 20
 
@@ -617,7 +715,7 @@ class YvConfig:
     muon_enabled: bool = False
 
     # CSA/HCA Hybrid Attention (DeepSeek-V4 inspired)
-    use_csa_attention: bool = False
+    use_csa_attention: bool = True
     csa_compression_ratio: int = 4
     csa_top_k: int = 1024
     csa_sliding_window: int = 128
@@ -697,26 +795,16 @@ class YvConfig:
     dapo_epsilon_high: float = 0.4
     dapo_diversity_threshold: float = 0.3
 
-    # Verification: CRV + OTV + ARES
-    use_crv_verification: bool = False
-    use_otv_verification: bool = False
-    use_ares_verification: bool = False
-    otv_quality_threshold: float = 0.6
+    # Verification: CRV
+    use_crv_verification: bool = True
 
     # SyncFusion: Audio-Video Synchronous Understanding
     use_sync_fusion: bool = True
     sync_fusion_temporal_bins: int = 16
 
-    # Coupled Mamba Fusion
-    use_coupled_mamba_fusion: bool = True
-    coupled_mamba_coupling_strength: float = 0.3
-
     # SparseSSM: Training-Free Mamba Pruning
     use_sparse_ssm: bool = True
     sparse_ssm_ratio: float = 0.5
-
-    # Gated Delta Networks
-    use_gated_delta: bool = True
 
     # OOMB: Million-Token Context
     use_oomb_context: bool = True
@@ -727,6 +815,70 @@ class YvConfig:
     use_reform: bool = True
     reform_compression_ratio: int = 4
     reform_importance_threshold: float = 0.1
+
+    # ========================================
+    # Dead Code Integration (2026)
+    # ========================================
+
+    # Dynamic H2O: adaptive compression + hierarchical caching for 1M+ context
+    use_dynamic_h2o: bool = False
+    dynamic_h2o_streaming_window: int = 16384
+    dynamic_h2o_compression_ratio: int = 8
+    dynamic_h2o_num_cache_levels: int = 3
+
+    # Local-Global Attention: head-level split for hybrid context
+    use_local_global: bool = False
+    local_global_window: int = 512
+    local_global_head_ratio: float = 0.5
+
+    # Adaptive Computation Time: token-level dynamic computation budget
+    use_adaptive_computation: bool = False
+    adaptive_computation_max_iterations: int = 3
+    adaptive_computation_threshold: float = 0.99
+
+    # Dynamic YaRN: learned scaling for adaptive position encoding
+    use_dynamic_yarn: bool = False
+
+    # SOLAR: parameter-level meta-learning self-optimization
+    use_solar: bool = False
+    solar_meta_lr: float = 1e-4
+
+    # Self-Play RL: self-generation → self-critique → self-training loop
+    use_self_play: bool = False
+    self_play_num_rounds: int = 3
+    self_play_num_samples: int = 4
+    self_play_temperature: float = 0.8
+    self_play_dpo_beta: float = 0.1
+
+    # Graph of Tokens MoE routing: sequence-level dependency-aware routing
+    use_graph_of_tokens: bool = False
+    graph_of_tokens_top_k: int = 2
+    graph_of_tokens_n_heads: int = 4
+    graph_of_tokens_max_clusters: int = 8
+    graph_of_tokens_load_balance_alpha: float = 0.01
+
+    # SoftMoE: soft differentiable MoE routing via LapSum relaxation
+    use_soft_moe: bool = False
+    soft_moe_mean_k: int = 2
+    soft_moe_temperature: float = 1.0
+
+    # RoMA: Routing Manifold Alignment for MoE routers (ICLR 2026)
+    use_roma: bool = False
+    roma_n_neighbors: int = 8
+
+    # SPELL: Self-Play for evolving long-context models (ICLR 2026)
+    use_spell: bool = False
+    spell_proj_dim: int = 512
+    spell_ramp_steps: int = 1000
+
+    # Seirênes: Adversarial Self-Play with distractions (arXiv May 2026)
+    use_seirenes: bool = False
+
+    # Tactic: Adaptive Sparse Attention with clustering (ICLR 2026)
+    use_tactic: bool = False
+    tactic_cumulative_target: float = 0.8
+    tactic_n_bins: int = 64
+    tactic_n_clusters: int = 4
 
     # Quartet: End-to-End FP4 Training
     use_quartet: bool = True
@@ -860,6 +1012,19 @@ class YvConfig:
 
     modal_protection_mod: bool = True
 
+    # === 2026 flagship feature flags ===
+    use_rca_fusion: bool = True
+    use_seer_executor: bool = True
+    use_vericot: bool = True
+    use_comet_memory: bool = True
+    use_token_sparse_attn: bool = True
+    use_mhc_lite: bool = False
+
+    # --- 2026 Q2 flagship algorithm additions ---
+    use_hicl_router: bool = True       # HiCL DG-gated MoE routing (arXiv:2508.16651v3)
+    use_layer_route: bool = True       # LayerRoute adaptive layer skip (arXiv:2606.01838)
+    use_mr_rope: bool = True           # MrRoPE mixed-radix position encoding (arXiv:2601.22181)
+
     use_ultra_sparse_gate: bool = False
     ultra_sparse_tier1_threshold: float = 0.3
     ultra_sparse_tier2_threshold: float = 0.8
@@ -911,6 +1076,24 @@ class YvConfig:
     memory_knowledge_slots: int = 0
 
     # ========================================
+    # Knowledge Store Builder (POPSS)
+    # Offline construction of FAISS-indexed mmap-backed knowledge store.
+    # Configured here so that `memory_store_path` and the builder share
+    # the same default path.  Run `popss_knowledge_build` CLI (or
+    # opss/knowledge/run_build.py) to populate the store from text.
+    # ========================================
+    knowledge_store_slots: int = 0
+    knowledge_store_chunk_size: int = 256
+    knowledge_store_chunk_overlap: int = 32
+    knowledge_store_contrastive_epochs: int = 3
+    knowledge_store_batch_size: int = 64
+    knowledge_store_index_type: str = "ivfpq"
+    knowledge_store_index_nlist: int = 4096
+    knowledge_store_index_m: int = 16
+    knowledge_store_index_nbits: int = 8
+    knowledge_store_use_fp8: bool = False
+
+    # ========================================
     # Subconscious Configuration
     # 0.5B Dynamic Head + 314B-equivalent Implicit Knowledge Field
     #
@@ -932,9 +1115,36 @@ class YvConfig:
     subconscious_prefetch_depth: int = 2
 
     # ========================================
+    # EnTA (Encre Train Agent) Configuration
+    #
+    # Populated from ``configs/teachers.yaml`` by ``load_encre_yaml()``.
+    # At ``from_yvconfig()`` the YAML is loaded automatically when
+    # ``encre_teachers`` is empty.
+    # ========================================
+    encre_teachers: List[Dict[str, Any]] = field(default_factory=list)
+    encre_judge: Optional[Dict[str, Any]] = None
+    encre_max_steps: int = 32
+    encre_temperature: float = 0.7
+    encre_max_tokens: int = 2048
+    encre_backend: str = "local"
+    encre_model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
+    encre_device: str = "auto"
+    encre_completion_weight: float = 0.6
+    encre_tool_weight: float = 0.2
+    encre_safety_weight: float = 0.1
+    encre_execution_weight: float = 0.1
+    encre_stream: bool = False
+    encre_judge_temperature: float = 0.0
+    encre_judge_max_tokens: int = 1024
+    encre_max_violations: int = 8
+
+    # EnTA configuration (loaded from configs/teachers.yaml)
+    enta: Optional[YvEntaConfig] = None
+
+    # ========================================
     # MoVE (Mixture of Vision Encoders)
     # ========================================
-    use_move_encoder: bool = False
+    use_move_encoder: bool = True
     move_encoder_list: List[str] = field(default_factory=lambda: ["siglip"])
     move_top_k: int = 1
 
@@ -1027,6 +1237,18 @@ class YvConfig:
                 self.hidden_size * self.n_layer * self.memory_capacity_factor * 1000
             )
 
+        # Auto-configure knowledge store defaults if builder slots not set
+        if self.knowledge_store_slots == 0:
+            self.knowledge_store_slots = self.memory_knowledge_slots
+
+        # Derive the default memory store path from the model size so that
+        # ``memory_store_path`` is always non-empty when memory separation is on.
+        # The user can still override it explicitly.
+        if not self.memory_store_path:
+            self.memory_store_path = (
+                f"./knowledge_store/{self.hidden_size}x{self.n_layer}/"
+            )
+
     @classmethod
     def from_json(cls, path: str) -> 'YvConfig':
         """Load configuration from a JSON file.
@@ -1086,6 +1308,50 @@ class YvConfig:
         filtered_config = {k: v for k, v in config_data.items() if k in model_fields}
 
         return cls(**filtered_config)
+
+    @classmethod
+    def load_encre_yaml(cls, yaml_path: str = "configs/teachers.yaml") -> Dict[str, Any]:
+        """Load EnTA teacher/rollout config from ``configs/teachers.yaml``.
+
+        Returns a dict of ``encre_*`` fields suitable for ``cls(**fields)`` or
+        ``config = YvConfig(**YvConfig.load_encre_yaml())``.
+
+        Keys in the YAML are automatically mapped:
+          ``teachers`` → ``encre_teachers``, ``judge`` → ``encre_judge``,
+          ``max_steps`` → ``encre_max_steps``, etc.
+        """
+        from pathlib import Path
+        import yaml
+
+        path = Path(yaml_path)
+        if not path.exists():
+            return {}
+
+        with open(path, "r", encoding="utf-8") as f:
+            data = yaml.safe_load(f) or {}
+
+        mapping = {
+            "teachers": "encre_teachers",
+            "judge": "encre_judge",
+            "max_steps": "encre_max_steps",
+            "temperature": "encre_temperature",
+            "max_tokens": "encre_max_tokens",
+            "max_violations": "encre_max_violations",
+            "completion_weight": "encre_completion_weight",
+            "tool_weight": "encre_tool_weight",
+            "safety_weight": "encre_safety_weight",
+            "execution_weight": "encre_execution_weight",
+            "backend": "encre_backend",
+            "model_name": "encre_model_name",
+            "device": "encre_device",
+        }
+
+        result: Dict[str, Any] = {}
+        for k, v in data.items():
+            prefixed = mapping.get(k)
+            if prefixed is not None:
+                result[prefixed] = v
+        return result
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'YvConfig':

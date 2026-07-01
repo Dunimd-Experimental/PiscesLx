@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Server utilities that expose multimodal generation through MCP.
 
 The module defines :class:`YvMCPGenerationServer`, which mediates between the

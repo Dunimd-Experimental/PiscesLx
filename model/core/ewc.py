@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Elastic Weight Consolidation (EWC) for Yv Models.
 
 Prevents catastrophic forgetting during online learning by penalizing
@@ -36,6 +38,7 @@ import torch.nn as nn
 from typing import Dict, Optional, Iterator
 
 
+# Paper: Kirkpatrick et al., "Overcoming Catastrophic Forgetting", PNAS 2017
 class YvEWC(nn.Module):
     """Elastic Weight Consolidation module.
 

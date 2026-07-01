@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-PiscesL1 Intelligent Sampling Module.
+PiscesLx Intelligent Sampling Module.
 
 This module provides advanced sampling strategies for efficient training:
 - DynamicBatchSampler: Token-based batching to minimize padding waste

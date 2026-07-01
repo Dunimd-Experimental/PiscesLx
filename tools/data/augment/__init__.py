@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-PiscesL1 Data Augmentation Module.
+PiscesLx Data Augmentation Module.
 
 This module provides data augmentation strategies for training data:
 - TextAugmenter: EDA, synonym replacement, back-translation

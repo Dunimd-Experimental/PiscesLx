@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 PiscesLx Data Cache Module.
 
 This module provides high-performance caching utilities for data-intensive
-machine learning workflows in the PiscesL1 framework. It includes thread-safe
+machine learning workflows in the PiscesLx framework. It includes thread-safe
 LRU caching and memory-mapped array storage for efficient handling of large
 datasets.
 
@@ -50,7 +52,7 @@ Key Features:
     - Thread-safe operations for concurrent access
     - Memory-efficient storage for large datasets
     - Transparent caching with automatic eviction
-    - Integration with PiscesL1 data pipeline
+    - Integration with PiscesLx data pipeline
     - Comprehensive logging and statistics
 
 Use Cases:

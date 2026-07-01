@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Unified tokenizer implementation for the Yv architecture.
 
 This module provides the primary tokenizer interface for text encoding/decoding
@@ -221,7 +223,9 @@ class YvTokenizer:
                 _LOG.info(f"Using project tokenizer/: {project_tokenizer}")
                 return project_tokenizer
 
-        return None
+        raise RuntimeError(
+            "YvTokenizer._resolve_tokenizer_path could not find tokenizer.json in the configured locations."
+        )
 
     def _load_tokenizer(self) -> None:
         """Load tokenizer from local path or HuggingFace hub.
@@ -235,29 +239,23 @@ class YvTokenizer:
 
         if local_path is not None:
             _LOG.info(f"Loading tokenizer from local path: {local_path}")
-            try:
-                self._tokenizer = AutoTokenizer.from_pretrained(
-                    str(local_path),
-                    local_files_only=True,
-                    trust_remote_code=self._trust_remote_code,
-                )
-                _LOG.info(f"Successfully loaded tokenizer from: {local_path}")
-                return
-            except Exception as e:
-                _LOG.warning(f"Failed to load from local path: {e}")
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                str(local_path),
+                local_files_only=True,
+                trust_remote_code=self._trust_remote_code,
+            )
+            _LOG.info(f"Successfully loaded tokenizer from: {local_path}")
+            return
 
         if self._model_name:
             _LOG.info(f"Attempting to load from HuggingFace: {self._model_name}")
-            try:
-                self._tokenizer = AutoTokenizer.from_pretrained(
-                    self._model_name,
-                    cache_dir=self._cache_dir,
-                    trust_remote_code=self._trust_remote_code,
-                )
-                _LOG.info(f"Successfully loaded tokenizer from HuggingFace: {self._model_name}")
-                return
-            except Exception as e:
-                _LOG.warning(f"Failed to load from HuggingFace: {e}")
+            self._tokenizer = AutoTokenizer.from_pretrained(
+                self._model_name,
+                cache_dir=self._cache_dir,
+                trust_remote_code=self._trust_remote_code,
+            )
+            _LOG.info(f"Successfully loaded tokenizer from HuggingFace: {self._model_name}")
+            return
 
         raise RuntimeError(
             "Failed to load tokenizer. "
@@ -278,13 +276,10 @@ class YvTokenizer:
         config_file = config_path / "tokenizer_config.json"
         glmtokens = []
         if config_file.exists():
-            try:
-                with open(config_file, "r", encoding="utf-8") as f:
-                    config = json.load(f)
-                glmtokens = config.get("extra_special_tokens", [])
-                _LOG.info(f"Loaded {len(glmtokens)} special tokens from tokenizer_config.json")
-            except Exception as e:
-                _LOG.warning(f"Failed to load tokenizer_config.json: {e}")
+            with open(config_file, "r", encoding="utf-8") as f:
+                config = json.load(f)
+            glmtokens = config.get("extra_special_tokens", [])
+            _LOG.info(f"Loaded {len(glmtokens)} special tokens from tokenizer_config.json")
 
         if not glmtokens:
             _LOG.warning("No special tokens found in tokenizer_config.json, using empty list")
@@ -298,8 +293,8 @@ class YvTokenizer:
                     ids = self._tokenizer.encode(token, add_special_tokens=False)
                     if ids:
                         self._multimodal_token_ids[token] = ids[0]
-                except Exception:
-                    pass
+                except (RuntimeError, ValueError, TypeError, AttributeError) as e:
+                    raise RuntimeError(f"Failed to encode special token {token}: {e}") from e
 
         _LOG.info(f"Prepared {len(self._multimodal_token_ids)} special tokens")
 
@@ -1008,8 +1003,8 @@ class PiscesLx160KTokenizer(YvTokenizer):
                                         merged.append(extended_ids[i])
                                         i += 1
                                 extended_ids = merged
-        except Exception:
-            pass
+        except (RuntimeError, ValueError, TypeError, AttributeError) as e:
+            raise RuntimeError(f"Failed to extend multimodal token sequence: {e}") from e
 
         return extended_ids
 

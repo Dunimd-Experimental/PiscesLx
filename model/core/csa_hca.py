@@ -8,12 +8,20 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-# CSA/HCA Hybrid Attention — Compressed Sparse + Heavily Compressed.
-# Based on DeepSeek-V4 Pro technical report (2026).
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# CSA: 4x softmax KV compression + Lightning Indexer top-k selection + sliding window.
-# HCA: 128x aggressive compression, dense attention on compressed stream.
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# DISCLAIMER: Users must comply with applicable AI regulations.
+# Non-compliance may result in service termination or legal liability.
+
+from __future__ import annotations
 
 import math
 import torch
@@ -122,6 +130,7 @@ class YvLightningIndexer(nn.Module):
         return selected_k, top_k_indices, index_scores
 
 
+# Paper: CSA from Long Context literature (DeepSeek-V4)
 class YvCompressedSparseAttention(nn.Module):
     """Compressed Sparse Attention (CSA) from DeepSeek-V4.
 
@@ -314,6 +323,7 @@ class YvCompressedSparseAttention(nn.Module):
         return out, None
 
 
+# Paper: HCA from Long Context literature (DeepSeek-V4)
 class YvHeavilyCompressedAttention(nn.Module):
     """Heavily Compressed Attention (HCA) from DeepSeek-V4.
 
@@ -410,6 +420,7 @@ class YvHeavilyCompressedAttention(nn.Module):
         return out, None
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — CSA+HCA hybrid)
 class YvHybridAttention(nn.Module):
     """Hybrid CSA + HCA attention layer.
 

@@ -30,19 +30,16 @@ n_kv_head: 5
 # Lookup Split Configuration (0.5B Dynamic Head)
 # ========================================
 # 0.5B Dynamic Head Design:
-#   - compute_params_total: 0    �?All params in lookup (FAISS knowledge field)
-#   - lookup_params_total: 270M  �?0.5B dynamic head's full parameter count
-#   - use_dual_inject: true       �?Engram-style memory+subconscious dual injection
-#   - use_subconscious: true      �?Product-quantized implicit knowledge field
-#   - use_memory_separation: true �?FAISS IVF-PQ indexed knowledge store
+#   - compute_params_total: 0    â?All params in lookup (FAISS knowledge field)
+#   - lookup_params_total: 270M  â?0.5B dynamic head's full parameter count
+#   - use_dual_inject: true       â?Engram-style memory+subconscious dual injection
+#   - use_subconscious: true      â?Product-quantized implicit knowledge field
+#   - use_memory_separation: true â?FAISS IVF-PQ indexed knowledge store
 #   - Memory separation is ENABLED for 0.5B because the dynamic head has
 #     a separate 314B-equivalent knowledge field (see configs/model/0.5B.yaml:469-478
 #     for the memory separation configuration below).
 compute_params_total: 0
 lookup_params_total: 270000000
-use_dual_inject: true
-use_subconscious: true
-use_memory_separation: true
 attention_type: "standard"
 
 moe_num_experts: 4
@@ -50,7 +47,6 @@ moe_top_k: 2
 moe_capacity_factor: 1.2
 moe_load_balance_alpha: 0.05
 moe_noise_std: 0.35
-moe_use_stable_gate: true
 moe_min_capacity: 4
 moe_prediction_horizon: 8
 moe_routing_temperature: 3.0
@@ -58,22 +54,17 @@ moe_temperature_min: 0.8
 moe_temperature_max: 3.0
 moe_random_to_gradient_steps: 2000
 
-enable_dynamic_fusion: true
 fusion_quality_threshold: 0.25
 fusion_dropout: 0.03
-enable_cognitive_density: true
-enable_dynamic_capacity: true
 
 # Knowledge Density Optimization Configuration
 expert_init_method: 'hybrid'
 diversity_weight: 0.005
 mi_weight: 0.05
-online_clustering: true
 orthogonality_weight: 0.005
 routing_entropy_weight: 0.0005
 activation_variance_weight: 0.005
 expert_warmup_steps: 50
-auto_detect_clusters: true
 min_clusters: 2
 max_clusters: 8
 
@@ -86,28 +77,22 @@ dropout: 0.0
 image_res: -1
 image_patch: 14
 max_image_res: 512
-use_native_resolution: false
-enable_patch_pack: false
 mm_tokens: 16
 audio_tokens: 32
 task_classes: 256
 eval_dims: 7
 residual_dropout_p: 0.1
-use_gradient_checkpointing: true
-use_pre_norm: true
 attention_dropout: 0.0
 
 # ========================================
 # Algorithm Optimization Configuration
 # ========================================
 # QK Normalization: Stabilizes attention computation
-use_qk_norm: true
 
 # Label Smoothing: Prevents overfitting, improves generalization
 label_smoothing: 0.1
 
 # Learnable Attention Scale: Adaptive scaling for attention scores
-learnable_attention_scale: true
 
 # LayerScale Initialization: Stabilizes deep network training
 # Formula: init_value = 1e-5 for deep networks
@@ -115,7 +100,6 @@ layer_scale_init: 1.0e-5
 
 # Depth-Aware Initialization: Adjusts init std based on network depth
 # Formula: std = 1 / sqrt(2 * n_layer * hidden_size)
-depth_aware_init: true
 
 # Residual Alpha: Scales residual connections for stability
 # Formula: alpha = (2 * n_layer) ** 0.25 for DeepNorm-style stability
@@ -126,63 +110,47 @@ embedding_norm_weight: 0.01
 
 # Attention Residuals Configuration (Kimi AttnRes, arXiv:2603.15031, 2026)
 # Replaces fixed-weight residual accumulation with dynamic attention-based aggregation
-use_attn_res: true
 attn_res_block_size: 8
-attn_res_use_two_phase: true
-attn_res_use_online_softmax: true
-attn_res_cache_pipeline: true
 attn_res_max_blocks: 32
-attn_res_learnable_query: true
-attn_res_use_rmsnorm: true
 
 # Manifold-Constrained Hyper-Connections (mHC, DeepSeek-V4 Pro, 2026)
 # Replaces standard residual with expanded stream + Birkhoff polytope constraint
-use_mhc: true
 mhc_n_hc: 4
 mhc_sinkhorn_iters: 20
 
 # PathMoE: Cross-layer shared routing (2026)
 # Shares router parameters across stages of MoE layers for improved efficiency
-use_path_moe: true
 path_moe_stage_size: 4
 
 # Phi-Balancing: Population-level mirror descent load balancing (2026)
 # EMA-based expert load balancing without auxiliary loss
-use_phi_balancing: true
 phi_balancing_momentum: 0.95
 phi_balancing_lr: 0.01
 phi_balancing_ema_decay: 0.99
 
 # HydraHead: Head-level FA/LA hybrid attention (2026)
 # Splits heads into softmax (FA) and linear (LA) attention groups
-use_hydra_head: true
 hydra_head_la_ratio: 0.5
-hydra_head_learnable_assignment: true
 hydra_head_temperature: 1.0
 
 # LCA: Latent-Condensed Attention (2026)
 # Condenses KV representations into lower-dimensional latent space
-use_lca: true
 lca_latent_dim: 512
 lca_condense_factor: 0.25
-lca_use_residual: true
 
 # DSpark: Parallel speculative decoding with Markov head (2026)
 # Parallel draft generation + confidence scheduling
-use_dspark: true
 dspark_markov_order: 5
 dspark_parallel_candidates: 3
 dspark_confidence_window: 10
 
 # MoVE: Multi-Encoder Vision Ensemble (2026)
 # Routes tokens through multiple vision backbones with learned gating
-use_move_encoder: true
 move_encoder_list: ["siglip"]
 move_top_k: 1
 
 # SparseCut: Token pruning for vision (2026)
 # Post-encoder token reduction via learned importance scoring
-use_sparse_cut: true
 sparse_cut_ratio: 0.5
 
 # Distributed Training (auto-enabled when multiple GPUs detected)
@@ -240,19 +208,16 @@ training_config:
   multitask:
     enabled: false
   # GRPO Upgrades (2026): VPS, MMR-GRPO, TR-GRPO
-  use_vps: true
   vps_outcome_weight: 0.7
   vps_process_weight: 0.3
   vps_step_delimiter: "\n\n"
   vps_min_steps: 2
   vps_quality_scale: 1.0
-  use_mmr_grpo: true
   mmr_buffer_size: 128
   mmr_diversity_weight: 0.3
   mmr_similarity_threshold: 0.8
   mmr_mix_ratio: 0.5
   mmr_embedding_dim: 256
-  use_tr_grpo: true
   tr_importance_scale: 1.0
   tr_importance_bias: 0.0
   tr_token_clip_ratio: 0.2
@@ -282,7 +247,6 @@ inference_config:
     top_k_long: 20
     top_p_long: 0.8
   vllm:
-    use_vllm: false
     dtype: auto
     gpu_memory_utilization: 0.9
     tensor_parallel_size: 1
@@ -292,15 +256,11 @@ inference_config:
     draft_model: null
   chunk_size: 512
 
-use_h2o_attention: true
 streaming_window: 4096
 compression_ratio: 8
 max_cache_size: 4096
-cache_quantization: true
 kv_cache_block_size: 256
-sdpa_prefer_flash: true
 
-enable_speculative_decoding: false
 speculative_candidates: 4
 speculative_draft_length: 4
 speculative_acceptance_threshold: 0.8
@@ -308,7 +268,6 @@ speculative_temperature: 0.7
 speculative_top_k: 50
 speculative_top_p: 0.9
 
-galore_enabled: true
 galore_rank: 48
 galore_update_interval: 200
 galore_target_modules:
@@ -325,20 +284,15 @@ galore_max_rank: 96
 galore_rank_adapt_interval: 1000
 galore_rank_adapt_threshold: 0.1
 galore_quantization_bits: 8
-galore_memory_efficient: true
-galore_moe_expert_only: false
 galore_multimodal_modules:
   - vision_encoder
   - audio_encoder
   - multimodal_fusion
 galore_sequence_threshold: 1024
-galore_gradient_accumulation_sync: true
 
 # FP4 Training Configuration (75% memory savings vs BF16)
 # Enable for extreme memory efficiency: ~3GB for 0.5B model
-use_fp4: true
 fp4_block_size: 16
-fp4_stochastic_rounding: true
 fp4_master_weights_dtype: "fp32"
 
 ink_optimizer:
@@ -352,11 +306,9 @@ ink_optimizer:
   max_experts_on_gpu: 2
   checkpoint_ratio: 0.5
 
-chinchilla_optimal: false
 chinchilla_c_budget: 0
 chinchilla_d_ratio: 1.0
 
-use_mla: true
 kv_lora_rank: 256
 mla_q_lora_rank: null
 mla_rope_scaling_factor: 1.0
@@ -366,16 +318,13 @@ mla_rope_scaling_factor: 1.0
 # ========================================
 
 # EG-MLA: Embedding-Gated Multi-Head Latent Attention (NeurIPS 2025)
-use_eg_mla: false
 eg_mla_compression_ratio: 0.916
 
 # DuoAttention: Retrieval vs Streaming Heads (ICLR 2026 MIT)
-use_duo_attention: false
 duo_attention_retrieval_ratio: 0.2
 duo_attention_buffer_size: 1024
 
 # Test-Time Training TTT-E2E (arXiv 2512.23675)
-use_ttt_e2e: false
 ttt_update_layers: 2
 ttt_learning_rate: 0.00001
 ttt_max_steps: 5
@@ -383,79 +332,60 @@ ttt_confidence_threshold: 0.6
 ttt_complexity_threshold: 0.7
 
 # Expert Evolution: Hebbian Learning + Domain Specialization
-use_expert_evolution: false
 expert_evolution_base_lr: 0.00001
 expert_evolution_decay: 0.99
 
 # EWC: Elastic Weight Consolidation
-use_ewc: false
 ewc_lambda: 1000.0
 
 # SEAL: Self-Adapting LLMs (MIT 2025)
-use_seal: false
 seal_confidence_threshold: 0.85
 seal_max_synthetic_samples: 100
 
 # DAPO: Decoupled Clipping Policy Optimization (2025)
-use_dapo: false
 dapo_epsilon_low: 0.2
 dapo_epsilon_high: 0.4
 dapo_diversity_threshold: 0.3
 
 # Verification: CRV + OTV + ARES
-use_crv_verification: false
-use_otv_verification: false
-use_ares_verification: false
 otv_quality_threshold: 0.6
 
 # SyncFusion: Audio-Video Synchronous Understanding (ICLR 2025)
-use_sync_fusion: false
 sync_fusion_temporal_bins: 16
 
 # Coupled Mamba Fusion (NeurIPS 2024)
-use_coupled_mamba_fusion: false
 coupled_mamba_coupling_strength: 0.3
 
 # SparseSSM: Training-Free Mamba Pruning (ICLR 2026)
-use_sparse_ssm: false
 sparse_ssm_ratio: 0.5
 
 # Gated Delta Networks (ICLR 2025)
-use_gated_delta: false
 
 # OOMB: Million-Token Context Training (ICLR 2026)
-use_oomb_context: false
 oomb_chunk_size: 32768
 oomb_max_context: 4194304
 
 # REFORM: Compress-Gather-Recompute (2025)
-use_reform: false
 reform_compression_ratio: 4
 reform_importance_threshold: 0.1
 
 # Quartet: End-to-End FP4 Training (OpenReview 2025)
-use_quartet: false
 
 # Long Context Extensions
 max_context_length: 1048576
 
 num_mtp_heads: 4
 mtp_loss_weight: 0.5
-mtp_share_embeddings: true
 
 image_gen_resolution: 128
 image_gen_num_steps: 30
 image_gen_guidance_scale: 5.0
 image_gen_initial_size: 8
-image_gen_use_attention: false
-image_gen_use_residual: true
-image_gen_use_diffusion: false
 
 audio_gen_sample_rate: 16000
 audio_gen_n_mels: 80
 audio_gen_duration: 3.0
 audio_gen_num_steps: 50
-audio_gen_streaming: true
 audio_gen_num_codebooks: 2
 audio_gen_codebook_size: 2048
 
@@ -472,9 +402,7 @@ flagship_level: 0.5
 
 dsa_sparse_ratio: 0.3
 dsa_importance_threshold: 0.1
-dsa_use_dynamic: true
 
-use_hisa_attention: true
 hisa_block_size: 64
 hisa_superblock_size: 512
 hisa_local_ratio: 0.4
@@ -487,69 +415,53 @@ complexity_threshold_high: 0.7
 swarm_intensity: 0.5
 num_swarm_agents: 4
 
-coat_enabled: true
 coat_amax_epsilon: 0.001
 coat_scale_factor: 1.0
-mixed_grain_activation: true
 per_tensor_threshold: 1024
 per_group_size: 128
 
-use_int4_projection: true
-use_int8_weights: true
-adaptive_rank_update: true
 convergence_threshold: 0.01
 
-structured_sparsity: true
 grass_block_size: 32
 gradient_compression_ratio: 0.1
 
-adaptive_recomputation: true
 compute_cost_threshold: 0.5
 activation_size_threshold: 1048576
 
-enable_teraio: false
 gpu_memory_budget: 42949672960
 cpu_memory_budget: 137438953472
-enable_gds: true
 
-modal_aware_routing: true
 n_cross_modal_experts: 0
 modal_affinity_alpha: 1.0
 n_modalities: 7
 
-use_recurrent_modal_refiner: true
 rdt_max_loops: 3
 rdt_spectral_radius: 0.95
 rdt_convergence_threshold: 0.99
 rdt_refine_heads: 2
 rdt_refine_ffn_ratio: 1.0
 
-modal_protection_mod: true
 
-use_ultra_sparse_gate: false
 ultra_sparse_tier1_threshold: 0.3
 ultra_sparse_tier2_threshold: 0.8
 ultra_sparse_tier1_topk: 1
 ultra_sparse_tier2_topk: 2
 ultra_sparse_tier3_topk: 4
 
-use_circulant_attention: true
 circulant_threshold: 4096
 
-use_rdt_layers: true
 rdt_layer_indices: []
 rdt_loops_per_layer: 2
 
 # ========================================
 # Memory Separation (Engram-style Lookup-Computation Separation)
 # Reference: Liang Wenfeng et al., arXiv:2601.07372, 2026
-# 0.5B Dynamic Head: ENABLED �?the 314B-equivalent knowledge field
+# 0.5B Dynamic Head: ENABLED â?the 314B-equivalent knowledge field
 # (FAISS IVF-PQ indexed) is accessed via memory separation, while
 # the 0.5B compute core handles reasoning and tool orchestration.
 # The knowledge store at lookup_params_total: 270M supports full
 # memory separation for compute-storage decoupling.
 # ========================================
-use_memory_separation: true
 memory_read_interval: 4
 memory_top_k: 4
 memory_cache_tokens: 2048

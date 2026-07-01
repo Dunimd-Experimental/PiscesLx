@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Cross-modal attention primitives for Yv multimodal encoders.
 
 This module provides cross-modal attention components for the Yv model,
@@ -73,6 +75,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvCrossModalAttention(nn.Module):
     """Multi-head attention layer for fusing heterogeneous modality embeddings.
     

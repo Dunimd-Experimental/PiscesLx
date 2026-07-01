@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Quantization Methods Operator
 
@@ -115,6 +117,7 @@ class GPTQHessianComputer:
         return hessians
 
 
+# Paper: Frantar et al., "GPTQ: Accurate Post-Training Quantization for Generative Pre-Trained Transformers", ICLR 2023, arXiv:2210.17323
 class GPTQQuantizer:
     """
     GPTQ (Gradient Post-Training Quantization) Implementation.
@@ -316,6 +319,7 @@ class GPTQQuantizer:
             setattr(current, parts[-1], new_layer)
 
 
+# Paper: Lin et al., "AWQ: Activation-aware Weight Quantization for LLM Compression and Acceleration", MLSys 2024, arXiv:2306.00978
 class AWQQuantizer:
     """
     AWQ (Activation-aware Weight Quantization) Implementation.
@@ -551,6 +555,7 @@ class AWQQuantizer:
             target.quant_zero_points = quant_info.get("group_zero_points")
 
 
+# Paper: Xiao et al., "SmoothQuant: Accurate and Efficient Post-Training Quantization for Large Language Models", ICML 2023, arXiv:2211.10438
 class SmoothQuantizer:
     """
     SmoothQuant Implementation.

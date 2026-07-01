@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-PiscesL1 Agent Module - Operator-based Multi-Agent System
+PiscesLx Agent Module - Operator-based Multi-Agent System
 
 This module provides a comprehensive multi-agent system that integrates with
 the OPSC operator infrastructure for unified execution, monitoring, and

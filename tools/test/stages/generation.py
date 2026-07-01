@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-Generation Checker Module for PiscesL1.
+Generation Checker Module for PiscesLx.
 
 This module provides the PiscesLxGenerationChecker class for validating
 text generation functionality.

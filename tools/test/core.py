@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Test Runner Core Module for PiscesL1.
+Test Runner Core Module for PiscesLx.
 
 This module provides the PiscesLxTestRunner class that orchestrates
 all 8 stages of the project health check system with Cargo-style
@@ -57,7 +59,7 @@ from .stages import (
 
 class PiscesLxTestRunner:
     """
-    Main test runner for PiscesL1 project health checks.
+    Main test runner for PiscesLx project health checks.
     
     This class orchestrates all 8 stages of the health check system,
     collecting results and generating reports with real-time progress.

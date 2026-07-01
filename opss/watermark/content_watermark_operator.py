@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Content Watermark Operator
 
@@ -66,13 +68,13 @@ Usage Examples:
     >>> # Embed watermark in text
     >>> watermarked_text = operator.embed_text(
     ...     "Hello, World!",
-    ...     payload={"model": "PiscesL1", "user_id": "user123"}
+    ...     payload={"model": "PiscesLx", "user_id": "user123"}
     ... )
     >>> 
     >>> # Embed watermark in image
     >>> watermarked_image = operator.embed_image(
     ...     image_tensor,
-    ...     payload={"model": "PiscesL1"}
+    ...     payload={"model": "PiscesLx"}
     ... )
     >>> 
     >>> # Extract watermark from content

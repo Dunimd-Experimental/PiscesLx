@@ -1,7 +1,7 @@
 <div align="center">
 
 <h1 style="display: flex; flex-direction: column; align-items: center; gap: 12px; margin-bottom: 8px;">
-  <span style="display: flex; align-items: center; gap: 12px;">PiscesL1</span>
+  <img src="assets/svg/PiscesLx.svg" width="128" height="72">
   <span style="font-size: 0.6em; color: #666; font-weight: normal;">Security Policy</span>
 </h1>
 

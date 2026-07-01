@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 FlashAttention-3 Operator for H100 Optimization
 
@@ -388,6 +390,7 @@ class POPSSFlashAttention3Operator(PiscesLxOperatorInterface):
         }
 
 
+# Paper: Shah et al., "FlashAttention-3: Fast and Accurate Attention with Asynchronous Processing", 2024, arXiv:2407.08608
 class POPSSFlashAttention3Layer(nn.Module):
     """
     FlashAttention-3 Layer for transformer integration.

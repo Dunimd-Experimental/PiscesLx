@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Watermark Orchestrator
 
@@ -123,7 +125,7 @@ class POPSSWatermarkOrchestrator(PiscesLxBaseOperator):
     This orchestrator coordinates all watermark operators to provide a complete
     watermarking solution including content watermarking, weight watermarking,
     compliance validation, and audit logging. It serves as the primary interface
-    for all watermark-related operations in the PiscesL1 system.
+    for all watermark-related operations in the PiscesLx system.
     
     Architecture:
         The orchestrator implements a pipeline-based architecture where each

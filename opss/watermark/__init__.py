@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-PiscesL1 Watermark Operators
+PiscesLx Watermark Operators
 
 This module provides comprehensive watermark operators for AI-generated content
 provenance, ownership verification, and regulatory compliance.

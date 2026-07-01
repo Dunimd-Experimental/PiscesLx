@@ -1,15 +1,22 @@
-//! Unified permission system for the EnTA agent framework.
+//! Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 //!
-//! All authorization decisions — tool-level allow/deny/ask, dangerous-command
-//! detection, and MCP tool resolution — are implemented here in Rust.  Python
-//! tools call `permission_check` and forward the decision to the client; the
-//! client may then call `permission_record_decision` to persist the answer
-//! for future invocations.
+//! This file is part of PiscesL1.
+//! The PiscesL1 project belongs to the Dunimd Team.
 //!
-//! The three terminal states are:
-//! * `Allow` — run the tool silently.
-//! * `Deny`  — refuse, return a short error message to the model.
-//! * `Ask`   — request user confirmation through the frontend.
+//! Licensed under the Apache License, Version 2.0 (the "License");
+//! You may not use this file except in compliance with the License.
+//! You may obtain a copy of the License at
+//!
+//!     http://www.apache.org/licenses/LICENSE-2.0
+//!
+//! Unless required by applicable law or agreed to in writing, software
+//! distributed under the License is distributed on an "AS IS" BASIS,
+//! WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+//! See the License for the specific language governing permissions and
+//! limitations under the License.
+//! 
+//! DISCLAIMER: Users must comply with applicable AI regulations.
+//! Non-compliance may result in service termination or legal liability.
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};

@@ -8,19 +8,20 @@
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
 #
-# YvVRAMController — Intelligent VRAM control for PiscesL1.
+#     http://www.apache.org/licenses/LICENSE-2.0
 #
-# Design principles (low VRAM, high speed):
-#   1. Speed-preserving optimizations first (Flash, MLA, KV cache quant, CSA)
-#   2. Compute-memory tradeoffs second (gradient checkpointing, selective)
-#   3. Speed-impacting optimizations last (offloading, aggressive compression)
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 #
-# Tier system:
-#   Tier 0 (no speed loss): Flash Attention, MLA, KV Cache mixed precision
-#   Tier 1 (negligible loss): FP4 weights, KV cache quantization, CSA/HCA
-#   Tier 2 (small loss): Gradient checkpointing, selective recomputation
-#   Tier 3 (speed cost): CPU offload, weight offload, activation quantization
+# DISCLAIMER: Users must comply with applicable AI regulations.
+# Non-compliance may result in service termination or legal liability.
+
+from __future__ import annotations
 
 import math
 import torch

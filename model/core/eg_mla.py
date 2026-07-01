@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Embedding-Gated Multi-Head Latent Attention (EG-MLA) for Yv Models.
 
 Based on: "EG-MLA: Embedding-Gated Multi-Head Latent Attention for Large Language Models"
@@ -45,6 +47,7 @@ from typing import Optional, Tuple
 from .norms import YvYaRNRotaryEmbedding
 
 
+# Paper: DeepSeek-V2 (arXiv:2405.04434, 2024) MLA + embedding gating extension
 class YvEGMLA(nn.Module):
     """Embedding-Gated Multi-Head Latent Attention.
 

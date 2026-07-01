@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Gradient Clustering Expert Initialization for Mixture-of-Experts.
 
 This module implements gradient-based clustering for expert initialization,
@@ -178,6 +180,7 @@ class ClusterInfo:
     size: int
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvGradientClusterInitializer:
     """Gradient-based clustering initializer for MoE experts.
     

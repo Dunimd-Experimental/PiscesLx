@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Copyright © 2025-2026 Wenze Wei & Annian Wang. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -21,8 +21,10 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Visualization module for PiscesL1 benchmark results.
+Visualization module for PiscesLx benchmark results.
 
 This module provides comprehensive visualization capabilities including:
 - Radar charts for multi-dimensional comparison
@@ -96,7 +98,7 @@ class PiscesLxToolsBenchmarkVisualizer:
     def plot_radar_chart(
         self,
         scores: Dict[str, float],
-        model_name: str = "PiscesL1",
+        model_name: str = "PiscesLx",
         title: str = "Benchmark Performance Radar",
         save_path: Optional[str] = None,
     ) -> Optional[str]:
@@ -337,7 +339,7 @@ class PiscesLxToolsReportGenerator:
     def generate_markdown_report(
         self,
         results: Dict[str, Any],
-        model_name: str = "PiscesL1",
+        model_name: str = "PiscesLx",
         save_path: Optional[str] = None,
     ) -> str:
         """Generate Markdown report."""
@@ -400,7 +402,7 @@ class PiscesLxToolsReportGenerator:
     def generate_html_report(
         self,
         results: Dict[str, Any],
-        model_name: str = "PiscesL1",
+        model_name: str = "PiscesLx",
         charts: Optional[Dict[str, str]] = None,
         save_path: Optional[str] = None,
     ) -> str:

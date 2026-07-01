@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-from __future__ import annotations
-
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
@@ -23,8 +21,10 @@ from __future__ import annotations
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
-Enhanced Agentic Capabilities for PiscesL1.
+Enhanced Agentic Capabilities for PiscesLx.
 
 Core enhancements:
 - Long-term planning engine: 100+ step task decomposition

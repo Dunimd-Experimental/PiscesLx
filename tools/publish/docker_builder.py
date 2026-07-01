@@ -7,7 +7,7 @@
 # The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
-# You may not use this file file except in compliance with the License.
+# You may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
 #
 #     http://www.apache.org/licenses/LICENSE-2.0
@@ -24,12 +24,12 @@
 """
 Docker Image Builder
 
-This module handles the building of Docker images for PiscesL1 models.
+This module handles the building of Docker images for PiscesLx models.
 It generates Dockerfiles and builds images containing the model weights,
 inference engine, and all necessary dependencies.
 
 Key Features:
-    - Custom Dockerfile generation with PiscesL1 inference engine
+    - Custom Dockerfile generation with PiscesLx inference engine
     - Multi-stage builds for optimized image size
     - GPU support with CUDA base images
     - Platform-specific builds (amd64, arm64)
@@ -90,9 +90,9 @@ _LOG = PiscesLxLogger("PiscesLx.Publish.Docker", file_path=get_log_file("PiscesL
 
 
 class PiscesLxPublishDockerBuilder:
-    """Docker Image Builder for PiscesL1.
+    """Docker Image Builder for PiscesLx.
 
-    Builds Docker images containing PiscesL1 models and inference engine.
+    Builds Docker images containing PiscesLx models and inference engine.
     Supports multiple build configurations and platforms.
 
     Attributes:
@@ -108,7 +108,7 @@ class PiscesLxPublishDockerBuilder:
 
     DOCKERFILE_TEMPLATES = {
         "default": '''
-# PiscesL1 Docker Image
+# PiscesLx Docker Image
 # Built: {build_time}
 # Model: {model_name}
 # Architecture: Yv
@@ -173,7 +173,7 @@ CMD ["python3", "/app/tools/infer/server.py", \\
 ''',
 
         "minimal": '''
-# PiscesL1 Minimal Docker Image
+# PiscesLx Minimal Docker Image
 FROM {base_image}
 
 ENV PYTHONUNBUFFERED=1
@@ -202,7 +202,7 @@ CMD ["python3", "/app/tools/infer/server.py", "--model_path", "/app/model_weight
 ''',
 
         "gpu": '''
-# PiscesL1 GPU-Optimized Docker Image
+# PiscesLx GPU-Optimized Docker Image
 FROM nvidia/cuda:12.1.0-cudnn8-runtime-ubuntu22.04
 
 ENV PYTHONUNBUFFERED=1 DEBIAN_FRONTEND=noninteractive

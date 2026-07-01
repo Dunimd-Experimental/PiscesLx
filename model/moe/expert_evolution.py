@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Expert Evolution Module for Yv MoE.
 
 Implements per-expert adaptive learning and domain specialization:
@@ -36,6 +38,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvExpertEvolution(nn.Module):
     """Expert evolution with Hebbian learning and domain specialization.
 

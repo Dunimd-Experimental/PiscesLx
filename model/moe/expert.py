@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Expert Network Implementations for Mixture-of-Experts.
 
@@ -293,6 +295,7 @@ class YvExpertBase(nn.Module):
         raise NotImplementedError("Subclasses must implement forward")
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvStandardExpert(YvExpertBase):
     """Standard feed-forward network expert with SiLU activation.
     
@@ -385,6 +388,7 @@ class YvStandardExpert(YvExpertBase):
         return x
 
 
+# Paper: Shazeer, "GLU Variants Improve Transformer", arXiv:2002.05202, 2020; Chowdhery et al., "PaLM: Scaling Language Modeling with Pathways", JMLR 2023, arXiv:2204.02311
 class YvSwiGLUExpert(YvExpertBase):
     """SwiGLU-based expert network with gated linear unit.
     
@@ -493,6 +497,7 @@ class YvSwiGLUExpert(YvExpertBase):
         return x
 
 
+# Paper: Shazeer, "GLU Variants Improve Transformer", arXiv:2002.05202, 2020
 class YvGeGLUExpert(YvExpertBase):
     """GeGLU-based expert network with GELU-gated linear unit.
     
@@ -594,6 +599,7 @@ class YvGeGLUExpert(YvExpertBase):
         return x
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvMultiLayerExpert(YvExpertBase):
     """Multi-layer expert network for complex transformations.
     
@@ -682,6 +688,7 @@ class YvMultiLayerExpert(YvExpertBase):
         return self.layers(x)
 
 
+# Paper: DeepSeek-AI, "DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model", arXiv:2405.04434
 class YvSharedExpert(YvExpertBase):
     """Shared expert that is always active in MoE layers.
     
@@ -747,10 +754,11 @@ class YvSharedExpert(YvExpertBase):
         return self.expert(x)
 
 
+# Paper: Shazeer, "GLU Variants Improve Transformer", arXiv:2002.05202, 2020 (inherits SwiGLU)
 class YvExpert(YvSwiGLUExpert):
     """Unified default expert with compute/lookup mode support.
     
-    This is the recommended expert implementation for PiscesL1 MoE layers,
+    This is the recommended expert implementation for PiscesLx MoE layers,
     combining the quality of SwiGLU with explicit compute/lookup mode control.
     In PURE_LOOKUP mode, all parameters are frozen to act as static knowledge
     storage, enabling the compute/lookup split architecture.

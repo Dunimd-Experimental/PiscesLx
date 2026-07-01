@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Long Context Processing for Yv Models.
 
 Implements:
-- OOMB: Million-token context training (ICLR 2026)
-- REFORM: Compress-Gather-Recompute (2025)
+- OOMB: Million-token context training (chunked processing)
+- REFORM: Compress-Gather-Recompute
 """
 
 import torch
@@ -34,6 +36,7 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — OOMB)
 class YvOOMBContext(nn.Module):
     """OOMB: Million-token context training system.
 
@@ -111,6 +114,7 @@ class YvOOMBContext(nn.Module):
         return merged
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — REFORM)
 class YvREFORM(nn.Module):
     """REFORM: Compress-Gather-Recompute for long context.
 

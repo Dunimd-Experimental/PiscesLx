@@ -3,8 +3,8 @@
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
-# This file is part of EnTA.
-# The EnTA project belongs to the Dunimd Team.
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -21,7 +21,7 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-
+from __future__ import annotations
 
 """``workflow`` tool -- decompose a goal into a dependency-ordered task graph.
 
@@ -36,18 +36,18 @@ the call.  When no list is provided the tool simply records the goal as
 a single task so the workflow is still auditable.
 """
 
-from __future__ import annotations
-
-import logging
 import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
+logger = PiscesLxLogger("EnTA.Tools.Workflow", file_path=get_log_file("EnTA.Tools.Workflow"), enable_file=True)
+
 from enta.tools.base import build_tool
 from enta.utils.task_store import get_store
-
-logger = logging.getLogger(__name__)
 
 
 @dataclass

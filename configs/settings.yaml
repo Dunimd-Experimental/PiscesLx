@@ -19,12 +19,12 @@
 # Non-compliance may result in service termination or legal liability.
 
 # =============================================================================
-# PiscesL1 System Configuration Settings
+# PiscesLx System Configuration Settings
 # =============================================================================
 #
 # PURPOSE:
 #     This file contains system-level configuration parameters that control
-#     the overall behavior of the PiscesL1 framework. These settings affect
+#     the overall behavior of the PiscesLx framework. These settings affect
 #     development workflows, debugging capabilities, and system-level features.
 #
 # CONFIGURATION SCOPE:

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Main Model Implementation for Yv Architecture.
 
@@ -213,7 +215,6 @@ from .cache import YvUnifiedCacheManager
 from .subconscious import YvSubconsciousSystem
 from .dual_injector import YvDualInjector
 from typing import Optional, Tuple, Dict, Any, List, Union
-from ..reasoning import YvMultiModalReasoningEnhancer
 from ..generation.speculative import YvAdaptiveSpeculativeDecoder, YvDSparkSpeculativeDecoder, YvSpeculativeConfig
 from ..multimodal import (
     YvUnifiedReasoner,
@@ -226,6 +227,22 @@ from ..multimodal import (
     YvAgenticEncoder,
     YvDynamicModalFusion
 )
+# RCA: Recursive Cross-Modal Attention (ACM TOMM 2026)
+from ..multimodal.rca_fusion import YvRecursiveCrossModalFusion, YvDeepCrossLayerInjector
+# SEER: Self-Guided Experience-Enhanced Reasoning (arXiv:2508.15214)
+from ..multimodal.seer_executor import YvSEERExecutor
+# VeriCoT: Neuro-Symbolic CoT Validation (arXiv:2511.04662)
+from ..reasoning.vericot import YvVeriCoTVerifier, YvVeriCoTReflector
+# CRV: Circuit-based Reasoning Verification (Zhao et al., ICLR 2026 Oral, arXiv:2510.09312)
+from ..reasoning.verification import YvCRVIntegration
+# CoMeT: Collaborative Memory Transformer (ACL 2026)
+from .comet import YvCoMeTMemory
+# Token Sparse Attention (ICML 2026)
+from .token_sparse_attn import YvTokenSparseAttention
+# mHC-lite (arXiv:2601.05732)
+from .mhc_lite import YvMHCLiteHyperConnection
+# OOMB: Million-token chunked processing (Yv Architecture)
+from .long_context import YvOOMBContext, YvREFORM
 from dataclasses import dataclass
 from enum import Enum
 import math
@@ -360,6 +377,7 @@ class YvLayerConfig:
     expert_capacity: float = 1.25
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvLayerRouter:
     """Layer router for dynamic layer type assignment.
     
@@ -472,6 +490,28 @@ class YvLayerRouter:
             return self.layer_configs[layer_idx]
         return self.layer_configs[-1]
 
+class YvModelOutput(dict):
+    """Model output supporting both dict-style and attribute-style access.
+
+    Wraps forward return dicts so training engine code (GRPO, DPO, etc.)
+    can use either result["logits"] or result.logits seamlessly.
+    """
+    def __getattr__(self, name):
+        if name in self:
+            return self[name]
+        raise AttributeError(f"YvModelOutput has no attribute '{name}'")
+
+    def __setattr__(self, name, value):
+        self[name] = value
+
+    def __delattr__(self, name):
+        if name in self:
+            del self[name]
+        else:
+            raise AttributeError(f"YvModelOutput has no attribute '{name}'")
+
+
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvModel(nn.Module):
     """Main Yv model implementation with multimodal and reasoning capabilities.
     
@@ -648,6 +688,15 @@ class YvModel(nn.Module):
         if getattr(self.config, 'max_position_embeddings', 0) >= 1_048_576 and not getattr(self.config, 'use_h2o_attention', False):
             setattr(self.config, 'use_h2o_attention', True)
 
+        if not getattr(self.config, 'backbone_allow_legacy_blocks', False):
+            setattr(self.config, 'use_mamba3', True)
+            setattr(self.config, 'mamba3_layers', list(range(getattr(self.config, 'n_layer', 0))))
+
+        if getattr(self.config, 'use_oomb_context', False):
+            setattr(self.config, 'use_h2o_attention', True)
+            if not hasattr(self.config, 'cache_type'):
+                setattr(self.config, 'cache_type', 'hybrid')
+
         self.quantization_config = quantization_config
         self.lora_config = lora_config
 
@@ -659,7 +708,11 @@ class YvModel(nn.Module):
             "speculative_cache_max_size": 256,
             "quantization_enabled": True,
             "dynamic_quantization": True,
-            "cache_eviction_policy": "lru"
+            "cache_eviction_policy": "lru",
+            "cache_type": getattr(cfg, 'cache_type', 'hybrid'),
+            "use_h2o_attention": getattr(cfg, 'use_h2o_attention', True),
+            "enable_cache_compression": getattr(cfg, 'enable_cache_compression', True),
+            "cache_compression_ratio": getattr(cfg, 'cache_compression_ratio', 0.5),
         })
         self.cache_manager = YvUnifiedCacheManager(cache_config)
 
@@ -702,8 +755,17 @@ class YvModel(nn.Module):
 
             layer_config = self.layer_router.get_layer_config(i)
 
+            allow_legacy_blocks = bool(getattr(cfg, 'backbone_allow_legacy_blocks', False))
             use_hybrid = getattr(cfg, 'use_mamba3', False)
-            if use_hybrid:
+            if not allow_legacy_blocks:
+                _LOG.debug(f"YvModel: using YvHybridBlock for layer {i+1}")
+                block = YvHybridBlock(
+                    cfg,
+                    device=device,
+                    dtype=dtype,
+                    quantization_config=self.quantization_config,
+                )
+            elif use_hybrid:
                 mamba3_layers = getattr(cfg, 'mamba3_layers', [])
                 if not mamba3_layers or i in mamba3_layers:
                     _LOG.debug(f"YvModel: using YvHybridBlock for layer {i+1}")
@@ -864,11 +926,81 @@ class YvModel(nn.Module):
         else:
             self.modal_fusion = YvDynamicModalFusion(cfg, device=device, dtype=dtype)
 
-        try:
-            if 'agent_encoder' in self._modules:
-                del self._modules['agent_encoder']
-        except Exception:
-            pass
+        # === 2026 flagship feature init ===
+        self.rca_fusion = None
+        self.deep_cross_layer_injector = None
+        self.seer_executor = None
+        self.vericot_verifier = None
+        self.vericot_reflector = None
+        self.comet_memory = None
+        self.token_sparse_attn = None
+        self.mhc_lite = None
+
+        # SyncFusion: audio-video synchronous understanding
+        self.sync_fusion = None
+        if getattr(cfg, 'use_sync_fusion', False):
+            from ..multimodal.sync_fusion import YvSyncFusion
+            self.sync_fusion = YvSyncFusion(
+                hidden_size=cfg.hidden_size,
+                n_head=cfg.n_head,
+                num_temporal_bins=getattr(cfg, 'sync_fusion_temporal_bins', 16),
+                device=device, dtype=dtype,
+            )
+
+        # REFORM: Compress-Gather-Recompute for long context
+        self.reform_processor = None
+        if getattr(cfg, 'use_reform', False):
+            self.reform_processor = YvREFORM(
+                compression_ratio=getattr(cfg, 'reform_compression_ratio', 4),
+                importance_threshold=getattr(cfg, 'reform_importance_threshold', 0.1),
+            )
+
+        if self.cfg.use_rca_fusion:
+            _LOG.debug("YvModel: initializing RCA fusion...")
+            self.rca_fusion = YvRecursiveCrossModalFusion(cfg, device=device, dtype=dtype)
+            self.deep_cross_layer_injector = YvDeepCrossLayerInjector(
+                cfg, num_layers=cfg.n_layer, device=device, dtype=dtype
+            )
+
+        if self.cfg.use_seer_executor:
+            _LOG.debug("YvModel: initializing SEER executor...")
+            self.seer_executor = YvSEERExecutor(cfg)
+
+        if getattr(self.cfg, 'use_vericot', False) or getattr(self.cfg, 'use_spell', False):
+            _LOG.debug("YvModel: initializing VeriCoT/SPELL...")
+            self.vericot_verifier = YvVeriCoTVerifier(cfg, device=device, dtype=dtype)
+            self.vericot_reflector = YvVeriCoTReflector(self.vericot_verifier)
+
+        if getattr(self.cfg, 'use_crv_verification', True):
+            _LOG.debug("YvModel: initializing CRV integration...")
+            self.crv_integration = YvCRVIntegration(hidden_size=cfg.hidden_size)
+        else:
+            self.crv_integration = None
+
+        if getattr(self.cfg, 'use_comet_memory', False) or getattr(self.cfg, 'use_seirenes', False):
+            _LOG.debug("YvModel: initializing CoMeT/Seirênes memory...")
+            self.comet_memory = YvCoMeTMemory(cfg, device=device, dtype=dtype)
+
+        if getattr(self.cfg, 'use_oomb_context', True):
+            _LOG.debug("YvModel: initializing OOMB processor...")
+            self.oomb_processor = YvOOMBContext(
+                chunk_size=getattr(self.cfg, 'oomb_chunk_size', 32768),
+                max_context_length=getattr(self.cfg, 'max_position_embeddings', 4194304)
+            )
+        else:
+            self.oomb_processor = None
+
+        if getattr(self.cfg, 'use_token_sparse_attn', False) or getattr(self.cfg, 'use_tactic', False):
+            _LOG.debug("YvModel: initializing Token Sparse Attention / Tactic...")
+            self.token_sparse_attn = YvTokenSparseAttention(cfg, device=device, dtype=dtype)
+
+        if self.cfg.use_mhc_lite:
+            _LOG.debug("YvModel: initializing mHC-lite...")
+            self.mhc_lite = YvMHCLiteHyperConnection(
+                num_streams=getattr(cfg, 'mhc_streams', 4),
+                num_permutations=getattr(cfg, 'mhc_permutations', 8),
+                device=device, dtype=dtype,
+            )
 
         _LOG.debug("YvModel: initializing output heads...")
         self.lm_head = nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
@@ -895,28 +1027,9 @@ class YvModel(nn.Module):
         self.reasoner = YvUnifiedReasoner(cfg, device=device, dtype=dtype)
         self.reasoner.initialize_reasoning_tokens(None)
 
-        _LOG.debug("YvModel: initializing multi-modal reasoning enhancer...")
-        self.mm_reasoning_enhancer = YvMultiModalReasoningEnhancer(cfg, device=device, dtype=dtype)
-
         _LOG.debug("YvModel: initializing agentic...")
-        try:
-            from ..multimodal import YvAgentic
-            self.agentic = YvAgentic(cfg, model=self)
-        except ImportError:
-            self.agentic = None
-            _LOG.debug("YvModel: agentic import failed, agentic=None")
-
-        try:
-            if 'agentic' in self._modules:
-                del self._modules['agentic']
-        except Exception:
-            pass
-
-        try:
-            if 'mm_reasoning_enhancer' in self._modules:
-                del self._modules['mm_reasoning_enhancer']
-        except Exception:
-            pass
+        from ..multimodal import YvAgentic
+        self.agentic = YvAgentic(cfg, model=self)
 
         _LOG.debug("YvModel: initializing speculative decoder...")
         use_dspark = getattr(cfg, 'use_dspark', False)
@@ -942,13 +1055,6 @@ class YvModel(nn.Module):
             )
         else:
             self.speculative_decoder = YvAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
-
-        try:
-            for k in ("speculative_decoder",):
-                if k in self._modules:
-                    del self._modules[k]
-        except Exception:
-            pass
 
         if lora_config is not None:
             raise RuntimeError(
@@ -1010,7 +1116,140 @@ class YvModel(nn.Module):
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, device=device).float() / dim))
         self.register_buffer('inv_freq', inv_freq, persistent=False)
 
-        return None
+    def _apply_backbone_defaults(self) -> None:
+        """Harden the flagship backbone configuration onto one main sequence lane."""
+        if getattr(self.config, 'max_position_embeddings', 0) >= 1_048_576:
+            setattr(self.config, 'use_h2o_attention', True)
+
+        if not getattr(self.config, 'backbone_allow_legacy_blocks', False):
+            setattr(self.config, 'use_mamba3', True)
+            setattr(self.config, 'mamba3_layers', list(range(getattr(self.config, 'n_layer', 0))))
+
+        if getattr(self.config, 'use_oomb_context', False):
+            setattr(self.config, 'use_h2o_attention', True)
+            setattr(self.config, 'cache_type', getattr(self.config, 'cache_type', 'hybrid') or 'hybrid')
+
+    def _build_backbone_block(
+        self,
+        cfg,
+        layer_idx: int,
+        device,
+        dtype,
+        path_moe_stage_gate,
+    ):
+        """Build one backbone block while keeping the flagship path as default."""
+        allow_legacy_blocks = bool(getattr(cfg, 'backbone_allow_legacy_blocks', False))
+        use_hybrid = bool(getattr(cfg, 'use_mamba3', False))
+
+        if not allow_legacy_blocks:
+            _LOG.debug(f"YvModel: using YvHybridBlock for layer {layer_idx + 1}")
+            return YvHybridBlock(
+                cfg,
+                device=device,
+                dtype=dtype,
+                quantization_config=self.quantization_config,
+            )
+
+        if use_hybrid:
+            mamba3_layers = getattr(cfg, 'mamba3_layers', [])
+            if not mamba3_layers or layer_idx in mamba3_layers:
+                _LOG.debug(f"YvModel: using YvHybridBlock for layer {layer_idx + 1}")
+                return YvHybridBlock(
+                    cfg,
+                    device=device,
+                    dtype=dtype,
+                    quantization_config=self.quantization_config,
+                )
+
+        return YvTransformerBlock(
+            cfg,
+            device=device,
+            dtype=dtype,
+            quantization_config=self.quantization_config,
+            gate=path_moe_stage_gate,
+        )
+
+    def _init_long_context_stack(self, cfg, device, dtype) -> None:
+        """Initialize the long-context refinement stack on one shared post-backbone lane."""
+        self.reform_processor = None
+        self.oomb_processor = None
+        self.token_sparse_attn = None
+        self.mhc_lite = None
+
+        if getattr(cfg, 'use_reform', False):
+            self.reform_processor = YvREFORM(
+                compression_ratio=getattr(cfg, 'reform_compression_ratio', 4),
+                importance_threshold=getattr(cfg, 'reform_importance_threshold', 0.1),
+            )
+
+        if getattr(cfg, 'use_oomb_context', True):
+            _LOG.debug("YvModel: initializing OOMB processor...")
+            self.oomb_processor = YvOOMBContext(
+                chunk_size=getattr(cfg, 'oomb_chunk_size', 32768),
+                max_context_length=getattr(cfg, 'max_position_embeddings', 4194304)
+            )
+
+        if getattr(cfg, 'use_token_sparse_attn', False) or getattr(cfg, 'use_tactic', False):
+            _LOG.debug("YvModel: initializing Token Sparse Attention / Tactic...")
+            self.token_sparse_attn = YvTokenSparseAttention(cfg, device=device, dtype=dtype)
+
+        if getattr(cfg, 'use_mhc_lite', False):
+            _LOG.debug("YvModel: initializing mHC-lite...")
+            self.mhc_lite = YvMHCLiteHyperConnection(
+                num_streams=getattr(cfg, 'mhc_streams', 4),
+                num_permutations=getattr(cfg, 'mhc_permutations', 8),
+                device=device, dtype=dtype,
+            )
+
+    def _apply_long_context_refinement(
+        self,
+        hidden_states: torch.Tensor,
+        attention_mask: Optional[torch.Tensor],
+    ) -> torch.Tensor:
+        """Apply the shared long-context refinement stack on the main sequence path.
+
+        This keeps token sparsification, hyper-connections, and REFORM-style
+        importance refinement on one post-backbone lane instead of scattering
+        the logic across multiple forward branches.
+        """
+        refined = hidden_states
+
+        if self.token_sparse_attn is not None:
+            refined = refined + self.token_sparse_attn(refined, attention_mask)
+
+        if self.mhc_lite is not None:
+            streams = refined.unsqueeze(1).expand(-1, self.mhc_lite.num_streams, -1)
+            refined = refined + self.mhc_lite(streams, refined.mean(dim=1)).mean(dim=1)
+
+        if self.reform_processor is not None:
+            importance = refined.norm(dim=-1)
+            important_mask = importance > importance.mean(dim=-1, keepdim=True)
+            if important_mask.any():
+                refined = refined + 0.01 * refined * important_mask.unsqueeze(-1).float()
+
+        return refined
+
+    def _should_use_long_context_path(self, sequence_length: int) -> bool:
+        """Return whether the current sequence should use the long-context lane."""
+        return (
+            self.oomb_processor is not None
+            and sequence_length > self.oomb_processor.chunk_size
+        )
+
+    def save_pretrained(self, save_directory: str):
+        """Save model in HF-compatible format for training engine checkpointing."""
+        import os, json
+        os.makedirs(save_directory, exist_ok=True)
+        torch.save(self.state_dict(), os.path.join(save_directory, "pytorch_model.bin"))
+        cfg_dict = {
+            "architectures": ["YvModelForCausalLM"],
+            "model_type": "yv_model",
+            "hidden_size": self.cfg.hidden_size,
+            "num_hidden_layers": self.cfg.n_layer,
+            "vocab_size": self.cfg.vocab_size,
+        }
+        with open(os.path.join(save_directory, "config.json"), "w") as f:
+            json.dump(cfg_dict, f)
 
     def set_gradient_checkpointing(self, enabled: bool = True):
         """Enable or disable gradient checkpointing for memory efficiency.
@@ -1152,18 +1391,11 @@ class YvModel(nn.Module):
             self.reasoner.resize_vocab(new_num_tokens)
         self.cfg.vocab_size = new_num_tokens
 
-        try:
-            self.reasoner.initialize_reasoning_tokens(None)
-        except Exception as e:
-            _LOG.debug(f"YvModel: reasoner token init skipped: {e}")
-
-        try:
-            _LOG.info(
-                f"Resized token embeddings to {new_num_tokens}. "
-                f"Remember to update special token IDs in the reasoner."
-            )
-        except ImportError as e:
-            _LOG.debug(f"YvModel: logger info skipped: {e}")
+        self.reasoner.initialize_reasoning_tokens(None)
+        _LOG.info(
+            f"Resized token embeddings to {new_num_tokens}. "
+            f"Remember to update special token IDs in the reasoner."
+        )
 
     def prepare_inputs_for_generation(
         self,
@@ -1418,22 +1650,16 @@ class YvModel(nn.Module):
                 delta: Temperature increment.
                 cap: Maximum temperature cap.
             """
-            try:
-                for m in _model.modules():
-                    if hasattr(m, 'temperature'):
-                        try:
-                            if isinstance(m.temperature, torch.Tensor):
-                                cur = m.temperature.detach().float().mean().item()
-                                newv = min(cap, cur + delta)
-                                m.temperature.fill_(newv)
-                            else:
-                                cur = float(getattr(m, 'temperature', 1.0))
-                                newv = min(cap, cur + delta)
-                                setattr(m, 'temperature', newv)
-                        except Exception:
-                            continue
-            except Exception as e:
-                _LOG.debug(f"YvModel: gate temperature update skipped: {e}")
+            for m in _model.modules():
+                if hasattr(m, 'temperature'):
+                    if isinstance(m.temperature, torch.Tensor):
+                        cur = m.temperature.detach().float().mean().item()
+                        newv = min(cap, cur + delta)
+                        m.temperature.fill_(newv)
+                    else:
+                        cur = float(getattr(m, 'temperature', 1.0))
+                        newv = min(cap, cur + delta)
+                        setattr(m, 'temperature', newv)
 
         with torch.no_grad():
             for step_idx in range(max_length - input_ids.shape[1]):
@@ -1568,8 +1794,9 @@ class YvModel(nn.Module):
                 - eval_score: Evaluation scores
                 - aux_loss: Auxiliary losses (MoE routing, etc.)
                 - reasoner_out: Reasoning module outputs
-                - tool_trigger: Tool use triggers (if conditions met)
-                - tool_intent: Tool intent information
+                - tool_output: External tool execution result (if used)
+                - tool_experience: Retrieved execution experience/memory (if used)
+                - vericot_out: Verification output from reasoning checker (if enabled)
                 - past_key_values: Updated KV cache (if use_cache=True)
                 - cache_stats: Cache statistics (if available)
         
@@ -1641,9 +1868,11 @@ class YvModel(nn.Module):
 
         if docs is not None:
             doc_out = self.doc(docs)
-            modal_features['doc'] = (
+            doc_features = (
                 doc_out['features'] if isinstance(doc_out, dict) and 'features' in doc_out else doc_out
             )
+            modal_features['doc'] = doc_features
+            modal_features['document'] = doc_features
 
         if agent_embed is not None:
             agent_input = {
@@ -1666,14 +1895,45 @@ class YvModel(nn.Module):
             agent_feat = self.agent_encoder(agent_obs_input)
             modal_features['agentic'] = agent_feat
 
-        if len(modal_features) > 1:
+        # === SyncFusion: audio-video temporal alignment before RCA ===
+        if self.sync_fusion is not None and 'audio' in modal_features and 'video' in modal_features:
+            audio_feat = modal_features['audio']
+            video_feat = modal_features['video']
+            if audio_feat.dim() == 2:
+                audio_feat = audio_feat.unsqueeze(1)
+            if video_feat.dim() == 2:
+                video_feat = video_feat.unsqueeze(1)
+            synced = self.sync_fusion(audio_feat, video_feat)
+            if synced is None:
+                raise ValueError("YvSyncFusion returned None while audio-video sync fusion is enabled.")
+            modal_features['audio'] = synced
+            modal_features['video'] = synced
+
+        # === RCA Fusion (ACM TOMM 2026) ===
+        use_rca = self.cfg.use_rca_fusion and self.rca_fusion is not None
+        fused_features = None
+        rca_output = None
+
+        if len(modal_features) > 1 and use_rca:
+            rca_output = self.rca_fusion(modal_features)
+            fused_features = rca_output['fused']  # [B, modal_token_count, H]
+            if fused_features is not None and fused_features.dim() == 3:
+                if fused_features.dtype != text_emb.dtype:
+                    fused_features = fused_features.to(text_emb.dtype)
+                if fused_features.device != text_emb.device:
+                    fused_features = fused_features.to(text_emb.device)
+                x = torch.cat([fused_features, text_emb], dim=1)
+            else:
+                raise ValueError("RCA fusion did not return a valid [B, T, H] fused tensor.")
+        elif len(modal_features) > 1:
+            # Legacy fusion fallback
             use_recurrent_refiner = getattr(self.cfg, 'use_recurrent_modal_refiner', True)
             if use_recurrent_refiner and hasattr(self.modal_fusion, 'forward') and 'text_emb' in self.modal_fusion.forward.__code__.co_varnames:
                 fused_features = self.modal_fusion(modal_features, text_emb=text_emb)
             else:
                 fused_features = self.modal_fusion(modal_features)
             if fused_features is None:
-                x = text_emb
+                raise ValueError("Multimodal fusion returned None while non-text modalities were present.")
             elif fused_features.dim() == 3:
                 if fused_features.dtype != text_emb.dtype:
                     fused_features = fused_features.to(text_emb.dtype)
@@ -1720,11 +1980,8 @@ class YvModel(nn.Module):
         outputs = []
 
         # OOMB: Out-of-Order Memory Banking for million-token context
-        use_oomb = getattr(self.cfg, 'use_oomb_context', False)
-        if use_oomb:
-            oomb_chunk_size = getattr(self.cfg, 'oomb_chunk_size', 32768)
-            chunk_size = min(chunk_size, oomb_chunk_size)
-            self._oomb_memory_bank = []
+        if hasattr(self, 'oomb_processor') and self.oomb_processor is not None:
+            chunk_size = min(chunk_size, self.oomb_processor.chunk_size)
 
         if use_cache:
             seq_len = x.shape[1]
@@ -1755,29 +2012,106 @@ class YvModel(nn.Module):
                     if hasattr(layer, '_set_subconscious_system'):
                         layer._set_subconscious_system(self.subconscious)
 
-            h = x
-            for layer_idx, layer in enumerate(self.layers):
-                if self.use_memory_separation and self.memory_router is not None:
-                    if layer_idx % self.memory_read_interval == 0:
-                        knowledge_ctx = self.memory_router.forward(h)
-                        if knowledge_ctx is not None and hasattr(layer, '_set_memory_context'):
-                            layer._set_memory_context(knowledge_ctx)
+            rca_features_dict = rca_output.get('modality_features', {}) if rca_output is not None else {}
+            rca_fused = None
+            if rca_features_dict:
+                rca_fused = torch.cat(list(rca_features_dict.values()), dim=1)
 
-                past_kv = self.cache_manager.get_kv_cache(layer_idx, None)
+            seq_is_long = self._should_use_long_context_path(x.shape[1])
 
-                if self.use_dual_inject and self.dual_injector is not None:
-                    h, extra_kv = self.dual_injector.inject(h, layer_idx)
-                else:
-                    extra_kv = None
+            crv_active = self.crv_integration is not None
+            if crv_active:
+                n_layers = len(self.layers)
+                crv_checkpoints = {n_layers // 4, n_layers // 2, 3 * n_layers // 4}
 
-                if hasattr(layer, 'set_sequence_length'):
-                    layer.set_sequence_length(h.shape[1])
+            if seq_is_long:
+                aux_loss_bucket = [torch.tensor(0.0, device=x.device)]
 
-                h, aux_loss = layer(
-                    h, mask, past_key_values=past_kv, use_cache=False,
-                    subconscious_kv=extra_kv, film_params=None,
-                )
-                total_aux_loss = total_aux_loss + (aux_loss if aux_loss is not None else 0.0)
+                def _oomb_chunk(chunk, chunk_mask):
+                    h_chunk = chunk
+                    for layer_idx, layer in enumerate(self.layers):
+                        if self.use_memory_separation and self.memory_router is not None:
+                            if layer_idx % self.memory_read_interval == 0:
+                                knowledge_ctx = self.memory_router.forward(h_chunk)
+                                if knowledge_ctx is not None and hasattr(layer, '_set_memory_context'):
+                                    layer._set_memory_context(knowledge_ctx)
+
+                        past_kv = self.cache_manager.get_kv_cache(layer_idx, None)
+
+                        if self.use_dual_inject and self.dual_injector is not None:
+                            h_chunk, extra_kv = self.dual_injector.inject(h_chunk, layer_idx)
+                            film_params = None
+                        elif self.use_subconscious and self.subconscious is not None:
+                            extra_kv = None
+                            film_params = self.subconscious.get_film_params(h_chunk, layer_idx)
+                        else:
+                            extra_kv = None
+                            film_params = None
+
+                        if hasattr(layer, 'set_sequence_length'):
+                            layer.set_sequence_length(h_chunk.shape[1])
+
+                        if self.deep_cross_layer_injector is not None and rca_fused is not None:
+                            h_chunk = self.deep_cross_layer_injector(h_chunk, rca_fused, layer_idx)
+
+                        if self.comet_memory is not None and layer_idx % 4 == 0:
+                            h_chunk = self.comet_memory(h_chunk, update_memory=False)
+
+                        h_chunk, aux_loss = layer(
+                            h_chunk, chunk_mask, past_key_values=past_kv, use_cache=False,
+                            subconscious_kv=extra_kv, film_params=film_params,
+                        )
+                        aux_loss_bucket[0] = aux_loss_bucket[0] + (aux_loss if aux_loss is not None else 0.0)
+
+                        if crv_active and layer_idx in crv_checkpoints:
+                            self.crv_integration.record(h_chunk)
+
+                    h_chunk = self._apply_long_context_refinement(h_chunk, chunk_mask)
+
+                    return h_chunk
+
+                h = self.oomb_processor.process(x, _oomb_chunk, mask)
+                total_aux_loss = aux_loss_bucket[0]
+            else:
+                h = x
+                for layer_idx, layer in enumerate(self.layers):
+                    if self.use_memory_separation and self.memory_router is not None:
+                        if layer_idx % self.memory_read_interval == 0:
+                            knowledge_ctx = self.memory_router.forward(h)
+                            if knowledge_ctx is not None and hasattr(layer, '_set_memory_context'):
+                                layer._set_memory_context(knowledge_ctx)
+
+                    past_kv = self.cache_manager.get_kv_cache(layer_idx, None)
+
+                    if self.use_dual_inject and self.dual_injector is not None:
+                        h, extra_kv = self.dual_injector.inject(h, layer_idx)
+                        film_params = None
+                    elif self.use_subconscious and self.subconscious is not None:
+                        extra_kv = None
+                        film_params = self.subconscious.get_film_params(h, layer_idx)
+                    else:
+                        extra_kv = None
+                        film_params = None
+
+                    if hasattr(layer, 'set_sequence_length'):
+                        layer.set_sequence_length(h.shape[1])
+
+                    if self.deep_cross_layer_injector is not None and rca_fused is not None:
+                        h = self.deep_cross_layer_injector(h, rca_fused, layer_idx)
+
+                    if self.comet_memory is not None and layer_idx % 4 == 0:
+                        h = self.comet_memory(h, update_memory=False)
+
+                    h, aux_loss = layer(
+                        h, mask, past_key_values=past_kv, use_cache=False,
+                        subconscious_kv=extra_kv, film_params=film_params,
+                    )
+                    total_aux_loss = total_aux_loss + (aux_loss if aux_loss is not None else 0.0)
+
+                    if crv_active and layer_idx in crv_checkpoints:
+                        self.crv_integration.record(h)
+
+                h = self._apply_long_context_refinement(h, mask)
 
             outputs = [h]
         else:
@@ -1810,6 +2144,23 @@ class YvModel(nn.Module):
                                 if knowledge_ctx is not None and hasattr(layer, '_set_memory_context'):
                                     layer._set_memory_context(knowledge_ctx)
 
+                        if self.comet_memory is not None:
+                            if layer_idx % max(1, len(self.layers) // 2) == 0:
+                                comet_ctx = self.comet_memory.read(h)
+                                if comet_ctx is not None and hasattr(layer, '_set_memory_context'):
+                                    layer._set_memory_context(comet_ctx)
+
+                        if self.deep_cross_layer_injector is not None and (rca_output is not None or fused_features is not None):
+                            inject_fused = rca_output.get('modality_features', {}) if rca_output is not None else {}
+                            if inject_fused:
+                                inject_fused = torch.cat(list(inject_fused.values()), dim=1)
+                            elif fused_features is not None:
+                                inject_fused = fused_features
+                            else:
+                                inject_fused = None
+                            if inject_fused is not None:
+                                h = self.deep_cross_layer_injector(h, inject_fused, layer_idx)
+
                         past_kv = self.cache_manager.get_kv_cache(
                             layer_idx,
                             layer_past_key_values[layer_idx] if layer_past_key_values is not None else None
@@ -1838,15 +2189,20 @@ class YvModel(nn.Module):
 
                         if self.use_dual_inject and self.dual_injector is not None:
                             h, extra_kv = self.dual_injector.inject(h, layer_idx)
+                            film_params = None
+                        elif self.use_subconscious and self.subconscious is not None:
+                            extra_kv = None
+                            film_params = self.subconscious.get_film_params(h, layer_idx)
                         else:
                             extra_kv = None
+                            film_params = None
 
                         if hasattr(layer, 'set_sequence_length'):
                             layer.set_sequence_length(seq_len)
 
                         h, aux_loss, cache = layer(
                             h, msk, past_key_values=past_kv, use_cache=True,
-                            subconscious_kv=extra_kv, film_params=None,
+                            subconscious_kv=extra_kv, film_params=film_params,
                         )
 
                         if cache is not None:
@@ -1872,17 +2228,14 @@ class YvModel(nn.Module):
                         new_caches.append(cache)
                         aux = aux + (aux_loss if aux_loss is not None else 0.0)
 
+                    h = self._apply_long_context_refinement(h, None)
+
                     return h, aux, new_caches
 
                 with torch.amp.autocast("cuda", dtype=cache_dtype, enabled=(x.device.type == 'cuda')):
                     h_chunk, aux_chunk, cache_chunk = block_fn(x_chunk, mask_chunk, past_key_values)
                 if next_cache is not None and cache_chunk is not None:
                     next_cache.extend(cache_chunk)
-
-                if use_oomb:
-                    self._oomb_memory_bank.append(h_chunk.detach())
-                    if len(self._oomb_memory_bank) > 8:
-                        self._oomb_memory_bank.pop(0)
 
                 outputs.append(h_chunk)
                 total_aux_loss = total_aux_loss + aux_chunk
@@ -1896,14 +2249,17 @@ class YvModel(nn.Module):
             x = torch.cat(outputs, dim=1)
 
             if x.shape[1] == 0:
-                return {
+                return YvModelOutput({
                     "logits": self.lm_head(x),
                     "loss": torch.tensor(0.0, device=x.device, requires_grad=True),
                     "task_logits": torch.zeros(x.shape[0], self.cfg.task_classes, device=x.device),
                     "eval_score": torch.zeros(x.shape[0], self.cfg.eval_dims, device=x.device),
                     "aux_loss": total_aux_loss,
-                    "reasoner_out": {"loss": torch.tensor(0.0, device=x.device, requires_grad=True)}
-                }
+                    "reasoner_out": {"loss": torch.tensor(0.0, device=x.device, requires_grad=True)},
+                    "tool_output": None,
+                    "tool_experience": None,
+                    "vericot_out": None,
+                })
 
             x = self.norm(x)
             logits = self.lm_head(x)
@@ -1917,12 +2273,42 @@ class YvModel(nn.Module):
                 else labels
             )
 
-            reasoner_out = self.reasoner(x, reasoner_input_ids, reasoner_labels)
+            reasoner_out = self.reasoner(
+                input_ids=reasoner_input_ids,
+                attention_mask=attention_mask,
+                labels=reasoner_labels,
+                hidden_states=x,
+            )
+
+            # CRV: circuit-based contradiction detection (ICLR 2026 Oral)
+            if self.crv_integration is not None:
+                crv_out = self.crv_integration(hidden_states=x)
+                reasoner_out['crv_verified'] = crv_out.get('verified', torch.tensor(True, device=x.device))
+                reasoner_out['crv_confidence'] = crv_out.get('confidence', torch.tensor(1.0, device=x.device))
+
+            # VeriCoT: neuro-symbolic verification of reasoning chain
+            vericot_out = None
+            if self.vericot_verifier is not None and reasoner_out is not None:
+                vericot_out = self.vericot_verifier.verify_batch(
+                    hidden_states=x,
+                    logits=logits,
+                    input_ids=input_ids,
+                    reasoner_out=reasoner_out,
+                )
+                reasoner_out['vericot_verified'] = vericot_out.get('verified', False)
+                reasoner_out['vericot_confidence'] = vericot_out.get('confidence', torch.tensor(1.0, device=x.device))
+                reasoner_out['vericot_correction'] = vericot_out.get('correction_logits', None)
+                if vericot_out.get('correction_logits') is not None:
+                    logits = logits + 0.1 * vericot_out['correction_logits']
+                total_aux_loss = total_aux_loss + vericot_out.get('verifier_loss', torch.tensor(0.0, device=x.device))
 
             loss = None
             mtp_loss = torch.tensor(0.0, device=x.device)
             mtp_logits_list = []
             
+            if labels is not None and self.comet_memory is not None:
+                self.comet_memory.write(x.detach(), input_ids=input_ids)
+
             if labels is not None:
                 text_seq_len = labels.shape[1]
                 lm_loss = F.cross_entropy(
@@ -1952,48 +2338,23 @@ class YvModel(nn.Module):
                     mtp_loss = mtp_loss / max(1, self.num_mtp_heads)
                     loss = loss + self.mtp_loss_weight * mtp_loss
 
-            tool_trigger = None
-            try:
-                unc = reasoner_out.get("uncertainty_scores", None)
-                fac = reasoner_out.get("fact_consistency", None)
-                unc_val = unc.mean().item() if unc is not None and unc.numel() > 0 else 0.0
-                fac_val = fac.mean().item() if fac is not None and fac.numel() > 0 else 1.0
-                unc_th = getattr(self.cfg, 'tool_uncertainty_threshold', 0.7)
-                fac_th = getattr(self.cfg, 'fact_consistency_threshold', 0.55)
-                if unc_val > unc_th or fac_val < fac_th:
-                    tool_trigger = {
-                        'uncertainty': unc_val,
-                        'fact_consistency': fac_val,
-                        'suggested_tools': reasoner_out.get("suggested_tools", []),
-                    }
-            except Exception:
-                tool_trigger = None
-
             task_logits = self.task_head(x[:, 0])
             eval_score = self.eval_head(x.mean(1))
 
-        tool_intent = None
-        try:
-            if tool_trigger is not None and tool_trigger.get('should_tool', False):
-                tool_intent = {
-                    'type': 'tool_intent',
-                    'version': '1.0',
-                    'triggers': {
-                        'uncertainty': tool_trigger.get('uncertainty', 0.0),
-                        'fact_consistency': tool_trigger.get('fact_consistency', 1.0),
-                        'thresholds': {
-                            'uncertainty': getattr(self.cfg, 'tool_uncertainty_threshold', 0.7),
-                            'fact_consistency': getattr(self.cfg, 'tool_fact_consistency_threshold', 0.6)
-                        }
-                    },
-                    'suggested_tools': tool_trigger.get('suggested_tools', []),
-                    'confidence': float(min(1.0, max(0.0, tool_trigger.get('uncertainty', 0.0)))),
-                    'reason': 'High uncertainty or low fact consistency detected by reasoner',
-                }
-        except Exception:
-            tool_intent = None
+        tool_output = None
+        tool_experience = None
+        if self.seer_executor is not None and outputs:
+            seer_result = self.seer_executor(
+                query_hidden=x,
+                reasoner_out=reasoner_out,
+                input_ids=input_ids,
+            )
+            tool_output = seer_result.get('tool_result')
+            tool_experience = seer_result.get('experience_recalled')
+            if tool_output is not None:
+                total_aux_loss = total_aux_loss + seer_result.get('seer_loss', torch.tensor(0.0, device=x.device))
 
-        result = {
+        result = YvModelOutput({
             "logits": logits,
             "mtp_logits": mtp_logits_list if self.num_mtp_heads > 0 else [],
             "mtp_loss": mtp_loss if self.num_mtp_heads > 0 else torch.tensor(0.0, device=x.device),
@@ -2002,18 +2363,21 @@ class YvModel(nn.Module):
             "eval_score": eval_score,
             "aux_loss": total_aux_loss,
             "reasoner_out": reasoner_out,
-            "tool_trigger": tool_trigger,
-            "tool_intent": tool_intent
-        }
+            "tool_output": tool_output if tool_output is not None else None,
+            "tool_experience": tool_experience if tool_experience is not None else None,
+            "vericot_out": vericot_out if vericot_out is not None else None,
+        })
 
         if use_cache:
             result["past_key_values"] = next_cache
 
+        if kwargs.get("output_hidden_states"):
+            result["hidden_states"] = (x,)
+        if kwargs.get("output_attentions"):
+            result["attentions"] = ()
+
         if hasattr(self, 'cache_manager') and self.cache_manager is not None:
-            try:
-                result["cache_stats"] = self.cache_manager.get_cache_stats()
-            except Exception as e:
-                _LOG.debug(f"YvModel: cache stats retrieval failed: {e}")
+            result["cache_stats"] = self.cache_manager.get_cache_stats()
 
         return result
 
@@ -2072,6 +2436,24 @@ class YvModelForCausalLM(YvModel):
         """
         super().__init__(cfg, device, dtype, quantization_config, lora_config)
 
+        # SOLAR: parameter-level meta-learning self-optimization
+        self.solar = None
+        if getattr(cfg, 'use_solar', False):
+            from ..reasoning.self_evolution import YvSOLAR
+            self.solar = YvSOLAR(self, meta_lr=getattr(cfg, 'solar_meta_lr', 1e-4))
+
+        # Self-Play: self-generation → self-critique → self-training
+        self.self_play_trainer = None
+        if getattr(cfg, 'use_self_play', False):
+            from opss.train.self_play import POPSSSelfPlayTrainer
+            self.self_play_trainer = POPSSSelfPlayTrainer(
+                model=self,
+                num_rounds=getattr(cfg, 'self_play_num_rounds', 3),
+                num_samples=getattr(cfg, 'self_play_num_samples', 4),
+                temperature=getattr(cfg, 'self_play_temperature', 0.8),
+                dpo_beta=getattr(cfg, 'self_play_dpo_beta', 0.1),
+            )
+
     def forward(
         self,
         input_ids: torch.Tensor,
@@ -2101,7 +2483,9 @@ class YvModelForCausalLM(YvModel):
             labels=labels,
             **kwargs
         )
-
+        # SOLAR: meta-update after loss computation during training
+        if self.solar is not None and self.training and outputs.get('loss') is not None:
+            self.solar.meta_update(outputs['loss'])
         return outputs
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
-# Copyright (c) 2025-2026 Wenze Wei. All Rights Reserved.
+# Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
 # This file is part of PiscesL1.
 # The PiscesL1 project belongs to the Dunimd Team.
@@ -20,6 +20,8 @@
 #
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
+
+from __future__ import annotations
 
 """
 Probabilistic Language Trie (PLT) for Sequential KV Cache Prefix Deduplication.
@@ -88,6 +90,7 @@ class YvPLTTrieNode:
         return self.cumulative_log_prob
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture — PLT trie)
 class YvPLTTrieIndex:
     """Probabilistic Language Trie index for KV cache prefix deduplication.
 

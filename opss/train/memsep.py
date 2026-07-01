@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Memory Separation Training Pipeline.
 
 Implements the three-phase training strategy for Engram-style
@@ -493,6 +495,7 @@ class POPSSMemoryAlignmentLoss(nn.Module):
 # Main Memory Separation Trainer
 # ============================================================
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class POPSSMemSepTrainer:
     """Memory separation training orchestrator.
 

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Knowledge Distillation Training Operator
 
@@ -793,6 +795,7 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
         )
 
 
+# Paper: Hinton et al., "Distilling the Knowledge in a Neural Network", NeurIPS 2014 Workshop, 2015
 class POPSSDistillationOperator:
     """Facade for distillation training operator.
     

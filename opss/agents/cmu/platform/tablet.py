@@ -21,14 +21,14 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 CMU Tablet Platform - iPad/Android Tablet Control
 
 This module extends the mobile platform for tablet-specific features
 including larger screen layouts and stylus support.
 """
-
-from __future__ import annotations
 
 from typing import Any, Dict, Optional, Tuple
 

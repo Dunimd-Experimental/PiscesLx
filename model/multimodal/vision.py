@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Vision encoders and utilities for Yv multimodal agents.
 
 This module provides comprehensive vision processing components for the Yv
@@ -398,6 +400,7 @@ class YvVisualTextProcessor(nn.Module):
         return compressed
 
 
+# Paper: Dosovitskiy et al., "An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale", ICLR 2021, arXiv:2010.11929
 class YvVisionEncoder(nn.Module):
     """Vision backbone producing multimodal features and auxiliary predictions.
     
@@ -777,22 +780,20 @@ class YvVisionEncoder(nn.Module):
         if isinstance(result, dict) and 'features' in result:
             features = result['features']
             return self._lfq_encode(features)
-        return None
+        raise ValueError(
+            "YvVisionEncoder.encode_to_tokens requires forward() to return a feature dictionary."
+        )
 
     def process_image(self, image_path, target_size=None):
         """Process an image from the given path, including normalization."""
         _LOG.debug(f"Processing image: {image_path}")
-        try:
-            with Image.open(image_path) as img:
-                img = img.convert('RGB')
-                if target_size is not None:
-                    img = img.resize(target_size, Image.LANCZOS)
-                image_tensor = torch.tensor(np.array(img)).permute(2, 0, 1).float() / 255.0
-                image_tensor = (image_tensor - self.mean) / self.std
-                return image_tensor
-        except Exception as e:
-            _LOG.error(f"Image processing error: {e}")
-            return None
+        with Image.open(image_path) as img:
+            img = img.convert('RGB')
+            if target_size is not None:
+                img = img.resize(target_size, Image.LANCZOS)
+            image_tensor = torch.tensor(np.array(img)).permute(2, 0, 1).float() / 255.0
+            image_tensor = (image_tensor - self.mean) / self.std
+            return image_tensor
 
     def interpolate_pos_encoding(self, pos_embed, h, w):
         """Interpolate position embeddings to match the given height and width."""
@@ -836,7 +837,10 @@ class YvVisionEncoder(nn.Module):
             return self._decode_from_tokens(pixel_values)
         
         if pixel_values is None:
-            return torch.zeros(1, 1, self.cfg.hidden_size, device=self.proj.weight.device)
+            raise ValueError(
+                "YvVisionEncoder.forward requires real pixel_values for understand mode. "
+                "Zero-tensor fallbacks are disabled for strict model closure."
+            )
         x = (pixel_values - self.mean) / self.std
         B, C, H, W = x.shape
         is_video = video_shape is not None and self.use_3d_rope
@@ -915,11 +919,12 @@ class YvVisionEncoder(nn.Module):
                         allowed = key_pos.view(1, -1) >= lower_bound
                         disallow = ~allowed
                         attn_mask = disallow.expand(Bq * Hh, Tq, Tq)
-                try:
-                    from torch.backends.cuda import sdp_kernel as _sdp
-                    use_flash = torch.cuda.is_available() and bool(getattr(self.cfg, 'sdpa_prefer_flash', True))
-                except Exception:
-                    use_flash = False
+                _sdp = getattr(torch.backends.cuda, "sdp_kernel", None)
+                use_flash = (
+                    _sdp is not None
+                    and torch.cuda.is_available()
+                    and bool(getattr(self.cfg, 'sdpa_prefer_flash', True))
+                )
                 if use_flash:
                     with _sdp(enable_math=False, enable_flash=True, enable_mem_efficient=False):
                         out_ = F.scaled_dot_product_attention(
@@ -1795,10 +1800,10 @@ class YvSigLIPVisionEncoder(nn.Module):
         return_all_features: bool = False,
     ) -> Dict[str, torch.Tensor]:
         if pixel_values is None:
-            B = 1
-            device = next(self.parameters()).device
-            dummy = torch.zeros(B, 1, self.hidden_size, device=device)
-            return {'features': dummy, 'patch_features': dummy, 'multi_scale': dummy}
+            raise ValueError(
+                "YvSigLIPVisionEncoder.forward requires real pixel_values. "
+                "Zero-tensor fallbacks are disabled for strict model closure."
+            )
 
         x = (pixel_values - self.mean) / self.std
         B, C, H, W = x.shape

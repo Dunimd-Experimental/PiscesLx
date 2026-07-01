@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Supervised Fine-Tuning (SFT) Operator Implementation
 
 Complete implementation of SFT training as a standardized operator.
-Based on the original PiscesL1 SFT training pipeline.
+Based on the original PiscesLx SFT training pipeline.
 """
 
 import os
@@ -303,12 +305,12 @@ class _SFTTrainingOperatorImpl(PiscesLxOperatorInterface):
 
     @property
     def description(self) -> str:
-        return "Complete Supervised Fine-Tuning training operator with full PiscesL1 pipeline"
+        return "Complete Supervised Fine-Tuning training operator with full PiscesLx pipeline"
         
     @property
     def input_schema(self) -> Dict[str, Any]:
         return {
-            "model": {"type": "torch.nn.Module", "required": True, "description": "PiscesL1 model to train"},
+            "model": {"type": "torch.nn.Module", "required": True, "description": "PiscesLx model to train"},
             "tokenizer": {"type": "object", "required": True, "description": "Model tokenizer"},
             "train_data_path": {"type": "str", "required": True, "description": "Path to training data (JSONL)"},
             "val_data_path": {"type": "str", "required": False, "description": "Path to validation data"},

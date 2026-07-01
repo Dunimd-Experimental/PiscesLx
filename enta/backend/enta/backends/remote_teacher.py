@@ -3,8 +3,8 @@
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
 #
-# This file is part of EnTA.
-# The EnTA project belongs to the Dunimd Team.
+# This file is part of PiscesL1.
+# The PiscesL1 project belongs to the Dunimd Team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # You may not use this file except in compliance with the License.
@@ -21,13 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-
+from __future__ import annotations
 
 """
-Remote teacher client + multi-teacher roundtable for PiscesL1 self-training.
+Remote teacher client + multi-teacher roundtable for PiscesLx self-training.
 
-This module is the *single* integration point between the slimmed EnCRE
-training pipeline and external teacher model APIs.  The EnCRE core is
+This module is the *single* integration point between the slimmed EnTA
+training pipeline and external teacher model APIs.  The EnTA core is
 intentionally provider-agnostic: it does not hard-code any specific vendor
 name, model id, or domain.  The training operator is expected to declare
 the teachers in the runtime configuration (see :class:`TeacherSpec`).
@@ -36,7 +36,7 @@ Two public classes are exposed:
 
 * :class:`RemoteTeacherClient` -- wraps a single :class:`OpenAICompatibleBackend`
   and exposes both a streaming ``chat()`` (compatible with the rest of the
-  EnCRE event loop) and a one-shot ``complete()`` helper that returns the
+  EnTA event loop) and a one-shot ``complete()`` helper that returns the
   final assistant text plus the full reasoning stream.  The client is the
   building block of any multi-teacher workflow.
 
@@ -50,30 +50,32 @@ Two public classes are exposed:
 Design notes
 ------------
 * Every external teacher is reachable through a vLLM/SGLang/llama.cpp
-  OpenAI-compatible endpoint.  The EnCRE framework never hard-codes a
+  OpenAI-compatible endpoint.  The EnTA framework never hard-codes a
   specific vendor (no "OpenAI" or "Anthropic" string appears in the
-  EnCRE source).  Each teacher is a (base_url, api_key, model_name) triple.
+  EnTA source).  Each teacher is a (base_url, api_key, model_name) triple.
 * The judge is itself a regular teacher endpoint.  The default behaviour
   is to use the first teacher in the panel as the judge; users can pick
   any other endpoint explicitly.
 * All HTTP traffic flows through :class:`OpenAICompatibleBackend`, so the
-  retry, streaming, and tool-calling machinery of EnCRE is reused as-is.
+  retry, streaming, and tool-calling machinery of EnTA is reused as-is.
 * The roundtable is fully async and safe to embed in the training
   operator's asyncio loop.  The public :meth:`run` returns a
   :class:`RoundtableResult` dataclass that the training operator can
   inspect, log, and feed into :class:`YvEncreTrainer`.
 """
 
-from __future__ import annotations
-
 import asyncio
 import json
-import logging
 import re
 import time
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass, field
 from typing import Any, Sequence
+
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
+_LOG = PiscesLxLogger("EnTA.RemoteTeacher", file_path=get_log_file("EnTA.RemoteTeacher"), enable_file=True)
 
 from enta.backends.base import BaseBackend
 from enta.backends.openai_compatible import OpenAICompatibleBackend
@@ -88,8 +90,6 @@ from enta.utils.types import (
     BackendToolCallDelta,
 )
 
-_LOG = logging.getLogger("enta.remote_teacher")
-
 
 # ── Teacher descriptors ─────────────────────────────────────────────
 
@@ -99,7 +99,7 @@ class TeacherSpec:
     """Declarative description of one remote teacher endpoint.
 
     A teacher is just an OpenAI-compatible chat completions endpoint.  The
-    EnCRE framework treats every teacher the same; no vendor string is
+    EnTA framework treats every teacher the same; no vendor string is
     embedded in the runtime.  Training operators compose a panel of
     teachers by listing the corresponding :class:`TeacherSpec` entries in
     the configuration.
@@ -115,7 +115,7 @@ class TeacherSpec:
         weight: Optional sampling weight used by the round-robin / weighted
             pick policies.  Defaults to ``1.0`` (uniform).
         role: Optional role tag (``"general"``, ``"reasoner"``,
-            ``"multimodal"``, ``"tool"``).  EnCRE does not interpret this
+            ``"multimodal"``, ``"tool"``).  EnTA does not interpret this
             field -- it is metadata for the training operator.
         timeout: HTTP timeout override in seconds.  Defaults to ``None``
             which falls back to the backend's default.
@@ -266,7 +266,7 @@ class RemoteTeacherClient:
     """High-level wrapper around :class:`OpenAICompatibleBackend`.
 
     Exposes the same async ``chat()`` event-stream interface every other
-    EnCRE backend uses, plus a synchronous-feeling ``complete()`` helper
+    EnTA backend uses, plus a synchronous-feeling ``complete()`` helper
     that buffers the full stream into a :class:`TeacherAnswer`.
 
     Instances are cheap to construct.  The underlying HTTP client is

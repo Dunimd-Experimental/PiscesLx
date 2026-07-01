@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Evolution Pipeline - Complete Self-Evolution Training System
 
@@ -36,7 +38,7 @@ Pipeline Stages:
     1. Distillation: Teacher model -> 0.5B seed model
     2. Growth: 0.5B -> 1B -> 2B -> 4B -> 7B (progressive expansion)
     3. Self-Evolution: SEAL/SPIN self-improvement
-    4. Weak-to-Strong: Evolved model -> PiscesL1 flagship
+    4. Weak-to-Strong: Evolved model -> PiscesLx flagship
 
 Usage:
     from opss.train.evolution_pipeline import (
@@ -644,6 +646,7 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
         self._LOG.info(f"Saved checkpoint: {checkpoint_path}")
 
 
+# Paper: Original contribution by Dunimd Team (Yv Architecture)
 class POPSSEvolutionPipeline:
     """Facade for evolution pipeline.
     
@@ -651,7 +654,7 @@ class POPSSEvolutionPipeline:
         1. Knowledge distillation from teacher to seed model
         2. Progressive model growth (depth/width/experts)
         3. Self-evolution using SEAL/SPIN
-        4. Weak-to-strong training for final PiscesL1
+        4. Weak-to-strong training for final PiscesLx
     
     Example:
         >>> config = POPSSEvolutionConfig(

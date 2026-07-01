@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """Quantization utilities for Yv model inference optimization.
 
 This module provides comprehensive quantization support for reducing model

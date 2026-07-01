@@ -22,7 +22,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 """
-Test Stage Modules for PiscesL1.
+Test Stage Modules for PiscesLx.
 
 This package contains all stage checker implementations for the
 project health check system.

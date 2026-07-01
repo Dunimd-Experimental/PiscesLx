@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Multitask Training Operator
 
 Implementation of multitask learning with dynamic task weighting
-and curriculum learning for PiscesL1 model training.
+and curriculum learning for PiscesLx model training.
 """
 
 import os

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 Watermark Configuration Operator
 
@@ -256,7 +258,7 @@ class POPSSWatermarkConfig:
     tamper_evidence: bool = True
     retention_days: int = 365
     owner_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    model_id: str = "PiscesL1-1.5B"
+    model_id: str = "PiscesLx-1.5B"
     version: str = VERSION
     enable_text_watermark: bool = True
     enable_image_watermark: bool = True
@@ -381,7 +383,7 @@ class POPSSWatermarkPayload:
         
     Example:
         payload = POPSSWatermarkPayload(
-            model_id="PiscesL1-1.5B",
+            model_id="PiscesLx-1.5B",
             user_hash="a1b2c3d4e5f6",
             content_hash="...")
     """

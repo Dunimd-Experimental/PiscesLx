@@ -19,7 +19,7 @@
 # Non-compliance may result in service termination or legal liability.
 
 # =============================================================================
-# PiscesL1 Installation Order (Optimized for pip - No Redownload)
+# PiscesLx Installation Order (Optimized for pip - No Redownload)
 # =============================================================================
 # Key principles:
 # 1. Install PyTorch FIRST with exact versions
@@ -32,14 +32,14 @@
 # =============================================================================
 # 1. flash-attn: Requires compilation, may take 10-30 minutes
 #    - If fails: pip install flash-attn --no-build-isolation
-#    - Or skip: PiscesL1 will use PyTorch's native attention
+#    - Or skip: PiscesLx will use PyTorch's native attention
 #
 # 2. triton: Not fully supported on Windows
 #    - Automatically skipped on Windows (platform_system=="Linux")
-#    - PiscesL1 will work without it
+#    - PiscesLx will work without it
 #
 # 3. mamba-ssm & causal-conv1d: Require CUDA compilation
-#    - If fails: PiscesL1 will fall back to standard attention
+#    - If fails: PiscesLx will fall back to standard attention
 #    - Ensure CUDA toolkit is installed and in PATH
 #
 # 4. bitsandbytes: May require Visual Studio Build Tools

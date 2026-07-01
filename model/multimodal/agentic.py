@@ -21,11 +21,13 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """High-level orchestration helpers for Yv multimodal agent behaviors.
 
 This module provides comprehensive agent orchestration components for the Yv
 model, including perception, memory, reasoning, and tool execution coordination
-for the PiscesL1 system.
+for the PiscesLx system.
 
 Module Components:
     1. YvAgentic:
@@ -806,18 +808,18 @@ class YvAgentic(nn.Module):
 
         Returns:
             torch.Tensor: Embedding tensor compatible with downstream reasoning
-            modules. A zero tensor is returned when the modality cannot be
-            processed.
+            modules.
         """
         if observation.modality == "text":
             if hasattr(self, 'tokenizer') and self.tokenizer:
                 tokens = self.tokenizer.encode(str(observation.content), return_tensors="pt")
                 if self.base_model:
                     return self.base_model.embed_tokens(tokens)
-                else:
-                    return torch.randn(1, tokens.size(1), self.cfg.hidden_size)
-            else:
-                return torch.zeros(1, 1, self.cfg.hidden_size)
+                raise ValueError(
+                    "YvAgentic.process_observation(text) requires a bound base_model "
+                    "to embed tokenizer outputs."
+                )
+            raise ValueError("YvAgentic.process_observation(text) requires a tokenizer.")
         
         elif observation.modality == "image":
             if isinstance(observation.content, str):  # Image path
@@ -844,11 +846,13 @@ class YvAgentic(nn.Module):
                 tokens = self.tokenizer.encode(result_str, return_tensors="pt")
                 if self.base_model:
                     return self.base_model.embed_tokens(tokens)
-                else:
-                    return torch.randn(1, tokens.size(1), self.cfg.hidden_size)
-        
-        # Fallback to zero tensor
-        return torch.zeros(1, 1, self.cfg.hidden_size)
+                raise ValueError(
+                    "YvAgentic.process_observation(tool_result) requires a bound base_model "
+                    "to embed serialized tool outputs."
+                )
+            raise ValueError("YvAgentic.process_observation(tool_result) requires a tokenizer.")
+
+        raise ValueError(f"Unsupported or unprocessable observation modality: {observation.modality}")
 
     async def plan_action(self, context: Dict[str, Any]) -> YvAgenticAction:
         """Generate an agent action using retrieval-augmented reasoning.
@@ -900,15 +904,10 @@ class YvAgentic(nn.Module):
         swarm_mode = False
         
         if self.swarm_intensity > 0.3 and hasattr(self, 'specialized_agents'):
-            try:
-                query_hidden = query_embedding.unsqueeze(0) if query_embedding.dim() == 2 else query_embedding
-                
-                for agent_name, agent_module in self.specialized_agents.items():
-                    agent_outputs[agent_name] = agent_module(query_hidden)
-                
-                swarm_mode = True
-            except Exception:
-                swarm_mode = False
+            query_hidden = query_embedding.unsqueeze(0) if query_embedding.dim() == 2 else query_embedding
+            for agent_name, agent_module in self.specialized_agents.items():
+                agent_outputs[agent_name] = agent_module(query_hidden)
+            swarm_mode = True
 
         # Execute multi-step chain-of-thought reasoning to plan the response.
         with torch.no_grad():
@@ -929,28 +928,36 @@ class YvAgentic(nn.Module):
                 action_logits = self.action_type_head(thinking_logits[:, -1])
                 action_probs = torch.softmax(action_logits, dim=-1)
                 action_type_idx = torch.argmax(action_probs, dim=-1).item()
-                
-                # Fuse swarm agent outputs if swarm mode is active
+                if difficulty_logits is not None:
+                    difficulty = torch.softmax(difficulty_logits[:, -1], dim=-1)
+                    difficulty_level = torch.argmax(difficulty, dim=-1).item()
+                else:
+                    difficulty_level = 2
+            else:
+                raise ValueError(
+                    "YvAgentic.plan_action requires a base_model with a bound reasoner."
+                )
+
+            # Fuse swarm agent outputs if swarm mode is active
             if swarm_mode and len(agent_outputs) > 0 and hasattr(self, 'agent_coordinator'):
-                try:
-                    agent_hidden = torch.cat(list(agent_outputs.values()), dim=-1)
-                    fused_hidden = self.agent_coordinator(agent_hidden)
+                agent_hidden = torch.cat(list(agent_outputs.values()), dim=-1)
+                fused_hidden = self.agent_coordinator(agent_hidden)
 
-                    weights = torch.softmax(self.agent_fusion_weights, dim=0)
-                    agent_confidences = {}
-                    for i, (agent_name, agent_out) in enumerate(agent_outputs.items()):
-                        if agent_out.dim() >= 2:
-                            agent_conf = torch.sigmoid(self.confidence_head(agent_out[:, -1])).item()
-                        else:
-                            agent_conf = torch.sigmoid(self.confidence_head(agent_out.unsqueeze(0))).item()
-                        agent_confidences[agent_name] = agent_conf
+                weights = torch.softmax(self.agent_fusion_weights, dim=0)
+                agent_confidences = {}
+                for i, (agent_name, agent_out) in enumerate(agent_outputs.items()):
+                    if agent_out.dim() >= 2:
+                        agent_conf = torch.sigmoid(self.confidence_head(agent_out[:, -1])).item()
+                    else:
+                        agent_conf = torch.sigmoid(self.confidence_head(agent_out.unsqueeze(0))).item()
+                    agent_confidences[agent_name] = agent_conf
 
-                    swarm_confidence = sum(
-                        weights[i].item() * agent_confidences.get(name, 0.5)
-                        for i, name in enumerate(agent_outputs.keys())
-                    )
-                except Exception:
-                    swarm_confidence = None
+                swarm_confidence = sum(
+                    weights[i].item() * agent_confidences.get(name, 0.5)
+                    for i, name in enumerate(agent_outputs.keys())
+                )
+            else:
+                swarm_confidence = None
 
             # Blend base and reflection confidences when available.
             base_confidence = torch.sigmoid(self.confidence_head(thinking_logits[:, -1])).item()
@@ -959,21 +966,6 @@ class YvAgentic(nn.Module):
             # Fold in swarm confidence when available
             if swarm_mode and swarm_confidence is not None:
                 confidence = (confidence + swarm_confidence) / 2
-                
-                # Estimate difficulty tier for downstream parameter decoding.
-                if difficulty_logits is not None:
-                    difficulty = torch.softmax(difficulty_logits[:, -1], dim=-1)
-                    difficulty_level = torch.argmax(difficulty, dim=-1).item()
-                else:
-                    difficulty_level = 2  # Default medium
-                
-            else:
-                # Fallback path: sample logits from random embeddings when no base model exists.
-                action_logits = self.action_type_head(torch.randn(1, self.cfg.hidden_size))
-                action_probs = torch.softmax(action_logits, dim=-1)
-                action_type_idx = torch.argmax(action_probs, dim=-1).item()
-                confidence = 0.5
-                difficulty_level = 2
             
             # Enumerate supported action types in deterministic order.
             action_types = [
@@ -987,7 +979,9 @@ class YvAgentic(nn.Module):
             if self.base_model and hasattr(self, 'reasoner'):
                 param_embedding = self.action_param_head(thinking_logits[:, -1])
             else:
-                param_embedding = self.action_param_head(torch.randn(1, self.cfg.hidden_size))
+                raise ValueError(
+                    "YvAgentic.plan_action cannot decode action params without a base_model reasoner path."
+                )
             
             action_params = self._decode_enhanced_action_params(
                 param_embedding, 
@@ -1054,9 +1048,7 @@ class YvAgentic(nn.Module):
             query (str): Query string representing the current planning context.
 
         Returns:
-            torch.Tensor: Semantic embedding of shape ``[1, hidden_size]``. Falls
-            back to a hash-based representation when tokenizer or base model are
-            unavailable.
+            torch.Tensor: Semantic embedding of shape ``[1, hidden_size]``.
         """
         if hasattr(self, 'tokenizer') and self.tokenizer and self.base_model:
             tokens = self.tokenizer.encode(query, return_tensors="pt", max_length=512, truncation=True)
@@ -1065,22 +1057,9 @@ class YvAgentic(nn.Module):
                 # Use mean pooling for query embedding
                 query_embedding = embeddings.mean(dim=1)
                 return query_embedding
-        else:
-            # Fallback: use simple hash-based encoding when language models are unavailable.
-            import hashlib
-            hash_obj = hashlib.md5(query.encode())
-            hash_bytes = hash_obj.digest()
-            hash_tensor = torch.tensor([int(b) for b in hash_bytes], dtype=torch.float32)
-            # Normalize to hidden size
-            query_embedding = hash_tensor.unsqueeze(0) / 255.0
-            if query_embedding.size(-1) != self.cfg.hidden_size:
-                # Pad or truncate to match hidden size
-                if query_embedding.size(-1) < self.cfg.hidden_size:
-                    padding = torch.zeros(1, self.cfg.hidden_size - query_embedding.size(-1))
-                    query_embedding = torch.cat([query_embedding, padding], dim=-1)
-                else:
-                    query_embedding = query_embedding[:, :self.cfg.hidden_size]
-            return query_embedding
+        raise ValueError(
+            "YvAgentic._encode_query requires tokenizer and base_model for strict model-closure mode."
+        )
 
     def _extract_memory_keys(self, memories: List[Dict[str, Any]]) -> List[str]:
         """Create coarse key phrases summarizing retrieved memories.
@@ -1272,71 +1251,70 @@ class YvAgentic(nn.Module):
             diagnostics. Empty structures are returned when detection fails.
         """
         if not self._coordinate_detection_enabled:
-            return {"objects": [], "image_size": [0, 0], "num_objects": 0}
-        
-        try:
-            # Process image through vision encoder
-            if isinstance(image_input, str):
-                image_tensor = self.vision_encoder.process_image(image_input)
-                if image_tensor is None:
-                    return {"objects": [], "image_size": [0, 0], "num_objects": 0}
-                image_tensor = image_tensor.unsqueeze(0)
-            elif isinstance(image_input, np.ndarray):
-                image_tensor = torch.from_numpy(image_input).float()
-                if len(image_tensor.shape) == 3:
-                    image_tensor = image_tensor.unsqueeze(0)
-            else:
-                image_tensor = image_input
-            
-            # Get detection results from vision encoder
-            with torch.no_grad():
-                detection_results = self.vision_encoder(image_tensor)
-            
-            if "bbox_coords" not in detection_results:
-                return {"objects": [], "image_size": [0, 0], "num_objects": 0}
+            raise RuntimeError("YvAgentic.detect_objects requires coordinate detection to be enabled.")
 
-            results = detection_results
-            objects = []
-            
-            # Process bounding boxes and coordinates.
-            if "boxes" in results and "labels" in results:
-                boxes = results["boxes"].cpu().numpy()
-                labels = results["labels"].cpu().numpy()
-                scores = results.get("scores", torch.ones(len(boxes))).cpu().numpy()
-                
-                # Convert patch indices into absolute image coordinates.
-                img_coords = self.vision_encoder.convert_patch_to_image_coords(boxes)
-                
-                for i, (box, label, score) in enumerate(zip(img_coords, labels, scores)):
-                    if score > 0.5:  # Confidence threshold
-                        x_min, y_min, x_max, y_max = box
-                        x_center = (x_min + x_max) / 2
-                        y_center = (y_min + y_max) / 2
-                        
-                        objects.append({
-                            "class": f"class_{label}",
-                            "confidence": float(score),
-                            "coordinates": [float(x_center), float(y_center)],
-                            "bbox": [float(x_min), float(y_min), float(x_max), float(y_max)]
-                        })
-            
-            # Capture approximate image dimensions for coordinate normalization.
-            if isinstance(image_input, str):
-                from PIL import Image
-                with Image.open(image_input) as img:
-                    width, height = img.size
-            else:
-                # Assume square image for tensor inputs
-                width = height = 224
-            
-            return {
-                "objects": objects,
-                "image_size": [width, height],
-                "num_objects": len(objects)
-            }
-            
-        except Exception as e:
-            return {"objects": [], "image_size": [0, 0], "num_objects": 0, "error": str(e)}
+        # Process image through vision encoder
+        if isinstance(image_input, str):
+            image_tensor = self.vision_encoder.process_image(image_input).unsqueeze(0)
+        elif isinstance(image_input, np.ndarray):
+            image_tensor = torch.from_numpy(image_input).float()
+            if len(image_tensor.shape) == 3:
+                image_tensor = image_tensor.unsqueeze(0)
+        else:
+            image_tensor = image_input
+
+        # Get detection results from vision encoder
+        with torch.no_grad():
+            detection_results = self.vision_encoder(image_tensor)
+
+        if not isinstance(detection_results, dict):
+            raise ValueError("YvAgentic.detect_objects requires the vision encoder to return a detection dictionary.")
+        if "bbox_coords" not in detection_results:
+            raise ValueError("YvAgentic.detect_objects requires bbox_coords in vision encoder outputs.")
+
+        results = detection_results
+        objects = []
+
+        # Process bounding boxes and coordinates.
+        if "boxes" in results and "labels" in results:
+            boxes = results["boxes"].cpu().numpy()
+            labels = results["labels"].cpu().numpy()
+            scores = results.get("scores", torch.ones(len(boxes))).cpu().numpy()
+
+            # Convert patch indices into absolute image coordinates.
+            img_coords = self.vision_encoder.convert_patch_to_image_coords(boxes)
+
+            for box, label, score in zip(img_coords, labels, scores):
+                if score > 0.5:
+                    x_min, y_min, x_max, y_max = box
+                    x_center = (x_min + x_max) / 2
+                    y_center = (y_min + y_max) / 2
+
+                    objects.append({
+                        "class": f"class_{label}",
+                        "confidence": float(score),
+                        "coordinates": [float(x_center), float(y_center)],
+                        "bbox": [float(x_min), float(y_min), float(x_max), float(y_max)]
+                    })
+
+        # Capture approximate image dimensions for coordinate normalization.
+        if isinstance(image_input, str):
+            from PIL import Image
+            with Image.open(image_input) as img:
+                width, height = img.size
+        else:
+            if not torch.is_tensor(image_tensor):
+                raise TypeError("YvAgentic.detect_objects requires tensor-compatible image inputs.")
+            if image_tensor.dim() < 4:
+                raise ValueError("YvAgentic.detect_objects requires image tensors with shape [B, C, H, W].")
+            height = int(image_tensor.shape[-2])
+            width = int(image_tensor.shape[-1])
+
+        return {
+            "objects": objects,
+            "image_size": [width, height],
+            "num_objects": len(objects)
+        }
 
     def get_coordinates(self, image_input: Union[str, torch.Tensor, np.ndarray], 
                          target_object: str = None) -> List[List[float]]:
@@ -1743,7 +1721,7 @@ class YvAgentic(nn.Module):
                 
                 last_error = result.error if hasattr(result, 'error') else "Unknown error"
                 
-            except Exception as e:
+            except (RuntimeError, ValueError, OSError, asyncio.TimeoutError) as e:
                 last_error = str(e)
             
             current_time = time_module.time()
