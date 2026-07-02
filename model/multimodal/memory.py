@@ -284,34 +284,60 @@ class YvVectorStore:
     
     def _setup_backend(self) -> None:
         """Setup vector database backend (FAISS or NumPy).
-        
-        Attempts to initialize FAISS backend for efficient similarity search.
-        
+
+        FAISS is treated as an optional dependency: if ``faiss`` is not
+        installed, we silently fall back to a NumPy-based backend. The
+        NumPy backend is significantly slower on large vector stores
+        but does not require a binary dependency that often fails to
+        install in container/CI environments.
+
         Note:
             Sets _use_faiss flag based on availability.
             Logs backend initialization status.
         """
         if self.config.vector_backend == "faiss":
-            import faiss
-            self._faiss = faiss
-            self._use_faiss = True
-            _LOG.info("FAISS backend initialized")
+            try:
+                import faiss
+                self._faiss = faiss
+                self._use_faiss = True
+                _LOG.info("FAISS backend initialized")
+            except ImportError as e:
+                _LOG.warning(
+                    f"FAISS backend requested but `faiss` is not installed "
+                    f"({type(e).__name__}: {e}). Falling back to the NumPy "
+                    f"backend. Install with `pip install faiss-cpu` for "
+                    f"production workloads."
+                )
+                self._faiss = None
+                self._use_faiss = False
         else:
+            self._faiss = None
             self._use_faiss = False
             _LOG.info("NumPy backend initialized")
     
     def _setup_encoder(self) -> None:
         """Setup sentence encoder for text embeddings.
-        
+
         Attempts to load SentenceTransformer model for semantic embeddings.
-        
+        If ``sentence_transformers`` is not installed, the encoder is
+        left as ``None`` and a warning is logged; callers that need
+        semantic embeddings must handle the ``None`` case explicitly.
+
         Note:
             Default model: all-MiniLM-L6-v2 (384 dimensions).
             Logs encoder initialization status.
         """
-        from sentence_transformers import SentenceTransformer
-        self._encoder = SentenceTransformer(self.config.embedding_model)
-        _LOG.info(f"SentenceTransformer loaded: {self.config.embedding_model}")
+        try:
+            from sentence_transformers import SentenceTransformer
+            self._encoder = SentenceTransformer(self.config.embedding_model)
+            _LOG.info(f"SentenceTransformer loaded: {self.config.embedding_model}")
+        except ImportError as e:
+            _LOG.warning(
+                f"`sentence_transformers` is not installed "
+                f"({type(e).__name__}: {e}); semantic-embedding path is "
+                f"unavailable. Install with `pip install sentence-transformers`."
+            )
+            self._encoder = None
     
     def encode(self, text: str) -> np.ndarray:
         """Encode text to vector embedding.
@@ -1158,8 +1184,18 @@ class YvMemory:
         _LOG.info("YvMemory shutdown complete")
     
     def __del__(self):
-        """Cleanup on deletion."""
-        self.shutdown()
+        """Cleanup on deletion.
+
+        `__del__` can run after a partially-completed ``__init__``
+        (for example, if a dependency such as `faiss` failed to
+        import). In that case some attributes are missing, so we
+        guard the shutdown path to avoid masking the original error
+        with a confusing ``AttributeError`` raised from `__del__`.
+        """
+        try:
+            self.shutdown()
+        except Exception:
+            pass
 
 
 # ==================== Factory Function ====================

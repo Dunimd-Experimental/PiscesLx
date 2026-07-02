@@ -491,15 +491,5 @@ memory_store_path: ""
 #   Virtual combinations: 131072^16 ~ 1e80
 #   Actual parameters:    ~0.27B (field) + ~0.23B (head) = 0.5B
 # ========================================
-subconscious_knowledge_dim: 256
-subconscious_num_codebooks: 16
-subconscious_codebook_size: 131072
-subconscious_codebook_dim: 128
-subconscious_num_field_heads: 8
-subconscious_head_dim: 1024
-subconscious_head_num_layers: 2
-subconscious_head_num_attn_heads: 4
-subconscious_read_interval: 1
-subconscious_prefetch_depth: 2
 
 

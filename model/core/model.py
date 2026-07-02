@@ -635,7 +635,7 @@ class YvModel(nn.Module):
                 continue
             yield name, module
 
-    def __init__(self, cfg, device=None, dtype=None, quantization_config=None, lora_config=None):
+    def __init__(self, cfg, device=None, dtype=None, quantization_config=None, lora_config=None, modalities=None):
         super().__init__()
         _LOG.debug("YvModel: __init__ start")
         self.cfg = cfg
@@ -645,6 +645,8 @@ class YvModel(nn.Module):
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         if dtype is None:
             dtype = torch.bfloat16 if device.type == 'cuda' else torch.float32
+
+        self._modalities = modalities or {'text'}
         self._device = device
         self._dtype = dtype
 
@@ -724,9 +726,14 @@ class YvModel(nn.Module):
         setattr(cfg, '_path_moe_model_id', id(self))
 
         self.layers = nn.ModuleList([])
-        for i in range(cfg.n_layer):
-            if (i % 4 == 0) or (i == cfg.n_layer - 1):
-                _LOG.debug(f"YvModel: initializing TransformerBlock {i+1}/{cfg.n_layer}")
+        # Announce layer construction only at the first, the midpoint,
+        # and the last layer. Logging once per layer is noise at any
+        # non-trivial depth.
+        n_layer = cfg.n_layer
+        mid_layer = max(1, n_layer // 2) if n_layer > 1 else n_layer
+        for i in range(n_layer):
+            if i == 0 or i == mid_layer or i == n_layer - 1:
+                _LOG.debug(f"YvModel: initializing TransformerBlock {i+1}/{n_layer}")
 
             # PathMoE: (re)create shared gate at stage boundaries
             if use_path_moe:
@@ -780,37 +787,60 @@ class YvModel(nn.Module):
         }
         self._lazy_initialized = {k: False for k in self._lazy_init_flags}
 
-        if self._lazy_init_flags.get('vision', False):
+        _needs_vision = 'image' in self._modalities
+        if _needs_vision and self._lazy_init_flags.get('vision', False):
             self._vision_encoder = None
             self.vision = None
-        else:
+        elif _needs_vision:
             base_vision = YvVisionEncoder(cfg, device=device, dtype=dtype)
             self.vision = YvMoVEVisionEncoder(cfg, base_encoder=base_vision, device=device, dtype=dtype) if getattr(cfg, 'use_move_encoder', False) else base_vision
+        else:
+            self._vision_encoder = None
+            self.vision = None
 
-        self.sparse_cut_router = YvSparseCutRouter(cfg) if getattr(cfg, 'use_sparse_cut', False) else None
+        self.sparse_cut_router = YvSparseCutRouter(cfg) if (getattr(cfg, 'use_sparse_cut', False) and _needs_vision) else None
 
-        if self._lazy_init_flags.get('video', False):
+        _needs_video = 'video' in self._modalities
+        if _needs_video and self._lazy_init_flags.get('video', False):
             self._video_encoder = None
             self.video = None
-        else:
+        elif _needs_video:
             self.video = YvVideoEncoder(cfg, device=device, dtype=dtype)
+        else:
+            self._video_encoder = None
+            self.video = None
 
-        if self._lazy_init_flags.get('audio', False):
+        _needs_audio = 'audio' in self._modalities
+        if _needs_audio and self._lazy_init_flags.get('audio', False):
             self._audio_encoder = None
             self.audio = None
-        else:
+        elif _needs_audio:
             self.audio = YvAudioEncoder(cfg, device=device, dtype=dtype)
+        else:
+            self._audio_encoder = None
+            self.audio = None
 
-        if self._lazy_init_flags.get('doc', False):
+        _needs_doc = 'doc' in self._modalities
+        if _needs_doc and self._lazy_init_flags.get('doc', False):
             self._doc_encoder = None
             self.doc = None
-        else:
+        elif _needs_doc:
             self.doc = YvDocEncoder(cfg, device=device, dtype=dtype)
+        else:
+            self._doc_encoder = None
+            self.doc = None
 
-        self.agent_encoder = YvAgenticEncoder(cfg, device=device, dtype=dtype)
+        _needs_multimodal = _needs_vision or _needs_video or _needs_audio or _needs_doc
+        if getattr(cfg, 'use_agentic', True) and _needs_multimodal:
+            self.agent_encoder = YvAgenticEncoder(cfg, device=device, dtype=dtype)
+        else:
+            self.agent_encoder = None
 
         # Unified multimodal fusion — absorbs Dynamic/Enhanced/RecurrentRefiner/SyncFusion/RCA
-        self.modal_fusion = YvDynamicModalFusion(cfg, device=device, dtype=dtype)
+        if _needs_multimodal:
+            self.modal_fusion = YvDynamicModalFusion(cfg, device=device, dtype=dtype)
+        else:
+            self.modal_fusion = None
 
         # === 2026 flagship feature init ===
         self.deep_cross_layer_injector = None
@@ -869,26 +899,35 @@ class YvModel(nn.Module):
         self.modal_token_count = getattr(cfg, 'modal_token_count', 8)
         self.fusion_proj = nn.Linear(cfg.hidden_size, cfg.hidden_size, bias=False, device=device, dtype=dtype)
 
-        _LOG.debug("YvModel: initializing reasoner...")
-        self.reasoner = YvUnifiedReasoner(cfg, device=device, dtype=dtype)
-        self.reasoner.initialize_reasoning_tokens(None)
+        if getattr(cfg, 'use_reasoner', True):
+            _LOG.debug("YvModel: initializing reasoner...")
+            self.reasoner = YvUnifiedReasoner(cfg, device=device, dtype=dtype)
+            self.reasoner.initialize_reasoning_tokens(None)
+        else:
+            self.reasoner = None
 
-        _LOG.debug("YvModel: initializing agentic...")
-        from ..multimodal import YvAgentic
-        self.agentic = YvAgentic(cfg, model=self)
+        if getattr(cfg, 'use_agentic', True):
+            _LOG.debug("YvModel: initializing agentic...")
+            from ..multimodal import YvAgentic
+            self.agentic = YvAgentic(cfg, model=self)
+        else:
+            self.agentic = None
 
-        _LOG.debug("YvModel: initializing speculative decoder...")
-        self.speculative_config = YvSpeculativeConfig(
-            num_candidates=getattr(cfg, 'speculative_candidates', 4),
-            draft_length=getattr(cfg, 'speculative_draft_length', 5),
-            acceptance_threshold=getattr(cfg, 'speculative_acceptance_threshold', 0.8),
-            temperature=getattr(cfg, 'speculative_temperature', 0.7),
-            top_k=getattr(cfg, 'speculative_top_k', 50),
-            top_p=getattr(cfg, 'speculative_top_p', 0.9),
-            tree_width=getattr(cfg, 'speculative_tree_width', 4),
-            tree_depth=getattr(cfg, 'speculative_tree_depth', 5)
-        )
-        self.speculative_decoder = YvAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
+        if getattr(cfg, 'use_speculative_decoder', False) and getattr(cfg, 'enable_speculative_decoding', True):
+            _LOG.debug("YvModel: initializing speculative decoder...")
+            self.speculative_config = YvSpeculativeConfig(
+                num_candidates=getattr(cfg, 'speculative_candidates', 4),
+                draft_length=getattr(cfg, 'speculative_draft_length', 5),
+                acceptance_threshold=getattr(cfg, 'speculative_acceptance_threshold', 0.8),
+                temperature=getattr(cfg, 'speculative_temperature', 0.7),
+                top_k=getattr(cfg, 'speculative_top_k', 50),
+                top_p=getattr(cfg, 'speculative_top_p', 0.9),
+                tree_width=getattr(cfg, 'speculative_tree_width', 4),
+                tree_depth=getattr(cfg, 'speculative_tree_depth', 5)
+            )
+            self.speculative_decoder = YvAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
+        else:
+            self.speculative_decoder = None
 
         if lora_config is not None:
             raise RuntimeError(
@@ -976,7 +1015,14 @@ class YvModel(nn.Module):
         use_hybrid = bool(getattr(cfg, 'use_mamba3', False))
 
         if not allow_legacy_blocks:
-            _LOG.debug(f"YvModel: using YvHybridBlock for layer {layer_idx + 1}")
+            # The block type is constant across the whole backbone, so
+            # logging it once at the first layer is enough. Subsequent
+            # calls are silent.
+            if layer_idx == 0:
+                _LOG.debug(
+                    f"YvModel: backbone uses YvHybridBlock for all "
+                    f"{getattr(cfg, 'n_layer', '?')} layers"
+                )
             return YvHybridBlock(
                 cfg,
                 device=device,
@@ -987,7 +1033,11 @@ class YvModel(nn.Module):
         if use_hybrid:
             mamba3_layers = getattr(cfg, 'mamba3_layers', [])
             if not mamba3_layers or layer_idx in mamba3_layers:
-                _LOG.debug(f"YvModel: using YvHybridBlock for layer {layer_idx + 1}")
+                if layer_idx == 0:
+                    _LOG.debug(
+                        f"YvModel: backbone uses YvHybridBlock for hybrid "
+                        f"layers (mamba3_layers={mamba3_layers})"
+                    )
                 return YvHybridBlock(
                     cfg,
                     device=device,
@@ -1680,7 +1730,7 @@ class YvModel(nn.Module):
         text_emb = self.embed(input_ids)
         modal_features = {'text': text_emb}
 
-        if images is not None:
+        if images is not None and getattr(self, 'vision', None) is not None:
             img_out = self.vision(images)
             if self.sparse_cut_router is not None:
                 img_out = self.sparse_cut_router(img_out)
@@ -1688,19 +1738,19 @@ class YvModel(nn.Module):
                 img_out['features'] if isinstance(img_out, dict) and 'features' in img_out else img_out
             )
 
-        if audio is not None:
+        if audio is not None and getattr(self, 'audio', None) is not None:
             aud_out = self.audio(audio)
             modal_features['audio'] = (
                 aud_out['features'] if isinstance(aud_out, dict) and 'features' in aud_out else aud_out
             )
 
-        if video is not None:
+        if video is not None and getattr(self, 'video', None) is not None:
             vid_out = self.video(video)
             modal_features['video'] = (
                 vid_out['features'] if isinstance(vid_out, dict) and 'features' in vid_out else vid_out
             )
 
-        if docs is not None:
+        if docs is not None and getattr(self, 'doc', None) is not None:
             doc_out = self.doc(docs)
             doc_features = (
                 doc_out['features'] if isinstance(doc_out, dict) and 'features' in doc_out else doc_out

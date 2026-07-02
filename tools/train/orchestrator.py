@@ -695,46 +695,6 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         
         _LOG.info("Applied top-level config from model config file")
 
-    def _bridge_model_flags_to_engine(self, model_cfg: Any) -> None:
-        if model_cfg is None:
-            return
-        _LOG.info("--- Model Flagship Feature Audit ---")
-        use_flags = []
-        for attr in sorted(dir(model_cfg)):
-            if attr.startswith('use_') and not attr.startswith('__'):
-                val = getattr(model_cfg, attr, None)
-                if isinstance(val, bool):
-                    use_flags.append((attr, val))
-                    if val:
-                        _LOG.info(f"  [+] {attr} = True  (active)")
-                    else:
-                        _LOG.debug(f"  [-] {attr} = False (inactive)")
-        active = sum(1 for _, v in use_flags if v)
-        _LOG.info(f"  Active flagship features: {active}/{len(use_flags)}")
-
-        top_level_map = {
-            'use_fp4': 'optimizer.use_fp4',
-            'use_gradient_checkpointing': 'gradient_checkpointing',
-            'use_self_play': 'self_play',
-            'use_graph_of_tokens': 'graph_of_tokens',
-            'use_soft_moe': 'soft_moe',
-            'use_roma': 'roma',
-            'use_spell': 'spell',
-            'use_seirenes': 'seirenes',
-            'use_tactic': 'tactic',
-            'use_seer_executor': 'seer_executor',
-            'use_vericot': 'vericot',
-            'use_comet_memory': 'comet_memory',
-            'use_token_sparse_attn': 'token_sparse_attn',
-        }
-        for flag, target in top_level_map.items():
-            val = getattr(model_cfg, flag, None)
-            if isinstance(val, bool) and val:
-                _LOG.info(f"  Engine-aware flag: {flag} → {target} (active)")
-        all_enabled = [f for f, v in use_flags if v]
-        _LOG.info(f"  All enabled flags: {all_enabled}")
-        _LOG.info("--- End Model Flagship Feature Audit ---")
-
     def _apply_training_moe_overrides_to_model_config(self, model_cfg: Any) -> Any:
         moe_cfg = getattr(self.train_config, "moe", None)
         if not isinstance(moe_cfg, dict) or not moe_cfg:
@@ -968,9 +928,6 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         # Apply top-level config (galore_enabled, use_h2o_attention, etc.)
         self._apply_top_level_config(model_cfg)
-
-        # Bridge model use_xxx flags → training engine
-        self._bridge_model_flags_to_engine(model_cfg)
 
         # Apply training_config from raw YAML. Do not rely on YvConfig having a training_config field,
         # because YvConfig.from_yaml filters unknown keys.
@@ -1248,12 +1205,21 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             train_loader = DataLoader(train_ds, **dl_kwargs)
             self._current_train_loader = train_loader
 
+            # Scan dataset for modalities before model init
+            from utils.modality_scanner import scan_dataset
+            detected_modalities = scan_dataset(train_ds)
+            if detected_modalities == {'text'}:
+                _LOG.info(f"Dataset {ds_name} is text-only, skipping multimodal encoders")
+            else:
+                _LOG.info(f"Dataset {ds_name} detected modalities: {detected_modalities}")
+
             if idx == 0:
                 self.initialize_training(
                     model_class=YvModel,
                     train_dataloader_factory=lambda *_args, **_kwargs: train_loader,
                     val_dataloader_factory=None,
                     cfg=model_cfg,
+                    modalities=detected_modalities,
                 )
                 if reporter is not None:
                     try:

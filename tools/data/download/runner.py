@@ -21,8 +21,6 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
-
-
 import os
 import gc
 import time
@@ -119,13 +117,29 @@ class PiscesLxDataRetryStrategy:
             if isinstance(error, retryable_errors):
                 return True
 
-            error_str = str(error).lower()
+            error_str = (str(error) or "").lower()
+
             retryable_keywords = [
                 "timeout", "connection", "network", "rate limit",
-                "too many requests", "service unavailable", "gateway"
+                "too many requests", "service unavailable", "gateway",
             ]
             if any(kw in error_str for kw in retryable_keywords):
                 return True
+
+            # Deterministic failures: the environment is broken in a way that
+            # retrying without user intervention cannot fix. Examples include
+            # missing packages and incompatible package versions. Retrying
+            # just burns time and floods the log.
+            fatal_keywords = [
+                "importerror", "modulenotfounderror",
+                "pretrainedmodel",
+                "failed to import `modelscope.msdatasets`",
+                "package is not installed",
+                "is not importable",
+                "syntaxerror",
+            ]
+            if any(kw in error_str for kw in fatal_keywords):
+                return False
 
         return True
 
@@ -192,11 +206,11 @@ class PiscesLxToolsDataDatasetDownload:
     @staticmethod
     def save_dataset(ds: Any, data_dir: str, name: str, max_samples: Optional[int] = None) -> Optional[str]:
         try:
-            try:
-                from .sources import PiscesLxToolsDataSourceRouter
-                ds = PiscesLxToolsDataSourceRouter.to_hf_if_needed(ds)
-            except Exception:
-                _LOG.debug("Dataset is already in HuggingFace format or conversion failed")
+            if not hasattr(ds, "save_to_disk"):
+                _LOG.error(
+                    f"Cannot save dataset {name}: expected a HuggingFace Dataset, got {type(ds).__name__}"
+                )
+                return None
 
             if max_samples is not None and max_samples > 0 and len(ds) > max_samples:
                 _LOG.info(f"Limiting dataset {name} from {len(ds)} to {max_samples} samples")
@@ -290,6 +304,7 @@ class PiscesLxToolsDataDatasetDownload:
                             ds = tmp
                             logger.debug(f"Successfully loaded with method {desc}")
                             break
+                        last_err = router.last_error or last_err
                     except Exception as e:
                         last_err = str(e)
                         logger.debug(f"Method {desc} failed: {str(e)}")
@@ -299,7 +314,14 @@ class PiscesLxToolsDataDatasetDownload:
                     logger.error(f"Failed to load dataset {dataset_name} after all methods. Last error: {last_err}")
                     state.last_error = last_err
 
-                    if attempt < max_retries - 1 and retry_strategy.should_retry(attempt, Exception(last_err)):
+                    # Wrap the string in a generic exception only if it's not
+                    # empty/None; the retry strategy now classifies fatal
+                    # import/version errors and will refuse to retry them.
+                    err_for_retry: Optional[Exception] = None
+                    if last_err:
+                        err_for_retry = Exception(last_err)
+
+                    if attempt < max_retries - 1 and retry_strategy.should_retry(attempt, err_for_retry):
                         delay = retry_strategy.get_delay(attempt)
                         logger.info(f"Retrying {dataset_name} in {delay:.1f} seconds...")
                         resume_manager.save_state(state)
@@ -473,11 +495,11 @@ class PiscesLxToolsDataDatasetDownload:
 
         seen_names: Set[str] = set()
         def preferred_sources_for(d: PiscesLxToolsDatasetItem) -> List[str]:
-            if getattr(d, "source", None):
-                return [d.source]
-            if getattr(d, "source_preference", None):
-                return d.source_preference
-            return cfg.source_preference
+            # Use the dataclass's own normalizer so aliases ("ModelScope",
+            # "HF", "baobaolian", ...) are mapped to canonical "modelscope" /
+            # "huggingface" and case is ignored. This is what `source` is
+            # *supposed* to be matched against.
+            return d.normalize_source_preference(cfg.source_preference)
 
         to_download: List[Tuple[str, str, str, List[str]]] = []
         for d in cfg.datasets:

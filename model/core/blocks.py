@@ -200,6 +200,7 @@ from ..moe import YvDeepSeekMoELayer
 from .mamba3 import YvMamba3Block, YvMamba3Config
 
 from utils.paths import get_log_file
+from utils.dtype_safe import qr_safe, svd_safe
 _LOG = PiscesLxLogger("Yv.Core", file_path=get_log_file("Yv.Core"), enable_file=True)
 
 
@@ -2637,7 +2638,10 @@ class YvManifoldConstraint(nn.Module):
         if manifold_type in ("stiefel", "grassmann"):
             init_mat = torch.randn(dim, self.stiefel_k,
                                    device=device, dtype=dtype)
-            Q, _ = torch.linalg.qr(init_mat)
+            # `qr_safe` upcasts to fp32 internally so this works on
+            # fp16/bf16 models where torch.linalg.qr's CUDA path is
+            # not implemented.
+            Q = qr_safe(init_mat)
             self.register_buffer("_stiefel_basis", Q)
 
         self._reset_parameters(device, dtype)
@@ -2721,7 +2725,10 @@ class YvManifoldConstraint(nn.Module):
         batch_shape = x.shape[:-2]
         flat = x.reshape(-1, *x.shape[-2:])  # (B, n, k)
         # Polar decomposition via SVD:  X = UΣVᵀ  →  Q = UVᵀ
-        U, _S, Vh = torch.linalg.svd(flat, full_matrices=False)
+        # `svd_safe` upcasts to fp32 internally so this works on
+        # fp16/bf16 models where torch.linalg.svd's CUDA path is not
+        # implemented (or numerically meaningful for half precision).
+        U, _S, Vh = svd_safe(flat, full_matrices=False)
         Q = U @ Vh
         Q = Q.reshape(orig_shape)
         return Q

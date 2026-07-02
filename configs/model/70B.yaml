@@ -454,16 +454,6 @@ memory_store_path: ""
 # Subconscious System (0.5B Head + 314B Implicit Knowledge Field)
 # Scaled for 70B: hidden=8192, n_layer=80.
 # ========================================
-subconscious_knowledge_dim: 256
-subconscious_num_codebooks: 16
-subconscious_codebook_size: 131072
-subconscious_codebook_dim: 128
-subconscious_num_field_heads: 8
-subconscious_head_dim: 1792
-subconscious_head_num_layers: 2
-subconscious_head_num_attn_heads: 4
-subconscious_read_interval: 1
-subconscious_prefetch_depth: 2
 
 
 

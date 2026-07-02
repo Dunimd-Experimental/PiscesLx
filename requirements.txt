@@ -27,7 +27,24 @@
 # 3. Then everything else
 # 4. Use --no-deps for packages with known good transitive dependencies
 # =============================================================================
-# 
+#
+# !!! COMPATIBILITY MATRIX (DO NOT LOOSEN WITHOUT TESTING) !!!
+#   transformers  : >=4.45.0, <4.46          (keeps PreTrainedModel at top level)
+#   tokenizers    : >=0.20.0,  <1.0
+#   huggingface-hub: >=0.25.0, <1.0
+#   modelscope    : ==1.27.0                (1.x line that matches transformers 4.45.x)
+#   datasets      : >=3.0.0,   <4.0         (datasets 4.x has API breakage)
+#
+# `modelscope.msdatasets.MsDataset` does `from transformers import PreTrainedModel`
+# at import time. That symbol was removed from the top-level `transformers`
+# namespace in `transformers >= 4.46`. If you bump the transformers cap, you
+# will get:
+#     ModuleNotFoundError: Could not import module 'PreTrainedModel'.
+#     Are this object's requirements defined correctly?
+# when the PiscesLx data downloader tries to load ModelScope-hosted datasets.
+# Do not change any of the above ranges without also re-testing
+# `python manage.py download`.
+#
 # IMPORTANT NOTES FOR WINDOWS USERS:
 # =============================================================================
 # 1. flash-attn: Requires compilation, may take 10-30 minutes
@@ -119,19 +136,26 @@ scikit-learn>=1.5.0
 # =============================================================================
 # SECTION 5: Transformers Ecosystem (Order matters)
 # =============================================================================
+# IMPORTANT: `modelscope` (see SECTION 7) and `transformers` are tightly
+# coupled. The `PreTrainedModel` symbol that older `modelscope` releases
+# import was removed from the top-level `transformers` namespace in
+# `transformers >= 4.46`. We pin to the last compatible transformers line
+# here so `from modelscope.msdatasets import MsDataset` does not blow up.
 # huggingface-hub first (base dependency)
-huggingface-hub>=0.20.0
+huggingface-hub>=0.25.0,<1.0
 # Then tokenizers (binary build, version matters)
-tokenizers>=0.20.0
-# Then transformers
-transformers>=4.49.0
+tokenizers>=0.20.0,<1.0
+# Then transformers (capped to keep PreTrainedModel importable)
+transformers>=4.45.0,<4.46
 
 # =============================================================================
 # SECTION 6: Data Processing
 # =============================================================================
 pandas>=2.2.0
 pyarrow>=18.0.0
-datasets>=3.0.0
+# `datasets` 4.x has API breakage; cap at the 3.x line to stay compatible
+# with both the `transformers<4.46` pin (SECTION 5) and `modelscope` (SECTION 7).
+datasets>=3.0.0,<4.0
 jsonlines>=4.0.0
 ijson>=3.2.0
 kagglehub>=0.3.0
@@ -139,7 +163,12 @@ kagglehub>=0.3.0
 # =============================================================================
 # SECTION 7: Modelscope (Separate from transformers ecosystem)
 # =============================================================================
-modelscope>=1.19.0
+# Pinned to a known-good version. `modelscope` does not cap `transformers`
+# in its own framework.txt, so a fresh `pip install -U` can pick up a
+# `transformers` release that has removed the symbols `modelscope.msdatasets`
+# imports at module load time. The cap on `transformers` in SECTION 5 is
+# what makes this work.
+modelscope==1.27.0
 
 # =============================================================================
 # SECTION 8: Computer Vision & Multimedia

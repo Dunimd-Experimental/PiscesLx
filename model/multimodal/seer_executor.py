@@ -162,6 +162,9 @@ class YvSEERExecutor(nn.Module):
         self.hidden_size = config.hidden_size
         self.experience_pool = YvSEERExperiencePool()
 
+        # Initialize _stats and _tools BEFORE calling _register_tools;
+        # the registration loop writes into both dicts.
+        self._stats: Dict[str, Dict] = {}
         self._tools: Dict[str, YvSEERToolBase] = {}
         self._register_tools()
 
@@ -186,7 +189,6 @@ class YvSEERExecutor(nn.Module):
         )
 
         self.register_buffer('evolution_step', torch.tensor(0))
-        self._stats: Dict[str, Dict] = {}
 
     def _register_tools(self):
         for tool in [

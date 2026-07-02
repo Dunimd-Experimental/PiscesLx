@@ -367,6 +367,7 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
         max_grad_norm = 1.0
         
         step = 0
+        _grad_ready = False
         for batch in dataloader:
             if step >= self.config.distill_steps:
                 break
@@ -386,17 +387,20 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
                         scaler.scale(loss).backward()
                     else:
                         loss.backward()
+                    _grad_ready = True
             
             if (step + 1) % grad_accum == 0:
-                if scaler is not None:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(student_model.parameters(), max_grad_norm)
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    torch.nn.utils.clip_grad_norm_(student_model.parameters(), max_grad_norm)
-                    optimizer.step()
+                if _grad_ready:
+                    if scaler is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(student_model.parameters(), max_grad_norm)
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        torch.nn.utils.clip_grad_norm_(student_model.parameters(), max_grad_norm)
+                        optimizer.step()
                 optimizer.zero_grad()
+                _grad_ready = False
                 
                 if result.status == PiscesLxOperatorStatus.SUCCESS:
                     self.tracker.log_step("distill_loss", loss.item() * grad_accum if isinstance(loss, Tensor) else 0)
@@ -476,22 +480,25 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
             
             loss = outputs.loss if hasattr(outputs, 'loss') else outputs[0]
             
+            _grad_ready = False
             if isinstance(loss, Tensor) and loss.requires_grad:
                 loss = loss / grad_accum
                 if scaler is not None:
                     scaler.scale(loss).backward()
                 else:
                     loss.backward()
+                _grad_ready = True
             
             if (step + 1) % grad_accum == 0:
-                if scaler is not None:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-                    optimizer.step()
+                if _grad_ready:
+                    if scaler is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                        optimizer.step()
                 optimizer.zero_grad()
                 
                 if isinstance(loss, Tensor):
@@ -541,22 +548,25 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
             
             if hasattr(outputs, 'loss') and outputs.loss is not None:
                 loss = outputs.loss
+                _grad_ready = False
                 if isinstance(loss, Tensor) and loss.requires_grad:
                     loss = loss / grad_accum
                     if scaler is not None:
                         scaler.scale(loss).backward()
                     else:
                         loss.backward()
+                    _grad_ready = True
             
             if (step + 1) % grad_accum == 0:
-                if scaler is not None:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
-                    optimizer.step()
+                if _grad_ready:
+                    if scaler is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                        optimizer.step()
                 optimizer.zero_grad()
                 
                 if hasattr(outputs, 'loss') and outputs.loss is not None and isinstance(loss, Tensor):
@@ -623,22 +633,25 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
             
             if result.status == PiscesLxOperatorStatus.SUCCESS:
                 loss = result.data.get("loss", 0)
+                _grad_ready = False
                 if isinstance(loss, Tensor) and loss.requires_grad:
                     loss = loss / grad_accum
                     if scaler is not None:
                         scaler.scale(loss).backward()
                     else:
                         loss.backward()
+                    _grad_ready = True
             
             if (step + 1) % grad_accum == 0:
-                if scaler is not None:
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(pl1_model.parameters(), max_grad_norm)
-                    scaler.step(optimizer)
-                    scaler.update()
-                else:
-                    torch.nn.utils.clip_grad_norm_(pl1_model.parameters(), max_grad_norm)
-                    optimizer.step()
+                if _grad_ready:
+                    if scaler is not None:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(pl1_model.parameters(), max_grad_norm)
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        torch.nn.utils.clip_grad_norm_(pl1_model.parameters(), max_grad_norm)
+                        optimizer.step()
                 optimizer.zero_grad()
                 
                 if result.status == PiscesLxOperatorStatus.SUCCESS:

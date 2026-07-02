@@ -135,18 +135,29 @@ class YvVideoEncoder(nn.Module):
         Temporal processing varies based on use_3d_rope setting.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, device=None, dtype=None):
         """Instantiate the encoder using the supplied configuration namespace.
-        
+
         Args:
             cfg: Configuration object providing:
                 - hidden_size: Output embedding dimension
                 - n_head: Number of attention heads
                 - use_3d_spatio_temporal_rope: Enable 3D RoPE (default: False)
                 - Vision backbone parameters for YvVisionEncoder
+            device: Target device for the encoder's parameters. Accepted
+                for API compatibility with the rest of the Yv model
+                stack; submodules are constructed on CPU and the parent
+                model performs a single .to(device, dtype) after this
+                __init__ returns.
+            dtype: Target dtype for the encoder's parameters. Same
+                caveat as ``device``.
         """
         super().__init__()
         self.enabled = True
+        # Recorded for downstream inspection. Submodules are built on
+        # CPU; the top-level YvModel moves the whole tree in one .to().
+        self._init_device = device
+        self._init_dtype = dtype
         self.cfg = cfg
         _LOG.debug(f"VideoEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
 

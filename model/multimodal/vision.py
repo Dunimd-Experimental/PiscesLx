@@ -449,15 +449,30 @@ class YvVisionEncoder(nn.Module):
         Supports both SDPA and MHA attention backends.
     """
 
-    def __init__(self, cfg, cache_manager=None) -> None:
+    def __init__(self, cfg, cache_manager=None, device=None, dtype=None) -> None:
         """Initialize the vision encoder with configuration.
-        
+
         Args:
             cfg: Configuration namespace supplying hyperparameters such as
                 ``hidden_size``, ``n_head``, ``n_layer``, ``use_3d_spatio_temporal_rope``,
                 ``vision_use_sdpa``, ``h_network_enabled``, etc.
             cache_manager: Reserved for future caching integrations. Defaults to ``None``.
+            device: Target device for the encoder's parameters. The
+                top-level ``YvModel`` calls ``.to(device, dtype)`` after
+                construction, so submodules are constructed on CPU and
+                moved in a single sweep. This kwarg is accepted only
+                for API symmetry with the rest of the Yv model stack.
+            dtype: Target dtype for the encoder's parameters. Same
+                caveat as ``device`` — it is recorded for inspection
+                but the actual cast happens in the parent model.
         """
+        # Record device/dtype for downstream inspection (e.g. logging)
+        # without breaking the standard "construct on CPU, .to() later"
+        # pattern. Submodules below are intentionally constructed
+        # without these kwargs; the parent YvModel performs a single
+        # bulk .to(device, dtype) after this __init__ returns.
+        self._init_device = device
+        self._init_dtype = dtype
         super().__init__()
         self.enabled = True
         self.cfg = cfg

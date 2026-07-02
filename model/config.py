@@ -745,7 +745,7 @@ class YvConfig:
     # ========================================
     # Lazy Initialization Configuration
     # ========================================
-    lazy_init_enabled: bool = False
+    lazy_init_enabled: bool = True
     lazy_init_vision_encoder: bool = True
     lazy_init_audio_encoder: bool = True
     lazy_init_video_encoder: bool = True
@@ -1105,7 +1105,7 @@ class YvConfig:
     use_subconscious: bool = True
     subconscious_knowledge_dim: int = 256
     subconscious_num_codebooks: int = 16
-    subconscious_codebook_size: int = 131072
+    subconscious_codebook_size: int = 16384
     subconscious_codebook_dim: int = 128
     subconscious_num_field_heads: int = 8
     subconscious_head_dim: int = 1024
@@ -1213,6 +1213,18 @@ class YvConfig:
             self.memory_knowledge_slots = int(
                 self.hidden_size * self.n_layer * self.memory_capacity_factor * 1000
             )
+
+        # Dynamic subconscious scaling: proportional to model hidden_size
+        # Formula: codebook_size = hidden_size * 4, clamped to [2048, 65536]
+        # This keeps the subconscious field at 0.1-8% of main model params
+        # while providing sufficient virtual capacity for all model scales.
+        scaled = max(2048, min(65536, self.hidden_size * 4))
+        if self.subconscious_codebook_size != scaled:
+            _LOG.debug(
+                f"Scaling subconscious_codebook_size: {self.subconscious_codebook_size} -> {scaled} "
+                f"(hidden_size={self.hidden_size})"
+            )
+            self.subconscious_codebook_size = scaled
 
         # Auto-configure knowledge store defaults if builder slots not set
         if self.knowledge_store_slots == 0:

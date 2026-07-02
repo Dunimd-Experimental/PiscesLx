@@ -30,11 +30,11 @@ n_kv_head: 5
 # Lookup Split Configuration (0.5B Dynamic Head)
 # ========================================
 # 0.5B Dynamic Head Design:
-#   - compute_params_total: 0    â?All params in lookup (FAISS knowledge field)
-#   - lookup_params_total: 270M  â?0.5B dynamic head's full parameter count
-#   - use_dual_inject: true       â?Engram-style memory+subconscious dual injection
-#   - use_subconscious: true      â?Product-quantized implicit knowledge field
-#   - use_memory_separation: true â?FAISS IVF-PQ indexed knowledge store
+#   - compute_params_total: 0    -> All params in lookup (FAISS knowledge field)
+#   - lookup_params_total: 270M  -> 0.5B dynamic head's full parameter count
+#   - use_dual_inject: true       -> Engram-style memory+subconscious dual injection
+#   - use_subconscious: true      -> Product-quantized implicit knowledge field
+#   - use_memory_separation: true -> FAISS IVF-PQ indexed knowledge store
 #   - Memory separation is ENABLED for 0.5B because the dynamic head has
 #     a separate 314B-equivalent knowledge field (see configs/model/0.5B.yaml:469-478
 #     for the memory separation configuration below).
@@ -456,7 +456,7 @@ rdt_loops_per_layer: 2
 # ========================================
 # Memory Separation (Engram-style Lookup-Computation Separation)
 # Reference: Cheng et al., arXiv:2601.07372, 2026
-# 0.5B Dynamic Head: ENABLED â?the 314B-equivalent knowledge field
+# 0.5B Dynamic Head: ENABLED -> the 314B-equivalent knowledge field
 # (FAISS IVF-PQ indexed) is accessed via memory separation, while
 # the 0.5B compute core handles reasoning and tool orchestration.
 # The knowledge store at lookup_params_total: 270M supports full

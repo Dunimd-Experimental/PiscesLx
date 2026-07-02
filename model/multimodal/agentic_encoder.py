@@ -53,7 +53,7 @@ class YvAgenticEncoder(nn.Module):
             observation processing and reasoning.
     """
 
-    def __init__(self, cfg: Any) -> None:
+    def __init__(self, cfg: Any, device=None, dtype=None) -> None:
         """Instantiate the compatibility encoder.
 
         Args:
@@ -61,10 +61,21 @@ class YvAgenticEncoder(nn.Module):
                 ``hidden_size`` attributes. Downstream components are expected to
                 populate additional encoder submodules (for example ``obs_text_encoder``)
                 referenced within this class.
+            device: Target device for the encoder's parameters. Accepted
+                for API compatibility with the rest of the Yv model
+                stack; submodules are constructed on CPU and the parent
+                model performs a single .to(device, dtype) after this
+                __init__ returns.
+            dtype: Target dtype for the encoder's parameters. Same
+                caveat as ``device``.
         """
         super().__init__()
         self.enabled = True
         self.cfg = cfg
+        # Recorded for downstream inspection. Submodules are built on
+        # CPU; the top-level YvModel moves the whole tree in one .to().
+        self._init_device = device
+        self._init_dtype = dtype
         self.pisces_agentic = YvAgentic(cfg)
         h = cfg.hidden_size
         v = cfg.vocab_size

@@ -114,6 +114,8 @@ from .gate import YvPhiBalancing as _YvPhiBalancing
 from .expert import YvExpert, YvSharedExpert, YvExpertConfig, YvExpertType, YvExpertMode
 
 from utils.paths import get_log_file
+from utils.dtype_safe import qr_safe as _qr_safe, svd_safe as _svd_safe
+
 _LOG = PiscesLxLogger("Yv.Moe", file_path=get_log_file("Yv.Moe"), enable_file=True)
 
 
@@ -456,11 +458,11 @@ class YvFineGrainedRouter(nn.Module):
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvDynamicMoELayer(nn.Module):
     """Dynamic Mixture-of-Experts layer with shared expert support.
-    
+
     Implements DeepSeek-V3 style MoE architecture with shared expert
     isolation, fine-grained expert segmentation, and dynamic device
     migration for efficient handling of large expert pools.
-    
+
     Architecture:
         Input -> Router -> Expert Selection -> Expert Computation
               -> Shared Expert -> Combined Output
@@ -507,7 +509,11 @@ class YvDynamicMoELayer(nn.Module):
         Configure max_gpu_experts based on available GPU memory.
     """
     _layer_count = 0
-    
+    # Class-level set tracking which (init strategy, expert count) tuples
+    # have already been announced, so we don't spam the log once per layer
+    # in a 16-/32-/64-layer model.
+    _init_strategy_emitted: set = set()
+
     def __init__(
         self,
         cfg: Any,
@@ -546,6 +552,10 @@ class YvDynamicMoELayer(nn.Module):
                 50% of the intermediate size. Default: "default".
         """
         super().__init__()
+        # Read the counter BEFORE incrementing so the log block below can
+        # detect "first layer" reliably. The previous `== 1` check was
+        # always true because `+= 1` happened first.
+        is_first_layer = YvDynamicMoELayer._layer_count == 0
         YvDynamicMoELayer._layer_count += 1
         self.cfg = cfg
         
@@ -613,7 +623,7 @@ class YvDynamicMoELayer(nn.Module):
                 use_bias=False
             )
             self.shared_experts = nn.ModuleList([
-                YvSharedExpert(shared_config, device, dtype)
+                YvSharedExpert(shared_config, device=device, dtype=dtype)
                 for _ in range(self.num_shared_experts)
             ])
             self.shared_expert_weight = nn.Parameter(
@@ -640,7 +650,7 @@ class YvDynamicMoELayer(nn.Module):
                 dtype=dtype
             )
 
-        if YvDynamicMoELayer._layer_count == 1:
+        if is_first_layer:
             shared_info = f", {self.num_shared_experts} shared" if self.num_shared_experts > 0 else ""
             fine_grained_info = f" (fine-grained x{self.num_sub_experts})" if use_fine_grained else ""
             compute_info = f", compute_mode={compute_mode}" if compute_mode != "default" else ""
@@ -919,30 +929,57 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
             self._initialize_experts_with_density_optimization(device, dtype)
         
         self._setup_diversity_regularizer(device, dtype)
-    
+
+    def _emit_init_log(self, strategy: str, num_experts: int) -> None:
+        """
+        Announce which initialization strategy was applied.
+
+        The message is emitted at most once per (strategy, num_experts)
+        pair across the whole process. In a 16-layer model that uses
+        the same init strategy everywhere, the user sees exactly one
+        line per strategy, not 16.
+
+        Args:
+            strategy: Human-readable strategy name
+                (e.g. ``"hybrid"``, ``"orthogonal"``).
+            num_experts: Number of experts the strategy was applied to.
+        """
+        key = (strategy, num_experts)
+        if key in type(self)._init_strategy_emitted:
+            return
+        type(self)._init_strategy_emitted.add(key)
+        msg = (
+            f"YvDeepSeekMoELayer: Applied {strategy} initialization "
+            f"for {num_experts} experts"
+        )
+        try:
+            _LOG.info(msg)
+        except UnicodeEncodeError:
+            print(f"[OK] {msg}")
+
     def _initialize_experts_with_density_optimization(
         self,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ) -> None:
         """Initialize experts using knowledge density optimization algorithms.
-        
+
         Applies specialized initialization strategies based on the configured
         method to ensure experts start with diverse and well-distributed
         parameter configurations.
-        
+
         Initialization Methods:
             - 'gradient_cluster': Gradient-based clustering initialization
             - 'orthogonal': Orthogonal weight initialization for diversity
             - 'spectral': Spectral decomposition-based initialization
             - 'hybrid': Combined approach using multiple strategies
-        
+
         Args:
             device: Device for initializer computation.
             dtype: Data type for initializer tensors.
         """
         from .expert_init import YvGradientClusterInitializer
-        
+
         if self.expert_init_method == 'gradient_cluster':
             self._expert_initializer = YvGradientClusterInitializer(
                 hidden_size=self.hidden_size,
@@ -957,55 +994,19 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
                 self.experts,
                 init_scale=0.02
             )
-            try:
-                _LOG.info(
-                    f"YvDeepSeekMoELayer: Applied gradient cluster initialization "
-                    f"for {self.num_experts} experts"
-                )
-            except UnicodeEncodeError:
-                print(
-                    f"[OK] YvDeepSeekMoELayer: Applied gradient cluster initialization "
-                    f"for {self.num_experts} experts"
-                )
-        
+            self._emit_init_log('gradient cluster', self.num_experts)
+
         elif self.expert_init_method == 'orthogonal':
             self._apply_orthogonal_initialization()
-            try:
-                _LOG.info(
-                    f"YvDeepSeekMoELayer: Applied orthogonal initialization "
-                    f"for {self.num_experts} experts"
-                )
-            except UnicodeEncodeError:
-                print(
-                    f"[OK] YvDeepSeekMoELayer: Applied orthogonal initialization "
-                    f"for {self.num_experts} experts"
-                )
-        
+            self._emit_init_log('orthogonal', self.num_experts)
+
         elif self.expert_init_method == 'spectral':
             self._apply_spectral_initialization()
-            try:
-                _LOG.info(
-                    f"YvDeepSeekMoELayer: Applied spectral initialization "
-                    f"for {self.num_experts} experts"
-                )
-            except UnicodeEncodeError:
-                print(
-                    f"[OK] YvDeepSeekMoELayer: Applied spectral initialization "
-                    f"for {self.num_experts} experts"
-                )
-        
+            self._emit_init_log('spectral', self.num_experts)
+
         elif self.expert_init_method == 'hybrid':
             self._apply_hybrid_initialization(device, dtype)
-            try:
-                _LOG.info(
-                    f"YvDeepSeekMoELayer: Applied hybrid initialization "
-                    f"for {self.num_experts} experts"
-                )
-            except UnicodeEncodeError:
-                print(
-                    f"[OK] YvDeepSeekMoELayer: Applied hybrid initialization "
-                    f"for {self.num_experts} experts"
-                )
+            self._emit_init_log('hybrid', self.num_experts)
     
     def _apply_orthogonal_initialization(self) -> None:
         """Apply orthogonal initialization to expert weights.
@@ -1023,14 +1024,14 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
                                 param.size(1), param.size(1),
                                 device=param.device, dtype=param.dtype
                             )
-                            q, _ = torch.linalg.qr(q)
+                            q = _qr_safe(q)
                             param.copy_(q[:param.size(0), :])
                         else:
                             q = torch.randn(
                                 param.size(0), param.size(0),
                                 device=param.device, dtype=param.dtype
                             )
-                            q, _ = torch.linalg.qr(q)
+                            q = _qr_safe(q)
                             param.copy_(q[:, :param.size(1)])
     
     def _apply_spectral_initialization(self) -> None:
@@ -1053,8 +1054,8 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
                             device=param.device, dtype=param.dtype
                         )
                         
-                        u, _ = torch.linalg.qr(u)
-                        v, _ = torch.linalg.qr(v.T)
+                        u = _qr_safe(u)
+                        v = _qr_safe(v.T)
                         v = v.T
                         
                         spectral_shift = 0.02 * (expert_idx / max(1, self.num_experts - 1))
@@ -1096,22 +1097,22 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
                                     param.size(1), param.size(1),
                                     device=param.device, dtype=param.dtype
                                 )
-                                q, _ = torch.linalg.qr(q)
+                                q = _qr_safe(q)
                                 param.copy_(q[:param.size(0), :])
                             else:
                                 q = torch.randn(
                                     param.size(0), param.size(0),
                                     device=param.device, dtype=param.dtype
                                 )
-                                q, _ = torch.linalg.qr(q)
+                                q = _qr_safe(q)
                                 param.copy_(q[:, :param.size(1)])
-                        
+
                         elif group_idx == 1:
                             scale = math.sqrt(2.0 / (param.size(0) + param.size(1)))
                             param.copy_(torch.randn_like(param) * scale)
-                            
+
                             spectral_shift = 0.01 * (i / max(1, num_experts - 1))
-                            u, s, v = torch.linalg.svd(param, full_matrices=False)
+                            u, s, v = _svd_safe(param, full_matrices=False)
                             s = s * (1.0 + spectral_shift)
                             param.copy_(torch.mm(u * s.unsqueeze(0), v))
                         

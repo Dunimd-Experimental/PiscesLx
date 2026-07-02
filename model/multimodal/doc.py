@@ -158,18 +158,29 @@ class YvDocEncoder(nn.Module):
         Supports text, layout, table, and handwriting inputs.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, device=None, dtype=None):
         """Initialize the composite document encoder.
-        
+
         Args:
             cfg: Configuration object containing parameters such as:
                 - hidden_size: Output embedding dimension
                 - n_head: Number of attention heads
                 - Vocabulary and sequence length are fixed defaults
+            device: Target device for the encoder's parameters. Accepted
+                for API compatibility with the rest of the Yv model
+                stack; submodules are constructed on CPU and the parent
+                model performs a single .to(device, dtype) after this
+                __init__ returns.
+            dtype: Target dtype for the encoder's parameters. Same
+                caveat as ``device``.
         """
         super().__init__()
         self.enabled = True
         self.cfg = cfg
+        # Recorded for downstream inspection. Submodules are built on
+        # CPU; the top-level YvModel moves the whole tree in one .to().
+        self._init_device = device
+        self._init_dtype = dtype
         self.vocab_size = 50000
         self.max_length = 512
         

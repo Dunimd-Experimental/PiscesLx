@@ -70,6 +70,7 @@ from typing import Optional, Tuple, List, Dict, Any
 
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
+from utils.dtype_safe import qr_safe
 
 _LOG = PiscesLxLogger("Yv.Subconscious", file_path=get_log_file("Yv.Subconscious"), enable_file=True)
 
@@ -258,8 +259,11 @@ class YvImplicitKnowledgeField(nn.Module):
             for m in range(num_codebooks):
                 # Create a random Gaussian matrix
                 W = torch.randn(codebook_size, codebook_dim, device=device, dtype=dtype)
-                # QR decomposition → orthonormal rows (up to K > D tolerance)
-                Q, R = torch.linalg.qr(W)
+                # QR decomposition → orthonormal rows (up to K > D tolerance).
+                # `qr_safe` upcasts to fp32 internally so this works on
+                # fp16/bf16 models where torch.linalg.qr's CUDA path is
+                # not implemented.
+                Q = qr_safe(W)
                 # Ensure Q has the right shape (K x D)
                 Q = Q[:, :codebook_dim]
                 # Scale so that ‖row‖² ≈ codebook_dim (unit variance per dim)
@@ -333,13 +337,18 @@ class YvDynamicHead(nn.Module):
         self.input_norm = nn.LayerNorm(head_dim, device=device, dtype=dtype)
 
         # Lightweight transformer encoder for context-aware addressing
-        # Using small dimensions to keep this at ~0.23B params total
+        # Using small dimensions to keep this at ~0.23B params total.
+        #
+        # NOTE: torch.nn.TransformerEncoderLayer only accepts 'relu' or
+        # 'gelu' for its `activation` argument; SiLU/swish is not
+        # supported. We pick 'gelu' as the closest smooth nonlinearity
+        # to SiLU.
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=head_dim,
             nhead=num_attn_heads,
             dim_feedforward=head_dim * 4,
             dropout=0.0,
-            activation='silu',
+            activation='gelu',
             batch_first=True,
             device=device,
             dtype=dtype,

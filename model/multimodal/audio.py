@@ -144,9 +144,9 @@ class YvAudioEncoder(nn.Module):
         Supports both raw audio and pre-computed spectrograms.
     """
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, device=None, dtype=None):
         """Instantiate the encoder using model-level configuration.
-        
+
         Args:
             cfg: Configuration object providing audio hyperparameters including:
                 - hidden_size: Output embedding dimension
@@ -155,8 +155,19 @@ class YvAudioEncoder(nn.Module):
                 - audio_n_fft: FFT window size (default: 1024)
                 - audio_hop_length: STFT hop length (default: 512)
                 - audio_win_length: Window length (default: 1024)
+            device: Target device for the encoder's parameters. Accepted
+                for API compatibility with the rest of the Yv model
+                stack; submodules are constructed on CPU and the parent
+                model performs a single .to(device, dtype) after this
+                __init__ returns.
+            dtype: Target dtype for the encoder's parameters. Same
+                caveat as ``device``.
         """
         super().__init__()
+        # Recorded for downstream inspection. Submodules are built on
+        # CPU; the top-level YvModel moves the whole tree in one .to().
+        self._init_device = device
+        self._init_dtype = dtype
         self.cfg = cfg
         self.enabled = True
         self.hidden_size = cfg.hidden_size

@@ -73,6 +73,7 @@ class YvTokenGraphBuilder(nn.Module):
         temperature: float = 1.0,
         pos_decay_factor: float = 0.1,
         max_clusters: int = 8,
+        device=None, dtype=None,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -81,11 +82,11 @@ class YvTokenGraphBuilder(nn.Module):
         self.pos_decay_factor = pos_decay_factor
         self.max_clusters = max_clusters
 
-        self.q_proj = nn.Linear(hidden_size, hidden_size)
-        self.k_proj = nn.Linear(hidden_size, hidden_size)
-        self.cluster_centroids = nn.Parameter(torch.randn(max_clusters, hidden_size) * 0.02)
-        self.affinity_threshold = nn.Parameter(torch.tensor(0.5))
-        self.graph_scale = nn.Parameter(torch.ones(1) * 0.1)
+        self.q_proj = nn.Linear(hidden_size, hidden_size, device=device, dtype=dtype)
+        self.k_proj = nn.Linear(hidden_size, hidden_size, device=device, dtype=dtype)
+        self.cluster_centroids = nn.Parameter(torch.randn(max_clusters, hidden_size, device=device, dtype=dtype) * 0.02)
+        self.affinity_threshold = nn.Parameter(torch.tensor(0.5, device=device, dtype=dtype))
+        self.graph_scale = nn.Parameter(torch.ones(1, device=device, dtype=dtype) * 0.1)
 
     def build_affinity(
         self, hidden_states: torch.Tensor
