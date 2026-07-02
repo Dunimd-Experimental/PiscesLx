@@ -90,7 +90,17 @@ dmsc==0.1.8
 # =============================================================================
 # SECTION 2: PyTorch Core (MUST install first)
 # =============================================================================
-# Let pip decide the best version for your system
+# !!! torch / torchvision / torchaudio MUST come from the same PyTorch
+# index and the same release, otherwise `import torchvision` will fail
+# with `RuntimeError: operator torchvision::nms does not exist` (and
+# peft/transformers will then surface this as
+# `ModuleNotFoundError: Could not import module 'BloomPreTrainedModel'`).
+# PyPI's generic wheels do not include CUDA; for GPU support use the
+# official PyTorch index, e.g.
+#     pip install -U torch torchvision torchaudio \
+#         --index-url https://download.pytorch.org/whl/cu130
+# Adjust the cu suffix (cu118 / cu121 / cu124 / cu128 / cu130) to match
+# your local CUDA toolkit.
 torch
 torchvision
 torchaudio

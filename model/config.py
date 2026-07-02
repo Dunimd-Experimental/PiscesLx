@@ -114,6 +114,10 @@ from typing import Any, Dict, Optional, List, Union
 from enum import Enum
 
 from configs.version import VERSION
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
+_LOG = PiscesLxLogger("Yv.Config", file_path=get_log_file("Yv.Config"), enable_file=True)
 
 
 class YvAttentionType(Enum):

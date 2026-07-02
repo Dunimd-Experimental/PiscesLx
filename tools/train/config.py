@@ -739,7 +739,12 @@ class TrainingConfig:
     enable_sft: bool = True
     enable_pref_align: bool = True
     enable_multitask: bool = True
-    enable_distillation: bool = True
+    # The classical knowledge-distillation path was removed in favour of
+    # the EnTA self-adversarial training loop. EnTA is opt-in via
+    # `python manage.py train --enta`; this flag is kept only so that
+    # legacy config files that still set it explicitly do not break —
+    # but the default is now off.
+    enable_distillation: bool = False
     
     distill_teacher_path: Optional[str] = None
     distill_teacher_name: Optional[str] = None

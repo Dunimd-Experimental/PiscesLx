@@ -871,9 +871,9 @@ class PiscesLxTrainingOperator(object):
         if lora_cfg is None:
             return
 
-        target_modules = getattr(lora_cfg, "target_modules", None)
-        if not target_modules:
-            target_modules = [
+        target_patterns = getattr(lora_cfg, "target_modules", None)
+        if not target_patterns:
+            target_patterns = [
                 "q_proj",
                 "k_proj",
                 "v_proj",
@@ -883,11 +883,30 @@ class PiscesLxTrainingOperator(object):
                 "down_proj",
             ]
 
-        target_modules_list = list(target_modules)
+        target_patterns_list = list(target_patterns)
         lora_r = int(getattr(lora_cfg, "r", 8))
         lora_alpha = int(getattr(lora_cfg, "lora_alpha", 16))
         lora_dropout = float(getattr(lora_cfg, "lora_dropout", 0.05))
         lora_bias = str(getattr(lora_cfg, "bias", "none"))
+        
+        # Scan model for nn.Linear modules matching target names (skip Sequential containers)
+        valid_names = set()
+        for name, mod in self.model.named_modules():
+            if isinstance(mod, (torch.nn.Linear,)):
+                mod_short = name.rpartition('.')[-1]
+                if any(p in mod_short for p in target_patterns_list):
+                    valid_names.add(name)
+                    continue
+                # also check the module class name for Linear4bit / linear matches
+                cls_name = type(mod).__name__.lower()
+                if 'linear' in cls_name and any(p in mod_short for p in target_patterns_list):
+                    valid_names.add(name)
+        
+        if not valid_names:
+            _LOG.warning("No Linear modules matched for LoRA target patterns; falling back to pattern list")
+            target_modules_list = target_patterns_list
+        else:
+            target_modules_list = sorted(valid_names)
         
         peft_cfg = _PeftLoraConfig(
             r=lora_r,
