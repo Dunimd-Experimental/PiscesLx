@@ -264,20 +264,13 @@ class PiscesLxInferenceEngine(object):
         _LOG.info(f"PiscesLxInferenceEngine initialized on {self.device}")
     
     def _setup_inference_engine(self):
-        """
-        Setup the inference engine based on configuration.
-        
-        Attempts to initialize VLLM first if configured, falls back to
-        PyTorch native inference if VLLM is unavailable or fails.
-        """
         if self.config.acceleration.use_vllm:
             try:
                 self._setup_vllm_engine()
+                return
             except Exception as e:
-                _LOG.warning(f"VLLM engine setup failed: {e}, falling back to PyTorch")
-                self._setup_pytorch_engine()
-        else:
-            self._setup_pytorch_engine()
+                _LOG.warning(f"VLLM engine setup failed: {e}, falling back to native")
+        self._setup_pytorch_engine()
     
     def _setup_vllm_engine(self):
         """Initialize VLLM inference engine with configuration parameters."""
@@ -318,59 +311,52 @@ class PiscesLxInferenceEngine(object):
     
     def _setup_pytorch_engine(self):
         """Initialize Yv native inference engine."""
-        try:
-            model_size = getattr(self.config.model, 'model_size', '0.5B')
-            cfg_path = self._resolve_ruchbah_config_path(model_size, self.config.model.model_path)
-            
-            cfg = YvConfig.from_yaml(str(cfg_path))
-            self.model = YvModelForCausalLM(cfg)
-            
-            ckpt_path = self.config.model.model_path
-            if ckpt_path and Path(ckpt_path).exists():
-                if ckpt_path.endswith('.pt') or ckpt_path.endswith('.bin') or ckpt_path.endswith('.safetensors'):
-                    raw = torch.load(ckpt_path, map_location='cpu', weights_only=True)
-                    if isinstance(raw, dict):
-                        state = raw.get("model_state_dict") or raw.get("model") or raw.get("state_dict") or raw
-                    else:
-                        state = raw
-                    if isinstance(state, dict):
-                        self.model.load_state_dict(state, strict=False)
-                    _LOG.info(f"Loaded checkpoint from {ckpt_path}")
-            
-            self.tokenizer = YvTokenizer()
-            
-            if self.config.device == 'cuda' and torch.cuda.is_available():
-                self.model = self.model.to(self.device)
-            
-            self.model.eval()
-            
-            self._apply_ink_quantization()
-            
-            self._agentic = None
-            if YvAgentic is not None:
-                self._agentic = YvAgentic(cfg, tokenizer=self.tokenizer, model=self.model)
-                
-                self._tool_registry = POPSSToolRegistry.get_instance()
-                
-                try:
-                    from opss.mcp.mcps import register_all_tools
-                    registered = register_all_tools(self._tool_registry)
-                    _LOG.info(f"Registered {len(registered)} MCP tools to unified registry")
-                except ImportError as e:
-                    _LOG.warning(f"Could not import MCP tools: {e}")
-            
-            if self.config.moe.enable_moe:
-                self._setup_moe_operator()
-            
-            if self.config.acceleration.use_speculative_decoding:
-                self._setup_speculative_operator()
-            
-            _LOG.info(f"Yv inference engine initialized: model_size={model_size}")
-            
-        except Exception as e:
-            _LOG.error(f"Yv engine initialization failed: {e}")
-            _LOG.warning("Falling back to AutoModelForCausalLM")
-            self._setup_transformers_engine()
+        model_size = getattr(self.config.model, 'model_size', '0.5B')
+        cfg_path = self._resolve_ruchbah_config_path(model_size, self.config.model.model_path)
+        
+        cfg = YvConfig.from_yaml(str(cfg_path))
+        self.model = YvModelForCausalLM(cfg)
+        
+        ckpt_path = self.config.model.model_path
+        if ckpt_path and Path(ckpt_path).exists():
+            if ckpt_path.endswith('.pt') or ckpt_path.endswith('.bin') or ckpt_path.endswith('.safetensors'):
+                raw = torch.load(ckpt_path, map_location='cpu', weights_only=True)
+                if isinstance(raw, dict):
+                    state = raw.get("model_state_dict") or raw.get("model") or raw.get("state_dict") or raw
+                else:
+                    state = raw
+                if isinstance(state, dict):
+                    self.model.load_state_dict(state, strict=False)
+                _LOG.info(f"Loaded checkpoint from {ckpt_path}")
+        
+        self.tokenizer = YvTokenizer()
+        
+        if self.config.device == 'cuda' and torch.cuda.is_available():
+            self.model = self.model.to(self.device)
+        
+        self.model.eval()
+        if self.config.acceleration.use_torch_compile:
+            try:
+                self.model = torch.compile(self.model, mode="reduce-overhead")
+                _LOG.info("torch.compile enabled for inference (mode=reduce-overhead)")
+            except Exception as e:
+                _LOG.warning(f"torch.compile failed: {e}")
+        self._apply_ink_quantization()
+        
+        self._agentic = YvAgentic(cfg, tokenizer=self.tokenizer, model=self.model) if YvAgentic is not None else None
+        if self._agentic is not None:
+            self._tool_registry = POPSSToolRegistry.get_instance()
+            try:
+                from opss.mcp.mcps import register_all_tools
+                registered = register_all_tools(self._tool_registry)
+                _LOG.info(f"Registered {len(registered)} MCP tools to unified registry")
+            except ImportError as e:
+                _LOG.warning(f"Could not import MCP tools: {e}")
+        
+        self._setup_moe_operator()
+        self._setup_speculative_operator()
+        
+        _LOG.info(f"Yv inference engine initialized: model_size={model_size}")
     
     def _setup_transformers_engine(self):
         """Initialize transformers AutoModelForCausalLM as fallback."""
@@ -470,7 +456,6 @@ class PiscesLxInferenceEngine(object):
             self._audit_operator = None
     
     def _setup_moe_operator(self):
-        """Initialize MoE runtime operator for MoE models."""
         try:
             moe_runtime_config = POPSSMoERuntimeConfig(
                 routing_temp=self.config.moe.routing_temp,
@@ -489,33 +474,18 @@ class PiscesLxInferenceEngine(object):
                 priority_routing=self.config.moe.priority_routing,
                 drop_tokens=self.config.moe.drop_tokens,
             )
-            
             self._moe_operator = POPSSMoERuntimeOperator(config=moe_runtime_config)
-            
-            # Register model with MoE operator
-            if self.model is not None:
-                self._moe_operator.set_model(self.model)
-            
-            _LOG.info(
-                f"MoE runtime operator initialized: "
-                f"top_k={self.config.moe.top_k}, "
-                f"temp={self.config.moe.routing_temp}"
-            )
-            
+            self._moe_operator.set_model(self.model)
+            _LOG.info(f"MoE runtime operator initialized: top_k={self.config.moe.top_k}, temp={self.config.moe.routing_temp}")
         except Exception as e:
             _LOG.warning(f"Failed to initialize MoE operator: {e}")
             self._moe_operator = None
     
     def _setup_speculative_operator(self):
-        """Initialize speculative decoding operator."""
         try:
             self._speculative_operator = POPSSSpeculativeDecodingOperator()
-            
-            if self.model is not None:
-                self._speculative_operator.set_model(self.model)
-            
+            self._speculative_operator.set_model(self.model)
             _LOG.info("Speculative decoding operator initialized")
-            
         except Exception as e:
             _LOG.warning(f"Failed to initialize speculative operator: {e}")
             self._speculative_operator = None
@@ -794,19 +764,54 @@ class PiscesLxInferenceEngine(object):
         return [output.outputs[0].text for output in outputs]
     
     def _generate_with_pytorch(self, prompts: List[str], **kwargs) -> List[str]:
-        """Generate text using YvModel or PyTorch backend."""
-        results = []
+        if not prompts:
+            return []
         
         use_tools = kwargs.pop('use_tools', False)
-        tool_registry = kwargs.pop('tool_registry', self._tool_registry if hasattr(self, '_tool_registry') else None)
+        tool_registry = kwargs.pop('tool_registry', getattr(self, '_tool_registry', None))
         
-        for prompt in prompts:
-            if hasattr(self, '_agentic') and self._agentic is not None:
-                result = self._generate_with_ruchbah(prompt, use_tools, tool_registry, **kwargs)
-                results.append(result)
-            else:
-                result = self._generate_with_transformers(prompt, **kwargs)
-                results.append(result)
+        if len(prompts) == 1:
+            return [self._generate_with_ruchbah(prompts[0], use_tools, tool_registry, **kwargs)]
+        
+        # True batched generation: pad prompts to uniform length
+        encoded = [self.tokenizer.encode(p, return_tensors='pt') for p in prompts]
+        max_len = max(e.shape[1] for e in encoded)
+        batch_size = len(encoded)
+        pad_id = self.tokenizer.pad_token_id if self.tokenizer.pad_token_id is not None else 0
+        
+        input_ids = torch.full((batch_size, max_len), pad_id, dtype=torch.long, device=self.device)
+        attention_mask = torch.zeros((batch_size, max_len), dtype=torch.long, device=self.device)
+        
+        for i, e in enumerate(encoded):
+            seq_len = e.shape[1]
+            input_ids[i, -seq_len:] = e[0].to(self.device)
+            attention_mask[i, -seq_len:] = 1
+        
+        gen_kwargs = {
+            'max_length': max_len + self.config.generation.max_new_tokens,
+            'temperature': self.config.generation.temperature,
+            'top_p': self.config.generation.top_p,
+            'top_k': self.config.generation.top_k,
+            'use_speculative': self.config.acceleration.use_speculative_decoding,
+            'mode': kwargs.pop('mode', 'auto'),
+            'seq_len': kwargs.pop('seq_len', 512),
+        }
+        gen_kwargs.update(kwargs)
+        
+        with torch.no_grad():
+            out_ids, stats = self.model.generate(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                **gen_kwargs
+            )
+        
+        results = []
+        for i in range(batch_size):
+            gen_len = encoded[i].shape[1]
+            text = self.tokenizer.decode(out_ids[i, gen_len:].tolist(), skip_special_tokens=True)
+            if use_tools and tool_registry is not None:
+                text = self._process_agentic_calls(text, tool_registry)
+            results.append(text)
         
         return results
     
@@ -1290,7 +1295,12 @@ class PiscesLxInferenceEngine(object):
             yield f"[Error: {e}]"
     
     def _stream_with_pytorch(self, prompt: str, **kwargs):
-        """Stream generation using PyTorch backend."""
+        from model.generation import YvSampler, YvSamplingConfig, YvSamplingStrategy
+        sampler = YvSampler(YvSamplingConfig(
+            temperature=self.config.generation.temperature,
+            top_k=self.config.generation.top_k,
+            top_p=self.config.generation.top_p,
+        ))
         try:
             inputs = self.tokenizer.encode(prompt, return_tensors='pt')
             if self.config.device == 'cuda':
@@ -1302,10 +1312,7 @@ class PiscesLxInferenceEngine(object):
             for _ in range(self.config.generation.max_new_tokens):
                 with torch.no_grad():
                     if past_key_values is None:
-                        outputs = self.model(
-                            input_ids=generated,
-                            use_cache=True,
-                        )
+                        outputs = self.model(input_ids=generated, use_cache=True)
                     else:
                         outputs = self.model(
                             input_ids=generated[:, -1:],
@@ -1315,32 +1322,12 @@ class PiscesLxInferenceEngine(object):
                     
                     past_key_values = outputs.past_key_values
                     logits = outputs.logits[:, -1, :]
-                    
-                    if self.config.generation.temperature > 0:
-                        logits = logits / self.config.generation.temperature
-                    
-                    if self.config.generation.top_k > 0:
-                        indices_to_remove = logits < torch.topk(logits, self.config.generation.top_k)[0][..., -1, None]
-                        logits[indices_to_remove] = float('-inf')
-                    
-                    if self.config.generation.top_p < 1.0:
-                        sorted_logits, sorted_indices = torch.sort(logits, descending=True)
-                        cumulative_probs = torch.cumsum(torch.softmax(sorted_logits, dim=-1), dim=-1)
-                        sorted_indices_to_remove = cumulative_probs > self.config.generation.top_p
-                        sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-                        sorted_indices_to_remove[..., 0] = 0
-                        indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
-                        logits[indices_to_remove] = float('-inf')
-                    
-                    probs = torch.softmax(logits, dim=-1)
-                    next_token = torch.multinomial(probs, num_samples=1)
+                    next_token = sampler.sample(logits)
                     
                     if next_token.item() == self.tokenizer.eos_token_id:
                         break
                     
-                    token_text = self.tokenizer.decode(next_token.item())
-                    yield token_text
-                    
+                    yield self.tokenizer.decode(next_token.item())
                     generated = torch.cat([generated, next_token], dim=-1)
                     
         except Exception as e:

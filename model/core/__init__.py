@@ -153,19 +153,6 @@ from .attention import (
     YvAttention,
     YvAttentionConfig,
     YvAttentionBackend,
-    YvFlashAttention,
-    YvMultiQueryAttention,
-    YvLinearAttention,
-    YvSlidingWindowAttention,
-    YvSparseAttention,
-    YvPagedAttention,
-    YvLocalGlobalAttention,
-    YvRingAttention,
-    YvALiBi,
-    YvAttentionSink,
-    YvQKNormalizer,
-    YvH2OAttention,
-    YvDynamicH2OAttention,
 )
 
 from .blocks import (
@@ -279,8 +266,7 @@ from .subconscious import (
     YvDynamicHead,
     YvSubconsciousModulator,
 )
-from .eg_mla import YvEGMLA
-from .duo_attention import YvDuoAttention
+
 from .ewc import YvEWC
 from .long_context import YvOOMBContext, YvREFORM
 from .mamba_upgrades import YvSparseSSM, YvGatedDeltaNetwork
@@ -300,19 +286,6 @@ __all__ = [
     "YvAttention",
     "YvAttentionConfig",
     "YvAttentionBackend",
-    "YvFlashAttention",
-    "YvMultiQueryAttention",
-    "YvLinearAttention",
-    "YvSlidingWindowAttention",
-    "YvSparseAttention",
-    "YvPagedAttention",
-    "YvLocalGlobalAttention",
-    "YvRingAttention",
-    "YvALiBi",
-    "YvAttentionSink",
-    "YvQKNormalizer",
-    "YvH2OAttention",
-    "YvDynamicH2OAttention",
 
     "YvTransformerBlock",
     "YvBlockConfig",
@@ -400,8 +373,6 @@ __all__ = [
     "YvStateCache",
     "YvFlashSSM",
 
-    "YvEGMLA",
-    "YvDuoAttention",
     "YvEWC",
     "YvOOMBContext",
     "YvREFORM",

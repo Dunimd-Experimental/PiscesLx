@@ -212,10 +212,9 @@ from .hybrid import YvHybridBlock
 from utils.dc import PiscesLxLogger
 from .blocks import YvTransformerBlock
 from .cache import YvUnifiedCacheManager
-from .subconscious import YvSubconsciousSystem
 from .dual_injector import YvDualInjector
 from typing import Optional, Tuple, Dict, Any, List, Union
-from ..generation.speculative import YvAdaptiveSpeculativeDecoder, YvDSparkSpeculativeDecoder, YvSpeculativeConfig
+from ..generation.speculative import YvAdaptiveSpeculativeDecoder, YvSpeculativeConfig
 from ..multimodal import (
     YvUnifiedReasoner,
     YvVisionEncoder,
@@ -228,7 +227,7 @@ from ..multimodal import (
     YvDynamicModalFusion
 )
 # RCA: Recursive Cross-Modal Attention (ACM TOMM 2026)
-from ..multimodal.rca_fusion import YvRecursiveCrossModalFusion, YvDeepCrossLayerInjector
+from ..multimodal.rca_fusion import YvDeepCrossLayerInjector
 # SEER: Self-Guided Experience-Enhanced Reasoning (arXiv:2508.15214)
 from ..multimodal.seer_executor import YvSEERExecutor
 # VeriCoT: Neuro-Symbolic CoT Validation (arXiv:2511.04662)
@@ -761,70 +760,13 @@ class YvModel(nn.Module):
         _LOG.debug("YvModel: initializing norm...")
         self.norm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
 
-        self.use_dual_inject = getattr(cfg, 'use_dual_inject', False)
-        self.use_subconscious = False
-        self.use_memory_separation = getattr(cfg, 'use_memory_separation', False)
-        self.memory_router = None
-        self.memory_read_interval = 0
-        self.memory_prefetch_depth = 0
-        self.dual_injector = None
-        self.subconscious = None
-        self.subconscious_read_interval = 0
-        self.subconscious_prefetch_depth = 0
-
-        # Dual-path knowledge injection (FiLM + KV). When enabled it owns the
-        # subconscious system and the memory-separation KV producer, so the
-        # standalone memory router / subconscious path below is not duplicated.
-        if self.use_dual_inject:
-            _LOG.debug("YvModel: initializing dual injector...")
-            self.dual_injector = YvDualInjector(cfg, device=device, dtype=dtype)
-            # Expose the subconscious system for backward compatibility.
-            self.subconscious = self.dual_injector.subconscious
-            self.use_subconscious = True
-            self.use_memory_separation = True
-            self.subconscious_read_interval = getattr(cfg, 'subconscious_read_interval', 1)
-            self.subconscious_prefetch_depth = getattr(cfg, 'subconscious_prefetch_depth', 2)
-        else:
-            if self.use_memory_separation:
-                from .memory_router import YvMemoryRouter
-                self.memory_router = YvMemoryRouter(
-                    hidden_size=cfg.hidden_size,
-                    memory_router_dim=getattr(cfg, 'memory_router_dim', 256),
-                    memory_knowledge_dim=getattr(cfg, 'memory_knowledge_dim', 256),
-                    memory_top_k=getattr(cfg, 'memory_top_k', 8),
-                    memory_cache_tokens=getattr(cfg, 'memory_cache_tokens', 4096),
-                    memory_store_path=getattr(cfg, 'memory_store_path', ''),
-                    memory_index_type=getattr(cfg, 'memory_index_type', 'ivfpq'),
-                    memory_gate_init=getattr(cfg, 'memory_gate_init', 0.0),
-                    device=device,
-                    dtype=dtype,
-                )
-                self.memory_read_interval = getattr(cfg, 'memory_read_interval', 4)
-                self.memory_prefetch_depth = getattr(cfg, 'memory_prefetch_depth', 4)
-
-            # Subconscious: 0.5B dynamic head + 314B implicit knowledge field
-            # Activated when use_subconscious=True. This is the "潜意识" system
-            # separate from the 1M context and the memory router.
-            self.use_subconscious = getattr(cfg, 'use_subconscious', False)
-            if self.use_subconscious:
-                _LOG.debug("YvModel: initializing subconscious system...")
-                _sc_kw = lambda k, d: getattr(cfg, f'subconscious_{k}', d)
-                self.subconscious = YvSubconsciousSystem(
-                    hidden_size=cfg.hidden_size,
-                    num_layers=cfg.n_layer,
-                    knowledge_dim=_sc_kw('knowledge_dim', 256),
-                    num_codebooks=_sc_kw('num_codebooks', 16),
-                    codebook_size=_sc_kw('codebook_size', 131072),
-                    codebook_dim=_sc_kw('codebook_dim', 128),
-                    num_field_heads=_sc_kw('num_field_heads', 8),
-                    head_dim=_sc_kw('head_dim', 1024),
-                    head_num_layers=_sc_kw('head_num_layers', 2),
-                    head_num_attn_heads=_sc_kw('head_num_attn_heads', 4),
-                    device=device,
-                    dtype=dtype,
-                )
-                self.subconscious_read_interval = _sc_kw('read_interval', 1)
-                self.subconscious_prefetch_depth = _sc_kw('prefetch_depth', 2)
+        # Dual-path knowledge injection (FiLM + KV). Always active.
+        _LOG.debug("YvModel: initializing dual injector...")
+        self.dual_injector = YvDualInjector(cfg, device=device, dtype=dtype)
+        self.subconscious = self.dual_injector.subconscious
+        self.subconscious_read_interval = getattr(cfg, 'subconscious_read_interval', 1)
+        self.subconscious_prefetch_depth = getattr(cfg, 'subconscious_prefetch_depth', 2)
+        self._memory_augment_interval = getattr(cfg, 'memory_read_interval', 4)
 
         _LOG.debug("YvModel: initializing multimodal encoders...")
         self._lazy_init_flags = {
@@ -867,29 +809,10 @@ class YvModel(nn.Module):
 
         self.agent_encoder = YvAgenticEncoder(cfg, device=device, dtype=dtype)
 
-        use_enhanced_fusion = getattr(cfg, 'use_enhanced_fusion', False)
-        use_recurrent_refiner = getattr(cfg, 'use_recurrent_modal_refiner', True)
-        if use_recurrent_refiner:
-            from ..multimodal.fusion import YvRecurrentModalRefiner
-            self.modal_fusion = YvRecurrentModalRefiner(cfg, device=device, dtype=dtype)
-        elif use_enhanced_fusion:
-            from ..multimodal import YvEnhancedModalFusion, YvModalFusionConfig
-            fusion_config = YvModalFusionConfig(
-                hidden_size=cfg.hidden_size,
-                num_modalities=6,
-                num_heads=getattr(cfg, 'num_heads', 16),
-                num_layers=4,
-                dropout=0.1,
-                use_quality_aware_fusion=True,
-                use_modality_attention=True,
-                use_cross_modal_alignment=True
-            )
-            self.modal_fusion = YvEnhancedModalFusion(fusion_config, device=device, dtype=dtype)
-        else:
-            self.modal_fusion = YvDynamicModalFusion(cfg, device=device, dtype=dtype)
+        # Unified multimodal fusion — absorbs Dynamic/Enhanced/RecurrentRefiner/SyncFusion/RCA
+        self.modal_fusion = YvDynamicModalFusion(cfg, device=device, dtype=dtype)
 
         # === 2026 flagship feature init ===
-        self.rca_fusion = None
         self.deep_cross_layer_injector = None
         self.seer_executor = None
         self.vericot_verifier = None
@@ -898,20 +821,8 @@ class YvModel(nn.Module):
         self.token_sparse_attn = None
         self.mhc_lite = None
 
-        # SyncFusion: audio-video synchronous understanding
-        self.sync_fusion = None
-        if getattr(cfg, 'use_sync_fusion', False):
-            from ..multimodal.sync_fusion import YvSyncFusion
-            self.sync_fusion = YvSyncFusion(
-                hidden_size=cfg.hidden_size,
-                n_head=cfg.n_head,
-                num_temporal_bins=getattr(cfg, 'sync_fusion_temporal_bins', 16),
-                device=device, dtype=dtype,
-            )
-
-        if self.cfg.use_rca_fusion:
-            _LOG.debug("YvModel: initializing RCA fusion...")
-            self.rca_fusion = YvRecursiveCrossModalFusion(cfg, device=device, dtype=dtype)
+        # Deep cross-layer injector: injects aligned multimodal features into transformer layers
+        if getattr(cfg, 'use_rca_fusion', True):
             self.deep_cross_layer_injector = YvDeepCrossLayerInjector(
                 cfg, num_layers=cfg.n_layer, device=device, dtype=dtype
             )
@@ -967,7 +878,6 @@ class YvModel(nn.Module):
         self.agentic = YvAgentic(cfg, model=self)
 
         _LOG.debug("YvModel: initializing speculative decoder...")
-        use_dspark = getattr(cfg, 'use_dspark', False)
         self.speculative_config = YvSpeculativeConfig(
             num_candidates=getattr(cfg, 'speculative_candidates', 4),
             draft_length=getattr(cfg, 'speculative_draft_length', 5),
@@ -978,18 +888,7 @@ class YvModel(nn.Module):
             tree_width=getattr(cfg, 'speculative_tree_width', 4),
             tree_depth=getattr(cfg, 'speculative_tree_depth', 5)
         )
-        if use_dspark:
-            from ..generation.speculative import YvDSparkSpeculativeDecoder
-            self.speculative_decoder = YvDSparkSpeculativeDecoder(
-                self.speculative_config,
-                self,
-                ngram_vocab_size=getattr(cfg, 'dspark_ngram_vocab_size', cfg.vocab_size),
-                markov_order=getattr(cfg, 'dspark_markov_order', 5),
-                parallel_candidates=getattr(cfg, 'dspark_parallel_candidates', 3),
-                draft_length=getattr(cfg, 'speculative_draft_length', 5),
-            )
-        else:
-            self.speculative_decoder = YvAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
+        self.speculative_decoder = YvAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
 
         if lora_config is not None:
             raise RuntimeError(
@@ -1830,46 +1729,14 @@ class YvModel(nn.Module):
             agent_feat = self.agent_encoder(agent_obs_input)
             modal_features['agentic'] = agent_feat
 
-        # === SyncFusion: audio-video temporal alignment before RCA ===
-        if self.sync_fusion is not None and 'audio' in modal_features and 'video' in modal_features:
-            audio_feat = modal_features['audio']
-            video_feat = modal_features['video']
-            if audio_feat.dim() == 2:
-                audio_feat = audio_feat.unsqueeze(1)
-            if video_feat.dim() == 2:
-                video_feat = video_feat.unsqueeze(1)
-            synced = self.sync_fusion(audio_feat, video_feat)
-            if synced is None:
-                raise ValueError("YvSyncFusion returned None while audio-video sync fusion is enabled.")
-            modal_features['audio'] = synced
-            modal_features['video'] = synced
-
-        # === RCA Fusion (ACM TOMM 2026) ===
-        use_rca = self.cfg.use_rca_fusion and self.rca_fusion is not None
+        # === Unified Multimodal Fusion ===
         fused_features = None
         rca_output = None
-
-        if len(modal_features) > 1 and use_rca:
-            rca_output = self.rca_fusion(modal_features)
-            fused_features = rca_output['fused']  # [B, modal_token_count, H]
-            if fused_features is not None and fused_features.dim() == 3:
-                if fused_features.dtype != text_emb.dtype:
-                    fused_features = fused_features.to(text_emb.dtype)
-                if fused_features.device != text_emb.device:
-                    fused_features = fused_features.to(text_emb.device)
-                x = torch.cat([fused_features, text_emb], dim=1)
-            else:
-                raise ValueError("RCA fusion did not return a valid [B, T, H] fused tensor.")
-        elif len(modal_features) > 1:
-            # Legacy fusion fallback
-            use_recurrent_refiner = getattr(self.cfg, 'use_recurrent_modal_refiner', True)
-            if use_recurrent_refiner and hasattr(self.modal_fusion, 'forward') and 'text_emb' in self.modal_fusion.forward.__code__.co_varnames:
-                fused_features = self.modal_fusion(modal_features, text_emb=text_emb)
-            else:
-                fused_features = self.modal_fusion(modal_features)
+        if len(modal_features) > 1:
+            fused_features = self.modal_fusion(modal_features)
             if fused_features is None:
                 raise ValueError("Multimodal fusion returned None while non-text modalities were present.")
-            elif fused_features.dim() == 3:
+            if fused_features.dim() == 3:
                 if fused_features.dtype != text_emb.dtype:
                     fused_features = fused_features.to(text_emb.dtype)
                 if fused_features.device != text_emb.device:
@@ -1883,9 +1750,10 @@ class YvModel(nn.Module):
                 x = torch.cat([tokens, text_emb], dim=1)
             else:
                 x = text_emb
+            # Store aligned per-modality features for deep layer injection
+            rca_output = getattr(self.modal_fusion, '_last_modality_features', None) or None
         else:
             x = text_emb
-            fused_features = None
 
         t = x.shape[1]
         lm_seq_len = x.shape[1]
@@ -1938,16 +1806,7 @@ class YvModel(nn.Module):
         next_cache = [] if use_cache else None
 
         if not use_cache or past_key_values is None:
-            # Full sequence processing (no chunking — ensures cross-chunk attention)
-            if self.use_dual_inject and self.dual_injector is not None:
-                pass
-            elif self.use_subconscious and self.subconscious is not None:
-                self.subconscious(x)
-                for layer in self.layers:
-                    if hasattr(layer, '_set_subconscious_system'):
-                        layer._set_subconscious_system(self.subconscious)
-
-            rca_features_dict = rca_output.get('modality_features', {}) if rca_output is not None else {}
+            rca_features_dict = rca_output if isinstance(rca_output, dict) else {}  # _last_modality_features is the dict directly
             rca_fused = None
             if rca_features_dict:
                 rca_fused = torch.cat(list(rca_features_dict.values()), dim=1)
@@ -1965,23 +1824,9 @@ class YvModel(nn.Module):
                 def _oomb_chunk(chunk, chunk_mask):
                     h_chunk = chunk
                     for layer_idx, layer in enumerate(self.layers):
-                        if self.use_memory_separation and self.memory_router is not None:
-                            if layer_idx % self.memory_read_interval == 0:
-                                knowledge_ctx = self.memory_router.forward(h_chunk)
-                                if knowledge_ctx is not None and hasattr(layer, '_set_memory_context'):
-                                    layer._set_memory_context(knowledge_ctx)
-
                         past_kv = self.cache_manager.get_kv_cache(layer_idx, None)
-
-                        if self.use_dual_inject and self.dual_injector is not None:
-                            h_chunk, extra_kv = self.dual_injector.inject(h_chunk, layer_idx)
-                            film_params = None
-                        elif self.use_subconscious and self.subconscious is not None:
-                            extra_kv = None
-                            film_params = self.subconscious.get_film_params(h_chunk, layer_idx)
-                        else:
-                            extra_kv = None
-                            film_params = None
+                        h_chunk, extra_kv = self.dual_injector.inject(h_chunk, layer_idx)
+                        film_params = None
 
                         if hasattr(layer, 'set_sequence_length'):
                             layer.set_sequence_length(h_chunk.shape[1])
@@ -2011,23 +1856,9 @@ class YvModel(nn.Module):
             else:
                 h = x
                 for layer_idx, layer in enumerate(self.layers):
-                    if self.use_memory_separation and self.memory_router is not None:
-                        if layer_idx % self.memory_read_interval == 0:
-                            knowledge_ctx = self.memory_router.forward(h)
-                            if knowledge_ctx is not None and hasattr(layer, '_set_memory_context'):
-                                layer._set_memory_context(knowledge_ctx)
-
                     past_kv = self.cache_manager.get_kv_cache(layer_idx, None)
-
-                    if self.use_dual_inject and self.dual_injector is not None:
-                        h, extra_kv = self.dual_injector.inject(h, layer_idx)
-                        film_params = None
-                    elif self.use_subconscious and self.subconscious is not None:
-                        extra_kv = None
-                        film_params = self.subconscious.get_film_params(h, layer_idx)
-                    else:
-                        extra_kv = None
-                        film_params = None
+                    h, extra_kv = self.dual_injector.inject(h, layer_idx)
+                    film_params = None
 
                     if hasattr(layer, 'set_sequence_length'):
                         layer.set_sequence_length(h.shape[1])
@@ -2060,14 +1891,6 @@ class YvModel(nn.Module):
                 else:
                     mask_chunk = mask[i:i+chunk_size, :i+chunk_size]
 
-                if self.use_dual_inject and self.dual_injector is not None:
-                    pass
-                elif self.use_subconscious and self.subconscious is not None:
-                    self.subconscious(x_chunk)
-                    for layer in self.layers:
-                        if hasattr(layer, '_set_subconscious_system'):
-                            layer._set_subconscious_system(self.subconscious)
-
                 def block_fn(xc, msk, layer_past_key_values=None):
                     h = xc
                     aux = 0.0
@@ -2075,12 +1898,6 @@ class YvModel(nn.Module):
                     seq_len = xc.shape[1]
 
                     for layer_idx, layer in enumerate(self.layers):
-                        if self.use_memory_separation and self.memory_router is not None:
-                            if layer_idx % self.memory_read_interval == 0:
-                                knowledge_ctx = self.memory_router.forward(h)
-                                if knowledge_ctx is not None and hasattr(layer, '_set_memory_context'):
-                                    layer._set_memory_context(knowledge_ctx)
-
                         if self.comet_memory is not None:
                             if layer_idx % max(1, len(self.layers) // 2) == 0:
                                 comet_ctx = self.comet_memory.read(h)
@@ -2088,7 +1905,7 @@ class YvModel(nn.Module):
                                     layer._set_memory_context(comet_ctx)
 
                         if self.deep_cross_layer_injector is not None and (rca_output is not None or fused_features is not None):
-                            inject_fused = rca_output.get('modality_features', {}) if rca_output is not None else {}
+                            inject_fused = rca_output if isinstance(rca_output, dict) else {}
                             if inject_fused:
                                 inject_fused = torch.cat(list(inject_fused.values()), dim=1)
                             elif fused_features is not None:
@@ -2124,15 +1941,8 @@ class YvModel(nn.Module):
                                 for tensor in past_kv
                             )
 
-                        if self.use_dual_inject and self.dual_injector is not None:
-                            h, extra_kv = self.dual_injector.inject(h, layer_idx)
-                            film_params = None
-                        elif self.use_subconscious and self.subconscious is not None:
-                            extra_kv = None
-                            film_params = self.subconscious.get_film_params(h, layer_idx)
-                        else:
-                            extra_kv = None
-                            film_params = None
+                        h, extra_kv = self.dual_injector.inject(h, layer_idx)
+                        film_params = None
 
                         if hasattr(layer, 'set_sequence_length'):
                             layer.set_sequence_length(seq_len)
@@ -2150,7 +1960,6 @@ class YvModel(nn.Module):
                                 key_states,
                                 value_states,
                                 i + xc.shape[1],
-                                use_h2o=getattr(self.cfg, 'use_h2o_attention', False)
                             )
                             cache = updated
 
@@ -2179,8 +1988,7 @@ class YvModel(nn.Module):
                 total_aux_loss = total_aux_loss + aux_chunk
 
         # Clear subconscious cache after layer processing
-        if self.use_subconscious and self.subconscious is not None:
-            self.subconscious.clear_cache()
+        self.subconscious.clear_cache()
 
         # Concatenate all chunks at once after the loop (more efficient than per-chunk)
         if outputs:

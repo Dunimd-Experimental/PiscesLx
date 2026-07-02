@@ -170,6 +170,7 @@ class AccelerationConfig:
     pipeline_parallel_size: int = 1
     gpu_memory_utilization: float = 0.9
     enforce_eager: bool = False
+    use_torch_compile: bool = False
     max_num_seqs: int = 256
     min_new_tokens: int = 16
     use_ring_attention: bool = False

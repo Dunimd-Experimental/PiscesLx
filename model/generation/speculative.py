@@ -857,25 +857,13 @@ class YvSpeculativeDecoder(nn.Module):
         return generated_ids, stats
     
     def _apply_sampling(self, logits: torch.Tensor) -> torch.Tensor:
-        """Apply temperature, top-k, and top-p sampling to logits.
-        
-        Args:
-            logits: Raw logits from the model [batch_size, vocab_size].
-            
-        Returns:
-            Modified logits after applying sampling parameters.
-        """
-        if self.config.temperature > 0:
-            temp = max(0.1, min(2.0, self.config.temperature))
-            logits = logits / temp
-        
+        temp = max(0.1, min(2.0, self.config.temperature))
+        logits = logits / temp
         if self.config.top_k > 0:
-            top_k_logits, top_k_indices = torch.topk(
-                logits, min(self.config.top_k, logits.size(-1))
+            logits = torch.where(
+                logits < torch.topk(logits, min(self.config.top_k, logits.size(-1)))[0][..., -1:, :],
+                float('-inf'), logits
             )
-            logits = torch.full_like(logits, float('-inf'))
-            logits.scatter_(-1, top_k_indices, top_k_logits)
-        
         if self.config.top_p < 1.0:
             sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
             cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
@@ -885,7 +873,6 @@ class YvSpeculativeDecoder(nn.Module):
             indices_to_remove = torch.zeros_like(sorted_indices_to_remove, dtype=torch.bool)
             indices_to_remove.scatter_(-1, sorted_indices, sorted_indices_to_remove)
             logits[indices_to_remove] = float('-inf')
-        
         return logits
     
     def _generate_draft_sequence(
@@ -935,39 +922,9 @@ class YvSpeculativeDecoder(nn.Module):
         return draft_seq, draft_step_logits
     
     def _sample_candidates(self, logits: torch.Tensor) -> torch.Tensor:
-        """Sample candidate tokens from logits.
-        
-        Applies temperature, top-k, and top-p filtering before sampling
-        multiple candidates for speculative decoding.
-        
-        Args:
-            logits: Logits for sampling [batch_size, 1, vocab_size].
-            
-        Returns:
-            Sampled candidate token IDs [batch_size, num_candidates].
-        """
-        if self.config.temperature > 0:
-            logits = logits / self.config.temperature
-        
-        if self.config.top_k > 0:
-            top_k_logits, top_k_indices = torch.topk(logits, min(self.config.top_k, logits.size(-1)))
-            logits = torch.full_like(logits, float('-inf'))
-            logits.scatter_(-1, top_k_indices, top_k_logits)
-        
-        if self.config.top_p < 1.0:
-            sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
-            cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-            sorted_indices_to_remove = cumulative_probs > self.config.top_p
-            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-            sorted_indices_to_remove[..., 0] = 0
-            indices_to_remove = torch.zeros_like(sorted_indices_to_remove, dtype=torch.bool)
-            indices_to_remove.scatter_(-1, sorted_indices, sorted_indices_to_remove)
-            logits[indices_to_remove] = float('-inf')
-        
+        logits = self._apply_sampling(logits)
         probs = F.softmax(logits, dim=-1)
-        candidates = torch.multinomial(probs.squeeze(1), self.config.num_candidates, replacement=False)
-        
-        return candidates
+        return torch.multinomial(probs.squeeze(1), self.config.num_candidates, replacement=False)
     
     def _verify_and_accept(
         self,
@@ -1554,23 +1511,12 @@ class YvDSparkSpeculativeDecoder(nn.Module):
         return all_candidates[best_idx]
 
     def _apply_sampling(self, logits: torch.Tensor) -> torch.Tensor:
-        """Apply temperature, top-k, and top-p filtering to logits."""
-        if self.temperature > 0:
-            logits = logits / self.temperature
+        logits = logits / max(0.1, min(2.0, self.temperature))
         if self.top_k > 0:
-            k = min(self.top_k, logits.size(-1))
-            top_k_logits, top_k_indices = torch.topk(logits, k)
-            logits = torch.full_like(logits, float('-inf'))
-            logits.scatter_(-1, top_k_indices, top_k_logits)
-        if self.top_p < 1.0:
-            sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
-            cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
-            sorted_indices_to_remove = cumulative_probs > self.top_p
-            sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
-            sorted_indices_to_remove[..., 0] = 0
-            indices_to_remove = torch.zeros_like(sorted_indices_to_remove, dtype=torch.bool)
-            indices_to_remove.scatter_(-1, sorted_indices, sorted_indices_to_remove)
-            logits[indices_to_remove] = float('-inf')
+            logits = torch.where(
+                logits < torch.topk(logits, min(self.top_k, logits.size(-1)))[0][..., -1:, :],
+                float('-inf'), logits
+            )
         return logits
 
     @torch.no_grad()

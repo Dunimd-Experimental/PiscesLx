@@ -184,6 +184,55 @@ def _depth_aware_init_weights(m: nn.Module, n_layer: int, hidden_size: int):
             nn.init.normal_(m.weight, mean=0, std=depth_std)
 
 
+def _norm_forward(
+    x: torch.Tensor,
+    weight: torch.Tensor,
+    bias: Optional[torch.Tensor],
+    eps: float,
+    mode: str = 'rms',
+    num_groups: Optional[int] = None,
+    cond: Optional[torch.Tensor] = None,
+    scale_proj: Optional[nn.Module] = None,
+    shift_proj: Optional[nn.Module] = None,
+) -> torch.Tensor:
+    """Unified normalization core used by all Yv norm classes.
+    
+    Args:
+        x: Input tensor.
+        weight: Learnable scale parameter.
+        bias: Optional learnable bias.
+        eps: Epsilon for numerical stability.
+        mode: One of 'rms', 'layer', 'group', 'adaptive'.
+        num_groups: Number of groups for group norm.
+        cond: Conditioning tensor for adaptive norm.
+        scale_proj: Scale projection module for adaptive norm.
+        shift_proj: Shift projection module for adaptive norm.
+    
+    Returns:
+        Normalized tensor.
+    """
+    if mode == 'rms':
+        rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
+        out = weight * x * rms
+        if bias is not None:
+            out = out + bias
+        return out
+
+    if mode == 'layer':
+        return F.layer_norm(x, (x.shape[-1],), weight, bias, eps)
+
+    if mode == 'group':
+        return F.group_norm(x, num_groups, weight, bias, eps)
+
+    if mode == 'adaptive':
+        x_norm = F.layer_norm(x, (x.shape[-1],), weight, bias, eps)
+        scale = scale_proj(cond).unsqueeze(1)
+        shift = shift_proj(cond).unsqueeze(1)
+        return x_norm * (1 + scale) + shift
+
+    raise ValueError(f"Unknown norm mode: {mode}")
+
+
 def _residual_alpha_for_depth(n_layer: int) -> float:
     """Compute optimal residual alpha for DeepNorm-style stability.
     
@@ -209,49 +258,7 @@ def _residual_alpha_for_depth(n_layer: int) -> float:
 class YvRMSNorm(nn.Module):
     """Root Mean Square Layer Normalization for efficient normalization.
     
-    Implements RMSNorm, a computationally efficient alternative to LayerNorm
-    that normalizes by the root mean square without computing the mean. This
-    reduces computational overhead while maintaining similar performance.
-    
-    Mathematical Formulation:
-        RMS(x) = sqrt(1/n * sum(x_i^2))
-        y = x / RMS(x) * weight + bias (optional)
-    
-    Key Features:
-        - No mean computation, reducing operations by ~25%
-        - Optional bias parameter for flexibility
-        - Numerically stable with epsilon clamping
-        - Compatible with all tensor shapes
-    
-    Performance Characteristics:
-        - Memory: O(dim) for weight and optional bias
-        - Compute: O(n) where n is the number of features
-        - Speedup: ~10-20% faster than LayerNorm
-    
-    Comparison with LayerNorm:
-        - LayerNorm: Computes mean and variance, centers data
-        - RMSNorm: Only normalizes scale, no centering
-        - Quality: Similar performance for most transformer tasks
-        - Efficiency: RMSNorm is more efficient
-    
-    Attributes:
-        weight (nn.Parameter): Learnable scale parameter of shape [dim].
-        bias (Optional[nn.Parameter]): Optional learnable bias of shape [dim].
-        eps (float): Small epsilon for numerical stability.
-        use_bias (bool): Whether bias parameter is used.
-    
-    Example:
-        >>> norm = YvRMSNorm(dim=4096, eps=1e-6)
-        >>> hidden = torch.randn(2, 1024, 4096)
-        >>> normalized = norm(hidden)
-    
-    Note:
-        RMSNorm was introduced in "Root Mean Square Layer Normalization"
-        by Zhang and Sennrich (2019). It has become standard in many
-        large language models including LLaMA.
-    
-    Reference:
-        Zhang & Sennrich, "Root Mean Square Layer Normalization", NeurIPS 2019.
+    Uses the unified _norm_forward core. See core docstring for details.
     """
     
     def __init__(
@@ -262,21 +269,6 @@ class YvRMSNorm(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ):
-        """Initialize RMS normalization layer.
-        
-        Args:
-            dim: Dimension of the features to normalize. This is the
-                size of the last dimension of input tensors.
-            eps: Small epsilon added to the denominator for numerical
-                stability. Default: 1e-6.
-            use_bias: Whether to include a learnable bias parameter.
-                Default: False (standard RMSNorm has no bias).
-            device: Device for parameter allocation.
-            dtype: Data type for parameters.
-        
-        Example:
-            >>> norm = YvRMSNorm(dim=4096, eps=1e-6, use_bias=False)
-        """
         super().__init__()
         self.eps = eps
         self.weight = nn.Parameter(torch.ones(dim, device=device, dtype=dtype))
@@ -287,66 +279,14 @@ class YvRMSNorm(nn.Module):
             self.register_parameter('bias', None)
             
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply RMS normalization to input tensor.
-        
-        Computes the root mean square of the last dimension and normalizes
-        the input, then applies the learned scale (and optional bias).
-        
-        Args:
-            x: Input tensor of shape [..., dim]. The last dimension
-                must match the initialized dim parameter.
-        
-        Returns:
-            Normalized tensor of the same shape as input. Each element
-            is scaled by weight / sqrt(mean(x^2) + eps).
-        
-        Example:
-            >>> x = torch.randn(2, 1024, 4096)
-            >>> y = norm(x)
-            >>> y.shape
-            torch.Size([2, 1024, 4096])
-        """
-        rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-        output = self.weight * x * rms
-        if self.use_bias:
-            output = output + self.bias
-        return output
+        """Apply RMS normalization via unified core."""
+        return _norm_forward(x, self.weight, self.bias, self.eps, mode='rms')
 
 
 class YvLayerNorm(nn.Module):
     """Layer Normalization with optional RMS-style computation.
     
-    Implements standard LayerNorm that normalizes by mean and variance,
-    with an optional RMS mode for improved efficiency. Provides a
-    unified interface for both normalization strategies.
-    
-    Mathematical Formulation:
-        Standard LayerNorm:
-            y = (x - mean(x)) / sqrt(var(x) + eps) * weight + bias
-        
-        RMS Mode:
-            y = x / sqrt(mean(x^2) + eps) * weight + bias
-    
-    Key Features:
-        - Standard LayerNorm with mean centering
-        - Optional RMS mode for efficiency
-        - Always includes bias parameter (unlike RMSNorm)
-        - Compatible with PyTorch's F.layer_norm
-    
-    When to Use:
-        - Standard mode: When centering is important (e.g., pre-norm)
-        - RMS mode: When efficiency is critical and centering is optional
-    
-    Attributes:
-        weight (nn.Parameter): Learnable scale parameter.
-        bias (nn.Parameter): Learnable bias parameter.
-        eps (float): Epsilon for numerical stability.
-        use_rms (bool): Whether to use RMS computation.
-    
-    Example:
-        >>> norm = YvLayerNorm(dim=4096, use_rms=False)
-        >>> hidden = torch.randn(2, 1024, 4096)
-        >>> normalized = norm(hidden)
+    Uses the unified _norm_forward core.
     """
 
     def __init__(
@@ -357,20 +297,6 @@ class YvLayerNorm(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ):
-        """Initialize LayerNorm with optional RMS mode.
-        
-        Args:
-            dim: Dimension of the features to normalize.
-            eps: Epsilon for numerical stability. Default: 1e-6.
-            use_rms: Whether to use RMS normalization instead of full
-                LayerNorm. RMS mode is more efficient but does not
-                center the data. Default: False.
-            device: Device for parameter allocation.
-            dtype: Data type for parameters.
-        
-        Example:
-            >>> norm = YvLayerNorm(dim=4096, use_rms=False)
-        """
         super().__init__()
         self.eps = eps
         self.use_rms = use_rms
@@ -378,76 +304,15 @@ class YvLayerNorm(nn.Module):
         self.bias = nn.Parameter(torch.zeros(dim, device=device, dtype=dtype))
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply layer normalization to input tensor.
-        
-        Args:
-            x: Input tensor of shape [..., dim]. The last dimension
-                must match the initialized dim parameter.
-        
-        Returns:
-            Normalized tensor of the same shape as input.
-        
-        Note:
-            In RMS mode, the mean is not subtracted, making this
-            equivalent to RMSNorm with bias.
-        """
-        if self.use_rms:
-            rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
-            return self.weight * x * rms + self.bias
-        else:
-            return F.layer_norm(x, (x.shape[-1],), self.weight, self.bias, self.eps)
+        mode = 'rms' if self.use_rms else 'layer'
+        return _norm_forward(x, self.weight, self.bias, self.eps, mode=mode)
 
 
 # Paper: Perez et al., "FiLM: Visual Reasoning with a General Conditioning Layer", NeurIPS 2017, arXiv:1709.07871; DiT: Peebles & Xie, arXiv:2212.09748
 class YvAdaptiveLayerNorm(nn.Module):
     """Adaptive Layer Normalization with external conditioning.
     
-    Implements adaptive normalization where the scale and shift parameters
-    are dynamically generated from conditioning information. This is
-    essential for conditional generation tasks like diffusion models.
-    
-    Mathematical Formulation:
-        x_norm = LayerNorm(x)
-        scale = linear_scale(cond)
-        shift = linear_shift(cond)
-        y = x_norm * (1 + scale) + shift
-    
-    Key Features:
-        - Dynamic scale and shift from conditioning
-        - Essential for diffusion models and conditional generation
-        - Supports timestep embeddings and other conditioning signals
-        - Maintains normalization stability with learned modulation
-    
-    Use Cases:
-        - Diffusion models: Conditioning on timestep embeddings
-        - Class-conditional generation: Conditioning on class embeddings
-        - Text-to-image: Conditioning on text encoder outputs
-        - Style transfer: Conditioning on style embeddings
-    
-    Architecture Integration:
-        In diffusion models, AdaptiveLayerNorm is typically used in
-        transformer blocks to inject timestep information:
-        
-        >>> class TransformerBlock(nn.Module):
-        ...     def forward(self, x, timestep_emb):
-        ...         x = self.adaptive_norm(x, timestep_emb)
-        ...         x = self.attention(x)
-        ...         return x
-    
-    Attributes:
-        norm (nn.LayerNorm): Base layer normalization.
-        scale_proj (nn.Linear): Projects conditioning to scale modulation.
-        shift_proj (nn.Linear): Projects conditioning to shift modulation.
-        eps (float): Epsilon for numerical stability.
-    
-    Example:
-        >>> adanorm = YvAdaptiveLayerNorm(dim=4096, cond_dim=512)
-        >>> hidden = torch.randn(2, 1024, 4096)
-        >>> timestep_emb = torch.randn(2, 512)
-        >>> normalized = adanorm(hidden, timestep_emb)
-    
-    Reference:
-        Peebles & Xie, "Scalable Diffusion Models with Transformers", ICCV 2023.
+    Uses the unified _norm_forward core.
     """
     
     def __init__(
@@ -458,107 +323,26 @@ class YvAdaptiveLayerNorm(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ):
-        """Initialize Adaptive LayerNorm with conditioning projection.
-        
-        Args:
-            dim: Dimension of the features to normalize.
-            cond_dim: Dimension of the conditioning input. This will be
-                projected to produce scale and shift parameters.
-            eps: Epsilon for numerical stability. Default: 1e-6.
-            device: Device for parameter allocation.
-            dtype: Data type for parameters.
-        
-        Example:
-            >>> adanorm = YvAdaptiveLayerNorm(
-            ...     dim=4096,
-            ...     cond_dim=512,  # timestep embedding dimension
-            ...     device='cuda'
-            ... )
-        """
         super().__init__()
         self.eps = eps
-        self.norm = nn.LayerNorm(dim, eps=eps, device=device, dtype=dtype)
+        self.weight = nn.Parameter(torch.ones(dim, device=device, dtype=dtype))
+        self.bias = nn.Parameter(torch.zeros(dim, device=device, dtype=dtype))
         self.scale_proj = nn.Linear(cond_dim, dim, device=device, dtype=dtype)
         self.shift_proj = nn.Linear(cond_dim, dim, device=device, dtype=dtype)
         
-    def forward(
-        self,
-        x: torch.Tensor,
-        cond: torch.Tensor
-    ) -> torch.Tensor:
-        """Apply adaptive normalization with conditioning.
-        
-        Normalizes the input and applies conditioning-dependent scale
-        and shift modulation.
-        
-        Args:
-            x: Input tensor of shape [batch, ..., dim]. The last dimension
-                must match the initialized dim parameter.
-            cond: Conditioning tensor of shape [batch, cond_dim]. This
-                is used to generate the scale and shift parameters.
-        
-        Returns:
-            Adaptively normalized tensor of the same shape as input.
-            The output is modulated by the conditioning signal.
-        
-        Example:
-            >>> x = torch.randn(2, 1024, 4096)
-            >>> cond = torch.randn(2, 512)  # timestep embedding
-            >>> y = adanorm(x, cond)
-        """
-        x_norm = self.norm(x)
-        scale = self.scale_proj(cond).unsqueeze(1)
-        shift = self.shift_proj(cond).unsqueeze(1)
-        return x_norm * (1 + scale) + shift
+    def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
+        return _norm_forward(
+            x, self.weight, self.bias, self.eps, mode='adaptive',
+            cond=cond, scale_proj=self.scale_proj, shift_proj=self.shift_proj,
+        )
 
 
 # Paper: Wu & He, "Group Normalization", ECCV 2018, arXiv:1803.08494
 class YvGroupNorm(nn.Module):
     """Group Normalization with optional RMS-style computation.
     
-    Divides channels into groups and normalizes within each group.
-    This provides a middle ground between LayerNorm (one group) and
-    InstanceNorm (one channel per group), making it suitable for
-    vision transformers and convolutional architectures.
-    
-    Mathematical Formulation:
-        For each group g:
-            mean_g = mean(x_g)
-            var_g = var(x_g)
-            y_g = (x_g - mean_g) / sqrt(var_g + eps) * weight_g + bias_g
-    
-    Key Features:
-        - Batch-size independent: Works with any batch size
-        - Group-wise normalization: Balances local and global statistics
-        - Optional RMS mode for efficiency
-        - Optimal for vision transformers and CNNs
-    
-    Comparison with Other Normalizations:
-        - BatchNorm: Depends on batch statistics, issues with small batches
-        - LayerNorm: Normalizes all channels together
-        - InstanceNorm: Normalizes each channel independently
-        - GroupNorm: Normalizes groups of channels, flexible
-    
-    When to Use:
-        - Vision transformers: Groups capture related feature channels
-        - Small batch training: Independent of batch size
-        - Transfer learning: Consistent behavior across batch sizes
-    
-    Attributes:
-        num_groups (int): Number of groups to divide channels into.
-        num_channels (int): Total number of channels.
-        weight (nn.Parameter): Learnable scale per channel.
-        bias (nn.Parameter): Learnable bias per channel.
-        eps (float): Epsilon for numerical stability.
-        use_rms (bool): Whether to use RMS normalization.
-    
-    Example:
-        >>> norm = YvGroupNorm(num_groups=32, num_channels=4096)
-        >>> features = torch.randn(2, 4096, 16, 16)  # CNN features
-        >>> normalized = norm(features)
-    
-    Reference:
-        Wu & He, "Group Normalization", ECCV 2018.
+    Uses the unified _norm_forward core for group mode.
+    RMS group norm is computed inline for performance.
     """
     
     def __init__(
@@ -570,16 +354,6 @@ class YvGroupNorm(nn.Module):
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ):
-        """Initialize group norm.
-        
-        Args:
-            num_groups: Number of groups to divide channels into.
-            num_channels: Total number of channels.
-            eps: Epsilon for numerical stability.
-            use_rms: Whether to use RMS normalization.
-            device: Device for parameters.
-            dtype: Data type for parameters.
-        """
         super().__init__()
         self.num_groups = num_groups
         self.num_channels = num_channels
@@ -590,14 +364,6 @@ class YvGroupNorm(nn.Module):
         self.bias = nn.Parameter(torch.zeros(num_channels, device=device, dtype=dtype))
         
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Apply group normalization.
-        
-        Args:
-            x: Input tensor of shape [batch, channels, ...].
-            
-        Returns:
-            Normalized tensor.
-        """
         if self.use_rms:
             x = x.view(x.shape[0], self.num_groups, -1)
             rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps)
@@ -605,7 +371,7 @@ class YvGroupNorm(nn.Module):
             x = x.view(x.shape[0], self.num_channels, -1)
             return self.weight[:, None] * x + self.bias[:, None]
         else:
-            return F.group_norm(x, self.num_groups, self.weight, self.bias, self.eps)
+            return _norm_forward(x, self.weight, self.bias, self.eps, mode='group', num_groups=self.num_groups)
 
 
 # Paper: Su et al., "RoFormer: Enhanced Transformer with Rotary Position Embedding", arXiv:2104.09864, 2021
@@ -751,60 +517,20 @@ class YvRotaryEmbedding(nn.Module):
 
 
 # Paper: Peng et al., "YaRN: Efficient Context Window Extension of Large Language Models", arXiv:2309.00071, 2023
-class YvYaRNRotaryEmbedding(nn.Module):
-    """YaRN (Yet Another RoPE extensioN) for ultra-long context support.
-    
-    Implements YaRN scaling for extending RoPE to much longer sequences
-    than seen during training. Uses DynamicNTK scaling for improved
-    extrapolation quality, enabling sequences up to 10M+ tokens.
-    
-    Mathematical Formulation:
-        YaRN modifies the RoPE frequencies based on sequence length:
-        
-        For seq_len > original_max:
-            ratio = seq_len / original_max
-            scale = ratio^(dim / (dim - 2))  # NTK-aware scaling
-            new_base = base * scale
-            freq = 1 / new_base^(2i/dim)
-    
-    Key Features:
-        - Dynamic NTK scaling for extrapolation
-        - Supports sequences up to 10M+ tokens
-        - Automatic scaling factor computation
-        - Maintains attention quality at long ranges
-    
-    Scaling Strategy:
-        - Short sequences (<= original_max): Standard RoPE
-        - Medium sequences: NTK-aware scaling
-        - Ultra-long sequences (>1M): Logarithmic scaling boost
-    
-    Use Cases:
-        - Long document processing
-        - Extended conversation history
-        - Code analysis with full context
-        - Book-length text understanding
-    
-    Performance Characteristics:
-        - Memory: O(dim) for inverse frequencies
-        - Compute: O(seq_len * dim) for position encoding
-        - No additional learned parameters
-    
-    Attributes:
-        dim (int): Dimension of the embedding.
-        max_position_embeddings (int): Maximum supported sequence length.
-        base (int): Base frequency for RoPE computation.
-        scale (float): Maximum YaRN scaling factor.
-        original_max_position_embeddings (int): Training sequence length.
-        inv_freq (torch.Tensor): Precomputed inverse frequencies.
-    
-    Example:
-        >>> rope = YvYaRNRotaryEmbedding(
-        ...     dim=128,
-        ...     max_position_embeddings=10485760,  # 10M tokens
-        ...     scale=32.0
-        ... )
-        >>> query = torch.randn(1, 32, 100000, 128)  # 100K tokens
-        >>> rotated = rope(query, seq_len=100000)
+# ──────────────────────────────────────────────────────────────────────────────
+# YvUnifiedRotaryEmbedding — single RoPE implementation absorbing all variants
+#   Base: standard RoPE     │ YaRN: NTK-aware frequency scaling
+#   MrRoPE: mixed-radix     │ Dynamic: learned/task-aware scaling
+#   Linear: position scaling │ All combined into one unified frequency set.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class YvUnifiedRotaryEmbedding(nn.Module):
+    """Unified Rotary Position Embedding — absorbs all position-encoding variants.
+
+    Every forward pass applies a single combined frequency derived from all
+    active mechanisms: standard RoPE frequencies, MrRoPE mixed‑radix factors,
+    YaRN dynamic NTK scaling, linear position scaling, and learned (dynamic)
+    per‑dimension adjustments.  No algorithm‑variant branching.
     """
 
     def __init__(
@@ -814,206 +540,176 @@ class YvYaRNRotaryEmbedding(nn.Module):
         base: int = 10000,
         scale: float = 32.0,
         original_max_position_embeddings: int = 4096,
-        device: Optional[torch.device] = None
+        device: Optional[torch.device] = None,
+        # --- absorbed variants ---
+        use_mr_rope: bool = False,
+        mr_rope_mode: str = 'pro',
+        use_dynamic: bool = False,
+        enable_learned_scaling: bool = True,
+        enable_task_aware: bool = True,
+        linear_scale: float = 1.0,
     ):
-        """Initialize YaRN rotary embedding.
-        
-        Args:
-            dim: Dimension of the embedding.
-            max_position_embeddings: Maximum supported sequence length.
-            base: Base frequency for RoPE.
-            scale: YaRN scaling factor.
-            original_max_position_embeddings: Original training length.
-            device: Device for buffers.
-        """
         super().__init__()
         self.dim = dim
         self.max_position_embeddings = max_position_embeddings
         self.base = base
         self.scale = scale
         self.original_max_position_embeddings = original_max_position_embeddings
-        
-        freq_factors = 1.0 / (base ** (torch.arange(0, dim, 2).float().to(device) / dim))
+
+        self.use_mr_rope = use_mr_rope
+        self.mr_rope_mode = mr_rope_mode
+        self.use_dynamic = use_dynamic
+        self.enable_learned_scaling = enable_learned_scaling
+        self.enable_task_aware = enable_task_aware
+        self.linear_scale = linear_scale
+
+        half = dim // 2
+
+        # ── base frequencies (always) ──
+        freq_factors = 1.0 / (base ** (torch.arange(0, dim, 2, device=device).float() / dim))
         self.register_buffer("inv_freq", freq_factors, persistent=False)
         self.register_buffer("dynamic_base", torch.tensor(float(base), device=device), persistent=False)
         self.register_buffer("max_seq_len_seen", torch.tensor(0, device=device), persistent=False)
-        
+
+        # ── MrRoPE mixed radices (always built) ──
+        if use_mr_rope:
+            with torch.no_grad():
+                if mr_rope_mode == 'pro':
+                    rad = torch.arange(1, half + 1, device=device, dtype=torch.float32)
+                    rad = 1.0 + 0.1 * (rad / (half))  # progressive ramp
+                else:
+                    rad = torch.ones(half, device=device, dtype=torch.float32)
+            self.register_buffer("mr_radices", rad, persistent=False)
+
+        # ── Dynamic learned parameters (always built when use_dynamic) ──
+        if use_dynamic and enable_learned_scaling:
+            self.learned_scale = nn.Parameter(torch.tensor(1.0, device=device))
+            self.ntk_scale_factor = nn.Parameter(torch.tensor(1.0, device=device))
+            self.log_scale_factor = nn.Parameter(torch.tensor(0.0, device=device))
+
+        if use_dynamic and enable_task_aware:
+            self.task_scale_net = nn.Sequential(
+                nn.Linear(dim, dim // 4),
+                nn.ReLU(),
+                nn.Linear(dim // 4, 2),
+            )
+
+    # ── helpers ──────────────────────────────────────────────────────
+
     def _compute_dynamic_ntk_scale(self, seq_len: int) -> float:
-        """Compute dynamic NTK scaling factor.
-        
-        Args:
-            seq_len: Current sequence length.
-            
-        Returns:
-            Dynamic scaling factor.
-        """
         if seq_len <= self.original_max_position_embeddings:
             return 1.0
-            
         ratio = seq_len / self.original_max_position_embeddings
-        
-        if seq_len > 1000000:
-            log_scale = math.log(ratio) / math.log(10) + 1.0
-            scale = ratio ** (self.dim / (self.dim - 2)) * log_scale
+        base_scale = ratio ** (self.dim / (self.dim - 2))
+
+        if self.use_dynamic and self.enable_learned_scaling:
+            lm = torch.sigmoid(self.learned_scale)
+            nm = torch.sigmoid(self.ntk_scale_factor)
+            lf = torch.exp(self.log_scale_factor)
+            if seq_len > 1000000:
+                s = base_scale * (math.log(ratio) / math.log(10) + 1.0) * lf
+            else:
+                s = base_scale * nm
+            s = s * lm
         else:
-            scale = ratio ** (self.dim / (self.dim - 2))
-            
-        scale = max(scale, 1.0)
-        return min(scale, self.scale * 2)
-        
+            if seq_len > 1000000:
+                s = base_scale * (math.log(ratio) / math.log(10) + 1.0)
+            else:
+                s = base_scale
+        s = max(float(s), 1.0)
+        return min(s, self.scale * 2)
+
     def _compute_scale_factors(
-        self,
-        seq_len: int,
-        device: Optional[torch.device] = None
+        self, seq_len: int, device: torch.device,
+        task_embedding: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Compute YaRN scaling factors with dynamic NTK.
-        
-        Args:
-            seq_len: Current sequence length.
-            device: Target device.
-            
-        Returns:
-            Scale factors tensor.
-        """
         if seq_len > self.max_seq_len_seen.item():
             self.max_seq_len_seen.fill_(seq_len)
-            
         ntk_scale = self._compute_dynamic_ntk_scale(seq_len)
-        
-        positions = torch.arange(seq_len, device=device)
-        scale_factors = torch.ones(seq_len, device=device)
-        
+        pos = torch.arange(seq_len, device=device)
+        sf = torch.ones(seq_len, device=device)
+
         if ntk_scale > 1.0:
             crossover = int(math.sqrt(self.original_max_position_embeddings))
+            tm = torch.ones(seq_len, device=device)
+            if self.use_dynamic and self.enable_task_aware and task_embedding is not None:
+                tw = self.task_scale_net(task_embedding.mean(dim=0))
+                tm = 1.0 + 0.1 * tw[0] * pos / seq_len
             if seq_len > crossover:
-                high_positions = positions[crossover:]
-                scale_factors[crossover:] = crossover * (high_positions / crossover) ** (1.0 / (ntk_scale * self.scale))
-                
-        return scale_factors
-        
+                sf[crossover:] = crossover * (pos[crossover:] / crossover) ** (1.0 / (ntk_scale * self.scale)) * tm[crossover:]
+        return sf
+
+    # ── forward ─────────────────────────────────────────────────────
+
     def forward(
         self,
         x: torch.Tensor,
-        seq_len: Optional[int] = None
+        seq_len: Optional[int] = None,
+        task_embedding: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Apply YaRN rotary embedding.
-        
-        Args:
-            x: Input tensor of shape [batch, n_head, seq_len, head_dim] or [batch, seq_len, dim].
-            seq_len: Optional sequence length override.
-            
-        Returns:
-            Tensor with YaRN rotary embeddings applied.
-        """
         device = x.device
-        
         if x.dim() == 4:
             actual_seq_len = seq_len or x.shape[2]
-            embedding_dim = x.shape[3]
+            embed_dim = x.shape[3]
         elif x.dim() == 3:
             actual_seq_len = seq_len or x.shape[1]
-            embedding_dim = x.shape[2]
+            embed_dim = x.shape[2]
         else:
-            raise ValueError(f"Input tensor must be 3D or 4D, got {x.dim()}D")
-            
-        scale_factors = self._compute_scale_factors(actual_seq_len, device)
-        
+            raise ValueError(f"Input must be 3D or 4D, got {x.dim()}D")
+
+        half = embed_dim // 2
+
+        # 1. positions with linear scaling
         t = torch.arange(actual_seq_len, device=device, dtype=torch.float32)
-        t = t * scale_factors
-        
-        dynamic_freq = 1.0 / (self.dynamic_base ** (torch.arange(0, embedding_dim, 2).float().to(device) / embedding_dim))
-        freqs = torch.outer(t, dynamic_freq)
-        
+        if self.linear_scale != 1.0:
+            t = t / self.linear_scale
+
+        # 2. YaRN scale factors (position‑dependent interpolant)
+        sf = self._compute_scale_factors(actual_seq_len, device, task_embedding)
+        t = t * sf
+
+        # 3. combined frequencies
+        base_freq = 1.0 / (self.dynamic_base ** (torch.arange(0, embed_dim, 2, device=device).float() / embed_dim))
+
+        if self.use_mr_rope:
+            mr = self.mr_radices[:half].to(device)
+            freqs = torch.outer(t, base_freq * mr)
+        else:
+            freqs = torch.outer(t, base_freq)
+
         cos = freqs.cos()
         sin = freqs.sin()
-        
+
+        # slice to actual length
         if x.dim() == 4:
             cos = cos[:x.shape[2], :]
             sin = sin[:x.shape[2], :]
         else:
             cos = cos[:x.shape[1], :]
             sin = sin[:x.shape[1], :]
-            
+
         return self._rotate_half(x, cos, sin)
-        
+
     @staticmethod
-    def _rotate_half(
-        x: torch.Tensor,
-        cos: torch.Tensor,
-        sin: torch.Tensor
-    ) -> torch.Tensor:
-        """Rotate tensor by half using cosine and sine.
-        
-        Args:
-            x: Input tensor.
-            cos: Cosine values.
-            sin: Sine values.
-            
-        Returns:
-            Rotated tensor.
-        """
+    def _rotate_half(x: torch.Tensor, cos: torch.Tensor, sin: torch.Tensor) -> torch.Tensor:
         if x.dim() == 4:
             cos = cos.unsqueeze(0).unsqueeze(0)
             sin = sin.unsqueeze(0).unsqueeze(0)
         elif x.dim() == 3:
             cos = cos.unsqueeze(0)
             sin = sin.unsqueeze(0)
-            
         x1 = x[..., :x.shape[-1] // 2]
         x2 = x[..., x.shape[-1] // 2:]
-        
-        rotated = torch.cat([
-            -x2 * sin + x1 * cos,
-            x1 * sin + x2 * cos
-        ], dim=-1)
-        
-        return rotated
+        return torch.cat([-x2 * sin + x1 * cos, x1 * sin + x2 * cos], dim=-1)
 
 
-class YvDynamicYaRNRotaryEmbedding(YvYaRNRotaryEmbedding):
-    """Dynamic YaRN RoPE with learned scaling for adaptive position encoding.
-    
-    Extends YaRN with learned scaling parameters for improved long-context
-    extrapolation and task-aware position scaling. This allows the model
-    to adapt its position encoding strategy based on the task and sequence
-    characteristics.
-    
-    Key Features:
-        - Learned scaling parameters for better extrapolation
-        - Task-aware position scaling
-        - Adaptive to different sequence length distributions
-        - Inherits all YaRN capabilities
-    
-    Learned Components:
-        - Scaling factor: Learned adjustment to base scaling
-        - Task embeddings: Optional task-specific scaling adjustments
-    
-    Use Cases:
-        - Multi-task models with varying context requirements
-        - Models that need to adapt to different sequence distributions
-        - Fine-tuning on tasks with specific context patterns
-    
-    Attributes:
-        Inherited from YvYaRNRotaryEmbedding plus:
-        learned_scale (nn.Parameter): Learned scaling adjustment.
-        task_scale_embed (Optional[nn.Embedding]): Task-specific scaling.
-        enable_learned_scaling (bool): Whether learned scaling is enabled.
-        enable_task_aware (bool): Whether task-aware scaling is enabled.
-    
-    Example:
-        >>> rope = YvDynamicYaRNRotaryEmbedding(
-        ...     dim=128,
-        ...     max_position_embeddings=10485760,
-        ...     enable_learned_scaling=True
-        ... )
-        >>> query = torch.randn(1, 32, 100000, 128)
-        >>> rotated = rope(query, task_id=0)
-    
-    Note:
-        Learned scaling is initialized close to 1.0 to preserve
-        the base YaRN behavior at the start of training.
-    """
-    
+# Backward‑compatible alias
+YvYaRNRotaryEmbedding = YvUnifiedRotaryEmbedding
+
+
+class YvDynamicYaRNRotaryEmbedding(YvUnifiedRotaryEmbedding):
+    """Dynamic YaRN RoPE — thin wrapper with default use_dynamic=True."""
+
     def __init__(
         self,
         dim: int,
@@ -1023,171 +719,19 @@ class YvDynamicYaRNRotaryEmbedding(YvYaRNRotaryEmbedding):
         original_max_position_embeddings: int = 4096,
         device: Optional[torch.device] = None,
         enable_learned_scaling: bool = True,
-        enable_task_aware: bool = True
+        enable_task_aware: bool = True,
     ):
-        """Initialize Dynamic YaRN with learned scaling.
-        
-        Args:
-            dim: Dimension of the embedding.
-            max_position_embeddings: Maximum supported sequence length.
-                Default: 10M tokens for ultra-long context.
-            base: Base frequency for RoPE computation. Default: 10000.
-            scale: Base YaRN scaling factor. Default: 32.0.
-            original_max_position_embeddings: Original training sequence
-                length. Default: 4096.
-            device: Device for buffers and parameters.
-            enable_learned_scaling: Whether to use learned scaling
-                parameters. Default: True.
-            enable_task_aware: Whether to enable task-specific scaling
-                adjustments. Default: True.
-        
-        Example:
-            >>> rope = YvDynamicYaRNRotaryEmbedding(
-            ...     dim=128,
-            ...     enable_learned_scaling=True,
-            ...     enable_task_aware=True
-            ... )
-        """
         super().__init__(
-            dim, max_position_embeddings, base, scale,
-            original_max_position_embeddings, device
+            dim=dim, max_position_embeddings=max_position_embeddings,
+            base=base, scale=scale,
+            original_max_position_embeddings=original_max_position_embeddings,
+            device=device,
+            use_mr_rope=False, mr_rope_mode='pro',
+            use_dynamic=True,
+            enable_learned_scaling=enable_learned_scaling,
+            enable_task_aware=enable_task_aware,
+            linear_scale=1.0,
         )
-        
-        self.enable_learned_scaling = enable_learned_scaling
-        self.enable_task_aware = enable_task_aware
-        
-        if enable_learned_scaling:
-            self.learned_scale = nn.Parameter(torch.tensor(1.0))
-            self.ntk_scale_factor = nn.Parameter(torch.tensor(1.0))
-            self.log_scale_factor = nn.Parameter(torch.tensor(0.0))
-            
-        if enable_task_aware:
-            self.task_scale_net = nn.Sequential(
-                nn.Linear(dim, dim // 4),
-                nn.ReLU(),
-                nn.Linear(dim // 4, 2)
-            )
-            
-    def _compute_dynamic_ntk_scale(self, seq_len: int) -> float:
-        """Compute dynamic NTK scale with learned parameters.
-        
-        Args:
-            seq_len: Current sequence length.
-            
-        Returns:
-            Dynamic scaling factor.
-        """
-        if seq_len <= self.original_max_position_embeddings:
-            return 1.0
-            
-        ratio = seq_len / self.original_max_position_embeddings
-        base_scale = ratio ** (self.dim / (self.dim - 2))
-        
-        if hasattr(self, 'learned_scale'):
-            learned_multiplier = torch.sigmoid(self.learned_scale)
-            ntk_multiplier = torch.sigmoid(self.ntk_scale_factor)
-            log_factor = torch.exp(self.log_scale_factor)
-            
-            if seq_len > 1000000:
-                log_scale = math.log(ratio) / math.log(10) + 1.0
-                scale = base_scale * log_scale * log_factor
-            else:
-                scale = base_scale * ntk_multiplier
-                
-            scale = scale * learned_multiplier
-        else:
-            if seq_len > 1000000:
-                log_scale = math.log(ratio) / math.log(10) + 1.0
-                scale = ratio ** (self.dim / (self.dim - 2)) * log_scale
-            else:
-                scale = ratio ** (self.dim / (self.dim - 2))
-                
-        scale = max(scale, 1.0)
-        return min(scale, self.scale * 2)
-        
-    def _compute_scale_factors(
-        self,
-        seq_len: int,
-        task_embedding: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        """Compute scale factors with task-aware modulation.
-        
-        Args:
-            seq_len: Current sequence length.
-            task_embedding: Optional task embedding for modulation.
-            
-        Returns:
-            Scale factors tensor.
-        """
-        if seq_len > self.max_seq_len_seen.item():
-            self.max_seq_len_seen.fill_(seq_len)
-            
-        ntk_scale = self._compute_dynamic_ntk_scale(seq_len)
-        
-        positions = torch.arange(seq_len, device=self.dynamic_base.device)
-        scale_factors = torch.ones(seq_len, device=self.dynamic_base.device)
-        
-        if ntk_scale > 1.0:
-            crossover = int(math.sqrt(self.original_max_position_embeddings))
-            
-            task_modulation = torch.ones(seq_len, device=self.dynamic_base.device)
-            if task_embedding is not None and self.enable_task_aware:
-                task_weights = self.task_scale_net(task_embedding.mean(dim=0))
-                task_modulation = 1.0 + 0.1 * task_weights[0] * torch.arange(seq_len, device=self.dynamic_base.device) / seq_len
-                
-            if seq_len > crossover:
-                high_positions = positions[crossover:]
-                base_scaling = (high_positions / crossover) ** (1.0 / (ntk_scale * self.scale))
-                scale_factors[crossover:] = base_scaling * task_modulation[crossover:]
-                
-        return scale_factors
-        
-    def forward(
-        self,
-        x: torch.Tensor,
-        seq_len: Optional[int] = None,
-        task_embedding: Optional[torch.Tensor] = None
-    ) -> torch.Tensor:
-        """Apply dynamic YaRN rotary embedding.
-        
-        Args:
-            x: Input tensor.
-            seq_len: Optional sequence length override.
-            task_embedding: Optional task embedding for modulation.
-            
-        Returns:
-            Tensor with dynamic YaRN embeddings applied.
-        """
-        device = x.device
-        
-        if x.dim() == 4:
-            actual_seq_len = seq_len or x.shape[2]
-            embedding_dim = x.shape[3]
-        elif x.dim() == 3:
-            actual_seq_len = seq_len or x.shape[1]
-            embedding_dim = x.shape[2]
-        else:
-            raise ValueError(f"Input tensor must be 3D or 4D, got {x.dim()}D")
-            
-        scale_factors = self._compute_scale_factors(actual_seq_len, task_embedding)
-        
-        t = torch.arange(actual_seq_len, device=device, dtype=torch.float32)
-        t = t * scale_factors
-        
-        dynamic_freq = 1.0 / (self.dynamic_base ** (torch.arange(0, embedding_dim, 2).float().to(device) / embedding_dim))
-        freqs = torch.outer(t, dynamic_freq)
-        
-        cos = freqs.cos()
-        sin = freqs.sin()
-        
-        if x.dim() == 4:
-            cos = cos[:x.shape[2], :]
-            sin = sin[:x.shape[2], :]
-        else:
-            cos = cos[:x.shape[1], :]
-            sin = sin[:x.shape[1], :]
-            
-        return self._rotate_half(x, cos, sin)
 
 
 # Paper: Wang et al., "DeepNet: Scaling Transformers to 1,000 Layers", arXiv:2203.00555, 2022

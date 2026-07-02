@@ -1761,49 +1761,29 @@ class YvUnifiedCacheManager:
         self.speculative_cache: Dict[str, Any] = {}
         self.h2o_cache: Dict[Any, Any] = {}
 
-        self.paged_manager: Optional[YvPagedCacheManager] = None
-        self.ssm_manager: Optional[YvSSMCacheManager] = None
-        self.speculative_manager: Optional[YvSpeculativeCacheManager] = None
-        self.multimodal_manager: Optional[YvMultimodalCacheManager] = None
-        self.compressor: Optional[YvCacheCompressor] = None
+        hidden_size = getattr(config, 'hidden_size', 4096)
 
-        self.predictive_delta: Optional[YvPredictiveDeltaCoder] = None
-        self.plt_trie: Optional[YvPLTTrieIndex] = None
+        self.predictive_delta = YvPredictiveDeltaCoder(
+            hidden_size=hidden_size,
+            kv_lora_rank=self.config.kv_lora_rank,
+            num_layers=self.config.n_layers,
+            predictor_bottleneck=self.config.predictive_delta_bottleneck,
+            delta_bits=self.config.predictive_delta_bits,
+            use_layer_specific_predictors=True,
+            dtype=self.config.dtype,
+            device=self.config.device,
+        )
 
-        if self.config.use_predictive_delta:
-            _LOG.info(f"YvUnifiedCacheManager: Enabling Predictive Delta Coding "
-                       f"(bits={self.config.predictive_delta_bits}, "
-                       f"kv_lora_rank={self.config.kv_lora_rank})")
-            self.predictive_delta = YvPredictiveDeltaCoder(
-                hidden_size=getattr(config, 'hidden_size', 4096),
-                kv_lora_rank=self.config.kv_lora_rank,
-                num_layers=self.config.n_layers,
-                predictor_bottleneck=self.config.predictive_delta_bottleneck,
-                delta_bits=self.config.predictive_delta_bits,
-                use_layer_specific_predictors=True,
-                dtype=self.config.dtype,
-                device=self.config.device,
-            )
+        self.plt_trie = YvPLTTrieIndex(
+            distance_threshold_bits=self.config.plt_trie_distance_threshold,
+            max_nodes=self.config.plt_trie_max_nodes,
+        )
 
-        if self.config.use_plt_trie:
-            _LOG.info(f"YvUnifiedCacheManager: Enabling PLT Trie prefix deduplication "
-                       f"(threshold={self.config.plt_trie_distance_threshold} bits)")
-            self.plt_trie = YvPLTTrieIndex(
-                distance_threshold_bits=self.config.plt_trie_distance_threshold,
-                max_nodes=self.config.plt_trie_max_nodes,
-            )
-
-        if self.config.cache_type in [YvCacheType.PAGED, YvCacheType.HYBRID]:
-            self.paged_manager = YvPagedCacheManager(self.config)
-
-        if self.config.cache_type == YvCacheType.SSM:
-            self.ssm_manager = YvSSMCacheManager(self.config)
-
-        if self.config.cache_type == YvCacheType.SPECULATIVE:
-            self.speculative_manager = YvSpeculativeCacheManager(self.config)
-
-        if self.config.enable_compression:
-            self.compressor = YvCacheCompressor(self.config)
+        self.paged_manager = YvPagedCacheManager(self.config)
+        self.ssm_manager = YvSSMCacheManager(self.config)
+        self.speculative_manager = YvSpeculativeCacheManager(self.config)
+        self.multimodal_manager = YvMultimodalCacheManager(self.config)
+        self.compressor = YvCacheCompressor(self.config)
 
         self.cache_hits = 0
         self.cache_misses = 0
@@ -1853,11 +1833,9 @@ class YvUnifiedCacheManager:
         key_states: torch.Tensor,
         value_states: torch.Tensor,
         current_pos: int,
-        use_h2o: bool = True
     ):
         with self._get_layer_lock(layer_idx):
-            if use_h2o and self.config.use_h2o_attention:
-                key_states, value_states = self._apply_h2o_cache_selection(key_states, value_states, current_pos)
+            key_states, value_states = self._apply_h2o_cache_selection(key_states, value_states, current_pos)
 
             entry = self.kv_cache.get(layer_idx)
             if entry is None:
@@ -1879,19 +1857,13 @@ class YvUnifiedCacheManager:
                     vb = tail_v[:, :, s:e, :]
                     block_tokens = e - s
 
-                    use_delta = (
-                        self.predictive_delta is not None
-                        and block_tokens == 1
-                        and self.predictive_delta._enable_delta
-                    )
-
-                    if use_delta:
+                    if block_tokens == 1 and self.predictive_delta._enable_delta:
                         delta_entry, (kb, vb) = self._delta_encode_block(kb, vb, layer_idx)
                         entry['blocks'].append(delta_entry)
                         entry['total_len'] += block_tokens
                         continue
 
-                    if self.config.cache_quantization and kb.shape[2] >= min(bs, 256):
+                    if kb.shape[2] >= min(bs, 256):
                         kb, vb = self._quantize_cache(kb, vb)
 
                     entry['blocks'].append((kb, vb))
@@ -2176,9 +2148,7 @@ class YvUnifiedCacheManager:
         return (q * scale).to(tensor.dtype)
 
     def allocate_paged_sequence(self, seq_id: int, initial_blocks: int = 1) -> bool:
-        if self.paged_manager is not None:
-            return self.paged_manager.allocate_sequence(seq_id, initial_blocks)
-        return False
+        return self.paged_manager.allocate_sequence(seq_id, initial_blocks)
 
     def append_paged(
         self,
@@ -2187,27 +2157,19 @@ class YvUnifiedCacheManager:
         values: torch.Tensor,
         layer_idx: int
     ) -> bool:
-        if self.paged_manager is not None:
-            return self.paged_manager.append(seq_id, keys, values, layer_idx)
-        return False
+        return self.paged_manager.append(seq_id, keys, values, layer_idx)
 
     def read_paged(self, seq_id: int, layer_idx: int) -> Optional[Tuple[torch.Tensor, torch.Tensor]]:
-        if self.paged_manager is not None:
-            return self.paged_manager.read(seq_id, layer_idx)
-        raise RuntimeError("Paged cache manager is not initialized.")
+        return self.paged_manager.read(seq_id, layer_idx)
 
     def free_paged_sequence(self, seq_id: int):
-        if self.paged_manager is not None:
-            self.paged_manager.free_sequence(seq_id)
+        self.paged_manager.free_sequence(seq_id)
 
     def get_ssm_state(self, layer_idx: int, seq_id: Optional[int] = None) -> torch.Tensor:
-        if self.ssm_manager is not None:
-            return self.ssm_manager.get_state(layer_idx, seq_id)
-        return torch.zeros(1, 256, dtype=self.config.dtype, device=self.config.device)
+        return self.ssm_manager.get_state(layer_idx, seq_id)
 
     def update_ssm_state(self, layer_idx: int, state: torch.Tensor, seq_id: Optional[int] = None):
-        if self.ssm_manager is not None:
-            self.ssm_manager.update_state(layer_idx, state, seq_id)
+        self.ssm_manager.update_state(layer_idx, state, seq_id)
 
     def store_speculative_draft(
         self,
@@ -2216,27 +2178,19 @@ class YvUnifiedCacheManager:
         logits: torch.Tensor,
         tokens: torch.Tensor
     ):
-        if self.speculative_manager is not None:
-            self.speculative_manager.store_draft(draft_length, hidden_states, logits, tokens)
+        self.speculative_manager.store_draft(draft_length, hidden_states, logits, tokens)
 
     def get_speculative_draft(self, draft_length: int) -> Optional[Dict[str, torch.Tensor]]:
-        if self.speculative_manager is not None:
-            return self.speculative_manager.get_draft(draft_length)
-        raise RuntimeError("Speculative cache manager is not initialized.")
+        return self.speculative_manager.get_draft(draft_length)
 
     def get_optimal_draft_length(self) -> int:
-        if self.speculative_manager is not None:
-            return self.speculative_manager.get_optimal_draft_length()
-        return 4
+        return self.speculative_manager.get_optimal_draft_length()
 
     def store_multimodal_cache(self, modality: str, cache_key: str, cache_data: torch.Tensor):
-        if self.multimodal_manager is not None:
-            self.multimodal_manager.store_modality_cache(modality, cache_key, cache_data)
+        self.multimodal_manager.store_modality_cache(modality, cache_key, cache_data)
 
     def get_multimodal_cache(self, modality: str, cache_key: str) -> Optional[torch.Tensor]:
-        if self.multimodal_manager is not None:
-            return self.multimodal_manager.get_modality_cache(modality, cache_key)
-        raise RuntimeError("Multimodal cache manager is not initialized.")
+        return self.multimodal_manager.get_modality_cache(modality, cache_key)
 
     def compress_cache(
         self,
@@ -2244,9 +2198,7 @@ class YvUnifiedCacheManager:
         values: torch.Tensor,
         target_ratio: float = 0.5
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        if self.compressor is not None:
-            return self.compressor.compress_importance_based(keys, values, target_ratio)
-        return keys, values
+        return self.compressor.compress_importance_based(keys, values, target_ratio)
 
     def find_plt_prefix_match(
         self,
@@ -2272,8 +2224,6 @@ class YvUnifiedCacheManager:
         Reference:
             Magarshak, arXiv:2604.15356, 2026, Section 4.
         """
-        if self.plt_trie is None:
-            raise RuntimeError("PLT trie is not initialized.")
         return self.plt_trie.find_longest_match(token_ids, log_probs)
 
     def insert_plt_prefix(
@@ -2292,8 +2242,7 @@ class YvUnifiedCacheManager:
             log_probs: Per-token log-probabilities.
             block_ids: Paged cache block IDs for this prefix.
         """
-        if self.plt_trie is not None:
-            self.plt_trie.insert(token_ids, log_probs, block_ids)
+        self.plt_trie.insert(token_ids, log_probs, block_ids)
 
     def compute_plt_trie_distance(
         self,
@@ -2315,9 +2264,7 @@ class YvUnifiedCacheManager:
         Returns:
             Trie distance in bits.
         """
-        if self.plt_trie is not None:
-            return self.plt_trie.trie_distance(seq_a, seq_b, log_probs_a, log_probs_b)
-        return float('inf')
+        return self.plt_trie.trie_distance(seq_a, seq_b, log_probs_a, log_probs_b)
 
     def clear_cache(self):
         with self._lock:
@@ -2328,11 +2275,9 @@ class YvUnifiedCacheManager:
             self.cache_hits = 0
             self.cache_misses = 0
             self.cache_evictions = 0
-            if self.plt_trie is not None:
-                self.plt_trie.clear()
-            if self.predictive_delta is not None:
-                self.predictive_delta.reset_stats()
-                self.predictive_delta._pending_predictions.clear()
+            self.plt_trie.clear()
+            self.predictive_delta.reset_stats()
+            self.predictive_delta._pending_predictions.clear()
 
     def get_cache_stats(self) -> Dict[str, Any]:
         total_requests = self.cache_hits + self.cache_misses
@@ -2358,15 +2303,11 @@ class YvUnifiedCacheManager:
             'speculative_cache_size': len(self.speculative_cache),
             'h2o_cache_entries': len(self.h2o_cache),
             'cache_window_size': self.config.cache_window_size,
-            'quantization_enabled': bool(self.config.cache_quantization)
+            'quantization_enabled': bool(self.config.cache_quantization),
+            'paged_sequences': len(self.paged_manager.sequence_blocks),
+            'paged_free_blocks': len(self.paged_manager.free_blocks),
+            'ssm_cached_layers': len(self.ssm_manager.state_cache),
         }
-
-        if self.paged_manager is not None:
-            stats['paged_sequences'] = len(self.paged_manager.sequence_blocks)
-            stats['paged_free_blocks'] = len(self.paged_manager.free_blocks)
-
-        if self.ssm_manager is not None:
-            stats['ssm_cached_layers'] = len(self.ssm_manager.state_cache)
 
         if self.predictive_delta is not None:
             stats.update({
@@ -2374,8 +2315,7 @@ class YvUnifiedCacheManager:
                 for k, v in self.predictive_delta.get_stats().items()
             })
 
-        if self.plt_trie is not None:
-            stats['plt_trie_nodes'] = self.plt_trie.get_stats().get('node_count', 0)
+        stats['plt_trie_nodes'] = self.plt_trie.get_stats().get('node_count', 0)
 
         return stats
 
@@ -2416,3 +2356,46 @@ class YvUnifiedCacheManager:
                     'blocks': blocks_data,
                     'total_len': entry['total_len']
                 }
+
+
+class YvKVCacheRing:
+    """Preallocated ring buffer to replace per-step torch.cat for KV cache.
+
+    Allocates buffer on first use and grows exponentially. New tokens are
+    written via copy_ instead of creating new tensors each step.
+    """
+
+    def __init__(self, grow_factor: float = 2.0, max_seq_len: int = 0):
+        self.k_buf = None
+        self.v_buf = None
+        self.pos = 0
+        self.grow_factor = grow_factor
+        self.max_seq_len = max_seq_len
+
+    def append(self, k: torch.Tensor, v: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        B, H, T, D = k.shape
+        new_pos = self.pos + T
+        need = max(new_pos, self.max_seq_len)
+
+        if self.k_buf is None:
+            alloc = max(need, new_pos * 2)
+            self.k_buf = k.new_empty(B, H, alloc, D)
+            self.v_buf = v.new_empty(B, H, alloc, D)
+        elif new_pos > self.k_buf.shape[2]:
+            alloc = max(int(self.k_buf.shape[2] * self.grow_factor), need)
+            new_k = k.new_empty(B, H, alloc, D)
+            new_v = v.new_empty(B, H, alloc, D)
+            new_k[:, :, :self.pos].copy_(self.k_buf[:, :, :self.pos])
+            new_v[:, :, :self.pos].copy_(self.v_buf[:, :, :self.pos])
+            self.k_buf = new_k
+            self.v_buf = new_v
+
+        self.k_buf[:, :, self.pos:new_pos] = k
+        self.v_buf[:, :, self.pos:new_pos] = v
+        self.pos = new_pos
+        return self.k_buf[:, :, :self.pos], self.v_buf[:, :, :self.pos]
+
+    def reset(self):
+        self.k_buf = None
+        self.v_buf = None
+        self.pos = 0

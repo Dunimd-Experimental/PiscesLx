@@ -77,11 +77,6 @@ class YvDualInjector(nn.Module):
     ):
         super().__init__()
         self.cfg = cfg
-        self.mode = getattr(cfg, "dual_inject_mode", "dual")
-        if self.mode not in ("film", "kv", "dual", "none"):
-            raise ValueError(
-                f"dual_inject_mode must be one of film/kv/dual/none, got {self.mode}"
-            )
 
         _sc_kw = lambda key, default: getattr(cfg, f"subconscious_{key}", default)
 
@@ -107,74 +102,40 @@ class YvDualInjector(nn.Module):
             dtype=dtype,
         )
 
-        if self.mode == "dual":
-            hidden_size = cfg.hidden_size
-            self.film_gate = nn.Sequential(
-                nn.Linear(hidden_size, hidden_size // 4, device=device, dtype=dtype),
-                nn.SiLU(),
-                nn.Linear(hidden_size // 4, 1, device=device, dtype=dtype),
-                nn.Sigmoid(),
-            )
-        else:
-            self.film_gate = None
-
-    def _compute_alpha(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Compute FiLM blending weight for dual mode.
-
-        Args:
-            hidden_states: [batch, seq, hidden_size].
-
-        Returns:
-            alpha: [batch, seq, 1] with values in (0, 1).
-        """
-        if self.film_gate is None:
-            return 0.5  # default balance when not in dual mode
-        return self.film_gate(hidden_states)
+        hidden_size = cfg.hidden_size
+        self.film_gate = nn.Sequential(
+            nn.Linear(hidden_size, hidden_size // 4, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(hidden_size // 4, 1, device=device, dtype=dtype),
+            nn.Sigmoid(),
+        )
 
     def inject(
         self,
         hidden_states: torch.Tensor,
         layer_idx: int,
-    ) -> Tuple[torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
-        """Apply the configured knowledge injection to ``hidden_states``.
+    ) -> Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        """Dual-path knowledge injection: FiLM + KV separation.
+
+        Always blends the subconscious FiLM-modulated stream with the
+        raw hidden stream (dual mode), and always produces extra KV pairs
+        from the memory separation layer.
 
         Args:
             hidden_states: [batch, seq, hidden_size] from the 7B core.
             layer_idx: Index of the transformer layer consuming the output.
 
         Returns:
-            A tuple ``(h_out, extra_kv)`` where ``extra_kv`` is ``None``
-            unless the KV path is active. When present, ``extra_kv`` is a
-            pair of tensors of shape ``[batch, n_kv_head, seq, head_dim]``.
+            ``(h_out, extra_kv)`` where ``extra_kv`` is a pair of tensors
+            of shape ``[batch, n_kv_head, seq, head_dim]``.
         """
-        if self.mode == "none":
-            return hidden_states, None
-
-        h = hidden_states
-
-        if self.mode == "kv":
-            # KV-only mode asymmetry: returns extra KV pairs but does NOT
-            # modulate hidden_states. The extra KV pairs are consumed by the
-            # attention layer via concatenation; the hidden stream passes
-            # through unchanged. This is by design — in KV-only mode the
-            # knowledge is injected through the attention values rather than
-            # through FiLM-style activation modulation.
-            extra_kv = self.memory_sep(h, layer_idx)
-            return h, extra_kv
-
-        film_params = self.subconscious.get_film_params(h, layer_idx)
-        h_film = h * (1.0 + film_params["scale"]) + film_params["shift"]
-
-        if self.mode == "film":
-            return h_film, None
-
-        # dual mode: blend FiLM-modulated and raw streams
-        extra_kv = self.memory_sep(h, layer_idx)
-        alpha = self._compute_alpha(h)
-        beta = 1.0 - alpha
-        h_dual = alpha * h_film + beta * h
+        extra_kv = self.memory_sep(hidden_states, layer_idx)
+        film_params = self.subconscious.get_film_params(hidden_states, layer_idx)
+        h_film = hidden_states * (1.0 + film_params["scale"]) + film_params["shift"]
+        alpha = self.film_gate(hidden_states)
+        h_dual = alpha * h_film + (1.0 - alpha) * hidden_states
         return h_dual, extra_kv
 
     def extra_repr(self) -> str:
         total = sum(p.numel() for p in self.parameters())
-        return f"mode={self.mode}, params={total / 1e9:.3f}B"
+        return f"params={total / 1e9:.3f}B"

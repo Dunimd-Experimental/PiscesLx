@@ -288,6 +288,13 @@ class PiscesLxTrainingOperator(object):
         
         self._setup_mixed_precision()
 
+        accum = int(getattr(config, "gradient_accumulation_steps", 4) or 4)
+        if accum <= 1 and self.device.type == "cuda":
+            _LOG.warning(
+                f"gradient_accumulation_steps={accum} may cause OOM for large models. "
+                "Consider setting to 4+ for effective batch size scaling."
+            )
+
         self._modality_scheduler = None
         self._moe_gradient_optimizer = None
         self._kfac_operator = None
@@ -1299,7 +1306,13 @@ class PiscesLxTrainingOperator(object):
             
         except Exception:
             import traceback
-            _LOG.warning(f"Ink optimizer initialization failed, falling back to AdamW. Traceback:\n{traceback.format_exc()}")
+            _LOG.critical(
+                "INK OPTIMIZER INITIALIZATION FAILED — "
+                "FALLING BACK TO FULL-PRECISION ADAMW. "
+                "You are NOT getting 8-bit states, GaLore, KV cache quantization, "
+                "or expert offloading. This will significantly increase GPU memory usage. "
+                f"Error:\n{traceback.format_exc()}"
+            )
             
             default_params = {
                 'lr': self.config.optimizer.learning_rate,

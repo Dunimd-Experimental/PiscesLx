@@ -462,8 +462,8 @@ class YvSwiGLU(nn.Module):
         """
         gate = F.silu(self.gate_proj(x))
         up = self.up_proj(x)
-        gate = torch.clamp(gate, max=10.0)
-        up = torch.clamp(up, min=-10.0, max=10.0)
+        gate.clamp_(max=10.0)
+        up.clamp_(-10.0, 10.0)
         return self.down_proj(gate * up)
 
 
@@ -1012,22 +1012,21 @@ class YvExpertChoiceMLP(nn.Module):
         
         output = torch.zeros_like(x_flat)
         counts = torch.zeros(batch_size * seq_len, device=x.device, dtype=x.dtype)
+        batch_offset = torch.arange(batch_size, device=x.device, dtype=torch.long) * seq_len
+        ones_flat = torch.ones(batch_size * capacity, device=x.device, dtype=x.dtype)
         
         for expert_idx, expert in enumerate(self.experts):
-            batch_indices = torch.arange(batch_size, device=x.device).unsqueeze(1).expand(-1, capacity)
             token_indices = topk_indices[:, expert_idx]
+            flat_indices = (batch_offset.unsqueeze(1) + token_indices).view(-1)
             
-            flat_indices = batch_indices * seq_len + token_indices
-            
-            selected_tokens = x_flat[flat_indices.view(-1)]
-            expert_output = expert(selected_tokens)
-            expert_output = expert_output.view(batch_size, capacity, hidden_size)
+            selected_tokens = x_flat[flat_indices]
+            expert_output = expert(selected_tokens).view(batch_size, capacity, hidden_size)
             
             weights = topk_weights[:, expert_idx].unsqueeze(-1)
             weighted_output = (expert_output * weights).view(-1, hidden_size)
             
-            output.scatter_add_(0, flat_indices.view(-1, 1).expand(-1, hidden_size), weighted_output)
-            counts.scatter_add_(0, flat_indices.view(-1), torch.ones(flat_indices.numel(), device=x.device))
+            output.index_add_(0, flat_indices, weighted_output)
+            counts.index_add_(0, flat_indices, ones_flat)
         
         counts = counts.clamp(min=1.0)
         output = output / counts.unsqueeze(1)
@@ -1135,23 +1134,7 @@ class YvParallelBlock(nn.Module):
             self.phi_balancing = None
             
         self.norm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
-        
-        if getattr(cfg, 'use_layerscale', True):
-            self.attn_scale = YvLayerScale(
-                cfg.hidden_size,
-                init_value=getattr(cfg, 'layerscale_init', 1e-5),
-                device=device, dtype=dtype
-            )
-            self.mlp_scale = YvLayerScale(
-                cfg.hidden_size,
-                init_value=getattr(cfg, 'layerscale_init', 1e-5),
-                device=device, dtype=dtype
-            )
-        else:
-            self.attn_scale = nn.Identity()
-            self.mlp_scale = nn.Identity()
-            
-        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
+        self.residual = YvUnifiedResidual(cfg.hidden_size, num_sublayers=1, cfg=cfg, device=device, dtype=dtype)
         
     def forward(
         self,
@@ -1211,7 +1194,7 @@ class YvParallelBlock(nn.Module):
         if self.phi_balancing is not None and self.training:
             aux_loss = aux_loss + self.phi_balancing.get_regularization_loss()
 
-        output = residual + self.residual_dropout(self.attn_scale(attn_out) + self.mlp_scale(mlp_out))
+        output = self.residual.forward_combined(residual, attn_out + mlp_out)
 
         if use_cache:
             return output, aux_loss, present_kv
@@ -1264,14 +1247,7 @@ class YvDeepNormBlock(nn.Module):
 
         self.mlp = YvDeepSeekMoELayer(cfg, device=device, dtype=dtype)
             
-        self.deep_norm_attn = YvDeepNorm(
-            cfg.hidden_size, cfg.n_layer, device=device, dtype=dtype
-        )
-        self.deep_norm_mlp = YvDeepNorm(
-            cfg.hidden_size, cfg.n_layer, device=device, dtype=dtype
-        )
-        
-        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
+        self.residual = YvUnifiedResidual(cfg.hidden_size, num_sublayers=2, cfg=cfg, device=device, dtype=dtype)
 
         # Phi-Balancing: population-level mirror descent load balancer
         if getattr(cfg, 'use_phi_balancing', False):
@@ -1336,7 +1312,7 @@ class YvDeepNormBlock(nn.Module):
             if hydra_out is not None:
                 attn_out = attn_out + hydra_out
 
-        x = self.deep_norm_attn(residual, self.residual_dropout(attn_out))
+        x = self.residual.forward_deepnorm(residual, attn_out, 0)
         
         residual = x
         mlp_out, aux_loss = self.mlp(x, modal_id=modal_id)
@@ -1345,7 +1321,7 @@ class YvDeepNormBlock(nn.Module):
         if self.phi_balancing is not None and self.training:
             aux_loss = aux_loss + self.phi_balancing.get_regularization_loss()
 
-        x = self.deep_norm_mlp(residual, self.residual_dropout(mlp_out))
+        x = self.residual.forward_deepnorm(residual, mlp_out, 1)
         
         if use_cache:
             return x, aux_loss, present_kv
@@ -1442,6 +1418,51 @@ class YvCrossAttentionBlock(nn.Module):
 
 
 # Paper: Vaswani et al., "Attention Is All You Need", NeurIPS 2017; core transformer block with Yv extensions
+class YvUnifiedResidual(nn.Module):
+    """Unified residual connection absorbing standard, DeepNorm, and mHC variants.
+
+    Always builds all sub-mechanisms and combines them additively.
+    Removes if/else residual branching (use_mhc, use_deepnorm).
+
+    Architecture per sublayer:
+        standard   = residual_scales[i] * dropout(sublayer_out)
+        deepnorm   = dnorm_beta[i] * standard + dnorm_alpha[i] * hidden
+        mhc        = MHC(hidden + standard)
+        output     = hidden + standard + deepnorm + mhc
+    """
+
+    def __init__(self, hidden_size, num_sublayers=2, cfg=None, device=None, dtype=None):
+        super().__init__()
+        self.num_sublayers = num_sublayers
+        init_alpha = getattr(cfg, 'residual_alpha', (2.0 * getattr(cfg, 'n_layer', 32)) ** -0.5) if cfg else 1.0
+        self.residual_scales = nn.ParameterList([
+            nn.Parameter(torch.ones(1, device=device, dtype=dtype) * init_alpha)
+            for _ in range(num_sublayers)
+        ])
+        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1) if cfg else 0.1)
+        self.deepnorm_beta = nn.Parameter(torch.ones(num_sublayers, device=device, dtype=dtype) * (getattr(cfg, 'deepnorm_beta', 0.13) if cfg else 0.13))
+        self.deepnorm_alpha = nn.Parameter(torch.ones(num_sublayers, device=device, dtype=dtype) * (getattr(cfg, 'deepnorm_alpha', 0.87) if cfg else 0.87))
+        self.mhc = YvMHC(hidden_size, n_hc=getattr(cfg, 'mhc_n_hc', 4) if cfg else 4,
+                         sinkhorn_iters=getattr(cfg, 'mhc_sinkhorn_iters', 20) if cfg else 20,
+                         device=device, dtype=dtype)
+
+    def forward(self, hidden_states, sublayer_output, sublayer_idx):
+        standard = self.residual_scales[sublayer_idx] * self.residual_dropout(sublayer_output)
+        deepnorm = self.deepnorm_beta[sublayer_idx] * standard + self.deepnorm_alpha[sublayer_idx] * hidden_states
+        mhc_out = self.mhc(hidden_states + standard)
+        return hidden_states + standard + deepnorm + mhc_out
+
+    def forward_combined(self, hidden_states, combined_output):
+        """For parallel-style where all sublayer outputs are pre-combined."""
+        return self.forward(hidden_states, combined_output, 0)
+
+    def forward_deepnorm(self, hidden_states, sublayer_output, sublayer_idx):
+        """DeepNorm-style: apply deepnorm after the standard path."""
+        standard = self.residual_scales[sublayer_idx] * self.residual_dropout(sublayer_output)
+        dn = self.deepnorm_beta[sublayer_idx] * standard + self.deepnorm_alpha[sublayer_idx] * hidden_states
+        return self.mhc(dn)
+
+
 class YvTransformerBlock(nn.Module):
     """Unified Transformer Block with multiple architecture support.
 
@@ -1569,11 +1590,10 @@ class YvTransformerBlock(nn.Module):
         self.pre_norm1 = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
         self.pre_norm2 = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
 
-        self.residual_scale = nn.Parameter(
-            torch.ones(1, device=device, dtype=dtype) * getattr(cfg, 'residual_alpha', (2.0 * cfg.n_layer) ** -0.5)
+        self.residual = YvUnifiedResidual(
+            cfg.hidden_size, num_sublayers=2, cfg=cfg, device=device, dtype=dtype
         )
-        self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
-        
+
         if self.use_layerscale:
             self.attn_layerscale = YvLayerScale(
                 cfg.hidden_size,
@@ -1583,23 +1603,6 @@ class YvTransformerBlock(nn.Module):
             self.mlp_layerscale = YvLayerScale(
                 cfg.hidden_size,
                 init_value=getattr(cfg, 'layer_scale_init', getattr(cfg, 'layerscale_init', 1e-5)),
-                device=device, dtype=dtype
-            )
-
-        # Manifold-Constrained Hyper-Connections (mHC)
-        # Replaces standard residual with expanded stream + Birkhoff polytope constraint
-        # Based on DeepSeek-V4 Pro technical report
-        if self.use_mhc:
-            self.attn_mhc = YvMHC(
-                cfg.hidden_size,
-                n_hc=getattr(cfg, 'mhc_n_hc', 4),
-                sinkhorn_iters=getattr(cfg, 'mhc_sinkhorn_iters', 20),
-                device=device, dtype=dtype
-            )
-            self.mlp_mhc = YvMHC(
-                cfg.hidden_size,
-                n_hc=getattr(cfg, 'mhc_n_hc', 4),
-                sinkhorn_iters=getattr(cfg, 'mhc_sinkhorn_iters', 20),
                 device=device, dtype=dtype
             )
 
@@ -2256,10 +2259,7 @@ class YvTransformerBlock(nn.Module):
             except (ImportError, ModuleNotFoundError, RuntimeError, ValueError) as e:
                 _LOG.debug(f"YvTransformerBlock: distributed attention gathering skipped: {e}")
 
-        if self.use_mhc:
-            x_out = self.attn_mhc(residual + self.residual_dropout(self.residual_scale * attn_out))
-        else:
-            x_out = residual + self.residual_dropout(self.residual_scale * attn_out)
+        x_out = self.residual(residual, attn_out, 0)
         x_out = self.norm1(x_out)
         
         if hasattr(self, 'ssm_layer') and self.ssm_layer is not None:
@@ -2284,6 +2284,8 @@ class YvTransformerBlock(nn.Module):
                 )
 
         mlp_out, aux_loss = self.mlp(x_norm, modal_id=modal_id)
+        aux_loss = aux_loss + getattr(self.attn, '_sparsity_loss',
+                                       torch.tensor(0.0, device=x.device, dtype=x.dtype))
 
         # Apply phi-balancing to aux_loss
         if getattr(self, 'phi_balancing', None) is not None and self.training:
@@ -2295,10 +2297,7 @@ class YvTransformerBlock(nn.Module):
         if self.use_attn_res:
             self._accumulate_partial_block(mlp_out)
 
-        if self.use_mhc:
-            x_out = self.mlp_mhc(residual + self.residual_dropout(self.residual_scale * mlp_out))
-        else:
-            x_out = residual + self.residual_dropout(self.residual_scale * mlp_out)
+        x_out = self.residual(residual, mlp_out, 1)
         x_out = self.norm2(x_out)
 
         if layer_route_gate is not None:
@@ -2341,22 +2340,28 @@ class YvTransformerBlock(nn.Module):
         Returns:
             Aggregated tensor with attention-weighted block contributions.
         """
-        if self._attn_res_blocks is None or self._attn_res_block_count == 0:
+        count = self._attn_res_block_count.item() if hasattr(self, '_attn_res_block_count') else 0
+        if self._attn_res_blocks is None or count == 0:
             return x
         
         batch_size, seq_len, hidden_size = x.shape
         device = x.device
         dtype = x.dtype
         
-        if self._attn_res_blocks is None or self._attn_res_block_count.item() == 0:
-            return x
-        
-        num_blocks_stored = self._attn_res_blocks.shape[0]
-        num_blocks = min(num_blocks_stored, self.attn_res_max_blocks)
+        num_blocks = min(count, self.attn_res_max_blocks)
         if num_blocks == 0:
             return x
         
-        blocks = self._attn_res_blocks[-num_blocks:]  # [N, B, T, H] where N = num_blocks
+        # Reconstruct chronological order from ring buffer
+        if count <= self.attn_res_max_blocks:
+            blocks = self._attn_res_blocks[:num_blocks]
+        else:
+            write_pos = (count - 1) % self.attn_res_max_blocks
+            start = (write_pos + 1) % self.attn_res_max_blocks
+            if start == 0:
+                blocks = self._attn_res_blocks
+            else:
+                blocks = torch.cat([self._attn_res_blocks[start:], self._attn_res_blocks[:start]], dim=0)
         
         if blocks.dim() != 4 or blocks.shape[0] != num_blocks:
             _LOG.warning(f"AttnRes blocks shape mismatch: blocks.shape={blocks.shape}, num_blocks={num_blocks}")
@@ -2487,31 +2492,17 @@ class YvTransformerBlock(nn.Module):
         
         # Check if we're at a block boundary
         if self.layer_idx % self.attn_res_block_size == 0:
-            # Detach to prevent gradient flow through block storage
             block_repr = x.detach()
-            
-            # Update block count
             self._attn_res_block_count += 1
+            count = self._attn_res_block_count.item()
             
-            # Store block representation
+            # Ring buffer: preallocate on first write, overwrite oldest thereafter
             if self._attn_res_blocks is None:
-                self._attn_res_blocks = block_repr.unsqueeze(0)  # [1, B, T, H]
-            else:
-                # Append new block
-                new_block = block_repr.unsqueeze(0)  # [1, B, T, H]
-                
-                # Limit memory by keeping only max_blocks
-                if self._attn_res_blocks.shape[0] >= self.attn_res_max_blocks:
-                    # Remove oldest block
-                    self._attn_res_blocks = torch.cat([
-                        self._attn_res_blocks[1:],
-                        new_block
-                    ], dim=0)
-                else:
-                    self._attn_res_blocks = torch.cat([
-                        self._attn_res_blocks,
-                        new_block
-                    ], dim=0)
+                self._attn_res_blocks = block_repr.new_zeros(
+                    self.attn_res_max_blocks, *block_repr.shape
+                )
+            write_idx = (count - 1) % self.attn_res_max_blocks
+            self._attn_res_blocks[write_idx].copy_(block_repr)
             
             # Reset partial block accumulation
             self._partial_block_sum = None

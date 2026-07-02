@@ -179,18 +179,15 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Dict, Any, Tuple, List, Union, Callable
-from dataclasses import dataclass, field
+from typing import Optional, Dict, Any, Tuple, List
+from dataclasses import dataclass
 from enum import Enum
 
 from .norms import YvRMSNorm, YvDeepNorm
 from .attention import YvAttention
 from .mamba3 import YvMamba3Integration, YvMamba3Config
 from ..moe import YvDeepSeekMoELayer
-from utils.dc import PiscesLxLogger
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("Yv.Core", file_path=get_log_file("Yv.Core"), enable_file=True)
 
 
 class YvHybridMode(Enum):
@@ -940,9 +937,9 @@ class YvHierarchicalFusion(nn.Module):
             Fused output tensor.
         """
         level_outputs = []
+        combined = torch.cat([attention_out, ssm_out], dim=-1)
         
         for i, (gate, proj) in enumerate(zip(self.level_gates, self.level_projs)):
-            combined = torch.cat([attention_out, ssm_out], dim=-1)
             weights = gate(combined)
             
             attn_weight = weights[..., 0].unsqueeze(-1)
@@ -1083,89 +1080,58 @@ class YvJambaBlock(nn.Module):
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture — hybrid attention-SSM block)
 class YvHybridBlock(nn.Module):
-    """Unified Hybrid Block combining attention and state space models.
+    """Unified Dual-Path Block (Attention + SSM).
 
-    Implements a comprehensive hybrid architecture supporting:
-    - Interleaved attention-SSM
-    - Progressive gating for stable training
-    - Dynamic routing based on sequence characteristics
-    - Parallel attention-SSM execution
-    - Hierarchical fusion strategies
-    - Selective state space models
-    - Memory-efficient computation
+    Always executes both attention and SSM paths in parallel with adaptive
+    fusion. All algorithm variants (selective SSM, progressive gating,
+    adaptive routing, hierarchical fusion, parallel execution) are absorbed
+    into a single forward path without conditional branches.
     """
 
     def __init__(self, cfg, device=None, dtype=None, quantization_config=None):
-        """Initialize the hybrid block.
-
-        Args:
-            cfg: Configuration object containing model hyperparameters.
-            device: Device to place the module on.
-            dtype: Data type for the module parameters.
-            quantization_config: Configuration for model quantization.
-        """
         super().__init__()
         self.cfg = cfg
         self.hidden_size = cfg.hidden_size
-        
-        self.hybrid_mode = getattr(cfg, 'hybrid_mode', 'adaptive')
-        self.use_parallel = getattr(cfg, 'use_parallel', True)
-        self.use_progressive_gate = getattr(cfg, 'use_progressive_gate', True)
-        self.use_selective_ssm = getattr(cfg, 'use_selective_ssm', True)
-        self.sequence_threshold = getattr(cfg, 'sequence_threshold', 4096)
-        
+
+        # === Dual paths: built unconditionally ===
         self.attention = YvAttention(cfg, device=device, dtype=dtype)
-        
+
         self.ssm_config = YvMamba3Config(
             d_model=cfg.hidden_size,
             d_state=getattr(cfg, 'mamba3_d_state', 128),
             d_conv=getattr(cfg, 'mamba3_d_conv', 4),
             expand=getattr(cfg, 'mamba3_expand', 2),
             dt_rank=getattr(cfg, 'mamba3_dt_rank', 'auto'),
-            use_trapezoidal=getattr(cfg, 'mamba3_use_trapezoidal', True),
-            use_complex=getattr(cfg, 'mamba3_use_complex', True),
-            use_mimo=getattr(cfg, 'mamba3_use_mimo', True)
         )
         self.ssm = YvMamba3Integration(cfg.hidden_size, self.ssm_config)
-        
-        if self.use_selective_ssm:
-            self.selective_ssm = YvSelectiveSSM(
-                cfg.hidden_size,
-                state_dim=getattr(cfg, 'ssm_state_dim', 16),
-                expansion_factor=getattr(cfg, 'ssm_expansion_factor', 2),
-                device=device, dtype=dtype
-            )
-            
-        if self.use_progressive_gate:
-            self.progressive_gate = YvProgressiveHybridGate(
-                cfg.hidden_size,
-                total_steps=getattr(cfg, 'hybrid_total_steps', 100000),
-                sequence_threshold=getattr(cfg, 'sequence_threshold', 4096),
-                device=device, dtype=dtype
-            )
-        else:
-            self.fusion_gate = nn.Sequential(
-                nn.Linear(cfg.hidden_size * 2, cfg.hidden_size // 4, device=device, dtype=dtype),
-                nn.SiLU(),
-                nn.Linear(cfg.hidden_size // 4, 2, device=device, dtype=dtype),
-                nn.Softmax(dim=-1)
-            )
-            
-        if self.hybrid_mode == "adaptive":
-            self.adaptive_router = YvAdaptiveRouter(
-                cfg.hidden_size, cfg.n_head,
-                routing_temperature=getattr(cfg, 'gate_temperature', 1.0),
-                device=device, dtype=dtype
-            )
-            
+        self.selective_ssm = YvSelectiveSSM(
+            cfg.hidden_size,
+            state_dim=getattr(cfg, 'ssm_state_dim', 16),
+            expansion_factor=getattr(cfg, 'ssm_expansion_factor', 2),
+            device=device, dtype=dtype
+        )
+
+        # === Fusion components: all built unconditionally ===
+        self.progressive_gate = YvProgressiveHybridGate(
+            cfg.hidden_size,
+            total_steps=getattr(cfg, 'hybrid_total_steps', 100000),
+            sequence_threshold=getattr(cfg, 'sequence_threshold', 4096),
+            device=device, dtype=dtype
+        )
+        self.adaptive_router = YvAdaptiveRouter(
+            cfg.hidden_size, cfg.n_head,
+            routing_temperature=getattr(cfg, 'gate_temperature', 1.0),
+            device=device, dtype=dtype
+        )
+        self.hierarchical_fusion = YvHierarchicalFusion(
+            cfg.hidden_size, num_levels=3, device=device, dtype=dtype
+        )
+
         self.norm_attention = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
         self.norm_ssm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
         self.norm_fusion = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
 
-        # Keep the backbone on a single MoE lane aligned with the latest
-        # DeepSeek-style shared/fine-grained expert design.
         self.mlp = YvDeepSeekMoELayer(cfg, device=device, dtype=dtype)
-
         self.norm_mlp = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
 
         self.residual_scale_attn = nn.Parameter(
@@ -1179,126 +1145,59 @@ class YvHybridBlock(nn.Module):
         )
 
         self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
-
         self.use_checkpoint = getattr(cfg, 'use_checkpoint', True)
-        self.hybrid_layers = getattr(
-            cfg, 'mamba3_layers', list(range(cfg.n_layer // 2, cfg.n_layer))
-        )
+
+        # GSA-style learnable sparse gate for SSM path
+        self.sparse_gate_ssm = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
+        self.gate_sparsity_threshold = 0.01
+        self.sparsity_reg_weight = 1e-6
 
         self.cache_manager = None
         self.layer_idx = -1
 
-        _LOG.info(
-            f"Initialized YvHybridBlock with hybrid_mode={self.hybrid_mode}, "
-            f"sequence_threshold={self.sequence_threshold}"
-        )
-
     def set_cache_manager(self, cache_manager, layer_idx: int):
-        """Set cache manager for efficient inference.
-
-        Args:
-            cache_manager: Cache manager instance for KV cache management.
-            layer_idx: Index of this layer in the model.
-        """
         self.cache_manager = cache_manager
         self.layer_idx = layer_idx
         self.attention.cache_manager = cache_manager
 
-    def _should_use_ssm(self, seq_len: int) -> bool:
-        """Determine whether to use SSM based on sequence length and layer index.
-
-        Args:
-            seq_len: Current sequence length.
-
-        Returns:
-            True if SSM should be used.
-        """
-        return seq_len > self.sequence_threshold and self.layer_idx in self.hybrid_layers
-
     def _forward_attention(
-        self,
-        x: torch.Tensor,
-        mask: Optional[torch.Tensor],
-        past_key_values=None,
-        use_cache=False
+        self, x, mask, past_key_values=None, use_cache=False
     ):
-        """Forward pass through attention mechanism.
-
-        Args:
-            x: Input tensor.
-            mask: Attention mask tensor.
-            past_key_values: Cached key/value pairs.
-            use_cache: Whether to use cache.
-
-        Returns:
-            Tuple of (output, cache).
-        """
         x_norm = self.norm_attention(x)
-
         if use_cache and self.cache_manager is not None and self.layer_idx >= 0:
             got = self.cache_manager.get_kv_cache(self.layer_idx, past_key_values)
-            if got is not None:
-                past_for_attn = got
-            else:
-                past_for_attn = past_key_values
+            past_for_attn = got if got is not None else past_key_values
         else:
             past_for_attn = past_key_values
 
         if use_cache:
             attn_out, present_kv = self.attention(
-                x_norm,
-                mask,
-                past_key_values=past_for_attn,
-                use_cache=True,
+                x_norm, mask, past_key_values=past_for_attn, use_cache=True,
                 cache_manager=self.cache_manager
             )
             if self.cache_manager is not None and self.layer_idx >= 0 and present_kv is not None:
                 self.cache_manager.update_kv_cache(
-                    self.layer_idx,
-                    present_kv[0],
-                    present_kv[1],
+                    self.layer_idx, present_kv[0], present_kv[1],
                     current_pos=x_norm.shape[1],
-                    use_h2o=getattr(self.attention, 'use_h2o', False)
                 )
             return attn_out, present_kv
         else:
             attn_out = self.attention(
-                x_norm,
-                mask,
-                past_key_values=past_for_attn,
-                use_cache=False,
+                x_norm, mask, past_key_values=past_for_attn, use_cache=False,
                 cache_manager=self.cache_manager
             )
             return attn_out, None
 
-    def _forward_ssm(self, x: torch.Tensor, mask: Optional[torch.Tensor]):
-        """Forward pass through SSM.
-
-        Args:
-            x: Input tensor.
-            mask: Optional mask.
-
-        Returns:
-            SSM output tensor.
-        """
-        x_norm = self.norm_ssm(x)
-        
-        if self.use_selective_ssm and self.training:
-            ssm_out = self.selective_ssm(x_norm)
-        else:
+    def _forward_ssm(self, x, mask):
+        ssm_gate = torch.sigmoid(self.sparse_gate_ssm)
+        if self.training or ssm_gate.item() >= self.gate_sparsity_threshold:
+            x_norm = self.norm_ssm(x)
             ssm_out = self.ssm(x_norm, mask)
-            
-        return ssm_out
+            ssm_selective = self.selective_ssm(x_norm)
+            return ssm_out + ssm_selective
+        return torch.zeros_like(x)
 
-    def _forward_mlp(self, x: torch.Tensor, modal_id: Optional[torch.Tensor] = None):
-        """Forward pass through MoE MLP layer.
-
-        Args:
-            x: Input tensor.
-
-        Returns:
-            Tuple of (output, auxiliary_loss).
-        """
+    def _forward_mlp(self, x, modal_id=None):
         x_norm = self.norm_mlp(x)
         if modal_id is not None:
             mlp_out, aux_loss = self.mlp(x_norm, modal_id=modal_id)
@@ -1314,74 +1213,49 @@ class YvHybridBlock(nn.Module):
         use_cache=False,
         modal_id: Optional[torch.Tensor] = None,
     ) -> Dict[str, Any]:
-        """Forward pass of the hybrid block.
-
-        Args:
-            hidden_states: Input tensor.
-            attention_mask: Optional attention mask.
-            past_key_values: Cached key/value pairs.
-            use_cache: Whether to use cache.
-
-        Returns:
-            Dictionary with output and statistics.
-        """
         batch_size, seq_len, d_model = hidden_states.shape
 
-        use_ssm = self._should_use_ssm(seq_len)
-
+        # === Attention path ===
         attn_out, attn_cache = self._forward_attention(
             hidden_states, attention_mask, past_key_values, use_cache
         )
 
-        if use_ssm:
-            ssm_out = self._forward_ssm(hidden_states, attention_mask)
+        # === SSM path (sparse-gated) ===
+        ssm_out = self._forward_ssm(hidden_states, attention_mask)
+        attn_sparsity_loss = getattr(self.attention, '_sparsity_loss',
+                                      torch.tensor(0.0, device=hidden_states.device, dtype=hidden_states.dtype))
 
-            if self.use_progressive_gate:
-                fusion_result = self.progressive_gate(
-                    attn_out, ssm_out, hidden_states, seq_len
-                )
-                hybrid_out = fusion_result["fused_output"]
-            else:
-                combined = torch.cat([attn_out, ssm_out], dim=-1)
-                gate_weights = self.fusion_gate(combined)
-                attn_weight = gate_weights[..., 0].unsqueeze(-1)
-                ssm_weight = gate_weights[..., 1].unsqueeze(-1)
-                hybrid_out = attn_weight * attn_out + ssm_weight * ssm_out
-                fusion_result = {
-                    "attention_weight": gate_weights[..., 0],
-                    "ssm_weight": gate_weights[..., 1],
-                    "gate_type": "learned"
-                }
+        # === Stage-1 fusion: progressive gate ===
+        fusion_prog = self.progressive_gate(attn_out, ssm_out, hidden_states, seq_len)
+        fused = fusion_prog["fused_output"]
 
-            hybrid_out = hidden_states + self.residual_dropout(
-                self.residual_scale_attn * hybrid_out
-            )
+        # === Stage-2 fusion: adaptive router (input-dependent mixing) ===
+        routed, _ = self.adaptive_router(
+            fused, lambda x: attn_out, lambda x: ssm_out
+        )
 
-        else:
-            hybrid_out = hidden_states + self.residual_dropout(
-                self.residual_scale_attn * attn_out
-            )
+        # === Stage-3 fusion: hierarchical multi-level merge ===
+        fused_hier = self.hierarchical_fusion(attn_out, ssm_out, hidden_states)
 
-            fusion_result = {
-                "attention_weight": torch.ones(batch_size, device=hidden_states.device),
-                "ssm_weight": torch.zeros(batch_size, device=hidden_states.device),
-                "gate_type": "attention_only"
-            }
+        # Combine all fusion stages
+        hybrid_out = fused + routed + fused_hier
+        hybrid_out = hidden_states + self.residual_dropout(
+            self.residual_scale_attn * hybrid_out
+        )
 
         mlp_residual = hybrid_out
         hybrid_out = self.norm_fusion(hybrid_out)
 
         mlp_out, aux_loss = self._forward_mlp(hybrid_out, modal_id=modal_id)
+        ssm_sparsity_loss = self.sparsity_reg_weight * torch.sigmoid(self.sparse_gate_ssm).mean()
+        aux_loss = aux_loss + attn_sparsity_loss + ssm_sparsity_loss
 
         output = mlp_residual + self.residual_dropout(
             self.residual_scale_mlp * mlp_out
         )
 
         result = {
-            "output": output,
-            "aux_loss": aux_loss,
-            "use_ssm": use_ssm,
-            "fusion_stats": fusion_result,
+            "output": output, "aux_loss": aux_loss,
             "sequence_length": seq_len
         }
 

@@ -354,32 +354,52 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
             teacher_model, student_model, distill_config
         )
         
-        # Training loop
+        # Training loop with mixed precision + gradient accumulation
         optimizer = AdamW(
             student_model.parameters(),
             lr=self.config.learning_rate,
             weight_decay=self.config.weight_decay,
         )
         
+        use_amp = self.config.use_fp16 and torch.cuda.is_available()
+        scaler = torch.cuda.amp.GradScaler('cuda') if use_amp else None
+        grad_accum = max(1, self.config.gradient_accumulation_steps)
+        max_grad_norm = 1.0
+        
         step = 0
         for batch in dataloader:
             if step >= self.config.distill_steps:
                 break
             
-            result = self._distill_operator.train_step(
-                batch["input_ids"],
-                batch.get("attention_mask"),
-                batch.get("labels"),
-            )
+            with torch.cuda.amp.autocast('cuda', enabled=use_amp):
+                result = self._distill_operator.train_step(
+                    batch["input_ids"],
+                    batch.get("attention_mask"),
+                    batch.get("labels"),
+                )
             
             if result.status == PiscesLxOperatorStatus.SUCCESS:
                 loss = result.data.get("loss", 0)
                 if isinstance(loss, Tensor) and loss.requires_grad:
-                    loss.backward()
+                    loss = loss / grad_accum
+                    if scaler is not None:
+                        scaler.scale(loss).backward()
+                    else:
+                        loss.backward()
+            
+            if (step + 1) % grad_accum == 0:
+                if scaler is not None:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(student_model.parameters(), max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    torch.nn.utils.clip_grad_norm_(student_model.parameters(), max_grad_norm)
                     optimizer.step()
-                    optimizer.zero_grad()
-                    
-                    self.tracker.log_step("distill_loss", loss.item())
+                optimizer.zero_grad()
+                
+                if result.status == PiscesLxOperatorStatus.SUCCESS:
+                    self.tracker.log_step("distill_loss", loss.item() * grad_accum if isinstance(loss, Tensor) else 0)
             
             step += 1
             
@@ -424,12 +444,17 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
         dataloader: DataLoader,
         steps: int,
     ) -> nn.Module:
-        """Train model after growth."""
+        """Train model after growth with mixed precision + gradient accumulation."""
         optimizer = AdamW(
             model.parameters(),
             lr=self.config.learning_rate,
             weight_decay=self.config.weight_decay,
         )
+        
+        use_amp = self.config.use_fp16 and torch.cuda.is_available()
+        scaler = torch.cuda.amp.GradScaler('cuda') if use_amp else None
+        grad_accum = max(1, self.config.gradient_accumulation_steps)
+        max_grad_norm = 1.0
         
         model.train()
         step = 0
@@ -442,20 +467,35 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
             attention_mask = batch.get("attention_mask")
             labels = batch.get("labels", input_ids)
             
-            outputs = model(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                labels=labels,
-            )
+            with torch.cuda.amp.autocast('cuda', enabled=use_amp):
+                outputs = model(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    labels=labels,
+                )
             
             loss = outputs.loss if hasattr(outputs, 'loss') else outputs[0]
             
             if isinstance(loss, Tensor) and loss.requires_grad:
-                loss.backward()
-                optimizer.step()
+                loss = loss / grad_accum
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
+            
+            if (step + 1) % grad_accum == 0:
+                if scaler is not None:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                    optimizer.step()
                 optimizer.zero_grad()
                 
-                self.tracker.log_step("growth_loss", loss.item())
+                if isinstance(loss, Tensor):
+                    self.tracker.log_step("growth_loss", loss.item() * grad_accum)
             
             step += 1
         
@@ -482,6 +522,11 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
             weight_decay=self.config.weight_decay,
         )
         
+        use_amp = self.config.use_fp16 and torch.cuda.is_available()
+        scaler = torch.cuda.amp.GradScaler('cuda') if use_amp else None
+        grad_accum = max(1, self.config.gradient_accumulation_steps)
+        max_grad_norm = 1.0
+        
         model.train()
         step = 0
         
@@ -491,17 +536,31 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
             
             input_ids = batch["input_ids"]
             
-            # Self-evolution step
-            outputs = seal(input_ids)
+            with torch.cuda.amp.autocast('cuda', enabled=use_amp):
+                outputs = seal(input_ids)
             
             if hasattr(outputs, 'loss') and outputs.loss is not None:
                 loss = outputs.loss
                 if isinstance(loss, Tensor) and loss.requires_grad:
-                    loss.backward()
+                    loss = loss / grad_accum
+                    if scaler is not None:
+                        scaler.scale(loss).backward()
+                    else:
+                        loss.backward()
+            
+            if (step + 1) % grad_accum == 0:
+                if scaler is not None:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                     optimizer.step()
-                    optimizer.zero_grad()
-                    
-                    self.tracker.log_step("evolution_loss", loss.item())
+                optimizer.zero_grad()
+                
+                if hasattr(outputs, 'loss') and outputs.loss is not None and isinstance(loss, Tensor):
+                    self.tracker.log_step("evolution_loss", loss.item() * grad_accum)
             
             step += 1
             
@@ -546,24 +605,44 @@ class _EvolutionPipelineImpl(PiscesLxOperatorInterface):
             weight_decay=self.config.weight_decay,
         )
         
+        use_amp = self.config.use_fp16 and torch.cuda.is_available()
+        scaler = torch.cuda.amp.GradScaler('cuda') if use_amp else None
+        grad_accum = max(1, self.config.gradient_accumulation_steps)
+        max_grad_norm = 1.0
+        
         step = 0
         for batch in dataloader:
             if step >= self.config.w2s_steps:
                 break
             
-            result = w2s_operator.train_step(
-                batch["input_ids"],
-                batch.get("attention_mask"),
-            )
+            with torch.cuda.amp.autocast('cuda', enabled=use_amp):
+                result = w2s_operator.train_step(
+                    batch["input_ids"],
+                    batch.get("attention_mask"),
+                )
             
             if result.status == PiscesLxOperatorStatus.SUCCESS:
                 loss = result.data.get("loss", 0)
                 if isinstance(loss, Tensor) and loss.requires_grad:
-                    loss.backward()
+                    loss = loss / grad_accum
+                    if scaler is not None:
+                        scaler.scale(loss).backward()
+                    else:
+                        loss.backward()
+            
+            if (step + 1) % grad_accum == 0:
+                if scaler is not None:
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(pl1_model.parameters(), max_grad_norm)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    torch.nn.utils.clip_grad_norm_(pl1_model.parameters(), max_grad_norm)
                     optimizer.step()
-                    optimizer.zero_grad()
-                    
-                    self.tracker.log_step("w2s_loss", loss.item())
+                optimizer.zero_grad()
+                
+                if result.status == PiscesLxOperatorStatus.SUCCESS:
+                    self.tracker.log_step("w2s_loss", loss.item() * grad_accum if isinstance(loss, Tensor) else 0)
             
             step += 1
             

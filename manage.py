@@ -315,7 +315,6 @@ def _build_train_argv_from_args(args) -> list:
         ("train_config", "--train_config"),
         ("enta", "--enta"),
         ("enta_config", "--enta_config"),
-        ("jsonlines", "--jsonlines"),
         ("dry_run", "--dry_run"),
         ("seq_len", "--seq_len"),
         ("quant", "--quant"),
@@ -1083,13 +1082,6 @@ def main():
         default='',  # Empty means auto-discover
         help='Path to EnTA config file (default: auto-discover configs/teachers.yaml)'
     )
-
-    # --jsonlines: Output structured JSON lines for CLI consumption
-    parser.add_argument(
-        '--jsonlines',
-        action='store_true',
-        help='Enable JSON-lines output for EnTA CLI dashboard'
-    )
     
     # --dry_run: Flag to resolve configs without executing
     # Useful for validating configuration before training
@@ -1621,25 +1613,6 @@ def main():
         if not run_id:
             from opss.run.id_factory import POPSSRunIdFactory
             run_id = POPSSRunIdFactory(prefix="train").new_id()
-
-        # Auto-launch EnTA CLI when ``--enta`` is set and ``enta/cli/`` exists.
-        # Append ``--jsonlines`` so ``manage.py`` won't re-spawn the CLI
-        # (infinite-recursion guard) and the orchestrator emits JSON-line
-        # progress for the dashboard to consume.
-        if getattr(args, 'enta', False) and not getattr(args, 'jsonlines', False):
-            _cli_root = os.path.join(ROOT, 'enta', 'cli')
-            _cli_js = os.path.join(_cli_root, 'dist', 'index.js')
-            if os.path.isfile(_cli_js):
-                import subprocess as _sp
-                _get_logger().info("Auto-launching EnTA CLI dashboard")
-                _cli_args = sys.argv[1:] + ['--jsonlines']
-                _proc = _sp.run(['node', _cli_js] + _cli_args, cwd=_cli_root)
-                sys.exit(_proc.returncode)
-            else:
-                _get_logger().warning(
-                    f"EnTA CLI not found at {_cli_js}; "
-                    "falling back to raw Python output"
-                )
 
         from opss.run.store import POPSSRunStore
         from opss.run.controller import POPSSRunController

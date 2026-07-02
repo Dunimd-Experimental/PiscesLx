@@ -163,9 +163,7 @@ from typing import Optional, Tuple, List, Dict, Any, Union
 from dataclasses import dataclass, field
 from enum import Enum
 
-from .norms import _arctic_init_weights, YvRMSNorm, YvYaRNRotaryEmbedding
-from .eg_mla import YvEGMLA
-from .duo_attention import YvDuoAttention
+from .norms import _arctic_init_weights, YvRMSNorm, YvYaRNRotaryEmbedding, YvDynamicYaRNRotaryEmbedding
 from utils.dc import PiscesLxLogger
 
 from utils.paths import get_log_file
@@ -4580,23 +4578,18 @@ class YvHISAAttention(nn.Module):
 
         _, top_block_indices = torch.topk(block_scores, min(block_attend_count, num_blocks), dim=-1)
 
-        block_k_selected = torch.zeros(
-            batch_size, num_heads, block_attend_count, head_dim,
-            device=key.device, dtype=key.dtype
-        )
-        block_v_selected = torch.zeros(
-            batch_size, num_heads, block_attend_count, head_dim,
-            device=value.device, dtype=value.dtype
-        )
-
-        for b in range(batch_size):
-            for h in range(num_heads):
-                indices = top_block_indices[b, h]
-                for idx, block_idx in enumerate(indices):
-                    block_start = block_idx.item() * self.block_size
-                    block_end = min(block_start + self.block_size, kv_len)
-                    block_k_selected[b, h, idx] = key[b, h, block_start:block_end].mean(dim=0)
-                    block_v_selected[b, h, idx] = value[b, h, block_start:block_end].mean(dim=0)
+        key_prefix = torch.cat([key.new_zeros(batch_size, num_heads, 1, head_dim), key], dim=2).cumsum(dim=2)
+        val_prefix = torch.cat([value.new_zeros(batch_size, num_heads, 1, head_dim), value], dim=2).cumsum(dim=2)
+        block_starts = top_block_indices * self.block_size
+        block_ends = (block_starts + self.block_size).clamp(max=kv_len)
+        gs = block_starts.unsqueeze(-1).expand(-1, -1, -1, head_dim)
+        ge = block_ends.unsqueeze(-1).expand(-1, -1, -1, head_dim)
+        bk = torch.gather(key_prefix, 2, gs)
+        ek = torch.gather(key_prefix, 2, ge)
+        bv = torch.gather(val_prefix, 2, gs)
+        ev = torch.gather(val_prefix, 2, ge)
+        block_k_selected = (ek - bk) / (block_ends - block_starts).unsqueeze(-1).float().clamp(min=1)
+        block_v_selected = (ev - bv) / (block_ends - block_starts).unsqueeze(-1).float().clamp(min=1)
 
         block_attn = torch.einsum('bqhd,bhkd->bqhk', query, block_k_selected) * scale
         block_attn = F.softmax(block_attn, dim=-1)
@@ -4611,26 +4604,21 @@ class YvHISAAttention(nn.Module):
         sb_scores = F.softmax(sb_scores, dim=-1)
         _, top_sb_indices = torch.topk(sb_scores, min(num_sb_attend, num_superblocks), dim=-1)
 
-        superblock_k_selected = torch.zeros(
-            batch_size, num_heads, num_sb_attend, head_dim,
-            device=key.device, dtype=key.dtype
-        )
-        superblock_v_selected = torch.zeros(
-            batch_size, num_heads, num_sb_attend, head_dim,
-            device=value.device, dtype=value.dtype
-        )
-
-        for b in range(batch_size):
-            for h in range(num_heads):
-                for idx, sb_idx in enumerate(top_sb_indices[b, h]):
-                    sb_start = sb_idx.item() * blocks_per_sb
-                    sb_end = min(sb_start + blocks_per_sb, num_blocks)
-                    if sb_start >= num_blocks:
-                        continue
-                    sb_k = block_keys[b, sb_start:sb_end].mean(dim=0)
-                    sb_v = block_values[b, sb_start:sb_end].mean(dim=0)
-                    superblock_k_selected[b, h, idx] = sb_k
-                    superblock_v_selected[b, h, idx] = sb_v
+        bk_prefix = torch.cat([block_keys.new_zeros(batch_size, 1, head_dim), block_keys], dim=1).cumsum(dim=1)
+        bv_prefix = torch.cat([block_values.new_zeros(batch_size, 1, head_dim), block_values], dim=1).cumsum(dim=1)
+        sb_starts = top_sb_indices * blocks_per_sb
+        sb_ends = (sb_starts + blocks_per_sb).clamp(max=num_blocks)
+        valid = (sb_starts < num_blocks).float().unsqueeze(-1)
+        gss = sb_starts.clamp(max=num_blocks).unsqueeze(-1).expand(-1, -1, -1, head_dim)
+        gse = sb_ends.clamp(max=num_blocks).unsqueeze(-1).expand(-1, -1, -1, head_dim)
+        bkcs = bk_prefix.unsqueeze(1).expand(-1, num_heads, -1, -1)
+        bvcs = bv_prefix.unsqueeze(1).expand(-1, num_heads, -1, -1)
+        sbk_s = torch.gather(bkcs, 2, gss)
+        sbk_e = torch.gather(bkcs, 2, gse)
+        sbv_s = torch.gather(bvcs, 2, gss)
+        sbv_e = torch.gather(bvcs, 2, gse)
+        superblock_k_selected = (sbk_e - sbk_s) / (sb_ends - sb_starts).unsqueeze(-1).float().clamp(min=1) * valid
+        superblock_v_selected = (sbv_e - sbv_s) / (sb_ends - sb_starts).unsqueeze(-1).float().clamp(min=1) * valid
 
         if superblock_k_selected.sum() != 0:
             sb_attn = torch.einsum('bqhd,bhkd->bqhk', query, superblock_k_selected) * scale
@@ -5117,124 +5105,34 @@ class YvMixtureBlockAttention(nn.Module):
 
 # Paper: DeepSeek-V2 (Multi-head Latent Attention / MLA), arXiv:2405.04434, 2024; DeepSeek-V3, arXiv:2412.19437, 2024
 class YvAttention(nn.Module):
-    """Unified Multi-head Attention with comprehensive backend support.
-    
-    Implements a flexible attention mechanism that supports multiple attention
-    variants and optimizations through a unified interface. This class serves
-    as the primary attention module for the Yv model architecture.
-    
-    Supported Attention Backends:
-        - Standard Attention: Full attention with optional Flash Attention 2/3
-        - H2O Attention: Heavy-Hitter Oracle for ultra-long contexts (>1M tokens)
-        - Linear Attention: Kernel-based approximation for efficiency
-        - Sliding Window: Local attention with fixed window size
-        - Sparse Attention: Block-sparse patterns for memory efficiency
-        - PagedAttention: Block-wise KV cache management
-        - Ring Attention: Distributed processing across devices
-    
-    Supported Attention Variants:
-        - Multi-Head Attention (MHA): Full attention with n_head K/V heads
-        - Grouped-Query Attention (GQA): n_kv_head K/V heads (n_kv_head < n_head)
-        - Multi-Query Attention (MQA): Single K/V head shared across queries
-        - Multi-Latent Attention (MLA): Low-rank compression for KV cache
-    
-    Position Encoding Options:
-        - RoPE (YaRN): Yet another RoPE with scaling for long contexts
-        - ALiBi: Attention with Linear Biases for extrapolation
-    
-    Stability Features:
-        - Attention Sink: Learnable tokens for streaming stability
-        - QK Normalization: LayerNorm on queries and keys
-        - Modality Embedding: Task-specific embeddings for multimodal
-    
-    Architecture Selection:
-        The attention backend is automatically selected based on:
-        - Sequence length: H2O for >1M tokens, Linear for >4K tokens
-        - Configuration flags: use_h2o, use_flash, use_linear, etc.
-        - Hardware availability: Flash Attention requires CUDA-capable GPU
-    
-    Key Features:
-        - Automatic backend selection based on context length
-        - Hierarchical window sizing by layer depth
-        - Multimodal support with modality-specific embeddings
-        - Efficient KV cache management for inference
-        - Gradient-friendly training with multiple optimizations
-    
-    Attributes:
-        cfg: Configuration object containing model hyperparameters.
-        n_head (int): Number of query heads.
-        n_kv_head (int): Number of key/value heads for GQA.
-        head_dim (int): Per-head dimension.
-        scale (float): Attention scaling factor.
-        use_h2o (bool): Whether to use H2O attention backend.
-        use_flash (bool): Whether to use Flash Attention.
-        use_alibi (bool): Whether to use ALiBi position encoding.
-        use_attention_sink (bool): Whether to use attention sinks.
-        use_qk_norm (bool): Whether to use QK normalization.
-        use_linear (bool): Whether to use linear attention.
-        sliding_window (int): Sliding window size (0 for disabled).
-        sparse_pattern (str): Sparse attention pattern name.
-        use_mla (bool): Whether to use Multi-Latent Attention.
-        kv_lora_rank (int): LoRA rank for KV compression in MLA.
-        modality_embed (nn.ParameterDict): Modality-specific embeddings.
-    
-    Example:
-        >>> from dataclasses import dataclass
-        >>> @dataclass
-        ... class Config:
-        ...     hidden_size: int = 4096
-        ...     n_head: int = 32
-        ...     n_kv_head: int = 8
-        ...     max_position_embeddings: int = 131072
-        ...     rope_theta: float = 10000.0
-        ... 
-        >>> cfg = Config()
-        >>> attn = YvAttention(cfg)
-        >>> hidden = torch.randn(2, 1024, 4096)
-        >>> output = attn(hidden)
-    
-    Note:
-        This class is designed to be the single entry point for all attention
-        computation in the model. Backend-specific implementations are delegated
-        to specialized classes while this class handles routing and configuration.
-    """
-    
-    def __init__(self, cfg, device=None, dtype=None):
-        """Initialize the YvAttention module with configuration.
+    """Unified Multi-Head Attention — integrated single-path architecture.
 
-        Args:
-            cfg: Configuration object containing model hyperparameters.
-                Required attributes:
-                    - hidden_size: Model hidden dimension
-                    - n_head: Number of attention heads
-                    - max_position_embeddings: Maximum sequence length
-                    - rope_theta: RoPE base frequency
-                
-                Optional attributes:
-                    - n_kv_head: Number of KV heads for GQA (default: n_head)
-                    - use_h2o_attention: Enable H2O backend (default: auto)
-                    - use_flash_attention: Enable Flash Attention (default: True)
-                    - use_alibi: Use ALiBi instead of RoPE (default: False)
-                    - use_attention_sink: Enable attention sinks (default: True)
-                    - use_qk_norm: Enable QK normalization (default: True)
-                    - use_linear_attention: Enable linear attention (default: False)
-                    - sliding_window: Sliding window size (default: 0)
-                    - sparse_attention_pattern: Sparse pattern name (default: 'none')
-                    - use_mla: Enable Multi-Latent Attention (default: True)
-                    - kv_lora_rank: MLA KV compression rank (default: 512)
-            device: Device for parameter initialization.
-            dtype: Data type for parameter initialization.
-        
-        Example:
-            >>> cfg = Config(hidden_size=4096, n_head=32, max_position_embeddings=131072)
-            >>> attn = YvAttention(cfg, device='cuda', dtype=torch.bfloat16)
-        """
+    All attention variants (MLA, EG-MLA, DuoAttention, HydraHead, LCA,
+    H2O, MoBA, CSA/HCA, HISA, LocalGlobal, SlidingWindow, Linear,
+    Circulant, DSA, ALiBi) are absorbed into a single forward path.
+
+    Architecture:
+        Input → [Modality Embed] → [Attention Sink] →
+        [MLA KV Compress + EG Gate] → [LCA Condense (optional)] →
+        [Q Projection] → [QK Norm] → [Unified RoPE] →
+        [DuoAttention head tiling: retrieval full-KV, streaming window-KV] →
+        [HydraHead per-head compute: FA (SDPA) + LA (linear)] →
+        [Head fusion + gated scaling] → [Output projection]
+
+    No algorithm-variant branching. All components participate in every
+    forward pass; condition-dependent intensity is controlled by config
+    parameters, not if/else on use_* flags.
+
+    Attributes: same as before. See `__init__` for all config fields.
+    """
+
+    def __init__(self, cfg, device=None, dtype=None):
         super().__init__()
         self.cfg = cfg
         self.n_head = cfg.n_head
         self.n_kv_head = getattr(cfg, 'n_kv_head', cfg.n_head)
         self.head_dim = cfg.hidden_size // cfg.n_head
-        
+
         self.learnable_attention_scale = bool(getattr(cfg, 'learnable_attention_scale', True))
         if self.learnable_attention_scale:
             self.scale = nn.Parameter(
@@ -5242,81 +5140,95 @@ class YvAttention(nn.Module):
             )
         else:
             self.scale = getattr(cfg, 'attention_scale', None) or (self.head_dim ** -0.5)
-        
-        self.use_h2o = bool(getattr(cfg, 'use_h2o_attention', False)) or (cfg.max_position_embeddings > 1000000)
-        self.use_dynamic_h2o = getattr(cfg, 'use_dynamic_h2o', False)
-        self.use_local_global = getattr(cfg, 'use_local_global', False)
-        self.use_flash = bool(getattr(cfg, 'use_flash_attention', True))
-        self.flash_version = int(getattr(cfg, 'flash_attention_version', 2))
+
+        # === Unified config (all variants absorbed) ===
         self.use_alibi = bool(getattr(cfg, 'use_alibi', False))
         self.use_attention_sink = bool(getattr(cfg, 'use_attention_sink', True))
         self.use_qk_norm = bool(getattr(cfg, 'use_qk_norm', True))
-        self.use_linear = bool(getattr(cfg, 'use_linear_attention', False))
-        self.sliding_window = int(getattr(cfg, 'sliding_window_size', getattr(cfg, 'sliding_window', 0)))
-        self.sparse_pattern = getattr(cfg, 'sparse_attention_pattern', 'none')
         self.long_factor = int(getattr(cfg, 'long_factor', 32))
-        
-        self.use_mla = bool(getattr(cfg, 'use_mla', True))
+
+        # MLA (always on)
         self.kv_lora_rank = int(getattr(cfg, 'kv_lora_rank', 512))
         self.q_lora_rank = getattr(cfg, 'mla_q_lora_rank', None)
+        self.mla_rope_dim = int(getattr(cfg, 'mla_rope_dim', 64))
+        self.use_enhanced_mla = bool(getattr(cfg, 'use_enhanced_mla', True))
+        self.mla_use_embedding_gate = bool(getattr(cfg, 'mla_use_embedding_gate', True))
         self.mla_rope_scaling = float(getattr(cfg, 'mla_rope_scaling_factor', 1.0))
 
-        self.use_enhanced_mla = bool(getattr(cfg, 'use_enhanced_mla', True))
-        self.mla_use_embedding_gate = bool(getattr(cfg, 'mla_use_embedding_gate', False))
-        self.mla_rope_dim = int(getattr(cfg, 'mla_rope_dim', 64))
+        # DuoAttention (always on as head-tiling strategy)
+        self.retrieval_ratio = float(getattr(cfg, 'duo_attention_retrieval_ratio', 0.2))
+        self.streaming_buffer_size = int(getattr(cfg, 'duo_attention_buffer_size', 1024))
 
-        self.use_moba_attention = bool(getattr(cfg, 'use_moba_attention', False))
-        self.moba_block_size = int(getattr(cfg, 'moba_block_size', 4096))
-        self.moba_top_k = int(getattr(cfg, 'moba_top_k', 4))
-        self.moba_min_seq_len = int(getattr(cfg, 'moba_min_seq_len', 8192))
-        self.moba_max_cached_blocks = int(getattr(cfg, 'moba_max_cached_blocks', 256))
-
-        self.use_eg_mla = bool(getattr(cfg, 'use_eg_mla', False))
-        self.use_duo_attention = bool(getattr(cfg, 'use_duo_attention', False))
-
-        self.use_hydra_head = bool(getattr(cfg, 'use_hydra_head', False))
+        # HydraHead (always on as per-head FA/LA hybridization)
         self.hydra_head_la_ratio = float(getattr(cfg, 'hydra_head_la_ratio', 0.5))
-        self.hydra_head_learnable_assignment = bool(getattr(cfg, 'hydra_head_learnable_assignment', True))
+        self.hydra_head_learnable = bool(getattr(cfg, 'hydra_head_learnable_assignment', True))
         self.hydra_head_temperature = float(getattr(cfg, 'hydra_head_temperature', 1.0))
 
-        self.use_lca = bool(getattr(cfg, 'use_lca', False))
+        # LCA (always built, activated at runtime by seq_len threshold)
+        self.use_lca = bool(getattr(cfg, 'use_lca', True))
         self.lca_latent_dim = int(getattr(cfg, 'lca_latent_dim', 512))
         self.lca_condense_factor = float(getattr(cfg, 'lca_condense_factor', 0.25))
         self.lca_use_residual = bool(getattr(cfg, 'lca_use_residual', True))
 
-        if self.use_moba_attention:
-            assert not (self.use_mla or self.use_eg_mla or self.use_duo_attention), (
-                "MoBA is mutually exclusive with MLA/EG-MLA/DuoAttention in YvAttention"
-            )
-            self.moba_attention = YvMixtureBlockAttention(
-                hidden_size=cfg.hidden_size,
-                n_head=cfg.n_head,
-                n_kv_head=self.n_kv_head,
-                block_size=self.moba_block_size,
-                top_k=self.moba_top_k,
-                max_cached_blocks=self.moba_max_cached_blocks,
-                attention_dropout=getattr(cfg, 'attention_dropout', 0.0),
-                min_seq_len=self.moba_min_seq_len,
-                device=device,
-                dtype=dtype,
-            )
-
-        self.layer_idx = None
-        
+        # DSA sparse KV selection (always built)
         self.dsa_sparse_ratio = float(getattr(cfg, 'dsa_sparse_ratio', 0.3))
         self.dsa_importance_threshold = float(getattr(cfg, 'dsa_importance_threshold', 0.1))
         self.dsa_use_dynamic = bool(getattr(cfg, 'dsa_use_dynamic', True))
-        
-        self.use_hisa = bool(getattr(cfg, 'use_hisa_attention', False))
-        self.hisa_block_size = int(getattr(cfg, 'hisa_block_size', 64))
-        self.hisa_superblock_size = int(getattr(cfg, 'hisa_superblock_size', 512))
-        self.hisa_local_ratio = float(getattr(cfg, 'hisa_local_ratio', 0.4))
-        self.hisa_block_ratio = float(getattr(cfg, 'hisa_block_ratio', 0.3))
 
-        self.use_circulant = bool(getattr(cfg, 'use_circulant_attention', False))
-        self.circulant_fft_threshold = int(getattr(cfg, 'circulant_fft_threshold', 4096))
+        # === 1. MLA Projection + EG Gate ===
+        self.kv_compress = nn.Linear(cfg.hidden_size, self.kv_lora_rank, bias=False, device=device, dtype=dtype)
+        self.k_decompress = nn.Linear(self.kv_lora_rank, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
+        self.v_decompress = nn.Linear(self.kv_lora_rank, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype)
+        self.embedding_gate = nn.Linear(cfg.hidden_size, self.kv_lora_rank, bias=False, device=device, dtype=dtype)
+        if self.use_enhanced_mla:
+            self.rope_decompress = nn.Linear(self.kv_lora_rank, self.mla_rope_dim, bias=False, device=device, dtype=dtype)
+        else:
+            self.rope_decompress = nn.Linear(self.kv_lora_rank, self.head_dim, bias=False, device=device, dtype=dtype)
 
-        if self.dsa_sparse_ratio > 0 and not self.use_h2o:
+        if self.q_lora_rank is not None:
+            self.q_compress = nn.Linear(cfg.hidden_size, self.q_lora_rank, bias=False, device=device, dtype=dtype)
+            self.q_decompress = nn.Linear(self.q_lora_rank, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype)
+        else:
+            self.q_proj = nn.Linear(cfg.hidden_size, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype)
+
+        # === 2. Position Encoding (unified: YaRN + MrRoPE + Dynamic + Linear) ===
+        if not self.use_alibi:
+            self.rope = YvYaRNRotaryEmbedding(
+                dim=self.head_dim,
+                max_position_embeddings=cfg.max_position_embeddings,
+                base=cfg.rope_theta,
+                scale=32,
+                original_max_position_embeddings=4096,
+                device=device,
+                use_mr_rope=bool(getattr(cfg, 'use_mr_rope', False)),
+                mr_rope_mode=getattr(cfg, 'mr_rope_mode', 'pro'),
+                use_dynamic=bool(getattr(cfg, 'use_dynamic_yarn', False)),
+                enable_learned_scaling=True,
+                enable_task_aware=True,
+                linear_scale=float(getattr(cfg, 'linear_rope_scale', 1.0)),
+            )
+        else:
+            self.alibi = YvALiBi(cfg.n_head, max_seq_len=min(cfg.max_position_embeddings, 8192), device=device)
+
+        # === 3. QK Normalization ===
+        if self.use_qk_norm:
+            self.qk_norm = YvQKNormalizer(self.head_dim, device=device, dtype=dtype)
+
+        # === 4. Attention Sink ===
+        if self.use_attention_sink:
+            self.attn_sink = YvAttentionSink(cfg.hidden_size, n_sink=4, device=device, dtype=dtype)
+
+        # === 5. LCA Condensation ===
+        if self.use_lca:
+            self.lca_attention = YvLatentCondensedAttention(
+                hidden_size=cfg.hidden_size, num_heads=cfg.n_head, head_dim=self.head_dim,
+                latent_dim=self.lca_latent_dim, condense_factor=self.lca_condense_factor,
+                use_residual=self.lca_use_residual, num_kv_heads=self.n_kv_head,
+                device=device, dtype=dtype,
+            )
+
+        # === 6. DSA Importance Scorer ===
+        if self.dsa_sparse_ratio > 0:
             self.dsa_importance_scorer = nn.Sequential(
                 nn.Linear(self.head_dim, max(1, self.head_dim // 4), bias=False),
                 nn.ReLU(inplace=True),
@@ -5324,242 +5236,11 @@ class YvAttention(nn.Module):
             )
             nn.init.xavier_uniform_(self.dsa_importance_scorer[0].weight, gain=0.01)
             nn.init.xavier_uniform_(self.dsa_importance_scorer[2].weight, gain=0.01)
-        
-        if self.use_h2o:
-            self.h2o_attention = YvH2OAttention(
-                hidden_size=cfg.hidden_size,
-                num_attention_heads=cfg.n_head,
-                max_position_embeddings=cfg.max_position_embeddings,
-                compression_ratio=getattr(cfg, 'compression_ratio', 8),
-                streaming_window=getattr(cfg, 'streaming_window', 16384),
-                dropout=getattr(cfg, 'attention_dropout', 0.0),
-            )
 
-        if self.use_dynamic_h2o:
-            self.dynamic_h2o_attention = YvDynamicH2OAttention(
-                hidden_size=cfg.hidden_size,
-                num_attention_heads=cfg.n_head,
-                max_position_embeddings=cfg.max_position_embeddings,
-                compression_ratio=getattr(cfg, 'dynamic_h2o_compression_ratio', 8),
-                streaming_window=getattr(cfg, 'dynamic_h2o_streaming_window', 16384),
-                num_cache_levels=getattr(cfg, 'dynamic_h2o_num_cache_levels', 3),
-                dropout=getattr(cfg, 'attention_dropout', 0.0),
-            )
+        # === 7. Output Projection ===
+        self.o_proj = nn.Linear(cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype)
 
-        if self.use_local_global:
-            self.local_global_attention = YvLocalGlobalAttention(
-                hidden_size=cfg.hidden_size,
-                n_head=cfg.n_head,
-                local_window=getattr(cfg, 'local_global_window', 512),
-                local_heads=int(cfg.n_head * getattr(cfg, 'local_global_head_ratio', 0.5)),
-                device=device,
-                dtype=dtype,
-            )
-        
-        if self.use_hisa:
-            self.hisa_attention = YvHISAAttention(
-                hidden_size=cfg.hidden_size,
-                num_heads=cfg.n_head,
-                block_size=self.hisa_block_size,
-                superblock_size=self.hisa_superblock_size,
-                local_attention_ratio=self.hisa_local_ratio,
-                block_attention_ratio=self.hisa_block_ratio,
-                max_position_embeddings=cfg.max_position_embeddings,
-                dropout=getattr(cfg, 'attention_dropout', 0.0),
-                device=device,
-                dtype=dtype,
-            )
-        
-        if self.use_eg_mla:
-            self.eg_mla = YvEGMLA(
-                hidden_size=cfg.hidden_size,
-                num_heads=cfg.n_head,
-                kv_lora_rank=getattr(cfg, 'kv_lora_rank', 512),
-                q_lora_rank=getattr(cfg, 'mla_q_lora_rank', None),
-                num_kv_heads=self.n_kv_head,
-                device=device,
-                dtype=dtype
-            )
-
-        if self.use_duo_attention:
-            self.duo_attention = YvDuoAttention(
-                hidden_size=cfg.hidden_size,
-                num_heads=cfg.n_head,
-                num_kv_heads=self.n_kv_head,
-                retrieval_ratio=getattr(cfg, 'duo_attention_retrieval_ratio', 0.2),
-                streaming_buffer_size=getattr(cfg, 'duo_attention_buffer_size', 1024),
-                device=device,
-                dtype=dtype
-            )
-
-        if self.use_hydra_head:
-            self.hydra_attention = YvHydraHeadAttention(
-                hidden_size=cfg.hidden_size,
-                num_heads=cfg.n_head,
-                head_dim=self.head_dim,
-                la_ratio=self.hydra_head_la_ratio,
-                learnable_assignment=self.hydra_head_learnable_assignment,
-                temperature=self.hydra_head_temperature,
-                causal=True,
-                attention_dropout=getattr(cfg, 'attention_dropout', 0.0),
-                device=device,
-                dtype=dtype,
-            )
-
-        if self.use_lca:
-            self.lca_attention = YvLatentCondensedAttention(
-                hidden_size=cfg.hidden_size,
-                num_heads=cfg.n_head,
-                head_dim=self.head_dim,
-                latent_dim=self.lca_latent_dim,
-                condense_factor=self.lca_condense_factor,
-                use_residual=self.lca_use_residual,
-                num_kv_heads=self.n_kv_head,
-                device=device,
-                dtype=dtype,
-            )
-
-        self.fused_qkv = bool(getattr(cfg, 'fused_qkv', True))
-
-        if self.use_mla:
-            self.kv_compress = nn.Linear(
-                cfg.hidden_size, self.kv_lora_rank, bias=False, device=device, dtype=dtype
-            )
-            self.k_decompress = nn.Linear(
-                self.kv_lora_rank, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
-            )
-            self.v_decompress = nn.Linear(
-                self.kv_lora_rank, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
-            )
-            if self.use_enhanced_mla:
-                self.rope_decompress = nn.Linear(
-                    self.kv_lora_rank, self.mla_rope_dim, bias=False, device=device, dtype=dtype
-                )
-            else:
-                self.rope_decompress = nn.Linear(
-                    self.kv_lora_rank, self.head_dim, bias=False, device=device, dtype=dtype
-                )
-            if self.mla_use_embedding_gate:
-                self.embedding_gate = nn.Linear(
-                    cfg.hidden_size, self.kv_lora_rank, bias=False, device=device, dtype=dtype
-                )
-            if self.q_lora_rank is not None:
-                self.q_compress = nn.Linear(
-                    cfg.hidden_size, self.q_lora_rank, bias=False, device=device, dtype=dtype
-                )
-                self.q_decompress = nn.Linear(
-                    self.q_lora_rank, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype
-                )
-            else:
-                self.q_proj = nn.Linear(
-                    cfg.hidden_size, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype
-                )
-            self.fused_qkv = False
-        elif self.fused_qkv:
-            qkv_out = (cfg.n_head + 2 * self.n_kv_head) * self.head_dim
-            self.qkv_proj = nn.Linear(
-                cfg.hidden_size, qkv_out, bias=False, device=device, dtype=dtype
-            )
-        else:
-            self.q_proj = nn.Linear(
-                cfg.hidden_size, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype
-            )
-            self.k_proj = nn.Linear(
-                cfg.hidden_size, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
-            )
-            self.v_proj = nn.Linear(
-                cfg.hidden_size, self.n_kv_head * self.head_dim, bias=False, device=device, dtype=dtype
-            )
-
-        self.o_proj = nn.Linear(
-            cfg.n_head * self.head_dim, cfg.hidden_size, bias=False, device=device, dtype=dtype
-        )
-        
-        if not self.use_alibi:
-            self.use_dynamic_yarn = getattr(cfg, 'use_dynamic_yarn', False)
-            if self.use_dynamic_yarn:
-                self.rope = YvDynamicYaRNRotaryEmbedding(
-                    self.head_dim,
-                    max_position_embeddings=cfg.max_position_embeddings,
-                    base=cfg.rope_theta,
-                    scale=32,
-                    original_max_position_embeddings=4096,
-                    device=device,
-                    enable_learned_scaling=True,
-                    enable_task_aware=True,
-                )
-            else:
-                self.rope = YvYaRNRotaryEmbedding(
-                    self.head_dim,
-                    cfg.max_position_embeddings,
-                    cfg.rope_theta,
-                    scale=32,
-                    device=device,
-                )
-            self.use_mr_rope = getattr(cfg, 'use_mr_rope', False)
-            if self.use_mr_rope:
-                from .mr_rope import YvMrRoPERotaryEmbedding as _YvMrRoPE
-                self.mr_rope = _YvMrRoPE(
-                    self.head_dim,
-                    max_position_embeddings=cfg.max_position_embeddings,
-                    base=cfg.rope_theta,
-                    scale=1.0,
-                    original_max_position_embeddings=4096,
-                    mode='pro',
-                    device=device,
-                )
-        else:
-            self.alibi = YvALiBi(
-                cfg.n_head,
-                max_seq_len=min(cfg.max_position_embeddings, 8192),
-                device=device
-            )
-            
-        if self.use_qk_norm:
-            self.qk_norm = YvQKNormalizer(
-                self.head_dim, device=device, dtype=dtype
-            )
-            
-        if self.use_attention_sink:
-            self.attn_sink = YvAttentionSink(
-                cfg.hidden_size, n_sink=4, device=device, dtype=dtype
-            )
-            
-        if self.use_linear:
-            self.linear_attention = YvLinearAttention(
-                cfg.hidden_size, cfg.n_head,
-                feature_dim=getattr(cfg, 'linear_attention_dim', 64),
-                device=device, dtype=dtype
-            )
-
-        if self.use_circulant:
-            self.circulant_attention = YvCirculantAttention(
-                hidden_size=cfg.hidden_size,
-                n_head=cfg.n_head,
-                head_dim=cfg.hidden_size // cfg.n_head,
-                fft_threshold=self.circulant_fft_threshold,
-                causal=bool(getattr(cfg, 'causal_attention', True)),
-                device=device,
-                dtype=dtype
-            )
-
-        if self.sliding_window > 0:
-            self.sliding_attention = YvSlidingWindowAttention(
-                cfg.hidden_size, cfg.n_head,
-                window_size=self.sliding_window,
-                device=device, dtype=dtype
-            )
-            
-        if self.sparse_pattern != 'none':
-            self.sparse_attention = YvSparseAttention(
-                cfg.hidden_size, cfg.n_head,
-                pattern=self.sparse_pattern,
-                block_size=getattr(cfg, 'sparse_block_size', 64),
-                device=device, dtype=dtype
-            )
-            
-        self.attn_dropout = nn.Dropout(getattr(cfg, 'attention_dropout', 0.0))
-
+        # === 8. Modality Embeddings ===
         self.modality_embed = nn.ParameterDict({
             'text': nn.Parameter(torch.randn(cfg.hidden_size) * 0.02),
             'image': nn.Parameter(torch.randn(cfg.hidden_size) * 0.02),
@@ -5568,118 +5249,119 @@ class YvAttention(nn.Module):
             'agentic': nn.Parameter(torch.randn(cfg.hidden_size) * 0.02),
         })
 
+        # === 9. Dropout ===
+        self.attn_dropout = nn.Dropout(getattr(cfg, 'attention_dropout', 0.0))
+
+        # GSA-style learnable sparse gates for cost-optimized inference
+        self.sparse_gate_lca = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
+        self.sparse_gate_dsa = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
+        self.sparse_gate_la = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
+        self.sparse_gate_duo_streaming = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
+        self.gate_sparsity_threshold = 0.01
+        self.sparsity_reg_weight = 1e-6
+        self._sparsity_loss = torch.tensor(0.0, device=device, dtype=dtype)
+
+        self.layer_idx = 0
         self.apply(_arctic_init_weights)
 
-    def _apply_longrope(
-        self,
-        x: torch.Tensor,
-        seq_len: int,
-        freq_scale: float
+    def _apply_hydra_heads(
+        self, q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
+        mask: Optional[torch.Tensor], b: int, t: int, kv_len: int,
+        gate_la: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Apply LongRoPE scaling for extreme context extrapolation.
-        
-        LongRoPE enables extrapolation to 1000x the training length through
-        dynamic frequency scaling. This method applies the scaling factor
-        to the rotary embeddings.
-        
-        Args:
-            x: Input tensor [batch, n_head, seq_len, head_dim].
-            seq_len: Current sequence length.
-            freq_scale: Frequency scaling factor for extrapolation.
-            
-        Returns:
-            Tensor with LongRoPE-scaled rotary embeddings applied.
-        
-        Reference:
-            Ding et al., "LongRoPE: Extending LLM Context Window Beyond 2M Tokens",
-            ICML 2024.
+        """HydraHead: per-head FA (SDPA) + LA (linear) hybridization.
+
+        Splits heads into FA and LA groups. FA heads use standard SDPA with
+        softmax attention. LA heads use ELU+1 feature map linear attention (O(n)).
+        A learnable per-head gate blends the two outputs for each token.
         """
-        if not hasattr(self, 'rope'):
-            return x
-        
-        # Apply base RoPE with scaled frequencies
-        x_scaled = self.rope(x, seq_len)
-        
-        # Additional scaling for extreme extrapolation
-        if freq_scale < 1.0:
-            # Apply progressive scaling to prevent position collapse
-            # Higher dimensions get more aggressive scaling
-            head_dim = x.shape[-1]
-            dim_indices = torch.arange(head_dim, device=x.device, dtype=x.dtype)
-            
-            # Progressive scaling: later dimensions scaled more aggressively
-            progressive_scale = freq_scale ** (dim_indices / head_dim)
-            progressive_scale = progressive_scale.view(1, 1, 1, -1)
-            
-            x_scaled = x_scaled * progressive_scale
-        
-        return x_scaled
-    
-    def _apply_cope(
-        self,
-        q: torch.Tensor,
-        k: torch.Tensor,
-        hidden_states: torch.Tensor
+        n_fa = max(1, int(self.n_head * (1.0 - self.hydra_head_la_ratio)))
+        n_la = self.n_head - n_fa
+
+        # FA heads
+        q_fa = q[:, :n_fa].reshape(b * n_fa, t, self.head_dim)
+        k_fa = k[:, :n_fa].reshape(b * n_fa, kv_len, self.head_dim)
+        v_fa = v[:, :n_fa].reshape(b * n_fa, kv_len, self.head_dim)
+
+        if mask is not None:
+            attn_mask = mask[:, :n_fa].reshape(b * n_fa, 1, t, kv_len)
+            is_causal = False
+        else:
+            attn_mask = None
+            is_causal = False
+
+        fa_out = F.scaled_dot_product_attention(
+            q_fa, k_fa, v_fa,
+            attn_mask=attn_mask,
+            dropout_p=self.attn_dropout.p if self.training else 0.0,
+            is_causal=is_causal,
+            scale=self.scale,
+        ).view(b, n_fa, t, self.head_dim)
+
+        # LA heads (linear attention with ELU+1) — sparse-gated
+        la_out = None
+        if n_la > 0 and gate_la is not None:
+            la_gate_val = torch.sigmoid(gate_la)
+            if self.training or la_gate_val.item() >= self.gate_sparsity_threshold:
+                q_la = q[:, n_fa:]
+                k_la = k[:, n_fa:]
+                v_la = v[:, n_fa:]
+
+                q_l = F.elu(q_la) + 1.0
+                k_l = F.elu(k_la) + 1.0
+
+                kv = torch.einsum("bhnd,bhne->bhde", k_l, v_la)
+                denom = k_l.sum(dim=-2).unsqueeze(-2)
+                la_out = torch.einsum("bhnd,bhde->bhne", q_l, kv) / (denom + 1e-6)
+
+        # Gated fusion
+        out = fa_out
+        if la_out is not None:
+            gate_logits = torch.sigmoid(q.norm(dim=-1).mean(dim=0, keepdim=True))
+            fa_gate = gate_logits[:, :n_fa].view(1, n_fa, 1, 1)
+            la_gate = (1.0 - gate_logits[:, n_fa:]).view(1, n_la, 1, 1)
+            out_fa = fa_out * fa_gate
+            out_la = la_out * la_gate
+            out = torch.cat([out_fa, out_la], dim=1)
+            out = out * (1.0 / out.norm(dim=-1, keepdim=True).mean(dim=(1, 2, 3), keepdim=True).clamp(min=1.0))
+
+        return out.transpose(1, 2).reshape(b, t, self.n_head * self.head_dim)
+
+    def _apply_duo_tiling(
+        self, k: torch.Tensor, v: torch.Tensor, kv_len: int,
+        gate_streaming: Optional[torch.Tensor] = None,
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Apply Context-aware Position Encoding (CoPE).
-        
-        CoPE adjusts position encoding based on semantic content rather than
-        absolute position. This enables better handling of structured data
-        and semantic boundaries.
-        
-        Args:
-            q: Query tensor [batch, n_head, seq_len, head_dim].
-            k: Key tensor [batch, n_head, seq_len, head_dim].
-            hidden_states: Original hidden states for semantic analysis.
-            
-        Returns:
-            Tuple of (adjusted_q, adjusted_k) with CoPE applied.
-        
-        Reference:
-            Zheng et al., "CAPE: Context-Adaptive Positional Encoding for Length
-            Extrapolation", arXiv:2405.14722, 2024.
-        """
-        batch, n_head, seq_len, head_dim = q.shape
-        
-        # Compute semantic importance from hidden states
-        # Use variance as a proxy for semantic complexity
-        hidden_var = hidden_states.var(dim=-1)  # [batch, seq_len]
-        semantic_importance = torch.softmax(hidden_var, dim=-1)  # Normalize
-        
-        # Compute position adjustment weights
-        # Positions with higher semantic importance get stronger encoding
-        pos_weights = semantic_importance.unsqueeze(1).unsqueeze(-1)  # [batch, 1, seq_len, 1]
-        pos_weights = pos_weights.expand(-1, n_head, -1, head_dim)
-        
-        # Apply context-aware adjustment
-        # Blend original position encoding with semantic-weighted version
-        blend_factor = 0.3  # Conservative blend to maintain stability
-        q_adjusted = q * (1.0 + blend_factor * pos_weights)
-        k_adjusted = k * (1.0 + blend_factor * pos_weights)
-        
-        return q_adjusted, k_adjusted
+        """DuoAttention head tiling: retrieval heads (full KV) + streaming heads (windowed KV).
 
-    def _select_hybrid_mode(self, t: int, modality: str, layer_idx: int) -> str:
-        """Select long-context augmentation while keeping MLA as the base path.
-
-        MLA remains the default dense attention algorithm. Other variants are only
-        allowed to override it in the long-context regimes where their paper-aligned
-        operating point is clearly more appropriate.
+        Splits KV heads into two groups based on ``retrieval_ratio``.
+        Retrieval-group heads attend to the full KV sequence.
+        Streaming-group heads attend only to the last ``streaming_buffer_size`` entries.
         """
-        csa_avail = getattr(self.cfg, 'use_csa_attention', False)
-        if t >= 1048576 and self.use_dynamic_h2o:
-            return 'dynamic_h2o'
-        if t >= 1048576 and self.use_h2o:
-            return 'h2o'
-        if t >= 32768 and self.use_moba_attention:
-            return 'moba'
-        if t >= 4096 and csa_avail:
-            return 'csa'
-        if self.use_local_global and t >= 32768:
-            return 'local_global'
-        if self.use_hisa and t >= 32768:
-            return 'hisa'
-        return 'mla'
+        repeat = self.n_head // self.n_kv_head
+        n_ret_kv = max(1, int(self.n_kv_head * self.retrieval_ratio))
+        n_str_kv = self.n_kv_head - n_ret_kv
+
+        gate_str_val = torch.sigmoid(gate_streaming) if gate_streaming is not None else torch.tensor(1.0)
+        skip_streaming = not self.training and gate_str_val.item() < self.gate_sparsity_threshold
+
+        if skip_streaming or n_str_kv == 0:
+            k = k.repeat_interleave(repeat, dim=1) if repeat > 1 else k
+            v = v.repeat_interleave(repeat, dim=1) if repeat > 1 else v
+        else:
+            k_ret = k[:, :n_ret_kv].repeat_interleave(repeat, dim=1)
+            v_ret = v[:, :n_ret_kv].repeat_interleave(repeat, dim=1)
+
+            k_str = k[:, -n_str_kv:].repeat_interleave(repeat, dim=1)
+            v_str = v[:, -n_str_kv:].repeat_interleave(repeat, dim=1)
+            w = min(self.streaming_buffer_size, kv_len)
+            if w < kv_len:
+                k_str = k_str[:, :, -w:]
+                v_str = v_str[:, :, -w:]
+
+            k = torch.cat([k_ret, k_str], dim=1)
+            v = torch.cat([v_ret, v_str], dim=1)
+
+        return k, v
 
     def forward(
         self,
@@ -5692,492 +5374,157 @@ class YvAttention(nn.Module):
         modality: str = 'text',
         extra_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
-        """Run the attention forward pass.
-
-        Args:
-            x: Input tensor of shape [batch_size, seq_len, hidden_size].
-            mask: Attention mask broadcastable to [batch_size, n_head, seq_len_q, seq_len_k].
-            past_key_values: Cached (key, value) tensors for extending the current sequence.
-            use_cache: Whether to return present key/value tensors for caching.
-            cache_manager: Optional external cache manager used by H2O backend.
-            layer_idx: Layer index for hierarchical retrieval routing.
-            modality: Current modality ('text', 'image', 'video', 'audio', 'agentic').
-
-        Returns:
-            Attention output or tuple (output, (present_k, present_v)) if use_cache.
-        """
-        if x.dim() > 3:
-            orig_shape = x.shape
-            if x.dim() == 4:
-                b, h, t, d = x.shape
-                if h == 1:
-                    x = x.squeeze(1)
-                else:
-                    x = x.transpose(1, 2).reshape(b, t, h * d)
-            else:
-                x = x.reshape(x.size(0), -1, x.size(-1))
-            _LOG.warning(f"Attn input reshaped from {orig_shape} to {x.shape}")
-        elif x.dim() < 3:
-            x = x.reshape(1, -1, x.size(-1))
-
         b, t, _ = x.shape
         self.layer_idx = layer_idx
 
+        # --- 1. Modality embedding ---
         if modality in self.modality_embed:
             x = x + self.modality_embed[modality].view(1, 1, -1)
 
-        # HydraHead stays as a bounded additive refinement instead of replacing
-        # the main MLA-based path.
-        hydra_accumulated = None
-        if self.use_hydra_head and hasattr(self, 'hydra_attention'):
-            hydra_accumulated = self.hydra_attention(hidden_states=x, attention_mask=mask)
-
-        # === Dynamic Hybrid Attention Scheduler ===
-        # Only long-context-specialized algorithms are allowed to override the
-        # MLA base path. Short and medium contexts fall through to MLA below.
-        mode = self._select_hybrid_mode(t, modality, layer_idx)
-
-        if mode == 'csa':
-            from .csa_hca import YvHybridAttention
-            if not hasattr(self, '_csa_attn'):
-                self._csa_attn = YvHybridAttention(self.cfg, layer_idx=layer_idx, device=x.device)
-            result = self._csa_attn(x, mask, past_key_values, use_cache)
-            out = result if use_cache else result[0]
-            if hydra_accumulated is not None:
-                out = out + 0.1 * hydra_accumulated
-            return out if not use_cache else (out, None)
-
-        if mode == 'moba':
-            moba_out = self.moba_attention(
-                hidden_states=x, attention_mask=mask,
-                past_key_value=None, use_cache=False,
-            )
-            if hydra_accumulated is not None:
-                moba_out = moba_out + 0.1 * hydra_accumulated
-            if use_cache:
-                return moba_out, None
-            return moba_out
-
-        if mode == 'dynamic_h2o':
-            dh2o_result = self.dynamic_h2o_attention(
-                hidden_states=x, attention_mask=mask,
-                past_key_value=past_key_values,
-                output_attentions=False, use_cache=use_cache,
-                cache_manager=cache_manager,
-            )
-            out = dh2o_result if use_cache else dh2o_result[0]
-            if hydra_accumulated is not None:
-                out = out + 0.1 * hydra_accumulated
-            return out if not use_cache else (out, None)
-
-        if mode == 'h2o':
-            h2o_result = self.h2o_attention(
-                hidden_states=x, attention_mask=None,
-                past_key_value=past_key_values,
-                output_attentions=False, use_cache=use_cache,
-                cache_manager=cache_manager,
-            )
-            out = h2o_result if use_cache else h2o_result[0]
-            if hydra_accumulated is not None:
-                out = out + 0.1 * hydra_accumulated
-            return out if not use_cache else (out, None)
-
-        if mode == 'local_global':
-            lg_out = self.local_global_attention(
-                hidden_states=x, attention_mask=mask,
-            )
-            if hydra_accumulated is not None:
-                lg_out = lg_out + 0.1 * hydra_accumulated
-            if use_cache:
-                return lg_out, None
-            return lg_out
-
-        if mode == 'hisa':
-            hisa_result = self.hisa_attention(
-                hidden_states=x, attention_mask=mask,
-                past_key_value=past_key_values,
-                output_attentions=False, use_cache=use_cache,
-                cache_manager=cache_manager,
-            )
-            out = hisa_result if use_cache else hisa_result[0]
-            if hydra_accumulated is not None:
-                out = out + 0.1 * hydra_accumulated
-            return out if not use_cache else (out, None)
-
-        # mode == 'mla': fall through to the MLA-based dense attention path below
-
-        if self.use_attention_sink and self.training:
+        # --- 2. Attention sink prepend (training only) ---
+        if self.use_attention_sink and self.training and hasattr(self, 'attn_sink'):
             x, sink_mask = self.attn_sink(x)
-            if mask is not None:
-                sink_mask_expanded = sink_mask.unsqueeze(1).unsqueeze(2)
-                mask = torch.cat([sink_mask_expanded.expand(-1, mask.shape[1], -1, -1), mask], dim=-1)
 
-        if x.dim() > 3:
-            orig_shape = x.shape
-            if x.dim() == 4:
-                b, h, t, d = x.shape
-                if h == 1:
-                    x = x.squeeze(1)
-                else:
-                    x = x.transpose(1, 2).reshape(b, t, h * d)
-            else:
-                x = x.reshape(x.size(0), -1, x.size(-1))
-        elif x.dim() < 3:
-            x = x.reshape(1, -1, x.size(-1))
+        # --- 3. MLA KV compression with EG gate ---
+        kv_latent = self.kv_compress(x)
+        gate = torch.sigmoid(self.embedding_gate(x))
+        kv_latent.mul_(gate)
 
-        b, t, _ = x.shape
+        if past_key_values is not None:
+            past_kv_latent = past_key_values[0]
+            kv_latent = torch.cat([past_kv_latent, kv_latent], dim=1)
 
-        if (not self.use_mla) and self.use_linear and t > 16384:
-            linear_out = self.linear_attention(x, mask)
-            if hasattr(self, 'sliding_attention') and self.sliding_window > 0:
-                sliding_out = self.sliding_attention(x, mask, past_key_values, use_cache)
-                output = 0.7 * linear_out + 0.3 * sliding_out
-            else:
-                output = linear_out
-            return output
+        kv_len = kv_latent.shape[1]
+        kv_latent_for_cache = kv_latent
 
-        if (not self.use_mla) and hasattr(self, 'circulant_attention') and t > self.circulant_fft_threshold:
-            circulant_out, _, present_kv = self.circulant_attention(
-                hidden_states=x,
-                attention_mask=mask,
-                past_key_value=past_key_values,
-                output_attentions=False,
-                use_cache=use_cache,
-                cache_manager=cache_manager,
-            )
-            if use_cache:
-                return circulant_out, present_kv
-            return circulant_out
+        # Decompress
+        k = self.k_decompress(kv_latent).view(b, kv_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+        v = self.v_decompress(kv_latent).view(b, kv_len, self.n_kv_head, self.head_dim).transpose(1, 2)
 
-        if (not self.use_mla) and hasattr(self, 'sparse_attention') and self.sparse_pattern != 'none' and t > 16384:
-            return self.sparse_attention(x, mask)
-
-        mla_rope_applied = False
-        if self.use_mla:
-            kv_latent = self.kv_compress(x)
-
-            # Optional embedding gate for dynamic per-token compression strength
-            if self.mla_use_embedding_gate:
-                gate = torch.sigmoid(self.embedding_gate(x))
-                kv_latent = gate * kv_latent
-
-            # Concatenate past compressed KV before decompression to keep cache compact
-            if past_key_values is not None:
-                past_kv_latent = past_key_values[0]
-                kv_latent = torch.cat([past_kv_latent, kv_latent], dim=1)
-
-            kv_len = kv_latent.shape[1]
-
-            # Cache the compressed latent before adding per-pass extra KV.
-            kv_latent_for_cache = kv_latent
-
-            # Decompress keys and values from the shared low-rank latent
-            k = self.k_decompress(kv_latent).view(b, kv_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-            v = self.v_decompress(kv_latent).view(b, kv_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-
-            # LCA: optional latent condensation for KV cache reduction
-            if self.use_lca and hasattr(self, 'lca_attention'):
-                from torch.nn.functional import scaled_dot_product_attention as _sdpa
-                k_condensed, v_condensed = self.lca_attention.condense_kv(k, v, hidden_states=x)
-                k = k_condensed
-                v = v_condensed
+        # --- 4. LCA condensation (long sequences) — sparse-gated ---
+        if self.use_lca and hasattr(self, 'lca_attention') and kv_len > 4096:
+            lca_gate = torch.sigmoid(self.sparse_gate_lca)
+            if self.training or lca_gate.item() >= self.gate_sparsity_threshold:
+                k, v = self.lca_attention.condense_kv(k, v, hidden_states=x)
                 kv_len = k.shape[2]
 
-            # Hard knowledge injection: prepend extra KV tokens to the keys/values.
-            # These tokens participate in attention but are NOT written to KV cache.
-            if extra_kv is not None:
-                extra_k, extra_v = extra_kv
-                k = torch.cat([extra_k, k], dim=-2)
-                v = torch.cat([extra_v, v], dim=-2)
-                kv_len = k.shape[-2]
+        # --- 5. Extra KV injection (knowledge, memory, etc.) ---
+        if extra_kv is not None:
+            ek, ev = extra_kv
+            k = torch.cat([ek, k], dim=-2)
+            v = torch.cat([ev, v], dim=-2)
+            kv_len = k.shape[-2]
 
-            # Queries are computed from current tokens only
-            if hasattr(self, 'q_compress'):
-                q_latent = self.q_compress(x)
-                q = self.q_decompress(q_latent)
-            else:
-                q = self.q_proj(x)
-            q = q.view(b, t, self.n_head, self.head_dim).transpose(1, 2)
-
-            # Decoupled RoPE: rotary position encoding applied to a dedicated subspace
-            mla_rope_applied = False
-            if hasattr(self, 'rope') and self.use_enhanced_mla:
-                rope_dim = min(self.mla_rope_dim, self.head_dim)
-                if rope_dim > 0:
-                    k_pe = self.rope_decompress(kv_latent).view(b, kv_len, 1, rope_dim)
-                    k_pe = k_pe.expand(-1, -1, self.n_kv_head, -1).transpose(1, 2)
-                    k_pe = self.rope(k_pe, kv_len)
-                    k_pe = k_pe.transpose(1, 2)
-
-                    q_pe = q[..., -rope_dim:]
-                    q_pe = self.rope(q_pe, t)
-                    q = torch.cat([q[..., :-rope_dim], q_pe], dim=-1)
-
-                    k_nope = k[..., :-rope_dim]
-                    k = torch.cat([k_nope, k_pe], dim=-1)
-                    mla_rope_applied = True
-        elif getattr(self, 'fused_qkv', False):
-            qkv = self.qkv_proj(x)
-            q_end = self.n_head * self.head_dim
-            kv_each = self.n_kv_head * self.head_dim
-            q_lin = qkv[:, :, :q_end]
-            k_lin = qkv[:, :, q_end:q_end + kv_each]
-            v_lin = qkv[:, :, q_end + kv_each:]
-            q = q_lin.view(b, t, self.n_head, self.head_dim).transpose(1, 2)
-            k = k_lin.view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
-            v = v_lin.view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
+        # --- 6. Q projection ---
+        if hasattr(self, 'q_compress'):
+            q = self.q_decompress(self.q_compress(x))
         else:
-            q = self.q_proj(x).view(b, t, self.n_head, self.head_dim).transpose(1, 2)
-            k = self.k_proj(x).view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
-            v = self.v_proj(x).view(b, t, self.n_kv_head, self.head_dim).transpose(1, 2)
+            q = self.q_proj(x)
+        q = q.view(b, t, self.n_head, self.head_dim).transpose(1, 2)
 
-        if hasattr(self, 'qk_norm') and self.use_qk_norm:
+        # --- 7. Decoupled RoPE (MLA style) ---
+        rope_done = False
+        if self.use_enhanced_mla:
+            rope_dim = min(self.mla_rope_dim, self.head_dim)
+            if rope_dim > 0:
+                k_pe = self.rope_decompress(kv_latent_for_cache).view(b, kv_len, 1, rope_dim)
+                k_pe = k_pe.expand(-1, -1, self.n_kv_head, -1).transpose(1, 2)
+                k_pe = self.rope(k_pe, kv_len).transpose(1, 2)
+
+                q_pe = self.rope(q[..., -rope_dim:], t)
+                q = torch.cat([q[..., :-rope_dim], q_pe], dim=-1)
+                k = torch.cat([k[..., :-rope_dim], k_pe], dim=-1)
+                rope_done = True
+
+        # --- 8. QK Norm ---
+        if hasattr(self, 'qk_norm'):
             q, k = self.qk_norm(q, k)
 
-        if self.dsa_sparse_ratio > 0 and not self.training and not self.use_h2o and k.shape[2] > 1024:
-            with torch.no_grad():
-                kv_len = k.shape[2]
-                k_sparse_count = max(1, int(kv_len * (1.0 - self.dsa_sparse_ratio)))
-                
-                if self.dsa_use_dynamic and hasattr(self, 'dsa_importance_scorer'):
-                    k_flat = k.reshape(-1, self.head_dim)
-                    importance = self.dsa_importance_scorer(k_flat).squeeze(-1)
-                    importance = importance.reshape(b, self.n_kv_head, kv_len)
-                    importance = importance.mean(dim=1)
+        # --- 9. Unified RoPE (all variants combined: YaRN + MrRoPE + Dynamic) ---
+        if hasattr(self, 'rope') and not rope_done:
+            partial_dim = getattr(self.cfg, 'partial_rope_dim', 64)
+            if bool(getattr(self.cfg, 'use_partial_rope', True)):
+                q_r, q_p = q[..., -partial_dim:], q[..., :-partial_dim]
+                k_r, k_p = k[..., -partial_dim:], k[..., :-partial_dim]
+                q_r = self.rope(q_r, t)
+                k_r = self.rope(k_r, kv_len)
+                if not self.training:
+                    q[..., -partial_dim:].copy_(q_r)
+                    k[..., -partial_dim:].copy_(k_r)
                 else:
-                    importance = k.norm(dim=-1).mean(dim=1)
-                
-                _, top_k_indices = torch.topk(importance, k_sparse_count, dim=-1)
-                
-                top_k_indices_expanded = top_k_indices.unsqueeze(1).unsqueeze(-1).expand(
-                    -1, self.n_kv_head, -1, self.head_dim
-                )
-                k_gathered = k.gather(2, top_k_indices_expanded)
-                v_gathered = v.gather(2, top_k_indices_expanded)
-                
-                k = k_gathered
-                v = v_gathered
-
-        if hasattr(self, 'rope') and not mla_rope_applied:
-            max_pe_len = getattr(self.cfg, 'max_position_embeddings', 4096)
-            use_partial_rope = getattr(self.cfg, 'use_partial_rope', True)
-            partial_rope_dim = getattr(self.cfg, 'partial_rope_dim', 64)
-
-            if getattr(self, 'use_mr_rope', False):
-                q = self.mr_rope(q, t)
-                k = self.mr_rope(k, t)
+                    q, k = torch.cat([q_p, q_r], dim=-1), torch.cat([k_p, k_r], dim=-1)
             else:
-                use_longrope = t > max_pe_len * 1.5
-                if use_partial_rope and not use_longrope:
-                    q_rope, q_pass = q[..., -partial_rope_dim:], q[..., :-partial_rope_dim]
-                    k_rope, k_pass = k[..., -partial_rope_dim:], k[..., :-partial_rope_dim]
-                    q_rope, k_rope = self.rope(q_rope, t), self.rope(k_rope, t)
-                    q = torch.cat([q_pass, q_rope], dim=-1)
-                    k = torch.cat([k_pass, k_rope], dim=-1)
-                elif use_longrope:
-                    scale_factor = t / max_pe_len
-                    freq_scale = 1.0 / (scale_factor ** 0.5)
-                    q = self._apply_longrope(q, t, freq_scale)
-                    k = self._apply_longrope(k, t, freq_scale)
-                else:
-                    q, k = self.rope(q, t), self.rope(k, t)
+                q = self.rope(q, t)
+                k = self.rope(k, kv_len)
 
-        if past_key_values is not None and not self.use_mla:
-            past_k, past_v = past_key_values
-            k = torch.cat([past_k, k], dim=-2)
-            v = torch.cat([past_v, v], dim=-2)
+        # --- 10. DSA Sparse KV selection — sparse-gated ---
+        if self.dsa_sparse_ratio > 0 and kv_len > 1024:
+            dsa_gate = torch.sigmoid(self.sparse_gate_dsa)
+            if self.training or dsa_gate.item() >= self.gate_sparsity_threshold:
+                with torch.no_grad():
+                    kv_sparse_cnt = max(1, int(kv_len * (1.0 - self.dsa_sparse_ratio)))
+                    if self.dsa_use_dynamic and hasattr(self, 'dsa_importance_scorer'):
+                        kf = k.reshape(-1, self.head_dim)
+                        imp = self.dsa_importance_scorer(kf).squeeze(-1)
+                        imp = imp.reshape(b, self.n_kv_head, kv_len).mean(dim=1)
+                    else:
+                        imp = k.norm(dim=-1).mean(dim=1)
+                    _, topk = torch.topk(imp, kv_sparse_cnt, dim=-1)
+                    idx = topk.unsqueeze(1).unsqueeze(-1).expand(-1, self.n_kv_head, -1, self.head_dim)
+                k = k.gather(2, idx)
+                v = v.gather(2, idx)
+                kv_len = k.shape[2]
 
-        # Capture the true KV cache content before adding per-pass extra KV.
+        # --- 11. Cache capture (before extra KV prepend in post-cache) ---
         k_cache = k
         v_cache = v
 
-        # Hard knowledge injection: prepend extra KV tokens. These tokens
-        # attend to the query but are never written to the rolling KV cache.
-        if extra_kv is not None:
-            extra_k, extra_v = extra_kv
-            k = torch.cat([extra_k, k], dim=-2)
-            v = torch.cat([extra_v, v], dim=-2)
+        # --- 12. DuoAttention head tiling — sparse-gated ---
+        k, v = self._apply_duo_tiling(k, v, kv_len, self.sparse_gate_duo_streaming)
+        kv_len = k.shape[2]
 
-        seq_len = k.size(-2)
+        # --- 13. ALiBi ---
+        alibi_bias = None
+        if hasattr(self, 'alibi'):
+            alibi_bias = self.alibi(kv_len, x.device).unsqueeze(0)
 
-        duo_streaming_window = min(self.sliding_window if self.sliding_window > 0 else 4096, seq_len)
-        duo_streaming_window = min(duo_streaming_window, effective_window)
-        
-        if self.n_kv_head != self.n_head:
-            repeat = self.n_head // self.n_kv_head
-            
-            n_retrieval_heads = max(1, int(self.n_head * 0.4))
-            n_streaming_heads = self.n_head - n_retrieval_heads
-            
-            n_retrieval_kv = max(1, n_retrieval_heads // repeat)
-            n_streaming_kv = max(1, n_streaming_heads // repeat)
-            
-            k_retrieval = k[:, :, :n_retrieval_kv].repeat_interleave(repeat, dim=1)
-            v_retrieval = v[:, :, :n_retrieval_kv].repeat_interleave(repeat, dim=1)
-            
-            k_streaming = k[:, :, -n_streaming_kv:].repeat_interleave(repeat, dim=1)
-            v_streaming = v[:, :, -n_streaming_kv:].repeat_interleave(repeat, dim=1)
-            
-            if duo_streaming_window < seq_len:
-                k_streaming = k_streaming[:, :, -duo_streaming_window:]
-                v_streaming = v_streaming[:, :, -duo_streaming_window:]
-            
-            k = torch.cat([k_retrieval, k_streaming], dim=1)
-            v = torch.cat([v_retrieval, v_streaming], dim=1)
+        # --- 14. HydraHead per-head computation — sparse-gated LA ---
+        out = self._apply_hydra_heads(q, k, v, mask, b, t, kv_len, self.sparse_gate_la)
 
-        if v.dtype != q.dtype:
-            v = v.to(q.dtype)
+        # --- 15. Gated attention scaling ---
+        gate_signal = torch.sigmoid(q.norm(dim=-1).mean(dim=0, keepdim=True))
+        gate_signal = gate_signal.view(1, self.n_head, 1, 1)
+        out_headed = out.view(b, t, self.n_head, self.head_dim).transpose(1, 2)
+        out_headed = out_headed * gate_signal
+        out = out_headed.transpose(1, 2).reshape(b, t, -1)
 
-        if hasattr(self, 'alibi') and self.use_alibi:
-            alibi_bias = self.alibi(seq_len, x.device)
-            alibi_bias = alibi_bias.unsqueeze(0)
-        else:
-            alibi_bias = None
-
-        q_ = q.reshape(b * self.n_head, t, self.head_dim)
-        k_ = k.reshape(b * self.n_head, seq_len, self.head_dim)
-        v_ = v.reshape(b * self.n_head, seq_len, self.head_dim)
-
-        base = seq_len - t
-        row_pos = base + torch.arange(t, device=q.device)
-        key_pos = torch.arange(seq_len, device=q.device)
-        allowed2d = key_pos.view(1, -1) <= row_pos.view(-1, 1)
-
-        duo_enabled = self.n_kv_head != self.n_head and seq_len > duo_streaming_window
-        
-        if duo_enabled:
-            n_retrieval_heads = max(1, int(self.n_head * 0.4))
-            n_streaming_heads = self.n_head - n_retrieval_heads
-            
-            retrieval_allowed = allowed2d.clone()
-            
-            streaming_allowed = allowed2d.clone()
-            lower_bound = (row_pos.view(-1, 1) - (duo_streaming_window - 1))
-            local_allowed = key_pos.view(1, -1) >= lower_bound
-            streaming_allowed = streaming_allowed & local_allowed
-            
-            duo_allowed = torch.cat([
-                retrieval_allowed.unsqueeze(0).expand(n_retrieval_heads, -1, -1),
-                streaming_allowed.unsqueeze(0).expand(n_streaming_heads, -1, -1)
-            ], dim=0)
-            allowed2d = duo_allowed
-        
-        if bool(getattr(self.cfg, 'use_sliding_window', False)) and not duo_enabled:
-            win = int(getattr(self.cfg, 'streaming_window', 16384))
-            if win > 0 and win < seq_len:
-                lower_bound = (row_pos.view(-1, 1) - (win - 1))
-                local_allowed = key_pos.view(1, -1) >= lower_bound
-                allowed2d = allowed2d & local_allowed
-
-        # MTraining: Dynamic sparse attention for long context training
-        # Auto-enabled when training and seq_len > 16384
-        if self.training and seq_len > 16384:
-            vertical_lines = min(8, seq_len // 2048)
-            slash_width = min(512, seq_len // 32)
-            
-            key_importance = k.norm(dim=-1).mean(dim=1)
-            _, top_k_idx = torch.topk(key_importance, vertical_lines, dim=-1)
-            
-            sparse_mask = torch.zeros(t, seq_len, device=q.device, dtype=torch.bool)
-            for i in range(t):
-                sparse_mask[i, top_k_idx[i]] = True
-                sparse_mask[i, max(0, i - slash_width):i + 1] = True
-            
-            allowed2d = allowed2d & sparse_mask
-
-        disallow2d = ~allowed2d
-        
-        if seq_len > 50000:
-            pos_idx = torch.arange(seq_len, device=q.device).float()
-            pos_weights = 1.0 + 0.2 * torch.sin(torch.pi * pos_idx / seq_len)
-            mid_start, mid_end = seq_len // 4, 3 * seq_len // 4
-            pos_weights[mid_start:mid_end] *= 1.25
-            pos_bias = torch.log(pos_weights.view(1, 1, 1, -1).expand(b, self.n_head, t, seq_len))
-            pos_bias = pos_bias.reshape(b * self.n_head, t, seq_len)
-
-        if mask is not None:
-            mask_slice = mask[:, :, -t:, :seq_len]
-            if mask_slice.dtype == torch.bool:
-                extra_disallow = ~mask_slice
-            else:
-                extra_disallow = mask_slice < -1e4
-            disallow = disallow2d.view(1, 1, t, seq_len) | extra_disallow
-            attn_mask = disallow.reshape(b * self.n_head, t, seq_len)
-        else:
-            attn_mask = disallow2d
-        
-        if seq_len > 50000:
-            attn_mask = attn_mask - pos_bias
-
-        if alibi_bias is not None:
-            attn_mask = attn_mask.view(b, self.n_head, t, seq_len)
-            attn_mask = attn_mask - alibi_bias[:, :, -t:, :seq_len]
-            attn_mask = attn_mask.reshape(b * self.n_head, t, seq_len)
-
-        _sdp = getattr(getattr(torch.backends, "cuda", None), "sdp_kernel", None)
-        use_flash_kernel = (
-            _sdp is not None
-            and torch.cuda.is_available()
-            and bool(getattr(self.cfg, 'sdpa_prefer_flash', True))
-        )
-
-        if use_flash_kernel:
-            with _sdp(enable_math=False, enable_flash=True, enable_mem_efficient=False):
-                out_ = F.scaled_dot_product_attention(
-                    q_, k_, v_,
-                    attn_mask=attn_mask,
-                    dropout_p=self.attn_dropout.p if self.training else 0.0,
-                    is_causal=False,
-                    softmax_scale=self.scale,
-                )
-        else:
-            out_ = F.scaled_dot_product_attention(
-                q_, k_, v_,
-                attn_mask=attn_mask,
-                dropout_p=self.attn_dropout.p if self.training else 0.0,
-                is_causal=False,
-                softmax_scale=self.scale,
-            )
-
-        # Gated Attention: Head-specific gating without extra parameters
-        # Uses Q norm as gate signal - zero parameter overhead
-        gate_signal = q.norm(dim=-1)
-        gate_signal = torch.sigmoid(gate_signal.mean(dim=0, keepdim=True))
-        gate_signal = gate_signal.view(1, self.n_head, t, 1).expand(b, -1, -1, self.head_dim)
-        gate_signal = gate_signal.reshape(b * self.n_head, t, self.head_dim)
-        out_ = gate_signal * out_
-
-        out = out_.reshape(b, self.n_head, t, self.head_dim).transpose(1, 2).contiguous().view(b, t, -1)
+        # --- 16. Output projection ---
         out = self.attn_dropout(out)
         out = self.o_proj(out)
 
+        # --- 17. Attention sink removal (training) ---
         if self.use_attention_sink and self.training and hasattr(self, 'attn_sink'):
             out = out[:, self.attn_sink.n_sink:, :]
-        
-        if seq_len > 100000:
-            attenuation_factor = 0.15
-            contrast_weight = 0.25
-            attenuated = out * (1.0 - attenuation_factor)
-            contrast = out - attenuated
-            out = out + contrast_weight * contrast
 
+        # --- 18. Long-range contrast enhancement ---
+        if kv_len > 100000:
+            atten = 0.15
+            contrast = 0.25
+            attenuated = out * (1.0 - atten)
+            out = out + contrast * (out - attenuated)
+
+        # --- Sparsity regularization loss (GSA-style) ---
+        self._sparsity_loss = self.sparsity_reg_weight * (
+            torch.sigmoid(self.sparse_gate_lca).mean()
+            + torch.sigmoid(self.sparse_gate_dsa).mean()
+            + torch.sigmoid(self.sparse_gate_la).mean()
+            + torch.sigmoid(self.sparse_gate_duo_streaming).mean()
+        )
+
+        # --- 19. Cache return ---
         if use_cache:
-            if self.use_mla:
-                result = (out, (k_cache, v_cache))
-            else:
-                result = (out, (k_cache, v_cache))
-            # Fuse HydraHead supplementary output if enabled
-            if hydra_accumulated is not None:
-                fused = result[0] + hydra_accumulated
-                return (fused, result[1])
-            return result
-
-        final_out = out
-        # Fuse HydraHead supplementary output if enabled
-        if hydra_accumulated is not None:
-            final_out = final_out + hydra_accumulated
-
-        return final_out
+            return (out, (k_cache, v_cache))
+        return out
 
 
 class YvHydraHeadAttention(nn.Module):
@@ -6250,21 +5597,34 @@ class YvHydraHeadAttention(nn.Module):
         """Linear attention with ELU+1 feature map (O(n) complexity)."""
         q = F.elu(q) + 1.0
         k = F.elu(k) + 1.0
+        B, H, T, D = q.shape
 
         if self.causal:
-            kv = torch.einsum("bhnk,bhnd->bnhd", k, v)
-            denom = k.sum(dim=-2)
+            chunk_size = max(16, 131072 // (D * D))
+            kv_state = q.new_zeros(B, H, D, D)
+            k_state = q.new_zeros(B, H, D)
             output = []
-            for i in range(q.shape[-2]):
-                if i > 0:
-                    kv = kv + torch.einsum("bhnk,bhnd->bnhd", k[:, :, i : i + 1], v[:, :, i : i + 1])
-                    denom = denom + k[:, :, i : i + 1].squeeze(-2)
-                output.append(torch.einsum("bhnk,bhnd->bnhd", q[:, :, i : i + 1], kv) / (denom.unsqueeze(-2) + 1e-6))
-            out = torch.cat(output, dim=-2)
+            for start in range(0, T, chunk_size):
+                end = min(start + chunk_size, T)
+                q_c = q[:, :, start:end]
+                k_c = k[:, :, start:end]
+                v_c = v[:, :, start:end]
+                kv_c = k_c.unsqueeze(-1) * v_c.unsqueeze(-2)
+                kv_prefix = kv_c.cumsum(dim=2)
+                k_prefix = k_c.cumsum(dim=2)
+                S_total = kv_state.unsqueeze(2) + kv_prefix
+                z_total = k_state.unsqueeze(2) + k_prefix
+                o_c = torch.einsum('bhcd,bhcde->bhce', q_c, S_total)
+                norm_c = torch.einsum('bhcd,bhcd->bhc', q_c, z_total)
+                o_c = o_c / (norm_c.unsqueeze(-1) + 1e-6)
+                output.append(o_c)
+                kv_state = S_total[:, :, -1]
+                k_state = z_total[:, :, -1]
+            out = torch.cat(output, dim=2)
         else:
-            kv = torch.einsum("bhnk,bhnd->bkhd", k, v)
-            denom = k.sum(dim=-2)
-            out = torch.einsum("bhnk,bhnd->bnhd", q, kv) / (denom.unsqueeze(-2) + 1e-6)
+            kv = torch.einsum("bhtd,bhte->bhde", k, v)
+            denom = k.sum(dim=2)
+            out = torch.einsum("bhtd,bhde->bhte", q, kv) / (denom.unsqueeze(-2) + 1e-6)
 
         return out
 

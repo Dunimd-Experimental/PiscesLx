@@ -1185,32 +1185,9 @@ class YvConfig:
             self.thinking_intensity = 0.5 * (0.5 + level)
             self.swarm_intensity = 0.5 * (0.5 + level)
 
-        # Conflict detection and mutual exclusion assertions for flagship
-        # split-architecture flags.
-        assert not (self.use_eg_mla and self.use_duo_attention), (
-            "use_eg_mla and use_duo_attention are mutually exclusive attention modes"
-        )
-        assert not (self.use_eg_mla and self.use_moba_attention), (
-            "use_eg_mla and use_moba_attention are mutually exclusive attention modes"
-        )
-        assert not (self.use_duo_attention and self.use_moba_attention), (
-            "use_duo_attention and use_moba_attention are mutually exclusive attention modes"
-        )
-        assert not (self.use_mla and self.use_moba_attention), (
-            "use_mla and use_moba_attention are mutually exclusive attention modes"
-        )
-        if self.use_eg_mla:
-            assert self.attention_type in ("eg_mla", "standard"), (
-                "use_eg_mla requires attention_type='eg_mla' or 'standard'"
-            )
-        if self.use_duo_attention:
-            assert self.attention_type in ("duo_attention", "standard"), (
-                "use_duo_attention requires attention_type='duo_attention' or 'standard'"
-            )
-        if self.use_moba_attention:
-            assert self.attention_type in ("moba", "standard"), (
-                "use_moba_attention requires attention_type='moba' or 'standard'"
-            )
+        # Note: All attention variants (MLA, EG-MLA, DuoAttention, MoBA,
+        # H2O, LCA, CSA/HCA, DSA, etc.) are unified in YvAttention.
+        # The use_* flags are informational/sizing only — no mutual exclusion enforced.
         if self.use_dual_inject and not (self.use_subconscious or self.use_memory_separation):
             raise ValueError(
                 "use_dual_inject requires at least one of use_subconscious or use_memory_separation"

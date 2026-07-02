@@ -1501,13 +1501,6 @@ class YvMamba3Block(nn.Module):
     """
 
     def __init__(self, config: YvMamba3Config):
-        """Initialize Mamba-3 block with configuration.
-        
-        Args:
-            config: Configuration object containing all hyperparameters.
-                Required fields: d_model, d_inner, d_conv, dt_rank, d_state.
-                Optional features enabled via use_* flags.
-        """
         super().__init__()
         self.config = config
         self.d_model = config.d_model
@@ -1516,48 +1509,25 @@ class YvMamba3Block(nn.Module):
         self.in_proj = nn.Linear(config.d_model, 2 * config.d_inner, bias=config.bias)
 
         self.conv1d = nn.Conv1d(
-            in_channels=config.d_inner,
-            out_channels=config.d_inner,
-            bias=config.conv_bias,
-            kernel_size=config.d_conv,
-            groups=config.d_inner,
-            padding=config.d_conv - 1,
+            in_channels=config.d_inner, out_channels=config.d_inner,
+            bias=config.conv_bias, kernel_size=config.d_conv,
+            groups=config.d_inner, padding=config.d_conv - 1,
         )
 
+        # All SSM sub-components built unconditionally
         self.selective_scan = YvSelectiveScan(config.d_inner, config.dt_rank, config.d_state)
-
-        if config.use_trapezoidal:
-            self.trapezoidal = YvTrapezoidalDiscretization(config.d_inner, config.dt_rank, config.d_state)
-
-        if config.use_complex:
-            self.complex_ssm = YvComplexStateSpace(config.d_state, config.d_inner)
-
-        if config.use_mimo:
-            self.mimo_ssm = YvMIMOStateSpace(config.d_inner, config.d_state)
-
-        if config.use_v_kernel:
-            self.v_kernel = YvVKernel(config.d_inner, config.d_state, config.max_seq_len)
-
-        if config.use_ss_duality:
-            self.ss_duality = YvSSDuality(config.d_inner, config.d_state)
-
-        if config.use_bidirectional:
-            self.bidirectional = YvBidirectionalSSM(config.d_inner, config.d_state, config.d_conv)
-
-        if config.use_gated:
-            self.gated_ssm = YvGatedSSM(config.d_inner, config.d_state, config.d_conv)
-
-        if config.n_heads > 1:
-            self.multi_head = YvMultiHeadSSM(config.d_inner, config.d_state, config.n_heads, config.d_conv)
-
-        if config.use_adaptive_dt:
-            self.adaptive_dt = YvAdaptiveDiscretization(config.d_inner, config.dt_rank, config.d_state)
-
-        if config.use_flash_ssm:
-            self.flash_ssm = YvFlashSSM(config.d_inner, config.d_state, config.d_conv)
+        self.trapezoidal = YvTrapezoidalDiscretization(config.d_inner, config.dt_rank, config.d_state)
+        self.complex_ssm = YvComplexStateSpace(config.d_state, config.d_inner)
+        self.mimo_ssm = YvMIMOStateSpace(config.d_inner, config.d_state)
+        self.v_kernel = YvVKernel(config.d_inner, config.d_state, config.max_seq_len)
+        self.ss_duality = YvSSDuality(config.d_inner, config.d_state)
+        self.bidirectional = YvBidirectionalSSM(config.d_inner, config.d_state, config.d_conv)
+        self.gated_ssm = YvGatedSSM(config.d_inner, config.d_state, config.d_conv)
+        self.multi_head = YvMultiHeadSSM(config.d_inner, config.d_state, max(2, config.n_heads), config.d_conv)
+        self.adaptive_dt = YvAdaptiveDiscretization(config.d_inner, config.dt_rank, config.d_state)
+        self.flash_ssm = YvFlashSSM(config.d_inner, config.d_state, config.d_conv)
 
         self.out_proj = nn.Linear(config.d_inner, config.d_model, bias=config.bias)
-
         self.dropout = nn.Dropout(config.dropout) if config.dropout > 0 else nn.Identity()
 
     def forward(
@@ -1566,27 +1536,7 @@ class YvMamba3Block(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         state_cache: Optional[YvStateCache] = None
     ) -> torch.Tensor:
-        """Forward pass through Mamba-3 block.
-        
-        Processes input through projection, convolution, selective scan,
-        and optional Mamba-3 features.
-        
-        Args:
-            hidden_states: Input tensor [batch, seq_len, d_model].
-            attention_mask: Optional attention mask (unused, for API compatibility).
-            state_cache: Optional state cache for generation.
-            
-        Returns:
-            Output tensor [batch, seq_len, d_model].
-        
-        Note:
-            Automatically switches to chunked processing for ultra-long
-            sequences (seq_len > 4 * max_seq_len).
-        """
         batch, seq_len, d_model = hidden_states.shape
-        
-        ultra_long_threshold = getattr(self.config, 'max_seq_len', 4096) * 4
-        use_chunked = seq_len > ultra_long_threshold
 
         xz = self.in_proj(hidden_states)
         x, z = xz.chunk(2, dim=-1)
@@ -1596,53 +1546,49 @@ class YvMamba3Block(nn.Module):
         x = rearrange(x, 'b d l -> b l d')
         x = F.silu(x)
 
-        if self.config.use_complex and hasattr(self, 'complex_ssm'):
-            x_complex = self.complex_ssm(x)
-            x = x + x_complex
+        # Complex SSM (always active)
+        x_complex = self.complex_ssm(x)
+        x = x + x_complex
 
-        if self.config.use_mimo and hasattr(self, 'mimo_ssm'):
-            state = torch.zeros(batch, self.config.d_state, device=x.device)
-            mimo_outputs = []
+        # MIMO SSM (always active: recurrent loop)
+        state = torch.zeros(batch, self.config.d_state, device=x.device)
+        mimo_outputs = []
+        for t in range(seq_len):
+            output, state = self.mimo_ssm(x[:, t], state)
+            mimo_outputs.append(output)
+        x_mimo = torch.stack(mimo_outputs, dim=1)
+        x = x + x_mimo
 
-            for t in range(seq_len):
-                output, state = self.mimo_ssm(x[:, t], state)
-                mimo_outputs.append(output)
+        # Adaptive discretization (always active)
+        dt, A = self.adaptive_dt(x)
 
-            x_mimo = torch.stack(mimo_outputs, dim=1)
-            x = x + x_mimo
+        # All SSM core paths (always active, combined additively)
+        y_scan = self.selective_scan(x, dt)
+        y_vk = self.v_kernel(x)
+        y_ssd = self.ss_duality(x)
+        y_flash = self.flash_ssm(x)
 
-        if self.config.use_adaptive_dt and hasattr(self, 'adaptive_dt'):
-            dt, A = self.adaptive_dt(x)
+        # Chunked forward for ultra-long sequences (complements, not replaces)
+        ultra_long_threshold = getattr(self.config, 'max_seq_len', 4096) * 4
+        if seq_len > ultra_long_threshold:
+            y_chunked = self._chunked_forward(x, dt, self.config.chunk_size)
         else:
-            dt = torch.randn(batch, seq_len, self.config.dt_rank, device=x.device) * 0.1
+            y_chunked = 0
 
-        if use_chunked:
-            chunk_size = min(self.config.chunk_size, seq_len // 4)
-            x = self._chunked_forward(x, dt, chunk_size)
-        elif self.config.ssm_mode == YvSSMMode.PARALLEL and hasattr(self, 'v_kernel'):
-            x = self.v_kernel(x)
-        elif self.config.ssm_mode == YvSSMMode.HYBRID and hasattr(self, 'ss_duality'):
-            x = self.ss_duality(x)
-        elif self.config.use_flash_ssm and hasattr(self, 'flash_ssm'):
-            x = self.flash_ssm(x)
-        else:
-            x = self.selective_scan(x, dt)
+        x = y_scan + y_vk + y_ssd + y_flash + y_chunked
 
-        if self.config.use_bidirectional and hasattr(self, 'bidirectional'):
-            x_bidir = self.bidirectional(hidden_states)
-            x = x + x_bidir
+        # Auxiliary SSM paths (always active)
+        x_bidir = self.bidirectional(hidden_states)
+        x = x + x_bidir
 
-        if self.config.use_gated and hasattr(self, 'gated_ssm'):
-            x_gated = self.gated_ssm(hidden_states)
-            x = x + x_gated
+        x_gated = self.gated_ssm(hidden_states)
+        x = x + x_gated
 
-        if self.config.n_heads > 1 and hasattr(self, 'multi_head'):
-            x_mh = self.multi_head(hidden_states)
-            x = x + x_mh
+        x_mh = self.multi_head(hidden_states)
+        x = x + x_mh
 
         z = F.silu(z)
         output = x * z
-
         output = self.dropout(output)
         output = self.out_proj(output)
 

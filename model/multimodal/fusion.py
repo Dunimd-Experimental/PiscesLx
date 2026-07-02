@@ -419,17 +419,6 @@ class YvDynamicModalFusion(nn.Module):
     """
 
     def __init__(self, cfg, cache_manager=None, device=None, dtype=None):
-        """Initialize the fusion module and supporting infrastructure.
-
-        Args:
-            cfg: Configuration object containing parameters such as:
-                - hidden_size: Output embedding dimension
-                - use_native_multimodal_fusion: Enable native unified token space
-            cache_manager: Optional cache manager for generation caches. Defaults
-                to ``None``.
-            device: Optional device for created parameters.
-            dtype: Optional dtype for created parameters.
-        """
         super().__init__()
         self.cfg = cfg
         self.hidden_size = cfg.hidden_size
@@ -438,86 +427,135 @@ class YvDynamicModalFusion(nn.Module):
         self.cache_size_limit = 1000
         self.cache_manager = cache_manager
         self.memory_manager = YvMemory()
-        # Initialize hardware adaptive configuration
         self.hw = YvHardwareAdaptiveConfig()
         self.grad_conf = self.hw.get_gradient_config()
 
-        self.use_native_mode = bool(getattr(cfg, "use_native_multimodal_fusion", False))
+        # === Unified tokenization (native always; legacy tokenizers for raw input compat) ===
+        self.native_tokenizer = YvUnifiedMultimodalTokenizer(cfg, device=device, dtype=dtype)
+        self.native_output_tokens = int(getattr(cfg, "native_fusion_output_tokens", getattr(cfg, "modal_token_count", 8)))
+        native_layers = int(getattr(cfg, "native_fusion_num_layers", 2))
+        num_heads = max(1, getattr(cfg, "n_head", 16) // 4)
+        self.native_fusion_layers = nn.ModuleList([
+            nn.TransformerEncoderLayer(
+                d_model=self.hidden_size, nhead=num_heads,
+                dim_feedforward=self.hidden_size * 4,
+                dropout=float(getattr(cfg, "fusion_dropout", 0.1)),
+                activation="gelu", batch_first=True,
+                device=device, dtype=dtype,
+            ) for _ in range(native_layers)
+        ])
+        self.output_proj = nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype)
+        self.output_tokens = nn.Parameter(
+            torch.randn(1, self.native_output_tokens, self.hidden_size, device=device, dtype=dtype) * 0.02
+        )
+        # Legacy raw-input tokenizers
+        self.unified_tokenizer = nn.ModuleDict({
+            "text": nn.Identity(),
+            "image": nn.Conv2d(3, self.hidden_size, 16, 16, device=device, dtype=dtype),
+            "audio": nn.Conv1d(1, self.hidden_size, 16, 16, device=device, dtype=dtype),
+            "video": nn.Conv3d(3, self.hidden_size, (2, 16, 16), (2, 16, 16), device=device, dtype=dtype),
+            "document": nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype),
+            "agentic": nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype)
+        })
+        self.unified_pos_embed = nn.Parameter(
+            torch.randn(1, 8192, self.hidden_size, device=device, dtype=dtype) * 0.02
+        )
+        self.modality_tokens = nn.Embedding(len(self.modalities), self.hidden_size, device=device)
+        if dtype is not None:
+            self.modality_tokens = self.modality_tokens.to(dtype)
 
-        if self.use_native_mode:
-            # Native unified multimodal token space.
-            self.native_tokenizer = YvUnifiedMultimodalTokenizer(cfg, device=device, dtype=dtype)
-            self.native_output_tokens = int(getattr(cfg, "native_fusion_output_tokens", getattr(cfg, "modal_token_count", 8)))
-            self.native_use_self_attn = bool(getattr(cfg, "native_fusion_use_self_attention", True))
-            native_layers = int(getattr(cfg, "native_fusion_num_layers", 2))
-
-            if self.native_use_self_attn:
-                num_heads = max(1, getattr(cfg, "n_head", 16) // 4)
-                self.native_fusion_layers = nn.ModuleList([
-                    nn.TransformerEncoderLayer(
-                        d_model=self.hidden_size,
-                        nhead=num_heads,
-                        dim_feedforward=self.hidden_size * 4,
-                        dropout=float(getattr(cfg, "fusion_dropout", 0.1)),
-                        activation="gelu",
-                        batch_first=True,
-                        device=device,
-                        dtype=dtype,
-                    )
-                    for _ in range(native_layers)
-                ])
-            else:
-                self.native_fusion_layers = nn.ModuleList([
-                    YvCrossModalAttention(cfg)
-                    for _ in range(native_layers)
-                ])
-
-            self.output_proj = nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype)
-            self.output_tokens = nn.Parameter(
-                torch.randn(1, self.native_output_tokens, self.hidden_size, device=device, dtype=dtype) * 0.02
-            )
-
-            # Unified tokenization for raw-input compatibility (kept for generation helpers).
-            self.unified_tokenizer = nn.ModuleDict({
-                "text": nn.Identity(),
-                "image": nn.Conv2d(3, self.hidden_size, 16, 16, device=device, dtype=dtype),
-                "audio": nn.Conv1d(1, self.hidden_size, 16, 16, device=device, dtype=dtype),
-                "video": nn.Conv3d(3, self.hidden_size, (2, 16, 16), (2, 16, 16), device=device, dtype=dtype),
-                "document": nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype),
-                "agentic": nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype)
-            })
-            self.unified_pos_embed = nn.Parameter(
-                torch.randn(1, 8192, self.hidden_size, device=device, dtype=dtype) * 0.02
-            )
-            self.modality_tokens = nn.Embedding(len(self.modalities), self.hidden_size, device=device)
-            if dtype is not None:
-                self.modality_tokens = self.modality_tokens.to(dtype)
-        else:
-            # Legacy CNN-patch cross-modal attention path.
-            self.unified_tokenizer = nn.ModuleDict({
-                "text": nn.Identity(),
-                "image": nn.Conv2d(3, self.hidden_size, 16, 16, device=device, dtype=dtype),
-                "audio": nn.Conv1d(1, self.hidden_size, 16, 16, device=device, dtype=dtype),
-                "video": nn.Conv3d(3, self.hidden_size, (2, 16, 16), (2, 16, 16), device=device, dtype=dtype),
-                "document": nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype),
-                "agentic": nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype)
-            })
-            self.unified_pos_embed = nn.Parameter(
-                torch.randn(1, 8192, self.hidden_size, device=device, dtype=dtype) * 0.02
-            )
-            self.modality_tokens = nn.Embedding(len(self.modalities), self.hidden_size, device=device)
-            if dtype is not None:
-                self.modality_tokens = self.modality_tokens.to(dtype)
-
-            self.native_tokenizer = None
-            self.native_fusion_layers = None
-            self.output_proj = None
-            self.output_tokens = None
-
-        # Native cross-modal token-level attention
+        # === Cross-modal attention ===
         self.cross_modal_attn = YvCrossModalAttention(cfg)
 
-        # Understanding and generation gating mechanisms
+        # === SyncFusion: audio-video temporal alignment ===
+        self.sync_temporal_bins = int(getattr(cfg, "sync_fusion_temporal_bins", 16))
+        sync_bins = self.sync_temporal_bins
+        self.audio_temporal = nn.Linear(self.hidden_size, sync_bins * self.hidden_size, device=device, dtype=dtype)
+        self.video_temporal = nn.Linear(self.hidden_size, sync_bins * self.hidden_size, device=device, dtype=dtype)
+        self.sync_cross_attn = nn.MultiheadAttention(
+            embed_dim=self.hidden_size, num_heads=num_heads,
+            batch_first=True, device=device, dtype=dtype,
+        )
+        self.sync_fusion_gate = nn.Sequential(
+            nn.Linear(self.hidden_size * 2, self.hidden_size, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(self.hidden_size, 1, device=device, dtype=dtype),
+            nn.Sigmoid(),
+        )
+        self.sync_output_proj = nn.Linear(self.hidden_size * 2, self.hidden_size, device=device, dtype=dtype)
+
+        # === Intra-modal encoders (enhanced fusion) ===
+        self.intra_modal_encoders = nn.ModuleDict({
+            modal: nn.Sequential(
+                nn.LayerNorm(self.hidden_size, device=device, dtype=dtype),
+                nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype),
+                nn.SiLU(),
+                nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype),
+            ) for modal in self.modalities
+        })
+
+        # === Inter-modal attention ===
+        self.inter_modal_q = nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype)
+        self.inter_modal_k = nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype)
+        self.inter_modal_v = nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype)
+        self.inter_modal_out = nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype)
+
+        # === Cross-modal alignment ===
+        self.align_projections = nn.ModuleDict({
+            modal: nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype)
+            for modal in self.modalities
+        })
+        self.align_fusion = nn.Sequential(
+            nn.Linear(self.hidden_size * len(self.modalities), self.hidden_size, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype),
+        )
+
+        # === Importance weighting ===
+        self.importance_net = nn.Sequential(
+            nn.Linear(self.hidden_size, self.hidden_size // 2, device=device, dtype=dtype),
+            nn.Tanh(),
+            nn.Linear(self.hidden_size // 2, len(self.modalities), device=device, dtype=dtype),
+        )
+        self.modality_gate_nets = nn.ModuleDict({
+            modal: nn.Sequential(
+                nn.Linear(self.hidden_size, self.hidden_size // 4, device=device, dtype=dtype),
+                nn.SiLU(),
+                nn.Linear(self.hidden_size // 4, 1, device=device, dtype=dtype),
+                nn.Sigmoid(),
+            ) for modal in self.modalities
+        })
+
+        # === Quality-aware fusion ===
+        self.quality_global = nn.Sequential(
+            nn.AdaptiveAvgPool1d(1), nn.Flatten(1),
+            nn.Linear(self.hidden_size, self.hidden_size // 2, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(self.hidden_size // 2, 1, device=device, dtype=dtype),
+            nn.Sigmoid(),
+        )
+        self.quality_local = nn.Conv1d(self.hidden_size, 1, kernel_size=3, padding=1, device=device, dtype=dtype)
+        self.quality_head = nn.Sequential(
+            nn.Linear(2, self.hidden_size // 4, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(self.hidden_size // 4, 1, device=device, dtype=dtype),
+            nn.Sigmoid(),
+        )
+
+        # === Recursive refinement (RCA-style) ===
+        self.max_rca_rounds = int(getattr(cfg, "max_rca_rounds", 3))
+        self.rca_convergence_threshold = float(getattr(cfg, "rca_convergence_threshold", 0.995))
+        self.rca_output_tokens = nn.Parameter(
+            torch.randn(1, self.native_output_tokens, self.hidden_size, device=device, dtype=dtype) * 0.02
+        )
+        self.rca_output_proj = nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype)
+        self.rca_forecast_proj = nn.Linear(
+            self.hidden_size, len(self.modalities) * max(1, num_heads // 2),
+            device=device, dtype=dtype,
+        )
+        self.rca_forecast_gate = nn.Parameter(torch.tensor(0.5, device=device, dtype=dtype))
+
+        # === Understanding and generation gating ===
         self.understanding_gate = nn.Sequential(
             nn.Linear(self.hidden_size, self.hidden_size, device=device, dtype=dtype),
             nn.SiLU(),
@@ -532,8 +570,6 @@ class YvDynamicModalFusion(nn.Module):
                 nn.Sigmoid()
             ) for m in self.modalities
         })
-
-        # Generation cache for each modality
         self._generation_cache: Dict[str, torch.Tensor] = {}
 
     def _signature(self, features: Dict[str, Optional[torch.Tensor]]) -> str:
@@ -639,88 +675,64 @@ class YvDynamicModalFusion(nn.Module):
         """
         return self.generate_modality(target_modal, prompt_tokens=source_tokens)
 
-    def _legacy_forward(self, modal_features: Dict[str, Optional[torch.Tensor]]) -> torch.Tensor:
-        """Legacy CNN-patch cross-modal attention forward path.
+    def forward(self, modal_features: Dict[str, Optional[torch.Tensor]]) -> torch.Tensor:
+        sig = self._signature(modal_features)
+        if sig in self.weight_cache:
+            return self.weight_cache[sig]
 
-        Args:
-            modal_features: Mapping from modality name to feature tensor or None.
+        # 1. SyncFusion: temporal alignment for audio+video
+        audio_feat = modal_features.get("audio")
+        video_feat = modal_features.get("video")
+        if audio_feat is not None and video_feat is not None:
+            a_pool = F.adaptive_avg_pool1d(audio_feat.transpose(1, 2), self.sync_temporal_bins).transpose(1, 2)
+            v_pool = F.adaptive_avg_pool1d(video_feat.transpose(1, 2), self.sync_temporal_bins).transpose(1, 2)
+            a_proj = self.audio_temporal(a_pool)
+            v_proj = self.video_temporal(v_pool)
+            a2v, _ = self.sync_cross_attn(a_proj, v_proj, v_proj)
+            v2a, _ = self.sync_cross_attn(v_proj, a_proj, a_proj)
+            gate_a = self.sync_fusion_gate(torch.cat([a2v, a_pool], dim=-1))
+            gate_v = self.sync_fusion_gate(torch.cat([v2a, v_pool], dim=-1))
+            a_synced = gate_a * a2v + (1 - gate_a) * a_pool
+            v_synced = gate_v * v2a + (1 - gate_v) * v_pool
+            modal_features = dict(modal_features)
+            modal_features["audio"] = self.sync_output_proj(torch.cat([a_synced, a_pool], dim=-1))
+            modal_features["video"] = self.sync_output_proj(torch.cat([v_synced, v_pool], dim=-1))
 
-        Returns:
-            Global representation tensor with shape ``[B, 1, hidden_size]``.
-        """
-        tokens = []
-        device = None
-        for idx, modal in enumerate(self.modalities):
-            feat = modal_features.get(modal)
-            if feat is None:
-                continue
-            if device is None:
-                device = feat.device
-            if modal == "text":
-                tok = feat
-                if tok.dim() == 2:
-                    tok = tok.unsqueeze(1)
-            elif modal == "image" and feat.dim() == 4:
-                patches = self.unified_tokenizer["image"](feat)
-                tok = patches.flatten(2).transpose(1, 2)
-            elif modal == "audio":
-                if feat.dim() == 2:
-                    feat = feat.unsqueeze(1)
-                tok = self.unified_tokenizer["audio"](feat).transpose(1, 2)
-            elif modal == "video" and feat.dim() == 5:
-                b, c, t, h, w = feat.shape
-                patches = self.unified_tokenizer["video"](feat)
-                tok = patches.flatten(2).transpose(1, 2)
-                tok = tok.reshape(b, t * tok.shape[1], self.hidden_size)
-            else:
-                # document/agentic or fallback
-                if feat.dim() == 3:
-                    tok = feat
-                else:
-                    tok = feat.unsqueeze(1)
-            seq_len = tok.shape[1]
-            pos = self.unified_pos_embed[:, :seq_len, :].to(tok.device)
-            modal_emb = self.modality_tokens(
-                torch.tensor(idx, device=tok.device, dtype=torch.long)
-            ).unsqueeze(0).unsqueeze(0)
-            tokens.append(tok + pos + modal_emb)
+        # 2. Tokenize via native tokenizer
+        tokenized = self.native_tokenizer(modal_features)
+        if not tokenized:
+            raise ValueError("YvDynamicModalFusion received no valid modality tensors.")
 
-        if not tokens:
-            raise ValueError(
-                "YvDynamicModalFusion received no valid modality tensors. "
-                "Fusion now requires real modality features instead of zero fallbacks."
-            )
+        # 3. Intra-modal encoding
+        encoded = {}
+        for modal, tok in tokenized.items():
+            encoded[modal] = self.intra_modal_encoders[modal](tok)
 
-        seq = torch.cat(tokens, dim=1)
-        fused = self.cross_modal_attn(seq, seq, seq)
-        gate = self.understanding_gate(fused.mean(dim=1)).unsqueeze(1)
-        understanding = fused * gate
-        return understanding.mean(dim=1, keepdim=True)
+        # 4. Cross-modal alignment
+        aligned = {}
+        for modal, h in encoded.items():
+            aligned[modal] = self.align_projections[modal](h)
 
-    def _native_forward(self, modal_features: Dict[str, Optional[torch.Tensor]]) -> torch.Tensor:
-        """Native unified multimodal token space forward path.
+        # 5. Inter-modal attention (each modality attends to others)
+        modal_keys = list(encoded.keys())
+        if len(modal_keys) > 1:
+            inter_features = {}
+            for modal in modal_keys:
+                others = torch.cat([encoded[m] for m in modal_keys if m != modal], dim=1)
+                q = self.inter_modal_q(encoded[modal])
+                k = self.inter_modal_k(others)
+                v = self.inter_modal_v(others)
+                attn_scores = torch.matmul(q, k.transpose(1, 2)) / (self.hidden_size ** 0.5)
+                attn_weights = F.softmax(attn_scores, dim=-1)
+                inter_out = torch.matmul(attn_weights, v)
+                inter_features[modal] = self.inter_modal_out(inter_out) + aligned[modal]
+        else:
+            inter_features = aligned
 
-        All present modalities are mapped into the same token embedding space,
-        fused with self-attention, and projected to a fixed number of output
-        tokens that can be consumed directly by the autoregressive transformer.
+        # 6. Concatenate all modality sequences
+        seq = torch.cat(list(inter_features.values()), dim=1)
 
-        Args:
-            modal_features: Mapping from modality name to feature tensor or None.
-
-        Returns:
-            Unified multimodal token tensor with shape ``[B, native_output_tokens, hidden_size]``.
-        """
-        unified = self.native_tokenizer(modal_features)
-        if not unified:
-            raise ValueError(
-                "YvDynamicModalFusion(native) received no valid modality tensors. "
-                "Native fusion now requires real modality features."
-            )
-
-        # Concatenate all modality token sequences into one unified sequence.
-        seq = torch.cat(list(unified.values()), dim=1)
-
-        # Apply native fusion layers (self-attention over unified token space).
+        # 7. Self-attention fusion (native layers)
         h = seq
         for layer in self.native_fusion_layers:
             if isinstance(layer, nn.TransformerEncoderLayer):
@@ -728,93 +740,75 @@ class YvDynamicModalFusion(nn.Module):
             else:
                 h = layer(h, h, h)
 
-        # Derive a global understanding vector via gating.
-        gate = self.understanding_gate(h.mean(dim=1)).unsqueeze(1)
+        # 8. Importance-weighted pooling
+        pooled_per_modal = {}
+        cursor = 0
+        for modal, feat in inter_features.items():
+            end = cursor + feat.shape[1]
+            pooled_per_modal[modal] = h[:, cursor:end, :].mean(dim=1)
+            cursor = end
+
+        if pooled_per_modal:
+            modal_stack = torch.stack(list(pooled_per_modal.values()), dim=1)
+            importance_scores = F.softmax(self.importance_net(modal_stack.mean(dim=2)), dim=-1)
+            importance_weighted = (modal_stack * importance_scores.unsqueeze(-1)).sum(dim=1)
+        else:
+            importance_weighted = h.mean(dim=1)
+
+        # 9. Quality-awareness scores
+        for modal, pooled in pooled_per_modal.items():
+            gs = self.quality_global(pooled.unsqueeze(-1))
+            ls = self.quality_local(pooled.unsqueeze(-1)).mean(dim=-1, keepdim=False).unsqueeze(-1)
+            qs = self.quality_head(torch.cat([gs, ls], dim=-1)).squeeze(-1)
+            if qs.item() < 0.3:
+                pass  # Quality gate: low-quality modalities are down-weighted naturally
+
+        # 10. Understanding gate
+        gate = self.understanding_gate(importance_weighted).unsqueeze(1)
         understanding = h * gate
 
-        # Compress the unified sequence to a fixed number of multimodal tokens.
+        # 11. Compress to output tokens
         batch_size = h.shape[0]
         query = self.output_tokens.expand(batch_size, -1, -1)
-        # Cross-attention from output tokens to unified sequence.
         attn_scores = torch.matmul(query, h.transpose(1, 2)) / (self.hidden_size ** 0.5)
         attn_weights = F.softmax(attn_scores, dim=-1)
-        pooled = torch.matmul(attn_weights, h)
-        out = self.output_proj(pooled)
-        return out + understanding.mean(dim=1, keepdim=True)
+        pooled_out = torch.matmul(attn_weights, h)
+        out = self.output_proj(pooled_out) + understanding.mean(dim=1, keepdim=True)
 
-    def forward(self, modal_features: Dict[str, Optional[torch.Tensor]]) -> torch.Tensor:
-        """Fuse modality features into a shared representation.
+        # 12. Recursive refinement (RCA)
+        if self.max_rca_rounds > 1:
+            prev = out
+            for rnd in range(self.max_rca_rounds):
+                query = self.rca_output_tokens.expand(batch_size, -1, -1)
+                attn_scores = torch.matmul(query, out.transpose(1, 2)) / (self.hidden_size ** 0.5)
+                attn_weights = F.softmax(attn_scores, dim=-1)
+                refined = torch.matmul(attn_weights, out)
+                refined = self.rca_output_proj(refined) + out
+                if rnd > 0:
+                    cos_sim = F.cosine_similarity(refined.flatten(1), prev.flatten(1), dim=1).mean()
+                    if cos_sim > self.rca_convergence_threshold:
+                        break
+                prev = refined
+                out = refined
 
-        Main entry point for multimodal fusion. Tokenizes each modality,
-        applies positional and modality embeddings, performs cross-modal
-        attention, and produces a unified representation through gating.
+        # 13. Generation gates
+        gen_outputs = {}
+        cursor = 0
+        total_len = out.shape[1]
+        for modal in self.modalities:
+            est_len = max(1, total_len // max(1, len(self.modalities)))
+            end = min(total_len, cursor + est_len)
+            modal_tokens = out[:, cursor:end, :]
+            cursor = end
+            gen_gate = self.generation_gates[modal](out.mean(dim=1)).unsqueeze(1)
+            gen_outputs[modal] = modal_tokens * gen_gate
 
-        Args:
-            modal_features (Dict[str, Optional[torch.Tensor]]): Mapping from
-                modality name to feature tensors or ``None``.
-                Supported modalities: text, image, audio, video, document, agentic.
-                - text: [B, seq_len, hidden_size] or [B, hidden_size]
-                - image: [B, C, H, W] or [B, seq_len, hidden_size]
-                - audio: [B, seq_len] or [B, 1, seq_len] or [B, seq_len, hidden_size]
-                - video: [B, C, T, H, W] or [B, seq_len, hidden_size]
-                - document/agentic: [B, seq_len, hidden_size]
-
-        Returns:
-            torch.Tensor: Global representation tensor.
-                Legacy mode: ``[B, 1, hidden_size]``.
-                Native mode: ``[B, native_fusion_output_tokens, hidden_size]``.
-
-        Note:
-            Caches output for efficient repeated fusion with same modality config.
-            Updates generation cache for modality-specific generation.
-            Raises ValueError if no valid modalities are provided.
-        """
-        # Cache lookup
-        sig = self._signature(modal_features)
-        if sig in self.weight_cache:
-            cached = self.weight_cache[sig]
-        else:
-            cached = None
-
-        if self.use_native_mode:
-            fused = self._native_forward(modal_features)
-            # Build per-modality generation views from the unified sequence.
-            gen_outputs: Dict[str, torch.Tensor] = {}
-            cursor = 0
-            total_len = fused.shape[1]
-            for modal in self.modalities:
-                est_len = max(1, total_len // max(1, len(self.modalities)))
-                end = min(total_len, cursor + est_len)
-                modal_tokens = fused[:, cursor:end, :]
-                cursor = end
-                gen_gate = self.generation_gates[modal](fused.mean(dim=1)).unsqueeze(1)
-                gen_outputs[modal] = modal_tokens * gen_gate
-            out = fused
-        else:
-            understanding = self._legacy_forward(modal_features)
-            # Generate modality-specific outputs modulated by generation gates.
-            gen_outputs: Dict[str, torch.Tensor] = {}
-            cursor = 0
-            total_len = understanding.shape[1]
-            for modal in self.modalities:
-                est_len = max(1, total_len // max(1, len(self.modalities)))
-                end = min(total_len, cursor + est_len)
-                modal_tokens = understanding[:, cursor:end, :]
-                cursor = end
-                gen_gate = self.generation_gates[modal](understanding.mean(dim=1)).unsqueeze(1)
-                gen_outputs[modal] = modal_tokens * gen_gate
-            out = understanding.mean(dim=1, keepdim=True)
-
-        # Write to weight cache
-        if cached is None:
-            if len(self.weight_cache) > self.cache_size_limit:
-                for k in list(self.weight_cache.keys())[:100]:
-                    self.weight_cache.pop(k, None)
-            self.weight_cache[sig] = out.detach()
-
-        # Update generation cache (only keep the last one)
+        # Cache management
+        if len(self.weight_cache) > self.cache_size_limit:
+            for k in list(self.weight_cache.keys())[:100]:
+                self.weight_cache.pop(k, None)
+        self.weight_cache[sig] = out.detach()
         self._generation_cache = {m: v.detach() for m, v in gen_outputs.items()}
-
         self.memory_manager.register_tensor(out, "fusion_out")
         return out
 

@@ -240,60 +240,17 @@ class YvQuantizer:
         symmetric: bool = True,
         per_channel: bool = True
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """Quantize a tensor to specified bit width.
-        
-        Converts a floating-point tensor to integer representation using
-        scale and zero-point parameters. Supports both symmetric and
-        asymmetric quantization.
-        
-        Quantization Formula:
-            quantized = clamp(round(tensor / scale + zero_point), qmin, qmax)
-        
-        Args:
-            tensor (torch.Tensor): Input tensor to quantize (FP32/FP16).
-            bits (int): Target bit width. Supported: 4, 8. Default: 8.
-            symmetric (bool): If True, uses symmetric quantization with
-                zero_point=0. Default: True.
-            per_channel (bool): If True, computes separate scale per output
-                channel. Default: True.
-        
-        Returns:
-            Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: 
-                - quantized: INT8 tensor with quantized values
-                - scale: Scale factor(s) for dequantization
-                - zero_point: Zero point offset(s)
-        
-        Example:
-            >>> quantizer = YvQuantizer()
-            >>> weight = torch.randn(256, 512)
-            >>> q_weight, scale, zp = quantizer.quantize_tensor(weight, bits=8)
-        """
-        if bits == 8:
-            qmin, qmax = -128, 127
-        elif bits == 4:
-            qmin, qmax = -8, 7
-        else:
-            qmin, qmax = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
-
-        if per_channel:
-            dim = 0
-            scale = tensor.abs().max(dim=dim, keepdim=True)[0] / qmax
-        else:
-            scale = tensor.abs().max() / qmax
-
+        qmin, qmax = -(2 ** (bits - 1)), 2 ** (bits - 1) - 1
+        dim = 0 if per_channel else None
+        scale = (tensor.abs().amax(dim=dim, keepdim=True) if per_channel else tensor.abs().amax()) / qmax
         scale = scale.clamp(min=1e-8)
 
-        if symmetric:
-            zero_point = torch.zeros_like(scale)
-        else:
-            if per_channel:
-                zero_point = qmin - (tensor.min(dim=dim, keepdim=True)[0] / scale).round()
-            else:
-                zero_point = qmin - (tensor.min() / scale).round()
-            zero_point = zero_point.clamp(qmin, qmax).round()
+        zero_point_sym = torch.zeros_like(scale)
+        min_val = tensor.amin(dim=dim, keepdim=True) if per_channel else tensor.amin()
+        zero_point_asym = (qmin - (min_val / scale)).round().clamp(qmin, qmax)
+        zero_point = zero_point_sym if symmetric else zero_point_asym
 
         quantized = torch.clamp((tensor / scale + zero_point).round(), qmin, qmax).to(torch.int8)
-
         return quantized, scale, zero_point
 
     def dequantize_tensor(
@@ -328,25 +285,8 @@ class YvQuantizer:
         linear: nn.Linear,
         name: str
     ) -> nn.Module:
-        """Quantize a linear layer and create a quantized wrapper.
-        
-        Converts the weight matrix of a linear layer to INT8/INT4 and
-        creates a QuantizedLinear module that performs on-the-fly
-        dequantization during forward pass.
-        
-        Args:
-            linear (nn.Linear): Linear layer to quantize.
-            name (str): Layer name for storing quantization parameters.
-        
-        Returns:
-            nn.Module: QuantizedLinear wrapper with quantized weights.
-        
-        Note:
-            The quantized weights are stored as INT8 parameters with
-            requires_grad=False. Dequantization happens at inference time.
-        """
         weight = linear.weight.data
-        bits = 8 if self.config.quantization_type == YvQuantizationType.INT8 else 4
+        bits = 8 if self.config.quantization_type in (YvQuantizationType.INT8, YvQuantizationType.DYNAMIC_INT8, YvQuantizationType.STATIC_INT8) else 4
 
         quantized_weight, scale, zero_point = self.quantize_tensor(
             weight,
@@ -358,19 +298,7 @@ class YvQuantizer:
         self.scale_dict[name + ".weight"] = scale
         self.zero_point_dict[name + ".weight"] = zero_point
 
-        class QuantizedLinear(nn.Module):
-            def __init__(self, q_weight, scale, zero_point, bias):
-                super().__init__()
-                self.q_weight = nn.Parameter(q_weight, requires_grad=False)
-                self.register_buffer("scale", scale)
-                self.register_buffer("zero_point", zero_point)
-                self.bias = bias
-
-            def forward(self, x):
-                weight = (self.q_weight.float() - self.zero_point) * self.scale
-                return F.linear(x, weight, self.bias)
-
-        return QuantizedLinear(quantized_weight, scale, zero_point, linear.bias)
+        return _QuantizedLinear(quantized_weight, scale, zero_point, linear.bias)
 
     def quantize_model(
         self,
@@ -452,6 +380,19 @@ class YvQuantizer:
         """
         self.scale_dict = state_dict.get("scales", {})
         self.zero_point_dict = state_dict.get("zero_points", {})
+
+
+class _QuantizedLinear(nn.Module):
+    def __init__(self, q_weight, scale, zero_point, bias):
+        super().__init__()
+        self.q_weight = nn.Parameter(q_weight, requires_grad=False)
+        self.register_buffer("scale", scale)
+        self.register_buffer("zero_point", zero_point)
+        self.bias = bias
+
+    def forward(self, x):
+        weight = (self.q_weight.float() - self.zero_point) * self.scale
+        return F.linear(x, weight, self.bias)
 
 
 def quantize_kv_cache(

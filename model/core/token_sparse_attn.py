@@ -79,7 +79,7 @@ class YvTokenSparseAttention(nn.Module):
         bin_idx = (normalized * (self.n_bins - 1)).long().clamp(0, self.n_bins - 1)
 
         bins = torch.zeros(scores_flat.shape[0], self.n_bins, device=scores.device)
-        bins.scatter_add_(1, bin_idx, torch.ones_like(scores_flat))
+        bins.scatter_add_(1, bin_idx, torch.ones(bins.shape[0], 1, device=scores.device).expand(-1, bin_idx.shape[1]))
 
         bin_centers = (torch.arange(self.n_bins, device=scores.device).float() + 0.5) / self.n_bins
         bin_values = v_min + bin_centers.unsqueeze(0) * range_safe

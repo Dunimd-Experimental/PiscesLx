@@ -327,18 +327,21 @@ class YvSampler:
 
         if config.strategy == YvSamplingStrategy.GREEDY:
             return self._greedy_sample(logits)
-        elif config.strategy == YvSamplingStrategy.TOP_K:
-            return self._top_k_sample(logits, config.top_k)
-        elif config.strategy == YvSamplingStrategy.TOP_P:
-            return self._top_p_sample(logits, config.top_p)
-        elif config.strategy == YvSamplingStrategy.TOP_K_TOP_P:
-            return self._top_k_top_p_sample(logits, config.top_k, config.top_p)
-        elif config.strategy == YvSamplingStrategy.TYPICAL:
-            return self._typical_sample(logits, config.typical_p)
-        elif config.strategy == YvSamplingStrategy.ETA_SAMPLING:
-            return self._eta_sample(logits, config.eta_cutoff)
-        else:
-            return self._top_k_top_p_sample(logits, config.top_k, config.top_p)
+
+        logits_orig = logits
+        if config.top_k > 0:
+            logits = self._apply_top_k_filter(logits, config.top_k)
+        if config.top_p < 1.0:
+            logits = self._apply_top_p_filter(logits, config.top_p)
+        if config.typical_p < 1.0:
+            logits = self._apply_typical_filter(logits, config.typical_p)
+        if config.eta_cutoff > 0:
+            logits = self._apply_eta_filter(logits, config.eta_cutoff)
+
+        probs = F.softmax(logits, dim=-1)
+        if (probs == 0).all(dim=-1).any():
+            probs = F.softmax(logits_orig, dim=-1)
+        return torch.multinomial(probs, num_samples=1)
 
     def _greedy_sample(self, logits: torch.Tensor) -> torch.Tensor:
         """Perform greedy sampling by selecting highest probability token.
@@ -350,6 +353,41 @@ class YvSampler:
             Selected token IDs [batch_size, 1].
         """
         return torch.argmax(logits, dim=-1, keepdim=True)
+
+    @staticmethod
+    def _apply_top_k_filter(logits: torch.Tensor, top_k: int) -> torch.Tensor:
+        top_k = min(top_k, logits.size(-1))
+        threshold = torch.topk(logits, top_k, dim=-1)[0][..., -1, None]
+        return torch.where(logits < threshold, float('-inf'), logits)
+
+    @staticmethod
+    def _apply_top_p_filter(logits: torch.Tensor, top_p: float) -> torch.Tensor:
+        sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+        cum_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
+        mask = cum_probs - F.softmax(sorted_logits, dim=-1) > top_p
+        sorted_logits[mask] = float('-inf')
+        return sorted_logits.scatter(-1, sorted_indices, sorted_logits)
+
+    @staticmethod
+    def _apply_typical_filter(logits: torch.Tensor, typical_p: float) -> torch.Tensor:
+        probs = F.softmax(logits, dim=-1)
+        entropy = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1, keepdim=True)
+        surprisal = -torch.log(probs + 1e-10)
+        typical_scores = torch.abs(surprisal - entropy)
+        sorted_indices = torch.argsort(typical_scores, dim=-1)
+        sorted_probs = torch.gather(probs, -1, sorted_indices)
+        cum_probs = torch.cumsum(sorted_probs, dim=-1)
+        mask = cum_probs - sorted_probs > typical_p
+        sorted_logits = torch.gather(logits, -1, sorted_indices)
+        sorted_logits[mask] = float('-inf')
+        return sorted_logits.scatter(-1, sorted_indices, sorted_logits)
+
+    @staticmethod
+    def _apply_eta_filter(logits: torch.Tensor, eta_cutoff: float) -> torch.Tensor:
+        probs = F.softmax(logits, dim=-1)
+        entropy = -torch.sum(probs * torch.log(probs + 1e-10), dim=-1, keepdim=True)
+        eta = torch.exp(-entropy) * eta_cutoff
+        return torch.where(probs < eta, float('-inf'), logits)
 
     def _top_k_sample(self, logits: torch.Tensor, top_k: int) -> torch.Tensor:
         """Perform top-k sampling from the k most likely tokens.
