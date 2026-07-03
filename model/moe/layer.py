@@ -105,6 +105,7 @@ from typing import Any, Optional, Tuple, List, Dict
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from model.utils import YvNumericalGuard
 
 from utils.dc import PiscesLxLogger
 from .expert_evolution import YvExpertEvolution
@@ -164,7 +165,8 @@ class YvExpertChoiceRouter(nn.Module):
         hidden_size: int,
         num_experts: int,
         capacity_factor: float = 1.25,
-        top_k: int = 2
+        top_k: int = 2,
+        top_p: Optional[float] = None,
     ) -> None:
         """Initialize the expert-choice router.
         
@@ -175,6 +177,10 @@ class YvExpertChoiceRouter(nn.Module):
                 Higher values allow more tokens per expert. Default: 1.25.
             top_k (int): Number of top tokens each expert selects.
                 Default: 2.
+            top_p (Optional[float]): If set, uses top-p threshold routing
+                instead of fixed-capacity routing. Each expert dynamically
+                selects tokens whose cumulative probability exceeds top_p.
+                Helps prevent extreme load fluctuations. Default: None.
         """
         super().__init__()
         self.gate = nn.Linear(hidden_size, num_experts, bias=False)
@@ -182,6 +188,7 @@ class YvExpertChoiceRouter(nn.Module):
         self.capacity_factor = capacity_factor
         self.num_experts = num_experts
         self.top_k = top_k
+        self.top_p = top_p
 
         # Gradient checkpointing compatibility flag
         # When True, disables any stateful mutation inside forward.
@@ -205,21 +212,47 @@ class YvExpertChoiceRouter(nn.Module):
                 - dispatch_mask (torch.Tensor): Binary mask for token-expert pairs.
                 - load_balancing_loss (torch.Tensor): Load balance loss scalar.
         """
-        tokens_per_expert = int(x.shape[0] * self.capacity_factor / self.num_experts)
-        
         logits = self.gate(x)
         if subconscious_hints is not None:
             logits = logits + self.subconscious_proj(subconscious_hints)
-        
-        expert_indices = torch.topk(logits.T, tokens_per_expert, dim=1).indices
-        
-        dispatch_mask = torch.zeros_like(logits)
-        dispatch_mask[expert_indices.T.flatten(), torch.arange(self.num_experts).repeat(tokens_per_expert)] = 1
-        
-        expert_load = dispatch_mask.sum(dim=0)
-        
-        load_balancing_loss = (expert_load * torch.log(expert_load / expert_load.mean() + 1e-8)).mean()
-        
+
+        if self.top_p is not None and not self.training:
+            # Top-p threshold routing: each expert dynamically selects tokens
+            # whose cumulative softmax probability exceeds top_p.
+            probs = logits.softmax(dim=0)  # [num_tokens, num_experts], normalize over tokens
+            probs_sorted, idx_sorted = probs.sort(dim=0, descending=True)
+            cumsum = probs_sorted.cumsum(dim=0)
+            mask = cumsum <= self.top_p
+            # Ensure at least 1 token per expert
+            mask[0] = True
+            tokens_per_expert = mask.sum(dim=0)  # [num_experts], dynamic per expert
+            max_tokens = tokens_per_expert.max().item()
+
+            expert_indices_list = []
+            for e in range(self.num_experts):
+                k = tokens_per_expert[e].item()
+                expert_indices_list.append(idx_sorted[:k, e])
+            expert_indices = torch.stack(
+                [torch.cat([eid, eid[:1].expand(max_tokens - len(eid))]) for eid in expert_indices_list]
+            )
+
+            dispatch_mask = torch.zeros_like(logits)
+            for e in range(self.num_experts):
+                k = tokens_per_expert[e].item()
+                dispatch_mask[idx_sorted[:k, e], e] = 1.0
+
+            expert_load = tokens_per_expert.float()
+        else:
+            tokens_per_expert = max(1, int(x.shape[0] * self.capacity_factor / max(1, self.num_experts)))
+            expert_indices = torch.topk(logits.T, tokens_per_expert, dim=1).indices
+
+            dispatch_mask = torch.zeros_like(logits)
+            dispatch_mask[expert_indices.T.flatten(), torch.arange(self.num_experts).repeat(tokens_per_expert)] = 1
+
+            expert_load = dispatch_mask.sum(dim=0)
+
+        load_balancing_loss = (expert_load * YvNumericalGuard.safe_log(expert_load / expert_load.mean().clamp(min=YvNumericalGuard.get_eps(expert_load.dtype)))).mean()
+
         return expert_indices, dispatch_mask, load_balancing_loss
 
 
@@ -282,7 +315,8 @@ class YvFineGrainedRouter(nn.Module):
         use_aux_loss_free: bool = True,
         use_anticipatory_routing: bool = False,
         anticipatory_momentum: float = 0.9,
-        anticipatory_scale: float = 0.1
+        anticipatory_scale: float = 0.1,
+        enable_tdqkr_async: bool = True,
     ) -> None:
         """Initialize the fine-grained router.
         
@@ -304,6 +338,8 @@ class YvFineGrainedRouter(nn.Module):
                 Default: 0.9.
             anticipatory_scale (float): Scale of anticipatory bias.
                 Default: 0.1.
+            enable_tdqkr_async (bool): Prefetch TDQKR on a separate CUDA
+                stream to overlap with upstream computation. Default: True.
         """
         super().__init__()
         self.hidden_size = hidden_size
@@ -316,10 +352,16 @@ class YvFineGrainedRouter(nn.Module):
         self.use_anticipatory_routing = use_anticipatory_routing
         self.anticipatory_momentum = anticipatory_momentum
         self.anticipatory_scale = anticipatory_scale
+        self.enable_tdqkr_async = enable_tdqkr_async
 
         # Gradient checkpointing compatibility flag
         # When True, disables any stateful mutation inside forward.
         self._is_checkpointing = False
+        
+        # UltraMem TDQKR async prefetch stream
+        self._tdqkr_stream: Optional[torch.cuda.Stream] = None
+        self._tdqkr_event: Optional[torch.cuda.Event] = None
+        self._tdqkr_result: Optional[torch.Tensor] = None
         
         self.gate = nn.Linear(hidden_size, self.total_experts, bias=False)
         
@@ -365,18 +407,34 @@ class YvFineGrainedRouter(nn.Module):
             grid_size = int(math.sqrt(self.total_experts))
             
             if grid_size * grid_size == self.total_experts:
-                logits_grid = logits.view(batch_size, grid_size, grid_size)
-                
-                row_scores = logits_grid.softmax(dim=-1).mean(dim=-1)
-                col_scores = logits_grid.softmax(dim=-2).mean(dim=-2)
-                
-                logits = (row_scores.unsqueeze(-1) * col_scores.unsqueeze(-2)).view(batch_size, -1)
+                if self.enable_tdqkr_async and torch.cuda.is_available() and not self.training:
+                    if self._tdqkr_stream is None:
+                        self._tdqkr_stream = torch.cuda.Stream()
+                        self._tdqkr_event = torch.cuda.Event()
+                    stream = self._tdqkr_stream
+                    with torch.cuda.stream(stream):
+                        logits_grid = logits.view(batch_size, grid_size, grid_size)
+                        row_scores = logits_grid.softmax(dim=-1).mean(dim=-1)
+                        col_scores = logits_grid.softmax(dim=-2).mean(dim=-2)
+                        self._tdqkr_result = (row_scores.unsqueeze(-1) * col_scores.unsqueeze(-2)).view(batch_size, -1)
+                    self._tdqkr_event.record(stream)
+                else:
+                    logits_grid = logits.view(batch_size, grid_size, grid_size)
+                    row_scores = logits_grid.softmax(dim=-1).mean(dim=-1)
+                    col_scores = logits_grid.softmax(dim=-2).mean(dim=-2)
+                    logits = (row_scores.unsqueeze(-1) * col_scores.unsqueeze(-2)).view(batch_size, -1)
+        
+        # Sync TDQKR async result before using logits
+        if self._tdqkr_result is not None and self._tdqkr_event is not None:
+            torch.cuda.current_stream().wait_event(self._tdqkr_event)
+            logits = self._tdqkr_result
+            self._tdqkr_result = None
         
         routing_weights = F.softmax(logits, dim=-1)
         
-        top_k_weights, top_k_indices = torch.topk(routing_weights, self.top_k, dim=-1)
+        top_k_weights, top_k_indices = torch.topk(routing_weights, min(self.top_k, self.num_experts), dim=-1)
         
-        top_k_weights = top_k_weights / (top_k_weights.sum(dim=-1, keepdim=True) + 1e-8)
+        top_k_weights = YvNumericalGuard.safe_div(top_k_weights, top_k_weights.sum(dim=-1, keepdim=True))
         
         if self.training and (not self._is_checkpointing):
             with torch.no_grad():
@@ -415,10 +473,10 @@ class YvFineGrainedRouter(nn.Module):
         if self.total_tokens < 1:
             return torch.tensor(0.0, device=self.gate.weight.device)
         
-        expert_freq = self.expert_counts / (self.total_tokens + 1e-8)
+        expert_freq = YvNumericalGuard.safe_div(self.expert_counts, self.total_tokens)
         expert_freq = expert_freq.clamp(min=1e-8)
         
-        loss = (expert_freq * torch.log(expert_freq * self.total_experts + 1e-8)).sum()
+        loss = (expert_freq * YvNumericalGuard.safe_log(expert_freq * self.total_experts)).sum()
         
         return loss * 0.01
     
@@ -571,6 +629,17 @@ class YvDynamicMoELayer(nn.Module):
         self.compute_split_ratio = getattr(cfg, 'moe_compute_split_ratio', 0.5)
         self.num_compute_experts = self.num_experts
         self.num_lookup_experts = 0
+        self.use_fused_moe = getattr(cfg, 'use_fused_moe', False)
+        self.fused_dispatch = None
+        if self.use_fused_moe:
+            try:
+                from opss.infer.fused_moe import FusedMoEDispatch
+                self.fused_dispatch = FusedMoEDispatch(
+                    num_experts=self.num_experts,
+                    top_k=self.top_k,
+                )
+            except ImportError:
+                self.fused_dispatch = None
         
         if compute_mode == "compute_split":
             self.num_compute_experts = max(1, int(self.num_experts * self.compute_split_ratio))
@@ -730,6 +799,10 @@ class YvDynamicMoELayer(nn.Module):
         routing. Their outputs are combined using learned weights and
         added to the routed expert outputs.
         
+        Uses fused gate/up projection for SwiGLU shared experts, replacing
+        two separate matmuls (hidden → intermediate each) with a single
+        batched matmul (hidden → 2*intermediate).
+        
         Args:
             x (torch.Tensor): Input tensor [batch, seq, hidden].
         
@@ -741,10 +814,29 @@ class YvDynamicMoELayer(nn.Module):
             return torch.zeros_like(x)
         
         batch_size, seq_len, hidden = x.shape
+        x_2d = x.view(-1, hidden)
+        num_tokens = x_2d.shape[0]
         
         shared_outputs = []
         for shared_expert in self.shared_experts:
-            shared_out = shared_expert(x)
+            expert = shared_expert.expert
+            if hasattr(expert, 'gate_proj') and hasattr(expert, 'up_proj') and not self.training:
+                # Fused gate/up projection: [num_tokens, 2*intermediate]
+                w_gate = expert.gate_proj.weight
+                w_up = expert.up_proj.weight
+                w_fused = torch.cat([w_gate, w_up], dim=0)
+                b_fused = None
+                if expert.gate_proj.bias is not None:
+                    b_fused = torch.cat([expert.gate_proj.bias, expert.up_proj.bias], dim=0)
+                fused_out = F.linear(x_2d, w_fused, b_fused)
+                gate_out, up_out = fused_out.chunk(2, dim=-1)
+                gate = F.silu(gate_out)
+                x_hidden = gate * up_out
+                if hasattr(expert, 'dropout'):
+                    x_hidden = expert.dropout(x_hidden)
+                shared_out = expert.down_proj(x_hidden).view(batch_size, seq_len, hidden)
+            else:
+                shared_out = shared_expert(x)
             shared_outputs.append(shared_out)
         
         weights = F.softmax(self.shared_expert_weight, dim=0)
@@ -799,18 +891,21 @@ class YvDynamicMoELayer(nn.Module):
         else:
             routing_weights, expert_indices, load_balancing_loss = self.router(x)
 
-        outputs = torch.zeros_like(x_flat)
-        flat_indices = expert_indices.view(-1)
-        flat_weights = routing_weights.view(-1)
-        token_indices = torch.arange(batch_size * seq_len, device=x.device).unsqueeze(1).expand(-1, expert_indices.shape[-1]).reshape(-1)
+        if self.use_fused_moe and self.fused_dispatch is not None:
+            outputs = self.fused_dispatch(x_flat, routing_weights, expert_indices, self.experts)
+        else:
+            outputs = torch.zeros_like(x_flat)
+            flat_indices = expert_indices.view(-1)
+            flat_weights = routing_weights.view(-1)
+            token_indices = torch.arange(batch_size * seq_len, device=x.device).unsqueeze(1).expand(-1, expert_indices.shape[-1]).reshape(-1)
 
-        for expert_id in range(self.num_experts):
-            expert_mask = (flat_indices == expert_id)
-            if expert_mask.any():
-                selected_tokens = token_indices[expert_mask]
-                selected_weights = flat_weights[expert_mask]
-                expert_out = self.experts[expert_id](x_flat[selected_tokens])
-                outputs[selected_tokens] += selected_weights.unsqueeze(1) * expert_out
+            for expert_id in range(self.num_experts):
+                expert_mask = (flat_indices == expert_id)
+                if expert_mask.any():
+                    selected_tokens = token_indices[expert_mask]
+                    selected_weights = flat_weights[expert_mask]
+                    expert_out = self.experts[expert_id](x_flat[selected_tokens])
+                    outputs[selected_tokens] += selected_weights.unsqueeze(1) * expert_out
         if self.phi_balancing is not None and self.training:
             load_balancing_loss = load_balancing_loss + self.phi_balancing.get_loss()
         
@@ -1198,22 +1293,31 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
         else:
             routing_weights, expert_indices, load_balancing_loss = self.router(x)
 
-        outputs = torch.zeros_like(x_flat)
-        expert_outputs_list = []
-        flat_indices = expert_indices.view(-1)
-        flat_weights = routing_weights.view(-1)
-        token_indices = torch.arange(batch_size * seq_len, device=x.device).unsqueeze(1).expand(-1, expert_indices.shape[-1]).reshape(-1)
+        if self.use_fused_moe and self.fused_dispatch is not None:
+            collect_stats = self.training and self.diversity_weight > 0
+            result = self.fused_dispatch(x_flat, routing_weights, expert_indices, self.experts, collect_stats=collect_stats)
+            if collect_stats:
+                outputs, expert_outputs_list = result
+            else:
+                outputs = result
+                expert_outputs_list = []
+        else:
+            outputs = torch.zeros_like(x_flat)
+            expert_outputs_list = []
+            flat_indices = expert_indices.view(-1)
+            flat_weights = routing_weights.view(-1)
+            token_indices = torch.arange(batch_size * seq_len, device=x.device).unsqueeze(1).expand(-1, expert_indices.shape[-1]).reshape(-1)
 
-        for expert_id in range(self.num_experts):
-            expert_mask = (flat_indices == expert_id)
-            if expert_mask.any():
-                selected_tokens = token_indices[expert_mask]
-                selected_weights = flat_weights[expert_mask]
-                expert_out = self.experts[expert_id](x_flat[selected_tokens])
-                outputs[selected_tokens] += selected_weights.unsqueeze(1) * expert_out
+            for expert_id in range(self.num_experts):
+                expert_mask = (flat_indices == expert_id)
+                if expert_mask.any():
+                    selected_tokens = token_indices[expert_mask]
+                    selected_weights = flat_weights[expert_mask]
+                    expert_out = self.experts[expert_id](x_flat[selected_tokens])
+                    outputs[selected_tokens] += selected_weights.unsqueeze(1) * expert_out
 
-                if self.training and self.diversity_weight > 0:
-                    expert_outputs_list.append(expert_out.mean(dim=0))
+                    if self.training and self.diversity_weight > 0:
+                        expert_outputs_list.append(expert_out.mean(dim=0))
         if self.phi_balancing is not None and self.training:
             load_balancing_loss = load_balancing_loss + self.phi_balancing.get_loss()
 

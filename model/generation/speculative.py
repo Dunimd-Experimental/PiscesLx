@@ -116,6 +116,8 @@ from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict, Any, Callable
 from enum import Enum
 
+from model.utils import YvNumericalGuard, YvShapeGuard
+
 from utils.dc import PiscesLxLogger
 
 from utils.paths import get_log_file
@@ -545,15 +547,18 @@ class YvParallelVerifier(nn.Module):
                 cum_prob = 1.0
                 for i in range(draft_len):
                     p_draft = token_probs[b, i].item()
-                    p_accept = min(1.0, cum_prob / (p_draft + 1e-8))
-                    
-                    if p_accept >= self.config.acceptance_threshold and p_draft > 1e-8:
-                        acceptance_mask[b, i] = True
-                        cum_prob *= p_draft
-                    else:
+                    eps = YvNumericalGuard.get_eps(torch.float32)
+                    if p_draft <= eps:
                         if rejection_position == -1:
                             rejection_position = i
                         break
+                    p_accept = min(1.0, cum_prob / max(p_draft, eps))
+                    if p_accept < self.config.acceptance_threshold:
+                        if rejection_position == -1:
+                            rejection_position = i
+                        break
+                    acceptance_mask[b, i] = True
+                    cum_prob *= p_draft
             
             accepted_lengths = acceptance_mask.sum(dim=1)
             max_accepted = accepted_lengths.max().item()
@@ -846,7 +851,8 @@ class YvSpeculativeDecoder(nn.Module):
             try:
                 self.on_stats(stats)
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).warning("on_stats callback failed", exc_info=True)
         
         self.performance_history.append({
             'acceptance_rate': stats.get('draft_acceptance_rate', 0),
@@ -924,7 +930,9 @@ class YvSpeculativeDecoder(nn.Module):
     def _sample_candidates(self, logits: torch.Tensor) -> torch.Tensor:
         logits = self._apply_sampling(logits)
         probs = F.softmax(logits, dim=-1)
-        return torch.multinomial(probs.squeeze(1), self.config.num_candidates, replacement=False)
+        n_valid = (probs.squeeze(1) > 0).sum(dim=-1).min().item()
+        k = min(self.config.num_candidates, max(1, n_valid))
+        return torch.multinomial(probs.squeeze(1), k, replacement=False)
     
     def _verify_and_accept(
         self,
@@ -1296,7 +1304,8 @@ class YvMedusaDecoder(nn.Module):
                 
                 candidate_tokens = []
                 for i, logits in enumerate(head_logits):
-                    probs = F.softmax(logits / self.config.temperature, dim=-1)
+                    temp = max(0.1, min(2.0, self.config.temperature))
+                    probs = F.softmax(logits / temp, dim=-1)
                     token = torch.multinomial(probs, num_samples=1)
                     candidate_tokens.append(token)
                 
@@ -1319,9 +1328,10 @@ class YvMedusaDecoder(nn.Module):
                     generated_ids = torch.cat([generated_ids, next_token], dim=1)
                 
                 if attention_mask is not None:
+                    tokens_added = accepted if accepted > 0 else 1
                     attention_mask = torch.cat([
                         attention_mask,
-                        torch.ones((batch_size, 1), device=device, dtype=attention_mask.dtype)
+                        torch.ones((batch_size, tokens_added), device=device, dtype=attention_mask.dtype)
                     ], dim=1)
         
         if stats['total_predicted'] > 0:
@@ -1334,7 +1344,8 @@ class YvMedusaDecoder(nn.Module):
             try:
                 self.on_stats(stats)
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).warning("on_stats callback failed", exc_info=True)
         
         return generated_ids, stats
 
@@ -1500,7 +1511,7 @@ class YvDSparkSpeculativeDecoder(nn.Module):
                 token = torch.multinomial(probs, num_samples=1)
                 draft_tokens.append(token)
                 tok_prob = probs.gather(1, token).squeeze(-1)
-                total_log_prob = total_log_prob + tok_prob.log().sum().item()
+                total_log_prob = total_log_prob + YvNumericalGuard.safe_log(tok_prob).sum().item()
                 cur_context = torch.cat([cur_context[:, 1:], token], dim=1)
 
             draft_seq = torch.cat(draft_tokens, dim=1)
@@ -1650,7 +1661,8 @@ class YvDSparkSpeculativeDecoder(nn.Module):
             try:
                 self.on_stats(stats)
             except Exception:
-                pass
+                import logging
+                logging.getLogger(__name__).warning("on_stats callback failed", exc_info=True)
 
         return generated_ids, stats
 

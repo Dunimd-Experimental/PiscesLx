@@ -178,7 +178,7 @@ class YvHiClRouter(nn.Module):
             logits = logits + noise
 
         scores = F.softmax(logits, dim=-1)
-        top_scores, top_idx = torch.topk(scores, self.top_k, dim=-1)
+        top_scores, top_idx = torch.topk(scores, min(self.top_k, self.num_experts), dim=-1)
         top_scores = F.softmax(top_scores, dim=-1)
 
         if self.training and not self._is_checkpointing:

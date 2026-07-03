@@ -81,6 +81,7 @@ import torch.nn.functional as F
 from typing import Dict, List, Optional, Any, Tuple
 from dataclasses import dataclass, field
 import math
+from model.utils import YvShapeGuard
 
 
 @dataclass
@@ -335,9 +336,13 @@ class _InterModalAttention(nn.Module):
             all_K.append(K)
             all_V.append(V)
         
+        YvShapeGuard.check_cat(all_K, 1, "enhanced fusion K cat")
         K_cat = torch.cat(all_K, dim=1)
+        YvShapeGuard.check_cat(all_V, 1, "enhanced fusion V cat")
         V_cat = torch.cat(all_V, dim=1)
         
+        if not (Q.shape[0] == K_cat.shape[0] and Q.shape[-1] == K_cat.shape[-1]):
+            raise RuntimeError(f"enhanced fusion shape: Q {Q.shape}, K_cat {K_cat.shape}")
         attn_scores = torch.einsum("bthd,bkhd->bhtk", Q, K_cat) / math.sqrt(self.head_dim)
         
         if context_mask is not None:
@@ -346,6 +351,8 @@ class _InterModalAttention(nn.Module):
         
         attn_weights = F.softmax(attn_scores, dim=-1)
         
+        if not (attn_weights.shape[-1] == V_cat.shape[1]):
+            raise RuntimeError(f"enhanced fusion attn-v shape: {attn_weights.shape}, {V_cat.shape}")
         output = torch.einsum("bhtk,bkhd->bthd", attn_weights, V_cat)
         output = output.contiguous().view(B, T, self.hidden_size)
         output = self.o_proj(output)
@@ -669,7 +676,11 @@ class YvEnhancedModalFusion(nn.Module):
         encoded_modals = self._standardize_input(modal_features)
         
         if not encoded_modals:
-            raise ValueError("No valid modal features provided")
+            raise ValueError(
+                f"No valid modal features provided. "
+                f"Expected modalities: {set(self.intra_modal_encoders.keys())}, "
+                f"received: {set(encoded_modals.keys()) if encoded_modals else 'empty dict'}"
+            )
         
         intra_encoded = {}
         for name, feat in encoded_modals.items():
@@ -1107,10 +1118,7 @@ class YvContrastiveCrossModalAligner(nn.Module):
                 else:
                     negative = anchor
                 
-                anchor_expanded = anchor.unsqueeze(1).expand(-1, positive.size(0), -1)
-                positive_expanded = positive.unsqueeze(0).expand(anchor.size(0), -1, -1)
-                
-                pos_sim = torch.sum(anchor_expanded * positive_expanded, dim=-1) / self.temperature
+                pos_sim = torch.mm(anchor, positive.t()) / self.temperature
                 
                 neg_sim = torch.matmul(anchor, negative.t()) / self.temperature
                 

@@ -116,16 +116,13 @@ class YvLightningIndexer(nn.Module):
         top_k_actual = min(self.top_k, T_comp)
         index_scores, top_k_indices = torch.topk(scores, top_k_actual, dim=-1)
 
-        # Gather top-k KV entries
+        # Gather top-k KV entries using take_along_dim (avoids 5D expand)
         k_expanded = k_compressed
         if n_head > n_kv:
             k_expanded = k_expanded.repeat_interleave(repeat, dim=1)
-
-        # Gather for each head and each query position
-        top_k_indices_exp = top_k_indices.unsqueeze(-1).expand(-1, -1, -1, -1, self.head_dim)
-        # k_expanded: (B, n_head, T_comp, head_dim) -> gather on dim=2
-        k_expanded = k_expanded.unsqueeze(2).expand(-1, -1, T, -1, -1)
-        selected_k = k_expanded.gather(3, top_k_indices_exp)
+        # k_expanded: (B, n_head, T_comp, head_dim), top_k_indices: (B, n_head, T, top_k)
+        k_expanded = k_expanded.unsqueeze(2)  # (B, n_head, 1, T_comp, head_dim)
+        selected_k = torch.take_along_dim(k_expanded, top_k_indices.unsqueeze(-1), dim=3)
 
         return selected_k, top_k_indices, index_scores
 
@@ -304,17 +301,15 @@ class YvCompressedSparseAttention(nn.Module):
             k_full = k_attn
             v_full = v_attn
 
-        # Standard attention
-        scale = self.head_dim ** -0.5
-        attn = torch.matmul(q, k_full.transpose(-2, -1)) * scale
-
-        if mask is not None:
-            attn = attn + mask
-
-        attn = F.softmax(attn, dim=-1)
-        attn = self.attn_dropout(attn)
-
-        out = torch.matmul(attn, v_full)
+        out = F.scaled_dot_product_attention(
+            q,
+            k_full,
+            v_full,
+            attn_mask=mask,
+            dropout_p=self.attn_dropout.p if self.training else 0.0,
+            is_causal=False,
+            scale=self.head_dim ** -0.5,
+        )
         out = out.transpose(1, 2).reshape(B, T, H)
         out = self.o_proj(out)
 
@@ -402,16 +397,19 @@ class YvHeavilyCompressedAttention(nn.Module):
         k = self.k_proj(x_compressed).view(B, T_comp, self.n_head, self.head_dim).transpose(1, 2)
         v = self.v_proj(x_compressed).view(B, T_comp, self.n_head, self.head_dim).transpose(1, 2)
 
-        scale = self.head_dim ** -0.5
-        attn = torch.matmul(q, k.transpose(-2, -1)) * scale
+        attn_mask = None
+        if mask is not None and mask.dim() == 4:
+            attn_mask = mask[:, :, -T:, -T_comp:]
 
-        if mask is not None:
-            attn = attn + mask[:, :, -T:, -T_comp:] if mask.dim() == 4 else attn
-
-        attn = F.softmax(attn, dim=-1)
-        attn = self.attn_dropout(attn)
-
-        out = torch.matmul(attn, v)
+        out = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=attn_mask,
+            dropout_p=self.attn_dropout.p if self.training else 0.0,
+            is_causal=False,
+            scale=self.head_dim ** -0.5,
+        )
         out = out.transpose(1, 2).reshape(B, T, H)
         out = self.o_proj(out)
 

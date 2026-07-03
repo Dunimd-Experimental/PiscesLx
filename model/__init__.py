@@ -197,6 +197,7 @@ from .core import (
     YvProgressiveHybridGate,
     YvAdaptiveRouter,
     YvHierarchicalFusion,
+    YvUnifiedFusion,
     YvJambaBlock,
     YvMamba3Block,
     YvMamba3Config,
@@ -284,6 +285,10 @@ from .generation import (
 )
 
 from .utils import (
+    YvEPS,
+    YvNumericalGuard,
+    YvShapeGuard,
+    YvDeviceGuard,
     YvYaRNRotaryEmbedding,
     YvDynamicYaRNRotaryEmbedding,
     YvLinearScalingRoPE,
@@ -387,6 +392,7 @@ __all__ = [
     "YvProgressiveHybridGate",
     "YvAdaptiveRouter",
     "YvHierarchicalFusion",
+    "YvUnifiedFusion",
     "YvJambaBlock",
 
     "YvMamba3Block",
@@ -462,6 +468,10 @@ __all__ = [
     "YvYaRNRotaryEmbedding",
     "YvDynamicYaRNRotaryEmbedding",
     "YvLinearScalingRoPE",
+    "YvEPS",
+    "YvNumericalGuard",
+    "YvShapeGuard",
+    "YvDeviceGuard",
     "YvQuantizer",
     "YvQuantizationConfig",
     "YvQuantizationType",

@@ -34,6 +34,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from typing import Dict, Optional
+from model.utils import YvShapeGuard
 
 
 class YvRCACrossCorrelationAttention(nn.Module):
@@ -57,10 +58,12 @@ class YvRCACrossCorrelationAttention(nn.Module):
         K = self.k_proj(context).view(B_c, T_c, self.num_heads, self.head_dim).transpose(1, 2)
         V = self.v_proj(context).view(B_c, T_c, self.num_heads, self.head_dim).transpose(1, 2)
 
+        YvShapeGuard.check_matmul(Q, K.transpose(-2, -1), "rca cross-attn scores")
         scores = torch.matmul(Q, K.transpose(-2, -1)) / (self.head_dim ** 0.5)
         attn = F.softmax(scores, dim=-1)
         attn = self.dropout(attn)
 
+        YvShapeGuard.check_matmul(attn, V, "rca cross-attn out")
         out = torch.matmul(attn, V).transpose(1, 2).contiguous().view(B, T_x, self.hidden_size)
         return self.o_proj(out)
 

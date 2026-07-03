@@ -168,7 +168,8 @@ class YvSpatioTemporalRoPE3D(nn.Module):
             AssertionError: If dim is not divisible by 3.
         """
         super().__init__()
-        assert dim % 3 == 0, "Dimension must be divisible by 3 for 3D RoPE"
+        if dim % 3 != 0:
+            raise RuntimeError("Dimension must be divisible by 3 for 3D RoPE")
         self.dim = dim
         self.dim_per_axis = dim // 3
         self.max_temporal_frames = max_temporal_frames
@@ -203,9 +204,9 @@ class YvSpatioTemporalRoPE3D(nn.Module):
             torch.Tensor: Position indices [t*h*w, 3] where each row is
                 (temporal_pos, height_pos, width_pos).
         """
-        temp_pos = torch.arange(t, dtype=torch.float32)
-        h_pos = torch.arange(h, dtype=torch.float32)
-        w_pos = torch.arange(w, dtype=torch.float32)
+        temp_pos = torch.arange(t, dtype=torch.float32, device=self.temp_freq.device)
+        h_pos = torch.arange(h, dtype=torch.float32, device=self.temp_freq.device)
+        w_pos = torch.arange(w, dtype=torch.float32, device=self.temp_freq.device)
         temp_grid, h_grid, w_grid = torch.meshgrid(temp_pos, h_pos, w_pos, indexing='ij')
         positions = torch.stack([
             temp_grid.flatten(),
@@ -333,21 +334,23 @@ class YvVisualTextProcessor(nn.Module):
         Compression network restores hidden_size after patch embedding.
     """
 
-    def __init__(self, hidden_size: int, patch_size: int = 14) -> None:
+    def __init__(self, hidden_size: int, patch_size: int = 14, device: Optional[torch.device] = None) -> None:
         """Construct a text-oriented preprocessing pipeline.
         
         Args:
             hidden_size (int): Target embedding dimension.
             patch_size (int): Convolutional patch size applied during tokenization.
                 Default: 14 (matches CLIP-style preprocessing).
+            device (torch.device | None): Optional device override for buffers.
         """
         super().__init__()
         self.hidden_size = hidden_size
         self.patch_size = patch_size
+        self.device = device
 
         # Text-specific normalization tuned for high-contrast glyph imagery.
-        self.register_buffer('text_mean', torch.tensor([0.95, 0.95, 0.95], dtype=torch.float32).view(1, 3, 1, 1))
-        self.register_buffer('text_std', torch.tensor([0.1, 0.1, 0.1], dtype=torch.float32).view(1, 3, 1, 1))
+        self.register_buffer('text_mean', torch.tensor([0.95, 0.95, 0.95], dtype=torch.float32, device=device).view(1, 3, 1, 1))
+        self.register_buffer('text_std', torch.tensor([0.1, 0.1, 0.1], dtype=torch.float32, device=device).view(1, 3, 1, 1))
 
         # Text-aware patch embedding producing coarse glyph descriptors.
         self.text_patch_embed = nn.Conv2d(
@@ -483,9 +486,9 @@ class YvVisionEncoder(nn.Module):
         self.cache_manager = cache_manager
         _LOG.debug(f"VisionEncoder: __init__ start ({'enabled' if self.enabled else 'disabled'})")
         # Register mean values for normalization - use float32 for stability
-        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(1, 3, 1, 1))
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32, device=device).view(1, 3, 1, 1))
         # Register standard deviation values for normalization
-        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32, device=device).view(1, 3, 1, 1))
         self.patch_embed = nn.Conv2d(
             in_channels=3,
             out_channels=self.hidden_size,
@@ -802,8 +805,16 @@ class YvVisionEncoder(nn.Module):
     def process_image(self, image_path, target_size=None):
         """Process an image from the given path, including normalization."""
         _LOG.debug(f"Processing image: {image_path}")
-        with Image.open(image_path) as img:
-            img = img.convert('RGB')
+        try:
+            with Image.open(image_path) as img:
+                img = img.convert('RGB')
+        except (FileNotFoundError, PermissionError, OSError) as e:
+            raise ValueError(f"Could not open or read image at {image_path}: {e}")
+        except Exception as e:
+            from PIL import UnidentifiedImageError
+            if isinstance(e, UnidentifiedImageError):
+                raise ValueError(f"Unidentified image format at {image_path}: {e}")
+            raise
             if target_size is not None:
                 img = img.resize(target_size, Image.LANCZOS)
             image_tensor = torch.tensor(np.array(img)).permute(2, 0, 1).float() / 255.0
@@ -821,9 +832,15 @@ class YvVisionEncoder(nn.Module):
         dim = self.hidden_size
         w0 = w
         h0 = h
-        sqrt_N = int(math.sqrt(N))
+        src_w = int(math.sqrt(N))
+        src_h = src_w
+        if src_h * src_w != N:
+            src_h = int(math.ceil(math.sqrt(N)))
+            src_w = N // src_h
+            while src_h * src_w < N:
+                src_w += 1
         patch_pos_embed = F.interpolate(
-            patch_pos_embed.reshape(1, sqrt_N, sqrt_N, dim).permute(0, 3, 1, 2),
+            patch_pos_embed.reshape(1, src_h, src_w, dim).permute(0, 3, 1, 2),
             size=(h0, w0),
             mode='bicubic',
             align_corners=False
@@ -1390,11 +1407,13 @@ class YvDiffusionImageEnhancer(nn.Module):
             Refined image tensor [B, 3, H, W].
         """
         num_steps = num_steps or self.num_steps
-        
+
         latents = x.clone()
-        
+        alphas_cumprod = self.noise_scheduler['alphas_cumprod'].to(x.device)
+        t_tensor = torch.full((x.shape[0],), fill_value=0, dtype=torch.long, device=x.device)
+
         for t in reversed(range(num_steps)):
-            t_tensor = torch.tensor([t] * x.shape[0], device=x.device)
+            t_tensor.fill_(t)
             time_emb = self._get_time_embedding(t_tensor)
             
             if cond is not None:
@@ -1403,7 +1422,7 @@ class YvDiffusionImageEnhancer(nn.Module):
             
             noise_pred = self._unet_forward(latents, time_emb)
             
-            latents = self._denoise_step(latents, noise_pred, t)
+            latents = self._denoise_step(latents, noise_pred, t, alphas_cumprod)
         
         return latents
     
@@ -1451,10 +1470,11 @@ class YvDiffusionImageEnhancer(nn.Module):
         self,
         x: torch.Tensor,
         noise_pred: torch.Tensor,
-        t: int
+        t: int,
+        alphas_cumprod: torch.Tensor,
     ) -> torch.Tensor:
         """Single denoising step."""
-        alphas_cumprod = self.noise_scheduler['alphas_cumprod'].to(x.device)
+        alphas_cumprod = alphas_cumprod.to(x.device)
         alpha = alphas_cumprod[t]
         alpha_prev = alphas_cumprod[t - 1] if t > 0 else torch.tensor(1.0)
         
@@ -1701,6 +1721,7 @@ class YvSigLIPVisionEncoder(nn.Module):
         use_prefix_tuning: bool = True,
         use_high_res: bool = True,
         use_video: bool = True,
+        device: Optional[torch.device] = None,
     ):
         super().__init__()
         self.hidden_size = hidden_size
@@ -1713,9 +1734,10 @@ class YvSigLIPVisionEncoder(nn.Module):
         self.use_prefix_tuning = use_prefix_tuning
         self.use_high_res = use_high_res
         self.use_video = use_video
+        self.device = device
 
-        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32).view(1, 3, 1, 1))
-        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32).view(1, 3, 1, 1))
+        self.register_buffer('mean', torch.tensor([0.485, 0.456, 0.406], dtype=torch.float32, device=device).view(1, 3, 1, 1))
+        self.register_buffer('std', torch.tensor([0.229, 0.224, 0.225], dtype=torch.float32, device=device).view(1, 3, 1, 1))
 
         self.patch_embed = nn.Conv2d(3, hidden_size, kernel_size=patch_size, stride=patch_size)
 
@@ -1750,9 +1772,9 @@ class YvSigLIPVisionEncoder(nn.Module):
         self.dynamic_resolution = YvDynamicResolutionProcessor(hidden_size, patch_size)
 
     def _create_2d_sincos_embeddings(self, grid_size: int, dim: int) -> torch.Tensor:
-        omega = 1.0 / (10000.0 ** (torch.arange(0, dim, 2, dtype=torch.float32) / dim))
-        grid_h = torch.arange(grid_size, dtype=torch.float32)
-        grid_w = torch.arange(grid_size, dtype=torch.float32)
+        omega = 1.0 / (10000.0 ** (torch.arange(0, dim, 2, dtype=torch.float32, device=self.device) / dim))
+        grid_h = torch.arange(grid_size, dtype=torch.float32, device=self.device)
+        grid_w = torch.arange(grid_size, dtype=torch.float32, device=self.device)
         h_emb = torch.outer(grid_h, omega)
         w_emb = torch.outer(grid_w, omega)
         h_emb = torch.cat([h_emb.sin(), h_emb.cos()], dim=1)[:grid_size, :dim // 2]

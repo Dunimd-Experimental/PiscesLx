@@ -216,18 +216,26 @@ class YvDuoAttention(nn.Module):
             v_str = torch.cat([past_v_str, v_str], dim=2)
 
         # Retrieval attention (full KV)
-        attn_weights_ret = torch.matmul(q_ret, k_ret.transpose(-2, -1)) * self.scale
-        if attention_mask is not None:
-            attn_weights_ret = attn_weights_ret + attention_mask
-        attn_weights_ret = F.softmax(attn_weights_ret, dim=-1)
-        attn_output_ret = torch.matmul(attn_weights_ret, v_ret)
+        attn_output_ret = F.scaled_dot_product_attention(
+            q_ret,
+            k_ret,
+            v_ret,
+            attn_mask=attention_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=self.scale,
+        )
 
         # Streaming attention (buffered KV)
-        attn_weights_str = torch.matmul(q_str, k_str.transpose(-2, -1)) * self.scale
-        if attention_mask is not None:
-            attn_weights_str = attn_weights_str + attention_mask
-        attn_weights_str = F.softmax(attn_weights_str, dim=-1)
-        attn_output_str = torch.matmul(attn_weights_str, v_str)
+        attn_output_str = F.scaled_dot_product_attention(
+            q_str,
+            k_str,
+            v_str,
+            attn_mask=attention_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=self.scale,
+        )
 
         # Combine outputs
         attn_output = torch.cat([attn_output_ret, attn_output_str], dim=1)

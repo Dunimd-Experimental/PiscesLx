@@ -261,8 +261,15 @@ class YvEntaConfig:
         if not os.path.exists(path):
             return cls()
 
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Enta config YAML file not found: {path}")
+        except yaml.YAMLError as e:
+            raise RuntimeError(f"Invalid YAML in enta config file {path}: {e}")
+        except OSError as e:
+            raise OSError(f"Failed to read enta config file {path}: {e}")
 
         # Extract enta_model_layout fields
         layout = data.get("enta_model_layout", {}) or {}
@@ -737,6 +744,10 @@ class YvConfig:
     mla_use_embedding_gate: bool = False
     mla_rope_dim: int = 64
 
+    # Fused MLA: merge compress+gate, k+v decompress into single matmuls
+    use_fused_mla: bool = True
+    use_fused_moe: bool = True
+
     # ========================================
     # Mixture of Block Attention (MoBA) for 1M+ context
     # ========================================
@@ -745,6 +756,14 @@ class YvConfig:
     moba_top_k: int = 4
     moba_min_seq_len: int = 8192
     moba_max_cached_blocks: int = 256
+
+    # ========================================
+    # Ring Attention for Ultra-Long Context (256K+)
+    # ========================================
+    use_ring_attention: bool = True
+    ring_attention_threshold: int = 32768
+    ring_attention_size: int = 4
+    ring_attention_distributed: bool = False
 
     # ========================================
     # Lazy Initialization Configuration
@@ -1021,6 +1040,7 @@ class YvConfig:
     use_seer_executor: bool = True
     use_vericot: bool = True
     use_comet_memory: bool = True
+    comet_write_interval: int = 1
     use_token_sparse_attn: bool = True
     use_mhc_lite: bool = False
 
@@ -1262,8 +1282,15 @@ class YvConfig:
         Example:
             >>> config = YvConfig.from_json("model_config.json")
         """
-        with open(path, 'r') as f:
-            config_data = json.load(f)
+        try:
+            with open(path, 'r') as f:
+                config_data = json.load(f)
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Config JSON file not found: {path}")
+        except json.JSONDecodeError as e:
+            raise json.JSONDecodeError(f"Invalid JSON in config file {path}: {e.msg}", e.doc, e.pos)
+        except OSError as e:
+            raise OSError(f"Failed to read config file {path}: {e}")
 
         model_fields = {f.name for f in fields(cls)}
         filtered_config = {k: v for k, v in config_data.items() if k in model_fields}
@@ -1290,8 +1317,15 @@ class YvConfig:
         Example:
             >>> config = YvConfig.from_yaml("model_config.yaml")
         """
-        with open(path, 'r', encoding='utf-8') as f:
-            config_data = yaml.safe_load(f) or {}
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                config_data = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Config YAML file not found: {path}")
+        except yaml.YAMLError as e:
+            raise RuntimeError(f"Invalid YAML in config file {path}: {e}")
+        except OSError as e:
+            raise OSError(f"Failed to read config file {path}: {e}")
 
         # Replace {{VERSION}} placeholder with actual version
         if "version" in config_data and config_data["version"] == "{{VERSION}}":
@@ -1320,8 +1354,15 @@ class YvConfig:
         if not path.exists():
             return {}
 
-        with open(path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = yaml.safe_load(f) or {}
+        except FileNotFoundError:
+            raise FileNotFoundError(f"EnCre YAML file not found: {path}")
+        except yaml.YAMLError as e:
+            raise RuntimeError(f"Invalid YAML in encre file {path}: {e}")
+        except OSError as e:
+            raise OSError(f"Failed to read encre file {path}: {e}")
 
         mapping = {
             "teachers": "encre_teachers",
@@ -1392,8 +1433,11 @@ class YvConfig:
         Example:
             >>> config.to_json("output_config.json")
         """
-        with open(path, 'w') as f:
-            json.dump(self.to_dict(), f, indent=2)
+        try:
+            with open(path, 'w') as f:
+                json.dump(self.to_dict(), f, indent=2)
+        except OSError as e:
+            raise RuntimeError(f"Failed to write JSON config to {path}: {e}")
 
     def to_yaml(self, path: str):
         """Save configuration to a YAML file.
@@ -1406,8 +1450,11 @@ class YvConfig:
         Example:
             >>> config.to_yaml("output_config.yaml")
         """
-        with open(path, 'w', encoding='utf-8') as f:
-            yaml.safe_dump(self.to_dict(), f, default_flow_style=False, allow_unicode=True)
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                yaml.safe_dump(self.to_dict(), f, default_flow_style=False, allow_unicode=True)
+        except OSError as e:
+            raise RuntimeError(f"Failed to write YAML config to {path}: {e}")
 
     def update(self, **kwargs):
         """Update configuration parameters.

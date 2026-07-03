@@ -376,7 +376,9 @@ class YvAgentic(nn.Module):
             the locally instantiated fallback instance.
         """
         if self._base_model_ref:
-            return self._base_model_ref().reasoner
+            base = self._base_model_ref()
+            if base is not None:
+                return base.reasoner
         return self._reasoner
 
     @property
@@ -388,7 +390,9 @@ class YvAgentic(nn.Module):
             possible, falling back to the local implementation.
         """
         if self._base_model_ref:
-            return self._base_model_ref().vision
+            base = self._base_model_ref()
+            if base is not None:
+                return base.vision
         # Lazy initialization
         if self._vision_encoder is None:
             self._vision_encoder = YvVisionEncoder(self.cfg)
@@ -403,7 +407,9 @@ class YvAgentic(nn.Module):
             locally provisioned encoder.
         """
         if self._base_model_ref:
-            return self._base_model_ref().audio
+            base = self._base_model_ref()
+            if base is not None:
+                return base.audio
         # Lazy initialization
         if self._audio_encoder is None:
             self._audio_encoder = YvAudioEncoder(self.cfg)
@@ -1300,8 +1306,16 @@ class YvAgentic(nn.Module):
         # Capture approximate image dimensions for coordinate normalization.
         if isinstance(image_input, str):
             from PIL import Image
-            with Image.open(image_input) as img:
-                width, height = img.size
+            try:
+                with Image.open(image_input) as img:
+                    width, height = img.size
+            except (FileNotFoundError, PermissionError, OSError) as e:
+                raise ValueError(f"Could not open or read image at {image_input}: {e}")
+            except Exception as e:
+                from PIL import UnidentifiedImageError
+                if isinstance(e, UnidentifiedImageError):
+                    raise ValueError(f"Unidentified image format at {image_input}: {e}")
+                raise
         else:
             if not torch.is_tensor(image_tensor):
                 raise TypeError("YvAgentic.detect_objects requires tensor-compatible image inputs.")
@@ -1723,6 +1737,8 @@ class YvAgentic(nn.Module):
                 
             except (RuntimeError, ValueError, OSError, asyncio.TimeoutError) as e:
                 last_error = str(e)
+                import logging
+                logging.getLogger(__name__).warning("Agent execution failed", exc_info=True)
             
             current_time = time_module.time()
             if current_time - last_checkpoint_time >= checkpoint_interval:

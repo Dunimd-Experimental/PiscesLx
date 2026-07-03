@@ -280,7 +280,11 @@ class _EntaRewardCalculator:
         execution_weight: float = 0.1,
     ) -> None:
         if any(w < 0.0 for w in (completion_weight, tool_weight, safety_weight, execution_weight)):
-            raise ValueError("reward weights must be non-negative")
+            raise ValueError(
+                f"reward weights must be non-negative, got: "
+                f"completion={completion_weight}, tool={tool_weight}, "
+                f"safety={safety_weight}, execution={execution_weight}"
+            )
         self._weights = {
             YvEntaRewardSignal.TASK_COMPLETION: completion_weight,
             YvEntaRewardSignal.TOOL_CALL_QUALITY: tool_weight,
@@ -289,7 +293,11 @@ class _EntaRewardCalculator:
         }
         total = sum(self._weights.values())
         if total <= 0.0:
-            raise ValueError("at least one reward weight must be positive")
+            raise ValueError(
+                f"at least one reward weight must be positive, but sum of weights is {total} "
+                f"(completion={completion_weight}, tool={tool_weight}, "
+                f"safety={safety_weight}, execution={execution_weight})"
+            )
         # Normalize so weights sum to 1.0.
         for k in self._weights:
             self._weights[k] /= total

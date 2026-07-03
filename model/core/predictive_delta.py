@@ -227,7 +227,8 @@ class YvPredictiveDeltaCoder(nn.Module):
             Predicted KV latent vector, shape [batch, kv_lora_rank].
         """
         predictor = self._get_predictor(layer_idx)
-        hidden_state = hidden_state.to(dtype=self.dtype, device=self.device)
+        if hidden_state.device != self.device or hidden_state.dtype != self.dtype:
+            hidden_state = hidden_state.to(dtype=self.dtype, device=self.device)
         predicted = predictor(hidden_state)
         return predicted
 
@@ -381,14 +382,17 @@ class YvPredictiveDeltaCoder(nn.Module):
         half_range = (num_levels - 1) / 2
 
         orig_shape = quantized.shape
-        flat = quantized.reshape(*([-1] if quantized.dim() > 1 else [1]), quantized.numel() // (
-            quantized.shape[0] if quantized.dim() > 1 else 1
-        ))
 
-        s = scale.reshape(-1, 1)
-        qf = flat.reshape(s.shape[0], -1)
+        if quantized.dim() == 4:
+            flat = quantized.reshape(orig_shape[0] * orig_shape[1], -1)
+        elif quantized.dim() == 3:
+            flat = quantized.reshape(orig_shape[0], -1)
+        else:
+            flat = quantized.reshape(1, -1)
 
-        dequant = (qf / half_range) * s
+        s = scale.reshape(flat.shape[0], 1)
+
+        dequant = (flat / half_range) * s
         return dequant.reshape(orig_shape)
 
     def forward(

@@ -614,7 +614,7 @@ class YvDocEncoder(nn.Module):
             if table_cells is not None:
                 if table_cells.dim() == 1:
                     table_cells = table_cells.unsqueeze(0)
-                table_cells = table_cells.float().to(device)
+                table_cells = table_cells.to(device=device, dtype=torch.float32)
 
                 # Project to hidden_size if necessary.
                 cell_dim = table_cells.size(-1)
@@ -685,7 +685,7 @@ class YvDocEncoder(nn.Module):
             if strokes is not None:
                 if strokes.dim() == 2:
                     strokes = strokes.unsqueeze(0)                  # (1, S, 3)
-                strokes = strokes.float().to(device)
+                strokes = strokes.to(device=device, dtype=torch.float32)
 
                 # Stroke encoder (bidirectional LSTM).
                 stroke_hidden, _ = self.handwriting_recognition[
@@ -721,7 +721,7 @@ class YvDocEncoder(nn.Module):
             if hw_image is not None:
                 if hw_image.dim() == 2:
                     hw_image = hw_image.unsqueeze(0).unsqueeze(0)   # (1, 1, H, W)
-                hw_image = hw_image.float().to(device)
+                hw_image = hw_image.to(device=device, dtype=torch.float32)
                 line_boundaries = self.handwriting_recognition[
                     'line_segmenter'
                 ](hw_image)                                          # (1, 1, H, W)

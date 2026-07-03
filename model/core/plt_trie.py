@@ -312,13 +312,15 @@ class YvPLTTrieIndex:
         now = _time.time()
         candidates = []
 
-        def _collect_leaf(node, parent, token_key):
+        def _collect_leaf(node, parent, token_key, depth=0):
+            if depth > 1000:
+                raise RuntimeError("PLT trie recursion depth exceeded 1000")
             for kid, child in list(node.children.items()):
                 if child.is_leaf():
                     age = now - child.last_access_time if child.last_access_time > 0 else 0
                     candidates.append((age, -child.access_count, parent, kid, child))
                 else:
-                    _collect_leaf(child, node, kid)
+                    _collect_leaf(child, node, kid, depth + 1)
 
         _collect_leaf(self.root, self.root, -1)
 
@@ -329,7 +331,7 @@ class YvPLTTrieIndex:
             age, _, parent, kid, child = candidates[i]
             if child.kv_block_ids:
                 continue
-            if age > self.eviction_ttl_seconds or parent is self.root:
+            if age > self.eviction_ttl_seconds or (parent is self.root and age > self.eviction_ttl_seconds * 0.5):
                 del parent.children[kid]
                 self._node_count -= 1
 

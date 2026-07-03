@@ -435,7 +435,11 @@ class YvGradientClusterInitializer:
             gradient_stats = self.gradient_features
         
         if len(gradient_stats) == 0:
-            raise ValueError("No gradient statistics available. Call collect_gradients first.")
+            raise ValueError(
+                f"No gradient statistics available for clustering. "
+                f"gradient_stats is empty (len=0). Call collect_gradients() before "
+                f"calling cluster_experts() or ensure gradient_features has data."
+            )
         
         features, param_names = self._extract_clustering_features(gradient_stats)
         
@@ -447,7 +451,12 @@ class YvGradientClusterInitializer:
             )
             _LOG.info(f"Auto-detected optimal cluster count: {num_clusters}")
         elif num_clusters is None:
-            raise ValueError("num_clusters must be specified when auto_detect_k is False")
+            raise ValueError(
+                f"num_clusters must be specified when auto_detect_k is False. "
+                f"Got auto_detect_k={auto_detect_k}, num_clusters=None, "
+                f"min_clusters={self.min_clusters}, max_clusters={self.max_clusters}. "
+                f"Either set auto_detect_k=True or provide a valid num_clusters value."
+            )
         
         centroids, labels = self._kmeans_clustering(
             features,

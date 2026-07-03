@@ -523,6 +523,8 @@ class YvLongTermPlanner(nn.Module):
         Returns:
             float: Estimated remaining time in seconds.
         """
+        if task_graph is None:
+            return 0.0
         total_steps = len(task_graph.steps)
         completed_steps = len(task_graph.completed_steps)
         remaining_steps = total_steps - completed_steps
@@ -1043,6 +1045,8 @@ class YvToolOrchestrator(nn.Module):
                 
             except Exception as e:
                 last_error = str(e)
+                import logging
+                logging.getLogger(__name__).warning("Tool execution failed", exc_info=True)
             
             error_type = self._classify_error(last_error)
             
@@ -1070,6 +1074,8 @@ class YvToolOrchestrator(nn.Module):
                     return fallback_result
                     
             except Exception:
+                import logging
+                logging.getLogger(__name__).warning(f"Fallback {fallback_tool} failed", exc_info=True)
                 continue
         
         return {
@@ -1849,6 +1855,9 @@ class YvPersistentMemory(nn.Module):
             self.case_embeddings[:self.case_count],
             dim=-1
         )
+        
+        if self.case_count == 0:
+            return torch.zeros(1, device=query_embedding.device), torch.zeros(1, dtype=torch.long, device=query_embedding.device)
         
         top_k = similarities.topk(min(k, len(similarities)))
         

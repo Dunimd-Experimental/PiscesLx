@@ -90,6 +90,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from model.utils import YvNumericalGuard
 from collections import OrderedDict
 from typing import Any, Optional, Tuple
 from utils.dc import PiscesLxLogger
@@ -290,6 +291,9 @@ class YvMoEGate(nn.Module):
         self.gate_sparsity_threshold = 0.01
         self.sparsity_reg_weight = 1e-6
 
+        # Pruning state: after training, unused routing heads are removed
+        self._pruned_heads: set = set()
+
     def forward(self, x, modal_id=None):
         batch_size, seq_len, hidden_size = x.shape
         x_flat = x.view(-1, hidden_size)
@@ -305,39 +309,43 @@ class YvMoEGate(nn.Module):
         soft_logits = None
 
         # HiCL DG-gated routing — sparse-gated
-        hicl_gate = torch.sigmoid(self.sparse_gate_hicl)
-        if self.training or hicl_gate.item() >= self.gate_sparsity_threshold:
-            logits = logits + self.w_hicl * torch.mm(
-                self.hicl_dg_encoder(x_flat),
-                self.hicl_prototypes.t(),
-            )
+        if not self._is_pruned('hicl'):
+            hicl_gate = torch.sigmoid(self.sparse_gate_hicl)
+            if self.training or hicl_gate.item() >= self.gate_sparsity_threshold:
+                logits = logits + self.w_hicl * torch.mm(
+                    self.hicl_dg_encoder(x_flat),
+                    self.hicl_prototypes.t(),
+                )
 
         # Graph-of-Tokens routing — sparse-gated
-        got_gate = torch.sigmoid(self.sparse_gate_got)
-        if self.training or got_gate.item() >= self.gate_sparsity_threshold:
-            with torch.no_grad():
-                got_clusters = self.got_graph_builder(x)
-            got_logits = self.got_cluster_proj(x_flat)
-            logits = logits + self.w_got * got_logits
+        if not self._is_pruned('got'):
+            got_gate = torch.sigmoid(self.sparse_gate_got)
+            if self.training or got_gate.item() >= self.gate_sparsity_threshold:
+                with torch.no_grad():
+                    got_clusters = self.got_graph_builder(x)
+                got_logits = self.got_cluster_proj(x_flat)
+                logits = logits + self.w_got * got_logits
 
         # SoftMoE routing — sparse-gated
-        soft_gate = torch.sigmoid(self.sparse_gate_soft_moe)
-        if self.training or soft_gate.item() >= self.gate_sparsity_threshold:
-            logits_k = self.gate_k(x_flat)
-            logits_v = self.gate_v(x_flat)
-            threshold = logits_k.median(dim=-1, keepdim=True).values
-            soft_weights = torch.sigmoid((logits_k - threshold) / self.soft_moe_temperature)
-            soft_logits = soft_weights * logits_v.softmax(dim=-1)
-            soft_logits = soft_logits / soft_logits.sum(dim=-1, keepdim=True).clamp(min=1e-8)
-            logits = logits + self.w_soft * soft_logits
+        if not self._is_pruned('soft_moe'):
+            soft_gate = torch.sigmoid(self.sparse_gate_soft_moe)
+            if self.training or soft_gate.item() >= self.gate_sparsity_threshold:
+                logits_k = self.gate_k(x_flat)
+                logits_v = self.gate_v(x_flat)
+                threshold = logits_k.median(dim=-1, keepdim=True).values
+                soft_weights = torch.sigmoid((logits_k - threshold) / self.soft_moe_temperature)
+                soft_logits = soft_weights * logits_v.softmax(dim=-1)
+                soft_logits = YvNumericalGuard.safe_div(soft_logits, soft_logits.sum(dim=-1, keepdim=True))
+                logits = logits + self.w_soft * soft_logits
 
         # Expert-Oriented routing — sparse-gated
-        eo_gate = torch.sigmoid(self.sparse_gate_expert_orient)
-        if self.training or eo_gate.item() >= self.gate_sparsity_threshold:
-            input_emb = self.input_encoder(x_flat)
-            encoded_expert = self.expert_capability_encoder(self.expert_embeddings)
-            sim_logits = torch.mm(input_emb, encoded_expert.t())
-            logits = logits + self.w_expert_orient * sim_logits
+        if not self._is_pruned('expert_orient'):
+            eo_gate = torch.sigmoid(self.sparse_gate_expert_orient)
+            if self.training or eo_gate.item() >= self.gate_sparsity_threshold:
+                input_emb = self.input_encoder(x_flat)
+                encoded_expert = self.expert_capability_encoder(self.expert_embeddings)
+                sim_logits = torch.mm(input_emb, encoded_expert.t())
+                logits = logits + self.w_expert_orient * sim_logits
 
         # === Step 3: Modal-aware affinity bias ===
         if modal_id is not None:
@@ -390,12 +398,13 @@ class YvMoEGate(nn.Module):
         per_token_topk[importance >= self.ultra_sparse_tier2_threshold] = self.ultra_sparse_tier3_topk
 
         # === Step 11: Top-k selection (supports per-token variable k) ===
+        top_k_actual = min(current_top_k, self.num_experts)
         if self.training and self.use_random_routing and self.current_step <= self.random_to_gradient_steps and not self._is_checkpointing:
             random_scores = torch.rand_like(scores)
-            top_scores, top_idx = torch.topk(random_scores, current_top_k, dim=-1)
-            top_scores = torch.ones_like(top_scores) / current_top_k
+            top_scores, top_idx = torch.topk(random_scores, top_k_actual, dim=-1)
+            top_scores = torch.ones_like(top_scores) / top_k_actual
         else:
-            top_scores, top_idx = torch.topk(scores, current_top_k, dim=-1)
+            top_scores, top_idx = torch.topk(scores, top_k_actual, dim=-1)
             top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
             if self.training and (not self._is_checkpointing) and self.total_routing_count > 100:
                 top_idx = self._enforce_balance_routing(top_idx, scores, current_top_k)
@@ -434,6 +443,32 @@ class YvMoEGate(nn.Module):
         total_loss = load_balance_loss + z_loss + budget_loss_term + sparsity_loss
 
         return top_scores, top_idx, total_loss
+
+    def prune_routing_heads(self, prune_threshold: float = 0.05) -> None:
+        """Prune unused routing heads after training.
+
+        Evaluates sparse gate values and removes heads whose gates
+        have fallen below prune_threshold. Keeps standard gate (always).
+
+        Args:
+            prune_threshold: Gate value below which a head is pruned.
+                Default: 0.05 (sigmoid(5.0)≈0.993, sigmoid(-2.9)≈0.05).
+        """
+        heads = {
+            'hicl': (self.sparse_gate_hicl, 'sparse_gate_hicl'),
+            'got': (self.sparse_gate_got, 'sparse_gate_got'),
+            'soft_moe': (self.sparse_gate_soft_moe, 'sparse_gate_soft_moe'),
+            'expert_orient': (self.sparse_gate_expert_orient, 'sparse_gate_expert_orient'),
+        }
+        for name, (gate, attr) in heads.items():
+            if torch.sigmoid(gate).item() < prune_threshold:
+                self._pruned_heads.add(name)
+                delattr(self, attr)
+                if hasattr(self, f'w_{name}'):
+                    delattr(self, f'w_{name}')
+
+    def _is_pruned(self, head: str) -> bool:
+        return head in self._pruned_heads
 
     def _get_dynamic_top_k(self):
         """Get dynamic top-k value based on current load balance.
@@ -549,7 +584,7 @@ class YvMoEGate(nn.Module):
         Returns:
             torch.Tensor: Z-loss scalar value.
         """
-        logit_squared = torch.square(logits)
+        logit_squared = torch.square(torch.nan_to_num(logits, nan=0.0, posinf=1e4, neginf=-1e4))
         z_loss = self.z_loss_alpha * torch.mean(logit_squared)
         return z_loss
     
@@ -1092,8 +1127,8 @@ class YvStableMoEGate(nn.Module):
             logits = self.gate(x_flat)
             logits = logits + self.expert_bias  # Apply DeepSeek-style dynamic bias
             scores = F.softmax(logits, dim=-1)
-            top_scores, top_idx = torch.topk(scores, self.top_k, dim=-1)
-            
+            top_scores, top_idx = torch.topk(scores, min(self.top_k, self.num_experts), dim=-1)
+
             # Normalize top-k scores
             top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
             
@@ -1138,9 +1173,9 @@ class YvStableMoEGate(nn.Module):
         # Calculate expert load balance and adjust routing if necessary
         if self.history_ptr > 0:
             recent_usage = self.routing_history[:self.history_ptr].mean(0)
-            usage_entropy = -torch.sum(recent_usage * torch.log(recent_usage + 1e-8))
+            usage_entropy = -torch.sum(recent_usage * YvNumericalGuard.safe_log(recent_usage))
             max_entropy = torch.log(torch.tensor(self.num_experts))
-            balance_ratio = usage_entropy / (max_entropy + 1e-8)
+            balance_ratio = usage_entropy / max(YvNumericalGuard.get_eps(max_entropy.dtype), max_entropy)
             
             # Adjust routing logits based on predicted load
             load_adjustment = 0.1 * (predicted_load - recent_usage)
@@ -1155,9 +1190,9 @@ class YvStableMoEGate(nn.Module):
         # Compute routing scores using softmax
         scores = F.softmax(logits, dim=-1)
         
-        # Select top-k experts
-        top_scores, top_idx = torch.topk(scores, self.top_k, dim=-1)
-        
+# Select top-k experts
+        top_scores, top_idx = torch.topk(scores, min(self.top_k, self.num_experts), dim=-1)
+
         # Apply capacity limitation - optimized batched processing
         final_scores = []
         final_indices = []
@@ -1320,12 +1355,12 @@ class YvExpertOrientedRouter(nn.Module):
         
         input_embeddings = self.input_encoder(x_flat)
         encoded_expert_embeds = self.expert_capability_encoder(self.expert_embeddings)
-        
-        similarity_scores = []
-        for i in range(self.num_experts):
-            score = self.similarity_scorer(input_embeddings, encoded_expert_embeds[i:i+1].expand_as(input_embeddings))
-            similarity_scores.append(score)
-        similarity_scores = torch.cat(similarity_scores, dim=-1)
+
+        # Vectorized similarity: (N, 1, D) vs (1, E, D) -> (N, E) via broadcasting
+        similarity_scores = self.similarity_scorer(
+            input_embeddings.unsqueeze(1),
+            encoded_expert_embeds.unsqueeze(0),
+        )
         
         combined_logits = logits + 0.3 * similarity_scores
         
@@ -1335,12 +1370,16 @@ class YvExpertOrientedRouter(nn.Module):
             combined_logits = combined_logits * (0.5 + 0.5 * affinity)
         
         scores = F.softmax(combined_logits, dim=-1)
-        
-        top_scores, top_idx = torch.topk(scores, self.top_k, dim=-1)
+
+        top_scores, top_idx = torch.topk(scores, min(self.top_k, self.num_experts), dim=-1)
         top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
-        
+
         if self.training:
-            self.expert_usage_count.scatter_add_(0, top_idx.view(-1), torch.ones_like(top_idx, dtype=torch.float32).view(-1))
+            valid_idx = top_idx.view(-1)
+            valid_mask = (valid_idx >= 0) & (valid_idx < self.num_experts)
+            valid_idx = valid_idx[valid_mask]
+            if valid_idx.numel() > 0:
+                self.expert_usage_count.scatter_add_(0, valid_idx, torch.ones_like(valid_idx, dtype=torch.float32))
             self.total_routed += x_flat.size(0)
             
             usage = self.expert_usage_count / (self.total_routed + 1e-8)
@@ -1762,7 +1801,8 @@ class YvPathMoEGate(nn.Module):
         if self._layer_idx == 0:
             self._cache = self.gate(x)
         result = self._cache
-        assert result is not None, "YvPathMoEGate: cache is None on layer_idx != 0"
+        if result is None:
+            raise RuntimeError("YvPathMoEGate: cache is None on layer_idx != 0")
         self._layer_idx = (self._layer_idx + 1) % self.stage_size
         return result
 
@@ -1945,12 +1985,13 @@ class YvModalAwareRouter(nn.Module):
             forbidden_mask = torch.ones_like(logits, dtype=torch.bool)
             forbidden_mask[:, :, self.cross_modal_expert_ids] = False
             logits = torch.where(cm_mask & forbidden_mask, torch.tensor(float('-inf'), device=logits.device, dtype=logits.dtype), logits)
+            logits = torch.nan_to_num(logits, nan=0.0, neginf=-1e4, posinf=1e4)
 
         scores = F.softmax(logits, dim=-1)
         top_k = min(self.top_k, self.num_experts)
         top_scores, top_idx = torch.topk(scores, top_k, dim=-1)
 
-        top_scores = top_scores / (top_scores.sum(dim=-1, keepdim=True) + 1e-9)
+        top_scores = YvNumericalGuard.safe_div(top_scores, top_scores.sum(dim=-1, keepdim=True))
 
         aux_loss = self._compute_load_balance_loss(scores, top_idx, top_k)
 
@@ -1961,8 +2002,12 @@ class YvModalAwareRouter(nn.Module):
         avg_scores = scores.mean(dim=[0, 1])
         expert_counts = torch.zeros(self.num_experts, device=scores.device)
         for k in range(current_top_k):
-            expert_counts.scatter_add_(0, top_idx[:, :, k].reshape(-1), torch.ones(top_idx[:, :, k].numel(), device=scores.device))
-        expert_counts = expert_counts / (top_idx.shape[0] * top_idx.shape[1])
+            idx_k = top_idx[:, :, k].reshape(-1)
+            valid = (idx_k >= 0) & (idx_k < self.num_experts)
+            idx_k = idx_k[valid]
+            if idx_k.numel() > 0:
+                expert_counts.scatter_add_(0, idx_k, torch.ones(idx_k.numel(), device=scores.device))
+        expert_counts = YvNumericalGuard.safe_div(expert_counts, max(top_idx.shape[0] * top_idx.shape[1], 1))
         balance_loss = self.num_experts * (avg_scores * expert_counts).sum()
         return balance_loss * self.load_balance_alpha
 
@@ -2079,7 +2124,7 @@ class YvUltraSparseGate(nn.Module):
             tier_logits = logits[mask]
             tier_scores = F.softmax(tier_logits, dim=-1)
             ts, ti = torch.topk(tier_scores, tier_topk, dim=-1)
-            ts = ts / (ts.sum(dim=-1, keepdim=True) + 1e-9)
+            ts = YvNumericalGuard.safe_div(ts, ts.sum(dim=-1, keepdim=True))
             all_top_scores[mask, :tier_topk] = ts
             all_top_idx[mask, :tier_topk] = ti
 

@@ -139,7 +139,9 @@ class FP8TrainingConfig:
     use_bf16: bool = False
     use_fp16: bool = False
     fp32_master_weights: bool = True
-    
+
+    use_fused_adamw: bool = False
+
     checkpoint_interval: int = 5000
     checkpoint_dir: str = ".pisceslx/ckpt"
     save_optimizer_state: bool = True
@@ -517,6 +519,14 @@ class FP8TrainingOperator(PiscesLxOperatorInterface):
             }
         ]
         
+        if config.use_fused_adamw:
+            from opss.kernels.fused_adamw import FusedAdamW
+            return FusedAdamW(
+                optimizer_grouped_parameters,
+                lr=config.learning_rate,
+                betas=config.adam_beta,
+                eps=config.adam_eps
+            )
         return torch.optim.AdamW(
             optimizer_grouped_parameters,
             lr=config.learning_rate,

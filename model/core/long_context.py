@@ -211,10 +211,12 @@ class YvREFORM(nn.Module):
         key_full = torch.cat([key_compressed, important_key], dim=2)
         value_full = torch.cat([value_compressed, important_value], dim=2)
 
-        # Compute attention
-        scale = query.shape[-1] ** -0.5
-        attn_weights = torch.matmul(query, key_full.transpose(-2, -1)) * scale
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        output = torch.matmul(attn_weights, value_full)
-
-        return output
+        return F.scaled_dot_product_attention(
+            query,
+            key_full,
+            value_full,
+            attn_mask=None,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=query.shape[-1] ** -0.5,
+        )

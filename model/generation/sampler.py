@@ -246,6 +246,8 @@ class YvSamplingConfig:
         """Post-initialization to convert string strategy to enum."""
         if isinstance(self.strategy, str):
             self.strategy = YvSamplingStrategy(self.strategy)
+        if self.repetition_penalty is not None and self.repetition_penalty <= 0:
+            raise ValueError(f"repetition_penalty must be > 0, got {self.repetition_penalty}")
 
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
@@ -312,12 +314,11 @@ class YvSampler:
         config = self.config
 
         if kwargs.get("temperature") is not None:
-            config = YvSamplingConfig(
-                temperature=kwargs["temperature"],
-                top_k=kwargs.get("top_k", config.top_k),
-                top_p=kwargs.get("top_p", config.top_p),
-                strategy=config.strategy
-            )
+            import copy
+            config = copy.deepcopy(config)
+            config.temperature = kwargs["temperature"]
+            config.top_k = kwargs.get("top_k", config.top_k)
+            config.top_p = kwargs.get("top_p", config.top_p)
 
         temperature = max(config.temperature, 1e-8)
         logits = logits / temperature
@@ -341,7 +342,7 @@ class YvSampler:
         probs = F.softmax(logits, dim=-1)
         if (probs == 0).all(dim=-1).any():
             probs = F.softmax(logits_orig, dim=-1)
-        return torch.multinomial(probs, num_samples=1)
+        return self._safe_multinomial(logits_orig, probs)
 
     def _greedy_sample(self, logits: torch.Tensor) -> torch.Tensor:
         """Perform greedy sampling by selecting highest probability token.
@@ -353,6 +354,14 @@ class YvSampler:
             Selected token IDs [batch_size, 1].
         """
         return torch.argmax(logits, dim=-1, keepdim=True)
+
+    def _safe_multinomial(self, logits: torch.Tensor, probs: torch.Tensor, num_samples: int = 1) -> torch.Tensor:
+        if torch.isnan(probs).any() or (probs == 0).all(dim=-1).any():
+            return torch.argmax(logits, dim=-1, keepdim=True)
+        try:
+            return torch.multinomial(probs, num_samples)
+        except RuntimeError:
+            return torch.argmax(logits, dim=-1, keepdim=True)
 
     @staticmethod
     def _apply_top_k_filter(logits: torch.Tensor, top_k: int) -> torch.Tensor:
@@ -403,7 +412,7 @@ class YvSampler:
         top_k_logits, top_k_indices = torch.topk(logits, top_k, dim=-1)
 
         probs = F.softmax(top_k_logits, dim=-1)
-        sampled_indices = torch.multinomial(probs, num_samples=1)
+        sampled_indices = self._safe_multinomial(top_k_logits, probs)
 
         return torch.gather(top_k_indices, -1, sampled_indices)
 
@@ -428,8 +437,9 @@ class YvSampler:
         indices_to_remove.scatter_(-1, sorted_indices, sorted_indices_to_remove)
         logits = logits.masked_fill(indices_to_remove, float('-inf'))
 
+        logits_orig = logits.clone()
         probs = F.softmax(logits, dim=-1)
-        return torch.multinomial(probs, num_samples=1)
+        return self._safe_multinomial(logits_orig, probs)
 
     def _top_k_top_p_sample(
         self,
@@ -472,8 +482,9 @@ class YvSampler:
             indices_to_remove.scatter_(-1, sorted_indices, sorted_indices_to_remove)
             logits = logits.masked_fill(indices_to_remove, float('-inf'))
 
+        logits_orig = logits.clone()
         probs = F.softmax(logits, dim=-1)
-        return torch.multinomial(probs, num_samples=1)
+        return self._safe_multinomial(logits_orig, probs)
 
     def _typical_sample(self, logits: torch.Tensor, typical_p: float) -> torch.Tensor:
         """Perform typical sampling based on surprisal-entropy distance.
@@ -488,6 +499,7 @@ class YvSampler:
         Returns:
             Sampled token IDs [batch_size, 1].
         """
+        logits_orig = logits.clone()
         probs = F.softmax(logits, dim=-1)
         log_probs = F.log_softmax(logits, dim=-1)
 
@@ -508,7 +520,7 @@ class YvSampler:
         sorted_logits = sorted_logits.masked_fill(~typical_mask, float('-inf'))
 
         probs = F.softmax(sorted_logits, dim=-1)
-        sampled = torch.multinomial(probs, num_samples=1)
+        sampled = self._safe_multinomial(logits_orig, probs)
 
         return torch.gather(sorted_indices, -1, sampled)
 
@@ -528,6 +540,7 @@ class YvSampler:
         if eta_cutoff <= 0:
             return self._top_k_top_p_sample(logits, self.config.top_k, self.config.top_p)
 
+        logits_orig = logits.clone()
         probs = F.softmax(logits, dim=-1)
         log_probs = F.log_softmax(logits, dim=-1)
 
@@ -536,10 +549,13 @@ class YvSampler:
 
         eta_mask = probs >= eta
 
+        if not eta_mask.any():
+            return torch.argmax(logits_orig, dim=-1, keepdim=True)
+
         logits = logits.masked_fill(~eta_mask, float('-inf'))
 
         probs = F.softmax(logits, dim=-1)
-        return torch.multinomial(probs, num_samples=1)
+        return self._safe_multinomial(logits_orig, probs)
 
     def _apply_repetition_penalty(
         self,
@@ -565,6 +581,9 @@ class YvSampler:
         for i in range(batch_size):
             unique_tokens = torch.unique(past_tokens[i])
             for token in unique_tokens:
+                token = token.item()
+                if token < 0 or token >= logits.size(-1):
+                    continue
                 if logits[i, token] > 0:
                     logits[i, token] /= penalty
                 else:

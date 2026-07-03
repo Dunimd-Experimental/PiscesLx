@@ -159,14 +159,40 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from model.utils import YvNumericalGuard, YvShapeGuard
 from typing import Optional, Tuple, List, Dict, Any, Union
 from dataclasses import dataclass, field
 from enum import Enum
 
 from .norms import _arctic_init_weights, YvRMSNorm, YvYaRNRotaryEmbedding, YvDynamicYaRNRotaryEmbedding
 from utils.dc import PiscesLxLogger
+from opss.infer.fused_mla import FusedMLAProjector
 
 from utils.paths import get_log_file
+
+_CACHED_CAUSAL_MASKS: dict = {}
+
+def _get_causal_sdpa_mask(
+    seq_len: int,
+    kv_len: int,
+    device: torch.device,
+    dtype: torch.dtype,
+    diagonal: int | None = None,
+) -> torch.Tensor:
+    if diagonal is None:
+        diagonal = kv_len - seq_len + 1
+    key = (seq_len, kv_len, diagonal)
+    if key not in _CACHED_CAUSAL_MASKS:
+        causal_mask = torch.triu(
+            torch.ones(seq_len, kv_len, dtype=torch.bool),
+            diagonal=diagonal,
+        )
+        _CACHED_CAUSAL_MASKS[key] = causal_mask.cpu()
+    bool_mask = _CACHED_CAUSAL_MASKS[key].to(device=device)
+    sdpa_mask = torch.zeros(seq_len, kv_len, device=device, dtype=dtype)
+    sdpa_mask.masked_fill_(bool_mask, float('-inf'))
+    return sdpa_mask
+
 _LOG = PiscesLxLogger("Yv.Core", file_path=get_log_file("Yv.Core"), enable_file=True)
 
 
@@ -1272,16 +1298,19 @@ class YvCirculantAttention(nn.Module):
         fft_len: int
     ) -> torch.Tensor:
         """Compute attention using standard softmax (fallback from FFT)."""
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(head_dim)
+        sdpa_mask = None
         if self.causal:
-            causal_mask = torch.triu(
-                torch.ones(seq_len, seq_len, device=q.device, dtype=torch.bool),
-                diagonal=1
-            )
-            attn_weights = attn_weights.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        out = torch.matmul(attn_weights, v)
-        return out
+            kv_len = k.shape[-2]
+            sdpa_mask = _get_causal_sdpa_mask(seq_len, kv_len, q.device, q.dtype)
+        return F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=head_dim ** -0.5,
+        )
 
     def _fft_causal_attention(
         self,
@@ -1293,17 +1322,19 @@ class YvCirculantAttention(nn.Module):
         n_heads: int,
         head_dim: int,
         fft_len: int
-    ) -> torch.Tensor:
+) -> torch.Tensor:
         """Compute causal attention using standard softmax (fallback from FFT)."""
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) / math.sqrt(head_dim)
-        causal_mask = torch.triu(
-            torch.ones(seq_len, seq_len, device=q.device, dtype=torch.bool),
-            diagonal=1
+        kv_len = k.shape[-2]
+        sdpa_mask = _get_causal_sdpa_mask(seq_len, kv_len, q.device, q.dtype)
+        return F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=head_dim ** -0.5,
         )
-        attn_weights = attn_weights.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        out = torch.matmul(attn_weights, v)
-        return out
 
     def _standard_attention(
         self,
@@ -1326,16 +1357,23 @@ class YvCirculantAttention(nn.Module):
         Returns:
             Attention output [batch, heads, seq, head_dim].
         """
-        scale = self.head_dim ** -0.5
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * scale
-
+        sdpa_mask = None
         if mask is not None:
-            attn_weights = attn_weights.masked_fill(mask == 0, float('-inf'))
+            if mask.dtype == torch.bool:
+                sdpa_mask = mask
+            else:
+                sdpa_mask = torch.zeros_like(mask, dtype=q.dtype)
+                sdpa_mask.masked_fill_(mask == 0, float('-inf'))
 
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        out = torch.matmul(attn_weights, v)
-
-        return out
+        return F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=self.head_dim ** -0.5,
+        )
 
     def forward(
         self,
@@ -1431,14 +1469,23 @@ class YvCirculantAttention(nn.Module):
             k = torch.cat([past_k, k], dim=2)
             v = torch.cat([past_v, v], dim=2)
 
-        scale = self.head_dim ** -0.5
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * scale
-
+        sdpa_mask = None
         if attention_mask is not None:
-            attn_weights = attn_weights.masked_fill(attention_mask == 0, float('-inf'))
+            if attention_mask.dtype == torch.bool:
+                sdpa_mask = attention_mask
+            else:
+                sdpa_mask = torch.zeros_like(attention_mask, dtype=q.dtype)
+                sdpa_mask.masked_fill_(attention_mask == 0, float('-inf'))
 
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        attn_output = torch.matmul(attn_weights, v)
+        attn_output = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=self.head_dim ** -0.5,
+        )
 
         attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.n_head * self.head_dim)
         attn_output = self.o_proj(attn_output)
@@ -1551,35 +1598,31 @@ class YvSlidingWindowAttention(nn.Module):
         
     def _create_window_mask(
         self,
-        seq_len: int,
+        q_len: int,
+        kv_len: int,
         device: torch.device
     ) -> torch.Tensor:
-        """Create sliding window attention mask.
-        
-        Generates a boolean mask where True indicates positions that should
-        be masked out (not attended to). The mask implements the sliding
-        window constraint where each position only attends to nearby positions.
-        
+        """Create boolean mask for sliding window attention.
+
         Args:
-            seq_len: Sequence length for the mask.
+            q_len: Length of the query sequence.
+            kv_len: Length of the key/value sequence.
             device: Device to create the mask on.
-        
+
         Returns:
-            Boolean mask tensor of shape [seq_len, seq_len].
+            Boolean mask tensor of shape [q_len, kv_len].
             True values indicate positions to mask (set to -inf in attention).
-        
+
         Note:
             The mask is symmetric around each position, attending to
             window_size/2 positions on each side. Edge positions have
             smaller effective windows due to sequence boundaries.
         """
-        mask = torch.ones(seq_len, seq_len, device=device, dtype=torch.bool)
-        
-        for i in range(seq_len):
-            start = max(0, i - self.window_size // 2)
-            end = min(seq_len, i + self.window_size // 2 + 1)
-            mask[i, start:end] = False
-            
+        mask = torch.ones(q_len, kv_len, device=device, dtype=torch.bool)
+
+        dist = (torch.arange(q_len, device=device)[:, None] - torch.arange(kv_len, device=device)[None, :]).abs()
+        mask = dist > self.window_size // 2
+
         return mask
         
     def forward(
@@ -1628,20 +1671,21 @@ class YvSlidingWindowAttention(nn.Module):
             
         kv_seq_len = k.shape[2]
         
-        window_mask = self._create_window_mask(kv_seq_len, hidden_states.device)
-        
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-        
-        attn_weights = attn_weights.masked_fill(
-            window_mask.unsqueeze(0).unsqueeze(0),
-            float('-inf')
-        )
-        
+        window_mask = self._create_window_mask(seq_len, kv_seq_len, hidden_states.device)
+        sdpa_mask = torch.zeros(seq_len, kv_seq_len, device=q.device, dtype=q.dtype)
+        sdpa_mask.masked_fill_(window_mask, float('-inf'))
         if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
-            
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        attn_output = torch.matmul(attn_weights, v)
+            sdpa_mask = sdpa_mask.unsqueeze(0).unsqueeze(0) + attention_mask.to(device=q.device, dtype=q.dtype)
+
+        attn_output = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=self.scale,
+        )
         
         attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.hidden_size)
         output = self.o_proj(attn_output)
@@ -1853,19 +1897,20 @@ class YvSparseAttention(nn.Module):
         v = self.v_proj(hidden_states).view(batch_size, seq_len, self.n_head, self.head_dim).transpose(1, 2)
         
         sparse_mask = self._create_sparse_mask(seq_len, hidden_states.device)
-        
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-        
-        attn_weights = attn_weights.masked_fill(
-            sparse_mask.unsqueeze(0).unsqueeze(0),
-            float('-inf')
-        )
-        
+        sdpa_mask = torch.zeros(seq_len, seq_len, device=q.device, dtype=q.dtype)
+        sdpa_mask.masked_fill_(sparse_mask, float('-inf'))
         if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
-            
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        attn_output = torch.matmul(attn_weights, v)
+            sdpa_mask = sdpa_mask.unsqueeze(0).unsqueeze(0) + attention_mask.to(device=q.device, dtype=q.dtype)
+
+        attn_output = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=self.scale,
+        )
         
         attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.hidden_size)
         output = self.o_proj(attn_output)
@@ -2050,10 +2095,13 @@ class YvPagedAttention(nn.Module):
                 for _ in range(3):
                     distances = torch.cdist(keys_flat, key_centroids)
                     assignments = distances.argmin(dim=1)
-                    for c in range(codebook_size):
-                        mask = assignments == c
-                        if mask.any():
-                            key_centroids[c] = keys_flat[mask].mean(dim=0)
+                    # Vectorized centroid update via scatter_add_
+                    assignments_expanded = assignments.view(-1, 1).expand(-1, keys_flat.shape[-1])
+                    sums = torch.zeros(codebook_size, keys_flat.shape[-1], device=keys_flat.device, dtype=keys_flat.dtype)
+                    counts = torch.zeros(codebook_size, device=keys_flat.device, dtype=torch.long)
+                    sums.scatter_add_(0, assignments_expanded, keys_flat)
+                    counts.scatter_add_(0, assignments, torch.ones(assignments.shape[0], device=assignments.device, dtype=torch.long))
+                    key_centroids = sums / counts.clamp(min=1).unsqueeze(-1)
                 
                 keys = key_centroids[assignments].view_as(keys)
                 
@@ -2064,10 +2112,13 @@ class YvPagedAttention(nn.Module):
                 for _ in range(3):
                     distances = torch.cdist(values_flat, value_centroids)
                     assignments = distances.argmin(dim=1)
-                    for c in range(codebook_size):
-                        mask = assignments == c
-                        if mask.any():
-                            value_centroids[c] = values_flat[mask].mean(dim=0)
+                    # Vectorized centroid update via scatter_add_
+                    assignments_expanded = assignments.view(-1, 1).expand(-1, values_flat.shape[-1])
+                    sums = torch.zeros(codebook_size, values_flat.shape[-1], device=values_flat.device, dtype=values_flat.dtype)
+                    counts = torch.zeros(codebook_size, device=values_flat.device, dtype=torch.long)
+                    sums.scatter_add_(0, assignments_expanded, values_flat)
+                    counts.scatter_add_(0, assignments, torch.ones(assignments.shape[0], device=assignments.device, dtype=torch.long))
+                    value_centroids = sums / counts.clamp(min=1).unsqueeze(-1)
                 
                 values = value_centroids[assignments].view_as(values)
         
@@ -2108,20 +2159,20 @@ class YvPagedAttention(nn.Module):
             repeat = self.n_head // self.n_kv_head
             k = k.repeat_interleave(repeat, dim=1)
             v = v.repeat_interleave(repeat, dim=1)
-            
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-        
-        causal_mask = torch.triu(
-            torch.ones(seq_len, kv_seq_len, device=hidden_states.device, dtype=torch.bool),
-            diagonal=kv_seq_len - seq_len + 1
-        )
-        attn_weights = attn_weights.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-        
+
+        sdpa_mask = _get_causal_sdpa_mask(seq_len, kv_seq_len, hidden_states.device, q.dtype)
         if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
-            
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        attn_output = torch.matmul(attn_weights, v)
+            sdpa_mask = sdpa_mask.unsqueeze(0).unsqueeze(0) + attention_mask.to(device=q.device, dtype=q.dtype)
+
+        attn_output = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=self.scale,
+        )
         
         attn_output = attn_output.transpose(1, 2).reshape(batch_size, seq_len, self.hidden_size)
         output = self.o_proj(attn_output)
@@ -2304,6 +2355,12 @@ class YvFlashAttention(nn.Module):
         except (ImportError, ModuleNotFoundError, OSError) as exc:
             raise RuntimeError("Flash Attention 3 backend is unavailable") from exc
 
+        if self.n_kv_head > self.n_head:
+            raise ValueError(
+                f"Cannot repeat K/V heads: n_kv_head ({self.n_kv_head}) > n_head ({self.n_head}). "
+                f"K/V heads cannot exceed query heads."
+            )
+
         if self.n_kv_head != self.n_head:
             repeat = self.n_head // self.n_kv_head
             k = k.repeat_interleave(repeat, dim=2)
@@ -2422,27 +2479,28 @@ class YvFlashAttention(nn.Module):
         """
         batch_size, seq_len = q.shape[0], q.shape[1]
         kv_seq_len = k.shape[1]
-        
+
         q = q.transpose(1, 2)
         k = k.transpose(1, 2)
         v = v.transpose(1, 2)
-        
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-        
-        causal_mask = torch.triu(
-            torch.ones(seq_len, kv_seq_len, device=q.device, dtype=torch.bool),
-            diagonal=kv_seq_len - seq_len + 1
+
+        sdpa_mask = attention_mask
+        is_causal = attention_mask is None
+
+        if attention_mask is not None and attention_mask.dtype == torch.bool:
+            sdpa_mask = attention_mask
+        elif attention_mask is not None and attention_mask.dim() == 3:
+            sdpa_mask = attention_mask.unsqueeze(1)
+
+        output = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=self.attention_dropout if self.training else 0.0,
+            is_causal=is_causal,
+            scale=self.scale,
         )
-        attn_weights = attn_weights.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-        
-        if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
-            
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        if self.training:
-            attn_weights = F.dropout(attn_weights, p=self.attention_dropout)
-            
-        output = torch.matmul(attn_weights, v)
         return output.transpose(1, 2)
 
 
@@ -2637,26 +2695,27 @@ class YvLocalGlobalAttention(nn.Module):
         Returns:
             Local attention output.
         """
-        batch_size, _, seq_len, _ = q.shape
-        
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-        
-        local_mask = torch.ones(seq_len, seq_len, device=q.device, dtype=torch.bool)
-        for i in range(seq_len):
-            start = max(0, i - self.local_window // 2)
-            end = min(seq_len, i + self.local_window // 2 + 1)
-            local_mask[i, start:end] = False
-            
+        _, _, seq_len, _ = q.shape
+
+        positions = torch.arange(seq_len, device=q.device)
+        local_mask = (positions[:, None] - positions[None, :]).abs() > (self.local_window // 2)
         causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=q.device, dtype=torch.bool), diagonal=1)
         local_mask = local_mask | causal_mask
-        
-        attn_weights = attn_weights.masked_fill(local_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-        
+        sdpa_mask = torch.zeros(seq_len, seq_len, device=q.device, dtype=q.dtype)
+        sdpa_mask.masked_fill_(local_mask, float('-inf'))
+
         if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
-            
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        return torch.matmul(attn_weights, v)
+            sdpa_mask = sdpa_mask.unsqueeze(0).unsqueeze(0) + attention_mask.to(device=q.device, dtype=q.dtype)
+
+        return F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=self.scale,
+        )
         
     def _global_attention(
         self,
@@ -2676,17 +2735,20 @@ class YvLocalGlobalAttention(nn.Module):
         Returns:
             Global attention output.
         """
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-        
         seq_len = q.shape[2]
-        causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=q.device, dtype=torch.bool), diagonal=1)
-        attn_weights = attn_weights.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-        
+        sdpa_mask = _get_causal_sdpa_mask(seq_len, seq_len, q.device, q.dtype, diagonal=1)
         if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
-            
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        return torch.matmul(attn_weights, v)
+            sdpa_mask = sdpa_mask.unsqueeze(0).unsqueeze(0) + attention_mask.to(device=q.device, dtype=q.dtype)
+
+        return F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=self.scale,
+        )
 
 
 # Paper: Liu et al., "Ring Attention with Blockwise Transformers for Near-Infinite Context", arXiv:2310.01889, 2023
@@ -2934,10 +2996,50 @@ class YvRingAttention(nn.Module):
                 output[:, :, i:i + chunk_size] += torch.matmul(chunk_exp, v)
                 normalizer[:, :, i:i + chunk_size] += chunk_sum
         
-        output = output / normalizer.clamp(min=1e-10)
+        output = output / normalizer.clamp(min=YvNumericalGuard.get_eps(normalizer.dtype))
         
         return output
         
+    def forward_kv(
+        self,
+        q: torch.Tensor,
+        k: torch.Tensor,
+        v: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        skip_head_repeat: bool = False,
+    ) -> torch.Tensor:
+        """Ring attention with pre-computed Q, K, V.
+
+        Accepts attention inputs directly (bypassing internal projections),
+        enabling integration with external MLA/KV pipelines.
+
+        Args:
+            q: Query [batch, n_head, seq_len, head_dim].
+            k: Key [batch, n_kv_head or n_head, kv_len, head_dim].
+            v: Value [batch, n_kv_head or n_head, kv_len, head_dim].
+            attention_mask: Optional mask.
+            skip_head_repeat: If True, skip KV head repetition (caller already handled it).
+
+        Returns:
+            Output [batch, seq_len, head_dim * n_head] (pre-output-proj).
+        """
+        batch_size, n_head, seq_len, head_dim = q.shape
+        kv_len = k.shape[2]
+
+        if not skip_head_repeat and self.n_kv_head != n_head:
+            repeat = n_head // self.n_kv_head
+            k = k.repeat_interleave(repeat, dim=1)
+            v = v.repeat_interleave(repeat, dim=1)
+
+        chunk_size = max(1, seq_len // self.ring_size)
+
+        if self._distributed_available or kv_len > 16384:
+            output = self._compute_flash_ring_attention(q, k, v, chunk_size)
+        else:
+            output = self._standard_ring_attention(q, k, v, chunk_size, attention_mask)
+
+        return output.transpose(1, 2).reshape(batch_size, seq_len, n_head * head_dim)
+
     def forward(
         self,
         hidden_states: torch.Tensor,
@@ -2986,15 +3088,8 @@ class YvRingAttention(nn.Module):
             k = k.repeat_interleave(repeat, dim=1)
             v = v.repeat_interleave(repeat, dim=1)
         
-        chunk_size = max(1, seq_len // self.ring_size)
-        
-        if self._distributed_available or seq_len > 16384:
-            output = self._compute_flash_ring_attention(q, k, v, chunk_size)
-        else:
-            output = self._standard_ring_attention(q, k, v, chunk_size, attention_mask)
-        
-        output = output.transpose(1, 2).reshape(batch_size, seq_len, self.hidden_size)
-        output = self.o_proj(output)
+        out = self.forward_kv(q, k, v, attention_mask)
+        output = self.o_proj(out)
         
         if use_cache:
             k_cache = k[:, :, :self.n_kv_head] if self.n_kv_head != self.n_head else k
@@ -3002,7 +3097,7 @@ class YvRingAttention(nn.Module):
             return output, (k_cache, v_cache)
             
         return output
-        
+    
     def _standard_ring_attention(
         self,
         q: torch.Tensor,
@@ -3024,29 +3119,41 @@ class YvRingAttention(nn.Module):
             for j in range(0, seq_len, chunk_size):
                 k_chunk = k[:, :, j:j + chunk_size]
                 v_chunk = v[:, :, j:j + chunk_size]
-                
-                attn_weights = torch.matmul(q_chunk, k_chunk.transpose(-2, -1)) * self.scale
-                
+
+                sdpa_mask = None
                 if i >= j + chunk_size:
                     pass
                 elif i + chunk_size <= j:
-                    attn_weights = attn_weights.masked_fill(
-                        torch.ones_like(attn_weights, dtype=torch.bool),
-                        float('-inf')
+                    sdpa_mask = torch.full(
+                        (q_chunk.shape[2], k_chunk.shape[2]),
+                        float("-inf"),
+                        device=q.device,
+                        dtype=q.dtype,
                     )
                 else:
                     causal_mask = torch.triu(
                         torch.ones(q_chunk.shape[2], k_chunk.shape[2], device=q.device, dtype=torch.bool),
                         diagonal=j - i + 1
                     )
-                    attn_weights = attn_weights.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+                    sdpa_mask = torch.zeros(q_chunk.shape[2], k_chunk.shape[2], device=q.device, dtype=q.dtype)
+                    sdpa_mask.masked_fill_(causal_mask, float('-inf'))
                     
                 if attention_mask is not None:
                     mask_slice = attention_mask[:, :, i:i + chunk_size, j:j + chunk_size]
-                    attn_weights = attn_weights + mask_slice
-                    
-                attn_weights = F.softmax(attn_weights, dim=-1)
-                chunk_output = chunk_output + torch.matmul(attn_weights, v_chunk)
+                    if sdpa_mask is None:
+                        sdpa_mask = mask_slice.to(device=q.device, dtype=q.dtype)
+                    else:
+                        sdpa_mask = sdpa_mask.unsqueeze(0).unsqueeze(0) + mask_slice.to(device=q.device, dtype=q.dtype)
+
+                chunk_output = chunk_output + F.scaled_dot_product_attention(
+                    q_chunk,
+                    k_chunk,
+                    v_chunk,
+                    attn_mask=sdpa_mask,
+                    dropout_p=0.0,
+                    is_causal=False,
+                    scale=self.scale,
+                )
                 
             output[:, :, i:i + chunk_size] = chunk_output
             
@@ -3201,23 +3308,24 @@ class YvMultiQueryAttention(nn.Module):
         
         k = k.expand(-1, self.n_head, -1, -1)
         v = v.expand(-1, self.n_head, -1, -1)
-        
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-        
-        causal_mask = torch.triu(
-            torch.ones(seq_len, kv_seq_len, device=q.device, dtype=torch.bool),
-            diagonal=kv_seq_len - seq_len + 1
+
+        sdpa_mask = attention_mask
+        if past_key_value is not None or attention_mask is not None:
+            causal_bias = _get_causal_sdpa_mask(seq_len, kv_seq_len, q.device, q.dtype)
+            if attention_mask is None:
+                sdpa_mask = causal_bias
+            else:
+                sdpa_mask = attention_mask.to(device=q.device, dtype=q.dtype) + causal_bias.unsqueeze(0).unsqueeze(0)
+
+        output = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=self.attention_dropout if self.training else 0.0,
+            is_causal=(past_key_value is None and attention_mask is None),
+            scale=self.scale,
         )
-        attn_weights = attn_weights.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-        
-        if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
-            
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        if self.training:
-            attn_weights = F.dropout(attn_weights, p=self.attention_dropout)
-            
-        output = torch.matmul(attn_weights, v)
         output = output.transpose(1, 2).reshape(batch_size, seq_len, self.hidden_size)
         output = self.o_proj(output)
         
@@ -3508,7 +3616,7 @@ class YvDynamicH2OAttention(nn.Module):
         
         flat = flat.view(batch_size * num_heads, compressed_length, ratio, head_dim)
         w = token_importance.view(batch_size * num_heads, compressed_length, ratio)
-        w_sum = w.sum(dim=2, keepdim=True) + 1e-8
+        w_sum = w.sum(dim=2, keepdim=True).clamp(min=YvNumericalGuard.get_eps(w.dtype))
         pooled = (flat * w.unsqueeze(-1)).sum(dim=2) / w_sum
         
         return pooled.view(batch_size, num_heads, compressed_length, head_dim)
@@ -3535,16 +3643,19 @@ class YvDynamicH2OAttention(nn.Module):
         if compressed_memory is None or compressed_memory.shape[2] == 0:
             return torch.zeros_like(query)
         
-        scores = torch.matmul(query, compressed_memory.transpose(-2, -1)) / math.sqrt(query.shape[-1])
-        
+        attn_mask = None
         if memory_weights is not None:
-            scores = scores + torch.log(memory_weights.unsqueeze(-2) + 1e-8)
-        
-        attn_weights = F.softmax(scores, dim=-1)
-        attn_weights = self.dropout(attn_weights)
-        output = torch.matmul(attn_weights, compressed_memory)
-        
-        return output
+            attn_mask = YvNumericalGuard.safe_log(memory_weights.unsqueeze(-2)).to(query.dtype)
+
+        return F.scaled_dot_product_attention(
+            query,
+            compressed_memory,
+            compressed_memory,
+            attn_mask=attn_mask,
+            dropout_p=self.dropout.p if self.training else 0.0,
+            is_causal=False,
+            scale=query.shape[-1] ** -0.5,
+        )
     
     def _update_compressed_memory(
         self,
@@ -3624,12 +3735,15 @@ class YvDynamicH2OAttention(nn.Module):
         device = query_states.device
         
         if seq_len <= self.streaming_window:
-            attention_scores = torch.matmul(query_states, key_states.transpose(-2, -1)) / math.sqrt(head_dim)
-            if attention_mask is not None:
-                attention_scores = attention_scores + attention_mask
-            attention_weights = F.softmax(attention_scores, dim=-1)
-            attention_weights = self.dropout(attention_weights)
-            return torch.matmul(attention_weights, value_states)
+            return F.scaled_dot_product_attention(
+                query_states,
+                key_states,
+                value_states,
+                attn_mask=attention_mask,
+                dropout_p=self.dropout.p if self.training else 0.0,
+                is_causal=False,
+                scale=head_dim ** -0.5,
+            )
         
         output_states = torch.zeros_like(query_states)
         
@@ -3662,7 +3776,7 @@ class YvDynamicH2OAttention(nn.Module):
                         attn_mask=attn_mask,
                         dropout_p=self.dropout.p if self.training else 0.0,
                         is_causal=False,
-                        softmax_scale=self.scale,
+                        scale=self.scale,
                     )
                     level_outputs[level_name] = level_out.reshape(batch_size, num_heads, window_size, head_dim)
             
@@ -3880,7 +3994,7 @@ class YvH2OAttention(nn.Module):
             scale = states_flat.abs().max() / 7.0
             states = torch.round(states_flat / scale) * scale
         
-        seq_complexity = torch.std(states) / (torch.mean(torch.abs(states)) + 1e-8)
+        seq_complexity = torch.std(states) / torch.mean(torch.abs(states)).clamp(min=YvNumericalGuard.get_eps(states.dtype))
         adaptive_ratio = max(1, min(ratio, int(seq_complexity * ratio)))
         actual_ratio = min(adaptive_ratio, max(1, seq_len // 512))
         
@@ -3900,7 +4014,7 @@ class YvH2OAttention(nn.Module):
         flat = flat.view(batch_size * num_heads, compressed_length, actual_ratio, head_dim)
         w = token_importance.view(batch_size * num_heads, compressed_length, actual_ratio)
         
-        w_sum = w.sum(dim=2, keepdim=True) + 1e-8
+        w_sum = w.sum(dim=2, keepdim=True).clamp(min=YvNumericalGuard.get_eps(w.dtype))
         pooled = (flat * w.unsqueeze(-1)).sum(dim=2) / w_sum
         
         return pooled.view(batch_size, num_heads, compressed_length, head_dim)
@@ -3973,7 +4087,7 @@ class YvH2OAttention(nn.Module):
             pos = recent_pos
         else:
             head_importance = imp_region.sum(dim=-1)
-            alloc = head_importance / (head_importance.sum(dim=1, keepdim=True) + 1e-8)
+            alloc = head_importance / head_importance.sum(dim=1, keepdim=True).clamp(min=YvNumericalGuard.get_eps(head_importance.dtype))
             alloc = alloc.mean(dim=0)
             
             quotas = (alloc * remaining).round().to(torch.long)
@@ -4042,15 +4156,15 @@ class YvH2OAttention(nn.Module):
         device = query_states.device
         
         if seq_len <= self.streaming_window:
-            attention_scores = torch.matmul(query_states, key_states.transpose(-2, -1)) / math.sqrt(head_dim)
-            
-            if attention_mask is not None:
-                attention_scores = attention_scores + attention_mask
-            
-            attention_weights = F.softmax(attention_scores, dim=-1)
-            attention_weights = self.dropout(attention_weights)
-            
-            return torch.matmul(attention_weights, value_states)
+            return F.scaled_dot_product_attention(
+                query_states,
+                key_states,
+                value_states,
+                attn_mask=attention_mask,
+                dropout_p=self.dropout.p if self.training else 0.0,
+                is_causal=False,
+                scale=head_dim ** -0.5,
+            )
         
         output_states = torch.zeros_like(query_states)
         
@@ -4095,7 +4209,7 @@ class YvH2OAttention(nn.Module):
                 attn_mask=attn_mask,
                 dropout_p=self.dropout.p if self.training else 0.0,
                 is_causal=False,
-                softmax_scale=self.scale,
+                scale=self.scale,
             )
             window_output = window_output.reshape(batch_size, num_heads, window_size, head_dim)
             
@@ -4271,20 +4385,6 @@ class YvHISAAttention(nn.Module):
         self.v_proj = nn.Linear(hidden_size, hidden_size, bias=False, device=device, dtype=dtype)
         self.o_proj = nn.Linear(hidden_size, hidden_size, bias=False, device=device, dtype=dtype)
 
-        self.block_summary_proj = nn.Linear(
-            hidden_size, hidden_size // 4, bias=False, device=device, dtype=dtype
-        )
-        self.superblock_summary_proj = nn.Linear(
-            hidden_size, hidden_size // 8, bias=False, device=device, dtype=dtype
-        )
-
-        self.block_score_proj = nn.Linear(
-            hidden_size // 4, 1, bias=False, device=device, dtype=dtype
-        )
-        self.superblock_score_proj = nn.Linear(
-            hidden_size // 8, 1, bias=False, device=device, dtype=dtype
-        )
-
         self.attention_dropout = nn.Dropout(dropout)
 
         self.register_buffer('hierarchy_cache', None, persistent=False)
@@ -4309,54 +4409,39 @@ class YvHISAAttention(nn.Module):
             self.superblock_size // self.block_size
         )
 
-        block_summaries_list = []
-        for b in range(batch_size):
-            block_summary_b = []
-            for i in range(num_blocks):
-                start = i * self.block_size
-                end = min(start + self.block_size, seq_len)
-                block_tokens = hidden_states[b, start:end]  # [block_size, hidden]
-
-                block_mean = block_tokens.mean(dim=0)
-                block_weight = torch.norm(block_tokens, dim=-1).mean()
-                block_weight = torch.sigmoid(block_weight).unsqueeze(0)
-
-                summary = block_mean * block_weight
-                block_summary_b.append(summary)
-
-            block_summaries_list.append(torch.stack(block_summary_b))
-
-        block_summaries = torch.stack(block_summaries_list)  # [batch, num_blocks, hidden]
-
-        block_proj = self.block_summary_proj(block_summaries)
-        block_summaries_compressed = torch.nn.functional.gelu(block_proj)
-
-        superblock_summaries_list = []
         blocks_per_sb = self.superblock_size // self.block_size
-        for b in range(batch_size):
-            superblock_summary_b = []
-            for i in range(num_superblocks):
-                start = i * blocks_per_sb
-                end = min(start + blocks_per_sb, num_blocks)
-                if start >= num_blocks:
-                    break
 
-                sb_blocks = block_summaries[b, start:end]
-                sb_mean = sb_blocks.mean(dim=0)
-                sb_weight = torch.norm(sb_blocks, dim=-1).mean()
-                sb_weight = torch.sigmoid(sb_weight).unsqueeze(0)
+        pad_len = num_blocks * self.block_size - seq_len
+        if pad_len > 0:
+            padded_hidden = F.pad(hidden_states, (0, 0, 0, pad_len))
+        else:
+            padded_hidden = hidden_states
 
-                summary = sb_mean * sb_weight
-                superblock_summary_b.append(summary)
+        hidden_blocks = padded_hidden.view(batch_size, num_blocks, self.block_size, -1)
+        block_counts = torch.full((num_blocks,), self.block_size, device=device, dtype=hidden_states.dtype)
+        if pad_len > 0:
+            block_counts[-1] = seq_len - self.block_size * (num_blocks - 1)
+        block_counts_view = block_counts.view(1, num_blocks, 1)
 
-            while len(superblock_summary_b) < num_superblocks:
-                superblock_summary_b.append(torch.zeros_like(superblock_summary_b[0]))
+        block_mean = hidden_blocks.sum(dim=2) / block_counts_view
+        block_weight = torch.sigmoid(hidden_blocks.norm(dim=-1).sum(dim=2) / block_counts.view(1, num_blocks))
+        block_summaries = block_mean * block_weight.unsqueeze(-1)
 
-            superblock_summaries_list.append(torch.stack(superblock_summary_b))
+        sb_pad = num_superblocks * blocks_per_sb - num_blocks
+        if sb_pad > 0:
+            padded_blocks = F.pad(block_summaries, (0, 0, 0, sb_pad))
+        else:
+            padded_blocks = block_summaries
 
-        superblock_summaries = torch.stack(superblock_summaries_list)
-        superblock_proj = self.superblock_summary_proj(superblock_summaries)
-        superblock_summaries_compressed = torch.nn.functional.gelu(superblock_proj)
+        sb_blocks = padded_blocks.view(batch_size, num_superblocks, blocks_per_sb, -1)
+        sb_counts = torch.full((num_superblocks,), blocks_per_sb, device=device, dtype=hidden_states.dtype)
+        if sb_pad > 0:
+            sb_counts[-1] = num_blocks - blocks_per_sb * (num_superblocks - 1)
+        sb_counts_view = sb_counts.view(1, num_superblocks, 1)
+
+        sb_mean = sb_blocks.sum(dim=2) / sb_counts_view
+        sb_weight = torch.sigmoid(sb_blocks.norm(dim=-1).sum(dim=2) / sb_counts.view(1, num_superblocks))
+        superblock_summaries = sb_mean * sb_weight.unsqueeze(-1)
 
         hierarchy_info = {
             'num_blocks': num_blocks,
@@ -4387,30 +4472,25 @@ class YvHISAAttention(nn.Module):
         num_blocks = hierarchy_info['num_blocks']
 
         query_seq = query.mean(dim=1)  # [batch, seq_len, head_dim]
+        num_b = min(num_blocks, block_summaries.shape[1])
+        scores = torch.einsum(
+            'bsd,bkd->bsk',
+            query_seq,
+            block_summaries[:, :num_b],
+        ) / (head_dim ** 0.5)
+        scores = scores.softmax(dim=-1)
 
-        block_scores_list = []
-        for b in range(batch_size):
-            q_b = query_seq[b]  # [seq_len, head_dim]
-            num_b = min(num_blocks, block_summaries.shape[1])
-
-            q_expanded = q_b.unsqueeze(1)  # [seq_len, 1, head_dim]
-            blocks_expanded = block_summaries[b, :num_b].unsqueeze(0)  # [1, num_b, hidden]
-
-            scores_b = torch.einsum('sh,bsh->sb', q_expanded, blocks_expanded) / (
-                head_dim ** 0.5
+        if num_blocks > num_b:
+            pad = torch.zeros(
+                batch_size,
+                seq_len,
+                num_blocks - num_b,
+                device=scores.device,
+                dtype=scores.dtype,
             )
-            scores_b = scores_b.softmax(dim=-1)
+            scores = torch.cat([scores, pad], dim=-1)
 
-            if num_blocks > block_summaries.shape[1]:
-                pad = torch.zeros(
-                    seq_len, num_blocks - block_summaries.shape[1],
-                    device=scores_b.device, dtype=scores_b.dtype
-                )
-                scores_b = torch.cat([scores_b, pad], dim=-1)
-
-            block_scores_list.append(scores_b)
-
-        block_scores = torch.stack(block_scores_list).unsqueeze(1)
+        block_scores = scores.unsqueeze(1)
 
         return block_scores
 
@@ -4434,30 +4514,25 @@ class YvHISAAttention(nn.Module):
         num_superblocks = hierarchy_info['num_superblocks']
 
         query_seq = query.mean(dim=1)
+        num_sb = min(num_superblocks, superblock_summaries.shape[1])
+        scores = torch.einsum(
+            'bsd,bkd->bsk',
+            query_seq,
+            superblock_summaries[:, :num_sb],
+        ) / (head_dim ** 0.5)
+        scores = scores.softmax(dim=-1)
 
-        superblock_scores_list = []
-        for b in range(batch_size):
-            q_b = query_seq[b]
-            num_sb = min(num_superblocks, superblock_summaries.shape[1])
-
-            q_expanded = q_b.unsqueeze(1)
-            sb_expanded = superblock_summaries[b, :num_sb].unsqueeze(0)
-
-            scores_b = torch.einsum('sh,sbsh->sb', q_expanded, sb_expanded) / (
-                head_dim ** 0.5
+        if num_superblocks > num_sb:
+            pad = torch.zeros(
+                batch_size,
+                seq_len,
+                num_superblocks - num_sb,
+                device=scores.device,
+                dtype=scores.dtype,
             )
-            scores_b = scores_b.softmax(dim=-1)
+            scores = torch.cat([scores, pad], dim=-1)
 
-            if num_superblocks > superblock_summaries.shape[1]:
-                pad = torch.zeros(
-                    seq_len, num_superblocks - superblock_summaries.shape[1],
-                    device=scores_b.device, dtype=scores_b.dtype
-                )
-                scores_b = torch.cat([scores_b, pad], dim=-1)
-
-            superblock_scores_list.append(scores_b)
-
-        superblock_scores = torch.stack(superblock_scores_list).unsqueeze(1)
+        superblock_scores = scores.unsqueeze(1)
 
         return superblock_scores
 
@@ -4497,15 +4572,19 @@ class YvHISAAttention(nn.Module):
         scale = head_dim ** -0.5
 
         if kv_len <= 4096:
-            attn_weights = torch.einsum('bqhd,bkhd->bhqk', query, key) * scale
-
+            sdpa_mask = None
             if attention_mask is not None:
-                attn_weights = attn_weights + attention_mask
+                sdpa_mask = attention_mask.to(device=query.device, dtype=query.dtype)
 
-            attn_weights = F.softmax(attn_weights, dim=-1)
-            attn_weights = self.attention_dropout(attn_weights)
-
-            output = torch.einsum('bhqk,bkhd->bqhd', attn_weights, value)
+            output = F.scaled_dot_product_attention(
+                query,
+                key,
+                value,
+                attn_mask=sdpa_mask,
+                dropout_p=self.attention_dropout.p if self.training else 0.0,
+                is_causal=False,
+                scale=scale,
+            )
             output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
             output = self.o_proj(output)
 
@@ -4520,31 +4599,37 @@ class YvHISAAttention(nn.Module):
         key_2d = key.mean(dim=1)
         value_2d = value.mean(dim=1)
 
-        block_keys_list = []
-        block_values_list = []
-        for i in range(num_blocks):
-            start = i * self.block_size
-            end = min(start + self.block_size, kv_len)
-            block_keys_list.append(key_2d[:, start:end].mean(dim=1))
-            block_values_list.append(value_2d[:, start:end].mean(dim=1))
+        block_pad = num_blocks * self.block_size - kv_len
+        if block_pad > 0:
+            key_2d_padded = F.pad(key_2d, (0, 0, 0, block_pad))
+            value_2d_padded = F.pad(value_2d, (0, 0, 0, block_pad))
+        else:
+            key_2d_padded = key_2d
+            value_2d_padded = value_2d
 
-        block_keys = torch.stack(block_keys_list, dim=1)
-        block_values = torch.stack(block_values_list, dim=1)
+        key_blocks = key_2d_padded.view(batch_size, num_blocks, self.block_size, head_dim)
+        value_blocks = value_2d_padded.view(batch_size, num_blocks, self.block_size, head_dim)
+        block_counts = torch.full((num_blocks,), self.block_size, device=query.device, dtype=query.dtype)
+        if block_pad > 0:
+            block_counts[-1] = kv_len - self.block_size * (num_blocks - 1)
+        block_keys = key_blocks.sum(dim=2) / block_counts.view(1, num_blocks, 1)
+        block_values = value_blocks.sum(dim=2) / block_counts.view(1, num_blocks, 1)
 
-        superblock_keys_list = []
-        superblock_values_list = []
-        for i in range(num_superblocks):
-            start = i * blocks_per_sb
-            end = min(start + blocks_per_sb, num_blocks)
-            if start >= num_blocks:
-                superblock_keys_list.append(torch.zeros_like(superblock_keys_list[0]))
-                superblock_values_list.append(torch.zeros_like(superblock_values_list[0]))
-                continue
-            superblock_keys_list.append(block_keys[:, start:end].mean(dim=1))
-            superblock_values_list.append(block_values[:, start:end].mean(dim=1))
+        sb_pad = num_superblocks * blocks_per_sb - num_blocks
+        if sb_pad > 0:
+            block_keys_padded = F.pad(block_keys, (0, 0, 0, sb_pad))
+            block_values_padded = F.pad(block_values, (0, 0, 0, sb_pad))
+        else:
+            block_keys_padded = block_keys
+            block_values_padded = block_values
 
-        superblock_keys = torch.stack(superblock_keys_list, dim=1)
-        superblock_values = torch.stack(superblock_values_list, dim=1)
+        superblock_key_blocks = block_keys_padded.view(batch_size, num_superblocks, blocks_per_sb, head_dim)
+        superblock_value_blocks = block_values_padded.view(batch_size, num_superblocks, blocks_per_sb, head_dim)
+        superblock_counts = torch.full((num_superblocks,), blocks_per_sb, device=query.device, dtype=query.dtype)
+        if sb_pad > 0:
+            superblock_counts[-1] = num_blocks - blocks_per_sb * (num_superblocks - 1)
+        superblock_keys = superblock_key_blocks.sum(dim=2) / superblock_counts.view(1, num_superblocks, 1)
+        superblock_values = superblock_value_blocks.sum(dim=2) / superblock_counts.view(1, num_superblocks, 1)
 
         local_len = int(kv_len * self.local_attention_ratio)
         local_len = max(self.block_size * 2, min(local_len, kv_len // 2))
@@ -4555,20 +4640,20 @@ class YvHISAAttention(nn.Module):
         local_k = key[:, :, :local_len]
         local_v = value[:, :, :local_len]
 
-        local_attn = torch.einsum('bqhd,bkhd->bhqk', query, local_k) * scale
-
-        causal_mask = torch.triu(
-            torch.ones(seq_len, local_len, device=query.device, dtype=torch.bool),
-            diagonal=1
-        ).unsqueeze(0).unsqueeze(0)
-        local_attn.masked_fill_(causal_mask, float('-inf'))
+        local_sdpa_mask = _get_causal_sdpa_mask(seq_len, local_len, query.device, query.dtype, diagonal=1)
 
         if attention_mask is not None:
-            local_attn = local_attn + attention_mask[:, :, :seq_len, :local_len]
+            local_sdpa_mask = local_sdpa_mask.unsqueeze(0).unsqueeze(0) + attention_mask[:, :, :seq_len, :local_len].to(device=query.device, dtype=query.dtype)
 
-        local_attn = F.softmax(local_attn, dim=-1)
-        local_attn = self.attention_dropout(local_attn)
-        local_output = torch.einsum('bhqk,bkhd->bqhd', local_attn, local_v)
+        local_output = F.scaled_dot_product_attention(
+            query,
+            local_k,
+            local_v,
+            attn_mask=local_sdpa_mask,
+            dropout_p=self.attention_dropout.p if self.training else 0.0,
+            is_causal=False,
+            scale=scale,
+        ).transpose(1, 2)
 
         query_block_repr = query.mean(dim=2)
         block_scores = torch.einsum('bhd,bkd->bhk', query_block_repr, block_keys) / (
@@ -4591,10 +4676,15 @@ class YvHISAAttention(nn.Module):
         block_k_selected = (ek - bk) / (block_ends - block_starts).unsqueeze(-1).float().clamp(min=1)
         block_v_selected = (ev - bv) / (block_ends - block_starts).unsqueeze(-1).float().clamp(min=1)
 
-        block_attn = torch.einsum('bqhd,bhkd->bqhk', query, block_k_selected) * scale
-        block_attn = F.softmax(block_attn, dim=-1)
-        block_attn = self.attention_dropout(block_attn)
-        block_output = torch.einsum('bqhk,bhkd->bqhd', block_attn, block_v_selected)
+        block_output = F.scaled_dot_product_attention(
+            query,
+            block_k_selected,
+            block_v_selected,
+            attn_mask=None,
+            dropout_p=self.attention_dropout.p if self.training else 0.0,
+            is_causal=False,
+            scale=scale,
+        ).transpose(1, 2)
 
         num_sb_attend = max(1, int(num_superblocks * 0.2))
         query_sb_repr = query.mean(dim=2)
@@ -4621,10 +4711,15 @@ class YvHISAAttention(nn.Module):
         superblock_v_selected = (sbv_e - sbv_s) / (sb_ends - sb_starts).unsqueeze(-1).float().clamp(min=1) * valid
 
         if superblock_k_selected.sum() != 0:
-            sb_attn = torch.einsum('bqhd,bhkd->bqhk', query, superblock_k_selected) * scale
-            sb_attn = F.softmax(sb_attn, dim=-1)
-            sb_attn = self.attention_dropout(sb_attn)
-            sb_output = torch.einsum('bqhk,bhkd->bqhd', sb_attn, superblock_v_selected)
+            sb_output = F.scaled_dot_product_attention(
+                query,
+                superblock_k_selected,
+                superblock_v_selected,
+                attn_mask=None,
+                dropout_p=self.attention_dropout.p if self.training else 0.0,
+                is_causal=False,
+                scale=scale,
+            ).transpose(1, 2)
         else:
             sb_output = torch.zeros_like(local_output)
 
@@ -4804,24 +4899,21 @@ class YvMixtureBlockAttention(nn.Module):
         attention_mask: Optional[torch.Tensor] = None
     ) -> torch.Tensor:
         """Standard causal attention used for short sequences."""
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-
         seq_len = q.shape[2]
         kv_len = k.shape[2]
-        causal_mask = torch.triu(
-            torch.ones(seq_len, kv_len, device=q.device, dtype=torch.bool),
-            diagonal=kv_len - seq_len + 1
-        )
-        attn_weights = attn_weights.masked_fill(causal_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
-
+        sdpa_mask = _get_causal_sdpa_mask(seq_len, kv_len, q.device, q.dtype)
         if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
+            sdpa_mask = sdpa_mask.unsqueeze(0).unsqueeze(0) + attention_mask.to(device=q.device, dtype=q.dtype)
 
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        if self.training:
-            attn_weights = F.dropout(attn_weights, p=self.attention_dropout)
-
-        return torch.matmul(attn_weights, v)
+        return F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=sdpa_mask,
+            dropout_p=self.attention_dropout if self.training else 0.0,
+            is_causal=False,
+            scale=self.scale,
+        )
 
     def _select_top_blocks(
         self,
@@ -4916,8 +5008,6 @@ class YvMixtureBlockAttention(nn.Module):
                 k_cat = k_cat.repeat_interleave(self.num_groups, dim=1)
                 v_cat = v_cat.repeat_interleave(self.num_groups, dim=1)
 
-            attn = torch.matmul(q_block, k_cat.transpose(-2, -1)) * self.scale
-
             # Causal mask inside the current block only.
             current_offset = kv_len - block_len
             causal_mask = torch.triu(
@@ -4926,17 +5016,22 @@ class YvMixtureBlockAttention(nn.Module):
             )
             full_mask = torch.zeros(block_len, kv_len, device=q.device, dtype=torch.bool)
             full_mask[:, current_offset:] = causal_mask
-            attn = attn.masked_fill(full_mask.unsqueeze(0).unsqueeze(0), float('-inf'))
+            sdpa_mask = torch.zeros(block_len, kv_len, device=q.device, dtype=q.dtype)
+            sdpa_mask.masked_fill_(full_mask, float('-inf'))
 
             if attention_mask is not None:
                 mask_slice = attention_mask[:, :, q_start:q_end, :kv_len]
-                attn = attn + mask_slice
+                sdpa_mask = sdpa_mask.unsqueeze(0).unsqueeze(0) + mask_slice.to(device=q.device, dtype=q.dtype)
 
-            attn = F.softmax(attn, dim=-1)
-            if self.training:
-                attn = F.dropout(attn, p=self.attention_dropout)
-
-            output[:, :, q_start:q_end] = torch.matmul(attn, v_cat)
+            output[:, :, q_start:q_end] = F.scaled_dot_product_attention(
+                q_block,
+                k_cat,
+                v_cat,
+                attn_mask=sdpa_mask,
+                dropout_p=self.attention_dropout if self.training else 0.0,
+                is_causal=False,
+                scale=self.scale,
+            )
 
         return output
 
@@ -5039,16 +5134,19 @@ class YvMixtureBlockAttention(nn.Module):
             k_cat = k_cat.repeat_interleave(self.num_groups, dim=1)
             v_cat = v_cat.repeat_interleave(self.num_groups, dim=1)
 
-        attn = torch.matmul(q, k_cat.transpose(-2, -1)) * self.scale
-
+        sdpa_mask = None
         if attention_mask is not None:
-            attn = attn + attention_mask[:, :, -new_len:, :k_cat.shape[2]]
+            sdpa_mask = attention_mask[:, :, -new_len:, :k_cat.shape[2]].to(device=q.device, dtype=q.dtype)
 
-        attn = F.softmax(attn, dim=-1)
-        if self.training:
-            attn = F.dropout(attn, p=self.attention_dropout)
-
-        return torch.matmul(attn, v_cat)
+        return F.scaled_dot_product_attention(
+            q,
+            k_cat,
+            v_cat,
+            attn_mask=sdpa_mask,
+            dropout_p=self.attention_dropout if self.training else 0.0,
+            is_causal=False,
+            scale=self.scale,
+        )
 
     def forward(
         self,
@@ -5191,6 +5289,21 @@ class YvAttention(nn.Module):
         else:
             self.q_proj = nn.Linear(cfg.hidden_size, cfg.n_head * self.head_dim, bias=False, device=device, dtype=dtype)
 
+        self.use_fused_mla = bool(getattr(cfg, 'use_fused_mla', False))
+        if self.use_fused_mla:
+            self.fused_mla = FusedMLAProjector(
+                hidden_size=cfg.hidden_size,
+                n_head=cfg.n_head,
+                n_kv_head=self.n_kv_head,
+                head_dim=self.head_dim,
+                kv_lora_rank=self.kv_lora_rank,
+                q_lora_rank=self.q_lora_rank,
+                mla_rope_dim=self.mla_rope_dim,
+                use_enhanced_mla=self.use_enhanced_mla,
+                device=device,
+                dtype=dtype,
+            )
+
         # === 2. Position Encoding (unified: YaRN + MrRoPE + Dynamic + Linear) ===
         if not self.use_alibi:
             self.rope = YvYaRNRotaryEmbedding(
@@ -5224,6 +5337,19 @@ class YvAttention(nn.Module):
                 hidden_size=cfg.hidden_size, num_heads=cfg.n_head, head_dim=self.head_dim,
                 latent_dim=self.lca_latent_dim, condense_factor=self.lca_condense_factor,
                 use_residual=self.lca_use_residual, num_kv_heads=self.n_kv_head,
+                device=device, dtype=dtype,
+            )
+
+        # === 5b. Ring Attention (long-context backend) ===
+        self.use_ring_attention = bool(getattr(cfg, 'use_ring_attention', True))
+        self.ring_attention_threshold = int(getattr(cfg, 'ring_attention_threshold', 32768))
+        if self.use_ring_attention:
+            self.ring_attn = YvRingAttention(
+                hidden_size=cfg.hidden_size,
+                n_head=cfg.n_head,
+                n_kv_head=self.n_kv_head,
+                ring_size=int(getattr(cfg, 'ring_attention_size', 4)),
+                use_distributed=bool(getattr(cfg, 'ring_attention_distributed', False)),
                 device=device, dtype=dtype,
             )
 
@@ -5288,7 +5414,7 @@ class YvAttention(nn.Module):
             is_causal = False
         else:
             attn_mask = None
-            is_causal = False
+            is_causal = True
 
         fa_out = F.scaled_dot_product_attention(
             q_fa, k_fa, v_fa,
@@ -5312,7 +5438,7 @@ class YvAttention(nn.Module):
 
                 kv = torch.einsum("bhnd,bhne->bhde", k_l, v_la)
                 denom = k_l.sum(dim=-2).unsqueeze(-2)
-                la_out = torch.einsum("bhnd,bhde->bhne", q_l, kv) / (denom + 1e-6)
+                la_out = torch.einsum("bhnd,bhde->bhne", q_l, kv) / denom.clamp(min=YvNumericalGuard.get_eps(denom.dtype))
 
         # Gated fusion
         out = fa_out
@@ -5373,6 +5499,8 @@ class YvAttention(nn.Module):
         layer_idx: int = 0,
         modality: str = 'text',
         extra_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None,
+        pre_norm: Optional[Any] = None,
+        **kwargs,
     ) -> Union[torch.Tensor, Tuple[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]:
         b, t, _ = x.shape
         self.layer_idx = layer_idx
@@ -5386,20 +5514,36 @@ class YvAttention(nn.Module):
             x, sink_mask = self.attn_sink(x)
 
         # --- 3. MLA KV compression with EG gate ---
-        kv_latent = self.kv_compress(x)
-        gate = torch.sigmoid(self.embedding_gate(x))
-        kv_latent.mul_(gate)
+        if self.use_fused_mla and hasattr(self, 'fused_mla'):
+            if pre_norm is not None:
+                q, kv_latent, _ = self.fused_mla.norm_compress(x, pre_norm.weight, pre_norm.eps)
+            else:
+                q, kv_latent, _ = self.fused_mla.compress(x)
 
-        if past_key_values is not None:
-            past_kv_latent = past_key_values[0]
-            kv_latent = torch.cat([past_kv_latent, kv_latent], dim=1)
+            if past_key_values is not None:
+                past_kv_latent = past_key_values[0]
+                kv_latent = torch.cat([past_kv_latent, kv_latent], dim=1)
 
-        kv_len = kv_latent.shape[1]
-        kv_latent_for_cache = kv_latent
+            kv_len = kv_latent.shape[1]
+            kv_latent_for_cache = kv_latent
 
-        # Decompress
-        k = self.k_decompress(kv_latent).view(b, kv_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-        v = self.v_decompress(kv_latent).view(b, kv_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+            k, v = self.fused_mla.decompress_kv(kv_latent)
+        else:
+            kv_gate = F.linear(x, torch.cat([self.kv_compress.weight, self.embedding_gate.weight], dim=1))
+            kv_latent_raw, gate_logits = kv_gate.chunk(2, dim=-1)
+            kv_latent = kv_latent_raw * torch.sigmoid(gate_logits)
+
+            if past_key_values is not None:
+                past_kv_latent = past_key_values[0]
+                kv_latent = torch.cat([past_kv_latent, kv_latent], dim=1)
+
+            kv_len = kv_latent.shape[1]
+            kv_latent_for_cache = kv_latent
+
+            kv = F.linear(kv_latent, torch.cat([self.k_decompress.weight, self.v_decompress.weight], dim=1))
+            k, v = kv.chunk(2, dim=-1)
+            k = k.view(b, kv_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+            v = v.view(b, kv_len, self.n_kv_head, self.head_dim).transpose(1, 2)
 
         # --- 4. LCA condensation (long sequences) — sparse-gated ---
         if self.use_lca and hasattr(self, 'lca_attention') and kv_len > 4096:
@@ -5416,19 +5560,24 @@ class YvAttention(nn.Module):
             kv_len = k.shape[-2]
 
         # --- 6. Q projection ---
-        if hasattr(self, 'q_compress'):
-            q = self.q_decompress(self.q_compress(x))
-        else:
-            q = self.q_proj(x)
-        q = q.view(b, t, self.n_head, self.head_dim).transpose(1, 2)
+        if not (self.use_fused_mla and hasattr(self, 'fused_mla')):
+            if hasattr(self, 'q_compress'):
+                q = self.q_decompress(self.q_compress(x))
+            else:
+                q = self.q_proj(x)
+            q = q.view(b, t, self.n_head, self.head_dim).transpose(1, 2)
 
         # --- 7. Decoupled RoPE (MLA style) ---
         rope_done = False
         if self.use_enhanced_mla:
             rope_dim = min(self.mla_rope_dim, self.head_dim)
             if rope_dim > 0:
-                k_pe = self.rope_decompress(kv_latent_for_cache).view(b, kv_len, 1, rope_dim)
-                k_pe = k_pe.expand(-1, -1, self.n_kv_head, -1).transpose(1, 2)
+                if self.use_fused_mla and hasattr(self, 'fused_mla'):
+                    k_pe = self.fused_mla.decompress_k_pe(kv_latent_for_cache)
+                    k_pe = k_pe.expand(-1, -1, self.n_kv_head, -1).transpose(1, 2)
+                else:
+                    k_pe = self.rope_decompress(kv_latent_for_cache).view(b, kv_len, 1, rope_dim)
+                    k_pe = k_pe.expand(-1, -1, self.n_kv_head, -1).transpose(1, 2)
                 k_pe = self.rope(k_pe, kv_len).transpose(1, 2)
 
                 q_pe = self.rope(q[..., -rope_dim:], t)
@@ -5488,8 +5637,12 @@ class YvAttention(nn.Module):
         if hasattr(self, 'alibi'):
             alibi_bias = self.alibi(kv_len, x.device).unsqueeze(0)
 
-        # --- 14. HydraHead per-head computation — sparse-gated LA ---
-        out = self._apply_hydra_heads(q, k, v, mask, b, t, kv_len, self.sparse_gate_la)
+        # --- 14. Attention computation: Ring (long context) or HydraHead ---
+        use_ring = self.use_ring_attention and hasattr(self, 'ring_attn') and kv_len > self.ring_attention_threshold
+        if use_ring:
+            out = self.ring_attn.forward_kv(q, k, v, mask, skip_head_repeat=True)
+        else:
+            out = self._apply_hydra_heads(q, k, v, mask, b, t, kv_len, self.sparse_gate_la)
 
         # --- 15. Gated attention scaling ---
         gate_signal = torch.sigmoid(q.norm(dim=-1).mean(dim=0, keepdim=True))
@@ -5523,6 +5676,8 @@ class YvAttention(nn.Module):
 
         # --- 19. Cache return ---
         if use_cache:
+            if self.use_fused_mla and hasattr(self, 'fused_mla'):
+                return (out, (kv_latent_for_cache,))
             return (out, (k_cache, v_cache))
         return out
 
@@ -5616,7 +5771,7 @@ class YvHydraHeadAttention(nn.Module):
                 z_total = k_state.unsqueeze(2) + k_prefix
                 o_c = torch.einsum('bhcd,bhcde->bhce', q_c, S_total)
                 norm_c = torch.einsum('bhcd,bhcd->bhc', q_c, z_total)
-                o_c = o_c / (norm_c.unsqueeze(-1) + 1e-6)
+                o_c = o_c / norm_c.unsqueeze(-1).clamp(min=YvNumericalGuard.get_eps(norm_c.dtype))
                 output.append(o_c)
                 kv_state = S_total[:, :, -1]
                 k_state = z_total[:, :, -1]
@@ -5624,7 +5779,7 @@ class YvHydraHeadAttention(nn.Module):
         else:
             kv = torch.einsum("bhtd,bhte->bhde", k, v)
             denom = k.sum(dim=2)
-            out = torch.einsum("bhtd,bhde->bhte", q, kv) / (denom.unsqueeze(-2) + 1e-6)
+            out = torch.einsum("bhtd,bhde->bhte", q, kv) / denom.unsqueeze(-2).clamp(min=YvNumericalGuard.get_eps(denom.dtype))
 
         return out
 
@@ -5655,11 +5810,22 @@ class YvHydraHeadAttention(nn.Module):
             fk_flat = fk.reshape(batch * self.num_fa_heads, seq_len, self.head_dim)
             fv_flat = fv.reshape(batch * self.num_fa_heads, seq_len, self.head_dim)
 
+            sdpa_mask = attention_mask
+            if sdpa_mask is not None:
+                if sdpa_mask.dim() == 4:
+                    if sdpa_mask.size(1) == 1:
+                        sdpa_mask = sdpa_mask.expand(batch, self.num_fa_heads, seq_len, seq_len)
+                    else:
+                        sdpa_mask = sdpa_mask[:, : self.num_fa_heads]
+                    sdpa_mask = sdpa_mask.reshape(batch * self.num_fa_heads, seq_len, seq_len)
+                elif sdpa_mask.dim() == 3 and sdpa_mask.size(0) == batch:
+                    sdpa_mask = sdpa_mask.repeat_interleave(self.num_fa_heads, dim=0)
+
             fa_out_flat = F.scaled_dot_product_attention(
                 fq_flat, fk_flat, fv_flat,
-                attn_mask=attention_mask,
+                attn_mask=sdpa_mask,
                 dropout_p=self.attention_dropout if self.training else 0.0,
-                is_causal=self.causal and attention_mask is None,
+                is_causal=self.causal and sdpa_mask is None,
                 scale=self.scale,
             )
             fa_out = fa_out_flat.view(batch, self.num_fa_heads, seq_len, self.head_dim).transpose(1, 2).reshape(batch, seq_len, -1)
@@ -5810,11 +5976,23 @@ class YvLatentCondensedAttention(nn.Module):
         k_flat = k_latent.reshape(b * n_h, k_latent.shape[2], hd)
         v_flat = v_latent.reshape(b * n_h, v_latent.shape[2], hd)
 
+        sdpa_mask = attention_mask
+        if sdpa_mask is not None:
+            kv_len = k_latent.shape[2]
+            if sdpa_mask.dim() == 4:
+                if sdpa_mask.size(1) == 1:
+                    sdpa_mask = sdpa_mask.expand(b, n_h, t, kv_len)
+                else:
+                    sdpa_mask = sdpa_mask[:, :n_h, :t, :kv_len]
+                sdpa_mask = sdpa_mask.reshape(b * n_h, t, kv_len)
+            elif sdpa_mask.dim() == 3 and sdpa_mask.size(0) == b:
+                sdpa_mask = sdpa_mask[:, :t, :kv_len].repeat_interleave(n_h, dim=0)
+
         output_flat = F.scaled_dot_product_attention(
             q_flat, k_flat, v_flat,
-            attn_mask=attention_mask,
+            attn_mask=sdpa_mask,
             dropout_p=0.0,
-            is_causal=attention_mask is None,
+            is_causal=sdpa_mask is None,
             scale=self.scale,
         )
         output = output_flat.view(b, n_h, t, hd)

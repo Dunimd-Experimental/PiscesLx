@@ -1195,7 +1195,8 @@ class YvMemory:
         try:
             self.shutdown()
         except Exception:
-            pass
+            import logging
+            logging.getLogger(__name__).warning("shutdown failed", exc_info=True)
 
 
 # ==================== Factory Function ====================

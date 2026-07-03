@@ -268,14 +268,15 @@ class YvGraphOfTokensRouter(nn.Module):
         cluster_logits = self.cluster_router(x)
         cluster_aggregated = self._cluster_aggregate(cluster_logits, cluster_mask)
 
-        cluster_probs = F.softmax(cluster_aggregated / self.temperature, dim=-1)
-        cluster_scores, cluster_indices = torch.topk(cluster_probs, self.top_k, dim=-1)
+        cluster_probs = F.softmax(cluster_aggregated / max(self.temperature, 1e-8), dim=-1)
+        cluster_scores, cluster_indices = torch.topk(cluster_probs, min(self.top_k, self.num_experts), dim=-1)
 
         group_indices = cluster_indices.unsqueeze(1).expand(-1, t, -1, -1)
         group_indices = group_indices.reshape(b * t, self.top_k)
 
         token_logits = self.token_refiner(x)
-        token_probs = F.softmax(token_logits / self.temperature, dim=-1)
+        token_probs = F.softmax(token_logits / max(self.temperature, 1e-8), dim=-1)
+        group_indices = group_indices.clamp(0, self.num_experts - 1)
         token_gathered = torch.gather(
             token_probs.view(b * t, self.num_experts),
             dim=1,
@@ -303,7 +304,7 @@ class YvGraphOfTokensRouter(nn.Module):
         expert_util = cluster_probs.mean(dim=1)
         target = torch.ones_like(expert_util) / self.num_experts
         aux_loss = self.load_balance_alpha * F.kl_div(
-            expert_util.log(), target, reduction="batchmean"
+            expert_util.clamp(min=1e-8).log(), target, reduction="batchmean"
         )
         return aux_loss
 

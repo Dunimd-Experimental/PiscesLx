@@ -124,6 +124,7 @@ from pathlib import Path
 import time
 import json
 from datetime import datetime
+from contextlib import nullcontext
 
 from utils.dc import PiscesLxLogger, PiscesLxSystemMonitor
 
@@ -288,7 +289,19 @@ class PiscesLxTrainingOperator(object):
         
         self._setup_mixed_precision()
 
-        accum = int(getattr(config, "gradient_accumulation_steps", 4) or 4)
+        self._grad_accum_steps = max(1, int(getattr(config, "gradient_accumulation_steps", 4) or 4))
+        self._log_steps = max(1, int(getattr(config, "log_steps", 100) or 100))
+        self._non_blocking_transfer = bool(
+            getattr(getattr(config, "data", None), "pin_memory", False)
+        ) and self.device.type == "cuda"
+        try:
+            self._max_grad_norm = float(
+                getattr(getattr(config, "optimizer", None), "max_grad_norm", 1.0) or 1.0
+            )
+        except Exception:
+            self._max_grad_norm = 1.0
+
+        accum = self._grad_accum_steps
         if accum <= 1 and self.device.type == "cuda":
             _LOG.warning(
                 f"gradient_accumulation_steps={accum} may cause OOM for large models. "
@@ -341,9 +354,11 @@ class PiscesLxTrainingOperator(object):
             Loss values are scaled up before backward pass to prevent gradient
             underflow in FP16. Gradients are unscaled before optimizer step.
         """
-        effective_mixed_precision = self.config.mixed_precision
+        effective_mixed_precision = str(getattr(self.config, "mixed_precision", "fp32") or "fp32").lower()
+        self._effective_mixed_precision = effective_mixed_precision
+        self._autocast_dtype = None
 
-        if self.config.mixed_precision == "bf16" and self.device.type == "cuda":
+        if effective_mixed_precision == "bf16" and self.device.type == "cuda":
             bf16_supported = False
             try:
                 bf16_supported = bool(torch.cuda.is_bf16_supported())
@@ -358,9 +373,14 @@ class PiscesLxTrainingOperator(object):
                     "falling back to fp16."
                 )
                 effective_mixed_precision = "fp16"
+                self._effective_mixed_precision = effective_mixed_precision
 
         if effective_mixed_precision == "fp16" and self.device.type == "cuda":
             self.scaler = torch.cuda.amp.GradScaler()
+            self._autocast_dtype = torch.float16
+        elif effective_mixed_precision == "bf16" and self.device.type == "cuda":
+            self.scaler = None
+            self._autocast_dtype = torch.bfloat16
         else:
             self.scaler = None
 
@@ -1344,6 +1364,9 @@ class PiscesLxTrainingOperator(object):
             opt_name = str(getattr(self.config.optimizer, "name", "adamw") or "adamw").lower()
             if opt_name == "sgd":
                 optimizer_class = torch.optim.SGD
+            elif getattr(self.config.optimizer, "use_fused_adamw", False):
+                from opss.kernels.fused_adamw import FusedAdamW
+                optimizer_class = FusedAdamW
             else:
                 optimizer_class = torch.optim.AdamW
             
@@ -1482,35 +1505,13 @@ class PiscesLxTrainingOperator(object):
                 # Fall back to standard forward pass
         
         # Standard forward pass (fallback)
-        non_blocking = False
-        try:
-            non_blocking = bool(getattr(getattr(self.config, "data", None), "pin_memory", False)) and self.device.type == "cuda"
-        except Exception as e:
-            non_blocking = False
-            _LOG.warning(f"Failed to check pin_memory setting: {e}. Using blocking transfer.")
-        batch = {k: v.to(self.device, non_blocking=non_blocking) for k, v in batch.items()}
-        
-        if self.config.mixed_precision in {"fp16", "bf16"} and self.device.type == "cuda":
-            if self.config.mixed_precision == "bf16":
-                bf16_supported = False
-                try:
-                    bf16_supported = bool(torch.cuda.is_bf16_supported())
-                except Exception as e:
-                    bf16_supported = False
-                    _LOG.warning(f"Failed to check BF16 support in training_step: {e}. Assuming BF16 is not supported.")
+        batch = {
+            k: (v.to(self.device, non_blocking=self._non_blocking_transfer) if isinstance(v, torch.Tensor) else v)
+            for k, v in batch.items()
+        }
 
-                if not bf16_supported:
-                    _LOG.warning(
-                        "mixed_precision='bf16' requested but bf16 is not supported on this CUDA device; "
-                        "falling back to fp16."
-                    )
-                    autocast_dtype = torch.float16
-                else:
-                    autocast_dtype = torch.bfloat16
-            else:
-                autocast_dtype = torch.float16
-
-            with torch.amp.autocast(device_type="cuda", dtype=autocast_dtype):
+        if self._autocast_dtype is not None and self.device.type == "cuda":
+            with torch.amp.autocast(device_type="cuda", dtype=self._autocast_dtype):
                 return self._stage_forward(batch)
 
         return self._stage_forward(batch)
@@ -1528,8 +1529,10 @@ class PiscesLxTrainingOperator(object):
         """
         from .config import TrainingStage
         
+        model_batch = self._prepare_model_batch(batch)
+
         if self._teacher_provider is not None and self._distill_loss_fn is not None:
-            return self._compute_distill_forward(batch)
+            return self._compute_distill_forward(model_batch)
         
         # Try opss/train/ operator dispatch first
         dispatch_map = {
@@ -1543,34 +1546,78 @@ class PiscesLxTrainingOperator(object):
             TrainingStage.RL_MEMSEP: ('POPSSMemSepTrainer', self._compute_memsep_forward),
         }
         if self.stage in [TrainingStage.SFT, TrainingStage.SPECIALIZED]:
-            op_result = self._try_sft_operator(batch)
+            op_result = self._try_sft_operator(model_batch)
             if op_result is not None:
                 return op_result
-            return self._compute_sft_forward(batch)
+            return self._compute_sft_forward(model_batch)
         
         if self.stage in dispatch_map:
             op_name, fallback = dispatch_map[self.stage]
             if op_name == 'POPSSDPOTrainingOperator':
-                op_result = self._try_dpo_operator(batch)
+                op_result = self._try_dpo_operator(model_batch)
                 if op_result is not None:
                     return op_result
-                return fallback(batch)
+                return fallback(model_batch)
             if op_name == 'POPSSGRPOOperator':
-                op_result = self._try_grpo_operator(batch)
+                op_result = self._try_grpo_operator(model_batch)
                 if op_result is not None:
                     return op_result
-                return fallback(batch)
+                return fallback(model_batch)
             if op_name == 'POPSSRLVROperator':
-                op_result = self._try_rlvr_operator(batch)
+                op_result = self._try_rlvr_operator(model_batch)
                 if op_result is not None:
                     return op_result
-                return fallback(batch)
-            return fallback(batch)
+                return fallback(model_batch)
+            return fallback(model_batch)
         
-        outputs = self.model(**batch)
-        if self.response_only_loss and 'response_mask' in batch:
-            outputs['loss'] = self._apply_response_mask_loss(outputs, batch)
+        outputs = self._call_training_model(self.model, **model_batch)
+        if self.response_only_loss and 'response_mask' in model_batch:
+            outputs['loss'] = self._apply_response_mask_loss(outputs, model_batch)
         return outputs
+
+    def _prepare_model_batch(self, batch: Dict[str, Any]) -> Dict[str, Any]:
+        """Attach training-time forward hints without mutating the caller batch."""
+        if (
+            batch.get("return_task_logits") is False
+            and batch.get("return_eval_score") is False
+            and batch.get("return_tool_outputs") is False
+            and batch.get("return_reasoner_outputs") is False
+            and batch.get("return_verifier_outputs") is False
+            and batch.get("return_mtp_logits") is False
+        ):
+                return batch
+        model_batch = dict(batch)
+        model_batch.setdefault("return_task_logits", False)
+        model_batch.setdefault("return_eval_score", False)
+        model_batch.setdefault("return_tool_outputs", False)
+        model_batch.setdefault("return_reasoner_outputs", False)
+        model_batch.setdefault("return_verifier_outputs", False)
+        model_batch.setdefault("return_mtp_logits", False)
+        return model_batch
+
+    def _call_training_model(self, model, **kwargs):
+        """Call a model with training-time output hints, falling back if unsupported."""
+        call_kwargs = self._prepare_model_batch(kwargs)
+        try:
+            return model(**call_kwargs)
+        except TypeError as exc:
+            if (
+                "return_task_logits" not in str(exc)
+                and "return_eval_score" not in str(exc)
+                and "return_tool_outputs" not in str(exc)
+                and "return_reasoner_outputs" not in str(exc)
+                and "return_verifier_outputs" not in str(exc)
+                and "return_mtp_logits" not in str(exc)
+            ):
+                raise
+            fallback_kwargs = dict(kwargs)
+            fallback_kwargs.pop("return_task_logits", None)
+            fallback_kwargs.pop("return_eval_score", None)
+            fallback_kwargs.pop("return_tool_outputs", None)
+            fallback_kwargs.pop("return_reasoner_outputs", None)
+            fallback_kwargs.pop("return_verifier_outputs", None)
+            fallback_kwargs.pop("return_mtp_logits", None)
+            return model(**fallback_kwargs)
     
     def _try_sft_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
         try:
@@ -1658,10 +1705,13 @@ class PiscesLxTrainingOperator(object):
             _base_model.reasoner = _NoOpReasoner()
 
         try:
-            student_out = self.model(
+            student_out = self._call_training_model(
+                self.model,
                 input_ids=input_ids,
                 output_hidden_states=True,
                 output_attentions=True,
+                return_task_logits=False,
+                return_eval_score=False,
             )
         finally:
             if _reasoner_backup is not None:
@@ -1699,7 +1749,7 @@ class PiscesLxTrainingOperator(object):
         Returns:
             Outputs with masked loss
         """
-        outputs = self.model(**batch)
+        outputs = self._call_training_model(self.model, **batch)
         
         if 'response_mask' in batch:
             outputs['loss'] = self._apply_response_mask_loss(outputs, batch)
@@ -1708,8 +1758,9 @@ class PiscesLxTrainingOperator(object):
             prompt_mask = (labels != -100).float()
             if 'attention_mask' in batch:
                 first_non_pad = (batch['attention_mask'] == 1).float().argmax(dim=1)
-                for i, start in enumerate(first_non_pad):
-                    prompt_mask[i, :int(start) + 50] = 0
+                cutoff = (first_non_pad + 50).clamp(max=prompt_mask.shape[1]).to(dtype=torch.long)
+                token_positions = torch.arange(prompt_mask.shape[1], device=prompt_mask.device).unsqueeze(0)
+                prompt_mask = prompt_mask.masked_fill(token_positions < cutoff.unsqueeze(1), 0)
             outputs['loss'] = self._compute_masked_lm_loss(outputs, labels, prompt_mask)
         
         return outputs
@@ -1755,13 +1806,13 @@ class PiscesLxTrainingOperator(object):
         if logits is None:
             return torch.tensor(0.0, device=self.device)
         
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = labels[..., 1:].contiguous()
-        shift_mask = mask[..., 1:].contiguous()
+        shift_logits = logits[..., :-1, :]
+        shift_labels = labels[..., 1:]
+        shift_mask = mask[..., 1:]
         
         loss = F.cross_entropy(
-            shift_logits.view(-1, shift_logits.size(-1)),
-            shift_labels.view(-1),
+            shift_logits.reshape(-1, shift_logits.size(-1)),
+            shift_labels.reshape(-1),
             reduction='none'
         )
         
@@ -1790,19 +1841,43 @@ class PiscesLxTrainingOperator(object):
         rejected_mask = batch.get('rejected_attention_mask')
         
         if chosen_ids is None or rejected_ids is None:
-            outputs = self.model(**batch)
+            outputs = self._call_training_model(self.model, **batch)
             return outputs
         
-        chosen_outputs = self.model(input_ids=chosen_ids, attention_mask=chosen_mask)
-        rejected_outputs = self.model(input_ids=rejected_ids, attention_mask=rejected_mask)
+        chosen_outputs = self._call_training_model(
+            self.model,
+            input_ids=chosen_ids,
+            attention_mask=chosen_mask,
+            return_task_logits=False,
+            return_eval_score=False,
+        )
+        rejected_outputs = self._call_training_model(
+            self.model,
+            input_ids=rejected_ids,
+            attention_mask=rejected_mask,
+            return_task_logits=False,
+            return_eval_score=False,
+        )
         
         chosen_log_probs = self._get_sequence_log_probs(chosen_outputs, chosen_ids, chosen_mask)
         rejected_log_probs = self._get_sequence_log_probs(rejected_outputs, rejected_ids, rejected_mask)
         
         if self._reference_model is not None:
             with torch.no_grad():
-                ref_chosen_outputs = self._reference_model(input_ids=chosen_ids, attention_mask=chosen_mask)
-                ref_rejected_outputs = self._reference_model(input_ids=rejected_ids, attention_mask=rejected_mask)
+                ref_chosen_outputs = self._call_training_model(
+                    self._reference_model,
+                    input_ids=chosen_ids,
+                    attention_mask=chosen_mask,
+                    return_task_logits=False,
+                    return_eval_score=False,
+                )
+                ref_rejected_outputs = self._call_training_model(
+                    self._reference_model,
+                    input_ids=rejected_ids,
+                    attention_mask=rejected_mask,
+                    return_task_logits=False,
+                    return_eval_score=False,
+                )
                 ref_chosen_log_probs = self._get_sequence_log_probs(ref_chosen_outputs, chosen_ids, chosen_mask)
                 ref_rejected_log_probs = self._get_sequence_log_probs(ref_rejected_outputs, rejected_ids, rejected_mask)
             chosen_log_probs = chosen_log_probs - ref_chosen_log_probs
@@ -1831,7 +1906,7 @@ class PiscesLxTrainingOperator(object):
         Returns:
             Dictionary with PPO-related outputs
         """
-        outputs = self.model(**batch)
+        outputs = self._call_training_model(self.model, **batch)
         return outputs
     
     def _compute_orpo_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
@@ -1854,11 +1929,23 @@ class PiscesLxTrainingOperator(object):
         rejected_mask = batch.get('rejected_attention_mask')
         
         if chosen_ids is None or rejected_ids is None:
-            outputs = self.model(**batch)
+            outputs = self._call_training_model(self.model, **batch)
             return outputs
         
-        chosen_outputs = self.model(input_ids=chosen_ids, attention_mask=chosen_mask)
-        rejected_outputs = self.model(input_ids=rejected_ids, attention_mask=rejected_mask)
+        chosen_outputs = self._call_training_model(
+            self.model,
+            input_ids=chosen_ids,
+            attention_mask=chosen_mask,
+            return_task_logits=False,
+            return_eval_score=False,
+        )
+        rejected_outputs = self._call_training_model(
+            self.model,
+            input_ids=rejected_ids,
+            attention_mask=rejected_mask,
+            return_task_logits=False,
+            return_eval_score=False,
+        )
         
         chosen_log_probs = self._get_sequence_log_probs(chosen_outputs, chosen_ids, chosen_mask)
         rejected_log_probs = self._get_sequence_log_probs(rejected_outputs, rejected_ids, rejected_mask)
@@ -1888,7 +1975,7 @@ class PiscesLxTrainingOperator(object):
                 return result.output
         except Exception:
             pass
-        outputs = self.model(**batch)
+        outputs = self._call_training_model(self.model, **batch)
         if isinstance(outputs, dict) and 'loss' in outputs:
             return outputs
         return {'loss': torch.tensor(0.0, device=self.device, requires_grad=True)}
@@ -1903,7 +1990,7 @@ class PiscesLxTrainingOperator(object):
                 return result.output
         except Exception:
             pass
-        outputs = self.model(**batch)
+        outputs = self._call_training_model(self.model, **batch)
         if isinstance(outputs, dict) and 'loss' in outputs:
             return outputs
         return {'loss': torch.tensor(0.0, device=self.device, requires_grad=True)}
@@ -1918,7 +2005,7 @@ class PiscesLxTrainingOperator(object):
                 return result
         except Exception:
             pass
-        outputs = self.model(**batch)
+        outputs = self._call_training_model(self.model, **batch)
         if isinstance(outputs, dict) and 'loss' in outputs:
             return outputs
         return {'loss': torch.tensor(0.0, device=self.device, requires_grad=True)}
@@ -1933,7 +2020,7 @@ class PiscesLxTrainingOperator(object):
                 return result
         except Exception:
             pass
-        outputs = self.model(**batch)
+        outputs = self._call_training_model(self.model, **batch)
         if isinstance(outputs, dict) and 'loss' in outputs:
             return outputs
         return {'loss': torch.tensor(0.0, device=self.device, requires_grad=True)}
@@ -1948,7 +2035,7 @@ class PiscesLxTrainingOperator(object):
                 return result
         except Exception:
             pass
-        outputs = self.model(**batch)
+        outputs = self._call_training_model(self.model, **batch)
         if isinstance(outputs, dict) and 'loss' in outputs:
             return outputs
         return {'loss': torch.tensor(0.0, device=self.device, requires_grad=True)}
@@ -1971,14 +2058,14 @@ class PiscesLxTrainingOperator(object):
         if logits is None:
             return torch.tensor(0.0, device=self.device)
         
-        shift_logits = logits[..., :-1, :].contiguous()
-        shift_labels = input_ids[..., 1:].contiguous()
+        shift_logits = logits[..., :-1, :]
+        shift_labels = input_ids[..., 1:]
         
         log_probs = F.log_softmax(shift_logits, dim=-1)
         token_log_probs = log_probs.gather(dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
         
         if attention_mask is not None:
-            shift_mask = attention_mask[..., 1:].contiguous()
+            shift_mask = attention_mask[..., 1:]
             token_log_probs = token_log_probs * shift_mask
         
         return token_log_probs.sum(dim=-1)
@@ -2041,7 +2128,7 @@ class PiscesLxTrainingOperator(object):
         """
         return self._teacher_provider is not None
     
-    def backward_pass(self, loss: torch.Tensor) -> float:
+    def backward_pass(self, loss: torch.Tensor, did_step: bool = True) -> float:
         """
         Execute backward pass with advanced gradient processing.
         
@@ -2056,20 +2143,10 @@ class PiscesLxTrainingOperator(object):
             scaled_loss.backward()
         else:
             loss.backward()
-        
-        grad_norm = self._compute_gradient_norm()
-        
+
         if self.scaler is not None:
             self.scaler.unscale_(self.optimizer)
-        
-        max_grad_norm = 1.0
-        try:
-            max_grad_norm = float(getattr(getattr(self.config, "optimizer", None), "max_grad_norm", 1.0) or 1.0)
-        except Exception as e:
-            max_grad_norm = 1.0
-            _LOG.warning(f"Failed to parse max_grad_norm: {e}. Using default value 1.0.")
-        if max_grad_norm is not None and max_grad_norm > 0:
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=max_grad_norm)
+        grad_norm = self._clip_and_measure_grad_norm()
         
         # Optimized: batch all auxiliary backward passes together
         aux_loss_total = 0.0
@@ -2119,7 +2196,7 @@ class PiscesLxTrainingOperator(object):
                 aux_loss_tensor.backward()
         
         # K-FAC preconditioning (no backward needed)
-        if self._kfac_operator is not None:
+        if did_step and self._kfac_operator is not None:
             try:
                 self._kfac_operator.execute({
                     "model": self.model,
@@ -2130,7 +2207,7 @@ class PiscesLxTrainingOperator(object):
                 pass
 
         # Multi-task uncertainty-weighted loss
-        if self._multitask_operator is not None:
+        if did_step and self._multitask_operator is not None:
             try:
                 self._multitask_operator.execute({
                     "model": self.model,
@@ -2225,14 +2302,20 @@ class PiscesLxTrainingOperator(object):
         self.global_step += 1
     
     def _compute_gradient_norm(self) -> float:
-        """Compute gradient norm efficiently."""
-        # Optimized: use torch.no_grad and avoid Python loops
+        """Compute gradient norm when clipping is disabled."""
         with torch.no_grad():
             total_norm_sq = 0.0
             for p in self.model.parameters():
                 if p.grad is not None:
                     total_norm_sq += p.grad.data.norm(2).item() ** 2
             return total_norm_sq ** 0.5
+
+    def _clip_and_measure_grad_norm(self) -> float:
+        """Measure gradient norm once and clip in the same pass when enabled."""
+        max_grad_norm = self._max_grad_norm
+        if max_grad_norm is not None and max_grad_norm > 0:
+            return float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=max_grad_norm).item())
+        return self._compute_gradient_norm()
     
     def train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """
@@ -2244,61 +2327,50 @@ class PiscesLxTrainingOperator(object):
         Returns:
             Training metrics dictionary.
         """
-        # Use CUDA events for accurate timing without synchronization overhead
-        if self.device.type == "cuda":
-            start_event = torch.cuda.Event(enable_timing=True)
-            end_event = torch.cuda.Event(enable_timing=True)
-            start_event.record()
         start_time = time.time()
+        profiler = self._profiler
+        grad_accum_steps = self._grad_accum_steps
 
         # Profiler: begin training step trace
-        if self._profiler is not None:
+        if profiler is not None:
             try:
-                self._profiler.execute({"action": "start_step", "step": self.global_step})
+                profiler.execute({"action": "start_step", "step": self.global_step})
             except Exception:
                 pass
 
-        grad_accum_steps = int(getattr(self.config, "gradient_accumulation_steps", 1) or 1)
-        if grad_accum_steps < 1:
-            grad_accum_steps = 1
-        
-        # Optimized: direct forward/backward without 3D parallelism overhead
-        outputs = self.forward_pass(batch)
-        loss = outputs['loss']
-        if grad_accum_steps > 1:
-            loss = loss / grad_accum_steps
-        grad_norm = self.backward_pass(loss)
-        
-        # Optimized: skip multitask operator overhead (rarely used)
-        
-        self._grad_accum_step += 1
-        did_step = (self._grad_accum_step % grad_accum_steps == 0)
+        if 'input_ids' in batch:
+            batch_size = int(batch['input_ids'].size(0))
+            try:
+                tokens = int(batch['attention_mask'].sum().item()) if 'attention_mask' in batch else int(batch['input_ids'].numel())
+            except Exception:
+                tokens = 0
+        else:
+            batch_size = 0
+            tokens = 0
+
+        next_accum_step = self._grad_accum_step + 1
+        did_step = (next_accum_step % grad_accum_steps == 0)
+
+        sync_context = nullcontext()
+        if (not did_step) and hasattr(self.model, "no_sync"):
+            sync_context = self.model.no_sync()
+
+        with sync_context:
+            outputs = self.forward_pass(batch)
+            loss = outputs['loss']
+            if grad_accum_steps > 1:
+                loss = loss / grad_accum_steps
+            grad_norm = self.backward_pass(loss, did_step=did_step)
+
+        self._grad_accum_step = next_accum_step
 
         # Optimizer step
         if did_step:
             self.optimizer_step()
         
-        # Record end event for accurate GPU timing
-        if self.device.type == "cuda":
-            end_event.record()
-
-        # Calculate throughput (use CPU time for async execution, GPU time available via events)
         step_time = time.time() - start_time
-        
-        # Always compute token count and loss for accurate logging / epoch stats
-        if 'input_ids' in batch:
-            try:
-                if 'attention_mask' in batch:
-                    tokens = int(batch['attention_mask'].sum().item())
-                else:
-                    tokens = int(batch['input_ids'].numel())
-            except Exception as e:
-                tokens = 0
-                _LOG.warning(f"Failed to compute token count: {e}. Setting tokens to 0.")
-        else:
-            tokens = 0
 
-        throughput = batch['input_ids'].size(0) / step_time if ('input_ids' in batch and step_time > 0) else 0.0
+        throughput = batch_size / step_time if (batch_size and step_time > 0) else 0.0
         token_throughput = float(tokens) / step_time if (tokens and step_time > 0) else 0.0
 
         loss_scalar = float(loss.detach().item())
@@ -2306,14 +2378,13 @@ class PiscesLxTrainingOperator(object):
             loss_scalar = loss_scalar * grad_accum_steps
 
         # Record detailed stats only on logging boundaries (avoids inflating history buffer)
-        log_steps = int(getattr(self.config, 'log_steps', 100) or 100)
-        if self.global_step % log_steps == 0:
+        if self.global_step % self._log_steps == 0:
             self._record_training_stats(loss_scalar, grad_norm, throughput)
 
         # Profiler: end training step trace
-        if self._profiler is not None:
+        if profiler is not None:
             try:
-                self._profiler.execute({"action": "end_step", "step": self.global_step, "metrics": {
+                profiler.execute({"action": "end_step", "step": self.global_step, "metrics": {
                     "loss": loss_scalar, "grad_norm": grad_norm, "throughput": throughput
                 }})
             except Exception:
@@ -2474,12 +2545,12 @@ class PiscesLxTrainingOperator(object):
 
                 if self.config.mixed_precision == "fp16":
                     with torch.cuda.amp.autocast(dtype=torch.float16):
-                        outputs = self.model(**batch)
+                        outputs = self._call_training_model(self.model, **batch)
                 elif self.config.mixed_precision == "bf16":
                     with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-                        outputs = self.model(**batch)
+                        outputs = self._call_training_model(self.model, **batch)
                 else:
-                    outputs = self.model(**batch)
+                    outputs = self._call_training_model(self.model, **batch)
 
                 loss = outputs.get('loss', outputs.get('loss'))
                 if loss is not None:

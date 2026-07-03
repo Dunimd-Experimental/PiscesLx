@@ -387,6 +387,8 @@ class YvSelectiveSSM(nn.Module):
         state_dim: int = 16,
         expansion_factor: int = 2,
         dt_rank: Union[int, str] = "auto",
+        use_fp32_dt: bool = True,
+        use_relu_dt: bool = True,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None
     ):
@@ -400,6 +402,8 @@ class YvSelectiveSSM(nn.Module):
                 Default: 2.
             dt_rank: Rank for delta parameter projection. If "auto",
                 uses ceil(hidden_size / 16). Default: "auto".
+            use_fp32_dt: Whether to compute dt in fp32 for stability.
+            use_relu_dt: Replace softplus with relu+eps during inference.
             device: Device for parameters.
             dtype: Data type for parameters.
         
@@ -412,6 +416,8 @@ class YvSelectiveSSM(nn.Module):
         self.state_dim = state_dim
         self.expansion_factor = expansion_factor
         self.d_inner = hidden_size * expansion_factor
+        self.use_fp32_dt = use_fp32_dt
+        self.use_relu_dt = use_relu_dt
         
         if dt_rank == "auto":
             self.dt_rank = math.ceil(hidden_size / 16)
@@ -475,7 +481,14 @@ class YvSelectiveSSM(nn.Module):
         dt, B, C = x_dbl.split([self.dt_rank, self.state_dim, self.state_dim], dim=-1)
         
         dt = self.dt_proj(dt)
-        dt = F.softplus(dt)
+        if self.use_fp32_dt:
+            dt = dt.float()
+        if not self.training and self.use_relu_dt:
+            dt = F.relu(dt) + 1e-5
+        else:
+            dt = F.softplus(dt)
+        if self.use_fp32_dt:
+            dt = dt.to(x.dtype)
         
         A = -torch.exp(self.A_log.float())
         
@@ -955,6 +968,79 @@ class YvHierarchicalFusion(nn.Module):
         return fused_output
 
 
+class YvUnifiedFusion(nn.Module):
+    """Single-path fusion for attention + SSM outputs.
+
+    Replaces the previous 3-stage pipeline (progressive_gate → adaptive_router →
+    hierarchical_fusion) with one efficient content-adaptive gating module.
+    Preserves training-progressive transition and sequence-length awareness.
+    Supports deterministic branch elimination during inference.
+    """
+
+    def __init__(
+        self,
+        d_model: int,
+        total_steps: int = 100000,
+        sequence_threshold: int = 4096,
+        deterministic_mode: bool = True,
+        deterministic_threshold: float = 0.95,
+        device: Optional[torch.device] = None,
+        dtype: Optional[torch.dtype] = None
+    ):
+        super().__init__()
+        self.d_model = d_model
+        self.total_steps = total_steps
+        self.sequence_threshold = sequence_threshold
+        self.deterministic_mode = deterministic_mode
+        self.deterministic_threshold = deterministic_threshold
+
+        self.content_encoder = nn.Linear(d_model, d_model // 4, bias=False, device=device, dtype=dtype)
+        self.gate = nn.Sequential(
+            nn.Linear(d_model // 4, d_model // 8, bias=False, device=device, dtype=dtype),
+            nn.SiLU(),
+            nn.Linear(d_model // 8, 2, bias=False, device=device, dtype=dtype),
+        )
+
+        self.register_buffer('current_step', torch.tensor(0, device=device))
+        self.hybrid_ratio = nn.Parameter(torch.tensor(0.0, device=device, dtype=dtype))
+        self.register_buffer('fixed_short', torch.tensor([[0.7, 0.3]], device=device))
+        self.register_buffer('fixed_long', torch.tensor([[0.3, 0.7]], device=device))
+
+    def forward(
+        self,
+        attention_out: torch.Tensor,
+        ssm_out: torch.Tensor,
+        hidden_states: torch.Tensor,
+        sequence_length: int
+    ) -> torch.Tensor:
+        if self.training:
+            self.current_step += 1
+
+        progress = min(1.0, self.current_step.item() / self.total_steps)
+        current_hybrid_ratio = torch.sigmoid(self.hybrid_ratio) * progress
+
+        fixed = self.fixed_long if sequence_length > self.sequence_threshold else self.fixed_short
+        fixed = fixed.to(hidden_states.device)
+
+        content = hidden_states.mean(dim=1)
+        content_feat = self.content_encoder(content)
+        gate_logits = self.gate(content_feat)
+        adaptive = F.softmax(gate_logits, dim=-1)
+
+        final_attn = fixed[0, 0] * (1 - current_hybrid_ratio) + adaptive[:, 0] * current_hybrid_ratio
+        final_ssm = fixed[0, 1] * (1 - current_hybrid_ratio) + adaptive[:, 1] * current_hybrid_ratio
+
+        if not self.training and self.deterministic_mode and current_hybrid_ratio > 0.5:
+            attn_max = final_attn.max().item()
+            ssm_max = final_ssm.max().item()
+            if attn_max > self.deterministic_threshold:
+                return attention_out
+            if ssm_max > self.deterministic_threshold:
+                return ssm_out
+
+        return final_attn.view(-1, 1, 1) * attention_out + final_ssm.view(-1, 1, 1) * ssm_out
+
+
 # Paper: Lieber et al., "Jamba: A Hybrid Transformer-Mamba Language Model", arXiv:2403.19887, 2024
 class YvJambaBlock(nn.Module):
     """Hybrid block combining attention and SSM.
@@ -1108,24 +1194,12 @@ class YvHybridBlock(nn.Module):
             cfg.hidden_size,
             state_dim=getattr(cfg, 'ssm_state_dim', 16),
             expansion_factor=getattr(cfg, 'ssm_expansion_factor', 2),
+            use_fp32_dt=getattr(cfg, 'ssm_use_fp32_dt', True),
+            use_relu_dt=getattr(cfg, 'ssm_use_relu_dt', True),
             device=device, dtype=dtype
         )
 
-        # === Fusion components: all built unconditionally ===
-        self.progressive_gate = YvProgressiveHybridGate(
-            cfg.hidden_size,
-            total_steps=getattr(cfg, 'hybrid_total_steps', 100000),
-            sequence_threshold=getattr(cfg, 'sequence_threshold', 4096),
-            device=device, dtype=dtype
-        )
-        self.adaptive_router = YvAdaptiveRouter(
-            cfg.hidden_size, cfg.n_head,
-            routing_temperature=getattr(cfg, 'gate_temperature', 1.0),
-            device=device, dtype=dtype
-        )
-        self.hierarchical_fusion = YvHierarchicalFusion(
-            cfg.hidden_size, num_levels=3, device=device, dtype=dtype
-        )
+        # === Fusion: replaced by YvUnifiedFusion below ===
 
         self.norm_attention = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
         self.norm_ssm = YvRMSNorm(cfg.hidden_size, device=device, dtype=dtype)
@@ -1142,6 +1216,14 @@ class YvHybridBlock(nn.Module):
         )
         self.residual_scale_mlp = nn.Parameter(
             torch.ones(1, device=device, dtype=dtype) * (2.0 * cfg.n_layer) ** -0.5
+        )
+
+        # === Unified fusion (replaces progressive_gate + adaptive_router + hierarchical_fusion) ===
+        self.fusion = YvUnifiedFusion(
+            cfg.hidden_size,
+            total_steps=getattr(cfg, 'hybrid_total_steps', 100000),
+            sequence_threshold=getattr(cfg, 'sequence_threshold', 4096),
+            device=device, dtype=dtype
         )
 
         self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1))
@@ -1189,13 +1271,16 @@ class YvHybridBlock(nn.Module):
             return attn_out, None
 
     def _forward_ssm(self, x, mask):
+        """SSM path with sparse gate — skipped entirely when gate is near zero."""
         ssm_gate = torch.sigmoid(self.sparse_gate_ssm)
-        if self.training or ssm_gate.item() >= self.gate_sparsity_threshold:
-            x_norm = self.norm_ssm(x)
-            ssm_out = self.ssm(x_norm, mask)
-            ssm_selective = self.selective_ssm(x_norm)
-            return ssm_out + ssm_selective
-        return torch.zeros_like(x)
+        sparsity_loss = self.sparsity_reg_weight * ssm_gate.mean()
+        # Skip SSM entirely when gate is below threshold (training or inference)
+        if ssm_gate.item() < self.gate_sparsity_threshold:
+            return None, sparsity_loss
+        x_norm = self.norm_ssm(x)
+        ssm_out = self.ssm(x_norm, mask)
+        ssm_selective = self.selective_ssm(x_norm)
+        return ssm_out + ssm_selective, sparsity_loss
 
     def _forward_mlp(self, x, modal_id=None):
         x_norm = self.norm_mlp(x)
@@ -1221,26 +1306,18 @@ class YvHybridBlock(nn.Module):
         )
 
         # === SSM path (sparse-gated) ===
-        ssm_out = self._forward_ssm(hidden_states, attention_mask)
+        ssm_out, ssm_sparsity_loss = self._forward_ssm(hidden_states, attention_mask)
         attn_sparsity_loss = getattr(self.attention, '_sparsity_loss',
                                       torch.tensor(0.0, device=hidden_states.device, dtype=hidden_states.dtype))
 
-        # === Stage-1 fusion: progressive gate ===
-        fusion_prog = self.progressive_gate(attn_out, ssm_out, hidden_states, seq_len)
-        fused = fusion_prog["fused_output"]
+        # === Unified fusion ===
+        if ssm_out is not None:
+            fused = self.fusion(attn_out, ssm_out, hidden_states, seq_len)
+        else:
+            fused = attn_out  # SSM skipped, pure attention
 
-        # === Stage-2 fusion: adaptive router (input-dependent mixing) ===
-        routed, _ = self.adaptive_router(
-            fused, lambda x: attn_out, lambda x: ssm_out
-        )
-
-        # === Stage-3 fusion: hierarchical multi-level merge ===
-        fused_hier = self.hierarchical_fusion(attn_out, ssm_out, hidden_states)
-
-        # Combine all fusion stages
-        hybrid_out = fused + routed + fused_hier
         hybrid_out = hidden_states + self.residual_dropout(
-            self.residual_scale_attn * hybrid_out
+            self.residual_scale_attn * fused
         )
 
         mlp_residual = hybrid_out

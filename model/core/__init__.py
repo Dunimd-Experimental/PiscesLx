@@ -224,6 +224,7 @@ from .hybrid import (
     YvProgressiveHybridGate,
     YvAdaptiveRouter,
     YvHierarchicalFusion,
+    YvUnifiedFusion,
     YvJambaBlock,
 )
 
@@ -347,6 +348,7 @@ __all__ = [
     "YvProgressiveHybridGate",
     "YvAdaptiveRouter",
     "YvHierarchicalFusion",
+    "YvUnifiedFusion",
     "YvJambaBlock",
 
     "YvMamba3Block",

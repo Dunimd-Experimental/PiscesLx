@@ -669,6 +669,21 @@ class YvPagedCacheManager:
         ]
 
         if not candidates:
+            # Fallback: force-evict the block with lowest ref_count
+            fallback_candidates = [
+                (bid, block) for bid, block in self.blocks.items()
+                if block.filled_size > 0
+            ]
+            if fallback_candidates:
+                fallback_candidates.sort(key=lambda x: x[1].ref_count)
+                evicted_id = fallback_candidates[0][0]
+                _LOG.warning(
+                    f"YvPagedCacheManager: force-evicting block {evicted_id} "
+                    f"(ref_count={self.blocks[evicted_id].ref_count})"
+                )
+                self.blocks[evicted_id].ref_count = 0
+                self.free_blocks.append(evicted_id)
+                return evicted_id
             raise RuntimeError("YvPagedCacheManager._evict_block found no evictable blocks.")
 
         if self.config.eviction_policy == YvEvictionPolicy.LRU:
@@ -1646,10 +1661,25 @@ class YvCacheCompressor:
                     sum_k = (combined * mask.unsqueeze(-1)).sum(dim=1)
                     cluster_centers[:, k] = sum_k / count_k
 
+        # Compute value cluster centroids using final assignments
+        distances = torch.cdist(combined, cluster_centers)
+        assignments = torch.argmin(distances, dim=-1)
+
+        value_centers = torch.zeros_like(cluster_centers)
+        for k in range(n_clusters):
+            mask = (assignments == k)
+            if mask.any():
+                count_k = mask.sum(dim=-1, keepdim=True).clamp(min=1)
+                sum_k = (values_flat * mask.unsqueeze(-1)).sum(dim=1)
+                value_centers[:, k] = sum_k / count_k
+
         compressed_keys = cluster_centers[:, :n_clusters].unsqueeze(1).expand(-1, heads, -1, -1)
         compressed_keys = compressed_keys.reshape(batch, heads, n_clusters, head_dim)
 
-        return compressed_keys, compressed_keys
+        compressed_values = value_centers[:, :n_clusters].unsqueeze(1).expand(-1, heads, -1, -1)
+        compressed_values = compressed_values.reshape(batch, heads, n_clusters, head_dim)
+
+        return compressed_keys, compressed_values
 
     def compress_semantic_aware(
         self,
@@ -2072,7 +2102,7 @@ class YvUnifiedCacheManager:
         cache_start = max(0, current_pos - self.config.cache_window_size)
         cache_end = current_pos
 
-        if cache_end - cache_start > self.config.cache_window_size:
+        if current_pos > self.config.cache_window_size:
             cache_importance = importance_scores[:, :, cache_start:cache_end]
             _, top_indices = torch.topk(cache_importance, self.config.cache_window_size, dim=-1)
             selected_keys = torch.gather(
@@ -2138,7 +2168,7 @@ class YvUnifiedCacheManager:
         if bits >= 16:
             return tensor
 
-        max_val = tensor.abs().max()
+        max_val = tensor.abs().amax(dim=-1, keepdim=True)
         scale = (max_val / (2**(bits - 1) - 1)).clamp(min=1e-8)
         q = torch.clamp(
             torch.round(tensor / scale),

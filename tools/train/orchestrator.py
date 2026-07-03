@@ -2164,6 +2164,18 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
     def _build_default_dataloader(self, split: str):
         from torch.utils.data import Dataset, DataLoader
 
+        seq_len = int(getattr(self.train_config.data, "sequence_length", 0) or 0)
+        batch_size = int(getattr(self.train_config.data, "batch_size", 1) or 1)
+        num_workers = int(getattr(self.train_config.data, "num_workers", 0) or 0)
+        pin_memory = bool(getattr(self.train_config.data, "pin_memory", False))
+        prefetch_factor = int(getattr(self.train_config.data, "prefetch_factor", 2) or 2)
+        use_packing = bool(getattr(self.train_config, "packing", False))
+        use_pad_multiple = (
+            getattr(getattr(self, "trainer", None), "device", torch.device("cpu")).type == "cuda"
+            and batch_size > 1
+        )
+        pad_to_multiple_of = 8 if use_pad_multiple else None
+
         class PiscesLxJsonlTextDataset(Dataset):
             def __init__(self, samples: List[str], seq_len: int, tokenizer: Optional[Any] = None, packing: bool = False):
                 self.samples = samples
@@ -2247,9 +2259,9 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         tokenizer = getattr(self.trainer, "tokenizer", None) if self.trainer is not None else None
         dataset = PiscesLxJsonlTextDataset(
             samples,
-            seq_len=self.train_config.data.sequence_length,
+            seq_len=seq_len,
             tokenizer=tokenizer,
-            packing=bool(getattr(self.train_config, "packing", False))
+            packing=use_packing
         )
 
         def _collate_fn(batch_items: List[Dict[str, Any]]):
@@ -2265,10 +2277,11 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 texts = [b.get("text", "") for b in batch_items]
                 enc = tokenizer(
                     texts,
-                    max_length=self.train_config.data.sequence_length,
-                    padding="max_length",
+                    max_length=seq_len if seq_len > 0 else None,
+                    padding=True,
                     truncation=True,
                     return_tensors="pt",
+                    pad_to_multiple_of=pad_to_multiple_of,
                 )
                 input_ids = enc["input_ids"]
                 attention_mask = enc["attention_mask"]
@@ -2280,15 +2293,15 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             return {}
 
         dl_kwargs = {
-            "batch_size": self.train_config.data.batch_size,
+            "batch_size": batch_size,
             "shuffle": (split == "train"),
-            "num_workers": self.train_config.data.num_workers,
-            "pin_memory": self.train_config.data.pin_memory,
+            "num_workers": num_workers,
+            "pin_memory": pin_memory,
             "drop_last": (split == "train"),
             "collate_fn": _collate_fn,
         }
-        if self.train_config.data.num_workers > 0:
-            dl_kwargs["prefetch_factor"] = self.train_config.data.prefetch_factor
+        if num_workers > 0:
+            dl_kwargs["prefetch_factor"] = prefetch_factor
             dl_kwargs["persistent_workers"] = True
         return DataLoader(dataset, **dl_kwargs)
 

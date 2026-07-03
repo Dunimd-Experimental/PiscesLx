@@ -201,6 +201,7 @@ from .mamba3 import YvMamba3Block, YvMamba3Config
 
 from utils.paths import get_log_file
 from utils.dtype_safe import qr_safe, svd_safe
+from model.utils import YvShapeGuard
 _LOG = PiscesLxLogger("Yv.Core", file_path=get_log_file("Yv.Core"), enable_file=True)
 
 
@@ -902,15 +903,15 @@ class YvCrossAttention(nn.Module):
             k = k.repeat_interleave(repeat, dim=1)
             v = v.repeat_interleave(repeat, dim=1)
             
-        attn_weights = torch.matmul(q, k.transpose(-2, -1)) * self.scale
-        
-        if attention_mask is not None:
-            attn_weights = attn_weights + attention_mask
-            
-        attn_weights = F.softmax(attn_weights, dim=-1)
-        attn_weights = self.attn_dropout(attn_weights)
-        
-        output = torch.matmul(attn_weights, v)
+        output = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=attention_mask,
+            dropout_p=self.attn_dropout.p if self.training else 0.0,
+            is_causal=False,
+            scale=self.scale,
+        )
         output = output.transpose(1, 2).reshape(batch_size, query_len, self.hidden_size)
         
         return self.o_proj(output)
@@ -1428,7 +1429,7 @@ class YvUnifiedResidual(nn.Module):
     Architecture per sublayer:
         standard   = residual_scales[i] * dropout(sublayer_out)
         deepnorm   = dnorm_beta[i] * standard + dnorm_alpha[i] * hidden
-        mhc        = MHC(hidden + standard)
+        mhc        = MHC(hidden + standard)   (skipped when use_mhc=False)
         output     = hidden + standard + deepnorm + mhc
     """
 
@@ -1443,14 +1444,21 @@ class YvUnifiedResidual(nn.Module):
         self.residual_dropout = nn.Dropout(getattr(cfg, 'residual_dropout', 0.1) if cfg else 0.1)
         self.deepnorm_beta = nn.Parameter(torch.ones(num_sublayers, device=device, dtype=dtype) * (getattr(cfg, 'deepnorm_beta', 0.13) if cfg else 0.13))
         self.deepnorm_alpha = nn.Parameter(torch.ones(num_sublayers, device=device, dtype=dtype) * (getattr(cfg, 'deepnorm_alpha', 0.87) if cfg else 0.87))
-        self.mhc = YvMHC(hidden_size, n_hc=getattr(cfg, 'mhc_n_hc', 4) if cfg else 4,
-                         sinkhorn_iters=getattr(cfg, 'mhc_sinkhorn_iters', 20) if cfg else 20,
-                         device=device, dtype=dtype)
+        self._use_mhc = bool(getattr(cfg, 'use_mhc', True)) if cfg else True
+        if self._use_mhc:
+            self.mhc = YvMHC(hidden_size, n_hc=getattr(cfg, 'mhc_n_hc', 4) if cfg else 4,
+                             sinkhorn_iters=getattr(cfg, 'mhc_sinkhorn_iters', 20) if cfg else 20,
+                             device=device, dtype=dtype)
+        else:
+            self.mhc = None
 
     def forward(self, hidden_states, sublayer_output, sublayer_idx):
         standard = self.residual_scales[sublayer_idx] * self.residual_dropout(sublayer_output)
         deepnorm = self.deepnorm_beta[sublayer_idx] * standard + self.deepnorm_alpha[sublayer_idx] * hidden_states
-        mhc_out = self.mhc(hidden_states + standard)
+        if self._use_mhc and self.mhc is not None:
+            mhc_out = self.mhc(hidden_states + standard)
+        else:
+            mhc_out = 0.0
         return hidden_states + standard + deepnorm + mhc_out
 
     def forward_combined(self, hidden_states, combined_output):
@@ -1461,7 +1469,9 @@ class YvUnifiedResidual(nn.Module):
         """DeepNorm-style: apply deepnorm after the standard path."""
         standard = self.residual_scales[sublayer_idx] * self.residual_dropout(sublayer_output)
         dn = self.deepnorm_beta[sublayer_idx] * standard + self.deepnorm_alpha[sublayer_idx] * hidden_states
-        return self.mhc(dn)
+        if self._use_mhc and self.mhc is not None:
+            return self.mhc(dn)
+        return dn
 
 
 class YvTransformerBlock(nn.Module):
@@ -1501,6 +1511,7 @@ class YvTransformerBlock(nn.Module):
         
         self.block_type = getattr(cfg, 'block_type', 'standard')
         self.use_parallel = getattr(cfg, 'use_parallel', False)
+        self.use_fused_mla = getattr(cfg, 'use_fused_mla', False)
         self.use_deepnorm = getattr(cfg, 'use_deepnorm', False)
         self.use_layerscale = getattr(cfg, 'use_layerscale', True)
         self.use_swiglu = getattr(cfg, 'use_swiglu', True)
@@ -1552,6 +1563,7 @@ class YvTransformerBlock(nn.Module):
         self.memory_threshold_low = getattr(cfg, 'memory_threshold_low', 0.60)
         self.checkpoint_frequency = getattr(cfg, 'checkpoint_frequency', 1)
         self.current_checkpoint_freq = self.checkpoint_frequency
+        self._checkpoint_call_count = 0
 
         self.quantization_config = quantization_config
 
@@ -1977,7 +1989,10 @@ class YvTransformerBlock(nn.Module):
                     return False
                 else:
                     self.current_checkpoint_freq = self.checkpoint_frequency
-                    return (self.checkpoint_frequency <= 1) or (torch.randint(0, self.checkpoint_frequency, (1,)).item() == 0)
+                    if self.current_checkpoint_freq <= 1:
+                        return True
+                    self._checkpoint_call_count = (self._checkpoint_call_count + 1) % self.current_checkpoint_freq
+                    return self._checkpoint_call_count == 0
             else:
                 return self.use_checkpoint
         except (RuntimeError, ValueError, AttributeError) as e:
@@ -2128,18 +2143,43 @@ class YvTransformerBlock(nn.Module):
         Returns:
             Output tensor(s).
         """
+        def _run_checkpointed(block_fn):
+            import torch.utils.checkpoint as cp
+
+            should_checkpoint = self.training and (not use_cache) and self._should_use_checkpoint()
+            if not should_checkpoint:
+                return block_fn(
+                    x,
+                    mask,
+                    past_key_values,
+                    use_cache,
+                    subconscious_kv=subconscious_kv,
+                    film_params=film_params,
+                    modal_id=modal_id,
+                )
+
+            self._set_moe_checkpointing(True)
+            try:
+                return cp.checkpoint(
+                    block_fn,
+                    x,
+                    mask,
+                    past_key_values,
+                    use_cache,
+                    subconscious_kv=subconscious_kv,
+                    film_params=film_params,
+                    modal_id=modal_id,
+                    use_reentrant=False,
+                    preserve_rng_state=True,
+                    determinism_check="default",
+                )
+            finally:
+                self._set_moe_checkpointing(False)
+
         if self.use_parallel:
-            return self.parallel_block(
-                x, mask, past_key_values, use_cache,
-                subconscious_kv=subconscious_kv,
-                film_params=film_params,
-            )
+            return _run_checkpointed(self.parallel_block)
         elif self.use_deepnorm:
-            return self.deepnorm_block(
-                x, mask, past_key_values, use_cache,
-                subconscious_kv=subconscious_kv,
-                film_params=film_params,
-            )
+            return _run_checkpointed(self.deepnorm_block)
         else:
             return self._apply_with_checkpoint(
                 x,
@@ -2193,9 +2233,14 @@ class YvTransformerBlock(nn.Module):
         if self.use_attn_res:
             x = self._apply_attn_res(x)
 
-        x_norm = self.pre_norm1(x)
         attn_cache = None
         past_for_attn = attn_past_key_values
+
+        fused_norm = self.use_fused_mla and getattr(self, 'hydra_attn', None) is None
+        if fused_norm:
+            x_norm = x  # fuse norm into attention, skip separate norm
+        else:
+            x_norm = self.pre_norm1(x)
 
         if use_cache and self.cache_manager is not None and self.layer_idx >= 0:
             got = self.cache_manager.get_kv_cache(self.layer_idx, attn_past_key_values)
@@ -2207,6 +2252,10 @@ class YvTransformerBlock(nn.Module):
         else:
             hydra_out = None
 
+        attn_kwargs = {}
+        if fused_norm:
+            attn_kwargs['pre_norm'] = self.pre_norm1
+
         if use_cache:
             attn_out, present_kv = self.attn(
                 x_norm,
@@ -2216,6 +2265,7 @@ class YvTransformerBlock(nn.Module):
                 cache_manager=self.cache_manager,
                 layer_idx=self.layer_idx,
                 extra_kv=subconscious_kv,
+                **attn_kwargs,
             )
             attn_cache = present_kv
             if hydra_out is not None:
@@ -2229,6 +2279,7 @@ class YvTransformerBlock(nn.Module):
                 cache_manager=self.cache_manager,
                 layer_idx=self.layer_idx,
                 extra_kv=subconscious_kv,
+                **attn_kwargs,
             )
             if hydra_out is not None:
                 attn_out = attn_out + hydra_out
@@ -2266,9 +2317,11 @@ class YvTransformerBlock(nn.Module):
         if hasattr(self, 'ssm_layer') and self.ssm_layer is not None:
             seq_len = x_out.shape[1]
             if seq_len > 8192:
-                ssm_out = self.ssm_layer(x_out)
-                gate = torch.sigmoid(self.ssm_gate)
-                x_out = gate * x_out + (1.0 - gate) * ssm_out
+                gate = torch.sigmoid(self.ssm_gate).item()
+                if gate >= 0.01:
+                    ssm_out = self.ssm_layer(x_out)
+                    x_out = (1.0 - gate) * x_out + gate * ssm_out
+                # else: gate ≈ 0, SSM contributes nothing — skip it
 
         residual = x_out
         x_norm = self.pre_norm2(x_out)
@@ -2456,11 +2509,15 @@ class YvTransformerBlock(nn.Module):
             current_weight = current_weight / current_weight.sum(dim=-1, keepdim=True)
             
             # Weighted aggregation
-            # Block contributions: [B, N, T] @ [N, B, T, H] -> [B, T, H]
-            # Ensure dimensions match before einsum
             block_weights_3d = block_weights.view(batch_size, num_blocks, seq_len)
             values_4d = values.view(num_blocks, batch_size, seq_len, hidden_size)
-            block_contrib = torch.einsum('bnt,nbth->bth', block_weights_3d, values_4d)
+            if not (block_weights_3d.shape[0] == values_4d.shape[1] and
+                    block_weights_3d.shape[1] == values_4d.shape[0] and
+                    block_weights_3d.shape[2] == values_4d.shape[2]):
+                raise RuntimeError(f"block einsum shape mismatch: {block_weights_3d.shape}, {values_4d.shape}")
+            block_weights_batched = block_weights_3d.permute(0, 2, 1).reshape(batch_size * seq_len, 1, num_blocks)
+            values_batched = values_4d.permute(1, 2, 0, 3).reshape(batch_size * seq_len, num_blocks, hidden_size)
+            block_contrib = torch.bmm(block_weights_batched, values_batched).reshape(batch_size, seq_len, hidden_size)
             
             # Current contribution: [B, T] @ [B, T, H] -> [B, T, H]
             current_contrib = current_weight.unsqueeze(-1) * current_value
@@ -2472,10 +2529,15 @@ class YvTransformerBlock(nn.Module):
             attn_weights = F.softmax(attn_logits.view(batch_size, -1), dim=-1)
             attn_weights = attn_weights.view(batch_size, num_blocks, -1)
             
-            # Weighted sum: [B, N, T] @ [N, B, T, H] -> [B, T, H]
             attn_weights_3d = attn_weights.view(batch_size, num_blocks, seq_len)
             values_4d = values.view(num_blocks, batch_size, seq_len, hidden_size)
-            aggregated = torch.einsum('bnt,nbth->bth', attn_weights_3d, values_4d)
+            if not (attn_weights_3d.shape[0] == values_4d.shape[1] and
+                    attn_weights_3d.shape[1] == values_4d.shape[0] and
+                    attn_weights_3d.shape[2] == values_4d.shape[2]):
+                raise RuntimeError(f"attn einsum shape mismatch: {attn_weights_3d.shape}, {values_4d.shape}")
+            attn_weights_batched = attn_weights_3d.permute(0, 2, 1).reshape(batch_size * seq_len, 1, num_blocks)
+            values_batched = values_4d.permute(1, 2, 0, 3).reshape(batch_size * seq_len, num_blocks, hidden_size)
+            aggregated = torch.bmm(attn_weights_batched, values_batched).reshape(batch_size, seq_len, hidden_size)
         
         # Output projection
         output = self.attn_res_out_proj(aggregated)

@@ -91,6 +91,10 @@ from typing import Dict, Optional
 from .memory import YvMemory
 from .hw import YvHardwareAdaptiveConfig
 from .attention import YvCrossModalAttention
+from model.utils import YvShapeGuard
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 class YvUnifiedMultimodalTokenizer(nn.Module):
@@ -171,9 +175,7 @@ class YvUnifiedMultimodalTokenizer(nn.Module):
             "pos_embed",
             nn.Parameter(torch.randn(1, max_pos, self.hidden_size, device=device, dtype=dtype) * 0.02)
         )
-        self.modality_embeddings = nn.Embedding(len(self.modalities), self.hidden_size, device=device)
-        if dtype is not None:
-            self.modality_embeddings = self.modality_embeddings.to(dtype)
+        self.modality_embeddings = nn.Embedding(len(self.modalities), self.hidden_size, device=device, dtype=dtype)
 
         # Modality-specific tokenizers that handle both raw inputs and features.
         self.modality_tokenizers = nn.ModuleDict({
@@ -308,6 +310,11 @@ class YvUnifiedMultimodalTokenizer(nn.Module):
 
         # Add positional and modality embeddings.
         seq_len = tok.shape[1]
+        if seq_len > self.pos_embed.shape[1]:
+            logger.debug(
+                "pos_embed truncated: seq_len=%d > pos_embed_len=%d for modal=%s",
+                seq_len, self.pos_embed.shape[1], modal,
+            )
         pos = self.pos_embed[:, :seq_len, :].to(tok.device)
         modal_emb = self.modality_embeddings(
             torch.tensor(idx, device=tok.device, dtype=torch.long)
@@ -701,7 +708,11 @@ class YvDynamicModalFusion(nn.Module):
         # 2. Tokenize via native tokenizer
         tokenized = self.native_tokenizer(modal_features)
         if not tokenized:
-            raise ValueError("YvDynamicModalFusion received no valid modality tensors.")
+            raise ValueError(
+                f"YvDynamicModalFusion received no valid modality tensors. "
+                f"Expected modalities: {set(self.intra_modal_encoders.keys())}, "
+                f"received: {set(modal_features.keys()) if isinstance(modal_features, dict) else type(modal_features).__name__}"
+            )
 
         # 3. Intra-modal encoding
         encoded = {}
@@ -719,11 +730,14 @@ class YvDynamicModalFusion(nn.Module):
             inter_features = {}
             for modal in modal_keys:
                 others = torch.cat([encoded[m] for m in modal_keys if m != modal], dim=1)
+                YvShapeGuard.check_cat([encoded[m] for m in modal_keys if m != modal], 1, "fusion inter-modal cat")
                 q = self.inter_modal_q(encoded[modal])
                 k = self.inter_modal_k(others)
                 v = self.inter_modal_v(others)
+                YvShapeGuard.check_matmul(q, k.transpose(1, 2), "fusion inter-modal attn")
                 attn_scores = torch.matmul(q, k.transpose(1, 2)) / (self.hidden_size ** 0.5)
                 attn_weights = F.softmax(attn_scores, dim=-1)
+                YvShapeGuard.check_matmul(attn_weights, v, "fusion inter-modal out")
                 inter_out = torch.matmul(attn_weights, v)
                 inter_features[modal] = self.inter_modal_out(inter_out) + aligned[modal]
         else:
@@ -731,6 +745,16 @@ class YvDynamicModalFusion(nn.Module):
 
         # 6. Concatenate all modality sequences
         seq = torch.cat(list(inter_features.values()), dim=1)
+
+        # Log when temporal ratio across modalities exceeds 100x.
+        lens = [v.shape[1] for v in inter_features.values()]
+        if lens:
+            ratio = max(lens) / max(min(lens), 1)
+            if ratio > 100:
+                logger.debug(
+                    "Cross-modal temporal ratio=%.1fx (max=%d, min=%d) exceeds 100x",
+                    ratio, max(lens), min(lens),
+                )
 
         # 7. Self-attention fusion (native layers)
         h = seq
@@ -770,6 +794,7 @@ class YvDynamicModalFusion(nn.Module):
         # 11. Compress to output tokens
         batch_size = h.shape[0]
         query = self.output_tokens.expand(batch_size, -1, -1)
+        YvShapeGuard.check_matmul(query, h.transpose(1, 2), "fusion output attn")
         attn_scores = torch.matmul(query, h.transpose(1, 2)) / (self.hidden_size ** 0.5)
         attn_weights = F.softmax(attn_scores, dim=-1)
         pooled_out = torch.matmul(attn_weights, h)
@@ -780,6 +805,7 @@ class YvDynamicModalFusion(nn.Module):
             prev = out
             for rnd in range(self.max_rca_rounds):
                 query = self.rca_output_tokens.expand(batch_size, -1, -1)
+                YvShapeGuard.check_matmul(query, out.transpose(1, 2), "fusion rca attn")
                 attn_scores = torch.matmul(query, out.transpose(1, 2)) / (self.hidden_size ** 0.5)
                 attn_weights = F.softmax(attn_scores, dim=-1)
                 refined = torch.matmul(attn_weights, out)

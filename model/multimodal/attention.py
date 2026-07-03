@@ -148,7 +148,10 @@ class YvCrossModalAttention(nn.Module):
         self.num_heads = cfg.n_head
         self.hidden_size = cfg.hidden_size
         if self.hidden_size % self.num_heads != 0:
-            raise ValueError("hidden_size must be divisible by n_head for uniform head dimensions")
+            raise ValueError(
+                f"hidden_size ({self.hidden_size}) must be divisible by n_head ({self.num_heads}) "
+                f"for uniform head dimensions (remainder: {self.hidden_size % self.num_heads})"
+            )
         self.head_dim = self.hidden_size // self.num_heads
         
         # Linear projection layers for query, key, value, and output

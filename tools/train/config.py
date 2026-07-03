@@ -385,6 +385,9 @@ class OptimizerConfig:
     fp4_stochastic_rounding: bool = True
     fp4_master_weights_dtype: str = "fp32"
 
+    # Fused AdamW (Triton kernel — single kernel launch per parameter)
+    use_fused_adamw: bool = False
+
 
 @dataclass
 class SchedulerConfig:

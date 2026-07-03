@@ -1092,7 +1092,8 @@ class YvMultiHeadSSM(nn.Module):
         self.n_heads = n_heads
         self.head_dim = d_model // n_heads
 
-        assert d_model % n_heads == 0, "d_model must be divisible by n_heads"
+        if d_model % n_heads != 0:
+            raise RuntimeError(f"d_model must be divisible by n_heads: d_model={d_model}, n_heads={n_heads}")
 
         self.in_proj = nn.Linear(d_model, d_model, bias=False)
         self.out_proj = nn.Linear(d_model, d_model, bias=False)

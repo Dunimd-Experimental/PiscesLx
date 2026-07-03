@@ -623,10 +623,10 @@ class YvModel(nn.Module):
 
     def named_children(self):
         """Override to exclude certain modules from named_children.
-        
+
         Excludes agentic module from standard module enumeration
         to prevent it from being included in state_dict operations.
-        
+
         Yields:
             Tuple[str, nn.Module]: Name and module pairs excluding agentic.
         """
@@ -634,6 +634,36 @@ class YvModel(nn.Module):
             if name == "agentic":
                 continue
             yield name, module
+
+    def parameters(self, recurse: bool = True):
+        """Override to de-duplicate parameters that share the same storage.
+
+        When weight tying (``tie_word_embeddings``) or MTP head sharing
+        (``mtp_share_embeddings``) is enabled, multiple ``nn.Parameter``
+        objects share the same underlying ``Storage``.  A normal
+        ``parameters()`` call yields every one of them, causing optimisers
+        such as AdamW to allocate separate momentum/variance entries for
+        identical data — inflating optimiser memory by up to 5×.
+
+        This override yields each unique storage exactly once, so the
+        optimiser builds exactly one momentum/variance entry per unique
+        ``Storage``.  The model's forward pass and gradients are completely
+        unaffected because the storage union ensures that a gradient written
+        through one ``Parameter`` is immediately visible through all aliases.
+
+        Note:
+            This is safe for every major optimiser (AdamW, Adam, SGD, Muon,
+            GaLore, INK).  The only observable effect is that
+            ``len(list(model.parameters()))`` may be smaller than
+            ``sum(1 for _ in model.named_parameters())`` when sharing is
+            active.
+        """
+        seen_data_ptrs: set = set()
+        for p in super().parameters(recurse=recurse):
+            ptr = p.data_ptr()
+            if ptr not in seen_data_ptrs:
+                seen_data_ptrs.add(ptr)
+                yield p
 
     def __init__(self, cfg, device=None, dtype=None, quantization_config=None, lora_config=None, modalities=None):
         super().__init__()
@@ -649,6 +679,7 @@ class YvModel(nn.Module):
         self._modalities = modalities or {'text'}
         self._device = device
         self._dtype = dtype
+        self._causal_mask_views: Dict[Tuple[str, torch.dtype], torch.Tensor] = {}
 
         # Automatic VRAM optimization: selects optimal settings without conflicts
         from utils.vram_controller import auto_optimize, get_vram_monitor
@@ -774,61 +805,58 @@ class YvModel(nn.Module):
         self.subconscious_read_interval = getattr(cfg, 'subconscious_read_interval', 1)
         self.subconscious_prefetch_depth = getattr(cfg, 'subconscious_prefetch_depth', 2)
         self._memory_augment_interval = getattr(cfg, 'memory_read_interval', 4)
+        self._comet_write_interval = max(1, int(getattr(cfg, 'comet_write_interval', 1)))
+        self._comet_write_step = 0
 
         _LOG.debug("YvModel: initializing multimodal encoders...")
-        self._lazy_init_flags = {
-            'vision': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_vision_encoder', True),
-            'video': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_video_encoder', True),
-            'audio': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_audio_encoder', True),
-            'doc': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_doc_encoder', True),
-            'modal_fusion': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_modal_fusion', False),
-            'reasoner': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_reasoner', False),
-            'speculative_decoder': getattr(cfg, 'lazy_init_enabled', False) and getattr(cfg, 'lazy_init_speculative_decoder', True),
-        }
-        self._lazy_initialized = {k: False for k in self._lazy_init_flags}
+        self._lazy_initialized: Dict[str, bool] = {}
+        def _lazy_flag(key: str, expr: bool) -> bool:
+            flag = bool(getattr(cfg, 'lazy_init_enabled', True)) and expr
+            self._lazy_initialized[key] = not flag
+            return flag
 
         _needs_vision = 'image' in self._modalities
-        if _needs_vision and self._lazy_init_flags.get('vision', False):
-            self._vision_encoder = None
+        self._lazy_vision_encoder = None
+        if _needs_vision and _lazy_flag('vision', getattr(cfg, 'lazy_init_vision_encoder', True)):
             self.vision = None
         elif _needs_vision:
             base_vision = YvVisionEncoder(cfg, device=device, dtype=dtype)
             self.vision = YvMoVEVisionEncoder(cfg, base_encoder=base_vision, device=device, dtype=dtype) if getattr(cfg, 'use_move_encoder', False) else base_vision
         else:
-            self._vision_encoder = None
             self.vision = None
+        self._lazy_initialized['vision'] = self.vision is not None
 
         self.sparse_cut_router = YvSparseCutRouter(cfg) if (getattr(cfg, 'use_sparse_cut', False) and _needs_vision) else None
 
         _needs_video = 'video' in self._modalities
-        if _needs_video and self._lazy_init_flags.get('video', False):
-            self._video_encoder = None
+        self._lazy_video_encoder = None
+        if _needs_video and _lazy_flag('video', getattr(cfg, 'lazy_init_video_encoder', True)):
             self.video = None
         elif _needs_video:
             self.video = YvVideoEncoder(cfg, device=device, dtype=dtype)
         else:
-            self._video_encoder = None
             self.video = None
+        self._lazy_initialized['video'] = self.video is not None
 
         _needs_audio = 'audio' in self._modalities
-        if _needs_audio and self._lazy_init_flags.get('audio', False):
-            self._audio_encoder = None
+        self._lazy_audio_encoder = None
+        if _needs_audio and _lazy_flag('audio', getattr(cfg, 'lazy_init_audio_encoder', True)):
             self.audio = None
         elif _needs_audio:
             self.audio = YvAudioEncoder(cfg, device=device, dtype=dtype)
         else:
-            self._audio_encoder = None
             self.audio = None
+        self._lazy_initialized['audio'] = self.audio is not None
 
         _needs_doc = 'doc' in self._modalities
-        if _needs_doc and self._lazy_init_flags.get('doc', False):
-            self._doc_encoder = None
+        self._lazy_doc_encoder = None
+        if _needs_doc and _lazy_flag('doc', getattr(cfg, 'lazy_init_doc_encoder', True)):
             self.doc = None
         elif _needs_doc:
             self.doc = YvDocEncoder(cfg, device=device, dtype=dtype)
         else:
-            self._doc_encoder = None
             self.doc = None
+        self._lazy_initialized['doc'] = self.doc is not None
 
         _needs_multimodal = _needs_vision or _needs_video or _needs_audio or _needs_doc
         if getattr(cfg, 'use_agentic', True) and _needs_multimodal:
@@ -842,92 +870,46 @@ class YvModel(nn.Module):
         else:
             self.modal_fusion = None
 
-        # === 2026 flagship feature init ===
-        self.deep_cross_layer_injector = None
-        self.seer_executor = None
-        self.vericot_verifier = None
+        # === 2026 flagship feature init (all lazy / conditional) ===
+        self.deep_cross_layer_injector = None  # lazy: _lazy_get_rca
+        self.seer_executor = None              # lazy: _lazy_get_seer
+        self.vericot_verifier = None           # lazy: _lazy_get_vericot
         self.vericot_reflector = None
-        self.comet_memory = None
-        self.token_sparse_attn = None
+        self.crv_integration = None            # lazy: _lazy_get_crv
+        self.comet_memory = None               # lazy: _lazy_get_comet
+        self.token_sparse_attn = None          # lazy: _lazy_get_long_context
         self.mhc_lite = None
-
-        # Deep cross-layer injector: injects aligned multimodal features into transformer layers
-        if getattr(cfg, 'use_rca_fusion', True):
-            self.deep_cross_layer_injector = YvDeepCrossLayerInjector(
-                cfg, num_layers=cfg.n_layer, device=device, dtype=dtype
-            )
-
-        if self.cfg.use_seer_executor:
-            _LOG.debug("YvModel: initializing SEER executor...")
-            self.seer_executor = YvSEERExecutor(cfg)
-
-        if getattr(self.cfg, 'use_vericot', False) or getattr(self.cfg, 'use_spell', False):
-            _LOG.debug("YvModel: initializing VeriCoT/SPELL...")
-            self.vericot_verifier = YvVeriCoTVerifier(cfg, device=device, dtype=dtype)
-            self.vericot_reflector = YvVeriCoTReflector(self.vericot_verifier)
-
-        if getattr(self.cfg, 'use_crv_verification', True):
-            _LOG.debug("YvModel: initializing CRV integration...")
-            self.crv_integration = YvCRVIntegration(hidden_size=cfg.hidden_size)
-        else:
-            self.crv_integration = None
-
-        if getattr(self.cfg, 'use_comet_memory', False) or getattr(self.cfg, 'use_seirenes', False):
-            _LOG.debug("YvModel: initializing CoMeT/Seirênes memory...")
-            self.comet_memory = YvCoMeTMemory(cfg, device=device, dtype=dtype)
-
-        self._init_long_context_stack(cfg, device, dtype)
+        self.reform_processor = None
+        self.oomb_processor = None
+        self.reasoner = None                   # lazy: _lazy_get_reasoner
+        self.agentic = None                    # lazy: _lazy_get_agentic
+        self.speculative_decoder = None        # lazy: _lazy_get_speculative
+        self.speculative_config = None
+        self._lazy_initialized['rca'] = False
+        self._lazy_initialized['seer'] = False
+        self._lazy_initialized['vericot'] = False
+        self._lazy_initialized['crv'] = False
+        self._lazy_initialized['comet'] = False
+        self._lazy_initialized['long_context'] = False
+        self._lazy_initialized['reasoner'] = False
+        self._lazy_initialized['agentic'] = False
+        self._lazy_initialized['speculative'] = False
 
         _LOG.debug("YvModel: initializing output heads...")
         self.lm_head = nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
-        self.task_head = nn.Linear(cfg.hidden_size, cfg.task_classes, device=device, dtype=dtype)
-        self.eval_head = nn.Linear(cfg.hidden_size, cfg.eval_dims, device=device, dtype=dtype)
+        self.task_head = None     # lazy: _lazy_get_task_head
+        self.eval_head = None     # lazy: _lazy_get_eval_head
+        self._lazy_initialized['task_head'] = False
+        self._lazy_initialized['eval_head'] = False
 
         self.num_mtp_heads = int(getattr(cfg, 'num_mtp_heads', 4))
         self.mtp_loss_weight = float(getattr(cfg, 'mtp_loss_weight', 0.5))
         self.mtp_share_embeddings = bool(getattr(cfg, 'mtp_share_embeddings', True))
-
-        if self.num_mtp_heads > 0:
-            self.mtp_heads = nn.ModuleList([
-                nn.Linear(cfg.hidden_size, cfg.vocab_size, bias=False, device=device, dtype=dtype)
-                for _ in range(self.num_mtp_heads)
-            ])
-            if self.mtp_share_embeddings:
-                for mtp_head in self.mtp_heads:
-                    mtp_head.weight = self.lm_head.weight
+        self.mtp_heads = None     # lazy: _lazy_get_mtp_heads
+        self._lazy_initialized['mtp_heads'] = False
 
         self.modal_token_count = getattr(cfg, 'modal_token_count', 8)
         self.fusion_proj = nn.Linear(cfg.hidden_size, cfg.hidden_size, bias=False, device=device, dtype=dtype)
-
-        if getattr(cfg, 'use_reasoner', True):
-            _LOG.debug("YvModel: initializing reasoner...")
-            self.reasoner = YvUnifiedReasoner(cfg, device=device, dtype=dtype)
-            self.reasoner.initialize_reasoning_tokens(None)
-        else:
-            self.reasoner = None
-
-        if getattr(cfg, 'use_agentic', True):
-            _LOG.debug("YvModel: initializing agentic...")
-            from ..multimodal import YvAgentic
-            self.agentic = YvAgentic(cfg, model=self)
-        else:
-            self.agentic = None
-
-        if getattr(cfg, 'use_speculative_decoder', False) and getattr(cfg, 'enable_speculative_decoding', True):
-            _LOG.debug("YvModel: initializing speculative decoder...")
-            self.speculative_config = YvSpeculativeConfig(
-                num_candidates=getattr(cfg, 'speculative_candidates', 4),
-                draft_length=getattr(cfg, 'speculative_draft_length', 5),
-                acceptance_threshold=getattr(cfg, 'speculative_acceptance_threshold', 0.8),
-                temperature=getattr(cfg, 'speculative_temperature', 0.7),
-                top_k=getattr(cfg, 'speculative_top_k', 50),
-                top_p=getattr(cfg, 'speculative_top_p', 0.9),
-                tree_width=getattr(cfg, 'speculative_tree_width', 4),
-                tree_depth=getattr(cfg, 'speculative_tree_depth', 5)
-            )
-            self.speculative_decoder = YvAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
-        else:
-            self.speculative_decoder = None
 
         if lora_config is not None:
             raise RuntimeError(
@@ -954,6 +936,13 @@ class YvModel(nn.Module):
         if getattr(cfg, 'tie_word_embeddings', False):
             if hasattr(self, 'lm_head') and hasattr(self, 'embed'):
                 self.lm_head.weight = self.embed.weight
+
+        # Causal mask cache (persistent=False — not saved in state_dict)
+        self.register_buffer(
+            '_causal_mask_cache',
+            torch.zeros(0, 0, device=device, dtype=dtype),
+            persistent=False,
+        )
 
         total_params = sum(p.numel() for p in self.parameters())
         _LOG.debug(f"YvModel: total parameters = {total_params/1e6:.2f}M")
@@ -989,6 +978,49 @@ class YvModel(nn.Module):
         inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2, device=device).float() / dim))
         self.register_buffer('inv_freq', inv_freq, persistent=False)
 
+    def _get_causal_mask(
+        self,
+        seq_len: int,
+        dtype: torch.dtype,
+        device: torch.device,
+    ) -> torch.Tensor:
+        """Return a cached causal (upper-triangular) mask, extending on demand.
+
+        Each sequence length is cached in ``_causal_mask_cache`` so that
+        repeated forward passes with the same length avoid re-allocating
+        and re-filling the :math:`T \\times T` matrix.
+        """
+        cache_key = (str(device), dtype)
+        cached = self._causal_mask_cache
+        cached_view = self._causal_mask_views.get(cache_key)
+
+        if cached_view is not None and cached_view.shape[-1] >= seq_len:
+            return cached_view[:seq_len, :seq_len]
+
+        if cached.shape[-1] >= seq_len:
+            if cached.device == device and cached.dtype == dtype:
+                self._causal_mask_views[cache_key] = cached
+                return cached[:seq_len, :seq_len]
+            converted = cached.to(dtype=dtype, device=device)
+            self._causal_mask_views[cache_key] = converted
+            return converted[:seq_len, :seq_len]
+        # Extend cache to the next power-of-two to amortise growth
+        new_len = 1
+        while new_len < seq_len:
+            new_len <<= 1
+        new_mask = torch.triu(
+            torch.full((new_len, new_len), float('-inf'), device=cached.device, dtype=cached.dtype),
+            diagonal=1,
+        )
+        self._causal_mask_cache = new_mask
+        self._causal_mask_views.clear()
+        if new_mask.device == device and new_mask.dtype == dtype:
+            self._causal_mask_views[cache_key] = new_mask
+            return new_mask[:seq_len, :seq_len]
+        converted = new_mask.to(dtype=dtype, device=device)
+        self._causal_mask_views[cache_key] = converted
+        return converted[:seq_len, :seq_len]
+
     def _apply_backbone_defaults(self) -> None:
         """Harden the flagship backbone configuration onto one main sequence lane."""
         if getattr(self.config, 'max_position_embeddings', 0) >= 1_048_576:
@@ -996,11 +1028,46 @@ class YvModel(nn.Module):
 
         if not getattr(self.config, 'backbone_allow_legacy_blocks', False):
             setattr(self.config, 'use_mamba3', True)
-            setattr(self.config, 'mamba3_layers', list(range(getattr(self.config, 'n_layer', 0))))
+            # Only auto-populate mamba3_layers if user hasn't explicitly set them.
+            # __post_init__ already sets mamba3_layers = list(range(n_layer)) when
+            # use_mamba3=True and mamba3_layers is empty, so by the time we reach
+            # here the list is already populated unless the user explicitly emptied it.
+            current = getattr(self.config, 'mamba3_layers', [])
+            if not current:
+                setattr(self.config, 'mamba3_layers', list(range(getattr(self.config, 'n_layer', 0))))
 
         if getattr(self.config, 'use_oomb_context', False):
             setattr(self.config, 'use_h2o_attention', True)
             setattr(self.config, 'cache_type', getattr(self.config, 'cache_type', 'hybrid') or 'hybrid')
+
+    def _convert_cache_precision(
+        self,
+        cache_pair: Optional[Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]],
+        cache_dtype: torch.dtype,
+        use_mixed_precision_cache: bool,
+    ) -> Optional[Tuple[Optional[torch.Tensor], Optional[torch.Tensor]]]:
+        """Convert KV cache tensors to the target cache dtype with optional rope preservation."""
+        if cache_pair is None:
+            return None
+
+        key_states, value_states = cache_pair
+        if not use_mixed_precision_cache:
+            return tuple(
+                tensor.to(cache_dtype) if tensor is not None else None
+                for tensor in (key_states, value_states)
+            )
+
+        converted = []
+        for tensor in (key_states, value_states):
+            if tensor is None:
+                converted.append(None)
+                continue
+            head_dim = tensor.shape[-1]
+            partial_rope_dim = min(128, head_dim // 4)
+            rope_part = tensor[..., :partial_rope_dim].to(self._dtype)
+            non_rope_part = tensor[..., partial_rope_dim:].to(cache_dtype)
+            converted.append(torch.cat([rope_part, non_rope_part], dim=-1))
+        return tuple(converted)
 
     def _build_backbone_block(
         self,
@@ -1157,44 +1224,193 @@ class YvModel(nn.Module):
             layer.use_checkpoint = enabled
     
     def _lazy_get_vision_encoder(self):
-        if self.vision is None and self._lazy_init_flags.get('vision', False):
-            if not self._lazy_initialized.get('vision', False):
-                base_vision = YvVisionEncoder(self.cfg, device=self._device, dtype=self._dtype)
-                self.vision = YvMoVEVisionEncoder(self.cfg, base_encoder=base_vision, device=self._device, dtype=self._dtype) if getattr(self.cfg, 'use_move_encoder', False) else base_vision
-                self._lazy_initialized['vision'] = True
+        if self.vision is None:
+            base_vision = YvVisionEncoder(self.cfg, device=self._device, dtype=self._dtype)
+            self.vision = YvMoVEVisionEncoder(self.cfg, base_encoder=base_vision, device=self._device, dtype=self._dtype) if getattr(self.cfg, 'use_move_encoder', False) else base_vision
+            self._lazy_initialized['vision'] = True
         return self.vision
 
     def _lazy_get_audio_encoder(self):
-        if self.audio is None and self._lazy_init_flags.get('audio', False):
-            if not self._lazy_initialized.get('audio', False):
-                self.audio = YvAudioEncoder(self.cfg, device=self._device, dtype=self._dtype)
-                self._lazy_initialized['audio'] = True
+        if self.audio is None:
+            self.audio = YvAudioEncoder(self.cfg, device=self._device, dtype=self._dtype)
+            self._lazy_initialized['audio'] = True
         return self.audio
 
     def _lazy_get_video_encoder(self):
-        if self.video is None and self._lazy_init_flags.get('video', False):
-            if not self._lazy_initialized.get('video', False):
-                self.video = YvVideoEncoder(self.cfg, device=self._device, dtype=self._dtype)
-                self._lazy_initialized['video'] = True
+        if self.video is None:
+            self.video = YvVideoEncoder(self.cfg, device=self._device, dtype=self._dtype)
+            self._lazy_initialized['video'] = True
         return self.video
 
     def _lazy_get_doc_encoder(self):
-        if self.doc is None and self._lazy_init_flags.get('doc', False):
-            if not self._lazy_initialized.get('doc', False):
-                self.doc = YvDocEncoder(self.cfg, device=self._device, dtype=self._dtype)
-                self._lazy_initialized['doc'] = True
+        if self.doc is None:
+            self.doc = YvDocEncoder(self.cfg, device=self._device, dtype=self._dtype)
+            self._lazy_initialized['doc'] = True
         return self.doc
     
     def is_lazy_initialized(self, component: str) -> bool:
         """Check if a component has been lazy initialized.
-        
+
         Args:
-            component: Component name ('vision', 'audio', 'video', 'doc', etc.)
-            
+            component: Component name ('vision', 'audio', 'video', 'doc', 'rca',
+                      'seer', 'vericot', 'crv', 'comet', 'long_context',
+                      'reasoner', 'agentic', 'speculative', 'task_head',
+                      'eval_head', 'mtp_heads')
+
         Returns:
             True if the component has been initialized, False otherwise.
         """
         return self._lazy_initialized.get(component, True)
+
+    def _lazy_get_reasoner(self) -> None:
+        if self.reasoner is None:
+            from ..reasoning import YvUnifiedReasoner
+            _LOG.debug("YvModel: lazy-init reasoner...")
+            self.reasoner = YvUnifiedReasoner(self.cfg, device=self._device, dtype=self._dtype)
+            self.reasoner.initialize_reasoning_tokens(None)
+            self._lazy_initialized['reasoner'] = True
+
+    def _lazy_get_agentic(self) -> None:
+        if self.agentic is None:
+            from ..multimodal import YvAgentic
+            _LOG.debug("YvModel: lazy-init agentic...")
+            self.agentic = YvAgentic(self.cfg, model=self)
+            self._lazy_initialized['agentic'] = True
+
+    def _lazy_get_speculative(self) -> None:
+        if self.speculative_decoder is None:
+            if bool(getattr(self.cfg, 'use_speculative_decoder', False)) and bool(getattr(self.cfg, 'enable_speculative_decoding', True)):
+                _LOG.debug("YvModel: lazy-init speculative decoder...")
+                from ..generation.speculative import YvAdaptiveSpeculativeDecoder, YvSpeculativeConfig
+                self.speculative_config = YvSpeculativeConfig(
+                    num_candidates=getattr(self.cfg, 'speculative_candidates', 4),
+                    draft_length=getattr(self.cfg, 'speculative_draft_length', 5),
+                    acceptance_threshold=getattr(self.cfg, 'speculative_acceptance_threshold', 0.8),
+                    temperature=getattr(self.cfg, 'speculative_temperature', 0.7),
+                    top_k=getattr(self.cfg, 'speculative_top_k', 50),
+                    top_p=getattr(self.cfg, 'speculative_top_p', 0.9),
+                    tree_width=getattr(self.cfg, 'speculative_tree_width', 4),
+                    tree_depth=getattr(self.cfg, 'speculative_tree_depth', 5)
+                )
+                self.speculative_decoder = YvAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
+                self._lazy_initialized['speculative'] = True
+
+    def _lazy_get_rca(self) -> None:
+        if self.deep_cross_layer_injector is None and getattr(self.cfg, 'use_rca_fusion', True):
+            from ..multimodal.rca_fusion import YvDeepCrossLayerInjector
+            _LOG.debug("YvModel: lazy-init RCA cross-layer injector...")
+            self.deep_cross_layer_injector = YvDeepCrossLayerInjector(
+                self.cfg, num_layers=self.cfg.n_layer, device=self._device, dtype=self._dtype
+            )
+            self._lazy_initialized['rca'] = True
+
+    def _lazy_get_seer(self) -> None:
+        if self.seer_executor is None and bool(getattr(self.cfg, 'use_seer_executor', False)):
+            from ..multimodal.seer_executor import YvSEERExecutor
+            _LOG.debug("YvModel: lazy-init SEER executor...")
+            self.seer_executor = YvSEERExecutor(self.cfg)
+            self._lazy_initialized['seer'] = True
+
+    def _lazy_get_vericot(self) -> None:
+        if self.vericot_verifier is None:
+            if getattr(self.cfg, 'use_vericot', False) or getattr(self.cfg, 'use_spell', False):
+                from ..reasoning.vericot import YvVeriCoTVerifier, YvVeriCoTReflector
+                _LOG.debug("YvModel: lazy-init VeriCoT/SPELL...")
+                self.vericot_verifier = YvVeriCoTVerifier(self.cfg, device=self._device, dtype=self._dtype)
+                self.vericot_reflector = YvVeriCoTReflector(self.vericot_verifier)
+                self._lazy_initialized['vericot'] = True
+
+    def _lazy_get_crv(self) -> None:
+        if self.crv_integration is None and getattr(self.cfg, 'use_crv_verification', True):
+            from ..reasoning.verification import YvCRVIntegration
+            _LOG.debug("YvModel: lazy-init CRV...")
+            self.crv_integration = YvCRVIntegration(hidden_size=self.cfg.hidden_size)
+            self._lazy_initialized['crv'] = True
+
+    def _lazy_get_comet(self) -> None:
+        if self.comet_memory is None:
+            if getattr(self.cfg, 'use_comet_memory', False) or getattr(self.cfg, 'use_seirenes', False):
+                from .comet import YvCoMeTMemory
+                _LOG.debug("YvModel: lazy-init CoMeT/Seirênes...")
+                self.comet_memory = YvCoMeTMemory(self.cfg, device=self._device, dtype=self._dtype)
+                self._lazy_initialized['comet'] = True
+
+    def _lazy_get_long_context(self) -> None:
+        if not self._lazy_initialized.get('long_context', True):
+            from .long_context import YvOOMBContext, YvREFORM
+            from .token_sparse_attn import YvTokenSparseAttention
+            from .mhc_lite import YvMHCLiteHyperConnection
+            if getattr(self.cfg, 'use_reform', False):
+                self.reform_processor = YvREFORM(
+                    compression_ratio=getattr(self.cfg, 'reform_compression_ratio', 4),
+                    importance_threshold=getattr(self.cfg, 'reform_importance_threshold', 0.1),
+                )
+            if getattr(self.cfg, 'use_oomb_context', True):
+                self.oomb_processor = YvOOMBContext(
+                    chunk_size=getattr(self.cfg, 'oomb_chunk_size', 32768),
+                    max_context_length=getattr(self.cfg, 'max_position_embeddings', 4194304)
+                )
+            if getattr(self.cfg, 'use_token_sparse_attn', False) or getattr(self.cfg, 'use_tactic', False):
+                self.token_sparse_attn = YvTokenSparseAttention(self.cfg, device=self._device, dtype=self._dtype)
+            if getattr(self.cfg, 'use_mhc_lite', False):
+                self.mhc_lite = YvMHCLiteHyperConnection(
+                    num_streams=getattr(self.cfg, 'mhc_streams', 4),
+                    num_permutations=getattr(self.cfg, 'mhc_permutations', 8),
+                    device=self._device, dtype=self._dtype,
+                )
+            self._lazy_initialized['long_context'] = True
+
+    def _lazy_get_task_head(self) -> None:
+        if self.task_head is None:
+            self.task_head = nn.Linear(
+                self.cfg.hidden_size, self.cfg.task_classes,
+                device=self._device, dtype=self._dtype
+            )
+            self._lazy_initialized['task_head'] = True
+
+    def _lazy_get_eval_head(self) -> None:
+        if self.eval_head is None:
+            self.eval_head = nn.Linear(
+                self.cfg.hidden_size, self.cfg.eval_dims,
+                device=self._device, dtype=self._dtype
+            )
+            self._lazy_initialized['eval_head'] = True
+
+    def _lazy_get_mtp_heads(self) -> None:
+        if self.mtp_heads is None and self.num_mtp_heads > 0:
+            self.mtp_heads = nn.ModuleList([
+                nn.Linear(self.cfg.hidden_size, self.cfg.vocab_size, bias=False,
+                          device=self._device, dtype=self._dtype)
+                for _ in range(self.num_mtp_heads)
+            ])
+            if self.mtp_share_embeddings:
+                for mtp_head in self.mtp_heads:
+                    mtp_head.weight = self.lm_head.weight
+            self._lazy_initialized['mtp_heads'] = True
+
+    def ensure_all_modules(self) -> None:
+        """Force-initialise all lazy modules so ``parameters()`` is complete.
+
+        Call **once** after creating the optimiser so that every module's
+        parameters are visible and the optimiser's param groups are fully
+        populated.  After this call the model is fully materialised.
+        """
+        self._lazy_get_vision_encoder()
+        self._lazy_get_audio_encoder()
+        self._lazy_get_video_encoder()
+        self._lazy_get_doc_encoder()
+        self._lazy_get_reasoner()
+        self._lazy_get_agentic()
+        self._lazy_get_speculative()
+        self._lazy_get_rca()
+        self._lazy_get_seer()
+        self._lazy_get_vericot()
+        self._lazy_get_crv()
+        self._lazy_get_comet()
+        self._lazy_get_long_context()
+        self._lazy_get_task_head()
+        self._lazy_get_eval_head()
+        self._lazy_get_mtp_heads()
 
     def to(self, device=None, dtype=None, non_blocking=False):
         if device is None and dtype is None:
@@ -1429,20 +1645,22 @@ class YvModel(nn.Module):
             top_p_final = max(0.9, top_p)
 
         if use_speculative_final and hasattr(self, 'speculative_decoder'):
-            self.speculative_config.temperature = temperature_final
-            self.speculative_config.top_k = top_k_final
-            self.speculative_config.top_p = top_p_final
-            out_ids, stats = self.speculative_decoder.speculative_generate(
-                input_ids=input_ids,
-                attention_mask=attention_mask,
-                max_length=max_length,
-                cache_manager=self.cache_manager if hasattr(self, 'cache_manager') else None,
-                **kwargs
-            )
-            stats['routing'] = routing
-            return out_ids, stats
-        else:
-            out_ids, stats = self._standard_generate(
+            self._lazy_get_speculative()
+            if self.speculative_decoder is not None:
+                self.speculative_config.temperature = temperature_final
+                self.speculative_config.top_k = top_k_final
+                self.speculative_config.top_p = top_p_final
+                out_ids, stats = self.speculative_decoder.speculative_generate(
+                    input_ids=input_ids,
+                    attention_mask=attention_mask,
+                    max_length=max_length,
+                    cache_manager=self.cache_manager if hasattr(self, 'cache_manager') else None,
+                    **kwargs
+                )
+                stats['routing'] = routing
+                return out_ids, stats
+
+        out_ids, stats = self._standard_generate(
                 input_ids,
                 attention_mask,
                 max_length,
@@ -1451,8 +1669,8 @@ class YvModel(nn.Module):
                 top_p_final,
                 **kwargs
             )
-            stats['routing'] = routing
-            return out_ids, stats
+        stats['routing'] = routing
+        return out_ids, stats
 
     def _standard_generate(
         self,
@@ -1545,8 +1763,13 @@ class YvModel(nn.Module):
                         newv = min(cap, cur + delta)
                         setattr(m, 'temperature', newv)
 
+        eos_token_id = getattr(self.cfg, 'eos_token_id', 2)
+
         with torch.no_grad():
-            for step_idx in range(max_length - input_ids.shape[1]):
+            remaining_steps = max_length - input_ids.shape[1]
+            if remaining_steps <= 0:
+                return input_ids
+            for step_idx in range(remaining_steps):
                 model_inputs = self.prepare_inputs_for_generation(
                     generated_ids,
                     attention_mask,
@@ -1597,7 +1820,7 @@ class YvModel(nn.Module):
                         )
                     ], dim=-1)
 
-                eos_mask = (next_token == getattr(self.cfg, 'eos_token_id', 2)).squeeze(-1)
+                eos_mask = (next_token == eos_token_id).squeeze(-1)
                 if eos_mask.any() and new_tokens_generated >= min_new_tokens:
                     if not hasattr(self, '_finished') or self._finished is None:
                         self._finished = eos_mask.clone()
@@ -1711,7 +1934,15 @@ class YvModel(nn.Module):
         """
         import torch.utils.checkpoint as cp
 
+        return_task_logits = bool(kwargs.pop("return_task_logits", True))
+        return_eval_score = bool(kwargs.pop("return_eval_score", True))
+        return_tool_outputs = bool(kwargs.pop("return_tool_outputs", True))
+        return_reasoner_outputs = bool(kwargs.pop("return_reasoner_outputs", True))
+        return_verifier_outputs = bool(kwargs.pop("return_verifier_outputs", return_reasoner_outputs))
+        return_mtp_logits = bool(kwargs.pop("return_mtp_logits", True))
+
         if agent_mode:
+            self._lazy_get_agentic()
             return self.agentic.run(
                 input_ids=input_ids,
                 images=images,
@@ -1809,26 +2040,25 @@ class YvModel(nn.Module):
         lm_seq_len = x.shape[1]
 
         modal_id = None
-        modal_protection_mask = None
         if getattr(self.cfg, 'modal_aware_routing', True) or getattr(self.cfg, 'modal_protection_mod', True):
             n_modalities = getattr(self.cfg, 'n_modalities', 7)
             modal_id = torch.zeros(b, t, dtype=torch.long, device=x.device)
-            modal_protection_mask = torch.zeros(b, t, dtype=torch.bool, device=x.device)
             if len(modal_features) > 1:
                 modal_token_count = getattr(self, 'modal_token_count', 8)
                 if fused_features is not None:
                     actual_modal_tokens = min(modal_token_count, t)
                     modal_id[:, :actual_modal_tokens] = n_modalities - 1
-                    modal_protection_mask[:, :actual_modal_tokens] = True
         
-        causal_mask = torch.triu(torch.full((t, t), float('-inf'), device=x.device, dtype=x.dtype), diagonal=1)
+        causal_mask = self._get_causal_mask(t, x.dtype, x.device)
+        mask = causal_mask
         if attention_mask is not None:
-            ext_mask = attention_mask[:, None, :].to(x.dtype)  # [B, 1, T]
-            mask = causal_mask[None, :, :] + (1.0 - ext_mask) * float('-inf')  # [B, T, T]
-        else:
-            mask = causal_mask
+            attention_mask_bool = attention_mask.to(device=x.device, dtype=torch.bool)
+            if not bool(attention_mask_bool.all()):
+                ext_mask = attention_mask_bool[:, None, :]  # [B, 1, T]
+                mask = causal_mask.unsqueeze(0).expand(b, -1, -1)
+                mask = mask.masked_fill(~ext_mask, float('-inf'))
 
-        total_aux_loss = 0.0
+        total_aux_loss = x.new_zeros(())
         chunk_size = min(getattr(self.cfg, 'max_position_embeddings', 2048), 8192)
         outputs = []
 
@@ -1854,14 +2084,24 @@ class YvModel(nn.Module):
         use_mixed_precision_cache = getattr(self.cfg, 'use_mixed_precision_cache', True)
 
         next_cache = [] if use_cache else None
+        rca_fused = None
+        if isinstance(rca_output, dict) and rca_output:
+            rca_fused = torch.cat(list(rca_output.values()), dim=1)
+        elif fused_features is not None:
+            rca_fused = fused_features
+        use_rca_path = rca_fused is not None and getattr(self.cfg, 'use_rca_fusion', True)
+        use_crv_path = return_reasoner_outputs and getattr(self.cfg, 'use_crv_verification', True)
 
         if not use_cache or past_key_values is None:
-            rca_features_dict = rca_output if isinstance(rca_output, dict) else {}  # _last_modality_features is the dict directly
-            rca_fused = None
-            if rca_features_dict:
-                rca_fused = torch.cat(list(rca_features_dict.values()), dim=1)
-
             seq_is_long = self._should_use_long_context_path(x.shape[1])
+
+            # Lazy-init modules used below
+            if use_rca_path:
+                self._lazy_get_rca()
+            if use_crv_path:
+                self._lazy_get_crv()
+            self._lazy_get_comet()
+            self._lazy_get_long_context()
 
             crv_active = self.crv_integration is not None
             if crv_active:
@@ -1869,7 +2109,7 @@ class YvModel(nn.Module):
                 crv_checkpoints = {n_layers // 4, n_layers // 2, 3 * n_layers // 4}
 
             if seq_is_long:
-                aux_loss_bucket = [torch.tensor(0.0, device=x.device)]
+                aux_loss_bucket = [x.new_zeros(())]
 
                 def _oomb_chunk(chunk, chunk_mask):
                     h_chunk = chunk
@@ -1954,41 +2194,19 @@ class YvModel(nn.Module):
                                 if comet_ctx is not None and hasattr(layer, '_set_memory_context'):
                                     layer._set_memory_context(comet_ctx)
 
-                        if self.deep_cross_layer_injector is not None and (rca_output is not None or fused_features is not None):
-                            inject_fused = rca_output if isinstance(rca_output, dict) else {}
-                            if inject_fused:
-                                inject_fused = torch.cat(list(inject_fused.values()), dim=1)
-                            elif fused_features is not None:
-                                inject_fused = fused_features
-                            else:
-                                inject_fused = None
-                            if inject_fused is not None:
-                                h = self.deep_cross_layer_injector(h, inject_fused, layer_idx)
+                        if self.deep_cross_layer_injector is not None and rca_fused is not None:
+                            h = self.deep_cross_layer_injector(h, rca_fused, layer_idx)
 
                         past_kv = self.cache_manager.get_kv_cache(
                             layer_idx,
                             layer_past_key_values[layer_idx] if layer_past_key_values is not None else None
                         )
 
-                        if use_mixed_precision_cache and past_kv is not None and cache_quant_bits < 16:
-                            key_states, value_states = past_kv
-                            if key_states is not None:
-                                head_dim = key_states.shape[-1]
-                                partial_rope_dim = min(128, head_dim // 4)
-                                k_rope_part = key_states[..., :partial_rope_dim].to(torch.bfloat16)
-                                k_non_rope = key_states[..., partial_rope_dim:].to(cache_dtype)
-                                key_states = torch.cat([k_rope_part, k_non_rope], dim=-1)
-                            if value_states is not None:
-                                head_dim = value_states.shape[-1]
-                                partial_rope_dim = min(128, head_dim // 4)
-                                v_rope_part = value_states[..., :partial_rope_dim].to(torch.bfloat16)
-                                v_non_rope = value_states[..., partial_rope_dim:].to(cache_dtype)
-                                value_states = torch.cat([v_rope_part, v_non_rope], dim=-1)
-                            past_kv = (key_states, value_states)
-                        elif past_kv is not None and cache_quant_bits < 16:
-                            past_kv = tuple(
-                                tensor.to(cache_dtype) if tensor is not None else None
-                                for tensor in past_kv
+                        if past_kv is not None and cache_quant_bits < 16:
+                            past_kv = self._convert_cache_precision(
+                                past_kv,
+                                cache_dtype=cache_dtype,
+                                use_mixed_precision_cache=use_mixed_precision_cache,
                             )
 
                         h, extra_kv = self.dual_injector.inject(h, layer_idx)
@@ -2014,9 +2232,10 @@ class YvModel(nn.Module):
                             cache = updated
 
                             if cache_quant_bits < 16:
-                                cache = tuple(
-                                    tensor.to(torch.float16) if tensor is not None else None
-                                    for tensor in cache
+                                cache = self._convert_cache_precision(
+                                    cache,
+                                    cache_dtype=cache_dtype,
+                                    use_mixed_precision_cache=False,
                                 )
 
                         if hasattr(self, 'cache_manager') and self.cache_manager is not None:
@@ -2042,16 +2261,26 @@ class YvModel(nn.Module):
 
         # Concatenate all chunks at once after the loop (more efficient than per-chunk)
         if outputs:
-            x = torch.cat(outputs, dim=1)
+            x = outputs[0] if len(outputs) == 1 else torch.cat(outputs, dim=1)
 
             if x.shape[1] == 0:
+                task_logits = (
+                    torch.zeros(x.shape[0], self.cfg.task_classes, device=x.device)
+                    if return_task_logits
+                    else None
+                )
+                eval_score = (
+                    torch.zeros(x.shape[0], self.cfg.eval_dims, device=x.device)
+                    if return_eval_score
+                    else None
+                )
                 return YvModelOutput({
                     "logits": self.lm_head(x),
                     "loss": torch.tensor(0.0, device=x.device, requires_grad=True),
-                    "task_logits": torch.zeros(x.shape[0], self.cfg.task_classes, device=x.device),
-                    "eval_score": torch.zeros(x.shape[0], self.cfg.eval_dims, device=x.device),
+                    "task_logits": task_logits,
+                    "eval_score": eval_score,
                     "aux_loss": total_aux_loss,
-                    "reasoner_out": {"loss": torch.tensor(0.0, device=x.device, requires_grad=True)},
+                    "reasoner_out": None,
                     "tool_output": None,
                     "tool_experience": None,
                     "vericot_out": None,
@@ -2060,31 +2289,41 @@ class YvModel(nn.Module):
             x = self.norm(x)
             logits = self.lm_head(x)
 
-            reasoner_input_ids = (
-                input_ids[:, :x.shape[1]] if input_ids.shape[1] > x.shape[1] else input_ids
-            )
-            reasoner_labels = (
-                labels[:, :x.shape[1]]
-                if labels is not None and labels.shape[1] > x.shape[1]
-                else labels
-            )
+            # Lazy-init reasoner and downstream modules
+            if return_reasoner_outputs:
+                self._lazy_get_reasoner()
+            if return_verifier_outputs:
+                self._lazy_get_vericot()
+            if return_tool_outputs:
+                self._lazy_get_seer()
 
-            reasoner_out = self.reasoner(
-                input_ids=reasoner_input_ids,
-                attention_mask=attention_mask,
-                labels=reasoner_labels,
-                hidden_states=x,
-            )
+            reasoner_out = None
+            if return_reasoner_outputs and self.reasoner is not None:
+                reasoner_input_ids = (
+                    input_ids[:, :x.shape[1]] if input_ids.shape[1] > x.shape[1] else input_ids
+                )
+                reasoner_labels = (
+                    labels[:, :x.shape[1]]
+                    if labels is not None and labels.shape[1] > x.shape[1]
+                    else labels
+                )
+
+                reasoner_out = self.reasoner(
+                    input_ids=reasoner_input_ids,
+                    attention_mask=attention_mask,
+                    labels=reasoner_labels,
+                    hidden_states=x,
+                )
 
             # CRV: circuit-based contradiction detection (ICLR 2026 Oral)
-            if self.crv_integration is not None:
+            if return_reasoner_outputs and self.crv_integration is not None and reasoner_out is not None:
                 crv_out = self.crv_integration(hidden_states=x)
                 reasoner_out['crv_verified'] = crv_out.get('verified', torch.tensor(True, device=x.device))
                 reasoner_out['crv_confidence'] = crv_out.get('confidence', torch.tensor(1.0, device=x.device))
 
             # VeriCoT: neuro-symbolic verification of reasoning chain
             vericot_out = None
-            if self.vericot_verifier is not None and reasoner_out is not None:
+            if return_verifier_outputs and self.vericot_verifier is not None and reasoner_out is not None:
                 vericot_out = self.vericot_verifier.verify_batch(
                     hidden_states=x,
                     logits=logits,
@@ -2096,26 +2335,35 @@ class YvModel(nn.Module):
                 reasoner_out['vericot_correction'] = vericot_out.get('correction_logits', None)
                 if vericot_out.get('correction_logits') is not None:
                     logits = logits + 0.1 * vericot_out['correction_logits']
-                total_aux_loss = total_aux_loss + vericot_out.get('verifier_loss', torch.tensor(0.0, device=x.device))
+                verifier_loss = vericot_out.get('verifier_loss')
+                if verifier_loss is not None:
+                    total_aux_loss = total_aux_loss + verifier_loss
 
             loss = None
-            mtp_loss = torch.tensor(0.0, device=x.device)
+            mtp_loss = logits.new_zeros(())
             mtp_logits_list = []
             
             if labels is not None and self.comet_memory is not None:
-                self.comet_memory.write(x.detach(), input_ids=input_ids)
+                self._comet_write_step += 1
+                if self._comet_write_step % self._comet_write_interval == 0:
+                    self.comet_memory.write(x.detach(), input_ids=input_ids)
 
             if labels is not None:
                 text_seq_len = labels.shape[1]
                 lm_loss = F.cross_entropy(
                     logits[:, -text_seq_len:, :].reshape(-1, logits.size(-1)),
-                    labels.view(-1),
+                    labels.reshape(-1),
                     ignore_index=-100
                 )
-                reasoner_loss = reasoner_out.get("loss", torch.tensor(0.0, device=x.device))
+                reasoner_loss = (
+                    reasoner_out.get("loss")
+                    if reasoner_out is not None and reasoner_out.get("loss") is not None
+                    else logits.new_zeros(())
+                )
                 loss = lm_loss + reasoner_loss
-                
+
                 if self.num_mtp_heads > 0 and hasattr(self, 'mtp_heads'):
+                    self._lazy_get_mtp_heads()
                     for i, mtp_head in enumerate(self.mtp_heads):
                         offset = i + 1
                         if x.shape[1] > offset and labels.shape[1] > offset:
@@ -2129,17 +2377,25 @@ class YvModel(nn.Module):
                                 ignore_index=-100
                             )
                             mtp_loss = mtp_loss + mtp_loss_i
-                            mtp_logits_list.append(mtp_logits)
+                            if return_mtp_logits:
+                                mtp_logits_list.append(mtp_logits)
                     
                     mtp_loss = mtp_loss / max(1, self.num_mtp_heads)
                     loss = loss + self.mtp_loss_weight * mtp_loss
 
-            task_logits = self.task_head(x[:, 0])
-            eval_score = self.eval_head(x.mean(1))
+            task_logits = None
+            if return_task_logits:
+                self._lazy_get_task_head()
+                task_logits = self.task_head(x[:, 0])
+
+            eval_score = None
+            if return_eval_score:
+                self._lazy_get_eval_head()
+                eval_score = self.eval_head(x.mean(1))
 
         tool_output = None
         tool_experience = None
-        if self.seer_executor is not None and outputs:
+        if return_tool_outputs and self.seer_executor is not None and outputs:
             seer_result = self.seer_executor(
                 query_hidden=x,
                 reasoner_out=reasoner_out,
@@ -2148,12 +2404,14 @@ class YvModel(nn.Module):
             tool_output = seer_result.get('tool_result')
             tool_experience = seer_result.get('experience_recalled')
             if tool_output is not None:
-                total_aux_loss = total_aux_loss + seer_result.get('seer_loss', torch.tensor(0.0, device=x.device))
+                seer_loss = seer_result.get('seer_loss')
+                if seer_loss is not None:
+                    total_aux_loss = total_aux_loss + seer_loss
 
         result = YvModelOutput({
             "logits": logits,
-            "mtp_logits": mtp_logits_list if self.num_mtp_heads > 0 else [],
-            "mtp_loss": mtp_loss if self.num_mtp_heads > 0 else torch.tensor(0.0, device=x.device),
+            "mtp_logits": mtp_logits_list if (self.num_mtp_heads > 0 and return_mtp_logits) else [],
+            "mtp_loss": mtp_loss if self.num_mtp_heads > 0 else logits.new_zeros(()),
             "loss": loss,
             "task_logits": task_logits,
             "eval_score": eval_score,
@@ -2665,7 +2923,7 @@ class YvModelForMaskedLM(nn.Module):
 
         loss = None
         if labels is not None:
-            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), labels.view(-1))
+            loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)), labels.reshape(-1))
 
         return {
             'logits': logits,

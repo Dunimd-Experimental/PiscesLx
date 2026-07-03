@@ -103,6 +103,7 @@ import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from model.utils import YvNumericalGuard, YvEPS
 from typing import Optional, Tuple, List
 from dataclasses import dataclass
 
@@ -366,7 +367,7 @@ class YvOnlineClusterRouter(nn.Module):
         
         distances_sq = F.relu(distances_sq)
         
-        distances = torch.sqrt(distances_sq + 1e-8)
+        distances = torch.sqrt(distances_sq.clamp(min=0) + YvNumericalGuard.get_eps(distances_sq.dtype))
         
         return distances
     
@@ -387,7 +388,7 @@ class YvOnlineClusterRouter(nn.Module):
         Returns:
             torch.Tensor: Routing weights [batch_size, num_clusters].
         """
-        logits = -distances / max(temperature, 1e-8)
+        logits = -distances / max(temperature, YvEPS.DEFAULT)
         
         weights = F.softmax(logits, dim=-1)
         
@@ -417,9 +418,9 @@ class YvOnlineClusterRouter(nn.Module):
         
         expert_weights = torch.mm(cluster_weights, mapping_weights)
         
-        top_k_weights, top_k_indices = torch.topk(expert_weights, self.top_k, dim=-1)
+        top_k_weights, top_k_indices = torch.topk(expert_weights, min(self.top_k, self.num_experts), dim=-1)
         
-        top_k_weights = top_k_weights / (top_k_weights.sum(dim=-1, keepdim=True) + 1e-8)
+        top_k_weights = YvNumericalGuard.safe_div(top_k_weights, top_k_weights.sum(dim=-1, keepdim=True))
         
         return top_k_weights, top_k_indices, expert_weights
     
@@ -497,10 +498,10 @@ class YvOnlineClusterRouter(nn.Module):
         decayed_temp = max(self.min_temperature, decayed_temp)
         
         if self.enable_adaptive_temperature and self.total_routing_count > 100:
-            usage = self.expert_usage_count / (self.total_routing_count + 1e-8)
+            usage = YvNumericalGuard.safe_div(self.expert_usage_count, self.total_routing_count)
             
             ideal_usage = 1.0 / self.num_experts
-            imbalance = torch.var(usage) / (ideal_usage + 1e-8)
+            imbalance = YvNumericalGuard.safe_div(torch.var(usage), torch.as_tensor(ideal_usage, dtype=usage.dtype, device=usage.device))
             
             if imbalance > 0.2:
                 decayed_temp = min(decayed_temp * 1.1, 5.0)
@@ -540,7 +541,7 @@ class YvOnlineClusterRouter(nn.Module):
             flat_indices = top_k_indices.flatten()
             actual_counts = torch.bincount(flat_indices, minlength=self.num_experts).float()
             
-            actual_freq = actual_counts / (top_k_indices.numel() + 1e-8)
+            actual_freq = YvNumericalGuard.safe_div(actual_counts, torch.tensor(top_k_indices.numel(), dtype=actual_counts.dtype, device=actual_counts.device))
             
             actual_loss = self.load_balance_alpha * torch.sum((actual_freq - ideal_freq) ** 2)
             
@@ -689,9 +690,9 @@ class YvOnlineClusterRouter(nn.Module):
             >>> stats = router.get_cluster_stats()
             >>> print(f"Cluster balance: {stats['cluster_balance']:.4f}")
         """
-        cluster_balance = torch.var(self.cluster_sizes) / (self.cluster_sizes.mean() + 1e-8)
+        cluster_balance = YvNumericalGuard.safe_div(torch.var(self.cluster_sizes), self.cluster_sizes.mean())
         
-        expert_usage = self.expert_usage_count / (self.total_routing_count + 1e-8)
+        expert_usage = YvNumericalGuard.safe_div(self.expert_usage_count, self.total_routing_count)
         
         return {
             'cluster_sizes': self.cluster_sizes.cpu().tolist(),

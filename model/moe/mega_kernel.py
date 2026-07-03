@@ -28,6 +28,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, List
 
+from model.utils import YvShapeGuard
+
 
 def _wave_schedule(expert_counts: torch.Tensor, max_wave_size: int) -> List[List[int]]:
     """Schedule experts into waves to maximize GPU utilization.
@@ -98,7 +100,7 @@ def _mega_moe_forward(
     # Count tokens per expert
     expert_counts = torch.zeros(num_experts, device=device, dtype=torch.long)
     for k in range(top_k):
-        expert_indices = gate_indices[:, k]
+        expert_indices = gate_indices[:, k].clamp(0, num_experts - 1)
         expert_counts.scatter_add_(0, expert_indices, torch.ones(num_tokens, device=device, dtype=torch.long))
 
     max_wave_size = max(1024, num_tokens // max(1, num_experts))
@@ -217,7 +219,7 @@ class YvMegaMoE(nn.Module):
         expert_counts = torch.zeros(self.num_experts, device=x.device, dtype=torch.long)
         for k in range(self.top_k):
             expert_counts.scatter_add_(
-                0, gate_indices[:, k], torch.ones(num_tokens, device=x.device, dtype=torch.long)
+                0, gate_indices[:, k].clamp(0, self.num_experts - 1), torch.ones(num_tokens, device=x.device, dtype=torch.long)
             )
 
         max_wave_size = max(256, num_tokens // max(1, self.num_experts))
@@ -260,11 +262,13 @@ class YvMegaMoE(nn.Module):
 
             # Compute gate
             gate_w = self.gate_proj[expert_id_for_token]  # (batch, intermediate_size, H)
+            YvShapeGuard.check_matmul(gate_w, batch_tokens.unsqueeze(-1), "mega gate bmm")
             gate_out = torch.bmm(gate_w, batch_tokens.unsqueeze(-1)).squeeze(-1)
             gate_act = F.silu(gate_out)
 
             # Compute up
             up_w = self.up_proj[expert_id_for_token]
+            YvShapeGuard.check_matmul(up_w, batch_tokens.unsqueeze(-1), "mega up bmm")
             up_out = torch.bmm(up_w, batch_tokens.unsqueeze(-1)).squeeze(-1)
 
             # Element-wise multiply
@@ -272,6 +276,7 @@ class YvMegaMoE(nn.Module):
 
             # Compute down
             down_w = self.down_proj[expert_id_for_token]
+            YvShapeGuard.check_matmul(down_w, hidden.unsqueeze(-1), "mega down bmm")
             expert_out = torch.bmm(down_w, hidden.unsqueeze(-1)).squeeze(-1)
 
             # Weight and scatter

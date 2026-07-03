@@ -197,6 +197,8 @@ class YvMCPXMLParser:
                         parameters = json.loads(param_text)
                     except json.JSONDecodeError:
                         parameters = {"raw": param_text}
+                    except RecursionError:
+                        raise ValueError("JSON content too deeply nested for parsing")
                     
                     call.tools.append(YvAgenticToolCall(
                         tool_name=tool_name,
@@ -234,6 +236,8 @@ class YvMCPXMLParser:
                     call.parameters = parameters
                 except json.JSONDecodeError:
                     raise ValueError("Agentic XML content is not valid JSON parameters.")
+                except RecursionError:
+                    raise ValueError("JSON content too deeply nested for parsing")
             
             agentic_calls.append(call)
         
@@ -250,6 +254,8 @@ class YvMCPXMLParser:
                         parameters[f"ap{param_index}"] = json.loads(param_value)
                     except json.JSONDecodeError:
                         parameters[f"ap{param_index}"] = param_value
+                    except RecursionError:
+                        raise ValueError("JSON content too deeply nested for parsing")
                 
                 legacy_call = YvParsedAgenticCall(
                     raw_match=match.group(0),
@@ -287,6 +293,8 @@ class YvMCPXMLParser:
                     parameters[f"ap{param_index}"] = json.loads(param_value)
                 except json.JSONDecodeError:
                     parameters[f"ap{param_index}"] = param_value
+                except RecursionError:
+                    raise ValueError("JSON content too deeply nested for parsing")
             
             calls.append({
                 "tool_name": tool_name,
@@ -350,6 +358,8 @@ class YvMCPXMLParser:
             return json.loads(param_text)
         except json.JSONDecodeError:
             return {"raw": param_text}
+        except RecursionError:
+            raise ValueError("JSON content too deeply nested for parsing")
 
 
 class YvMCPXMLGenerator:

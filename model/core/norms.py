@@ -194,6 +194,7 @@ def _norm_forward(
     cond: Optional[torch.Tensor] = None,
     scale_proj: Optional[nn.Module] = None,
     shift_proj: Optional[nn.Module] = None,
+    use_fused: bool = True,
 ) -> torch.Tensor:
     """Unified normalization core used by all Yv norm classes.
     
@@ -207,11 +208,21 @@ def _norm_forward(
         cond: Conditioning tensor for adaptive norm.
         scale_proj: Scale projection module for adaptive norm.
         shift_proj: Shift projection module for adaptive norm.
+        use_fused: Use Triton-fused RMSNorm kernel when available (mode='rms' only).
     
     Returns:
         Normalized tensor.
     """
     if mode == 'rms':
+        if use_fused and x.is_cuda and hasattr(weight, 'is_cuda') and weight.is_cuda:
+            try:
+                from opss.kernels.fused_rms_norm import fused_rms_norm
+                out = fused_rms_norm(x, weight, eps)
+                if bias is not None:
+                    out = out + bias
+                return out
+            except (ImportError, RuntimeError):
+                pass
         rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
         out = weight * x * rms
         if bias is not None:
@@ -925,7 +936,8 @@ class YvParallelResidualNorm(nn.Module):
         Returns:
             Combined output tensor.
         """
-        assert len(branch_outputs) == self.num_branches
+        if len(branch_outputs) != self.num_branches:
+            raise RuntimeError(f"Expected {self.num_branches} branches, got {len(branch_outputs)}")
         
         normalized = [
             norm(residual + output)

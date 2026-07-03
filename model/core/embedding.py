@@ -486,7 +486,8 @@ class YvLearnedPositionEmbedding(nn.Module):
             is used to map positions to the available embedding range.
         """
         if position_ids is None:
-            assert seq_len is not None, "seq_len required when position_ids is None"
+            if seq_len is None:
+                raise RuntimeError("seq_len required when position_ids is None")
             position_ids = torch.arange(seq_len, device=self.embedding.weight.device)
             position_ids = position_ids.unsqueeze(0)
             
