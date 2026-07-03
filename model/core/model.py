@@ -856,7 +856,7 @@ class YvModel(nn.Module):
         self._lazy_initialized['doc'] = self.doc is not None
 
         _needs_multimodal = _needs_vision or _needs_video or _needs_audio or _needs_doc
-        if getattr(cfg, 'use_agentic', True) and _needs_multimodal:
+        if getattr(cfg, 'use_agentic', False) and _needs_multimodal:
             self.agent_encoder = YvAgenticEncoder(cfg, device=device, dtype=dtype)
         else:
             self.agent_encoder = None

@@ -34,8 +34,8 @@ from .knowledge_experts import YvKnowledgeExpertPool
 class YvDualInjector(nn.Module):
     def __init__(self, cfg, device=None, dtype=None):
         super().__init__()
-        self.use_subconscious = getattr(cfg, 'use_subconscious', True)
-        self.use_knowledge_experts = getattr(cfg, 'use_knowledge_experts', True)
+        self.use_subconscious = getattr(cfg, 'use_subconscious', False)
+        self.use_knowledge_experts = getattr(cfg, 'use_knowledge_experts', False)
         self.subconscious = YvSubconsciousSystem(cfg, device, dtype) if self.use_subconscious else None
         if self.use_knowledge_experts and self.use_subconscious:
             self.knowledge_pool = YvKnowledgeExpertPool(cfg, device, dtype)

@@ -1912,7 +1912,8 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         _LOG.info("Starting subconscious knowledge field warm-start")
         try:
             from opss.subconscious_trainer import YvSubconsciousTrainer
-            trainer = YvSubconsciousTrainer(subconscious, cfg=model_cfg)
+            from opss.subconscious_trainer import SubconsciousTrainingConfig
+            trainer = YvSubconsciousTrainer(subconscious, config=SubconsciousTrainingConfig())
             sample_batch = next(iter(train_loader))
             hidden = getattr(self.trainer, "get_hidden_states", None)
             if hidden is not None:

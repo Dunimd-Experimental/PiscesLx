@@ -645,7 +645,7 @@ class YvConfig:
     # Enable dual-path knowledge injection from both memory separation and
     # subconscious systems into the compute stream. Requires at least one of
     # use_memory_separation or use_subconscious to be active.
-    use_dual_inject: bool = True
+    use_dual_inject: bool = False
 
     galore_enabled: bool = False
     galore_rank: int = 128
@@ -1078,8 +1078,8 @@ class YvConfig:
     #
     # Knowledge experts: up to 628 × 0.5B real SwiGLU FFN weights on disk.
     # ========================================
-    use_subconscious: bool = True
-    use_knowledge_experts: bool = True
+    use_subconscious: bool = False
+    use_knowledge_experts: bool = False
     subconscious_knowledge_dim: int = 1024
     subconscious_state_dim: int = 1024
     subconscious_expert_top_k: int = 4
@@ -1088,7 +1088,7 @@ class YvConfig:
     knowledge_num_experts: int = 0
     knowledge_expert_input_dim: int = 6455
     knowledge_expert_hidden_dim: int = 25820
-    knowledge_expert_path: str = "./knowledge_experts/"
+    knowledge_expert_path: str = "./knowledge_experts"
     knowledge_expert_cache_size: int = 8
 
     # ========================================

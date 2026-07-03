@@ -23,10 +23,16 @@
 
 from __future__ import annotations
 
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
+
+from utils.dc import PiscesLxLogger
+from utils.paths import get_log_file
+
+_LOG = PiscesLxLogger("Yv.Core", file_path=get_log_file("Yv.Core"), enable_file=True)
 
 
 class YvKnowledgeExpert(nn.Module):
@@ -68,7 +74,10 @@ class YvKnowledgeExpertPool(nn.Module):
 
     def _load_from_disk(self, idx: int) -> YvKnowledgeExpert:
         expert = YvKnowledgeExpert(self.expert_input_dim, self.expert_hidden_dim)
-        state_path = f"{self.expert_path}/expert_{idx}.pt"
+        state_path = os.path.join(self.expert_path, f"expert_{idx}.pt")
+        if not os.path.isfile(state_path):
+            _LOG.warning(f"Expert file not found: {state_path}, using uninitialized expert_{idx}")
+            return expert
         state = torch.load(state_path, map_location='cpu', weights_only=True)
         expert.load_state_dict(state)
         return expert

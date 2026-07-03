@@ -433,7 +433,7 @@ class YvDynamicModalFusion(nn.Module):
         self.weight_cache: Dict[str, torch.Tensor] = {}
         self.cache_size_limit = 1000
         self.cache_manager = cache_manager
-        self.memory_manager = YvMemory()
+        self.memory_manager = YvMemory() if getattr(cfg, 'use_agentic', False) else None
         self.hw = YvHardwareAdaptiveConfig()
         self.grad_conf = self.hw.get_gradient_config()
 
@@ -835,7 +835,8 @@ class YvDynamicModalFusion(nn.Module):
                 self.weight_cache.pop(k, None)
         self.weight_cache[sig] = out.detach()
         self._generation_cache = {m: v.detach() for m, v in gen_outputs.items()}
-        self.memory_manager.register_tensor(out, "fusion_out")
+        if self.memory_manager is not None:
+            self.memory_manager.register_tensor(out, "fusion_out")
         return out
 
 
