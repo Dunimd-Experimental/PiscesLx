@@ -117,6 +117,12 @@ class YvImplicitKnowledgeField(nn.Module):
         codebook_dim: int = 128,
         knowledge_dim: int = 256,
         num_heads: int = 8,
+        top_k_entries: int = 64,
+        min_top_k_entries: int = 16,
+        max_top_k_entries: int = 64,
+        dynamic_topk_scale: float = 2048.0,
+        score_chunk_size: int = 2048,
+        query_chunk_size: int = 256,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
@@ -126,6 +132,12 @@ class YvImplicitKnowledgeField(nn.Module):
         self.codebook_dim = codebook_dim
         self.knowledge_dim = knowledge_dim
         self.num_heads = num_heads
+        self.top_k_entries = max(1, min(top_k_entries, codebook_size))
+        self.min_top_k_entries = max(1, min(min_top_k_entries, codebook_size))
+        self.max_top_k_entries = max(self.min_top_k_entries, min(max_top_k_entries, codebook_size))
+        self.dynamic_topk_scale = max(1.0, float(dynamic_topk_scale))
+        self.score_chunk_size = max(1, score_chunk_size)
+        self.query_chunk_size = max(1, query_chunk_size)
 
         # Multi-head codebooks: each head has its own set of codebooks
         # This increases representational capacity without increasing K or M
@@ -217,6 +229,80 @@ class YvImplicitKnowledgeField(nn.Module):
         knowledge = self.output_proj(knowledge)
         knowledge = self.norm(knowledge)
 
+        return knowledge
+
+    def _resolve_sparse_budget(self, seq_len: int) -> Tuple[int, int]:
+        """Adapt retrieval budget to sequence length and training mode."""
+        if self.training:
+            target_top_k = int(self.dynamic_topk_scale / max(1, seq_len))
+            target_top_k = max(self.min_top_k_entries, min(self.max_top_k_entries, target_top_k))
+            target_top_k = min(target_top_k, self.top_k_entries, self.codebook_size)
+
+            shrink = max(1, seq_len // max(1, int(self.dynamic_topk_scale)))
+            query_chunk = max(32, self.query_chunk_size // shrink)
+        else:
+            target_top_k = min(self.max_top_k_entries, self.top_k_entries, self.codebook_size)
+            query_chunk = self.query_chunk_size
+
+        return target_top_k, max(1, query_chunk)
+
+    def _sparse_retrieve(self, queries: torch.Tensor, temperature: float) -> torch.Tensor:
+        """Chunked top-k retrieval to avoid materialising full [B, T, H, M, K] logits."""
+        B, T, H, M, D = queries.shape
+        bt = B * T
+        hm = H * M
+        top_k, query_chunk_size = self._resolve_sparse_budget(T)
+
+        flat_queries = queries.reshape(bt, hm, D).transpose(0, 1).contiguous()
+        flat_codebooks = self.codebooks.reshape(hm, self.codebook_size, D)
+        retrieved = queries.new_zeros((hm, bt, D))
+
+        for hm_idx in range(hm):
+            query_hm = flat_queries[hm_idx]
+            codebook_hm = flat_codebooks[hm_idx]
+
+            for q_start in range(0, bt, query_chunk_size):
+                q_end = min(q_start + query_chunk_size, bt)
+                q_chunk = query_hm[q_start:q_end]
+                top_vals = None
+                top_indices = None
+
+                for cb_start in range(0, self.codebook_size, self.score_chunk_size):
+                    cb_end = min(cb_start + self.score_chunk_size, self.codebook_size)
+                    cb_chunk = codebook_hm[cb_start:cb_end]
+                    scores = q_chunk @ cb_chunk.transpose(0, 1)
+                    local_k = min(top_k, cb_end - cb_start)
+                    chunk_vals, chunk_idx = torch.topk(scores, k=local_k, dim=-1)
+                    chunk_idx = chunk_idx + cb_start
+
+                    if top_vals is None:
+                        top_vals = chunk_vals
+                        top_indices = chunk_idx
+                    else:
+                        merged_vals = torch.cat([top_vals, chunk_vals], dim=-1)
+                        merged_idx = torch.cat([top_indices, chunk_idx], dim=-1)
+                        top_vals, merged_pos = torch.topk(merged_vals, k=top_k, dim=-1)
+                        top_indices = merged_idx.gather(-1, merged_pos)
+
+                selected = codebook_hm.index_select(0, top_indices.reshape(-1))
+                selected = selected.view(q_end - q_start, top_k, D)
+                weights = F.softmax(top_vals / temperature, dim=-1)
+                retrieved[hm_idx, q_start:q_end] = (weights.unsqueeze(-1) * selected).sum(dim=1)
+
+        return retrieved.transpose(0, 1).reshape(B, T, H, M, D)
+
+    def forward(
+        self,
+        queries: torch.Tensor,
+    ) -> torch.Tensor:
+        """Retrieve knowledge from the field given query vectors with sparse lookup."""
+        B, T, H, M, D = queries.shape
+        temp = max(0.5, 1.0 - self._get_training_progress() * 0.5) if self.training else 1.0
+        retrieved = self._sparse_retrieve(queries, temp)
+        knowledge_per_head = retrieved.sum(dim=3)
+        knowledge = knowledge_per_head.reshape(B, T, self.knowledge_dim)
+        knowledge = self.output_proj(knowledge)
+        knowledge = self.norm(knowledge)
         return knowledge
 
     def _get_training_progress(self) -> float:
@@ -614,6 +700,12 @@ class YvSubconsciousSystem(nn.Module):
         head_dim: int = 1024,
         head_num_layers: int = 2,
         head_num_attn_heads: int = 4,
+        top_k_entries: int = 64,
+        min_top_k_entries: int = 16,
+        max_top_k_entries: int = 64,
+        dynamic_topk_scale: float = 2048.0,
+        score_chunk_size: int = 2048,
+        query_chunk_size: int = 256,
         device: Optional[torch.device] = None,
         dtype: Optional[torch.dtype] = None,
     ):
@@ -626,6 +718,12 @@ class YvSubconsciousSystem(nn.Module):
             codebook_dim=codebook_dim,
             knowledge_dim=knowledge_dim,
             num_heads=num_field_heads,
+            top_k_entries=top_k_entries,
+            min_top_k_entries=min_top_k_entries,
+            max_top_k_entries=max_top_k_entries,
+            dynamic_topk_scale=dynamic_topk_scale,
+            score_chunk_size=score_chunk_size,
+            query_chunk_size=query_chunk_size,
             device=device,
             dtype=dtype,
         )
@@ -665,6 +763,7 @@ class YvSubconsciousSystem(nn.Module):
         # Cache for current forward pass (volatile, cleared after each forward)
         self._current_knowledge: Optional[torch.Tensor] = None
         self._current_gate: Optional[torch.Tensor] = None
+        self._film_param_cache: Dict[int, Dict[str, torch.Tensor]] = {}
 
         total_params = sum(p.numel() for p in self.parameters())
         _LOG.info(
@@ -705,6 +804,7 @@ class YvSubconsciousSystem(nn.Module):
         # (knowledge shift is applied per-layer in modulate_layer / get_film_params)
         self._current_knowledge = knowledge
         self._current_gate = gate
+        self._film_param_cache.clear()
 
         return knowledge, gate
 
@@ -792,6 +892,7 @@ class YvSubconsciousSystem(nn.Module):
         """Clear volatile subconscious cache after forward pass."""
         self._current_knowledge = None
         self._current_gate = None
+        self._film_param_cache.clear()
 
     def get_film_params(
         self,
@@ -812,8 +913,18 @@ class YvSubconsciousSystem(nn.Module):
             Dict with keys ``scale`` and ``shift``, each of shape
             [batch, seq, hidden_size].
         """
-        queries, gate = self.dynamic_head(hidden_states)
-        knowledge = self.knowledge_field(queries)
+        cached = self._film_param_cache.get(layer_idx)
+        if cached is not None:
+            return cached
+
+        gate = self._current_gate
+        knowledge = self._current_knowledge
+        if knowledge is None or gate is None:
+            queries, gate = self.dynamic_head(hidden_states)
+            knowledge = self.knowledge_field(queries)
+            self._current_knowledge = knowledge
+            self._current_gate = gate
+            self._film_param_cache.clear()
         knowledge = knowledge + self.knowledge_shift * (1 + layer_idx * 0.01)
 
         attn_params = self.modulators[layer_idx].attn_mod(knowledge)
@@ -823,7 +934,9 @@ class YvSubconsciousSystem(nn.Module):
         scale, shift = params.chunk(2, dim=-1)
         scale = scale * gate
         shift = shift * gate
-        return {"scale": scale, "shift": shift}
+        out = {"scale": scale, "shift": shift}
+        self._film_param_cache[layer_idx] = out
+        return out
 
     def get_knowledge(self) -> Optional[torch.Tensor]:
         """Get current cached knowledge for debugging/inspection."""

@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 """
 PiscesLx Training Engine
 
@@ -116,6 +118,13 @@ Performance Considerations:
     - Adjust gradient_accumulation_steps for memory constraints
     - Use pin_memory=True in DataLoader for GPU training
 """
+
+warnings.filterwarnings(
+    "ignore",
+    message=r".*urllib3 .* doesn't match a supported version.*",
+    category=Warning,
+    module=r"requests\.__init__",
+)
 
 import torch
 import torch.nn as nn
@@ -672,9 +681,17 @@ class PiscesLxTrainingOperator(object):
                     self._apply_lora()
                     missing, unexpected = self.model.load_state_dict(cached_state, strict=False)
                     if missing:
-                        _LOG.debug(f"Cache state_dict missing keys: {missing}")
+                        sample = ", ".join(missing[:8])
+                        suffix = " ..." if len(missing) > 8 else ""
+                        _LOG.debug(
+                            f"Cache state_dict missing keys: count={len(missing)} sample=[{sample}]{suffix}"
+                        )
                     if unexpected:
-                        _LOG.debug(f"Cache state_dict unexpected keys: {unexpected}")
+                        sample = ", ".join(unexpected[:8])
+                        suffix = " ..." if len(unexpected) > 8 else ""
+                        _LOG.debug(
+                            f"Cache state_dict unexpected keys: count={len(unexpected)} sample=[{sample}]{suffix}"
+                        )
                     del cached_state; gc.collect()
                     train_device = self._resolve_training_device()
                     if train_device.type != self.device.type:
@@ -1577,15 +1594,6 @@ class PiscesLxTrainingOperator(object):
 
     def _prepare_model_batch(self, batch: Dict[str, Any]) -> Dict[str, Any]:
         """Attach training-time forward hints without mutating the caller batch."""
-        if (
-            batch.get("return_task_logits") is False
-            and batch.get("return_eval_score") is False
-            and batch.get("return_tool_outputs") is False
-            and batch.get("return_reasoner_outputs") is False
-            and batch.get("return_verifier_outputs") is False
-            and batch.get("return_mtp_logits") is False
-        ):
-                return batch
         model_batch = dict(batch)
         model_batch.setdefault("return_task_logits", False)
         model_batch.setdefault("return_eval_score", False)
@@ -1593,6 +1601,34 @@ class PiscesLxTrainingOperator(object):
         model_batch.setdefault("return_reasoner_outputs", False)
         model_batch.setdefault("return_verifier_outputs", False)
         model_batch.setdefault("return_mtp_logits", False)
+
+        model_vocab_size = 0
+        try:
+            if self.model is not None:
+                base_model = self.model
+                for attr in ("base_model", "model"):
+                    if hasattr(base_model, attr):
+                        base_model = getattr(base_model, attr)
+                embed = getattr(base_model, "embed", None)
+                weight = getattr(embed, "weight", None)
+                if weight is not None:
+                    model_vocab_size = int(weight.shape[0])
+        except Exception:
+            model_vocab_size = 0
+
+        if model_vocab_size > 0:
+            input_ids = model_batch.get("input_ids")
+            if isinstance(input_ids, torch.Tensor):
+                model_batch["input_ids"] = input_ids.clamp(0, model_vocab_size - 1)
+
+            labels = model_batch.get("labels")
+            if isinstance(labels, torch.Tensor):
+                invalid_labels = (labels >= model_vocab_size) | (labels < -100)
+                if bool(invalid_labels.any().item()):
+                    sanitized_labels = labels.clone()
+                    sanitized_labels[invalid_labels] = -100
+                    model_batch["labels"] = sanitized_labels
+
         return model_batch
 
     def _call_training_model(self, model, **kwargs):

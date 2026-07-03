@@ -77,6 +77,8 @@ class YvDualInjector(nn.Module):
     ):
         super().__init__()
         self.cfg = cfg
+        self.memory_read_interval = max(1, int(getattr(cfg, "memory_read_interval", 1)))
+        self.subconscious_read_interval = max(1, int(getattr(cfg, "subconscious_read_interval", 1)))
 
         _sc_kw = lambda key, default: getattr(cfg, f"subconscious_{key}", default)
 
@@ -91,6 +93,12 @@ class YvDualInjector(nn.Module):
             head_dim=_sc_kw("head_dim", 1024),
             head_num_layers=_sc_kw("head_num_layers", 2),
             head_num_attn_heads=_sc_kw("head_num_attn_heads", 4),
+            top_k_entries=_sc_kw("top_k_entries", 64),
+            min_top_k_entries=_sc_kw("min_top_k_entries", 16),
+            max_top_k_entries=_sc_kw("max_top_k_entries", 64),
+            dynamic_topk_scale=_sc_kw("dynamic_topk_scale", 2048.0),
+            score_chunk_size=_sc_kw("score_chunk_size", 2048),
+            query_chunk_size=_sc_kw("query_chunk_size", 256),
             device=device,
             dtype=dtype,
         )
@@ -109,6 +117,9 @@ class YvDualInjector(nn.Module):
             nn.Linear(hidden_size // 4, 1, device=device, dtype=dtype),
             nn.Sigmoid(),
         )
+        self._cached_extra_kv: Optional[Tuple[torch.Tensor, torch.Tensor]] = None
+        self._cached_kv_anchor_layer: int = -1
+        self._cached_subconscious_anchor_layer: int = -1
 
     def inject(
         self,
@@ -129,12 +140,34 @@ class YvDualInjector(nn.Module):
             ``(h_out, extra_kv)`` where ``extra_kv`` is a pair of tensors
             of shape ``[batch, n_kv_head, seq, head_dim]``.
         """
-        extra_kv = self.memory_sep(hidden_states, layer_idx)
+        if (
+            self._cached_extra_kv is None
+            or self._cached_kv_anchor_layer < 0
+            or (layer_idx - self._cached_kv_anchor_layer) >= self.memory_read_interval
+        ):
+            self._cached_extra_kv = self.memory_sep(hidden_states, layer_idx)
+            self._cached_kv_anchor_layer = layer_idx
+        extra_kv = self._cached_extra_kv
+
+        if (
+            self.subconscious._current_knowledge is None
+            or self.subconscious._current_gate is None
+            or self._cached_subconscious_anchor_layer < 0
+            or (layer_idx - self._cached_subconscious_anchor_layer) >= self.subconscious_read_interval
+        ):
+            self.subconscious(hidden_states)
+            self._cached_subconscious_anchor_layer = layer_idx
         film_params = self.subconscious.get_film_params(hidden_states, layer_idx)
         h_film = hidden_states * (1.0 + film_params["scale"]) + film_params["shift"]
         alpha = self.film_gate(hidden_states)
         h_dual = alpha * h_film + (1.0 - alpha) * hidden_states
         return h_dual, extra_kv
+
+    def clear_cache(self):
+        self._cached_extra_kv = None
+        self._cached_kv_anchor_layer = -1
+        self._cached_subconscious_anchor_layer = -1
+        self.subconscious.clear_cache()
 
     def extra_repr(self) -> str:
         total = sum(p.numel() for p in self.parameters())

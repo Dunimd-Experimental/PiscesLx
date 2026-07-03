@@ -223,22 +223,25 @@ class YvMemoryCrossAttention(nn.Module):
             q = F.normalize(q, p=2, dim=-1)
             k = F.normalize(k, p=2, dim=-1)
 
-        # Compute attention scores: einsum over head_dim
-        # q: [B, n_heads, T, head_dim], k: [B, n_heads, T, top_k, head_dim]
-        # scores: [B, n_heads, T, top_k]
-        scores = torch.einsum('bhtd,bhtkd->bhtk', q, k) * self.scale
+        # Flatten token axis into batch so we can use fused SDPA over slots.
+        q = q.permute(0, 2, 1, 3).reshape(batch_size * seq_len, self.n_heads, 1, self.head_dim)
+        k = k.permute(0, 2, 1, 3, 4).reshape(batch_size * seq_len, self.n_heads, top_k, self.head_dim)
+        v = v.permute(0, 2, 1, 3, 4).reshape(batch_size * seq_len, self.n_heads, top_k, self.head_dim)
 
+        attn_mask = None
         if attention_mask is not None:
-            scores = scores + attention_mask
+            attn_mask = attention_mask.reshape(batch_size * seq_len, 1, 1, top_k)
 
-        # Softmax over knowledge slots dimension
-        attn_weights = F.softmax(scores, dim=-1)  # [B, n_heads, T, top_k]
-        attn_weights = self.attn_dropout(attn_weights)
-
-        # Weighted sum of value vectors
-        # attn_weights: [B, n_heads, T, top_k], v: [B, n_heads, T, top_k, head_dim]
-        # output: [B, n_heads, T, head_dim]
-        attn_output = torch.einsum('bhtk,bhtkd->bhtd', attn_weights, v)
+        attn_output = F.scaled_dot_product_attention(
+            q,
+            k,
+            v,
+            attn_mask=attn_mask,
+            dropout_p=self.attn_dropout.p if self.training and hasattr(self.attn_dropout, "p") else 0.0,
+            is_causal=False,
+            scale=self.scale,
+        )
+        attn_output = attn_output.reshape(batch_size, seq_len, self.n_heads, self.head_dim).permute(0, 2, 1, 3)
 
         # Merge heads: [B, n_heads, T, head_dim] -> [B, T, n_heads * head_dim]
         attn_output = attn_output.transpose(1, 2).contiguous()
@@ -308,16 +311,43 @@ class YvMemorySeparationLayer(nn.Module):
         self.n_kv_head = n_kv_head
         self.head_dim = head_dim
         self.hidden_size = hidden_size
+        self.router_dim = max(1, int(getattr(cfg, "memory_kv_router_dim", getattr(cfg, "memory_router_dim", hidden_size))))
+        self.kv_budget_ratio = float(getattr(cfg, "memory_kv_budget_ratio", 0.25))
+        self.kv_min_tokens = max(1, int(getattr(cfg, "memory_kv_min_tokens", 64)))
+        self.kv_max_tokens = max(self.kv_min_tokens, int(getattr(cfg, "memory_kv_max_tokens", 512)))
 
-        # Per-layer K/V projections keep each layer's extra KV stream independent.
-        self.k_proj = nn.ModuleList([
-            nn.Linear(hidden_size, inner_dim, bias=False, device=device, dtype=dtype)
+        self.pre_norm = YvRMSNorm(hidden_size, device=device, dtype=dtype)
+        self.router_proj = nn.Linear(
+            hidden_size,
+            self.router_dim,
+            bias=False,
+            device=device,
+            dtype=dtype,
+        )
+        self.router_act = nn.SiLU()
+
+        # Shared compression + per-layer fused KV expansion keeps the lookup
+        # path active while substantially reducing params and activation traffic.
+        self.kv_proj = nn.ModuleList([
+            nn.Linear(self.router_dim, inner_dim * 2, bias=False, device=device, dtype=dtype)
             for _ in range(num_layers)
         ])
-        self.v_proj = nn.ModuleList([
-            nn.Linear(hidden_size, inner_dim, bias=False, device=device, dtype=dtype)
-            for _ in range(num_layers)
-        ])
+
+    def _compress_sequence_budget(self, x: torch.Tensor) -> torch.Tensor:
+        """Compress sequence dimension to a bounded auxiliary-KV budget."""
+        batch_size, seq_len, dim = x.shape
+        target_tokens = min(
+            self.kv_max_tokens,
+            max(self.kv_min_tokens, int(seq_len * self.kv_budget_ratio)),
+        )
+        if seq_len <= target_tokens:
+            return x
+
+        # Adaptive average pooling keeps gradients dense while capping the
+        # extra-KV prefix length that would otherwise double the attention KV.
+        x = x.transpose(1, 2)
+        x = F.adaptive_avg_pool1d(x, target_tokens)
+        return x.transpose(1, 2).contiguous()
 
     def forward(
         self,
@@ -334,9 +364,12 @@ class YvMemorySeparationLayer(nn.Module):
             Tuple (extra_k, extra_v) each of shape
             [batch, n_kv_head, seq, head_dim].
         """
-        batch_size, seq_len, _ = hidden_states.shape
-        k = self.k_proj[layer_idx](hidden_states)
-        v = self.v_proj[layer_idx](hidden_states)
+        batch_size, _, _ = hidden_states.shape
+        routed = self.router_act(self.router_proj(self.pre_norm(hidden_states)))
+        routed = self._compress_sequence_budget(routed)
+        seq_len = routed.shape[1]
+        kv = self.kv_proj[layer_idx](routed)
+        k, v = kv.chunk(2, dim=-1)
         k = k.view(batch_size, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
         v = v.view(batch_size, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
         return k, v

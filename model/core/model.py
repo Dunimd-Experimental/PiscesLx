@@ -802,9 +802,6 @@ class YvModel(nn.Module):
         _LOG.debug("YvModel: initializing dual injector...")
         self.dual_injector = YvDualInjector(cfg, device=device, dtype=dtype)
         self.subconscious = self.dual_injector.subconscious
-        self.subconscious_read_interval = getattr(cfg, 'subconscious_read_interval', 1)
-        self.subconscious_prefetch_depth = getattr(cfg, 'subconscious_prefetch_depth', 2)
-        self._memory_augment_interval = getattr(cfg, 'memory_read_interval', 4)
         self._comet_write_interval = max(1, int(getattr(cfg, 'comet_write_interval', 1)))
         self._comet_write_step = 0
 
@@ -2114,7 +2111,7 @@ class YvModel(nn.Module):
                 def _oomb_chunk(chunk, chunk_mask):
                     h_chunk = chunk
                     for layer_idx, layer in enumerate(self.layers):
-                        past_kv = self.cache_manager.get_kv_cache(layer_idx, None)
+                        past_kv = None
                         h_chunk, extra_kv = self.dual_injector.inject(h_chunk, layer_idx)
                         film_params = None
 
@@ -2146,7 +2143,7 @@ class YvModel(nn.Module):
             else:
                 h = x
                 for layer_idx, layer in enumerate(self.layers):
-                    past_kv = self.cache_manager.get_kv_cache(layer_idx, None)
+                    past_kv = None
                     h, extra_kv = self.dual_injector.inject(h, layer_idx)
                     film_params = None
 
@@ -2256,8 +2253,8 @@ class YvModel(nn.Module):
                 outputs.append(h_chunk)
                 total_aux_loss = total_aux_loss + aux_chunk
 
-        # Clear subconscious cache after layer processing
-        self.subconscious.clear_cache()
+        # Clear dual-injector caches after layer processing
+        self.dual_injector.clear_cache()
 
         # Concatenate all chunks at once after the loop (more efficient than per-chunk)
         if outputs:

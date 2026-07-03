@@ -1089,6 +1089,11 @@ class YvConfig:
     memory_knowledge_dim: int = 256
     memory_cross_attn_heads: int = 4
     memory_gate_init: float = 0.0
+    memory_kv_router_dim: int = 256
+    memory_kv_budget_ratio: float = 0.25
+    memory_kv_min_tokens: int = 64
+    memory_kv_max_tokens: int = 512
+    aux_kv_gate_init: float = 0.0
     memory_store_path: str = ""
     knowledge_encoder_hidden: int = 640
     knowledge_encoder_layers: int = 16
@@ -1135,6 +1140,12 @@ class YvConfig:
     subconscious_head_dim: int = 1024
     subconscious_head_num_layers: int = 2
     subconscious_head_num_attn_heads: int = 4
+    subconscious_top_k_entries: int = 64
+    subconscious_min_top_k_entries: int = 16
+    subconscious_max_top_k_entries: int = 64
+    subconscious_dynamic_topk_scale: float = 2048.0
+    subconscious_score_chunk_size: int = 2048
+    subconscious_query_chunk_size: int = 256
     subconscious_read_interval: int = 1
     subconscious_prefetch_depth: int = 2
 

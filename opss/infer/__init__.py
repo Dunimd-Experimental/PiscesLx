@@ -83,13 +83,19 @@ from .speculative import (
     POPSSAssistedDecodingOperator,
 )
 
-from .vllm import (
-    POPSSVLLMInferenceOperator,
-    POPSSVLLMConfig,
-    POPSSMultiLoRAOperator,
-    POPSSPrefixCachingOperator,
-    POPSSChunkedPrefillOperator,
-)
+try:
+    from .vllm import (
+        POPSSVLLMInferenceOperator,
+        POPSSVLLMConfig,
+        POPSSMultiLoRAOperator,
+        POPSSPrefixCachingOperator,
+        POPSSChunkedPrefillOperator,
+    )
+    _HAS_VLLM = True
+except ModuleNotFoundError as exc:
+    if exc.name != "vllm":
+        raise
+    _HAS_VLLM = False
 
 from .sampling import (
     POPSSSamplingOperator,
@@ -147,11 +153,6 @@ __all__ = [
     "POPSSSpeculativeDecodingOperator",
     "POPSSSpeculativeConfig",
     "POPSSAssistedDecodingOperator",
-    "POPSSVLLMInferenceOperator",
-    "POPSSVLLMConfig",
-    "POPSSMultiLoRAOperator",
-    "POPSSPrefixCachingOperator",
-    "POPSSChunkedPrefillOperator",
     "POPSSSamplingOperator",
     "POPSSSamplingConfig",
     "POPSSBeamSearchOperator",
@@ -178,3 +179,12 @@ __all__ = [
     "POPSSTPOFeedbackType",
     "POPSSTPOPreferenceLibrary",
 ]
+
+if _HAS_VLLM:
+    __all__.extend([
+        "POPSSVLLMInferenceOperator",
+        "POPSSVLLMConfig",
+        "POPSSMultiLoRAOperator",
+        "POPSSPrefixCachingOperator",
+        "POPSSChunkedPrefillOperator",
+    ])

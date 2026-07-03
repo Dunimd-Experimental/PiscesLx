@@ -5383,6 +5383,9 @@ class YvAttention(nn.Module):
         self.sparse_gate_dsa = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
         self.sparse_gate_la = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
         self.sparse_gate_duo_streaming = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
+        self.aux_kv_gate = nn.Parameter(
+            torch.tensor(float(getattr(cfg, 'aux_kv_gate_init', 0.0)), device=device, dtype=dtype)
+        )
         self.gate_sparsity_threshold = 0.01
         self.sparsity_reg_weight = 1e-6
         self._sparsity_loss = torch.tensor(0.0, device=device, dtype=dtype)
@@ -5489,6 +5492,47 @@ class YvAttention(nn.Module):
 
         return k, v
 
+    def _apply_aux_kv_attention(
+        self,
+        q: torch.Tensor,
+        extra_kv: Optional[Tuple[torch.Tensor, torch.Tensor]],
+        b: int,
+        t: int,
+    ) -> Optional[torch.Tensor]:
+        """Apply auxiliary KV as a separate gated residual attention branch."""
+        if extra_kv is None:
+            return None
+
+        aux_gate = torch.sigmoid(self.aux_kv_gate)
+        if not self.training and aux_gate.item() < self.gate_sparsity_threshold:
+            return None
+
+        ek, ev = extra_kv
+        aux_len = ek.shape[2]
+        if aux_len == 0:
+            return None
+
+        repeat = self.n_head // self.n_kv_head
+        if repeat > 1:
+            ek = ek.repeat_interleave(repeat, dim=1)
+            ev = ev.repeat_interleave(repeat, dim=1)
+
+        q_aux = q.reshape(b * self.n_head, t, self.head_dim)
+        k_aux = F.normalize(ek, p=2, dim=-1).reshape(b * self.n_head, aux_len, self.head_dim)
+        v_aux = ev.reshape(b * self.n_head, aux_len, self.head_dim)
+
+        aux_out = F.scaled_dot_product_attention(
+            q_aux,
+            k_aux,
+            v_aux,
+            attn_mask=None,
+            dropout_p=self.attn_dropout.p if self.training else 0.0,
+            is_causal=False,
+            scale=self.scale,
+        ).view(b, self.n_head, t, self.head_dim)
+
+        return aux_gate * aux_out.transpose(1, 2).reshape(b, t, self.n_head * self.head_dim)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -5552,14 +5596,7 @@ class YvAttention(nn.Module):
                 k, v = self.lca_attention.condense_kv(k, v, hidden_states=x)
                 kv_len = k.shape[2]
 
-        # --- 5. Extra KV injection (knowledge, memory, etc.) ---
-        if extra_kv is not None:
-            ek, ev = extra_kv
-            k = torch.cat([ek, k], dim=-2)
-            v = torch.cat([ev, v], dim=-2)
-            kv_len = k.shape[-2]
-
-        # --- 6. Q projection ---
+        # --- 5. Q projection ---
         if not (self.use_fused_mla and hasattr(self, 'fused_mla')):
             if hasattr(self, 'q_compress'):
                 q = self.q_decompress(self.q_compress(x))
@@ -5643,6 +5680,10 @@ class YvAttention(nn.Module):
             out = self.ring_attn.forward_kv(q, k, v, mask, skip_head_repeat=True)
         else:
             out = self._apply_hydra_heads(q, k, v, mask, b, t, kv_len, self.sparse_gate_la)
+
+        aux_out = self._apply_aux_kv_attention(q, extra_kv, b, t)
+        if aux_out is not None:
+            out = out + aux_out
 
         # --- 15. Gated attention scaling ---
         gate_signal = torch.sigmoid(q.norm(dim=-1).mean(dim=0, keepdim=True))
