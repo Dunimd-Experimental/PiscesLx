@@ -1063,91 +1063,33 @@ class YvConfig:
     rdt_layer_indices: List[int] = field(default_factory=list)
     rdt_loops_per_layer: int = 2
 
-    # ========================================
-    # Memory Separation (Engram-style Lookup-Computation Separation)
-    # Reference: Cheng et al., "Engram: Conditional Memory via
-    #   Scalable Lookup", arXiv:2601.07372, 2026.
-    #
-    # Separates static factual knowledge from reasoning/tool-operation
-    # weights. Knowledge is stored in an external mmap-backed FAISS
-    # index and retrieved via deterministic N-gram address lookup with
-    # O(1) complexity. Enables 7B training cost with 1T-level knowledge.
-    #
-    # Memory Router: Projects hidden states to unified 256-dim address
-    #   space, queries FAISS IVF-PQ index for top-K knowledge slots.
-    # Memory CrossAttention: Injects retrieved knowledge embeddings
-    #   into model hidden flow via learnable-gated cross-attention.
-    # Knowledge Builder: Offline 0.5B encoder builds knowledge store
-    #   from raw corpora, independent of main model size.
-    # ========================================
-    use_memory_separation: bool = True
-    memory_read_interval: int = 4
-    memory_top_k: int = 8
-    memory_cache_tokens: int = 4096
-    memory_prefetch_depth: int = 4
-    memory_router_dim: int = 256
-    memory_knowledge_dim: int = 256
-    memory_cross_attn_heads: int = 4
-    memory_gate_init: float = 0.0
-    memory_kv_router_dim: int = 256
-    memory_kv_budget_ratio: float = 0.25
-    memory_kv_min_tokens: int = 64
-    memory_kv_max_tokens: int = 512
-    aux_kv_gate_init: float = 0.0
-    memory_store_path: str = ""
-    knowledge_encoder_hidden: int = 640
-    knowledge_encoder_layers: int = 16
-    knowledge_encoder_experts: int = 4
-    memory_query_mode: str = "auto"
-    memory_interleave_mode: str = "adaptive"
-    memory_capacity_factor: float = 1.0
-    memory_index_type: str = "ivfpq"
+    use_memory_separation: bool = False
     memory_knowledge_slots: int = 0
 
-    # ========================================
-    # Knowledge Store Builder (POPSS)
-    # Offline construction of FAISS-indexed mmap-backed knowledge store.
-    # Configured here so that `memory_store_path` and the builder share
-    # the same default path.  Run `popss_knowledge_build` CLI (or
-    # opss/knowledge/run_build.py) to populate the store from text.
-    # ========================================
     knowledge_store_slots: int = 0
-    knowledge_store_chunk_size: int = 256
-    knowledge_store_chunk_overlap: int = 32
-    knowledge_store_contrastive_epochs: int = 3
-    knowledge_store_batch_size: int = 64
-    knowledge_store_index_type: str = "ivfpq"
-    knowledge_store_index_nlist: int = 4096
-    knowledge_store_index_m: int = 16
-    knowledge_store_index_nbits: int = 8
-    knowledge_store_use_fp8: bool = False
 
     # ========================================
     # Subconscious Configuration
-    # 0.5B Dynamic Head + 314B-equivalent Implicit Knowledge Field
     #
-    # This system provides subconscious knowledge injection that runs
-    # in parallel to the 1M context window. It uses product-quantized
-    # codebooks for massive virtual capacity (K^M combinations) with
-    # only ~0.27B actual params for the field + ~0.23B for the head.
+    # Three-stage pipeline:
+    #   1. Knowledge expert routing: hidden → expert adapter → top-k experts → k_t
+    #   2. Subconscious state evolution: s_t = GRU(s_{t-1}, h_t, k_t)
+    #   3. Per-layer FiLM injection: h = h * (1 + gamma) + beta from s_t
+    #
+    # Knowledge experts: up to 628 × 0.5B real SwiGLU FFN weights on disk.
     # ========================================
     use_subconscious: bool = True
-    subconscious_knowledge_dim: int = 256
-    subconscious_num_codebooks: int = 16
-    subconscious_codebook_size: int = 16384
-    subconscious_codebook_dim: int = 128
-    subconscious_num_field_heads: int = 8
-    subconscious_head_dim: int = 1024
-    subconscious_head_num_layers: int = 2
-    subconscious_head_num_attn_heads: int = 4
-    subconscious_top_k_entries: int = 64
-    subconscious_min_top_k_entries: int = 16
-    subconscious_max_top_k_entries: int = 64
-    subconscious_dynamic_topk_scale: float = 2048.0
-    subconscious_score_chunk_size: int = 2048
-    subconscious_query_chunk_size: int = 256
-    subconscious_read_interval: int = 1
-    subconscious_prefetch_depth: int = 2
+    use_knowledge_experts: bool = True
+    subconscious_knowledge_dim: int = 1024
+    subconscious_state_dim: int = 1024
+    subconscious_expert_top_k: int = 4
+
+    # Knowledge expert pool (frozen 314B for 7B core, 0 = auto-compute via formula)
+    knowledge_num_experts: int = 0
+    knowledge_expert_input_dim: int = 6455
+    knowledge_expert_hidden_dim: int = 25820
+    knowledge_expert_path: str = "./knowledge_experts/"
+    knowledge_expert_cache_size: int = 8
 
     # ========================================
     # EnTA (Encre Train Agent) Configuration
@@ -1220,58 +1162,28 @@ class YvConfig:
             self.thinking_intensity = 0.5 * (0.5 + level)
             self.swarm_intensity = 0.5 * (0.5 + level)
 
-        # Note: All attention variants (MLA, EG-MLA, DuoAttention, MoBA,
-        # H2O, LCA, CSA/HCA, DSA, etc.) are unified in YvAttention.
-        # The use_* flags are informational/sizing only — no mutual exclusion enforced.
-        if self.use_dual_inject and not (self.use_subconscious or self.use_memory_separation):
+        if self.use_dual_inject and not self.use_subconscious:
             raise ValueError(
-                "use_dual_inject requires at least one of use_subconscious or use_memory_separation"
+                "use_dual_inject requires use_subconscious=True"
             )
         if self.compute_params_total < 0:
             raise ValueError("compute_params_total must be non-negative")
         if self.lookup_params_total < 0:
             raise ValueError("lookup_params_total must be non-negative")
-        # Split-architecture invariant: active compute budget and lookup budget
-        # must not both be positive in the same configuration.
         if self.compute_params_total > 0 and self.lookup_params_total > 0:
             raise ValueError(
                 "compute_params_total and lookup_params_total cannot both be positive "
                 "in a split-architecture configuration"
             )
 
-        # Auto-calculate knowledge slot count based on model capacity
-        # Formula: knowledge_slots = hidden_size * n_layer * capacity_factor
-        # Scaled by 1000 to provide sufficient addressing space for
-        # U-shaped sparsity allocation per Engram paper (arXiv:2601.07372).
-        # Only computed when use_memory_separation=True and slots not explicitly set.
-        if self.use_memory_separation and self.memory_knowledge_slots == 0:
-            self.memory_knowledge_slots = int(
-                self.hidden_size * self.n_layer * self.memory_capacity_factor * 1000
-            )
-
-        # Dynamic subconscious scaling: proportional to model hidden_size
-        # Formula: codebook_size = hidden_size * 4, clamped to [2048, 65536]
-        # This keeps the subconscious field at 0.1-8% of main model params
-        # while providing sufficient virtual capacity for all model scales.
-        scaled = max(2048, min(65536, self.hidden_size * 4))
-        if self.subconscious_codebook_size != scaled:
-            _LOG.debug(
-                f"Scaling subconscious_codebook_size: {self.subconscious_codebook_size} -> {scaled} "
-                f"(hidden_size={self.hidden_size})"
-            )
-            self.subconscious_codebook_size = scaled
-
-        # Auto-configure knowledge store defaults if builder slots not set
-        if self.knowledge_store_slots == 0:
-            self.knowledge_store_slots = self.memory_knowledge_slots
-
-        # Derive the default memory store path from the model size so that
-        # ``memory_store_path`` is always non-empty when memory separation is on.
-        # The user can still override it explicitly.
-        if not self.memory_store_path:
-            self.memory_store_path = (
-                f"./knowledge_store/{self.hidden_size}x{self.n_layer}/"
-            )
+        if self.knowledge_num_experts == 0:
+            core_b = self.compute_params_total / 1e9 if self.compute_params_total > 0 else 7.0
+            if core_b <= 7.0:
+                knowledge_b = core_b * 314.0 / 7.0
+            else:
+                knowledge_b = 314.0 * 7.0 / core_b
+            knowledge_b = min(max(knowledge_b, 7.0), 628.0)
+            self.knowledge_num_experts = int(round(knowledge_b / 0.5))
 
     @classmethod
     def from_json(cls, path: str) -> 'YvConfig':
@@ -1721,25 +1633,6 @@ class YvConfig:
 
     @classmethod
     def get_compute_split_config(cls) -> 'YvConfig':
-        """Get the 2026 flagship compute-split configuration preset.
-
-        This configuration realizes the 7B active reasoning model in the
-        PiscesL1 split architecture. It enables all flagship compute-side
-        algorithms and pairs with an external 0.5B dynamic head + 314B
-        knowledge field at inference/training time.
-
-        Returns:
-            YvConfig: Compute-split configuration with:
-                - ~7B active parameters
-                - 3584 hidden size, 28 layers, 32 heads (8 KV heads)
-                - 128 MoE experts, top-8 routing
-                - 1M position context
-                - EG-MLA attention by default
-                - All flagship compute flags enabled
-
-        Example:
-            >>> config = YvConfig.get_compute_split_config()
-        """
         return cls(
             model_type="piscesl1_7b_compute",
             hidden_size=3584,
@@ -1760,7 +1653,7 @@ class YvConfig:
             lookup_params_total=0,
             use_dual_inject=True,
             use_subconscious=True,
-            use_memory_separation=True,
+            use_knowledge_experts=True,
             use_eg_mla=True,
             use_duo_attention=False,
             use_ttt_e2e=True,
@@ -1776,24 +1669,6 @@ class YvConfig:
 
     @classmethod
     def get_lookup_split_config(cls) -> 'YvConfig':
-        """Get the 2026 flagship lookup-split configuration preset.
-
-        This configuration builds the knowledge encoder / lookup builder
-        side of the PiscesL1 split architecture. It is intentionally small
-        (~0.27B active parameters) because massive factual capacity lives
-        in the external 314B knowledge field, not in this encoder.
-
-        Returns:
-            YvConfig: Lookup-split configuration with:
-                - ~0.27B active parameters
-                - 512 hidden size, 12 layers, 8 heads (4 KV heads)
-                - 4 MoE experts, top-2 routing
-                - 128K position context
-                - Memory separation and subconscious injection enabled
-
-        Example:
-            >>> config = YvConfig.get_lookup_split_config()
-        """
         return cls(
             model_type="piscesl1_lookup",
             hidden_size=512,
@@ -1809,7 +1684,7 @@ class YvConfig:
             lookup_params_total=270000000,
             use_dual_inject=True,
             use_subconscious=True,
-            use_memory_separation=True,
+            use_knowledge_experts=True,
             use_eg_mla=False,
             use_duo_attention=False,
             use_ttt_e2e=False,

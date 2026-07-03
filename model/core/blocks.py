@@ -1694,25 +1694,9 @@ class YvTransformerBlock(nn.Module):
             self.register_buffer('_partial_block_sum', None, persistent=False)
             self.register_buffer('_partial_block_count', torch.tensor(0, dtype=torch.long), persistent=False)
 
-        # MemSep: Knowledge injection via cross-attention from retrieved memory slots
-        # Based on Engram (Cheng et al., arXiv:2601.07372, 2026)
-        # Only initialized when use_memory_separation=True in config
-        self.use_memory_separation = getattr(cfg, 'use_memory_separation', False)
-        if self.use_memory_separation:
-            from .memory_attention import YvMemoryCrossAttention
-            self.memory_attn = YvMemoryCrossAttention(
-                hidden_size=cfg.hidden_size,
-                knowledge_dim=getattr(cfg, 'memory_knowledge_dim', 256),
-                n_heads=getattr(cfg, 'memory_cross_attn_heads', 4),
-                gate_init=getattr(cfg, 'memory_gate_init', 0.0),
-                dropout=getattr(cfg, 'residual_dropout', 0.1),
-                device=device,
-                dtype=dtype,
-            )
-            self._memory_context = None
-        else:
-            self.memory_attn = None
-            self._memory_context = None
+        self.use_memory_separation = False
+        self.memory_attn = None
+        self._memory_context = None
 
         # Subconscious: volatile knowledge injection via 0.5B dynamic head + 314B field
         # Activated when use_subconscious=True in config. Parallel to 1M context.
@@ -2325,17 +2309,6 @@ class YvTransformerBlock(nn.Module):
 
         residual = x_out
         x_norm = self.pre_norm2(x_out)
-
-        # MemSep: Inject retrieved knowledge via cross-attention before MLP
-        # The memory_router (in model.py) provides knowledge_context dict with
-        # knowledge_projected tensor. If present, apply cross-attention injection.
-        if self.use_memory_separation and self.memory_attn is not None:
-            memory_context = self._get_memory_context()
-            if memory_context is not None and "knowledge_projected" in memory_context:
-                x_norm = self.memory_attn(
-                    hidden_states=x_norm,
-                    knowledge=memory_context["knowledge_projected"],
-                )
 
         mlp_out, aux_loss = self.mlp(x_norm, modal_id=modal_id)
         aux_loss = aux_loss + getattr(self.attn, '_sparsity_loss',

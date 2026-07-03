@@ -254,18 +254,13 @@ from .mamba3 import (
     YvFlashSSM,
 )
 
-from .memory_router import YvMemoryRouter, YvMemoryKnowledgeStore
-from .memory_attention import (
-    YvMemoryCrossAttention,
-    YvMemoryFusionGate,
-    YvMemorySeparationLayer,
-)
+from .knowledge_experts import YvKnowledgeExpert, YvKnowledgeExpertPool
 from .dual_injector import YvDualInjector
 from .subconscious import (
     YvSubconsciousSystem,
-    YvImplicitKnowledgeField,
-    YvDynamicHead,
-    YvSubconsciousModulator,
+    YvKnowledgeRouter,
+    YvSubconsciousState,
+    YvFiLMGenerator,
 )
 
 from .ewc import YvEWC
@@ -381,16 +376,13 @@ __all__ = [
     "YvSparseSSM",
     "YvGatedDeltaNetwork",
 
-    "YvMemoryRouter",
-    "YvMemoryKnowledgeStore",
-    "YvMemoryCrossAttention",
-    "YvMemoryFusionGate",
-    "YvMemorySeparationLayer",
+    "YvKnowledgeExpert",
+    "YvKnowledgeExpertPool",
 
     "YvDualInjector",
 
     "YvSubconsciousSystem",
-    "YvImplicitKnowledgeField",
-    "YvDynamicHead",
-    "YvSubconsciousModulator",
+    "YvKnowledgeRouter",
+    "YvSubconsciousState",
+    "YvFiLMGenerator",
 ]

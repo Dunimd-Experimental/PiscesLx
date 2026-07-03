@@ -304,7 +304,6 @@ from .core import (
     YvSparseSSM,
     YvGatedDeltaNetwork,
     YvDualInjector,
-    YvMemorySeparationLayer,
 )
 
 from .reasoning.ttt_e2e import YvTestTimeTrainer
@@ -483,7 +482,6 @@ __all__ = [
     "YvGatedDeltaNetwork",
 
     "YvDualInjector",
-    "YvMemorySeparationLayer",
 
     "YvTestTimeTrainer",
     "YvSEAL",
