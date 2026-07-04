@@ -88,9 +88,9 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 from typing import Dict, Optional
-from .memory import YvMemory
 from .hw import YvHardwareAdaptiveConfig
 from .attention import YvCrossModalAttention
+from .memory import YvMemory
 from model.utils import YvShapeGuard
 import logging
 

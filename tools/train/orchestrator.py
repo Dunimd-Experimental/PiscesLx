@@ -297,6 +297,39 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         else:
             raise ValueError(f"Unsupported config file format: {config_path.suffix}")
 
+    def _resolve_model_dataset_file(
+        self,
+        model_cfg_path: Optional[Path],
+        params: Dict[str, Any],
+    ) -> Optional[Path]:
+        """Resolve dataset list file with model-specific priority.
+
+        Priority:
+        1. Explicit `model_txt` CLI param if provided
+        2. `model.txt` next to the chosen model config
+        3. `model.txt` in the model config's parent directory
+        4. Legacy global `data_cache/model.txt`
+        """
+        candidates: List[Path] = []
+
+        explicit = str(params.get("model_txt") or "").strip()
+        if explicit:
+            candidates.append(Path(explicit))
+
+        if model_cfg_path is not None:
+            candidates.append(model_cfg_path.with_name("model.txt"))
+            candidates.append(model_cfg_path.parent / "model.txt")
+
+        candidates.append(Path(get_cache_dir("data_cache")) / "model.txt")
+
+        for candidate in candidates:
+            try:
+                if candidate.exists() and candidate.is_file():
+                    return candidate
+            except Exception:
+                continue
+        return None
+
     def _apply_model_training_config(self, model_train_cfg: Dict[str, Any]):
         """
         Apply training configuration from model config file.
@@ -876,26 +909,6 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         dataset = str(params.get("dataset") or "").strip()
         dataset_list: List[str] = []
-        if dataset:
-            dataset_list = [dataset]
-        else:
-            model_txt_path = os.path.join(get_cache_dir("data_cache"), "model.txt")
-            if not os.path.exists(model_txt_path):
-                _LOG.error(
-                    f"{model_txt_path} not found! Please create it with one dataset name per line, or use --dataset argument."
-                )
-                raise SystemExit(1)
-            with open(model_txt_path, "r", encoding="utf-8") as f:
-                dataset_list = [
-                    line.strip()
-                    for line in f
-                    if line.strip() and not line.strip().startswith("#")
-                ]
-            if not dataset_list:
-                _LOG.error(
-                    f"No dataset names found in {model_txt_path}! Please use --dataset argument instead."
-                )
-                raise SystemExit(1)
 
         from model import YvConfig, YvModel
         from model.tokenizer import YvTokenizer
@@ -928,6 +941,29 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         # Apply top-level config (galore_enabled, use_h2o_attention, etc.)
         self._apply_top_level_config(model_cfg)
+
+        if dataset:
+            dataset_list = [dataset]
+        else:
+            model_txt_path = self._resolve_model_dataset_file(model_cfg_path, params)
+            if model_txt_path is None:
+                _LOG.error(
+                    "No model.txt found for this model! Please place model.txt next to the model config, "
+                    "or use --dataset argument."
+                )
+                raise SystemExit(1)
+            with open(model_txt_path, "r", encoding="utf-8") as f:
+                dataset_list = [
+                    line.strip()
+                    for line in f
+                    if line.strip() and not line.strip().startswith("#")
+                ]
+            if not dataset_list:
+                _LOG.error(
+                    f"No dataset names found in {model_txt_path}! Please use --dataset argument instead."
+                )
+                raise SystemExit(1)
+            _LOG.info(f"Using dataset list from {model_txt_path}")
 
         # Apply training_config from raw YAML. Do not rely on YvConfig having a training_config field,
         # because YvConfig.from_yaml filters unknown keys.
@@ -1865,7 +1901,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         self._maybe_run_subconscious_warmup(train_loader)
 
     def _maybe_build_knowledge_store(self):
-        """Build FAISS knowledge store if configured in the model config."""
+        """Build the optional external knowledge store if explicitly enabled."""
         model_cfg = getattr(self.trainer.model, "config", None) if self.trainer else None
         if model_cfg is None:
             return

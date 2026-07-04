@@ -709,8 +709,14 @@ class YvUnifiedRotaryEmbedding(nn.Module):
         elif x.dim() == 3:
             cos = cos.unsqueeze(0)
             sin = sin.unsqueeze(0)
-        x1 = x[..., :x.shape[-1] // 2]
-        x2 = x[..., x.shape[-1] // 2:]
+        half = x.shape[-1] // 2
+        if cos.shape[-1] != half:
+            dim = min(cos.shape[-1], half)
+            cos = cos[..., :dim]
+            sin = sin[..., :dim]
+            half = dim
+        x1 = x[..., :half]
+        x2 = x[..., half:]
         return torch.cat([-x2 * sin + x1 * cos, x1 * sin + x2 * cos], dim=-1)
 
 

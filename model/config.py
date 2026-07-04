@@ -1039,7 +1039,7 @@ class YvConfig:
     use_rca_fusion: bool = True
     use_seer_executor: bool = True
     use_vericot: bool = True
-    use_comet_memory: bool = True
+    use_comet_memory: bool = False
     comet_write_interval: int = 1
     use_token_sparse_attn: bool = True
     use_mhc_lite: bool = False

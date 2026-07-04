@@ -27,6 +27,18 @@ import torch
 import math
 
 
+class MuonParameterError(ValueError):
+    """Exception raised for invalid parameters in Muon optimizer.
+
+    This exception is used when input parameters do not meet the requirements
+    for Muon optimization operations, such as incorrect tensor dimensions or
+    invalid numerical values. It inherits from ValueError to maintain
+    compatibility with existing exception handling patterns that catch
+    standard Python exceptions.
+    """
+    pass
+
+
 def _hybrid_newton_schulz(G: torch.Tensor, steps: int = 10) -> torch.Tensor:
     """Hybrid Newton-Schulz matrix orthogonalization.
 
@@ -36,8 +48,19 @@ def _hybrid_newton_schulz(G: torch.Tensor, steps: int = 10) -> torch.Tensor:
 
     Returns:
         Orthogonalized matrix O ~= (G G^T)^{-1/2} G
+
+    Raises:
+        MuonParameterError: If input tensor does not have exactly 2 dimensions.
     """
-    assert G.ndim == 2, f"Muon requires 2D param, got {G.ndim}D"
+    # Structured parameter validation
+    if G.ndim != 2:
+        raise MuonParameterError(
+            f"Muon requires 2D parameter tensor, but got {G.ndim}D tensor with shape {G.shape}. "
+            f"Expected shape: (n, m) where n and m are positive integers. "
+            f"This error typically occurs when the optimizer is applied to incompatible "
+            f"parameter types (e.g., 1D biases, 3D convolution weights). "
+            f"Please check your parameter filtering logic in create_muon_optimizer()."
+        )
     n, m = G.shape
 
     if min(n, m) <= 1:

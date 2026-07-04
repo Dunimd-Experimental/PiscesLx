@@ -48,7 +48,7 @@ Key Features:
 
 Performance Characteristics:
     - Perception: O(N * hidden_size) per modality
-    - Memory retrieval: O(log N) with FAISS indexing
+    - Memory retrieval: bounded internal runtime lookup
     - Reasoning: O(T * hidden_size) where T = reasoning steps
     - Tool execution: Depends on tool complexity
 
@@ -103,9 +103,9 @@ from .types import (
     YvAgenticState,
     YvAgenticAction,
     YvAgenticObservation,
-    YvAgenticMemory,
     YvMCPMessageType,
 )
+from .memory import YvMemory
 
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("Yv.Multimodal", file_path=get_log_file("Yv.Multimodal"), enable_file=True)
@@ -127,7 +127,7 @@ class YvAgentic(nn.Module):
         2. Memory:
            - YvAgenticMemory for persistent storage
            - Observation, action, and reflection tracking
-           - Contextual retrieval with FAISS indexing
+           - Contextual retrieval with internal Agentic memory
         
         3. Reasoning:
            - YvUnifiedReasoner for structured reasoning
@@ -224,7 +224,7 @@ class YvAgentic(nn.Module):
         self.tree_reasoner = POPSSMCPTreeSearchReasoner(None, tokenizer) if tokenizer else None
 
         # MCP agent infrastructure
-        self.memory = YvAgenticMemory([], [], [])
+        self.memory = YvMemory()
         
         # Initialize multipath reasoning backend
         from ..reasoning import YvMultiPathReasoningEngine
@@ -876,7 +876,7 @@ class YvAgentic(nn.Module):
             YvAgenticAction: Structured action containing type, parameters,
             confidence, and an explanatory reasoning trace.
         """
-        # Retrieve semantically relevant memories to enrich the reasoning context.
+        # Retrieve relevant internal Agentic memories to enrich the reasoning context.
         memory_context = self.memory.get_context_with_retrieval(
             query=str(context), 
             k=5, 
@@ -886,7 +886,7 @@ class YvAgentic(nn.Module):
         # Encode the textualized context for similarity search against memories.
         query_embedding = self._encode_query(str(context))
         
-        # Perform semantic retrieval to isolate the top-k memories by affinity.
+        # Perform bounded internal retrieval without external encoders/vector stores.
         relevant_memories = self.memory.semantic_search(
             query_embedding=query_embedding,
             k=3,

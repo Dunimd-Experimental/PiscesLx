@@ -93,8 +93,8 @@ Dependencies:
     - typing: Type hints for documentation
 
 Note:
-    The meta-learner uses SentenceTransformer for query embeddings when
-    available, with hash-based fallback for deterministic embeddings.
+    The meta-learner uses deterministic internal embeddings for query routing,
+    avoiding external embedding-model dependencies.
 """
 
 import time
@@ -235,12 +235,16 @@ class YvMultiPathMetaLearner:
             query (str): Free-form query string requiring representation.
 
         Returns:
-            torch.Tensor: Query embedding derived from SentenceTransformer.
+            torch.Tensor: Deterministic internal embedding without external models.
         """
-        from sentence_transformers import SentenceTransformer
-        model = SentenceTransformer('all-MiniLM-L6-v2')
-        embedding = model.encode(query, convert_to_tensor=True)
-        return embedding
+        import hashlib
+
+        digest = hashlib.sha256(query.encode("utf-8")).digest()
+        seed = int.from_bytes(digest[:8], "little", signed=False)
+        gen = torch.Generator(device="cpu")
+        gen.manual_seed(seed)
+        embedding = torch.randn(384, generator=gen, dtype=torch.float32)
+        return F.normalize(embedding, dim=0)
 
     def extract_reasoning_patterns(self) -> Optional[Dict[str, Any]]:
         """Mine recurring reasoning patterns from high-confidence episodes.

@@ -57,8 +57,8 @@ Module Components:
        - YvAgenticObservation: Agent observation container
     
     5. Memory System:
-       - YvMemory: Unified memory management
-       - YvMemoryConfig: Memory configuration
+       - YvMemory: Internal Agentic runtime memory
+       - YvMemoryConfig: Lightweight runtime memory configuration
     
     6. MCP Integration:
        - YvMCPGenerationServer: MCP generation server
@@ -79,14 +79,14 @@ Key Features:
     - Multi-task audio encoding (emotion, prosody, spectrum)
     - Document understanding with layout and table analysis
     - Agent orchestration with MCP protocol support
-    - Unified memory system with semantic retrieval
+    - Internal Agentic runtime memory without external vector stores
     - Hardware-adaptive configuration
 
 Performance Characteristics:
     - Vision encoding: O(N^2) attention with SDPA optimization
     - Audio encoding: O(T * mel_bins) spectral processing
     - Cross-modal fusion: O(M * N) where M is modalities
-    - Memory retrieval: O(log N) with FAISS indexing
+    - Memory retrieval: bounded recency/importance lookup
 
 Usage Example:
     >>> from model.multimodal import (
@@ -116,7 +116,7 @@ Usage Example:
 Note:
     All classes follow the YvXxx naming convention.
     MCP integration requires proper tool registration.
-    Memory system supports both FAISS and NumPy backends.
+    Memory system is internal-only and does not load external embedding models.
 """
 
 from .vision import YvVisionEncoder, YvSpatioTemporalRoPE3D, YvSigLIPVisionEncoder, YvMoVEVisionEncoder, YvSparseCutRouter
@@ -130,6 +130,7 @@ from .fusion import YvDynamicModalFusion, YvRecurrentModalRefiner
 from .enhanced_fusion import YvEnhancedModalFusion, YvModalFusionConfig
 from .generator import YvGenerator, YvGenerationResult, YvGenerationBackend
 from .hw import YvHardwareAdaptiveConfig
+from .memory import YvMemory, YvMemoryConfig
 from ..reasoning import YvUnifiedReasoner
 from .server import YvMCPGenerationServer
 from .mcp import YvMCPToolRegistry
@@ -142,9 +143,6 @@ from .types import (
 )
 # YvAgenticState is in state_machine.py
 from .state_machine import YvAgenticState
-# YvMemory is the unified memory system
-from .memory import YvMemory, YvMemoryConfig
-
 __all__ = [
     "YvVisionEncoder",
     "YvSpatioTemporalRoPE3D",
@@ -165,6 +163,8 @@ __all__ = [
     "YvGenerationResult",
     "YvGenerationBackend",
     "YvHardwareAdaptiveConfig",
+    "YvMemory",
+    "YvMemoryConfig",
     "YvUnifiedReasoner",
     "YvMCPGenerationServer",
     "YvMCPToolRegistry",
@@ -174,6 +174,4 @@ __all__ = [
     "YvMCPMessage",
     "YvAgenticAction",
     "YvAgenticObservation",
-    "YvMemory",
-    "YvMemoryConfig",
 ]

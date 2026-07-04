@@ -5556,6 +5556,7 @@ class YvAttention(nn.Module):
         # --- 2. Attention sink prepend (training only) ---
         if self.use_attention_sink and self.training and hasattr(self, 'attn_sink'):
             x, sink_mask = self.attn_sink(x)
+            t = x.shape[1]
 
         # --- 3. MLA KV compression with EG gate ---
         if self.use_fused_mla and hasattr(self, 'fused_mla'):

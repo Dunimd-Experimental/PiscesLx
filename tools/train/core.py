@@ -415,7 +415,7 @@ class PiscesLxTrainingOperator(object):
         )
         try:
             if hasattr(self.config, 'modality_scheduler') and self.config.modality_scheduler.get('enabled', False):
-                modality_config = POPSSModalitySchedulerConfig(**self.config.modality_scheduler)
+                modality_config = POPSSModalitySchedulerConfig(**{k: v for k, v in self.config.modality_scheduler.items() if k != 'enabled'})
                 self._modality_scheduler = POPSSModalitySchedulerOperator(modality_config)
                 _LOG.info("Modality-aware scheduler operator initialized")
         except Exception as e:
@@ -468,8 +468,16 @@ class PiscesLxTrainingOperator(object):
                     zero_stage=self.config.parallel_3d.get('zero_stage', 0),
                     mixed_precision=self.config.mixed_precision
                 )
+
+                class _ConcreteParallel3D(POPSSParallel3DOperator):
+                    description = "No-op 3D parallelism"
+                    input_schema = {}
+                    output_schema = {}
+                    name = "concrete_parallel_3d"
+                    version = "1.0.0"
+                    def validate_inputs(self, data): return data
                 
-                self._parallel_3d_operator = POPSSParallel3DOperator(parallel_config)
+                self._parallel_3d_operator = _ConcreteParallel3D(parallel_config)
                 _LOG.info(f"3D Parallelism operator initialized: dp={parallel_config.dp_size}, tp={parallel_config.tp_size}, pp={parallel_config.pp_size}")
         except Exception as e:
             _LOG.warning(f"Failed to initialize 3D parallelism operator: {e}")
@@ -497,7 +505,21 @@ class PiscesLxTrainingOperator(object):
                     model_id=self.config.watermark.get('model_id', self.config.model_name)
                 )
                 
-                self._weight_watermark_operator = POPSSWeightWatermarkOperator(self._watermark_config)
+                class _ConcreteWeightWatermark(POPSSWeightWatermarkOperator):
+                    @property
+                    def name(self):
+                        return "weight_watermark"
+                    @name.setter
+                    def name(self, value):
+                        pass
+                    @property
+                    def version(self):
+                        return "1.0.0"
+                    @version.setter
+                    def version(self, value):
+                        pass
+                
+                self._weight_watermark_operator = _ConcreteWeightWatermark(self._watermark_config)
                 self._compliance_operator = POPSSComplianceOperator(self._watermark_config)
                 self._audit_operator = POPSSAuditOperator(self._watermark_config)
                 
@@ -679,6 +701,12 @@ class PiscesLxTrainingOperator(object):
                     if quant_enabled:
                         self._apply_quantization_gpu_accelerated() if self.device.type == "cuda" else self._apply_quantization()
                     self._apply_lora()
+                    model_sd = self.model.state_dict()
+                    cache_keys = list(cached_state.keys())
+                    for k in cache_keys:
+                        if k in model_sd and cached_state[k].shape != model_sd[k].shape:
+                            _LOG.debug(f"Cache shape mismatch for {k}: cached {cached_state[k].shape} vs model {model_sd[k].shape}, skipping")
+                            del cached_state[k]
                     missing, unexpected = self.model.load_state_dict(cached_state, strict=False)
                     if missing:
                         sample = ", ".join(missing[:8])

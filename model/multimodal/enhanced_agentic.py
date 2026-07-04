@@ -30,7 +30,7 @@ Core enhancements:
 - Long-term planning engine: 100+ step task decomposition
 - Tool orchestration engine: conditional branching, loops + fallbacks
 - Self-evaluation system: multi-dimensional quality assessment
-- Persistent memory: vector database storage
+- Persistent memory: internal Agentic runtime storage
 """
 
 import torch

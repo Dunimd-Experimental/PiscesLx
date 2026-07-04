@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -234,8 +234,6 @@ from ..multimodal.seer_executor import YvSEERExecutor
 from ..reasoning.vericot import YvVeriCoTVerifier, YvVeriCoTReflector
 # CRV: Circuit-based Reasoning Verification (Zhao et al., ICLR 2026 Oral, arXiv:2510.09312)
 from ..reasoning.verification import YvCRVIntegration
-# CoMeT: Collaborative Memory Transformer (arXiv:2602.01766, ACL 2026)
-from .comet import YvCoMeTMemory
 # Token Sparse Attention / Tactic (Kan Zhu et al., ICLR 2026, arXiv:2502.12216)
 from .token_sparse_attn import YvTokenSparseAttention
 # mHC-lite (arXiv:2601.05732)
@@ -643,7 +641,7 @@ class YvModel(nn.Module):
         objects share the same underlying ``Storage``.  A normal
         ``parameters()`` call yields every one of them, causing optimisers
         such as AdamW to allocate separate momentum/variance entries for
-        identical data — inflating optimiser memory by up to 5×.
+        identical data 鈥?inflating optimiser memory by up to 5脳.
 
         This override yields each unique storage exactly once, so the
         optimiser builds exactly one momentum/variance entry per unique
@@ -861,7 +859,7 @@ class YvModel(nn.Module):
         else:
             self.agent_encoder = None
 
-        # Unified multimodal fusion — absorbs Dynamic/Enhanced/RecurrentRefiner/SyncFusion/RCA
+        # Unified multimodal fusion 鈥?absorbs Dynamic/Enhanced/RecurrentRefiner/SyncFusion/RCA
         if _needs_multimodal:
             self.modal_fusion = YvDynamicModalFusion(cfg, device=device, dtype=dtype)
         else:
@@ -873,7 +871,6 @@ class YvModel(nn.Module):
         self.vericot_verifier = None           # lazy: _lazy_get_vericot
         self.vericot_reflector = None
         self.crv_integration = None            # lazy: _lazy_get_crv
-        self.comet_memory = None               # lazy: _lazy_get_comet
         self.token_sparse_attn = None          # lazy: _lazy_get_long_context
         self.mhc_lite = None
         self.reform_processor = None
@@ -886,7 +883,6 @@ class YvModel(nn.Module):
         self._lazy_initialized['seer'] = False
         self._lazy_initialized['vericot'] = False
         self._lazy_initialized['crv'] = False
-        self._lazy_initialized['comet'] = False
         self._lazy_initialized['long_context'] = False
         self._lazy_initialized['reasoner'] = False
         self._lazy_initialized['agentic'] = False
@@ -934,7 +930,7 @@ class YvModel(nn.Module):
             if hasattr(self, 'lm_head') and hasattr(self, 'embed'):
                 self.lm_head.weight = self.embed.weight
 
-        # Causal mask cache (persistent=False — not saved in state_dict)
+        # Causal mask cache (persistent=False 鈥?not saved in state_dict)
         self.register_buffer(
             '_causal_mask_cache',
             torch.zeros(0, 0, device=device, dtype=dtype),
@@ -1325,12 +1321,7 @@ class YvModel(nn.Module):
             self._lazy_initialized['crv'] = True
 
     def _lazy_get_comet(self) -> None:
-        if self.comet_memory is None:
-            if getattr(self.cfg, 'use_comet_memory', False) or getattr(self.cfg, 'use_seirenes', False):
-                from .comet import YvCoMeTMemory
-                _LOG.debug("YvModel: lazy-init CoMeT/Seirênes...")
-                self.comet_memory = YvCoMeTMemory(self.cfg, device=self._device, dtype=self._dtype)
-                self._lazy_initialized['comet'] = True
+        return None
 
     def _lazy_get_long_context(self) -> None:
         if not self._lazy_initialized.get('long_context', True):
@@ -1403,7 +1394,6 @@ class YvModel(nn.Module):
         self._lazy_get_seer()
         self._lazy_get_vericot()
         self._lazy_get_crv()
-        self._lazy_get_comet()
         self._lazy_get_long_context()
         self._lazy_get_task_head()
         self._lazy_get_eval_head()
@@ -1951,7 +1941,7 @@ class YvModel(nn.Module):
 
         b, t = input_ids.shape
 
-        # Runtime VRAM check — auto-adjust if memory pressure detected
+        # Runtime VRAM check 鈥?auto-adjust if memory pressure detected
         if hasattr(self, '_vram_monitor'):
             self._vram_monitor.check_and_adjust()
 
@@ -2097,7 +2087,6 @@ class YvModel(nn.Module):
                 self._lazy_get_rca()
             if use_crv_path:
                 self._lazy_get_crv()
-            self._lazy_get_comet()
             self._lazy_get_long_context()
 
             crv_active = self.crv_integration is not None
@@ -2121,13 +2110,14 @@ class YvModel(nn.Module):
                         if self.deep_cross_layer_injector is not None and rca_fused is not None:
                             h_chunk = self.deep_cross_layer_injector(h_chunk, rca_fused, layer_idx)
 
-                        if self.comet_memory is not None and layer_idx % 4 == 0:
-                            h_chunk = self.comet_memory(h_chunk, update_memory=False)
-
+                        _layer_kw = {}
+                        if extra_kv is not None:
+                            _layer_kw['subconscious_kv'] = extra_kv
+                        if film_params is not None:
+                            _layer_kw['film_params'] = film_params
                         h_chunk, aux_loss = layer(
                             h_chunk, chunk_mask, past_key_values=past_kv, use_cache=False,
-                            subconscious_kv=extra_kv, film_params=film_params,
-                            modal_id=modal_id,
+                            modal_id=modal_id, **_layer_kw,
                         )
                         aux_loss_bucket[0] = aux_loss_bucket[0] + (aux_loss if aux_loss is not None else 0.0)
 
@@ -2153,13 +2143,14 @@ class YvModel(nn.Module):
                     if self.deep_cross_layer_injector is not None and rca_fused is not None:
                         h = self.deep_cross_layer_injector(h, rca_fused, layer_idx)
 
-                    if self.comet_memory is not None and layer_idx % 4 == 0:
-                        h = self.comet_memory(h, update_memory=False)
-
+                    _layer_kw = {}
+                    if extra_kv is not None:
+                        _layer_kw['subconscious_kv'] = extra_kv
+                    if film_params is not None:
+                        _layer_kw['film_params'] = film_params
                     h, aux_loss = layer(
                         h, mask, past_key_values=past_kv, use_cache=False,
-                        subconscious_kv=extra_kv, film_params=film_params,
-                        modal_id=modal_id,
+                        modal_id=modal_id, **_layer_kw,
                     )
                     total_aux_loss = total_aux_loss + (aux_loss if aux_loss is not None else 0.0)
 
@@ -2185,12 +2176,6 @@ class YvModel(nn.Module):
                     seq_len = xc.shape[1]
 
                     for layer_idx, layer in enumerate(self.layers):
-                        if self.comet_memory is not None:
-                            if layer_idx % max(1, len(self.layers) // 2) == 0:
-                                comet_ctx = self.comet_memory.read(h)
-                                if comet_ctx is not None and hasattr(layer, '_set_memory_context'):
-                                    layer._set_memory_context(comet_ctx)
-
                         if self.deep_cross_layer_injector is not None and rca_fused is not None:
                             h = self.deep_cross_layer_injector(h, rca_fused, layer_idx)
 
@@ -2212,10 +2197,14 @@ class YvModel(nn.Module):
                         if hasattr(layer, 'set_sequence_length'):
                             layer.set_sequence_length(seq_len)
 
+                        _layer_kw = {}
+                        if extra_kv is not None:
+                            _layer_kw['subconscious_kv'] = extra_kv
+                        if film_params is not None:
+                            _layer_kw['film_params'] = film_params
                         h, aux_loss, cache = layer(
                             h, msk, past_key_values=past_kv, use_cache=True,
-                            subconscious_kv=extra_kv, film_params=film_params,
-                            modal_id=modal_id,
+                            modal_id=modal_id, **_layer_kw,
                         )
 
                         if cache is not None:
@@ -2340,11 +2329,6 @@ class YvModel(nn.Module):
             mtp_loss = logits.new_zeros(())
             mtp_logits_list = []
             
-            if labels is not None and self.comet_memory is not None:
-                self._comet_write_step += 1
-                if self._comet_write_step % self._comet_write_interval == 0:
-                    self.comet_memory.write(x.detach(), input_ids=input_ids)
-
             if labels is not None:
                 text_seq_len = labels.shape[1]
                 lm_loss = F.cross_entropy(
@@ -2493,7 +2477,7 @@ class YvModelForCausalLM(YvModel):
             from ..reasoning.self_evolution import YvSOLAR
             self.solar = YvSOLAR(self, meta_lr=getattr(cfg, 'solar_meta_lr', 1e-4))
 
-        # Self-Play: self-generation → self-critique → self-training
+        # Self-Play: self-generation 鈫?self-critique 鈫?self-training
         self.self_play_trainer = None
         if getattr(cfg, 'use_self_play', False):
             from opss.train.self_play import POPSSSelfPlayTrainer
@@ -2927,3 +2911,4 @@ class YvModelForMaskedLM(nn.Module):
             'loss': loss,
             'hidden_states': hidden_states
         }
+
