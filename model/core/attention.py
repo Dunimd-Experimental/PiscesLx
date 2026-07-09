@@ -753,12 +753,13 @@ class YvQKNormalizer(nn.Module):
             >>> q_norm.shape  # [2, 32, 1024, 128]
             >>> # RMS of q_norm along last dim is approximately gamma_q
         """
-        original_shape = q.shape
-        q_flat = q.reshape(-1, original_shape[-1])
-        k_flat = k.reshape(-1, original_shape[-1])
+        q_shape = q.shape
+        k_shape = k.shape
+        q_flat = q.reshape(-1, q_shape[-1])
+        k_flat = k.reshape(-1, k_shape[-1])
         
-        q_normed = self.q_norm(q_flat).reshape(original_shape)
-        k_normed = self.k_norm(k_flat).reshape(original_shape)
+        q_normed = self.q_norm(q_flat).reshape(q_shape)
+        k_normed = self.k_norm(k_flat).reshape(k_shape)
         
         return q_normed, k_normed
 
@@ -5413,8 +5414,65 @@ class YvAttention(nn.Module):
         v_fa = v[:, :n_fa].reshape(b * n_fa, kv_len, self.head_dim)
 
         if mask is not None:
-            attn_mask = mask[:, :n_fa].reshape(b * n_fa, 1, t, kv_len)
-            is_causal = False
+            # The mask coming from YvModel.forward is shared across heads with
+            # shape [b, t, kv_len]; a 4D mask [b, n_head, t, kv_len] is also
+            # supported (e.g. when callers already head-expanded it). We
+            # rewrite it into a shape that SDPA accepts without
+            # misinterpreting batch dims.
+            #
+            # The old code unconditionally did
+            #     attn_mask = mask[:, :n_fa].reshape(b*n_fa, 1, t, kv_len)
+            # which assumed a 4D `[b, n_head, t, kv_len]` mask, but
+            # `YvModel.forward` actually passes either a 2D `[t, kv_len]`
+            # causal mask, a 3D `[b, t, kv_len]` broadcast mask, or a
+            # `[b, t, kv_len]` padding mask (post-DSA) — in all those
+            # cases the reshape read the wrong axis and crashed.
+            #
+            # We now normalise the mask along three branches:
+            #   1. 4D `[b, n_head, t, kv_len]` -> take first n_fa heads
+            #      -> `[b*n_fa, t, kv_len]`
+            #   2. 3D `[b, t, kv_len]` -> expand across the n_fa FA heads
+            #      -> `[b*n_fa, t, kv_len]`
+            #   3. 2D `[t, kv_len]` -> pass through; SDPA broadcasts it
+            #      across batch and heads.
+            # Anything else (e.g. dim mismatches after sink/LCA/DSA) is
+            # treated as a no-mask and we fall back to causal.
+            mask_dim = mask.dim()
+            tail_ok = (
+                mask_dim >= 2
+                and mask.shape[-2] == t
+                and mask.shape[-1] == kv_len
+            )
+            if not tail_ok:
+                # Mask tail dims (t, kv_len) do not line up with the
+                # current q/k/v dims. This can happen when the caller
+                # passes a 2D `[T, T]` causal mask and the attention
+                # sink has extended `t`, or when the mask's kv_len was
+                # captured before LCA/DSA trimmed it. SDPA cannot
+                # broadcast safely across mismatched t/kv_len dims, so
+                # we drop the mask and fall back to causal attention
+                # (which is mathematically correct for self-attention).
+                attn_mask = None
+                is_causal = True
+            elif mask_dim == 4 and mask.shape[0] == b and mask.shape[1] == self.n_head:
+                attn_mask = mask[:, :n_fa].reshape(b * n_fa, t, kv_len).contiguous()
+                is_causal = False
+            elif mask_dim == 3 and mask.shape[0] == b:
+                attn_mask = (
+                    mask.unsqueeze(1)
+                        .expand(b, n_fa, t, kv_len)
+                        .reshape(b * n_fa, t, kv_len)
+                        .contiguous()
+                )
+                is_causal = False
+            elif mask_dim == 2:
+                # Pure causal-style mask; SDPA broadcasts across (b, h).
+                attn_mask = mask
+                is_causal = False
+            else:
+                # Any other shape — pass through and let SDPA handle it.
+                attn_mask = mask
+                is_causal = False
         else:
             attn_mask = None
             is_causal = True
@@ -5424,7 +5482,7 @@ class YvAttention(nn.Module):
             attn_mask=attn_mask,
             dropout_p=self.attn_dropout.p if self.training else 0.0,
             is_causal=is_causal,
-            scale=self.scale,
+            scale=float(self.scale),
         ).view(b, n_fa, t, self.head_dim)
 
         # LA heads (linear attention with ELU+1) — sparse-gated
@@ -5528,7 +5586,7 @@ class YvAttention(nn.Module):
             attn_mask=None,
             dropout_p=self.attn_dropout.p if self.training else 0.0,
             is_causal=False,
-            scale=self.scale,
+            scale=float(self.scale),
         ).view(b, self.n_head, t, self.head_dim)
 
         return aux_gate * aux_out.transpose(1, 2).reshape(b, t, self.n_head * self.head_dim)
@@ -5616,7 +5674,12 @@ class YvAttention(nn.Module):
                 else:
                     k_pe = self.rope_decompress(kv_latent_for_cache).view(b, kv_len, 1, rope_dim)
                     k_pe = k_pe.expand(-1, -1, self.n_kv_head, -1).transpose(1, 2)
-                k_pe = self.rope(k_pe, kv_len).transpose(1, 2)
+                k_pe = self.rope(k_pe, kv_len)
+
+                if k_pe.shape[:3] != k.shape[:3]:
+                    raise RuntimeError(
+                        f"Enhanced MLA RoPE shape mismatch: k={tuple(k.shape)}, k_pe={tuple(k_pe.shape)}"
+                    )
 
                 q_pe = self.rope(q[..., -rope_dim:], t)
                 q = torch.cat([q[..., :-rope_dim], q_pe], dim=-1)
@@ -5854,14 +5917,29 @@ class YvHydraHeadAttention(nn.Module):
 
             sdpa_mask = attention_mask
             if sdpa_mask is not None:
-                if sdpa_mask.dim() == 4:
+                md = sdpa_mask.dim()
+                tail_ok = md >= 2 and sdpa_mask.shape[-2] == seq_len and sdpa_mask.shape[-1] == seq_len
+                if not tail_ok:
+                    # Mask tail dims (t, kv_len) don't line up with current
+                    # q/k/v shapes — drop the mask, fall back to causal.
+                    sdpa_mask = None
+                elif md == 4:
                     if sdpa_mask.size(1) == 1:
                         sdpa_mask = sdpa_mask.expand(batch, self.num_fa_heads, seq_len, seq_len)
+                    elif sdpa_mask.size(1) >= self.num_fa_heads:
+                        sdpa_mask = sdpa_mask[:, :self.num_fa_heads]
                     else:
-                        sdpa_mask = sdpa_mask[:, : self.num_fa_heads]
-                    sdpa_mask = sdpa_mask.reshape(batch * self.num_fa_heads, seq_len, seq_len)
-                elif sdpa_mask.dim() == 3 and sdpa_mask.size(0) == batch:
+                        sdpa_mask = None
+                    if sdpa_mask is not None:
+                        sdpa_mask = sdpa_mask.reshape(batch * self.num_fa_heads, seq_len, seq_len)
+                        sdpa_mask = sdpa_mask.contiguous()
+                elif md == 3 and sdpa_mask.size(0) == batch:
                     sdpa_mask = sdpa_mask.repeat_interleave(self.num_fa_heads, dim=0)
+                elif md == 2:
+                    # Pure causal mask; SDPA broadcasts across (b, h).
+                    pass
+                else:
+                    sdpa_mask = None
 
             fa_out_flat = F.scaled_dot_product_attention(
                 fq_flat, fk_flat, fv_flat,
@@ -6021,14 +6099,28 @@ class YvLatentCondensedAttention(nn.Module):
         sdpa_mask = attention_mask
         if sdpa_mask is not None:
             kv_len = k_latent.shape[2]
-            if sdpa_mask.dim() == 4:
+            md = sdpa_mask.dim()
+            tail_ok = md >= 2 and sdpa_mask.shape[-2] == t and sdpa_mask.shape[-1] == kv_len
+            if not tail_ok:
+                # Mask tail dims don't line up — drop the mask.
+                sdpa_mask = None
+            elif md == 4:
                 if sdpa_mask.size(1) == 1:
                     sdpa_mask = sdpa_mask.expand(b, n_h, t, kv_len)
-                else:
+                elif sdpa_mask.size(1) >= n_h:
                     sdpa_mask = sdpa_mask[:, :n_h, :t, :kv_len]
-                sdpa_mask = sdpa_mask.reshape(b * n_h, t, kv_len)
-            elif sdpa_mask.dim() == 3 and sdpa_mask.size(0) == b:
+                else:
+                    sdpa_mask = None
+                if sdpa_mask is not None:
+                    sdpa_mask = sdpa_mask.reshape(b * n_h, t, kv_len)
+                    sdpa_mask = sdpa_mask.contiguous()
+            elif md == 3 and sdpa_mask.size(0) == b:
                 sdpa_mask = sdpa_mask[:, :t, :kv_len].repeat_interleave(n_h, dim=0)
+            elif md == 2:
+                # Pure causal mask; SDPA broadcasts across (b, h).
+                sdpa_mask = sdpa_mask[:t, :kv_len]
+            else:
+                sdpa_mask = None
 
         output_flat = F.scaled_dot_product_attention(
             q_flat, k_flat, v_flat,

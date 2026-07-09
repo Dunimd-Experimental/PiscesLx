@@ -160,9 +160,17 @@ import json
 
 # argparse: Command-line argument parsing library for CLI interface
 import argparse
+import warnings
 
 # pathlib: Object-oriented filesystem paths for cross-platform compatibility
 from pathlib import Path
+
+warnings.filterwarnings(
+    "ignore",
+    message=r".*urllib3 .* doesn't match a supported version.*",
+    category=Warning,
+    module=r"requests(\.__init__)?",
+)
 
 
 # =============================================================================

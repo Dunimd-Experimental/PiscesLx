@@ -123,7 +123,7 @@ warnings.filterwarnings(
     "ignore",
     message=r".*urllib3 .* doesn't match a supported version.*",
     category=Warning,
-    module=r"requests\.__init__",
+    module=r"requests(\.__init__)?",
 )
 
 import torch
@@ -505,21 +505,7 @@ class PiscesLxTrainingOperator(object):
                     model_id=self.config.watermark.get('model_id', self.config.model_name)
                 )
                 
-                class _ConcreteWeightWatermark(POPSSWeightWatermarkOperator):
-                    @property
-                    def name(self):
-                        return "weight_watermark"
-                    @name.setter
-                    def name(self, value):
-                        pass
-                    @property
-                    def version(self):
-                        return "1.0.0"
-                    @version.setter
-                    def version(self, value):
-                        pass
-                
-                self._weight_watermark_operator = _ConcreteWeightWatermark(self._watermark_config)
+                self._weight_watermark_operator = POPSSWeightWatermarkOperator(self._watermark_config)
                 self._compliance_operator = POPSSComplianceOperator(self._watermark_config)
                 self._audit_operator = POPSSAuditOperator(self._watermark_config)
                 
@@ -775,13 +761,21 @@ class PiscesLxTrainingOperator(object):
         # Apply 3D parallelism wrapping (DP/TP/PP) if configured
         if self._parallel_3d_operator is not None:
             try:
-                result = self._parallel_3d_operator.execute({
-                    "model": self.model,
-                    "initialize": True,
-                })
-                if result.is_success() and result.output:
-                    self.model = result.output.get("model", self.model)
-                    _LOG.info("3D parallelism wrapping applied")
+                parallel_cfg = getattr(self._parallel_3d_operator, "config", None)
+                dp_size = int(getattr(parallel_cfg, "dp_size", 1) or 1)
+                tp_size = int(getattr(parallel_cfg, "tp_size", 1) or 1)
+                pp_size = int(getattr(parallel_cfg, "pp_size", 1) or 1)
+                if dp_size > 1 or tp_size > 1 or pp_size > 1:
+                    result = self._parallel_3d_operator.initialize(self.model, None)
+                    if result.is_success() and result.output:
+                        self.model = result.output.get("model", self.model)
+                        _LOG.info("3D parallelism wrapping applied")
+                    else:
+                        _LOG.warning(
+                            f"3D parallelism initialization skipped/failed: {getattr(result, 'error', 'unknown error')}"
+                        )
+                else:
+                    _LOG.debug("3D parallelism wrapping skipped because dp=tp=pp=1")
             except Exception as e:
                 _LOG.warning(f"3D parallelism wrapping failed: {e}")
 

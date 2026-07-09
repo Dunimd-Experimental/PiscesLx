@@ -40,9 +40,20 @@ from threading import Lock
 
 import torch
 
-from vllm import LLM, SamplingParams
-from vllm.outputs import RequestOutput
-from vllm.lora.request import LoRARequest
+try:
+    from vllm import LLM, SamplingParams  # noqa: F401
+    from vllm.outputs import RequestOutput  # noqa: F401
+    from vllm.lora.request import LoRARequest  # noqa: F401
+    _VLLM_AVAILABLE = True
+except ImportError:
+    # vLLM is an optional inference backend. We allow this module to be
+    # imported (so eager imports from ``opss.infer`` succeed) but the
+    # actual vLLM-backed classes will fail loudly when instantiated.
+    LLM = None  # type: ignore
+    SamplingParams = None  # type: ignore
+    RequestOutput = None  # type: ignore
+    LoRARequest = None  # type: ignore
+    _VLLM_AVAILABLE = False
 
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
