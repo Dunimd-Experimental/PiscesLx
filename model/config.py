@@ -1176,11 +1176,7 @@ class YvConfig:
             raise ValueError("compute_params_total must be non-negative")
         if self.lookup_params_total < 0:
             raise ValueError("lookup_params_total must be non-negative")
-        if self.compute_params_total > 0 and self.lookup_params_total > 0:
-            raise ValueError(
-                "compute_params_total and lookup_params_total cannot both be positive "
-                "in a split-architecture configuration"
-            )
+
 
         if self.knowledge_num_experts == 0:
             core_b = self.compute_params_total / 1e9 if self.compute_params_total > 0 else 7.0

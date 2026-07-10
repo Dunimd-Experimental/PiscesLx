@@ -733,9 +733,18 @@ class PiscesLxTrainingOperator(object):
         lora_enabled = getattr(getattr(self.config, "lora", None), "enabled", False)
         quant_enabled = self.config.quantization.enable_quantization
 
+        import torch.distributed as _dist
+        import os as _os
+        _use_meta_fsdp = (
+            getattr(self.config, 'fsdp', {}).get('enabled', False)
+            if hasattr(self.config, 'fsdp') else False
+        ) and self._parallel_3d_operator is None and _dist.is_initialized()
+        if _use_meta_fsdp:
+            _LOG.info("FSDP + distributed: using meta device init to avoid CPU OOM")
+
         # Try cache load: state_dict based (avoids pickle issues with bitsandbytes locks)
         cache_path = None
-        if quant_enabled and lora_enabled:
+        if quant_enabled and lora_enabled and not _use_meta_fsdp:
             cache_path = self._get_qlora_cache_path()
             if cache_path.exists():
                 _LOG.info(f"Loading cached QLoRA state_dict from {cache_path}")
@@ -784,84 +793,115 @@ class PiscesLxTrainingOperator(object):
 
         force_cpu_init = self._resolve_init_device(quant_enabled, model_kwargs)
 
+        if _use_meta_fsdp:
+            model_kwargs['device'] = 'meta'
+            model_kwargs['dtype'] = torch.float16
+
         # Create model instance with provided arguments
         self.model = model_class(**model_kwargs)
 
-        # Apply quantization (QLoRA-style) and LoRA BEFORE moving the full model to CUDA.
-        # This avoids the peak VRAM spike caused by first transferring bf16/fp16 full-precision weights.
-        if quant_enabled:
-            if self.device.type == "cuda":
-                self._apply_quantization_gpu_accelerated()
-            else:
-                self._apply_quantization()
-
-        if lora_enabled:
-            self._apply_lora()
-
-        # Save state_dict to cache (tensors only, no pickle issues with bnb locks)
-        if cache_path is not None and not cache_path.exists():
-            try:
-                cache_path.parent.mkdir(parents=True, exist_ok=True)
-                torch.save(self.model.state_dict(), cache_path)
-                _LOG.info(f"Cached prepared state_dict to {cache_path}")
-            except Exception as e:
-                _LOG.debug(f"Model caching skipped: {e}")
-
-        # Determine actual training device: prefer GPU even if driver warning fired.
-        # setup_training_device may return CPU when CUDA driver version mismatches
-        # PyTorch's build, but CUDA often still works. Probe it directly.
-        train_device = self._resolve_training_device()
-        if train_device.type != self.device.type:
-            _LOG.info(f"Overriding training device: {self.device} → {train_device}")
-            self.device = train_device
-
-        # Move model to target device (GPU/CPU) after QLoRA+LoRA.
-        _LOG.info(f"Transferring model to {self.device} (this copies quantized weights, may take time)...")
-        self.model = self.model.to(self.device)
-        self._post_transfer_setup(lora_enabled)
-
-        # Apply 3D parallelism wrapping (DP/TP/PP) if configured
-        if self._parallel_3d_operator is not None:
-            try:
-                parallel_cfg = getattr(self._parallel_3d_operator, "config", None)
-                dp_size = int(getattr(parallel_cfg, "dp_size", 1) or 1)
-                tp_size = int(getattr(parallel_cfg, "tp_size", 1) or 1)
-                pp_size = int(getattr(parallel_cfg, "pp_size", 1) or 1)
-                if dp_size > 1 or tp_size > 1 or pp_size > 1:
-                    result = self._parallel_3d_operator.initialize(self.model, None)
-                    if result.is_success() and result.output:
-                        self.model = result.output.get("model", self.model)
-                        info = result.output.get("parallel_info", {}) or {}
-                        _LOG.info(
-                            "3D parallelism wrapping applied: "
-                            f"dp_rank={info.get('dp_rank', 0)}, tp_rank={info.get('tp_rank', 0)}, pp_rank={info.get('pp_rank', 0)}, "
-                            f"effective_tp_size={info.get('effective_tp_size', getattr(parallel_cfg, 'tp_size', 1))}, "
-                            f"effective_pp_size={info.get('effective_pp_size', getattr(parallel_cfg, 'pp_size', 1))}"
-                        )
-                    else:
-                        _LOG.warning(
-                            f"3D parallelism initialization skipped/failed: {getattr(result, 'error', 'unknown error')}"
-                        )
+        if not _use_meta_fsdp:
+            # Apply quantization (QLoRA-style) and LoRA BEFORE moving the full model to CUDA.
+            # This avoids the peak VRAM spike caused by first transferring bf16/fp16 full-precision weights.
+            if quant_enabled:
+                if self.device.type == "cuda":
+                    self._apply_quantization_gpu_accelerated()
                 else:
-                    _LOG.debug("3D parallelism wrapping skipped because dp=tp=pp=1")
-            except Exception as e:
-                _LOG.warning(f"3D parallelism wrapping failed: {e}")
+                    self._apply_quantization()
+
+            if lora_enabled:
+                self._apply_lora()
+
+            # Save state_dict to cache (tensors only, no pickle issues with bnb locks)
+            if cache_path is not None and not cache_path.exists():
+                try:
+                    cache_path.parent.mkdir(parents=True, exist_ok=True)
+                    torch.save(self.model.state_dict(), cache_path)
+                    _LOG.info(f"Cached prepared state_dict to {cache_path}")
+                except Exception as e:
+                    _LOG.debug(f"Model caching skipped: {e}")
+
+            # Determine actual training device: prefer GPU even if driver warning fired.
+            # setup_training_device may return CPU when CUDA driver version mismatches
+            # PyTorch's build, but CUDA often still works. Probe it directly.
+            train_device = self._resolve_training_device()
+            if train_device.type != self.device.type:
+                _LOG.info(f"Overriding training device: {self.device} → {train_device}")
+                self.device = train_device
+
+            # Move model to target device (GPU/CPU) after QLoRA+LoRA.
+            _LOG.info(f"Transferring model to {self.device} (this copies quantized weights, may take time)...")
+            self.model = self.model.to(self.device)
+            self._post_transfer_setup(lora_enabled)
+
+            # Apply 3D parallelism wrapping if configured
+            if self._parallel_3d_operator is not None:
+                try:
+                    parallel_cfg = getattr(self._parallel_3d_operator, "config", None)
+                    dp_size = int(getattr(parallel_cfg, "dp_size", 1) or 1)
+                    tp_size = int(getattr(parallel_cfg, "tp_size", 1) or 1)
+                    pp_size = int(getattr(parallel_cfg, "pp_size", 1) or 1)
+                    if dp_size > 1 or tp_size > 1 or pp_size > 1:
+                        result = self._parallel_3d_operator.initialize(self.model, None)
+                        if result.is_success() and result.output:
+                            self.model = result.output.get("model", self.model)
+                            info = result.output.get("parallel_info", {}) or {}
+                            _LOG.info(
+                                "3D parallelism wrapping applied: "
+                                f"dp_rank={info.get('dp_rank', 0)}, tp_rank={info.get('tp_rank', 0)}, pp_rank={info.get('pp_rank', 0)}, "
+                                f"effective_tp_size={info.get('effective_tp_size', getattr(parallel_cfg, 'tp_size', 1))}, "
+                                f"effective_pp_size={info.get('effective_pp_size', getattr(parallel_cfg, 'pp_size', 1))}"
+                            )
+                        else:
+                            _LOG.warning(
+                                f"3D parallelism initialization skipped/failed: {getattr(result, 'error', 'unknown error')}"
+                            )
+                    else:
+                        _LOG.debug("3D parallelism wrapping skipped because dp=tp=pp=1")
+                except Exception as e:
+                    _LOG.warning(f"3D parallelism wrapping failed: {e}")
 
         # Apply FSDP wrapping if configured and 3D parallel not active
         fsdp_enabled = getattr(self.config, 'fsdp', {}).get('enabled', False) if hasattr(self.config, 'fsdp') else False
-        if fsdp_enabled and self._parallel_3d_operator is None:
+        if _use_meta_fsdp:
+            local_rank = int(_os.environ.get('LOCAL_RANK', '0'))
+            from torch.distributed.fsdp import FullyShardedDataParallel as _FSDP
+            from torch.distributed.fsdp.fully_sharded_data_parallel import (
+                CPUOffload, MixedPrecision, BackwardPrefetch, ShardingStrategy,
+            )
+            mp_dtype = torch.bfloat16 if self.config.mixed_precision in ('bf16', 'bfloat16') else torch.float16
+            self.model = _FSDP(
+                self.model,
+                sharding_strategy=ShardingStrategy.FULL_SHARD,
+                mixed_precision=MixedPrecision(param_dtype=mp_dtype, reduce_dtype=mp_dtype, buffer_dtype=mp_dtype),
+                cpu_offload=CPUOffload(offload_params=False),
+                backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+                limit_all_gathers=True,
+                device_id=local_rank,
+            )
+            with torch.no_grad():
+                for p in self.model.parameters():
+                    if p.numel() > 0:
+                        p.uniform_(-0.02, 0.02)
+            _LOG.info("FSDP wrapping applied with meta device init")
+        elif fsdp_enabled and self._parallel_3d_operator is None:
             try:
-                from opss.train.fsdp import POPSSFSDPOperator, POPSSFSDPConfig as _FSDPCfg
-                fsdp_cfg = _FSDPCfg(
-                    sharding_strategy=getattr(self.config, 'fsdp', {}).get('sharding_strategy', 'full_shard'),
-                    mixed_precision=getattr(self.config, 'fsdp', {}).get('mixed_precision', True),
-                    cpu_offload=getattr(self.config, 'fsdp', {}).get('cpu_offload', False),
+                from torch.distributed.fsdp import FullyShardedDataParallel as _FSDP
+                from torch.distributed.fsdp.fully_sharded_data_parallel import (
+                    CPUOffload, MixedPrecision, BackwardPrefetch, ShardingStrategy,
                 )
-                fsdp_op = POPSSFSDPOperator(fsdp_cfg)
-                result = fsdp_op.execute({"model": self.model, "initialize": True})
-                if result.is_success() and result.output:
-                    self.model = result.output.get("model", self.model)
-                    _LOG.info("FSDP wrapping applied")
+                mp_dtype = torch.bfloat16 if self.config.mixed_precision in ('bf16', 'bfloat16') else torch.float16
+                _local_rank = int(_os.environ.get('LOCAL_RANK', '0'))
+                self.model = _FSDP(
+                    self.model,
+                    sharding_strategy=ShardingStrategy.FULL_SHARD,
+                    mixed_precision=MixedPrecision(param_dtype=mp_dtype, reduce_dtype=mp_dtype, buffer_dtype=mp_dtype),
+                    cpu_offload=CPUOffload(offload_params=False),
+                    backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+                    limit_all_gathers=True,
+                    device_id=_local_rank,
+                )
+                _LOG.info("FSDP wrapping applied (non-meta)")
             except Exception as e:
                 _LOG.warning(f"FSDP initialization failed: {e}")
 

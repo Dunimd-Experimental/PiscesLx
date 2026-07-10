@@ -1600,13 +1600,14 @@ def main():
         run_dir = getattr(args, 'run_dir', None) or None
 
         # Auto-launch with torchrun for distributed training across multiple GPUs
-        if "LOCAL_RANK" not in os.environ and (args.distributed or args.world_size > 1):
-            detected_gpu_count = 0
+        detected_gpu_count = 0
+        if "LOCAL_RANK" not in os.environ:
             try:
                 import torch
                 detected_gpu_count = int(torch.cuda.device_count())
             except Exception:
                 detected_gpu_count = 0
+        if "LOCAL_RANK" not in os.environ and (args.distributed or args.world_size > 1 or detected_gpu_count > 1):
             n_gpu = args.world_size if args.world_size > 0 else detected_gpu_count
             if n_gpu > 1:
                 import subprocess
@@ -1620,19 +1621,22 @@ def main():
                 if nnodes <= 1:
                     env.setdefault("NCCL_SOCKET_IFNAME", "lo")
                     env.setdefault("GLOO_SOCKET_IFNAME", "lo")
+                sub_argv = list(sys.argv)
+                if "--distributed" not in sub_argv:
+                    sub_argv.insert(sub_argv.index("train") + 1, "--distributed")
                 cmd = [sys.executable, "-m", "torch.distributed.run",
                        f"--nproc_per_node={n_gpu}",
                        f"--nnodes={nnodes}",
                        f"--master_addr={master_addr}",
                        f"--master_port={master_port}",
-                       f"--node_rank={node_rank}"] + sys.argv
+                       f"--node_rank={node_rank}"] + sub_argv
                 _get_logger().info(
                     f"Launching distributed training on {n_gpu} GPUs via torchrun "
                     f"(nnodes={nnodes}, node_rank={node_rank}, master={master_addr}:{master_port})"
                 )
                 proc = subprocess.run(cmd, env=env)
                 sys.exit(proc.returncode)
-            elif args.distributed:
+            elif args.distributed or detected_gpu_count > 1:
                 _get_logger().warning(
                     f"Distributed training requested but only detected {detected_gpu_count} CUDA GPU(s); "
                     "falling back to single-process execution."
