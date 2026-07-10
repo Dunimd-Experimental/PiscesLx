@@ -62,7 +62,7 @@ class YvSubconsciousState(nn.Module):
         self.knowledge_dim = cfg.subconscious_knowledge_dim
         self.hidden_size = cfg.hidden_size
 
-        combined_dim = self.hidden_size + self.knowledge_dim + self.state_dim
+        combined_dim = self.state_dim * 3
         self.gru = nn.Linear(combined_dim, self.state_dim, bias=False, device=device, dtype=dtype)
         self.hidden_proj = nn.Linear(self.hidden_size, self.state_dim, bias=False, device=device, dtype=dtype)
         self.knowledge_proj = nn.Linear(self.knowledge_dim, self.state_dim, bias=False, device=device, dtype=dtype)

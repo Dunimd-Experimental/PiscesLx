@@ -134,9 +134,11 @@ Note:
 
 import os
 import sys
+import re
 import platform
 import subprocess
 import datetime
+from typing import Optional
 
 
 def _log(level, message):
@@ -279,6 +281,92 @@ def logger_warning(message):
         0125 14:30:00 | 2025-01-25T14:30:00.123456Z | 🟡 | [PiscesLx Core] | Some packages failed to install
     """
     _log('warning', message)
+
+
+def _detect_cuda_version() -> Optional[str]:
+    """Detect installed CUDA version via nvidia-smi or nvcc.
+
+    Returns:
+        Detected CUDA version string (e.g. '12.1'), or None if no CUDA found.
+    """
+    try:
+        result = subprocess.run(
+            ["nvidia-smi"], capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0:
+            for line in result.stdout.splitlines():
+                m = re.search(r'CUDA Version[:\s]+(\d+\.\d+)', line)
+                if m:
+                    return m.group(1)
+    except Exception:
+        pass
+
+    try:
+        result = subprocess.run(
+            ["nvcc", "--version"], capture_output=True, text=True, timeout=30
+        )
+        if result.returncode == 0:
+            m = re.search(r'release (\d+\.\d+)', result.stdout)
+            if m:
+                return m.group(1)
+    except Exception:
+        pass
+
+    try:
+        for ver_path in ("/usr/local/cuda/version.txt", "/usr/local/cuda/version.json"):
+            if os.path.exists(ver_path):
+                with open(ver_path) as f:
+                    content = f.read()
+                m = re.search(r'(\d+\.\d+)', content)
+                if m:
+                    return m.group(1)
+    except Exception:
+        pass
+
+    return None
+
+
+_CUDA_VERSION_MAP = {
+    (11, 0): "cu110", (11, 1): "cu111", (11, 2): "cu112",
+    (11, 3): "cu113", (11, 4): "cu114", (11, 5): "cu115",
+    (11, 6): "cu116", (11, 7): "cu117", (11, 8): "cu118",
+    (12, 0): "cu120", (12, 1): "cu121", (12, 2): "cu121",
+    (12, 3): "cu121", (12, 4): "cu124", (12, 5): "cu124",
+    (12, 6): "cu124", (12, 7): "cu124", (12, 8): "cu128",
+    (13, 0): "cu130",
+}
+
+
+def _get_pytorch_index_url(cuda_version: Optional[str]) -> Optional[str]:
+    """Map CUDA version to PyTorch wheel index URL.
+
+    Returns:
+        Full PyTorch index URL (e.g.
+        'https://download.pytorch.org/whl/cu121'), or None if CUDA is
+        not available or unsupported.
+    """
+    if not cuda_version:
+        return None
+
+    m = re.match(r'(\d+)\.(\d+)', cuda_version)
+    if not m:
+        return None
+
+    major, minor = int(m.group(1)), int(m.group(2))
+    # Find the best matching suffix: exact match or next available lower
+    available = sorted(_CUDA_VERSION_MAP.keys())
+    best = None
+    for ver in available:
+        if ver == (major, minor):
+            best = ver
+            break
+        if ver < (major, minor):
+            best = ver
+    if best is None:
+        return None
+
+    suffix = _CUDA_VERSION_MAP[best]
+    return f"https://download.pytorch.org/whl/{suffix}"
 
 
 def setup(args):
@@ -455,6 +543,27 @@ def setup(args):
         logger_error(f"Failed to upgrade pip: {e}")
         return
 
+    # -------------------------------------------------------------------------
+    # CUDA-aware PyTorch pre-installation
+    # -------------------------------------------------------------------------
+    cuda_version = _detect_cuda_version()
+    pytorch_index_url = _get_pytorch_index_url(cuda_version)
+    _torch_installed = False
+    if pytorch_index_url:
+        logger_info(f"Detected CUDA {cuda_version}. Installing PyTorch from {pytorch_index_url} ...")
+        try:
+            subprocess.check_call(
+                [sys.executable, "-m", "pip", "install", "torch", "torchvision", "torchaudio",
+                 "--index-url", pytorch_index_url],
+                timeout=600
+            )
+            _torch_installed = True
+            logger_success("PyTorch (CUDA) installed successfully")
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            logger_warning(f"CUDA PyTorch installation failed: {e}. Falling back to CPU-only torch from requirements.txt.")
+    else:
+        logger_info("CUDA not detected. PyTorch will be installed from requirements.txt (CPU-only).")
+
     compiled_packages = {
         'flash-attn': {
             'description': 'Flash Attention 2 - optimized attention kernel',
@@ -492,12 +601,20 @@ def setup(args):
     logger_info("Phase 1: Installing base packages (excluding compiled packages)...")
     logger_info(f"  Using Python: {sys.executable}")
     
+    # Skip torch/torchvision/torchaudio if already pre-installed with CUDA support
+    _skip_torch = _torch_installed
+
     for line in requirements:
         line = line.strip()
         if not line or line.startswith('#') or line.startswith('--'):
             continue
         
         pkg_name = line.split('>=')[0].split('==')[0].split('[')[0].lower()
+        
+        # Skip torch/torchvision/torchaudio if already installed via CUDA index
+        if _skip_torch and pkg_name in ('torch', 'torchvision', 'torchaudio'):
+            logger_info(f"  Skipping {pkg_name} (installed with CUDA support)")
+            continue
         
         is_compiled = False
         for compiled_pkg in compiled_packages.keys():

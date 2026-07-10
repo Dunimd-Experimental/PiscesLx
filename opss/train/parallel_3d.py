@@ -57,6 +57,12 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 from enum import Enum
 
+# Compatibility shim: torch.compiler.disable may not exist in older PyTorch
+if not hasattr(torch, 'compiler') or not hasattr(torch.compiler, 'disable'):
+    _DISABLE_COMPILE = lambda fn: fn
+else:
+    _DISABLE_COMPILE = torch.compiler.disable
+
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
@@ -803,7 +809,7 @@ class POPSSCommComputeOverlapOptimizer:
         if current_bucket:
             self._buckets.append(current_bucket)
 
-    @torch.compiler.disable
+    @_DISABLE_COMPILE
     def _sync_bucket(
         self,
         bucket: List[Tuple[str, nn.Parameter]],

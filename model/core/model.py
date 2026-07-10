@@ -876,6 +876,9 @@ class YvModel(nn.Module):
         self.mhc_lite = None
         self.reform_processor = None
         self.oomb_processor = None
+        self._tri_route_active = None
+        self._brownout_active = None
+        self._moebius_active = None
         self.reasoner = None                   # lazy: _lazy_get_reasoner
         self.agentic = None                    # lazy: _lazy_get_agentic
         self.speculative_decoder = None        # lazy: _lazy_get_speculative
@@ -938,9 +941,25 @@ class YvModel(nn.Module):
             persistent=False,
         )
 
+        self.gradient_checkpointing = False
+
         total_params = sum(p.numel() for p in self.parameters())
         _LOG.debug(f"YvModel: total parameters = {total_params/1e6:.2f}M")
         _LOG.debug("YvModel: __init__ end")
+
+    def gradient_checkpointing_enable(self):
+        """Enable gradient checkpointing across all backbone layers."""
+        self.gradient_checkpointing = True
+        for layer in self.layers:
+            if hasattr(layer, 'gradient_checkpointing'):
+                layer.gradient_checkpointing = True
+
+    def gradient_checkpointing_disable(self):
+        """Disable gradient checkpointing across all backbone layers."""
+        self.gradient_checkpointing = False
+        for layer in self.layers:
+            if hasattr(layer, 'gradient_checkpointing'):
+                layer.gradient_checkpointing = False
 
     def _validate_architecture_alignment(self) -> None:
         """Validate layer/index topology so cross-layer systems stay aligned."""
@@ -1169,6 +1188,10 @@ class YvModel(nn.Module):
                 num_permutations=getattr(cfg, 'mhc_permutations', 8),
                 device=device, dtype=dtype,
             )
+
+        self._tri_route_active = None
+        self._brownout_active = None
+        self._moebius_active = None
 
     def _apply_long_context_refinement(
         self,

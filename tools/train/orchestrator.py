@@ -1848,12 +1848,17 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         cfg = model_cfg or getattr(self, "config", None)
         has_aux_arch = bool(getattr(cfg, "use_dual_inject", False) or getattr(cfg, "use_subconscious", False))
         is_multimodal = any(mod != "text" for mod in active_modalities)
-        if vram_gb > 16.5 or not (has_aux_arch or is_multimodal):
+        is_heavy_arch = (
+            not bool(getattr(cfg, "backbone_allow_legacy_blocks", True))
+            or bool(getattr(cfg, "use_mamba3", False))
+            or int(getattr(cfg, "n_layer", 0) or 0) >= 16
+        )
+        if vram_gb > 16.5 or not (has_aux_arch or is_multimodal or is_heavy_arch):
             return
 
         original_batch = int(getattr(self.train_config.data, "batch_size", 1) or 1)
         original_accum = int(getattr(self.train_config, "gradient_accumulation_steps", 1) or 1)
-        target_batch = 1 if is_multimodal else 2
+        target_batch = 1 if (is_multimodal or is_heavy_arch) else 2
         if original_batch <= target_batch:
             return
 
@@ -1871,6 +1876,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             "Applied low-VRAM runtime policy",
             gpu_vram_gb=round(vram_gb, 2),
             active_modalities=active_modalities,
+            is_heavy_arch=is_heavy_arch,
             batch_size_before=original_batch,
             batch_size_after=target_batch,
             grad_accum_before=original_accum,

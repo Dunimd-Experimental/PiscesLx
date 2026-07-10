@@ -1589,17 +1589,22 @@ class YvMamba3Block(nn.Module):
         else:
             y_chunked = 0
 
-        x = y_scan + y_vk + y_ssd + y_flash + y_chunked
+        x_combined = y_scan + y_vk + y_ssd + y_flash + y_chunked
+        del y_scan, y_vk, y_ssd, y_flash, y_chunked
 
         # Auxiliary SSM paths (always active)
-        x_bidir = self.bidirectional(x)
+        x_bidir = self.bidirectional(x_combined)
+        del x_combined
         x = x + x_bidir
+        del x_bidir
 
         x_gated = self.gated_ssm(x)
         x = x + x_gated
+        del x_gated
 
         x_mh = self.multi_head(x)
         x = x + x_mh
+        del x_mh
 
         z = F.silu(z)
         output = x * z

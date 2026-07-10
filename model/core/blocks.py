@@ -2118,6 +2118,7 @@ class YvTransformerBlock(nn.Module):
         subconscious_kv=None,
         film_params=None,
         modal_id=None,
+        **kwargs,
     ):
         """Forward pass through the transformer block.
 
