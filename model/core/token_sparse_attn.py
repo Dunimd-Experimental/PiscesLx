@@ -111,6 +111,8 @@ class YvTokenSparseAttention(nn.Module):
         prelim_scores = torch.matmul(Q_lr, K_lr.transpose(-2, -1)) / (score_dim ** 0.5)
 
         if attention_mask is not None:
+            while attention_mask.dim() < prelim_scores.dim():
+                attention_mask = attention_mask.unsqueeze(1)
             prelim_scores = prelim_scores + attention_mask
 
         threshold = self._estimate_threshold_via_histogram(prelim_scores)

@@ -1376,6 +1376,10 @@ class YvModel(nn.Module):
             from .long_context import YvOOMBContext, YvREFORM
             from .token_sparse_attn import YvTokenSparseAttention
             from .mhc_lite import YvMHCLiteHyperConnection
+
+            embed_device = self.embed.weight.device
+            embed_dtype = self.embed.weight.dtype
+
             if getattr(self.cfg, 'use_reform', False):
                 self.reform_processor = YvREFORM(
                     compression_ratio=getattr(self.cfg, 'reform_compression_ratio', 4),
@@ -1387,12 +1391,12 @@ class YvModel(nn.Module):
                     max_context_length=getattr(self.cfg, 'max_position_embeddings', 4194304)
                 )
             if getattr(self.cfg, 'use_token_sparse_attn', False) or getattr(self.cfg, 'use_tactic', False):
-                self.token_sparse_attn = YvTokenSparseAttention(self.cfg, device=self._device, dtype=self._dtype)
+                self.token_sparse_attn = YvTokenSparseAttention(self.cfg, device=embed_device, dtype=embed_dtype)
             if getattr(self.cfg, 'use_mhc_lite', False):
                 self.mhc_lite = YvMHCLiteHyperConnection(
                     num_streams=getattr(self.cfg, 'mhc_streams', 4),
                     num_permutations=getattr(self.cfg, 'mhc_permutations', 8),
-                    device=self._device, dtype=self._dtype,
+                    device=embed_device, dtype=embed_dtype,
                 )
             self._lazy_initialized['long_context'] = True
 
@@ -1464,6 +1468,8 @@ class YvModel(nn.Module):
             getattr(self, 'mm_reasoning_enhancer', None),
             getattr(self, 'cache_manager', None),
             getattr(self, 'sparse_cut_router', None),
+            getattr(self, 'token_sparse_attn', None),
+            getattr(self, 'mhc_lite', None),
         ]
 
         for m in modules:
@@ -1474,6 +1480,10 @@ class YvModel(nn.Module):
                     sub.to(device=device, dtype=dtype, non_blocking=non_blocking)
             elif isinstance(m, nn.Module):
                 m.to(device=device, dtype=dtype, non_blocking=non_blocking)
+
+        if device is not None:
+            self._device = torch.device(device)
+            self._dtype = dtype or self._dtype
 
         return self
 
