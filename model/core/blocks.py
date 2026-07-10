@@ -1536,6 +1536,11 @@ class YvTransformerBlock(nn.Module):
                 routing_weight=getattr(cfg, 'mod_routing_weight', 0.1),
                 device=device, dtype=dtype
             )
+            self._mod_process_proj = nn.Linear(
+                cfg.hidden_size, cfg.hidden_size, bias=False,
+                device=device, dtype=dtype
+            )
+            nn.init.zeros_(self._mod_process_proj.weight)
 
         if self.use_adaptive_computation:
             self.act = YvAdaptiveComputationTime(
@@ -2252,8 +2257,11 @@ class YvTransformerBlock(nn.Module):
                 **attn_kwargs,
             )
             attn_cache = present_kv
+            del present_kv
             if hydra_out is not None:
                 attn_out = attn_out + hydra_out
+                del hydra_out
+            del x_norm
         else:
             attn_out = self.attn(
                 x_norm,
@@ -2267,6 +2275,8 @@ class YvTransformerBlock(nn.Module):
             )
             if hydra_out is not None:
                 attn_out = attn_out + hydra_out
+                del hydra_out
+            del x_norm
 
         if self.use_layerscale:
             attn_out = self.attn_layerscale(attn_out)
@@ -2274,28 +2284,21 @@ class YvTransformerBlock(nn.Module):
         if self.use_attn_res:
             self._accumulate_partial_block(attn_out)
 
-        if torch.cuda.device_count() > 1 and self.training:
+        if getattr(self.cfg, 'use_distributed_attn_gather', False) and torch.cuda.device_count() > 1 and self.training:
             try:
                 import torch.distributed as dist
                 if dist.is_initialized():
                     world_size = dist.get_world_size()
-
                     compressed = attn_out.mean(dim=1)
-
-                    if not hasattr(self, '_gather_buffer') or self._gather_buffer is None or self._gather_buffer[0].shape != compressed.shape:
-                        self._gather_buffer = [torch.zeros_like(compressed) for _ in range(world_size)]
-
-                    gathered = self._gather_buffer
-                    for g in gathered:
-                        g.zero_()
-                    dist.all_gather(gathered, compressed)
-
-                    other_info = torch.stack(gathered).mean(dim=0)
+                    buffer_list = [torch.zeros_like(compressed) for _ in range(world_size)]
+                    dist.all_gather(buffer_list, compressed)
+                    other_info = torch.stack(buffer_list).mean(dim=0)
                     attn_out = attn_out + 0.05 * other_info.unsqueeze(1)
-            except (ImportError, ModuleNotFoundError, RuntimeError, ValueError) as e:
+            except Exception as e:
                 _LOG.debug(f"YvTransformerBlock: distributed attention gathering skipped: {e}")
 
         x_out = self.residual(residual, attn_out, 0)
+        del attn_out
         x_out = self.norm1(x_out)
         
         if hasattr(self, 'ssm_layer') and self.ssm_layer is not None:
@@ -2325,20 +2328,16 @@ class YvTransformerBlock(nn.Module):
             self._accumulate_partial_block(mlp_out)
 
         x_out = self.residual(residual, mlp_out, 1)
+        del mlp_out
         x_out = self.norm2(x_out)
 
         if layer_route_gate is not None:
             x_out = layer_route_gate.unsqueeze(-1) * pre_block_input + \
                     (1.0 - layer_route_gate.unsqueeze(-1)) * x_out
+            del pre_block_input
             aux_loss = aux_loss + lr_loss
 
         if self.use_mixture_of_depths:
-            if not hasattr(self, '_mod_process_proj'):
-                self._mod_process_proj = nn.Linear(
-                    x_out.size(-1), x_out.size(-1), bias=False,
-                    device=x_out.device, dtype=x_out.dtype
-                )
-                nn.init.zeros_(self._mod_process_proj.weight)
             x_out, mod_loss = self.mod_router(
                 x_out, lambda h: h + self._mod_process_proj(h)
             )
@@ -2402,119 +2401,106 @@ class YvTransformerBlock(nn.Module):
         blocks_flat = blocks.view(-1, hidden_size)  # [N*B*T, H]
         blocks_norm = self.attn_res_norm(blocks_flat).view_as(blocks)  # [N, B, T, H]
         
-        # Project keys and values
+# Project keys and values
         # Key projection: [N, B, T, H]
-        keys = self.attn_res_key_proj(blocks_norm)  # [N, B, T, H]
-        
+        keys = self.attn_res_key_proj(blocks_norm)
+
         # Value projection: [N, B, T, H]
-        values = self.attn_res_value_proj(blocks)  # [N, B, T, H]
-        
+        values = self.attn_res_value_proj(blocks)
+
+        # Free blocks_norm and blocks after projections are done
+        del blocks_norm
+
         # Compute attention scores
-        # Query: [B, 1, H], Keys: [N, B, T, H]
-        # Reshape for batched matmul
-        query_expanded = query  # [B, 1, H]
-        keys_transposed = keys.permute(1, 0, 2, 3)  # [B, N, T, H]
-        
-        # Compute attention logits: [B, N, T]
-        # Use scaled dot-product attention
         scale = hidden_size ** -0.5
         attn_logits = torch.matmul(
-            query_expanded.squeeze(1).to(keys_transposed.dtype),  # [B, H]
-            keys_transposed.reshape(batch_size, -1, hidden_size).transpose(-1, -2)  # [B, H, N*T]
-        ) * scale  # [B, N*T]
-        
-        # Reshape back to [B, N, T]
+            query.squeeze(1).to(keys.dtype),
+            keys.permute(1, 0, 2, 3).reshape(batch_size, -1, hidden_size).transpose(-1, -2)
+        ) * scale
+        del keys
+
         attn_logits = attn_logits.view(batch_size, num_blocks, seq_len)
-        
+
         if self.attn_res_use_two_phase and self.attn_res_use_online_softmax:
-            # Phase 2: Online Softmax for streaming aggregation
-            # Merge block-level attention with current block
-            
-            # Get current block representation
-            current_norm = self.attn_res_norm(x)  # [B, T, H]
-            current_key = self.attn_res_key_proj(current_norm)  # [B, T, H]
-            current_value = self.attn_res_value_proj(x)  # [B, T, H]
-            
-            # Compute attention for current block
+            current_norm = self.attn_res_norm(x)
+            current_key = self.attn_res_key_proj(current_norm)
+            current_value = self.attn_res_value_proj(x)
+            del current_norm
+
             current_logits = torch.matmul(
-                query.squeeze(1).to(current_key.dtype),  # [B, H]
-                current_key.transpose(-1, -2)  # [B, H, T]
-            ) * scale  # [B, T]
-            
-            # Online Softmax: merge previous blocks with current block
-            # m: running maximum, n: running normalization factor
+                query.squeeze(1).to(current_key.dtype),
+                current_key.transpose(-1, -2)
+            ) * scale
+            del current_key
+
             if self._online_softmax_m is None:
-                # Initialize with current block
-                m_current = current_logits.max(dim=-1, keepdim=True)[0]  # [B, 1]
-                n_current = torch.exp(current_logits - m_current).sum(dim=-1, keepdim=True)  # [B, 1]
-                
-                # Update state
+                m_current = current_logits.max(dim=-1, keepdim=True)[0]
+                n_current = torch.exp(current_logits - m_current).sum(dim=-1, keepdim=True)
                 self._online_softmax_m = m_current
                 self._online_softmax_n = n_current
             else:
-                # Get previous state
-                m_prev = self._online_softmax_m  # [B, 1]
-                n_prev = self._online_softmax_n  # [B, 1]
-                
-                # Compute new maximum
+                m_prev = self._online_softmax_m
+                n_prev = self._online_softmax_n
                 m_new = torch.maximum(m_prev, current_logits.max(dim=-1, keepdim=True)[0])
-                
-                # Update normalization factor
                 n_prev_scaled = n_prev * torch.exp(m_prev - m_new)
                 n_current = torch.exp(current_logits - m_new).sum(dim=-1, keepdim=True)
                 n_new = n_prev_scaled + n_current
-                
-                # Update state
                 self._online_softmax_m = m_new
                 self._online_softmax_n = n_new
-            
-            # Compute final attention weights
-            # For blocks: use stored m and n
+
             m_final = self._online_softmax_m
             n_final = self._online_softmax_n
-            
-            # Block attention weights
+
             block_weights = torch.exp(attn_logits - m_final.unsqueeze(-1)) / (n_final.unsqueeze(-1) + 1e-8)
-            block_weights = block_weights / block_weights.sum(dim=-1, keepdim=True)  # Normalize
-            
-            # Current block weight
+            block_weights = block_weights / block_weights.sum(dim=-1, keepdim=True)
+            del attn_logits
+
             current_weight = torch.exp(current_logits - m_final) / (n_final + 1e-8)
             current_weight = current_weight / current_weight.sum(dim=-1, keepdim=True)
-            
-            # Weighted aggregation
+            del current_logits
+
             block_weights_3d = block_weights.view(batch_size, num_blocks, seq_len)
             values_4d = values.view(num_blocks, batch_size, seq_len, hidden_size)
+            del block_weights
             if not (block_weights_3d.shape[0] == values_4d.shape[1] and
                     block_weights_3d.shape[1] == values_4d.shape[0] and
                     block_weights_3d.shape[2] == values_4d.shape[2]):
                 raise RuntimeError(f"block einsum shape mismatch: {block_weights_3d.shape}, {values_4d.shape}")
             block_weights_batched = block_weights_3d.permute(0, 2, 1).reshape(batch_size * seq_len, 1, num_blocks)
             values_batched = values_4d.permute(1, 2, 0, 3).reshape(batch_size * seq_len, num_blocks, hidden_size)
+            del block_weights_3d, values_4d
             block_contrib = torch.bmm(block_weights_batched, values_batched).reshape(batch_size, seq_len, hidden_size)
-            
-            # Current contribution: [B, T] @ [B, T, H] -> [B, T, H]
+            del block_weights_batched, values_batched
+
             current_contrib = current_weight.unsqueeze(-1) * current_value
-            
-            # Combined output
+            del current_weight, current_value
+
             aggregated = block_contrib + current_contrib
+            del block_contrib, current_contrib
         else:
-            # Standard softmax attention over blocks
             attn_weights = F.softmax(attn_logits.view(batch_size, -1), dim=-1)
+            del attn_logits
             attn_weights = attn_weights.view(batch_size, num_blocks, -1)
-            
+
             attn_weights_3d = attn_weights.view(batch_size, num_blocks, seq_len)
             values_4d = values.view(num_blocks, batch_size, seq_len, hidden_size)
+            del attn_weights
             if not (attn_weights_3d.shape[0] == values_4d.shape[1] and
                     attn_weights_3d.shape[1] == values_4d.shape[0] and
                     attn_weights_3d.shape[2] == values_4d.shape[2]):
                 raise RuntimeError(f"attn einsum shape mismatch: {attn_weights_3d.shape}, {values_4d.shape}")
             attn_weights_batched = attn_weights_3d.permute(0, 2, 1).reshape(batch_size * seq_len, 1, num_blocks)
             values_batched = values_4d.permute(1, 2, 0, 3).reshape(batch_size * seq_len, num_blocks, hidden_size)
+            del attn_weights_3d, values_4d
             aggregated = torch.bmm(attn_weights_batched, values_batched).reshape(batch_size, seq_len, hidden_size)
-        
-        # Output projection
+            del attn_weights_batched, values_batched
+
+        # Free values after aggregation is done
+        del values
+
         output = self.attn_res_out_proj(aggregated)
-        
+        del aggregated
+
         return output
 
     def _update_attn_res_block(self, x: torch.Tensor) -> None:
@@ -2558,14 +2544,11 @@ class YvTransformerBlock(nn.Module):
         """
         # Detach to prevent gradient flow
         output_detached = output.detach()
-        
+
         if self._partial_block_sum is None:
             self._partial_block_sum = output_detached.clone()
         else:
-            self._partial_block_sum = self._partial_block_sum + output_detached
-        
-        # Update count
-        self._partial_block_count += 1
+            self._partial_block_sum.add_(output_detached)
 
 
 # Paper: Based on hyperbolic embeddings (Nickel & Kiela, NeurIPS 2017) and spherical constraints

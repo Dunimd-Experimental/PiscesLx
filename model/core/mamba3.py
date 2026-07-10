@@ -594,9 +594,10 @@ class YvComplexStateSpace(nn.Module):
             return x
 
         x_state = self.proj_in(x)
-        x_complex = torch.complex(x_state, torch.zeros_like(x_state))
+        orig_dtype = x_state.dtype
+        x_complex = torch.complex(x_state.to(torch.float32), torch.zeros_like(x_state, dtype=torch.float32))
         x_transformed = torch.einsum('bsd,de->bse', x_complex, A_complex)
-        result = self.proj_out(x_transformed.real)
+        result = self.proj_out(x_transformed.real).to(orig_dtype)
 
         if torch.isnan(result).any() or torch.isinf(result).any():
             return torch.zeros_like(x)
@@ -749,6 +750,10 @@ class YvSelectiveScan(nn.Module):
     def _parallel_scan(self, delta: torch.Tensor, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         """Sequential scan for short sequences.
         
+        Computes deltaA and deltaB_u one timestep at a time to avoid
+        materialising the full ``[batch, seq, d_state, d_model]`` tensor,
+        which can cause OOM with large ``d_state`` or ``d_model``.
+        
         Args:
             delta: Delta parameter [batch, seq_len, d_model].
             A: A matrix [d_state, d_model].
@@ -761,16 +766,22 @@ class YvSelectiveScan(nn.Module):
         """
         batch, seq_len, d_model = u.shape
         d_state = self.d_state
-
-        deltaA = torch.exp(delta.unsqueeze(-2) * A.unsqueeze(0).unsqueeze(0))
-        deltaB_u = delta.unsqueeze(-2) * B.unsqueeze(-1) * u.unsqueeze(-2)
+        A_4d = A.unsqueeze(0).unsqueeze(0)
 
         h = torch.zeros(batch, d_state, d_model, device=u.device, dtype=u.dtype)
         outputs = []
 
         for t in range(seq_len):
-            h = deltaA[:, t] * h + deltaB_u[:, t]
-            y = torch.einsum('bs,bsd->bd', C[:, t], h)
+            dt = delta[:, t:t+1]
+            Bt = B[:, t:t+1]
+            ut = u[:, t:t+1]
+            Ct = C[:, t:t+1]
+
+            deltaA_t = torch.exp(dt.unsqueeze(-2) * A_4d)
+            deltaB_u_t = dt.unsqueeze(-2) * Bt.unsqueeze(-1) * ut.unsqueeze(-2)
+
+            h = deltaA_t[:, 0] * h + deltaB_u_t[:, 0]
+            y = torch.einsum('bs,bsd->bd', Ct[:, 0], h)
             outputs.append(y)
 
         return torch.stack(outputs, dim=1)
@@ -837,7 +848,7 @@ class YvSelectiveScan(nn.Module):
         B = self.B_proj(u)
         C = self.C_proj(u)
 
-        if seq_len <= 256:
+        if seq_len <= 4096:
             output = self._parallel_scan(delta, A, B, C, u)
         else:
             output = self._associative_scan(delta, A, B, C, u)
@@ -1526,6 +1537,7 @@ class YvMamba3Block(nn.Module):
         self.gated_ssm = YvGatedSSM(config.d_inner, config.d_state, config.d_conv)
         self.multi_head = YvMultiHeadSSM(config.d_inner, config.d_state, max(2, config.n_heads), config.d_conv)
         self.adaptive_dt = YvAdaptiveDiscretization(config.d_inner, config.dt_rank, config.d_state)
+        self.dt_rank_down = nn.Linear(config.d_inner, config.dt_rank, bias=False)
         self.flash_ssm = YvFlashSSM(config.d_inner, config.d_state, config.d_conv)
 
         self.out_proj = nn.Linear(config.d_inner, config.d_model, bias=config.bias)
@@ -1564,7 +1576,8 @@ class YvMamba3Block(nn.Module):
         dt, A = self.adaptive_dt(x)
 
         # All SSM core paths (always active, combined additively)
-        y_scan = self.selective_scan(x, dt)
+        dt_rank = self.dt_rank_down(dt)
+        y_scan = self.selective_scan(x, dt_rank)
         y_vk = self.v_kernel(x)
         y_ssd = self.ss_duality(x)
         y_flash = self.flash_ssm(x)
@@ -1572,20 +1585,20 @@ class YvMamba3Block(nn.Module):
         # Chunked forward for ultra-long sequences (complements, not replaces)
         ultra_long_threshold = getattr(self.config, 'max_seq_len', 4096) * 4
         if seq_len > ultra_long_threshold:
-            y_chunked = self._chunked_forward(x, dt, self.config.chunk_size)
+            y_chunked = self._chunked_forward(x, dt_rank, self.config.chunk_size)
         else:
             y_chunked = 0
 
         x = y_scan + y_vk + y_ssd + y_flash + y_chunked
 
         # Auxiliary SSM paths (always active)
-        x_bidir = self.bidirectional(hidden_states)
+        x_bidir = self.bidirectional(x)
         x = x + x_bidir
 
-        x_gated = self.gated_ssm(hidden_states)
+        x_gated = self.gated_ssm(x)
         x = x + x_gated
 
-        x_mh = self.multi_head(hidden_states)
+        x_mh = self.multi_head(x)
         x = x + x_mh
 
         z = F.silu(z)

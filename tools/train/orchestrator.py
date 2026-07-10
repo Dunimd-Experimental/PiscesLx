@@ -1051,15 +1051,22 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         # Set by torchrun (LOCAL_RANK env) or --distributed flag
         local_rank = os.environ.get("LOCAL_RANK")
         if local_rank is not None and not (torch.distributed.is_available() and torch.distributed.is_initialized()):
-            os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-            os.environ.setdefault("MASTER_PORT", "29500")
-            os.environ.setdefault("NCCL_SOCKET_IFNAME", "lo")
-            os.environ.setdefault("GLOO_SOCKET_IFNAME", "lo")
+            master_addr = os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+            master_port = os.environ.setdefault("MASTER_PORT", "29500")
+            world_size_env = int(os.environ.get("WORLD_SIZE", "1") or 1)
+            if world_size_env <= 1:
+                os.environ.setdefault("NCCL_SOCKET_IFNAME", "lo")
+                os.environ.setdefault("GLOO_SOCKET_IFNAME", "lo")
             try:
-                torch.distributed.init_process_group(backend="nccl")
-                torch.cuda.set_device(int(local_rank))
-                _LOG.info(f"Distributed training initialized: rank={torch.distributed.get_rank()}, "
-                         f"world_size={torch.distributed.get_world_size()}")
+                backend = "nccl" if torch.cuda.is_available() else "gloo"
+                torch.distributed.init_process_group(backend=backend)
+                if torch.cuda.is_available():
+                    torch.cuda.set_device(int(local_rank))
+                _LOG.info(
+                    f"Distributed training initialized: backend={backend}, rank={torch.distributed.get_rank()}, "
+                    f"world_size={torch.distributed.get_world_size()}, master={master_addr}:{master_port}, "
+                    f"local_rank={local_rank}"
+                )
             except Exception as e:
                 _LOG.warning(f"Failed to initialize distributed training: {e}")
 
@@ -1073,6 +1080,15 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         }
         if dl_kwargs["num_workers"] > 0:
             dl_kwargs["prefetch_factor"] = int(getattr(self.train_config.data, "prefetch_factor", 2))
+        try:
+            cpu_count = os.cpu_count() or 1
+            world_size = int(os.environ.get("WORLD_SIZE", "1") or 1)
+            per_rank_budget = max(1, cpu_count // max(1, world_size))
+            dl_kwargs["num_workers"] = min(int(dl_kwargs["num_workers"]), per_rank_budget)
+            if dl_kwargs["num_workers"] == 0:
+                dl_kwargs.pop("prefetch_factor", None)
+        except Exception:
+            pass
 
         # Do not reload model_cfg here; keep the same instance to avoid
         # desynchronizing applied training_config and model-level overrides.
@@ -1758,9 +1774,23 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             local_rank_env = os.environ.get("LOCAL_RANK")
             if local_rank_env is not None:
                 self.train_config.local_rank = int(local_rank_env)
+        if hasattr(self.train_config, 'world_size'):
+            world_size_env = os.environ.get("WORLD_SIZE")
+            if world_size_env is not None:
+                self.train_config.world_size = int(world_size_env)
+                if int(world_size_env) > 1 and hasattr(self.train_config, 'distributed'):
+                    self.train_config.distributed = True
 
         self._train_dataloader_factory = train_dataloader_factory
         self._val_dataloader_factory = val_dataloader_factory
+
+        active_modalities = model_kwargs.get("modalities", {"text"})
+        try:
+            active_modalities = sorted(set(active_modalities or {"text"}))
+        except Exception:
+            active_modalities = ["text"]
+        self.train_config.active_modalities = active_modalities
+        self._apply_runtime_memory_policy(model_kwargs.get("cfg"), active_modalities)
         
         self._start_dev_mode_ui()
         
@@ -1799,6 +1829,53 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         
         _LOG.info("Training environment initialization completed")
         return self
+
+    def _apply_runtime_memory_policy(self, model_cfg: Any, active_modalities: List[str]) -> None:
+        """Adapt per-step training cost to the active architecture on low-VRAM cards.
+
+        Keeps the full auxiliary architecture enabled, but reduces the *simultaneous*
+        activation footprint by shrinking per-device batch size and compensating with
+        gradient accumulation. This preserves effective batch size far better than
+        simply disabling subsystems.
+        """
+        try:
+            if not torch.cuda.is_available() or torch.cuda.device_count() <= 0:
+                return
+            vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+        except Exception:
+            return
+
+        cfg = model_cfg or getattr(self, "config", None)
+        has_aux_arch = bool(getattr(cfg, "use_dual_inject", False) or getattr(cfg, "use_subconscious", False))
+        is_multimodal = any(mod != "text" for mod in active_modalities)
+        if vram_gb > 16.5 or not (has_aux_arch or is_multimodal):
+            return
+
+        original_batch = int(getattr(self.train_config.data, "batch_size", 1) or 1)
+        original_accum = int(getattr(self.train_config, "gradient_accumulation_steps", 1) or 1)
+        target_batch = 1 if is_multimodal else 2
+        if original_batch <= target_batch:
+            return
+
+        effective_batch = original_batch * original_accum
+        new_accum = max(original_accum, (effective_batch + target_batch - 1) // target_batch)
+        self.train_config.data.batch_size = target_batch
+        self.train_config.gradient_accumulation_steps = new_accum
+
+        if hasattr(self.train_config.data, "prefetch_factor"):
+            self.train_config.data.prefetch_factor = min(int(getattr(self.train_config.data, "prefetch_factor", 2) or 2), 2)
+        if hasattr(self.train_config.data, "num_workers"):
+            self.train_config.data.num_workers = min(int(getattr(self.train_config.data, "num_workers", 2) or 2), 2)
+
+        _LOG.info(
+            "Applied low-VRAM runtime policy",
+            gpu_vram_gb=round(vram_gb, 2),
+            active_modalities=active_modalities,
+            batch_size_before=original_batch,
+            batch_size_after=target_batch,
+            grad_accum_before=original_accum,
+            grad_accum_after=new_accum,
+        )
     
     def _setup_distillation(self):
         """Setup distillation components with teacher provider."""

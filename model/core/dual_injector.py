@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import torch
 import torch.nn as nn
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from .subconscious import YvSubconsciousSystem
 from .knowledge_experts import YvKnowledgeExpertPool
@@ -43,10 +43,15 @@ class YvDualInjector(nn.Module):
         else:
             self.knowledge_pool = None
 
-    def inject(self, h: torch.Tensor, layer_idx: Optional[int] = None) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
+    def inject(
+        self,
+        h: torch.Tensor,
+        layer_idx: Optional[int] = None,
+    ) -> Tuple[torch.Tensor, Optional[torch.Tensor], Optional[Dict[str, torch.Tensor]]]:
+        film_params = None
         if self.subconscious is not None:
-            h = self.subconscious(h, layer_idx if layer_idx is not None else 0)
-        return h, None
+            film_params = self.subconscious.get_film_params(h, layer_idx if layer_idx is not None else 0)
+        return h, None, film_params
 
     def get_trainable_params(self) -> Dict[str, nn.Parameter]:
         params = {}

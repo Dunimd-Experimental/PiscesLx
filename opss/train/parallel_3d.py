@@ -178,6 +178,8 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
         
         self._model = None
         self._optimizer = None
+        self._effective_tp_size = int(self.config.tp_size)
+        self._effective_pp_size = int(self.config.pp_size)
     
     def initialize(self, model: nn.Module, optimizer: Optional[torch.optim.Optimizer] = None) -> PiscesLxOperatorResult:
         """
@@ -191,11 +193,22 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
             PiscesLxOperatorResult with parallelized model
         """
         try:
+            self._validate_model_compatibility(model)
             self._setup_distributed()
             self._create_process_groups()
             
             self._model = self._parallelize_model(model)
             self._optimizer = self._setup_optimizer(optimizer)
+            if self.config.overlap_communication and self.config.dp_size > 1 and self._dp_group is not None:
+                self._overlap_optimizer = POPSSCommComputeOverlapOptimizer(
+                    model=self._model,
+                    bucket_size_mb=int(getattr(self.config, "overlap_bucket_size_mb", 25) or 25),
+                    enable_overlap=bool(getattr(self.config, "enable_overlap", True)),
+                    grad_sync=bool(getattr(self.config, "overlap_grad_sync", True)),
+                    dp_group=self._dp_group,
+                )
+            else:
+                self._overlap_optimizer = None
             
             self._initialized = True
             
@@ -208,7 +221,9 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
                         "dp_rank": self._dp_rank,
                         "tp_rank": self._tp_rank,
                         "pp_rank": self._pp_rank,
-                        "world_size": self._world_size
+                        "world_size": self._world_size,
+                        "effective_tp_size": self._effective_tp_size,
+                        "effective_pp_size": self._effective_pp_size,
                     }
                 }
             )
@@ -217,6 +232,39 @@ class POPSSParallel3DOperator(PiscesLxOperatorInterface):
             return PiscesLxOperatorResult(
                 status=PiscesLxOperatorStatus.ERROR,
                 error=str(e)
+            )
+
+    def _validate_model_compatibility(self, model: nn.Module) -> None:
+        """Clamp unsupported TP/PP modes to safe values for Yv-style monolithic models."""
+        model_name = model.__class__.__name__
+        has_yv_stack = hasattr(model, "layers") and hasattr(model, "embed") and hasattr(model, "lm_head")
+        if not has_yv_stack:
+            return
+
+        requested_tp = int(getattr(self.config, "tp_size", 1) or 1)
+        requested_pp = int(getattr(self.config, "pp_size", 1) or 1)
+        self._effective_tp_size = requested_tp
+        self._effective_pp_size = requested_pp
+
+        # Current TP/PP utilities mutate module weights without the matching
+        # gather/scatter semantics required by YvModel.forward, which would
+        # silently corrupt training. Keep DP/sequence parallel active, but
+        # force unsafe TP/PP dimensions back to 1 until a topology-aware path
+        # is implemented for this architecture.
+        if requested_tp > 1:
+            self._effective_tp_size = 1
+            self.config.tp_size = 1
+        if requested_pp > 1:
+            self._effective_pp_size = 1
+            self.config.pp_size = 1
+
+        if self._effective_tp_size != requested_tp or self._effective_pp_size != requested_pp:
+            self.config.world_size = self.config.dp_size * self.config.tp_size * self.config.pp_size
+            self._LOG.warning(
+                f"3D parallel compatibility guard engaged for {model_name}: "
+                f"requested(tp={requested_tp}, pp={requested_pp}) -> "
+                f"effective(tp={self.config.tp_size}, pp={self.config.pp_size}). "
+                "DP/sequence parallel remain enabled; topology-aware TP/PP is not yet safe for this model."
             )
     
     def _setup_distributed(self):
@@ -733,6 +781,7 @@ class POPSSCommComputeOverlapOptimizer:
         self.dp_group = dp_group
 
         self._buckets: List[List[Tuple[str, nn.Parameter]]] = []
+        self._pending_handles: List[Tuple[torch.distributed.Work, List[torch.Tensor], torch.Tensor]] = []
         self._build_buckets()
 
     def _build_buckets(self):
@@ -766,7 +815,7 @@ class POPSSCommComputeOverlapOptimizer:
             return None
 
         flat_grad = torch._utils._flatten_dense_tensors(grads)
-        handle = torch.distributed.all_reduce_(
+        handle = torch.distributed.all_reduce(
             flat_grad,
             op=torch.distributed.ReduceOp.SUM,
             group=dp_group,
@@ -789,7 +838,7 @@ class POPSSCommComputeOverlapOptimizer:
         for g in grads:
             g.div_(world_size)
 
-    def sync_gradients(self):
+    def sync_gradients(self, async_only: bool = False):
         """Synchronize gradients across all data parallel workers.
 
         Uses bucketed async all-reduce to overlap communication with
@@ -813,8 +862,17 @@ class POPSSCommComputeOverlapOptimizer:
             if result is not None:
                 handles.append(result)
 
+        if async_only:
+            self._pending_handles = handles
+            return handles
+
+        if self._pending_handles:
+            handles = self._pending_handles + handles
+            self._pending_handles = []
+
         for result in handles:
             self._wait_and_unscale(*result, world_size)
+        return handles
 
     def overlap_allreduce(self, backward_fn):
         """
@@ -861,6 +919,7 @@ class POPSSCommComputeOverlapOptimizer:
 
         local_world_size = int(os.environ.get('LOCAL_WORLD_SIZE', 1))
         local_rank = int(os.environ.get('LOCAL_RANK', 0))
+        global_rank = dist.get_rank()
 
         if local_world_size <= 0:
             self.sync_gradients()
@@ -871,7 +930,8 @@ class POPSSCommComputeOverlapOptimizer:
             self.sync_gradients()
             return
 
-        node_rank = local_rank // local_world_size
+        node_rank = global_rank // local_world_size
+        local_leader_rank = node_rank * local_world_size
 
         intra_node_group = dist.new_group(
             ranks=list(range(node_rank * local_world_size, (node_rank + 1) * local_world_size)),
@@ -891,8 +951,11 @@ class POPSSCommComputeOverlapOptimizer:
             dist.all_reduce(flat_grad, op=dist.ReduceOp.SUM, group=intra_node_group)
             flat_grad.div_(local_world_size)
 
-            dist.all_reduce(flat_grad, op=dist.ReduceOp.SUM, group=cross_node_group)
-            flat_grad.div_(n_nodes)
+            if global_rank == local_leader_rank:
+                dist.all_reduce(flat_grad, op=dist.ReduceOp.SUM, group=cross_node_group)
+                flat_grad.div_(n_nodes)
+
+            dist.broadcast(flat_grad, src=local_leader_rank, group=intra_node_group)
 
             synced = torch._utils._unflatten_dense_tensors(flat_grad, grads)
             for g, sg in zip(grads, synced):

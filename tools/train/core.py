@@ -132,6 +132,7 @@ from typing import Dict, Any, Optional, Union, List, Tuple
 from pathlib import Path
 import time
 import json
+import os
 from datetime import datetime
 from contextlib import nullcontext
 
@@ -264,6 +265,24 @@ class PiscesLxTrainingOperator(object):
             local_rank=getattr(config, 'local_rank', -1),
             device_pref=config.device
         )
+        try:
+            cpu_count = os.cpu_count() or 0
+        except Exception:
+            cpu_count = 0
+        try:
+            gpu_count = int(torch.cuda.device_count()) if torch.cuda.is_available() else 0
+        except Exception:
+            gpu_count = 0
+        _LOG.info(
+            f"Hardware topology detected: cpu_cores={cpu_count}, cuda_available={torch.cuda.is_available()}, "
+            f"gpu_count={gpu_count}, selected_device={self.device}, distributed={bool(getattr(config, 'distributed', False))}, "
+            f"local_rank={getattr(config, 'local_rank', -1)}, world_size={getattr(config, 'world_size', 1)}"
+        )
+        if gpu_count > 1 and not bool(getattr(config, 'distributed', False)):
+            _LOG.warning(
+                f"Detected {gpu_count} CUDA GPUs but distributed training is disabled; "
+                "training will use a single process/device unless --distributed is enabled."
+            )
         
         # Initialize CUDA context if using GPU
         if self.device.type == 'cuda':
@@ -457,28 +476,42 @@ class PiscesLxTrainingOperator(object):
         )
         try:
             if hasattr(self.config, 'parallel_3d') and self.config.parallel_3d.get('enabled', False):
+                configured_dp = int(self.config.parallel_3d.get('dp_size', 1) or 1)
+                configured_tp = int(self.config.parallel_3d.get('tp_size', 1) or 1)
+                configured_pp = int(self.config.parallel_3d.get('pp_size', 1) or 1)
+                env_world_size = int(
+                    os.environ.get("WORLD_SIZE")
+                    or getattr(self.config, "world_size", 1)
+                    or 1
+                )
+                inferred_dp = configured_dp
+                if configured_tp * configured_pp > 0 and env_world_size > 1:
+                    inferred_dp = max(1, env_world_size // max(1, configured_tp * configured_pp))
                 parallel_config = POPSSParallel3DConfig(
-                    dp_size=self.config.parallel_3d.get('dp_size', 1),
-                    tp_size=self.config.parallel_3d.get('tp_size', 1),
-                    pp_size=self.config.parallel_3d.get('pp_size', 1),
+                    dp_size=inferred_dp,
+                    tp_size=configured_tp,
+                    pp_size=configured_pp,
                     sequence_parallel=self.config.parallel_3d.get('sequence_parallel', True),
                     num_micro_batches=self.config.parallel_3d.get('num_micro_batches', 4),
                     overlap_communication=self.config.parallel_3d.get('overlap_communication', True),
                     gradient_checkpointing=self.config.parallel_3d.get('gradient_checkpointing', False),
                     zero_stage=self.config.parallel_3d.get('zero_stage', 0),
-                    mixed_precision=self.config.mixed_precision
+                    mixed_precision=self.config.mixed_precision,
+                    overlap_bucket_size_mb=int(self.config.parallel_3d.get('overlap_bucket_size_mb', 25) or 25),
+                    overlap_grad_sync=bool(self.config.parallel_3d.get('overlap_grad_sync', True)),
                 )
+                expected_world_size = parallel_config.world_size
+                if env_world_size > 1 and expected_world_size != env_world_size:
+                    _LOG.warning(
+                        f"3D parallel config/world-size mismatch: expected={expected_world_size}, env_world_size={env_world_size}. "
+                        "Keeping inferred dp_size but cluster topology may still be misconfigured."
+                    )
 
-                class _ConcreteParallel3D(POPSSParallel3DOperator):
-                    description = "No-op 3D parallelism"
-                    input_schema = {}
-                    output_schema = {}
-                    name = "concrete_parallel_3d"
-                    version = "1.0.0"
-                    def validate_inputs(self, data): return data
-                
-                self._parallel_3d_operator = _ConcreteParallel3D(parallel_config)
-                _LOG.info(f"3D Parallelism operator initialized: dp={parallel_config.dp_size}, tp={parallel_config.tp_size}, pp={parallel_config.pp_size}")
+                self._parallel_3d_operator = POPSSParallel3DOperator(parallel_config)
+                _LOG.info(
+                    f"3D Parallelism operator initialized: dp={parallel_config.dp_size}, "
+                    f"tp={parallel_config.tp_size}, pp={parallel_config.pp_size}, world_size={parallel_config.world_size}"
+                )
         except Exception as e:
             _LOG.warning(f"Failed to initialize 3D parallelism operator: {e}")
     
@@ -504,8 +537,37 @@ class PiscesLxTrainingOperator(object):
                     owner_id=self.config.watermark.get('owner_id', 'default_owner'),
                     model_id=self.config.watermark.get('model_id', self.config.model_name)
                 )
-                
-                self._weight_watermark_operator = POPSSWeightWatermarkOperator(self._watermark_config)
+
+                class _TrainingWeightWatermark(POPSSWeightWatermarkOperator):
+                    @property
+                    def name(self):
+                        return getattr(self, "_name", "pisceslx_weight_watermark_operator")
+
+                    @name.setter
+                    def name(self, value):
+                        self._name = value
+
+                    @property
+                    def version(self):
+                        return getattr(self, "_version", "1.0.0")
+
+                    @version.setter
+                    def version(self, value):
+                        self._version = value
+
+                    @property
+                    def description(self):
+                        return getattr(
+                            self,
+                            "_description",
+                            "Weight watermarking for model provenance and ownership verification",
+                        )
+
+                    @description.setter
+                    def description(self, value):
+                        self._description = value
+
+                self._weight_watermark_operator = _TrainingWeightWatermark(self._watermark_config)
                 self._compliance_operator = POPSSComplianceOperator(self._watermark_config)
                 self._audit_operator = POPSSAuditOperator(self._watermark_config)
                 
@@ -769,7 +831,13 @@ class PiscesLxTrainingOperator(object):
                     result = self._parallel_3d_operator.initialize(self.model, None)
                     if result.is_success() and result.output:
                         self.model = result.output.get("model", self.model)
-                        _LOG.info("3D parallelism wrapping applied")
+                        info = result.output.get("parallel_info", {}) or {}
+                        _LOG.info(
+                            "3D parallelism wrapping applied: "
+                            f"dp_rank={info.get('dp_rank', 0)}, tp_rank={info.get('tp_rank', 0)}, pp_rank={info.get('pp_rank', 0)}, "
+                            f"effective_tp_size={info.get('effective_tp_size', getattr(parallel_cfg, 'tp_size', 1))}, "
+                            f"effective_pp_size={info.get('effective_pp_size', getattr(parallel_cfg, 'pp_size', 1))}"
+                        )
                     else:
                         _LOG.warning(
                             f"3D parallelism initialization skipped/failed: {getattr(result, 'error', 'unknown error')}"
@@ -825,7 +893,16 @@ class PiscesLxTrainingOperator(object):
             return False
         if self.device.type == "cuda":
             vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-            if vram_gb >= 14:
+            active_modalities = set(getattr(self.config, "active_modalities", []) or [])
+            low_vram_heavy_arch = (
+                vram_gb <= 16.5
+                and (
+                    bool(getattr(self.config, "use_dual_inject", False))
+                    or bool(getattr(self.config, "use_subconscious", False))
+                    or any(mod != "text" for mod in active_modalities)
+                )
+            )
+            if vram_gb >= 18 and not low_vram_heavy_arch:
                 _LOG.info(f"GPU VRAM {vram_gb:.1f}GB - using GPU initialization for quantization")
                 model_kwargs['device'] = self.device
                 model_kwargs['dtype'] = torch.float16
@@ -894,8 +971,19 @@ class PiscesLxTrainingOperator(object):
         if self.config.gradient_checkpointing:
             self._enable_gradient_checkpointing()
 
-        if self.config.distributed:
+        parallel_cfg = getattr(self._parallel_3d_operator, "config", None)
+        parallel_active = bool(
+            parallel_cfg is not None
+            and (
+                int(getattr(parallel_cfg, "dp_size", 1) or 1) > 1
+                or int(getattr(parallel_cfg, "tp_size", 1) or 1) > 1
+                or int(getattr(parallel_cfg, "pp_size", 1) or 1) > 1
+            )
+        )
+        if self.config.distributed and not parallel_active:
             self._setup_distributed_training()
+        elif self.config.distributed and parallel_active:
+            _LOG.info("Skipping DDP wrapping because 3D parallelism is active")
 
     def _get_qlora_cache_path(self) -> Path:
         """Build a cache path keyed by model + quant + lora config hash."""
@@ -964,10 +1052,13 @@ class PiscesLxTrainingOperator(object):
         if not valid_names:
             _LOG.warning("No Linear modules matched for LoRA target patterns; falling back to pattern list")
             target_modules_list = target_patterns_list
+            rank_pattern = None
+            alpha_pattern = None
         else:
             target_modules_list = sorted(valid_names)
-        
-        peft_cfg = _PeftLoraConfig(
+            rank_pattern, alpha_pattern = self._build_lora_rank_patterns(target_modules_list, lora_r, lora_alpha)
+
+        peft_kwargs = dict(
             r=lora_r,
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
@@ -975,10 +1066,63 @@ class PiscesLxTrainingOperator(object):
             bias=lora_bias,
             task_type="CAUSAL_LM",
         )
+        if rank_pattern:
+            peft_kwargs["rank_pattern"] = rank_pattern
+        if alpha_pattern:
+            peft_kwargs["alpha_pattern"] = alpha_pattern
+
+        try:
+            peft_cfg = _PeftLoraConfig(**peft_kwargs)
+        except TypeError:
+            peft_kwargs.pop("rank_pattern", None)
+            peft_kwargs.pop("alpha_pattern", None)
+            peft_cfg = _PeftLoraConfig(**peft_kwargs)
         
         _LOG.info(f"Applying LoRA: r={lora_r}, alpha={lora_alpha}, target_modules={len(target_modules_list)}")
         self.model = get_peft_model(self.model, peft_cfg)
         _LOG.info("LoRA adapters injected, moving model to target device...")
+
+    def _build_lora_rank_patterns(self, target_modules_list, base_rank: int, base_alpha: int):
+        """Keep full architecture trainable while compressing adapter capacity by path.
+
+        Core backbone and knowledge-injection paths retain the configured rank.
+        Peripheral or currently inactive branches keep LoRA coverage, but receive a
+        smaller low-rank budget instead of being dropped entirely.
+        """
+        active_modalities = set(getattr(self.config, "active_modalities", []) or {"text"})
+        rank_pattern = {}
+        alpha_pattern = {}
+
+        for name in target_modules_list:
+            rank = int(base_rank)
+            alpha = int(base_alpha)
+
+            if any(token in name for token in ("reasoner", "generator", "mtp_heads", "task_head", "eval_head")):
+                rank = max(2, base_rank // 4)
+            elif name.startswith(("vision.", "video.", "doc.", "agent_encoder.", "agentic.")):
+                rank = max(2, base_rank // 2)
+            elif name.startswith("audio."):
+                rank = max(4, (base_rank * 3) // 4) if "audio" in active_modalities else max(2, base_rank // 2)
+            elif name.startswith(("modal_fusion.", "fusion_proj")):
+                rank = max(4, (base_rank * 3) // 4)
+            elif name.startswith(("dual_injector.", "subconscious.")):
+                rank = max(4, base_rank)
+            elif not name.startswith("layers."):
+                rank = max(2, base_rank // 2)
+
+            if rank != base_rank:
+                rank_pattern[name] = rank
+                alpha_pattern[name] = max(rank, int(round(base_alpha * (rank / max(base_rank, 1)))))
+
+        if rank_pattern:
+            _LOG.info(
+                "Applying path-aware LoRA compression",
+                active_modalities=sorted(active_modalities),
+                total_targets=len(target_modules_list),
+                compressed_targets=len(rank_pattern),
+                base_rank=base_rank,
+            )
+        return rank_pattern or None, alpha_pattern or None
     
     def _apply_quantization(self):
         """
@@ -1287,14 +1431,27 @@ class PiscesLxTrainingOperator(object):
                 return
 
             rank = dist.get_rank()
+            local_rank = int(getattr(self.config, "local_rank", -1))
+            device_index = None
+            if self.device.type == "cuda":
+                if local_rank >= 0:
+                    device_index = local_rank
+                elif hasattr(self.device, "index") and self.device.index is not None:
+                    device_index = int(self.device.index)
             self.model = nn.parallel.DistributedDataParallel(
                 self.model,
-                device_ids=[rank] if self.device.type == "cuda" else None,
-                output_device=rank if self.device.type == "cuda" else None,
+                device_ids=([device_index] if device_index is not None else None),
+                output_device=device_index,
                 find_unused_parameters=True,
+                broadcast_buffers=False,
+                gradient_as_bucket_view=True,
+                static_graph=bool(getattr(self.config, "ddp_static_graph", False)),
             )
 
-            _LOG.info(f"Distributed training setup completed: rank={rank}, world_size={world_size}")
+            _LOG.info(
+                f"Distributed training setup completed: rank={rank}, "
+                f"local_rank={local_rank}, world_size={world_size}, device={self.device}"
+            )
         except Exception as e:
             _LOG.error(f"Distributed training setup failed: {e}")
     
@@ -1623,6 +1780,34 @@ class PiscesLxTrainingOperator(object):
         model_batch.setdefault("return_reasoner_outputs", False)
         model_batch.setdefault("return_verifier_outputs", False)
         model_batch.setdefault("return_mtp_logits", False)
+        model_batch.setdefault("output_attentions", False)
+        model_batch.setdefault("output_hidden_states", False)
+        model_batch.setdefault("use_cache", False)
+
+        attention_mask = model_batch.get("attention_mask")
+        input_ids = model_batch.get("input_ids")
+        if (
+            isinstance(attention_mask, torch.Tensor)
+            and isinstance(input_ids, torch.Tensor)
+            and attention_mask.dim() == 2
+            and input_ids.dim() == 2
+            and attention_mask.shape == input_ids.shape
+        ):
+            try:
+                active_lengths = attention_mask.to(dtype=torch.int32).sum(dim=1)
+                trim_len = int(active_lengths.max().item())
+            except Exception:
+                trim_len = int(input_ids.shape[1])
+
+            trim_len = max(1, min(trim_len, int(input_ids.shape[1])))
+            current_len = int(input_ids.shape[1])
+            if trim_len < current_len:
+                for key in ("input_ids", "labels", "attention_mask"):
+                    tensor = model_batch.get(key)
+                    if isinstance(tensor, torch.Tensor) and tensor.dim() >= 2 and tensor.shape[1] == current_len:
+                        slicer = [slice(None)] * tensor.dim()
+                        slicer[1] = slice(0, trim_len)
+                        model_batch[key] = tensor[tuple(slicer)].contiguous()
 
         model_vocab_size = 0
         try:
@@ -2197,17 +2382,12 @@ class PiscesLxTrainingOperator(object):
             Gradient norm after processing
         """
         if self.scaler is not None:
-            scaled_loss = self.scaler.scale(loss)
-            scaled_loss.backward()
+            self.scaler.scale(loss).backward()
         else:
             loss.backward()
 
-        if self.scaler is not None:
-            self.scaler.unscale_(self.optimizer)
-        grad_norm = self._clip_and_measure_grad_norm()
-        
-        # Optimized: batch all auxiliary backward passes together
-        aux_loss_total = 0.0
+        # Keep auxiliary losses connected to the graph when operators return tensors.
+        aux_losses: List[torch.Tensor] = []
         
         # Collect GaLore gradients (no backward needed, just projection)
         if hasattr(self, '_galore_adapter') and self._galore_adapter is not None:
@@ -2229,8 +2409,12 @@ class PiscesLxTrainingOperator(object):
                 })
                 if moe_result.is_success() and moe_result.output:
                     aux_val = moe_result.output.get('total_auxiliary_loss', 0.0)
-                    aux_loss_total += aux_val
-                    if aux_val != 0.0:
+                    if isinstance(aux_val, torch.Tensor):
+                        if aux_val.requires_grad or aux_val.grad_fn is not None:
+                            aux_losses.append(aux_val)
+                        elif float(aux_val.detach().item()) != 0.0:
+                            _LOG.debug(f"MoE gradient optimizer returned detached aux loss: {float(aux_val.detach().item()):.6f}")
+                    elif aux_val not in (0, 0.0, None):
                         _LOG.debug(f"MoE gradient optimizer step completed, aux_loss: {aux_val}")
             except Exception as e:
                 _LOG.warning(f"MoE gradient optimizer execute failed: {e}. Skipping MoE auxiliary loss collection.")
@@ -2240,19 +2424,32 @@ class PiscesLxTrainingOperator(object):
             try:
                 wm_result = self._weight_watermark_operator._regularize({"model": self.model})
                 if wm_result.is_success() and wm_result.output.get("regularization_loss") is not None:
-                    aux_loss_total += wm_result.output["regularization_loss"].item()
-                    _LOG.debug(f"Weight watermark regularization completed, loss: {wm_result.output['regularization_loss'].item()}")
+                    wm_loss = wm_result.output["regularization_loss"]
+                    if isinstance(wm_loss, torch.Tensor):
+                        if wm_loss.requires_grad or wm_loss.grad_fn is not None:
+                            aux_losses.append(wm_loss)
+                        elif float(wm_loss.detach().item()) != 0.0:
+                            _LOG.debug(f"Weight watermark returned detached regularization loss: {float(wm_loss.detach().item()):.6f}")
+                    else:
+                        _LOG.debug(f"Weight watermark regularization completed, loss: {wm_loss}")
             except Exception as e:
                 _LOG.warning(f"Weight watermark regularization failed: {e}. Skipping watermark regularization loss.")
         
-        # Single backward for all auxiliary losses (much more efficient)
-        if aux_loss_total > 0:
-            aux_loss_tensor = torch.tensor(aux_loss_total, device=self.device)
+        # Single backward for all graph-connected auxiliary losses.
+        if aux_losses:
+            aux_loss_tensor = torch.stack([aux.to(device=self.device) for aux in aux_losses]).sum()
             if self.scaler is not None:
                 self.scaler.scale(aux_loss_tensor).backward()
             else:
                 aux_loss_tensor.backward()
-        
+
+        grad_norm = 0.0
+        if did_step:
+            self._sync_parallel_3d_gradients()
+            if self.scaler is not None:
+                self.scaler.unscale_(self.optimizer)
+            grad_norm = self._clip_and_measure_grad_norm()
+
         # K-FAC preconditioning (no backward needed)
         if did_step and self._kfac_operator is not None:
             try:
@@ -2284,6 +2481,29 @@ class PiscesLxTrainingOperator(object):
                 self._modality_scheduler.step()
             except Exception as e:
                 _LOG.warning(f"Modality scheduler step failed: {e}")
+
+    def _sync_parallel_3d_gradients(self) -> None:
+        """Synchronize gradients through the active 3D parallel operator."""
+        operator = self._parallel_3d_operator
+        if operator is None:
+            return
+        cfg = getattr(operator, "config", None)
+        if cfg is None:
+            return
+        dp_size = int(getattr(cfg, "dp_size", 1) or 1)
+        if dp_size <= 1:
+            return
+        try:
+            nnodes = int(os.environ.get("NNODES", "1") or 1)
+        except Exception:
+            nnodes = 1
+        try:
+            if nnodes > 1 and hasattr(operator, "_overlap_optimizer") and operator._overlap_optimizer is not None:
+                operator._overlap_optimizer.hierarchical_allreduce()
+            elif hasattr(operator, "_synchronize_gradients"):
+                operator._synchronize_gradients()
+        except Exception as e:
+            _LOG.warning(f"3D parallel gradient sync failed: {e}")
     
     def get_advanced_operator_stats(self) -> Dict[str, Any]:
         """Get statistics from all advanced operators.
@@ -2314,7 +2534,9 @@ class PiscesLxTrainingOperator(object):
                 'dp_size': self._parallel_3d_operator.config.dp_size,
                 'tp_size': self._parallel_3d_operator.config.tp_size,
                 'pp_size': self._parallel_3d_operator.config.pp_size,
-                'world_size': self._parallel_3d_operator.config.world_size
+                'world_size': self._parallel_3d_operator.config.world_size,
+                'effective_tp_size': getattr(self._parallel_3d_operator, '_effective_tp_size', self._parallel_3d_operator.config.tp_size),
+                'effective_pp_size': getattr(self._parallel_3d_operator, '_effective_pp_size', self._parallel_3d_operator.config.pp_size),
             }
         
         if self._evolution_operator is not None:
@@ -2396,18 +2618,22 @@ class PiscesLxTrainingOperator(object):
             except Exception:
                 pass
 
+        next_accum_step = self._grad_accum_step + 1
+        did_step = (next_accum_step % grad_accum_steps == 0)
+        should_measure_tokens = did_step or profiler is not None
+
         if 'input_ids' in batch:
             batch_size = int(batch['input_ids'].size(0))
-            try:
-                tokens = int(batch['attention_mask'].sum().item()) if 'attention_mask' in batch else int(batch['input_ids'].numel())
-            except Exception:
+            if should_measure_tokens:
+                try:
+                    tokens = int(batch['attention_mask'].sum().item()) if 'attention_mask' in batch else int(batch['input_ids'].numel())
+                except Exception:
+                    tokens = 0
+            else:
                 tokens = 0
         else:
             batch_size = 0
             tokens = 0
-
-        next_accum_step = self._grad_accum_step + 1
-        did_step = (next_accum_step % grad_accum_steps == 0)
 
         sync_context = nullcontext()
         if (not did_step) and hasattr(self.model, "no_sync"):
@@ -2436,7 +2662,7 @@ class PiscesLxTrainingOperator(object):
             loss_scalar = loss_scalar * grad_accum_steps
 
         # Record detailed stats only on logging boundaries (avoids inflating history buffer)
-        if self.global_step % self._log_steps == 0:
+        if did_step and self.global_step % self._log_steps == 0:
             self._record_training_stats(loss_scalar, grad_norm, throughput)
 
         # Profiler: end training step trace
@@ -2455,7 +2681,8 @@ class PiscesLxTrainingOperator(object):
             'throughput': throughput,
             'token_throughput': token_throughput,
             'global_step': self.global_step,
-            'step_time': step_time
+            'step_time': step_time,
+            'did_step': did_step,
         }
     
     def _record_training_stats(self, loss: float, grad_norm: float, throughput: float):
@@ -2674,11 +2901,17 @@ class PiscesLxTrainingOperator(object):
 
         while self.global_step < max_steps:
             self.epochs_completed += 1
+            try:
+                sampler = getattr(train_dataloader, "sampler", None)
+                if sampler is not None and hasattr(sampler, "set_epoch"):
+                    sampler.set_epoch(self.epochs_completed)
+            except Exception as e:
+                _LOG.warning(f"Failed to advance distributed sampler epoch: {e}")
 
             for batch in train_dataloader:
                 step_result = self.train_step(batch)
 
-                if log_steps > 0 and self.global_step % log_steps == 0:
+                if step_result.get("did_step") and log_steps > 0 and self.global_step % log_steps == 0:
                     _LOG.info(
                         f"Epoch {self.epochs_completed} | "
                         f"Step {self.global_step}/{max_steps} | "

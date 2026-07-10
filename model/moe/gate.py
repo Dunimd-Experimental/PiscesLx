@@ -202,30 +202,37 @@ class YvMoEGate(nn.Module):
         min_temp = getattr(cfg, 'moe_temperature_min', 1.5) if cfg is not None else 1.5
         max_temp = getattr(cfg, 'moe_temperature_max', 5.0) if cfg is not None else 5.0
 
-        self.register_buffer('expert_usage_count', torch.zeros(num_experts))
-        self.register_buffer('temperature', torch.tensor(initial_temp))
+        self.register_buffer('expert_usage_count', torch.zeros(num_experts, device=device, dtype=dtype))
+        self.register_buffer('temperature', torch.tensor(initial_temp, device=device, dtype=dtype))
         self.min_temperature = min_temp
-        self.register_buffer('total_routing_count', torch.tensor(0.0))
-        self.register_buffer('expert_temperature_max', torch.tensor(max_temp))
+        self.register_buffer('total_routing_count', torch.tensor(0.0, device=device, dtype=dtype))
+        self.register_buffer('expert_temperature_max', torch.tensor(max_temp, device=device, dtype=dtype))
 
-        self.register_buffer('expert_bias', torch.zeros(num_experts))
+        self.register_buffer('expert_bias', torch.zeros(num_experts, device=device, dtype=dtype))
         self.bias_update_rate = 0.05
         self.bias_update_freq = 10
-        self.register_buffer('bias_update_counter', torch.tensor(0))
+        self.register_buffer('bias_update_counter', torch.tensor(0, device=device, dtype=dtype))
 
         self._is_checkpointing = False
 
         # === 1. Standard routing gate (always built) ===
         self.gate = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
 
-        # === 2. HiCL DG-gated routing (always built) ===
+        # === Auxiliary routing heads (conditionally built) ===
+        self._routing_heads_enabled = False
+        self._routing_head_warmup_steps = max(
+            getattr(cfg, 'moe_random_to_gradient_steps', 2000) if cfg is not None else 2000,
+            500
+        )
+
+        # HiCL DG-gated routing
         from .hicl_router import YvDGEncoder as _YvDG
         self.hicl_dg_dim = hidden_size * 4
         self.hicl_dg_encoder = _YvDG(hidden_size, expansion_factor=4, sparsity_k=32, device=device, dtype=dtype)
         self.hicl_prototypes = nn.Parameter(torch.randn(num_experts, self.hicl_dg_dim, device=device, dtype=dtype) * 0.02)
         self.w_hicl = nn.Parameter(torch.tensor(0.1, device=device, dtype=dtype))
 
-        # === 3. Graph-of-Tokens routing (always built) ===
+        # Graph-of-Tokens routing
         from .graph_of_tokens import YvTokenGraphBuilder as _YvGraph
         self.got_n_heads = getattr(cfg, 'graph_of_tokens_n_heads', 4) if cfg is not None else 4
         self.got_max_clusters = getattr(cfg, 'graph_of_tokens_max_clusters', 8) if cfg is not None else 8
@@ -234,15 +241,15 @@ class YvMoEGate(nn.Module):
         self.got_cluster_proj = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
         self.w_got = nn.Parameter(torch.tensor(0.05, device=device, dtype=dtype))
 
-        # === 4. SoftMoE routing (always built) ===
+        # SoftMoE routing
         soft_k = getattr(cfg, 'soft_moe_mean_k', top_k) if cfg is not None else top_k
         self.soft_moe_temperature = getattr(cfg, 'soft_moe_temperature', 1.0) if cfg is not None else 1.0
         self.gate_k = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
         self.gate_v = nn.Linear(hidden_size, num_experts, bias=False, device=device, dtype=dtype)
-        self.register_buffer('soft_moe_budget', torch.tensor(float(soft_k)))
+        self.register_buffer('soft_moe_budget', torch.tensor(float(soft_k), device=device, dtype=dtype))
         self.w_soft = nn.Parameter(torch.tensor(0.05, device=device, dtype=dtype))
 
-        # === 5. Expert-Oriented routing (always built) ===
+        # Expert-Oriented routing
         expert_embed_dim = max(64, hidden_size // 64)
         self.expert_embeddings = nn.Parameter(torch.randn(num_experts, expert_embed_dim, device=device, dtype=dtype))
         self.input_encoder = nn.Sequential(
@@ -257,16 +264,15 @@ class YvMoEGate(nn.Module):
         )
         self.w_expert_orient = nn.Parameter(torch.tensor(0.05, device=device, dtype=dtype))
 
-        # === 6. Modal-Aware affinity (always built) ===
+        # Modal-Aware affinity
         n_modalities = getattr(cfg, 'n_modalities', 7) if cfg is not None else 7
         self.n_modalities = n_modalities
         self.expert_modal_affinity = nn.Parameter(
-            torch.zeros(num_experts, n_modalities, device=device, dtype=dtype)
+            YvNumericalGuard.nan_to_num(torch.zeros(num_experts, n_modalities, device=device, dtype=dtype))
         )
-        nn.init.normal_(self.expert_modal_affinity, mean=0.0, std=0.02)
         self.affinity_alpha = 1.0
 
-        # === 7. UltraSparse tiering (always built) ===
+        # UltraSparse tiering
         self.importance_proj = nn.Sequential(
             nn.Linear(hidden_size, hidden_size // 4, bias=False, device=device, dtype=dtype),
             nn.SiLU(),
@@ -278,12 +284,12 @@ class YvMoEGate(nn.Module):
         self.ultra_sparse_tier2_topk = getattr(cfg, 'ultra_sparse_tier2_topk', 2) if cfg is not None else 2
         self.ultra_sparse_tier3_topk = top_k
 
-        # === 8. PathMoE cache (always built) ===
+        # PathMoE cache
         self._path_moe_stage_size = getattr(cfg, 'path_moe_stage_size', 4) if cfg is not None else 4
         self._path_moe_layer_idx = 0
         self._path_moe_cache = None
 
-        # === GSA-style learnable sparse gates for routing mechanism cost optimization ===
+        # GSA-style learnable sparse gates for routing mechanism cost optimization
         self.sparse_gate_hicl = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
         self.sparse_gate_got = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
         self.sparse_gate_soft_moe = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
@@ -293,6 +299,36 @@ class YvMoEGate(nn.Module):
 
         # Pruning state: after training, unused routing heads are removed
         self._pruned_heads: set = set()
+        # Lazy stale gate weight - only allocated when anticipatory update runs
+        self._stale_gate_weight: Optional[torch.Tensor] = None
+
+    def _should_compute_aux_head(self, sparse_gate: nn.Parameter, pruned_name: str) -> bool:
+        """Check whether an auxiliary routing head should be computed.
+        
+        During early training (warmup), skips all auxiliary heads to save FLOPs.
+        After warmup, computes only if the head hasn't been pruned and its
+        sparse gate exceeds threshold. During inference, always computes if unpruned.
+        """
+        if pruned_name in self._pruned_heads:
+            return False
+        if not self.training:
+            return True
+        if self.current_step < self._routing_head_warmup_steps:
+            return False
+        return True
+
+    def _safe_temperature(self, logits: torch.Tensor, seq_len: int) -> torch.Tensor:
+        """Apply numerically safe temperature scaling entirely on GPU."""
+        if seq_len >= 8192:
+            effective_temp = self.temperature * self.attention_mamba_temp
+        else:
+            effective_temp = self.temperature
+        temp_clamped = YvNumericalGuard.safe_clamp(
+            effective_temp,
+            low=0.1,
+            high=self.expert_temperature_max
+        )
+        return logits / temp_clamped
 
     def forward(self, x, modal_id=None):
         batch_size, seq_len, hidden_size = x.shape
@@ -303,33 +339,31 @@ class YvMoEGate(nn.Module):
             self.current_step += 1
             if self.current_step > self.random_to_gradient_steps:
                 self.use_random_routing = False
+            if self.current_step == self._routing_head_warmup_steps:
+                self._routing_heads_enabled = True
 
-        # === Step 2: Compute logits from routing heads (sparse-gated) ===
+        # === Step 2: Compute logits (standard gate always) ===
         logits = self.gate(x_flat)
         soft_logits = None
 
-        # HiCL DG-gated routing — sparse-gated
-        if not self._is_pruned('hicl'):
-            hicl_gate = torch.sigmoid(self.sparse_gate_hicl)
-            if self.training or hicl_gate.item() >= self.gate_sparsity_threshold:
+        # Auxiliary routing heads — only compute after warmup + if unpruned
+        if self._routing_heads_enabled or not self.training:
+            # HiCL DG-gated routing
+            if self._should_compute_aux_head(self.sparse_gate_hicl, 'hicl'):
                 logits = logits + self.w_hicl * torch.mm(
                     self.hicl_dg_encoder(x_flat),
                     self.hicl_prototypes.t(),
                 )
 
-        # Graph-of-Tokens routing — sparse-gated
-        if not self._is_pruned('got'):
-            got_gate = torch.sigmoid(self.sparse_gate_got)
-            if self.training or got_gate.item() >= self.gate_sparsity_threshold:
+            # Graph-of-Tokens routing
+            if self._should_compute_aux_head(self.sparse_gate_got, 'got'):
                 with torch.no_grad():
                     got_clusters = self.got_graph_builder(x)
                 got_logits = self.got_cluster_proj(x_flat)
                 logits = logits + self.w_got * got_logits
 
-        # SoftMoE routing — sparse-gated
-        if not self._is_pruned('soft_moe'):
-            soft_gate = torch.sigmoid(self.sparse_gate_soft_moe)
-            if self.training or soft_gate.item() >= self.gate_sparsity_threshold:
+            # SoftMoE routing
+            if self._should_compute_aux_head(self.sparse_gate_soft_moe, 'soft_moe'):
                 logits_k = self.gate_k(x_flat)
                 logits_v = self.gate_v(x_flat)
                 threshold = logits_k.median(dim=-1, keepdim=True).values
@@ -338,10 +372,8 @@ class YvMoEGate(nn.Module):
                 soft_logits = YvNumericalGuard.safe_div(soft_logits, soft_logits.sum(dim=-1, keepdim=True))
                 logits = logits + self.w_soft * soft_logits
 
-        # Expert-Oriented routing — sparse-gated
-        if not self._is_pruned('expert_orient'):
-            eo_gate = torch.sigmoid(self.sparse_gate_expert_orient)
-            if self.training or eo_gate.item() >= self.gate_sparsity_threshold:
+            # Expert-Oriented routing
+            if self._should_compute_aux_head(self.sparse_gate_expert_orient, 'expert_orient'):
                 input_emb = self.input_encoder(x_flat)
                 encoded_expert = self.expert_capability_encoder(self.expert_embeddings)
                 sim_logits = torch.mm(input_emb, encoded_expert.t())
@@ -361,55 +393,42 @@ class YvMoEGate(nn.Module):
         # === Step 4: Apply Phi-Balancing bias ===
         logits = logits + self.expert_bias
 
-        # === Step 5: Anticipatory routing (stale weights) ===
-        if self.training and not self._is_checkpointing:
-            if not hasattr(self, '_stale_gate_weight') or self.current_step % 10 == 0:
-                self._stale_gate_weight = self.gate.weight.detach().clone()
-
-        # === Step 6: Gate warmup ===
+        # === Step 5: Gate warmup ===
         if self.training and (not self._is_checkpointing) and self.current_step < 100:
-            warmup_scale = min(1.0, self.current_step / 100.0)
+            warmup_scale = self.current_step / 100.0
             logits = logits * (self.gate_warmup_alpha + (1.0 - self.gate_warmup_alpha) * warmup_scale)
 
-        # === Step 7: Dynamic top_k + noise ===
+        # === Step 6: Dynamic top_k + noise ===
         current_top_k = self.top_k if self._is_checkpointing else self._get_dynamic_top_k()
         if self.training and self.noise_std > 0 and not self._is_checkpointing:
             logits = logits + torch.randn_like(logits) * self.noise_std
 
-        # === Step 8: Temperature scaling ===
-        seq_len_val = x.shape[1]
-        if seq_len_val >= 8192:
-            effective_temp = self.temperature * self.attention_mamba_temp
-            effective_temp = max(0.1, min(float(self.expert_temperature_max.item()), effective_temp))
-            logits = logits / effective_temp
-        else:
-            temp_bounded = max(0.1, min(float(self.expert_temperature_max.item()), float(self.temperature.item())))
-            logits = logits / temp_bounded
+        # === Step 7: Temperature scaling (GPU-only, no CPU sync) ===
+        logits = self._safe_temperature(logits, x.shape[1])
 
-        # === Step 9: Softmax + capacity ===
+        # === Step 8: Softmax + capacity ===
         scores = F.softmax(logits, dim=-1)
         scores = self._apply_capacity_limitation(scores)
 
-        # === Step 10: UltraSparse tiered top_k ===
+        # === Step 9: UltraSparse tiered top_k ===
         importance = torch.sigmoid(self.importance_proj(x_flat)).squeeze(-1)
         per_token_topk = torch.full_like(importance, current_top_k, dtype=torch.long)
         per_token_topk[importance < self.ultra_sparse_tier1_threshold] = self.ultra_sparse_tier1_topk
         per_token_topk[(importance >= self.ultra_sparse_tier1_threshold) & (importance < self.ultra_sparse_tier2_threshold)] = self.ultra_sparse_tier2_topk
         per_token_topk[importance >= self.ultra_sparse_tier2_threshold] = self.ultra_sparse_tier3_topk
 
-        # === Step 11: Top-k selection (supports per-token variable k) ===
+        # === Step 10: Top-k selection ===
         top_k_actual = min(current_top_k, self.num_experts)
         if self.training and self.use_random_routing and self.current_step <= self.random_to_gradient_steps and not self._is_checkpointing:
-            random_scores = torch.rand_like(scores)
-            top_scores, top_idx = torch.topk(random_scores, top_k_actual, dim=-1)
-            top_scores = torch.ones_like(top_scores) / top_k_actual
+            top_scores, top_idx = torch.topk(torch.rand_like(scores), top_k_actual, dim=-1)
+            top_scores = torch.full_like(top_scores, 1.0 / top_k_actual)
         else:
             top_scores, top_idx = torch.topk(scores, top_k_actual, dim=-1)
             top_scores = F.softmax(top_scores, dim=-1, dtype=torch.float32).type_as(x)
             if self.training and (not self._is_checkpointing) and self.total_routing_count > 100:
                 top_idx = self._enforce_balance_routing(top_idx, scores, current_top_k)
 
-        # === Step 12: PathMoE cache ===
+        # === Step 11: PathMoE cache ===
         if self._path_moe_stage_size > 1:
             if self._path_moe_layer_idx == 0:
                 self._path_moe_cache = (top_scores, top_idx)
@@ -417,22 +436,21 @@ class YvMoEGate(nn.Module):
                 top_scores, top_idx = self._path_moe_cache
             self._path_moe_layer_idx = (self._path_moe_layer_idx + 1) % self._path_moe_stage_size
 
-        # === Step 13: State update ===
+        # === Step 12: State update ===
         if self.training and (not self._is_checkpointing):
             if not self.use_random_routing:
                 self._update_expert_usage(top_idx, current_top_k)
                 self._adjust_temperature()
             self.total_routing_count += x_flat.size(0)
 
-        # === Step 14: Loss computation ===
+        # === Step 13: Loss computation ===
         load_balance_loss = self._compute_load_balance_loss(scores, top_idx, current_top_k)
         z_loss = self._compute_z_loss(logits)
 
+        budget_loss_term = torch.tensor(0.0, device=logits.device)
         if soft_logits is not None:
             active_count = soft_logits.sum(dim=-1).mean()
             budget_loss_term = 0.01 * (active_count - self.soft_moe_budget.detach()).square()
-        else:
-            budget_loss_term = torch.tensor(0.0, device=logits.device)
 
         sparsity_loss = self.sparsity_reg_weight * (
             torch.sigmoid(self.sparse_gate_hicl).mean()

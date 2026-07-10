@@ -1,4 +1,4 @@
-﻿#!/usr/bin/env python3
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
 # Copyright © 2025-2026 Wenze Wei. All Rights Reserved.
@@ -800,6 +800,7 @@ class YvModel(nn.Module):
         _LOG.debug("YvModel: initializing dual injector...")
         self.dual_injector = YvDualInjector(cfg, device=device, dtype=dtype)
         self.subconscious = self.dual_injector.subconscious
+        self._validate_architecture_alignment()
         self._comet_write_interval = max(1, int(getattr(cfg, 'comet_write_interval', 1)))
         self._comet_write_step = 0
 
@@ -940,6 +941,30 @@ class YvModel(nn.Module):
         total_params = sum(p.numel() for p in self.parameters())
         _LOG.debug(f"YvModel: total parameters = {total_params/1e6:.2f}M")
         _LOG.debug("YvModel: __init__ end")
+
+    def _validate_architecture_alignment(self) -> None:
+        """Validate layer/index topology so cross-layer systems stay aligned."""
+        expected_layers = int(getattr(self.cfg, 'n_layer', len(self.layers)))
+        actual_layers = len(self.layers)
+        if actual_layers != expected_layers:
+            raise ValueError(
+                f"YvModel layer count mismatch: cfg.n_layer={expected_layers}, built_layers={actual_layers}"
+            )
+
+        for idx, layer in enumerate(self.layers):
+            actual_idx = int(getattr(layer, 'layer_idx', idx))
+            if actual_idx != idx:
+                raise ValueError(
+                    f"YvModel layer index misalignment at position {idx}: layer.layer_idx={actual_idx}"
+                )
+
+        subconscious = getattr(self, 'subconscious', None)
+        film_generators = getattr(subconscious, 'film_generators', None)
+        if film_generators is not None and len(film_generators) != expected_layers:
+            raise ValueError(
+                f"YvModel FiLM generator count mismatch: expected={expected_layers}, "
+                f"actual={len(film_generators)}"
+            )
 
     def _create_rotary_embedding(self, cfg, device, dtype):
         """Create rotary position embedding (RoPE) buffers.
@@ -1272,7 +1297,7 @@ class YvModel(nn.Module):
 
     def _lazy_get_speculative(self) -> None:
         if self.speculative_decoder is None:
-            if bool(getattr(self.cfg, 'use_speculative_decoder', False)) and bool(getattr(self.cfg, 'enable_speculative_decoding', True)):
+            if bool(getattr(self.cfg, 'use_speculative_decoder', True)) and bool(getattr(self.cfg, 'enable_speculative_decoding', True)):
                 _LOG.debug("YvModel: lazy-init speculative decoder...")
                 from ..generation.speculative import YvAdaptiveSpeculativeDecoder, YvSpeculativeConfig
                 self.speculative_config = YvSpeculativeConfig(
@@ -1630,6 +1655,11 @@ class YvModel(nn.Module):
             temperature_final = max(0.6, temperature * 0.9)
             top_k_final = max(50, top_k)
             top_p_final = max(0.9, top_p)
+
+        # ── Attach flagship algorithm objects for the duration of generation ──
+        self._tri_route_active = kwargs.pop('tri_route_decision', None)
+        self._brownout_active = kwargs.pop('brownout_grouper', None)
+        self._moebius_active = kwargs.pop('moebius_switch', None)
 
         if use_speculative_final and hasattr(self, 'speculative_decoder'):
             self._lazy_get_speculative()
@@ -2101,8 +2131,7 @@ class YvModel(nn.Module):
                     h_chunk = chunk
                     for layer_idx, layer in enumerate(self.layers):
                         past_kv = None
-                        h_chunk, extra_kv = self.dual_injector.inject(h_chunk, layer_idx)
-                        film_params = None
+                        h_chunk, extra_kv, film_params = self.dual_injector.inject(h_chunk, layer_idx)
 
                         if hasattr(layer, 'set_sequence_length'):
                             layer.set_sequence_length(h_chunk.shape[1])
@@ -2115,6 +2144,12 @@ class YvModel(nn.Module):
                             _layer_kw['subconscious_kv'] = extra_kv
                         if film_params is not None:
                             _layer_kw['film_params'] = film_params
+                        if self._tri_route_active is not None:
+                            _layer_kw['tri_route'] = self._tri_route_active
+                        if self._brownout_active is not None:
+                            _layer_kw['brownout_grouper'] = self._brownout_active
+                        if self._moebius_active is not None:
+                            _layer_kw['moebius_switch'] = self._moebius_active
                         h_chunk, aux_loss = layer(
                             h_chunk, chunk_mask, past_key_values=past_kv, use_cache=False,
                             modal_id=modal_id, **_layer_kw,
@@ -2134,8 +2169,7 @@ class YvModel(nn.Module):
                 h = x
                 for layer_idx, layer in enumerate(self.layers):
                     past_kv = None
-                    h, extra_kv = self.dual_injector.inject(h, layer_idx)
-                    film_params = None
+                    h, extra_kv, film_params = self.dual_injector.inject(h, layer_idx)
 
                     if hasattr(layer, 'set_sequence_length'):
                         layer.set_sequence_length(h.shape[1])
@@ -2148,6 +2182,12 @@ class YvModel(nn.Module):
                         _layer_kw['subconscious_kv'] = extra_kv
                     if film_params is not None:
                         _layer_kw['film_params'] = film_params
+                    if self._tri_route_active is not None:
+                        _layer_kw['tri_route'] = self._tri_route_active
+                    if self._brownout_active is not None:
+                        _layer_kw['brownout_grouper'] = self._brownout_active
+                    if self._moebius_active is not None:
+                        _layer_kw['moebius_switch'] = self._moebius_active
                     h, aux_loss = layer(
                         h, mask, past_key_values=past_kv, use_cache=False,
                         modal_id=modal_id, **_layer_kw,
@@ -2176,9 +2216,6 @@ class YvModel(nn.Module):
                     seq_len = xc.shape[1]
 
                     for layer_idx, layer in enumerate(self.layers):
-                        if self.deep_cross_layer_injector is not None and rca_fused is not None:
-                            h = self.deep_cross_layer_injector(h, rca_fused, layer_idx)
-
                         past_kv = self.cache_manager.get_kv_cache(
                             layer_idx,
                             layer_past_key_values[layer_idx] if layer_past_key_values is not None else None
@@ -2191,17 +2228,25 @@ class YvModel(nn.Module):
                                 use_mixed_precision_cache=use_mixed_precision_cache,
                             )
 
-                        h, extra_kv = self.dual_injector.inject(h, layer_idx)
-                        film_params = None
+                        h, extra_kv, film_params = self.dual_injector.inject(h, layer_idx)
 
                         if hasattr(layer, 'set_sequence_length'):
                             layer.set_sequence_length(seq_len)
+
+                        if self.deep_cross_layer_injector is not None and rca_fused is not None:
+                            h = self.deep_cross_layer_injector(h, rca_fused, layer_idx)
 
                         _layer_kw = {}
                         if extra_kv is not None:
                             _layer_kw['subconscious_kv'] = extra_kv
                         if film_params is not None:
                             _layer_kw['film_params'] = film_params
+                        if self._tri_route_active is not None:
+                            _layer_kw['tri_route'] = self._tri_route_active
+                        if self._brownout_active is not None:
+                            _layer_kw['brownout_grouper'] = self._brownout_active
+                        if self._moebius_active is not None:
+                            _layer_kw['moebius_switch'] = self._moebius_active
                         h, aux_loss, cache = layer(
                             h, msk, past_key_values=past_kv, use_cache=True,
                             modal_id=modal_id, **_layer_kw,

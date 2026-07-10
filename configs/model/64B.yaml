@@ -26,6 +26,11 @@ n_layer: 80
 n_head: 52
 n_kv_head: 8
 
+lookup_params_total: 314000000
+use_dual_inject: true
+use_subconscious: true
+use_memory_separation: true
+
 moe_num_experts: 8
 moe_top_k: 2
 moe_capacity_factor: 1.7
@@ -190,7 +195,7 @@ training_config:
   kfac:
     enabled: true
   multitask:
-    enabled: false
+    enabled: true
   # GRPO Upgrades (2026): VPS, MMR-GRPO, TR-GRPO
   vps_outcome_weight: 0.7
   vps_process_weight: 0.3
@@ -235,7 +240,7 @@ inference_config:
     gpu_memory_utilization: 0.9
     tensor_parallel_size: 1
   speculative:
-    enable: false
+    enable: true
     gamma: 4
     draft_model: null
   chunk_size: 512
@@ -251,6 +256,7 @@ speculative_acceptance_threshold: 0.8
 speculative_temperature: 0.7
 speculative_top_k: 50
 speculative_top_p: 0.9
+use_speculative_decoder: true
 
 galore_rank: 256
 galore_update_interval: 200
@@ -291,11 +297,11 @@ ink_optimizer:
   max_experts_on_gpu: 6
   checkpoint_ratio: 0.5
 
-chinchilla_c_budget: 0
+chinchilla_c_budget: 128000000000000
 chinchilla_d_ratio: 1.0
 
 kv_lora_rank: 896
-mla_q_lora_rank: null
+mla_q_lora_rank: 128
 mla_rope_scaling_factor: 1.0
 
 # ========================================
@@ -345,6 +351,9 @@ coupled_mamba_coupling_strength: 0.3
 sparse_ssm_ratio: 0.5
 
 # Gated Delta Networks (ICLR 2025)
+gated_delta_use: true
+gated_delta_dim: 64
+gated_delta_tau: 0.1
 
 # OOMB: Million-Token Context Training (ICLR 2026)
 oomb_chunk_size: 32768
@@ -416,7 +425,7 @@ activation_size_threshold: 1048576
 gpu_memory_budget: 42949672960
 cpu_memory_budget: 137438953472
 
-n_cross_modal_experts: 0
+n_cross_modal_experts: 4
 modal_affinity_alpha: 1.0
 n_modalities: 7
 
@@ -454,6 +463,3 @@ memory_store_path: ""
 # Subconscious System (0.5B Head + 314B Implicit Knowledge Field)
 # Scaled for 64B: hidden=6656, n_layer=80.
 # ========================================
-
-
-

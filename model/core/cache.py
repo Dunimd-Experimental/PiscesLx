@@ -1815,6 +1815,26 @@ class YvUnifiedCacheManager:
         self.multimodal_manager = YvMultimodalCacheManager(self.config)
         self.compressor = YvCacheCompressor(self.config)
 
+        # Lynx progressive speculative KV quantizer
+        self.lyx_quantizer = YvLynxKVQuantizer(
+            anchor_bits=getattr(config, 'lyx_anchor_bits', 8),
+            residual_bits=getattr(config, 'lyx_residual_bits', 4),
+            anchor_ratio=getattr(config, 'lyx_anchor_ratio', 0.25),
+            progressive_enabled=getattr(config, 'lyx_progressive', True),
+        )
+
+        # STAR-KV adapter for low-rank KV compression
+        hidden_size = getattr(config, 'hidden_size', 4096)
+        head_dim = getattr(config, 'head_dim', 128)
+        n_head = getattr(config, 'n_head', 32)
+        n_kv_head = getattr(config, 'n_kv_head', max(1, n_head // 4))
+        self.starkv_adapter = YvSTARKVAdapter(
+            kv_dim=n_kv_head * head_dim,
+            compression_target=getattr(config, 'starkv_compression_target', 0.75),
+        )
+        if getattr(config, 'enable_starkv', True) and getattr(config, 'flagship_level', 0.0) >= 0.6:
+            self.starkv_adapter.enable()
+
         self.cache_hits = 0
         self.cache_misses = 0
         self.cache_evictions = 0
@@ -1896,6 +1916,10 @@ class YvUnifiedCacheManager:
                     if kb.shape[2] >= min(bs, 256):
                         kb, vb = self._quantize_cache(kb, vb)
 
+                    # STAR-KV adaptive low-rank compression (arXiv:2606.08382)
+                    if self.starkv_adapter is not None and self.starkv_adapter.is_enabled():
+                        kb, vb, _ = self.starkv_adapter.compress(layer_idx, kb, vb)
+
                     entry['blocks'].append((kb, vb))
                     entry['total_len'] += block_tokens
 
@@ -1933,8 +1957,15 @@ class YvUnifiedCacheManager:
                 ks.append(dk)
                 vs.append(dv)
             else:
-                ks.append(b[0])
-                vs.append(b[1])
+                kb, vb = b[0], b[1]
+                # Decompress STAR-KV compressed blocks
+                if self.starkv_adapter is not None and self.starkv_adapter.is_enabled():
+                    k_hidden = kb.shape[-1]
+                    d_orig = getattr(self.config, 'head_dim', 128) * getattr(self.config, 'n_kv_head', max(1, getattr(self.config, 'n_head', 32) // 4))
+                    if k_hidden < d_orig:
+                        kb, vb = self.starkv_adapter.decompress(layer_idx, kb, vb)
+                ks.append(kb)
+                vs.append(vb)
         k = torch.cat(ks, dim=2)
         v = torch.cat(vs, dim=2)
         return (k, v)
@@ -2144,9 +2175,14 @@ class YvUnifiedCacheManager:
         if seq_len <= self.config.cache_window_size:
             return key_states, value_states
 
-        use_fp8_like = torch.cuda.is_available()
+        # ── Lynx progressive speculative KV quantization (arXiv:2607.01831) ──
+        use_lyx = getattr(self.config, 'use_lynx_quant', True) and getattr(self.config, 'flagship_level', 0.0) >= 0.5
+        if use_lyx and hasattr(self, 'lyx_quantizer') and self.lyx_quantizer is not None:
+            return self.lyx_quantizer.quantize(key_states, value_states)
 
-        if use_fp8_like:
+        use_fp8_look = torch.cuda.is_available()
+
+        if use_fp8_look:
             def fake_fp8_quant(t: torch.Tensor) -> torch.Tensor:
                 b, h, tlen, d = t.shape
                 t_ = t.reshape(b * h, tlen, d)
@@ -2429,3 +2465,140 @@ class YvKVCacheRing:
         self.k_buf = None
         self.v_buf = None
         self.pos = 0
+
+
+# ═══════════════════════════════════════════════════════════════════
+# Lynx (2607.01831): Progressive Speculative KV Quantization
+# ═══════════════════════════════════════════════════════════════════
+
+class YvLynxKVQuantizer:
+    """Progressive speculative KV cache quantization.
+
+    Based on arXiv:2607.01831 (July 2026):
+    - Anchor+Residual split-stream transfer
+    - Progressive quantization: low bits first, refine on reuse
+    - Matches BF16 accuracy at 4-bit transfer speed.
+
+    Split-stream design:
+      Anchor (high-precision, small footprint) +
+      Residual (low-precision, larger footprint, transferred lazily)
+    """
+    def __init__(
+        self,
+        anchor_bits: int = 8,
+        residual_bits: int = 4,
+        anchor_ratio: float = 0.25,
+        progressive_enabled: bool = True,
+    ):
+        self.anchor_bits = anchor_bits
+        self.residual_bits = residual_bits
+        self.anchor_ratio = anchor_ratio
+        self.progressive = progressive_enabled
+        self._anchor_scale: Optional[torch.Tensor] = None
+        self._residual_scale: Optional[torch.Tensor] = None
+
+    @torch.no_grad()
+    def quantize(
+        self, tensor: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """Split-stream quantize: anchor (high-bit) + residual (low-bit).
+
+        Args:
+            tensor: [B, H, T, D] KV tensor.
+        Returns:
+            (anchor_q, residual_q, anchor_scale, residual_scale)
+        """
+        B, H, T, D = tensor.shape
+        n_anchor = max(1, int(T * self.anchor_ratio))
+        anchor = tensor[:, :, :n_anchor, :]
+        residual = tensor[:, :, n_anchor:, :]
+
+        a_scale = anchor.abs().amax(dim=-1, keepdim=True).clamp(min=1e-8)
+        a_scale = a_scale / (2 ** (self.anchor_bits - 1) - 1)
+        anchor_q = torch.round(anchor / a_scale).clamp(
+            -(2 ** (self.anchor_bits - 1)), 2 ** (self.anchor_bits - 1) - 1
+        )
+
+        if residual.numel() > 0:
+            r_scale = residual.abs().amax(dim=-1, keepdim=True).clamp(min=1e-8)
+            r_scale = r_scale / (2 ** (self.residual_bits - 1) - 1)
+            residual_q = torch.round(residual / r_scale).clamp(
+                -(2 ** (self.residual_bits - 1)), 2 ** (self.residual_bits - 1) - 1
+            )
+        else:
+            residual_q = torch.empty(0, device=tensor.device)
+            r_scale = torch.empty(0, device=tensor.device)
+
+        self._anchor_scale = a_scale.squeeze(-1)
+        self._residual_scale = r_scale.squeeze(-1) if residual.numel() > 0 else r_scale
+        return anchor_q, residual_q, self._anchor_scale, self._residual_scale
+
+    @torch.no_grad()
+    def dequantize(
+        self,
+        anchor_q: torch.Tensor,
+        residual_q: torch.Tensor,
+        anchor_scale: torch.Tensor,
+        residual_scale: torch.Tensor,
+    ) -> torch.Tensor:
+        anchor = anchor_q.float() * anchor_scale.unsqueeze(-1)
+        if residual_q.numel() > 0:
+            residual = residual_q.float() * residual_scale.unsqueeze(-1)
+            return torch.cat([anchor, residual], dim=-2)
+        return anchor
+
+
+# ═══════════════════════════════════════════════════════════════════
+# STAR-KV Integrator: adaptive low-rank KV compression
+# ═══════════════════════════════════════════════════════════════════
+
+class YvSTARKVAdapter:
+    """Adapter connecting STAR-KV compression to the Yv cache pipeline.
+
+    Integrates STARKVCompression from opss/quantize/methods.py into the
+    cache update path. 75% KV compression, 6.9x attention speedup (arXiv:2606.08382).
+    """
+    def __init__(self, kv_dim: int, compression_target: float = 0.75):
+        self.compression_target = compression_target
+        self.kv_dim = kv_dim
+        self._active = False
+        self._projections: Dict[int, Tuple[torch.Tensor, torch.Tensor]] = {}
+
+    def enable(self) -> None:
+        self._active = True
+
+    def disable(self) -> None:
+        self._active = False
+
+    @torch.no_grad()
+    def compress(
+        self, layer_idx: int, key: torch.Tensor, value: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor, Optional[Tuple[torch.Tensor, torch.Tensor]]]:
+        if not self._active:
+            return key, value, None
+        B, H, T, D = key.shape
+        target_r = max(1, int(D * (1.0 - self.compression_target)))
+        r = min(target_r, D // 2)
+
+        k_flat = key.reshape(-1, D)
+        v_flat = value.reshape(-1, D)
+        Uk, Sk, _ = torch.svd_lowrank(k_flat, q=r, niter=2)
+        Uv, Sv, _ = torch.svd_lowrank(v_flat, q=r, niter=2)
+
+        self._projections[layer_idx] = (Uk, Uv)
+        k_comp = (k_flat @ Uk) / Sk.unsqueeze(0).clamp(min=1e-8)
+        v_comp = (v_flat @ Uv) / Sv.unsqueeze(0).clamp(min=1e-8)
+        return (k_comp.view(B, H, T, r), v_comp.view(B, H, T, r),
+                (k_flat.detach(), v_flat.detach()))
+
+    @torch.no_grad()
+    def decompress(
+        self, layer_idx: int, k_comp: torch.Tensor, v_comp: torch.Tensor
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        B, H, T, r = k_comp.shape
+        Uk, Uv = self._projections.get(layer_idx, (None, None))
+        if Uk is None:
+            return k_comp, v_comp
+        k_flat = k_comp.reshape(-1, r) @ Uk.T
+        v_flat = v_comp.reshape(-1, r) @ Uv.T
+        return k_flat.view(B, H, T, -1), v_flat.view(B, H, T, -1)

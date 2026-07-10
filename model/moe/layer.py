@@ -228,26 +228,28 @@ class YvExpertChoiceRouter(nn.Module):
             tokens_per_expert = mask.sum(dim=0)  # [num_experts], dynamic per expert
             max_tokens = tokens_per_expert.max().item()
 
-            expert_indices_list = []
-            for e in range(self.num_experts):
-                k = tokens_per_expert[e].item()
-                expert_indices_list.append(idx_sorted[:k, e])
-            expert_indices = torch.stack(
-                [torch.cat([eid, eid[:1].expand(max_tokens - len(eid))]) for eid in expert_indices_list]
-            )
+            # Vectorized: build expert_indices with scatter, avoid per-expert loop
+            all_indices = idx_sorted[:max_tokens]  # [max_tokens, num_experts]
+            valid_mask = torch.arange(max_tokens, device=idx_sorted.device).unsqueeze(-1) < tokens_per_expert.unsqueeze(0)  # [max_tokens, num_experts]
+            expert_indices = torch.where(valid_mask, all_indices, all_indices[:1].expand(max_tokens, -1))  # pad with first row
+            expert_indices = expert_indices.T.contiguous()  # [num_experts, max_tokens]
 
+            # Vectorized dispatch mask: scatter_ 1.0 at valid positions
             dispatch_mask = torch.zeros_like(logits)
-            for e in range(self.num_experts):
-                k = tokens_per_expert[e].item()
-                dispatch_mask[idx_sorted[:k, e], e] = 1.0
+            row_idx = all_indices  # [max_tokens, num_experts]
+            col_idx = torch.arange(self.num_experts, device=logits.device).view(1, -1).expand(max_tokens, -1)
+            dispatch_mask[row_idx[valid_mask], col_idx[valid_mask]] = 1.0
 
             expert_load = tokens_per_expert.float()
         else:
             tokens_per_expert = max(1, int(x.shape[0] * self.capacity_factor / max(1, self.num_experts)))
             expert_indices = torch.topk(logits.T, tokens_per_expert, dim=1).indices
 
+            # Vectorized dispatch mask via scatter_
             dispatch_mask = torch.zeros_like(logits)
-            dispatch_mask[expert_indices.T.flatten(), torch.arange(self.num_experts).repeat(tokens_per_expert)] = 1
+            row_idx = expert_indices.T.flatten()  # [top_k * num_experts]
+            col_idx = torch.arange(self.num_experts, device=logits.device).repeat(tokens_per_expert)
+            dispatch_mask[row_idx, col_idx] = 1.0
 
             expert_load = dispatch_mask.sum(dim=0)
 
@@ -899,11 +901,22 @@ class YvDynamicMoELayer(nn.Module):
             flat_weights = routing_weights.view(-1)
             token_indices = torch.arange(batch_size * seq_len, device=x.device).unsqueeze(1).expand(-1, expert_indices.shape[-1]).reshape(-1)
 
+            # Group tokens by expert via sorting (single O(N log N) pass)
+            sorted_experts, gather_order = torch.sort(flat_indices)
+            sorted_weights = flat_weights[gather_order]
+            sorted_token_idx = token_indices[gather_order]
+
+            # Find contiguous boundaries for each expert via searchsorted
+            expert_ids = torch.arange(self.num_experts, device=x.device)
+            boundaries = torch.searchsorted(sorted_experts, expert_ids)
+            boundaries = torch.cat([boundaries, torch.tensor([len(sorted_experts)], device=x.device)])
+
             for expert_id in range(self.num_experts):
-                expert_mask = (flat_indices == expert_id)
-                if expert_mask.any():
-                    selected_tokens = token_indices[expert_mask]
-                    selected_weights = flat_weights[expert_mask]
+                start = boundaries[expert_id].item()
+                end = boundaries[expert_id + 1].item()
+                if start < end:
+                    selected_tokens = sorted_token_idx[start:end]
+                    selected_weights = sorted_weights[start:end]
                     expert_out = self.experts[expert_id](x_flat[selected_tokens])
                     outputs[selected_tokens] += selected_weights.unsqueeze(1) * expert_out
         if self.phi_balancing is not None and self.training:
@@ -1308,11 +1321,20 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
             flat_weights = routing_weights.view(-1)
             token_indices = torch.arange(batch_size * seq_len, device=x.device).unsqueeze(1).expand(-1, expert_indices.shape[-1]).reshape(-1)
 
+            # Group tokens by expert via sorting (single O(N log N) pass)
+            sorted_experts, gather_order = torch.sort(flat_indices)
+            sorted_weights = flat_weights[gather_order]
+            sorted_token_idx = token_indices[gather_order]
+            expert_ids = torch.arange(self.num_experts, device=x.device)
+            boundaries = torch.searchsorted(sorted_experts, expert_ids)
+            boundaries = torch.cat([boundaries, torch.tensor([len(sorted_experts)], device=x.device)])
+
             for expert_id in range(self.num_experts):
-                expert_mask = (flat_indices == expert_id)
-                if expert_mask.any():
-                    selected_tokens = token_indices[expert_mask]
-                    selected_weights = flat_weights[expert_mask]
+                start = boundaries[expert_id].item()
+                end = boundaries[expert_id + 1].item()
+                if start < end:
+                    selected_tokens = sorted_token_idx[start:end]
+                    selected_weights = sorted_weights[start:end]
                     expert_out = self.experts[expert_id](x_flat[selected_tokens])
                     outputs[selected_tokens] += selected_weights.unsqueeze(1) * expert_out
 
@@ -1321,7 +1343,15 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
         if self.phi_balancing is not None and self.training:
             load_balancing_loss = load_balancing_loss + self.phi_balancing.get_loss()
 
-        routing_probs_for_diversity = routing_weights
+        if routing_weights.size(-1) != self.num_experts:
+            full_probs = torch.zeros(
+                *routing_weights.shape[:-1], self.num_experts,
+                device=routing_weights.device, dtype=routing_weights.dtype
+            )
+            full_probs.scatter_(-1, expert_indices, routing_weights)
+            routing_probs_for_diversity = full_probs
+        else:
+            routing_probs_for_diversity = routing_weights
         
         routed_output = outputs.view(batch_size, seq_len, hidden)
         

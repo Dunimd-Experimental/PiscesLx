@@ -51,6 +51,17 @@ class YvNumericalGuard:
             eps = YvNumericalGuard.get_eps(x.dtype)
         return torch.log(x.clamp(min=eps))
 
+    @staticmethod
+    def safe_clamp(x: torch.Tensor, low: float, high: float | torch.Tensor) -> torch.Tensor:
+        if isinstance(high, torch.Tensor):
+            high = high.to(dtype=x.dtype, device=x.device)
+            return torch.max(torch.min(x, high), torch.tensor(low, dtype=x.dtype, device=x.device))
+        return torch.clamp(x, min=low, max=high)
+
+    @staticmethod
+    def nan_to_num(x: torch.Tensor, nan: float = 0.0, posinf: float | None = None, neginf: float | None = None) -> torch.Tensor:
+        return torch.nan_to_num(x, nan=nan, posinf=posinf, neginf=neginf)
+
 
 class YvShapeGuard:
     @staticmethod

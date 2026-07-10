@@ -354,8 +354,63 @@ class PiscesLxInferenceEngine(object):
                 _LOG.warning(f"Could not import MCP tools: {e}")
         
         self._setup_moe_operator()
-        self._setup_speculative_operator()
         
+        # Sync speculative decoding flag from YvConfig (model YAML) to InferenceConfig
+        if getattr(cfg, 'use_speculative_decoder', True) and getattr(cfg, 'enable_speculative_decoding', True):
+            self.config.acceleration.use_speculative_decoding = True
+            _LOG.info("Speculative decoding enabled (synced from YvConfig)")
+
+        # ── TriRoute: joint attention mode + expert selection + KV bit-width ──
+        self._tri_route = None
+        if getattr(cfg, 'flagship_level', 0.0) >= 0.5 and getattr(cfg, 'use_tri_route', True):
+            try:
+                from opss.infer.moe_runtime import TriRouteDecision
+                self._tri_route = TriRouteDecision(
+                    hidden_size=getattr(cfg, 'hidden_size', 4096),
+                    num_attention_heads=getattr(cfg, 'n_head', 32),
+                    num_experts=getattr(cfg, 'num_experts', 128),
+                ).to(self.device)
+                _LOG.info("TriRoute initialized for joint attention-expert-bitwidth routing")
+            except Exception as e:
+                _LOG.warning(f"TriRoute init failed: {e}")
+
+        # ── BrownoutMoE: RL-based expert grouping ──
+        self._brownout_grouper = None
+        if getattr(cfg, 'flagship_level', 0.0) >= 0.5 and getattr(cfg, 'use_brownout_moe', True):
+            try:
+                from opss.infer.moe_runtime import BrownoutMoEGrouper
+                self._brownout_grouper = BrownoutMoEGrouper(
+                    num_experts=getattr(cfg, 'num_experts', 64),
+                    group_size=max(2, getattr(cfg, 'num_experts', 64) // 8),
+                )
+                _LOG.info("BrownoutMoE grouper initialized")
+            except Exception as e:
+                _LOG.warning(f"BrownoutMoE init failed: {e}")
+
+        # ── Moebius: runtime EP↔TP switching ──
+        self._moebius_switch = None
+        if getattr(cfg, 'flagship_level', 0.0) >= 0.7:
+            try:
+                from opss.infer.moe_runtime import MoebiusParallelismMode, MoebiusParallelismSwitch
+                world_size = getattr(cfg, 'world_size', getattr(cfg, 'tensor_parallel_size', 1))
+                self._moebius_switch = MoebiusParallelismSwitch(world_size=world_size)
+                _LOG.info(f"Moebius EP↔TP switch initialized (world_size={world_size})")
+            except Exception as e:
+                _LOG.warning(f"Moebius init failed: {e}")
+
+        # ── HyperQuant / TWLA / STAR-KV quantization ──
+        if getattr(cfg, 'flagship_level', 0.0) >= 0.6:
+            try:
+                from opss.quantize.methods import HyperQuantizer, TWLAQuantizer, STARKVCompression
+                self._hyperquant = HyperQuantizer(bits=4, lattice="e8")
+                self._twla = TWLAQuantizer(group_size=128)
+                self._starkv = STARKVCompression(
+                    kv_dim=getattr(cfg, 'head_dim', 128) * getattr(cfg, 'n_head', 32) // getattr(cfg, 'n_kv_head', 8),
+                )
+                _LOG.info("HyperQuant + TWLA + STAR-KV quantizers initialized")
+            except Exception as e:
+                _LOG.warning(f"Advanced quantizer init failed: {e}")
+
         _LOG.info(f"Yv inference engine initialized: model_size={model_size}")
     
     def _setup_transformers_engine(self):
@@ -796,6 +851,13 @@ class PiscesLxInferenceEngine(object):
             'mode': kwargs.pop('mode', 'auto'),
             'seq_len': kwargs.pop('seq_len', 512),
         }
+        # ── Pass flagship algorithm decisions into model.generate() ──
+        if self._tri_route is not None:
+            gen_kwargs['tri_route_decision'] = self._tri_route
+        if self._brownout_grouper is not None:
+            gen_kwargs['brownout_grouper'] = self._brownout_grouper
+        if self._moebius_switch is not None:
+            gen_kwargs['moebius_switch'] = self._moebius_switch
         gen_kwargs.update(kwargs)
         
         with torch.no_grad():
@@ -831,6 +893,13 @@ class PiscesLxInferenceEngine(object):
             'mode': kwargs.pop('mode', 'auto'),
             'seq_len': kwargs.pop('seq_len', 512),
         }
+        # ── Pass flagship algorithm decisions into model.generate() ──
+        if self._tri_route is not None:
+            gen_kwargs['tri_route_decision'] = self._tri_route
+        if self._brownout_grouper is not None:
+            gen_kwargs['brownout_grouper'] = self._brownout_grouper
+        if self._moebius_switch is not None:
+            gen_kwargs['moebius_switch'] = self._moebius_switch
         gen_kwargs.update(kwargs)
         
         with torch.no_grad():

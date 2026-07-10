@@ -5409,9 +5409,9 @@ class YvAttention(nn.Module):
         n_la = self.n_head - n_fa
 
         # FA heads
-        q_fa = q[:, :n_fa].reshape(b * n_fa, t, self.head_dim)
-        k_fa = k[:, :n_fa].reshape(b * n_fa, kv_len, self.head_dim)
-        v_fa = v[:, :n_fa].reshape(b * n_fa, kv_len, self.head_dim)
+        q_fa = q[:, :n_fa]
+        k_fa = k[:, :n_fa]
+        v_fa = v[:, :n_fa]
 
         if mask is not None:
             # The mask coming from YvModel.forward is shared across heads with
@@ -5455,15 +5455,10 @@ class YvAttention(nn.Module):
                 attn_mask = None
                 is_causal = True
             elif mask_dim == 4 and mask.shape[0] == b and mask.shape[1] == self.n_head:
-                attn_mask = mask[:, :n_fa].reshape(b * n_fa, t, kv_len).contiguous()
+                attn_mask = mask[:, :n_fa].contiguous()
                 is_causal = False
             elif mask_dim == 3 and mask.shape[0] == b:
-                attn_mask = (
-                    mask.unsqueeze(1)
-                        .expand(b, n_fa, t, kv_len)
-                        .reshape(b * n_fa, t, kv_len)
-                        .contiguous()
-                )
+                attn_mask = mask.unsqueeze(1)
                 is_causal = False
             elif mask_dim == 2:
                 # Pure causal-style mask; SDPA broadcasts across (b, h).
@@ -5483,7 +5478,7 @@ class YvAttention(nn.Module):
             dropout_p=self.attn_dropout.p if self.training else 0.0,
             is_causal=is_causal,
             scale=float(self.scale),
-        ).view(b, n_fa, t, self.head_dim)
+        )
 
         # LA heads (linear attention with ELU+1) — sparse-gated
         la_out = None
@@ -5504,7 +5499,7 @@ class YvAttention(nn.Module):
         # Gated fusion
         out = fa_out
         if la_out is not None:
-            gate_logits = torch.sigmoid(q.norm(dim=-1).mean(dim=0, keepdim=True))
+            gate_logits = torch.sigmoid(q.norm(dim=-1).mean(dim=0, keepdim=True)).mean(dim=-1, keepdim=True)
             fa_gate = gate_logits[:, :n_fa].view(1, n_fa, 1, 1)
             la_gate = (1.0 - gate_logits[:, n_fa:]).view(1, n_la, 1, 1)
             out_fa = fa_out * fa_gate
@@ -5750,7 +5745,7 @@ class YvAttention(nn.Module):
             out = out + aux_out
 
         # --- 15. Gated attention scaling ---
-        gate_signal = torch.sigmoid(q.norm(dim=-1).mean(dim=0, keepdim=True))
+        gate_signal = torch.sigmoid(q.norm(dim=-1).mean(dim=0, keepdim=True)).mean(dim=-1, keepdim=True)
         gate_signal = gate_signal.view(1, self.n_head, 1, 1)
         out_headed = out.view(b, t, self.n_head, self.head_dim).transpose(1, 2)
         out_headed = out_headed * gate_signal

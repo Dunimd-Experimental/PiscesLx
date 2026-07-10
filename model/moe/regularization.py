@@ -312,6 +312,9 @@ class YvExpertDiversityRegularizer(nn.Module):
                 f"got {expert_weights.dim()}"
             )
         
+        if expert_weights_flat.dtype == torch.uint8:
+            expert_weights_flat = expert_weights_flat.float()
+
         if normalize:
             weight_norms = torch.norm(expert_weights_flat, p=2, dim=1, keepdim=True)
             weight_norms = torch.clamp(weight_norms, min=1e-8)

@@ -431,6 +431,7 @@ class YvDynamicModalFusion(nn.Module):
         self.hidden_size = cfg.hidden_size
         self.modalities = ["text", "image", "audio", "video", "document", "agentic"]
         self.weight_cache: Dict[str, torch.Tensor] = {}
+        self.feature_cache: Dict[str, Dict[str, torch.Tensor]] = {}
         self.cache_size_limit = 1000
         self.cache_manager = cache_manager
         self.memory_manager = YvMemory() if getattr(cfg, 'use_agentic', False) else None
@@ -578,6 +579,7 @@ class YvDynamicModalFusion(nn.Module):
             ) for m in self.modalities
         })
         self._generation_cache: Dict[str, torch.Tensor] = {}
+        self._last_modality_features: Dict[str, torch.Tensor] = {}
 
     def _signature(self, features: Dict[str, Optional[torch.Tensor]]) -> str:
         """Summarize modality presence and tensor shapes into a cache signature string.
@@ -684,7 +686,8 @@ class YvDynamicModalFusion(nn.Module):
 
     def forward(self, modal_features: Dict[str, Optional[torch.Tensor]]) -> torch.Tensor:
         sig = self._signature(modal_features)
-        if sig in self.weight_cache:
+        if (not self.training) and sig in self.weight_cache:
+            self._last_modality_features = self.feature_cache.get(sig, {})
             return self.weight_cache[sig]
 
         # 1. SyncFusion: temporal alignment for audio+video
@@ -743,6 +746,8 @@ class YvDynamicModalFusion(nn.Module):
         else:
             inter_features = aligned
 
+        self._last_modality_features = inter_features
+
         # 6. Concatenate all modality sequences
         seq = torch.cat(list(inter_features.values()), dim=1)
 
@@ -763,6 +768,7 @@ class YvDynamicModalFusion(nn.Module):
                 h = layer(h)
             else:
                 h = layer(h, h, h)
+        batch_size = h.shape[0]
 
         # 8. Importance-weighted pooling
         pooled_per_modal = {}
@@ -780,25 +786,26 @@ class YvDynamicModalFusion(nn.Module):
             importance_weighted = h.mean(dim=1)
 
         # 9. Quality-awareness scores
-        for modal, pooled in pooled_per_modal.items():
-            gs = self.quality_global(pooled.unsqueeze(-1))
-            ls = self.quality_local(pooled.unsqueeze(-1)).mean(dim=-1, keepdim=False).unsqueeze(-1)
-            qs = self.quality_head(torch.cat([gs, ls], dim=-1)).squeeze(-1)
-            if qs.item() < 0.3:
-                pass  # Quality gate: low-quality modalities are down-weighted naturally
+        if pooled_per_modal:
+            modal_order = list(pooled_per_modal.keys())
+            pooled_stack = torch.stack([pooled_per_modal[m] for m in modal_order], dim=1)
+            gs = self.quality_global(pooled_stack.reshape(-1, self.hidden_size, 1)).view(batch_size, -1, 1)
+            ls = self.quality_local(pooled_stack.reshape(-1, self.hidden_size, 1)).mean(dim=-1, keepdim=False).view(batch_size, -1, 1)
+            qs = self.quality_head(torch.cat([gs, ls], dim=-1))
+            quality_weights = qs / qs.sum(dim=1, keepdim=True).clamp_min(1e-6)
+            importance_weighted = (pooled_stack * quality_weights).sum(dim=1)
 
         # 10. Understanding gate
         gate = self.understanding_gate(importance_weighted).unsqueeze(1)
-        understanding = h * gate
+        understanding_summary = h.mean(dim=1, keepdim=True) * gate
 
         # 11. Compress to output tokens
-        batch_size = h.shape[0]
         query = self.output_tokens.expand(batch_size, -1, -1)
         YvShapeGuard.check_matmul(query, h.transpose(1, 2), "fusion output attn")
         attn_scores = torch.matmul(query, h.transpose(1, 2)) / (self.hidden_size ** 0.5)
         attn_weights = F.softmax(attn_scores, dim=-1)
         pooled_out = torch.matmul(attn_weights, h)
-        out = self.output_proj(pooled_out) + understanding.mean(dim=1, keepdim=True)
+        out = self.output_proj(pooled_out) + understanding_summary
 
         # 12. Recursive refinement (RCA)
         if self.max_rca_rounds > 1:
@@ -821,20 +828,28 @@ class YvDynamicModalFusion(nn.Module):
         gen_outputs = {}
         cursor = 0
         total_len = out.shape[1]
+        out_global = out.mean(dim=1)
         for modal in self.modalities:
             est_len = max(1, total_len // max(1, len(self.modalities)))
             end = min(total_len, cursor + est_len)
             modal_tokens = out[:, cursor:end, :]
             cursor = end
-            gen_gate = self.generation_gates[modal](out.mean(dim=1)).unsqueeze(1)
+            gen_gate = self.generation_gates[modal](out_global).unsqueeze(1)
             gen_outputs[modal] = modal_tokens * gen_gate
 
         # Cache management
-        if len(self.weight_cache) > self.cache_size_limit:
-            for k in list(self.weight_cache.keys())[:100]:
-                self.weight_cache.pop(k, None)
-        self.weight_cache[sig] = out.detach()
-        self._generation_cache = {m: v.detach() for m, v in gen_outputs.items()}
+        if not self.training:
+            if len(self.weight_cache) > self.cache_size_limit:
+                for k in list(self.weight_cache.keys())[:100]:
+                    self.weight_cache.pop(k, None)
+                    self.feature_cache.pop(k, None)
+            self.weight_cache[sig] = out.detach()
+            self.feature_cache[sig] = {m: v.detach() for m, v in inter_features.items()}
+            self._generation_cache = {m: v.detach() for m, v in gen_outputs.items()}
+        else:
+            self.weight_cache.clear()
+            self.feature_cache.clear()
+            self._generation_cache = {}
         if self.memory_manager is not None:
             self.memory_manager.register_tensor(out, "fusion_out")
         return out

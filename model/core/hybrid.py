@@ -1285,10 +1285,12 @@ class YvHybridBlock(nn.Module):
     def _forward_mlp(self, x, modal_id=None):
         x_norm = self.norm_mlp(x)
         if modal_id is not None:
-            mlp_out, aux_loss = self.mlp(x_norm, modal_id=modal_id)
+            result = self.mlp(x_norm, modal_id=modal_id)
         else:
-            mlp_out, aux_loss = self.mlp(x_norm)
-        return mlp_out, aux_loss
+            result = self.mlp(x_norm)
+        if isinstance(result, (tuple, list)):
+            return result[0], result[1] if len(result) > 1 else torch.tensor(0.0, device=x.device, dtype=x.dtype)
+        return result, torch.tensor(0.0, device=x.device, dtype=x.dtype)
 
     def forward(
         self,
@@ -1297,7 +1299,7 @@ class YvHybridBlock(nn.Module):
         past_key_values=None,
         use_cache=False,
         modal_id: Optional[torch.Tensor] = None,
-    ) -> Dict[str, Any]:
+    ):
         batch_size, seq_len, d_model = hidden_states.shape
 
         # === Attention path ===
@@ -1331,12 +1333,6 @@ class YvHybridBlock(nn.Module):
             self.residual_scale_mlp * mlp_out
         )
 
-        result = {
-            "output": output, "aux_loss": aux_loss,
-            "sequence_length": seq_len
-        }
-
         if use_cache:
-            result["past_key_values"] = attn_cache
-
-        return result
+            return output, aux_loss, attn_cache
+        return output, aux_loss

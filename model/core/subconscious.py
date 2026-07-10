@@ -26,7 +26,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 
 class YvKnowledgeRouter(nn.Module):
@@ -44,9 +44,9 @@ class YvKnowledgeRouter(nn.Module):
 
     def forward(self, h: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         router_logits = self.router(h)
-        router_weights = F.softmax(router_logits, dim=-1)
-        top_k_weights, top_k_indices = torch.topk(router_weights, self.top_k, dim=-1)
-        top_k_weights = top_k_weights / top_k_weights.sum(dim=-1, keepdim=True)
+        top_k = min(self.top_k, self.num_experts)
+        top_k_logits, top_k_indices = torch.topk(router_logits, top_k, dim=-1)
+        top_k_weights = F.softmax(top_k_logits.float(), dim=-1).to(dtype=router_logits.dtype)
         expert_input = self.input_proj(h)
         return expert_input, top_k_weights, top_k_indices, router_logits
 
@@ -105,20 +105,24 @@ class YvSubconsciousSystem(nn.Module):
     def set_knowledge_pool(self, pool):
         self.knowledge_pool = pool
 
-    def forward(self, h: torch.Tensor, layer_idx: int) -> torch.Tensor:
+    def get_film_params(self, h: torch.Tensor, layer_idx: int) -> Dict[str, torch.Tensor]:
         if layer_idx == 0:
-            expert_input, top_k_weights, top_k_indices, router_logits = self.router(h)
+            expert_input, top_k_weights, top_k_indices, _ = self.router(h)
             if self.knowledge_pool is not None:
                 expert_output = self.knowledge_pool(expert_input, top_k_indices, top_k_weights)
             else:
                 expert_output = expert_input
-            k_t = self.router.output_proj(expert_output)
+            expert_summary = expert_output.mean(dim=1, keepdim=True)
+            k_t = self.router.output_proj(expert_summary)
             self._current_k_t = k_t
             s_t = self.state_evolver(self._current_s, h, k_t)
             self._current_s = s_t
         gamma, beta = self.film_generators[layer_idx](self._current_s)
-        h_out = h * (1.0 + gamma) + beta
-        return h_out
+        return {"scale": gamma, "shift": beta}
+
+    def forward(self, h: torch.Tensor, layer_idx: int) -> torch.Tensor:
+        film_params = self.get_film_params(h, layer_idx)
+        return h * (1.0 + film_params["scale"]) + film_params["shift"]
 
     def get_router_aux_loss(self) -> torch.Tensor:
         return torch.tensor(0.0, device=self._current_s.device if self._current_s is not None else 'cpu')

@@ -1601,22 +1601,42 @@ def main():
 
         # Auto-launch with torchrun for distributed training across multiple GPUs
         if "LOCAL_RANK" not in os.environ and (args.distributed or args.world_size > 1):
-            n_gpu = args.world_size if args.world_size > 0 else 2
+            detected_gpu_count = 0
+            try:
+                import torch
+                detected_gpu_count = int(torch.cuda.device_count())
+            except Exception:
+                detected_gpu_count = 0
+            n_gpu = args.world_size if args.world_size > 0 else detected_gpu_count
             if n_gpu > 1:
                 import subprocess
                 env = os.environ.copy()
-                env["MASTER_ADDR"] = "127.0.0.1"
-                env["MASTER_PORT"] = "29500"
-                env["NCCL_SOCKET_IFNAME"] = "lo"
-                env["GLOO_SOCKET_IFNAME"] = "lo"
+                master_addr = env.get("MASTER_ADDR", "127.0.0.1")
+                master_port = env.get("MASTER_PORT", "29500")
+                nnodes = int(env.get("NNODES", "1") or 1)
+                node_rank = int(env.get("NODE_RANK", env.get("GROUP_RANK", "0")) or 0)
+                env["MASTER_ADDR"] = master_addr
+                env["MASTER_PORT"] = master_port
+                if nnodes <= 1:
+                    env.setdefault("NCCL_SOCKET_IFNAME", "lo")
+                    env.setdefault("GLOO_SOCKET_IFNAME", "lo")
                 cmd = [sys.executable, "-m", "torch.distributed.run",
                        f"--nproc_per_node={n_gpu}",
-                       "--master_addr=127.0.0.1",
-                       "--master_port=29500",
-                       "--node_rank=0"] + sys.argv
-                _get_logger().info(f"Launching distributed training on {n_gpu} GPUs via torchrun")
+                       f"--nnodes={nnodes}",
+                       f"--master_addr={master_addr}",
+                       f"--master_port={master_port}",
+                       f"--node_rank={node_rank}"] + sys.argv
+                _get_logger().info(
+                    f"Launching distributed training on {n_gpu} GPUs via torchrun "
+                    f"(nnodes={nnodes}, node_rank={node_rank}, master={master_addr}:{master_port})"
+                )
                 proc = subprocess.run(cmd, env=env)
                 sys.exit(proc.returncode)
+            elif args.distributed:
+                _get_logger().warning(
+                    f"Distributed training requested but only detected {detected_gpu_count} CUDA GPU(s); "
+                    "falling back to single-process execution."
+                )
 
         if not run_id:
             from opss.run.id_factory import POPSSRunIdFactory

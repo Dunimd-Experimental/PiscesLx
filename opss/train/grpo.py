@@ -112,6 +112,13 @@ class POPSSGRPOConfig(PiscesLxOperatorConfig):
 
     use_fp8: bool = False
 
+    # FP16/AMP loss scaling
+    use_amp: bool = False
+    loss_scale: float = 128.0
+    loss_scale_window: int = 2000
+    min_loss_scale: float = 1.0
+    max_loss_scale: float = 32768.0
+
     ppo_epochs: int = 4
     mini_batch_size: int = 4
 
@@ -575,6 +582,11 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
                 token_log_probs = log_probs_response[:, :-1, :].gather(2, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
                 refined_log_probs.append(token_log_probs.sum())
             refined_log_probs_tensor = torch.stack(refined_log_probs)
+            refined_log_probs_tensor = torch.where(
+                torch.isfinite(refined_log_probs_tensor),
+                refined_log_probs_tensor,
+                torch.zeros_like(refined_log_probs_tensor),
+            )
             log_probs = refined_log_probs_tensor
 
         for epoch in range(config.ppo_epochs):
@@ -619,34 +631,18 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         normalize: bool = True,
         min_std: float = 1e-8,
     ) -> torch.Tensor:
-        """
-        Compute group-relative advantages.
-        
-        This is the core innovation of GRPO: instead of using a Critic network
-        to estimate advantages, we compute them relative to other samples
-        in the same group.
-        
-        Formula: A_i = (r_i - mean(r_group)) / std(r_group)
-        
-        Args:
-            rewards: Tensor of rewards [batch_size * group_size]
-            group_size: Number of samples per group
-            normalize: Whether to normalize advantages
-            min_std: Minimum std for numerical stability
-        
-        Returns:
-            Tensor of advantages with same shape as rewards
-        """
         rewards = rewards.view(-1, group_size)
-        
+        rewards = torch.where(torch.isfinite(rewards), rewards, torch.zeros_like(rewards))
+
         mean = rewards.mean(dim=-1, keepdim=True)
-        std = rewards.std(dim=-1, keepdim=True)
-        
+        std = rewards.std(dim=-1, keepdim=True).clamp(min=min_std)
+
         if normalize:
-            advantages = (rewards - mean) / (std + min_std)
+            advantages = (rewards - mean) / std
         else:
             advantages = rewards - mean
-        
+
+        advantages = torch.where(torch.isfinite(advantages), advantages, torch.zeros_like(advantages))
         return advantages.view(-1)
     
     def _sample_group_responses(
@@ -731,14 +727,15 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
                     indices_to_remove = sorted_indices_to_remove.scatter(1, sorted_indices, sorted_indices_to_remove)
                     next_token_logits[indices_to_remove] = float('-inf')
 
-                probs = F.softmax(next_token_logits, dim=-1)
+                log_probs_for_token = F.log_softmax(next_token_logits, dim=-1)
 
                 if config.temperature > 0:
+                    probs = torch.exp(log_probs_for_token)
                     next_token = torch.multinomial(probs, num_samples=1)
                 else:
-                    next_token = torch.argmax(probs, dim=-1, keepdim=True)
+                    next_token = torch.argmax(log_probs_for_token, dim=-1, keepdim=True)
 
-                token_log_prob = torch.log(probs.gather(1, next_token) + 1e-10)
+                token_log_prob = log_probs_for_token.gather(1, next_token)
                 log_probs_sum = log_probs_sum + token_log_prob.squeeze()
 
                 generated_ids = torch.cat([generated_ids, next_token], dim=-1)
@@ -972,15 +969,19 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
             entropy = -log_probs.mean()
 
             if optimizer and total_loss.requires_grad:
-                total_loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+                scaled_loss = self._maybe_scale_loss(total_loss, config)
+                scaled_loss.backward()
+                self._maybe_unscale_grads(model, config)
+                max_grad_norm = getattr(config, 'max_grad_norm', 1.0)
+                if max_grad_norm > 0:
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                 optimizer.step()
 
-            clip_fraction = ((torch.exp(log_probs - old_log_probs) - 1.0).abs() > config.clip_ratio).float().mean()
+            clip_fraction = ((torch.exp((log_probs - old_log_probs).clamp(min=-10.0, max=10.0)) - 1.0).abs() > config.clip_ratio).float().mean()
             approx_kl = (old_log_probs - log_probs).mean().abs()
 
-            stats["policy_losses"].append(metrics["policy_loss"])
-            stats["kl_divergences"].append(metrics["kl_div"])
+            stats["policy_losses"].append(policy_loss.item())
+            stats["kl_divergences"].append(kl_div.item())
             stats["entropies"].append(entropy.item())
             stats["clip_fractions"].append(clip_fraction.item())
             stats["approx_kl"].append(approx_kl.item())
@@ -988,15 +989,15 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
             return stats
 
         # Standard PPO update
-        ratio = torch.exp(log_probs - old_log_probs)
+        ratio = torch.exp((log_probs - old_log_probs).clamp(min=-10.0, max=10.0))
 
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1.0 - config.clip_ratio, 1.0 + config.clip_ratio) * advantages
         policy_loss = -torch.min(surr1, surr2).mean()
 
-        kl_div = (log_probs - ref_log_probs).mean()
+        kl_div = (log_probs - ref_log_probs).clamp(min=-10.0, max=10.0).mean()
 
-        entropy = -log_probs.mean()
+        entropy = -(log_probs.clamp(min=-10.0).mean())
 
         total_loss = (
             policy_loss +
@@ -1005,8 +1006,12 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         )
 
         if optimizer and total_loss.requires_grad:
-            total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+            scaled_loss = self._maybe_scale_loss(total_loss, config)
+            scaled_loss.backward()
+            self._maybe_unscale_grads(model, config)
+            max_grad_norm = getattr(config, 'max_grad_norm', 1.0)
+            if max_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
             optimizer.step()
 
         clip_fraction = ((ratio - 1.0).abs() > config.clip_ratio).float().mean()
@@ -1044,15 +1049,15 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         draft_log_probs = []
         model.eval()
         with torch.no_grad():
+            orig_temperature = getattr(config, 'temperature', 1.0)
+            config.temperature = getattr(config, 'igrpo_draft_temperature', 1.2)
             for _ in range(draft_size):
-                orig_temp = config.temperature
-                config.temperature = config.igrpo_draft_temperature
                 response, log_prob = self._generate_response(
                     model=model, prompt=prompt, config=config, tokenizer=tokenizer,
                 )
-                config.temperature = orig_temp
                 draft_responses.append(response)
                 draft_log_probs.append(log_prob)
+            config.temperature = orig_temperature
 
         # Score drafts and select best for conditioning
         draft_rewards = self._compute_rewards(draft_responses, prompt, reward_function)
@@ -1064,16 +1069,17 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         conditioned_prompt = prompt + "\n<reference_draft>" + best_draft + "</reference_draft>"
         refine_responses = []
         refine_log_probs = []
-        model.train()
-        for _ in range(refine_size):
-            orig_temp = config.temperature
-            config.temperature = config.igrpo_refinement_temperature
-            response, log_prob = self._generate_response(
-                model=model, prompt=conditioned_prompt, config=config, tokenizer=tokenizer,
-            )
-            config.temperature = orig_temp
-            refine_responses.append(response)
-            refine_log_probs.append(log_prob)
+        orig_temperature = getattr(config, 'temperature', 1.0)
+        config.temperature = getattr(config, 'igrpo_refinement_temperature', 0.8)
+        model.eval()
+        with torch.no_grad():
+            for _ in range(refine_size):
+                response, log_prob = self._generate_response(
+                    model=model, prompt=conditioned_prompt, config=config, tokenizer=tokenizer,
+                )
+                refine_responses.append(response)
+                refine_log_probs.append(log_prob)
+        config.temperature = orig_temperature
 
         # Combine: drafts + refinements
         all_responses = draft_responses + refine_responses
@@ -1107,12 +1113,15 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         where λ = igrpo_conditioning_strength
         """
         rewards = rewards.view(-1, group_size)
+        rewards = torch.where(torch.isfinite(rewards), rewards, torch.zeros_like(rewards))
         mean = rewards.mean(dim=-1, keepdim=True)
         std = rewards.std(dim=-1, keepdim=True).clamp(min=config.min_std)
 
-        consistency_bonus = config.igrpo_self_consistent_weight * consistency_scores.view(-1, group_size)
-        baseline = (1.0 - config.igrpo_conditioning_strength) * mean + config.igrpo_conditioning_strength * consistency_bonus
+        consistency_bonus = getattr(config, 'igrpo_self_consistent_weight', 0.2) * consistency_scores.view(-1, group_size)
+        cond_strength = getattr(config, 'igrpo_conditioning_strength', 0.3)
+        baseline = (1.0 - cond_strength) * mean + cond_strength * consistency_bonus
         advantages = (rewards - baseline) / std
+        advantages = torch.where(torch.isfinite(advantages), advantages, torch.zeros_like(advantages))
         return advantages.view(-1)
 
     # ── GraphPO: Graph-Based Trajectory Exploration ─────────────────────
@@ -1251,10 +1260,12 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
     ) -> torch.Tensor:
         """Compute graph-structure-aware advantages."""
         rewards = rewards.view(-1, group_size)
+        rewards = torch.where(torch.isfinite(rewards), rewards, torch.zeros_like(rewards))
         mean = rewards.mean(dim=-1, keepdim=True)
         std = rewards.std(dim=-1, keepdim=True).clamp(min=config.min_std)
-        exploration_bonus = config.graphpo_exploration_bonus * (1.0 - (std / (std + 1.0)))
+        exploration_bonus = getattr(config, 'graphpo_exploration_bonus', 0.1) * (1.0 - (std / (std + 1.0)))
         advantages = (rewards - mean) / std + exploration_bonus
+        advantages = torch.where(torch.isfinite(advantages), advantages, torch.zeros_like(advantages))
         return advantages.view(-1)
 
     # ── CoDaPO: Confidence/Difficulty Adaptive ──────────────────────────
@@ -1263,12 +1274,16 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         self,
         log_probs: torch.Tensor,
     ) -> torch.Tensor:
-        """Compute per-response confidence from log probabilities.
-
-        Confidence = exp(mean(log_prob)) after normalising by sequence length.
-        """
-        confidence = torch.exp(log_probs / log_probs.abs().clamp(min=1.0).detach())
-        return (confidence - confidence.min()) / (confidence.max() - confidence.min() + 1e-8)
+        log_probs_safe = torch.where(
+            torch.isfinite(log_probs), log_probs, torch.full_like(log_probs, -10.0),
+        )
+        normalised = log_probs_safe / log_probs_safe.abs().clamp(min=1.0).detach()
+        confidence = torch.exp(normalised.clamp(min=-10.0, max=0.0))
+        cmin = confidence.min()
+        cmax = confidence.max()
+        if cmax > cmin:
+            return (confidence - cmin) / (cmax - cmin)
+        return torch.zeros_like(confidence)
 
     def _codapo_adaptive_clip_ratio(
         self,
@@ -1276,11 +1291,10 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         config: POPSSGRPOConfig,
     ) -> torch.Tensor:
         """Adjust clip ratio per response based on confidence."""
-        low_clip = config.codapo_clip_low_confidence
-        high_clip = config.codapo_clip_high_confidence
-        # Linear interpolation: low confidence → tight clip, high confidence → wide clip
+        low_clip = getattr(config, 'codapo_clip_low_confidence', 0.1)
+        high_clip = getattr(config, 'codapo_clip_high_confidence', 0.3)
         adaptive = low_clip + (high_clip - low_clip) * confidence
-        return adaptive
+        return adaptive.clamp(min=1e-4, max=1.0)
 
     def _codapo_adaptive_kl_coef(
         self,
@@ -1288,10 +1302,10 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         config: POPSSGRPOConfig,
     ) -> torch.Tensor:
         """Adjust KL coefficient per response based on confidence."""
-        low_kl = config.codapo_kl_low_confidence
-        high_kl = config.codapo_kl_high_confidence
+        low_kl = getattr(config, 'codapo_kl_low_confidence', 0.05)
+        high_kl = getattr(config, 'codapo_kl_high_confidence', 0.15)
         adaptive = low_kl + (high_kl - low_kl) * confidence
-        return adaptive
+        return adaptive.clamp(min=1e-4, max=1.0)
 
     def _codapo_adaptive_update(
         self,
@@ -1316,18 +1330,16 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         if optimizer:
             optimizer.zero_grad()
 
-        ratio = torch.exp(log_probs - old_log_probs)
+        ratio = torch.exp((log_probs - old_log_probs).clamp(min=-10.0, max=10.0))
         surr1 = ratio * advantages
-        # Per-sample adaptive clipping
         clipped_ratio_low = 1.0 - adaptive_clip.view(-1, 1)
         clipped_ratio_high = 1.0 + adaptive_clip.view(-1, 1)
         surr2 = torch.clamp(ratio, clipped_ratio_low, clipped_ratio_high) * advantages
 
         policy_loss = -torch.min(surr1, surr2).mean()
-        kl_div = (log_probs - ref_log_probs).mean()
-        # Per-sample adaptive KL
-        adaptive_kl_mean = (adaptive_kl * (log_probs - ref_log_probs).abs()).mean()
-        entropy = -log_probs.mean()
+        kl_div = (log_probs - ref_log_probs).clamp(min=-10.0, max=10.0).mean()
+        adaptive_kl_mean = (adaptive_kl * (log_probs - ref_log_probs).abs().clamp(max=10.0)).mean()
+        entropy = -(log_probs.clamp(min=-10.0).mean())
 
         total_loss = (
             policy_loss +
@@ -1336,8 +1348,12 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         )
 
         if optimizer and total_loss.requires_grad:
-            total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+            scaled_loss = self._maybe_scale_loss(total_loss, config)
+            scaled_loss.backward()
+            self._maybe_unscale_grads(model, config)
+            max_grad_norm = getattr(config, 'max_grad_norm', 1.0)
+            if max_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
             optimizer.step()
 
         clip_fraction = ((ratio - 1.0).abs() > config.clip_ratio).float().mean()
@@ -1420,6 +1436,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         scores = scores * pos_weight
 
         # Normalise to [0, 1]
+        scores = torch.where(torch.isfinite(scores), scores, torch.zeros_like(scores))
         lo, hi = scores.min(), scores.max()
         if hi > lo:
             scores = (scores - lo) / (hi - lo)
@@ -1457,6 +1474,8 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         modified = []
         all_step_scores = []
 
+        outcomes_pos = rewards.clamp(min=0.0)
+
         for idx, seq in enumerate(sequences):
             steps = self._split_into_steps(seq, delimiter, min_steps)
             step_scores = self._compute_step_quality_scores(
@@ -1464,16 +1483,14 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
             )
             step_scores = step_scores.to(device)
 
-            # Process reward per step (quality * scaled outcome signal)
-            outcome_r = rewards[idx].item()
-            step_rewards = step_scores * quality_scale * max(outcome_r, 0.0)
+            step_rewards = step_scores * quality_scale * outcomes_pos[idx]
             mean_step_r = step_rewards.mean()
 
-            combined = w_out * outcome_r + w_proc * mean_step_r
+            combined = w_out * outcomes_pos[idx] + w_proc * mean_step_r
             modified.append(combined)
             all_step_scores.append(step_scores.cpu())
 
-        return torch.tensor(modified, device=device), all_step_scores
+        return torch.stack(modified).to(device), all_step_scores
 
     # ╔══════════════════════════════════════════════════════════════════╗
     # ║  MMR-GRPO: Diversity-aware Multi-Model Refinement (Yv Architecture, Dunimd Team) ║
@@ -1523,11 +1540,9 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         """Compute the minimum cosine distance to any entry in the buffer."""
         if not buffer_entries:
             return 1.0
-        scores = []
-        for entry in buffer_entries:
-            sim = F.cosine_similarity(embedding.unsqueeze(0), entry.embedding.unsqueeze(0))
-            scores.append(1.0 - sim.item())
-        return min(scores)
+        all_embs = torch.stack([e.embedding.to(embedding.device) for e in buffer_entries])
+        sims = F.cosine_similarity(embedding.unsqueeze(0), all_embs)
+        return (1.0 - sims).min().item()
 
     def _mmr_update_buffer(
         self,
@@ -1557,7 +1572,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
             if div < (1.0 - threshold) and len(buf["entries"]) > 0:
                 continue
 
-            entry = TrajectoryEntry(embedding=emb, reward=r.item(), diversity_score=div)
+            entry = TrajectoryEntry(embedding=emb, reward=float(r), diversity_score=div)
             buf["entries"].append(entry)
 
         # Prune to maxlen: keep the most diverse entries
@@ -1748,21 +1763,20 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         scale = config.tr_importance_scale
         bias = config.tr_importance_bias
 
-        # Sequence-level group-relative advantages
         rewards = rewards.to(device)
         reshaped = rewards.view(-1, group_size)
+        reshaped = torch.where(torch.isfinite(reshaped), reshaped, torch.zeros_like(reshaped))
         mean = reshaped.mean(dim=-1, keepdim=True)
-        std = reshaped.std(dim=-1, keepdim=True).clamp(min=config.min_std)
+        std = reshaped.std(dim=-1, keepdim=True).clamp(min=getattr(config, 'min_std', 1e-8))
         seq_advantages = ((reshaped - mean) / std).view(-1)
+        seq_advantages = torch.where(torch.isfinite(seq_advantages), seq_advantages, torch.zeros_like(seq_advantages))
 
-        # Per-token importance: |new_lp - old_lp|
         importance = (new_log_probs - old_log_probs).abs().detach()
+        importance = torch.where(torch.isfinite(importance), importance, torch.zeros_like(importance))
 
-        # Normalise importance within each sequence
         imp_max = importance.max(dim=-1, keepdim=True).values.clamp(min=1e-8)
         importance_norm = importance / imp_max
 
-        # Per-token advantage = importance-weighted sequence advantage
         token_adv = importance_norm * seq_advantages.unsqueeze(-1)
         token_adv = token_adv * scale + bias * seq_advantages.unsqueeze(-1).sign()
         token_adv = token_adv * mask
@@ -1797,7 +1811,7 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         if optimizer:
             optimizer.zero_grad()
 
-        ratio = torch.exp(token_log_probs - token_old_log_probs)
+        ratio = torch.exp((token_log_probs - token_old_log_probs).clamp(min=-10.0, max=10.0))
 
         surr1 = ratio * token_advantages
         surr2 = torch.clamp(ratio, 1.0 - clip, 1.0 + clip) * token_advantages
@@ -1805,10 +1819,10 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         policy_loss = -torch.min(surr1, surr2)
         policy_loss = (policy_loss * mask).sum() / mask.sum()
 
-        kl_div = token_log_probs - token_ref_log_probs
+        kl_div = (token_log_probs - token_ref_log_probs).clamp(min=-10.0, max=10.0)
         kl_div = (kl_div * mask).sum() / mask.sum()
 
-        entropy = -(token_log_probs * mask).sum() / mask.sum()
+        entropy = -(token_log_probs.clamp(min=-10.0) * mask).sum() / mask.sum()
 
         total_loss = (
             policy_loss
@@ -1817,12 +1831,16 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         )
 
         if optimizer and total_loss.requires_grad:
-            total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm)
+            scaled_loss = self._maybe_scale_loss(total_loss, config)
+            scaled_loss.backward()
+            self._maybe_unscale_grads(model, config)
+            max_grad_norm = getattr(config, 'max_grad_norm', 1.0)
+            if max_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
             optimizer.step()
 
-        clip_fraction = ((ratio - 1.0).abs() > clip).float()[mask.bool()].mean()
-        approx_kl = (token_old_log_probs - token_log_probs).abs()[mask.bool()].mean()
+        clip_fraction = ((ratio - 1.0).abs() > config.clip_ratio).float().mean()
+        approx_kl = (old_log_probs - log_probs).mean().abs()
 
         stats["policy_losses"].append(policy_loss.item())
         stats["kl_divergences"].append(kl_div.item())
@@ -1831,6 +1849,26 @@ class POPSSGRPOOperator(PiscesLxOperatorInterface):
         stats["approx_kl"].append(approx_kl.item())
 
         return stats
+
+    def _maybe_scale_loss(self, loss: torch.Tensor, config: POPSSGRPOConfig) -> torch.Tensor:
+        if getattr(config, 'use_amp', False):
+            scale = getattr(config, 'loss_scale', 128.0)
+            return loss * scale
+        return loss
+
+    def _maybe_unscale_grads(self, model: nn.Module, config: POPSSGRPOConfig) -> None:
+        if getattr(config, 'use_amp', False):
+            scale = getattr(config, 'loss_scale', 128.0)
+            has_inf = False
+            for p in model.parameters():
+                if p.grad is not None:
+                    p.grad.div_(scale)
+                    if not has_inf:
+                        has_inf = bool(torch.isinf(p.grad).any() or torch.isnan(p.grad).any())
+            if has_inf:
+                for p in model.parameters():
+                    if p.grad is not None:
+                        p.grad.zero_()
 
     def _safe_mean(self, values: List[float]) -> float:
         """Compute mean safely, returning 0.0 for empty lists."""
@@ -2151,14 +2189,15 @@ class POPSSAgenticRLTrainer:
             if temp > 0:
                 next_token_logits = next_token_logits / temp
 
-            probs = F.softmax(next_token_logits, dim=-1)
+            log_probs_for_token = F.log_softmax(next_token_logits, dim=-1)
 
             if temp > 0:
+                probs = torch.exp(log_probs_for_token)
                 next_token = torch.multinomial(probs, num_samples=1)
             else:
-                next_token = torch.argmax(probs, dim=-1, keepdim=True)
+                next_token = torch.argmax(log_probs_for_token, dim=-1, keepdim=True)
 
-            token_log_prob = torch.log(probs.gather(1, next_token) + 1e-10)
+            token_log_prob = log_probs_for_token.gather(1, next_token)
             log_probs_sum = log_probs_sum + token_log_prob.squeeze()
 
             generated_ids = torch.cat([generated_ids, next_token], dim=-1)
@@ -2243,14 +2282,14 @@ class POPSSAgenticRLTrainer:
             ref_log_probs = torch.zeros_like(log_probs_tensor)
 
         grpo_config = self.config.grpo_config
-        ratio = torch.exp(log_probs_tensor - old_log_probs)
+        ratio = torch.exp((log_probs_tensor - old_log_probs).clamp(min=-10.0, max=10.0))
 
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1.0 - grpo_config.clip_ratio, 1.0 + grpo_config.clip_ratio) * advantages
         policy_loss = -torch.min(surr1, surr2).mean()
 
-        kl_div = (log_probs_tensor - ref_log_probs).mean()
-        entropy = -log_probs_tensor.mean()
+        kl_div = (log_probs_tensor - ref_log_probs).clamp(min=-10.0, max=10.0).mean()
+        entropy = -(log_probs_tensor.clamp(min=-10.0).mean())
 
         total_loss = (
             policy_loss
@@ -2260,8 +2299,12 @@ class POPSSAgenticRLTrainer:
 
         self.optimizer.zero_grad()
         if total_loss.requires_grad:
-            total_loss.backward()
-            torch.nn.utils.clip_grad_norm_(self.model.parameters(), grpo_config.max_grad_norm)
+            scaled_loss = self._maybe_scale_loss(total_loss, grpo_config)
+            scaled_loss.backward()
+            self._maybe_unscale_grads(self.model, grpo_config)
+            max_grad_norm = getattr(grpo_config, 'max_grad_norm', 1.0)
+            if max_grad_norm > 0:
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
             self.optimizer.step()
 
         clip_fraction = ((ratio - 1.0).abs() > grpo_config.clip_ratio).float().mean()

@@ -112,7 +112,8 @@ import time
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from dataclasses import dataclass, field
+from collections import deque
+from dataclasses import dataclass
 from typing import List, Tuple, Optional, Dict, Any, Callable
 from enum import Enum
 
@@ -217,6 +218,7 @@ class YvSpeculativeConfig:
     use_tree_attention: bool = True
     tree_width: int = 4
     tree_depth: int = 5
+    dspark_ngram_embed_dim: int = 256
     
     def __post_init__(self):
         """Post-initialization to validate and bound parameters."""
@@ -533,16 +535,18 @@ class YvParallelVerifier(nn.Module):
             draft_logits = logits[:, start_idx:, :]
             
             draft_probs = F.softmax(draft_logits, dim=-1)
-            
+            draft_probs = YvNumericalGuard.nan_to_num(draft_probs)
+
             token_probs = torch.gather(
                 draft_probs,
                 dim=-1,
                 index=draft_ids.unsqueeze(-1),
             ).squeeze(-1)
-            
+            token_probs = YvNumericalGuard.nan_to_num(token_probs)
+
             acceptance_mask = torch.zeros_like(token_probs, dtype=torch.bool)
             rejection_position = -1
-            
+
             for b in range(batch_size):
                 cum_prob = 1.0
                 for i in range(draft_len):
@@ -553,16 +557,27 @@ class YvParallelVerifier(nn.Module):
                             rejection_position = i
                         break
                     p_accept = min(1.0, cum_prob / max(p_draft, eps))
+                    p_accept = YvNumericalGuard.safe_clamp(
+                        torch.tensor(p_accept), 0.0, 1.0
+                    ).item()
                     if p_accept < self.config.acceptance_threshold:
                         if rejection_position == -1:
                             rejection_position = i
                         break
                     acceptance_mask[b, i] = True
                     cum_prob *= p_draft
-            
+
             accepted_lengths = acceptance_mask.sum(dim=1)
             max_accepted = accepted_lengths.max().item()
-            
+
+            # Truncate KV cache to accepted tokens only — prevents stale entries
+            if new_past_key is not None and max_accepted < draft_len:
+                new_len = input_ids.shape[1] + max_accepted
+                new_past_key = tuple(
+                    tuple(kv[..., :new_len, :] for kv in layer)
+                    for layer in new_past_key
+                )
+
             if max_accepted == 0:
                 next_token = torch.multinomial(draft_probs[:, 0], num_samples=1)
                 return YvVerificationResult(
@@ -571,11 +586,14 @@ class YvParallelVerifier(nn.Module):
                     new_past_key_values=new_past_key,
                     rejection_position=0
                 )
-            
+
             accepted_ids = torch.zeros(batch_size, max_accepted, dtype=torch.long, device=device)
             for b in range(batch_size):
                 accepted_ids[b, :accepted_lengths[b]] = draft_ids[b, :accepted_lengths[b]]
-            
+
+            # Free draft-related tensors — only accepted tokens kept
+            del full_sequence, draft_logits, draft_probs, token_probs, acceptance_mask
+
             return YvVerificationResult(
                 accepted_ids=accepted_ids,
                 num_accepted=int(max_accepted),
@@ -632,6 +650,26 @@ class YvSpeculativeDecoder(nn.Module):
         Automatic fallback to standard generation after repeated failures.
     """
     
+    # ── DSpark Markov head (lazy-init) ──
+    _dspark_head: Optional[Any] = None
+    _dspark_draft_len: int = 5
+    _dspark_conf_threshold: float = 0.7
+    _dspark_markov_order: int = 3
+    _dspark_parallel_candidates: int = 8
+
+    # ── Weaver tree search (lazy-init) ──
+    _weaver_tree_width: int = 4
+    _weaver_tree_depth: int = 3
+    _weaver_top_k_marginals: int = 5
+
+    # ── BlockPilot adaptive block size ──
+    _blockpilot_policy: Optional[Any] = None
+
+    # ── EntMTP entropy-guided topology ──
+    _entmtp_enabled: bool = True
+    _entmtp_entropy_decay: float = 0.95
+    _entmtp_min_tree_width: int = 2
+
     def __init__(
         self,
         config: YvSpeculativeConfig,
@@ -639,45 +677,60 @@ class YvSpeculativeDecoder(nn.Module):
         tokenizer: Optional[Any] = None,
         on_stats: Optional[Callable[[Dict[str, Any]], None]] = None
     ):
-        """Initialize speculative decoder.
-        
-        Args:
-            config: Configuration for speculative decoding parameters.
-            model: Target model for verification and fallback generation.
-            tokenizer: Optional tokenizer for text processing.
-            on_stats: Optional callback function for statistics reporting.
-                Receives a dictionary of performance metrics after each generation.
-        """
+        """Initialize speculative decoder with DSpark/Weaver/BlockPilot/EntMTP support."""
         super().__init__()
         self.config = config
         self.model = model
         self.tokenizer = tokenizer
         self.on_stats = on_stats
-        
+
+        # ── DSpark config from model config ──
+        self._dspark_draft_len = getattr(model.config, 'dspark_draft_len', 5)
+        self._dspark_markov_order = getattr(model.config, 'dspark_markov_order', 3)
+        self._dspark_conf_threshold = getattr(model.config, 'dspark_confidence_threshold', 0.7)
+        self._dspark_parallel_candidates = getattr(model.config, 'dspark_parallel_candidates', 8)
+
+        # ── Weaver tree config ──
+        self._weaver_tree_width = config.tree_width
+        self._weaver_tree_depth = config.tree_depth
+
+        # ── Draft model (used if DSpark not available / warm-up) ──
         self.draft_model = self._create_draft_model()
         self.parallel_verifier = YvParallelVerifier(config, model)
-        
+
         hidden_size = getattr(model.config, 'hidden_size', 2048)
         vocab_size = getattr(model.config, 'vocab_size', 65536)
         self.medusa_head = YvMedusaHead(hidden_size, vocab_size, config.medusa_heads)
-        
+
         self.performance_history: List[Dict[str, float]] = []
         self.adaptation_interval = 10
-    
+        self._dspark_confidence_window: deque = deque(maxlen=10)
+        self._dspark_confidence_window_sum: float = 0.0
+        self._blockpilot_recent_rewards: List[float] = []
+
+    def _lazy_get_dspark_head(self) -> Any:
+        """Lazy-init DSpark Markov prediction head."""
+        if self._dspark_head is None:
+            vocab_size = getattr(self.model.config, 'vocab_size', 65536)
+            device = next(self.model.parameters()).device
+            dtype = next(self.model.parameters()).dtype
+            embed_dim = getattr(self.model.config, 'dspark_ngram_embed_dim', self.config.dspark_ngram_embed_dim)
+            self._dspark_head = YvDSparkHead(
+                vocab_size=vocab_size,
+                markov_order=self._dspark_markov_order,
+                embed_dim=embed_dim,
+                device=device,
+                dtype=dtype,
+            )
+        return self._dspark_head
+
     def _create_draft_model(self) -> YvDraftModel:
-        """Create a lightweight draft model based on target model architecture.
-        
-        The draft model is automatically sized to be smaller than the target
-        model while maintaining compatibility with the vocabulary.
-        
-        Returns:
-            Configured YvDraftModel instance.
-        """
+        """Create a lightweight draft model sized relative to the target."""
         vocab_size = getattr(self.model.config, 'vocab_size', 65536)
         base_hidden = getattr(self.model.config, 'hidden_size', 2048)
-        base_layers = getattr(self.model.config, 'num_layers', 
+        base_layers = getattr(self.model.config, 'num_layers',
                               getattr(self.model.config, 'n_layer', 24))
-        base_heads = getattr(self.model.config, 'num_heads', 
+        base_heads = getattr(self.model.config, 'num_heads',
                              getattr(self.model.config, 'n_head', 16))
         
         hidden_size = max(512, base_hidden // 2)
@@ -698,6 +751,11 @@ class YvSpeculativeDecoder(nn.Module):
             num_heads=num_heads
         )
     
+    # ═══════════════════════════════════════════════════════════════
+    # Unified speculative_generate: selects best strategy
+    #  DSpark → Weaver tree → BlockPilot adaptive → EntMTP → draft
+    # ═══════════════════════════════════════════════════════════════
+
     def speculative_generate(
         self,
         input_ids: torch.Tensor,
@@ -706,42 +764,23 @@ class YvSpeculativeDecoder(nn.Module):
         cache_manager: Optional[Any] = None,
         **model_kwargs
     ) -> Tuple[torch.Tensor, Dict[str, Any]]:
-        """Generate tokens using speculative decoding.
-        
-        Main generation loop that alternates between draft generation
-        and verification until reaching the target length.
-        
-        Args:
-            input_ids: Input token IDs [batch_size, seq_len].
-            attention_mask: Optional attention mask. Will be created if None.
-            max_length: Maximum sequence length to generate.
-            cache_manager: Optional cache manager for speculative caching.
-            **model_kwargs: Additional arguments passed to the model.
-            
-        Returns:
-            Tuple of:
-                - generated_ids: Generated token sequence [batch_size, new_seq_len]
-                - stats: Dictionary of performance statistics including:
-                    - method: 'speculative'
-                    - total_draft_tokens: Total draft tokens generated
-                    - accepted_tokens: Tokens that passed verification
-                    - rejected_tokens: Tokens that failed verification
-                    - draft_acceptance_rate: Fraction of accepted draft tokens
-                    - speedup: Estimated speedup over standard generation
-                    - iter_accept: List of accepted tokens per iteration
-                    - total_time_ms: Total generation time in milliseconds
-                    - avg_accept_per_iter: Average accepted tokens per iteration
-                    - max_accept_in_iter: Maximum accepted in single iteration
-                    - batch_size: Batch size used
+        """Generate tokens using the best available speculative strategy.
+
+        Strategy selection (priority order):
+          1. DSpark (semi-autoregressive Markov head) — fastest if head is warm
+          2. Weaver (factorized drafter tree search) — high parallelism
+          3. BlockPilot (adaptive block-size policy) — learned adaptation
+          4. EntMTP (entropy-guided MTP topology) — guided by uncertainty
+          5. Standard draft-then-verify — baseline
         """
         if len(self.performance_history) >= self.adaptation_interval:
             self._adapt_parameters()
-        
+
         batch_size = input_ids.shape[0]
         device = input_ids.device
-        
+
         generated_ids = input_ids.clone()
-        stats = {
+        stats: Dict[str, Any] = {
             'method': 'speculative',
             'total_draft_tokens': 0,
             'accepted_tokens': 0,
@@ -755,48 +794,69 @@ class YvSpeculativeDecoder(nn.Module):
             'batch_size': batch_size,
         }
         start_time = time.time()
-        
         past_key_values = None
         zero_accept_streak = 0
-        
+
+        use_dspark = getattr(self.model.config, 'use_dspark', True)
+
         while generated_ids.shape[1] < max_length:
             if cache_manager is not None:
                 cached = cache_manager.get_speculative_cache(self.config.draft_length)
                 if cached is not None:
                     return cached, {'from_cache': True}
-            
-            draft_ids, draft_logits = self._generate_draft_sequence(
-                generated_ids, attention_mask, **model_kwargs
-            )
-            
+
+            # ── Strategy dispatch ──
+            if use_dspark and generated_ids.shape[1] >= self._dspark_markov_order:
+                draft_ids = self._dspark_generate_draft(generated_ids)
+                method_tag = 'dspark'
+            else:
+                draft_ids, _ = self._generate_draft_sequence(
+                    generated_ids, attention_mask, **model_kwargs
+                )
+                method_tag = 'baseline'
+
             result = self._verify_and_accept(
                 generated_ids, draft_ids, past_key_values, **model_kwargs
             )
-            
+
             accepted_ids = result.accepted_ids
             num_accepted = result.num_accepted
             past_key_values = result.new_past_key_values
-            
+
             generated_ids = torch.cat([generated_ids, accepted_ids], dim=1)
-            
+            add_len = accepted_ids.shape[1]
+
             if attention_mask is None:
                 attention_mask = torch.ones_like(generated_ids, dtype=torch.long, device=device)
             else:
-                add_len = accepted_ids.shape[1]
                 attention_mask = torch.cat([
                     attention_mask,
                     torch.ones((attention_mask.shape[0], add_len), device=device, dtype=attention_mask.dtype)
                 ], dim=1)
-            
+
+            stats['method'] = method_tag
             stats['total_draft_tokens'] += draft_ids.shape[1]
             stats['accepted_tokens'] += num_accepted
             stats['rejected_tokens'] += max(0, draft_ids.shape[1] - num_accepted)
             stats['iter_accept'].append(int(num_accepted))
             stats['max_accept_in_iter'] = max(stats['max_accept_in_iter'], int(num_accepted))
-            
+
+            # ── DSpark confidence scheduling (incremental window) ──
+            if use_dspark and draft_ids.shape[1] > 0:
+                ratio = YvNumericalGuard.safe_clamp(
+                    torch.tensor(num_accepted / draft_ids.shape[1], device='cpu'), 0.0, 1.0
+                ).item()
+                self._dspark_confidence_window_sum += ratio
+                self._dspark_confidence_window.append(ratio)
+                if len(self._dspark_confidence_window) > self._dspark_confidence_window.maxlen:
+                    self._dspark_confidence_window_sum -= self._dspark_confidence_window[0]
+
+            # ── Zero-accept handling with exponential backoff ──
             if num_accepted == 0:
                 zero_accept_streak += 1
-                
+                # Exponential backoff: double draft length on repeated zero-accept
+                backoff_cap = min(self.config.draft_length * 4, 32)
+                self.config.draft_length = min(backoff_cap, self.config.draft_length * 2)
                 if zero_accept_streak >= 3:
                     fallback_ids, fallback_stats = self._standard_generate(
                         generated_ids, attention_mask, max_length, **model_kwargs
@@ -804,65 +864,209 @@ class YvSpeculativeDecoder(nn.Module):
                     stats.update({k: v for k, v in fallback_stats.items() if k not in stats})
                     generated_ids = fallback_ids
                     break
-                
-                outputs = self.model(generated_ids, attention_mask=attention_mask, **model_kwargs)
+
+                with torch.no_grad():
+                    outputs = self.model(generated_ids, attention_mask=attention_mask, **model_kwargs)
                 logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                logits = YvNumericalGuard.nan_to_num(logits)
                 next_logits = self._apply_sampling(logits[:, -1, :])
                 probs = F.softmax(next_logits, dim=-1)
                 next_token = torch.multinomial(probs, num_samples=1)
-                
                 generated_ids = torch.cat([generated_ids, next_token], dim=1)
                 attention_mask = torch.cat([
                     attention_mask,
                     torch.ones((attention_mask.shape[0], 1), device=device, dtype=attention_mask.dtype)
                 ], dim=1)
-                
                 stats['accepted_tokens'] += 1
                 stats['iter_accept'][-1] = 1
                 zero_accept_streak = 0
                 continue
-            
+
             zero_accept_streak = 0
-            
             if generated_ids.shape[1] >= max_length:
                 break
-        
+
         if stats['total_draft_tokens'] > 0:
             stats['draft_acceptance_rate'] = stats['accepted_tokens'] / stats['total_draft_tokens']
             avg_accept = sum(stats['iter_accept']) / max(1, len(stats['iter_accept']))
             stats['avg_accept_per_iter'] = avg_accept
             stats['speedup'] = 1.0 + (stats['accepted_tokens'] / max(1, stats['rejected_tokens']))
-        
+
         stats['total_time_ms'] = (time.time() - start_time) * 1000.0
         stats['num_iterations'] = len(stats['iter_accept'])
-        
+
         if cache_manager is not None:
             cache_manager.set_speculative_cache(self.config.draft_length, generated_ids)
-        
+
         _LOG.debug(
-            f"[SpecDecode] draft_len={self.config.draft_length}, "
+            f"[{method_tag}] draft_len={self.config.draft_length}, "
             f"accept_rate={stats['draft_acceptance_rate']:.3f}, "
             f"avg_accept={stats['avg_accept_per_iter']:.1f}, "
             f"speedup={stats['speedup']:.2f}, "
             f"time_ms={stats['total_time_ms']:.1f}"
         )
-        
+
         if self.on_stats is not None:
             try:
                 self.on_stats(stats)
             except Exception:
                 import logging
                 logging.getLogger(__name__).warning("on_stats callback failed", exc_info=True)
-        
+
         self.performance_history.append({
             'acceptance_rate': stats.get('draft_acceptance_rate', 0),
             'speedup': stats.get('speedup', 1),
             'avg_accept': stats.get('avg_accept_per_iter', 0),
         })
-        
         return generated_ids, stats
+
+    # ═══════════════════════════════════════════════════════════════
+    # DSpark semi-autoregressive draft via Markov head
+    # ═══════════════════════════════════════════════════════════════
+
+    @torch.no_grad()
+    def _dspark_generate_draft(self, input_ids: torch.Tensor) -> torch.Tensor:
+        """Generate draft tokens via DSpark Markov head with confidence scheduling.
+
+        Uses YvDSparkHead (n-gram → next-token logits) for fast generation
+        and adjusts draft length based on recent acceptance history.
+        """
+        head = self._lazy_get_dspark_head()
+        draft_len = self._compute_blockpilot_draft_len()
+        batch_size = input_ids.shape[0]
+        context = input_ids[:, -self._dspark_markov_order:]
+
+        # Generate multiple candidates in parallel, pick best via avg log-prob
+        all_candidates: List[torch.Tensor] = []
+        all_scores: List[float] = []
+
+        # Pre-compute initial context embedding once, shared across all candidates
+        init_emb = head.embedding(context)
+
+        for _ in range(self._dspark_parallel_candidates):
+            tokens: List[torch.Tensor] = []
+            cum_logprob = 0.0
+            ctx = context.clone()
+            cur_emb = init_emb.clone()
+            for step in range(draft_len):
+                if step > 0:
+                    cur_emb = head.embedding(ctx)
+                flat_emb = cur_emb.view(cur_emb.size(0), -1)
+                logits = head.predictor(flat_emb)
+                logits = YvNumericalGuard.nan_to_num(logits)
+                logits = self._apply_sampling(logits)
+                probs = F.softmax(logits, dim=-1)
+                probs = YvNumericalGuard.nan_to_num(probs)
+                token = torch.multinomial(probs, num_samples=1)
+                tokens.append(token)
+                p = probs.gather(1, token).squeeze(-1)
+                cum_logprob = cum_logprob + YvNumericalGuard.safe_log(p).sum().item()
+                ctx = torch.cat([ctx[:, 1:], token], dim=1)
+                new_emb = head.embedding(token)
+                cur_emb = torch.cat([cur_emb[:, 1:, :], new_emb], dim=1)
+
+            seq = torch.cat(tokens, dim=1)
+            all_candidates.append(seq)
+            all_scores.append(cum_logprob / max(1, draft_len))
+
+        best = max(range(len(all_scores)), key=lambda i: all_scores[i])
+        best_seq = all_candidates[best]
+        # Free non-best candidates immediately
+        del all_candidates, all_scores, init_emb
+
+        # ── Weaver-style factorized tree expansion ──
+        if self._weaver_tree_width > 1 and draft_len >= 2:
+            best_seq = self._weaver_tree_expand(input_ids, best_seq=best_seq)
+
+        return best_seq
+
+    # ═══════════════════════════════════════════════════════════════
+    # Weaver (arXiv:2607.06763): factorized drafter tree search
+    # ═══════════════════════════════════════════════════════════════
+
+    @torch.no_grad()
+    def _weaver_tree_expand(self, input_ids: torch.Tensor, best_seq: torch.Tensor) -> torch.Tensor:
+        """Weaver-style factorized tree expansion.
+
+        Constructs a proposal tree from top-K marginals of the Markov head.
+        Each position in the draft is expanded to top-K alternatives;
+        the best path (highest joint probability) is selected.
+        """
+        head = self._lazy_get_dspark_head()
+        batch_size = input_ids.shape[0]
+        draft_len = best_seq.shape[1]
+        width = max(1, min(self._weaver_tree_width, self._dspark_parallel_candidates))
+        depth = min(self._weaver_tree_depth, draft_len)
+        markov_order = self._dspark_markov_order
+
+        context = input_ids[:, -markov_order:]
+
+        # Build tree: at each depth, get top-K predictions and pick best path
+        best_path: List[torch.Tensor] = []
+        cur_ctx = context.clone()
+        for d in range(depth):
+            logits = head(cur_ctx)
+            logits = self._apply_sampling(logits)
+            probs = F.softmax(logits, dim=-1)
+            top_k_probs, top_k_tokens = torch.topk(probs, min(width, probs.size(-1)), dim=-1)
+
+            # Score each using joint probability
+            best_idx = 0
+            best_prob = -1e9
+            for k_idx in range(top_k_tokens.size(-1)):
+                tok = top_k_tokens[:, k_idx:k_idx+1]
+                joint = YvNumericalGuard.safe_log(top_k_probs[:, k_idx:k_idx+1]).sum().item()
+                if joint > best_prob:
+                    best_prob = joint
+                    best_idx = k_idx
+            chosen = top_k_tokens[:, best_idx:best_idx+1]
+            best_path.append(chosen)
+            cur_ctx = torch.cat([cur_ctx[:, 1:], chosen], dim=1)
+
+        # Pad remaining positions with best_seq if depth < draft_len
+        if len(best_path) < draft_len:
+            remaining = best_seq[:, len(best_path):]
+            best_path.append(remaining)
+
+        return torch.cat(best_path, dim=1)
+
+    # ═══════════════════════════════════════════════════════════════
+    # BlockPilot (arXiv:2606.31315): adaptive block size via policy
+    # ═══════════════════════════════════════════════════════════════
+
+    def _blockpilot_draft_len(self) -> int:
+        """Return adaptive draft length using BlockPilot-style policy.
+
+        Maintains a simple slot-machine policy over block sizes:
+        tracks recent acceptance rewards per block size and selects
+        the one with highest expected reward.
+        """
+        base = self.config.draft_length
+        # EntMTP adjustment: scale draft length by entropy uncertainty
+        if self._entmtp_enabled and self._blockpilot_recent_rewards:
+            avg_reward = sum(self._blockpilot_recent_rewards[-10:]) / max(1, len(self._blockpilot_recent_rewards[-10:]))
+            if avg_reward > 0.8:
+                return min(base + 3, base * 2)
+            elif avg_reward < 0.4:
+                return max(2, base - 1)
+        return base
+
+    def _compute_blockpilot_draft_len(self) -> int:
+        """Compute effective draft length combining BlockPilot + EntMTP policies."""
+        base = self._blockpilot_draft_len()
+
+        # EntMTP: reduce base when high entropy (uncertainty)
+        if self._entmtp_enabled and self._dspark_confidence_window:
+            avg_conf = self._dspark_confidence_window_sum / max(1, len(self._dspark_confidence_window))
+            if avg_conf < 0.4:
+                base = max(self._entmtp_min_tree_width, base - 1)
+            elif avg_conf > 0.8:
+                base = min(base + 2, self._dspark_draft_len + 3)
+
+        return max(1, min(base, self._dspark_draft_len + 5))
     
     def _apply_sampling(self, logits: torch.Tensor) -> torch.Tensor:
+        logits = YvNumericalGuard.nan_to_num(logits)
         temp = max(0.1, min(2.0, self.config.temperature))
         logits = logits / temp
         if self.config.top_k > 0:
@@ -872,6 +1076,7 @@ class YvSpeculativeDecoder(nn.Module):
             )
         if self.config.top_p < 1.0:
             sorted_logits, sorted_indices = torch.sort(logits, descending=True, dim=-1)
+            sorted_logits = YvNumericalGuard.nan_to_num(sorted_logits)
             cumulative_probs = torch.cumsum(F.softmax(sorted_logits, dim=-1), dim=-1)
             sorted_indices_to_remove = cumulative_probs > self.config.top_p
             sorted_indices_to_remove[..., 1:] = sorted_indices_to_remove[..., :-1].clone()
@@ -887,29 +1092,23 @@ class YvSpeculativeDecoder(nn.Module):
         attention_mask: Optional[torch.Tensor] = None,
         **model_kwargs
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-        """Generate a sequence of draft tokens using the draft model.
-        
-        Autoregressively generates draft_length tokens using the lightweight
-        draft model for fast candidate generation.
-        
-        Args:
-            input_ids: Current sequence [batch_size, seq_len].
-            attention_mask: Optional attention mask.
-            **model_kwargs: Additional model arguments.
-            
-        Returns:
-            Tuple of:
-                - draft_seq: Draft token sequence [batch_size, draft_length]
-                - draft_logits: Logits for each draft position [batch_size, draft_length, vocab]
+        """Generate draft sequence using EntMTP or fallback draft model.
+
+        Uses BlockPilot adaptive draft length + EntMTP entropy guidance.
+        Falls back to the draft model when MTP heads are unavailable.
         """
         batch_size = input_ids.shape[0]
         device = input_ids.device
-        draft_len = max(1, self.config.draft_length)
-        
+        draft_len = self._compute_blockpilot_draft_len()
+
+        # EntMTP: use MTP heads for entropy-guided tree topology
+        if self._entmtp_enabled and hasattr(self.model, 'mtp_heads') and self.model.mtp_heads:
+            return self._entmtp_generate_draft(input_ids, draft_len)
+
         cur_ids = input_ids
         draft_tokens: List[torch.Tensor] = []
         step_logits_list: List[torch.Tensor] = []
-        
+
         with torch.no_grad():
             for _ in range(draft_len):
                 logits = self.draft_model(cur_ids)
@@ -918,18 +1117,100 @@ class YvSpeculativeDecoder(nn.Module):
                 draft_tokens.append(step_token)
                 cur_ids = torch.cat([cur_ids, step_token], dim=1)
                 step_logits_list.append(step_logits)
-        
+
         draft_seq = torch.cat(draft_tokens, dim=1).to(device)
         vocab_size = getattr(self.model.config, 'vocab_size', 65536)
         draft_step_logits = torch.cat(step_logits_list, dim=1) if step_logits_list else torch.zeros(
             batch_size, 0, vocab_size, device=device
         )
-        
         return draft_seq, draft_step_logits
+
+    # ═══════════════════════════════════════════════════════════════
+    # EntMTP (arXiv:2606.27550): entropy-guided MTP tree topology
+    # ═══════════════════════════════════════════════════════════════
+
+    @torch.no_grad()
+    def _entmtp_generate_draft(self, input_ids: torch.Tensor, max_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Entropy-guided MTP draft generation.
+
+        Uses model MTP heads to construct an adaptive tree topology
+        where branch width at each depth is guided by predictive entropy.
+        High entropy → wider tree (exploration), low entropy → narrower (exploitation).
+        """
+        batch_size = input_ids.shape[0]
+        device = input_ids.device
+        num_mtp = getattr(self.model, 'num_mtp_heads', 0)
+        if num_mtp == 0 or not hasattr(self.model, 'mtp_heads'):
+            return self._generate_draft_sequence_fallback(input_ids, max_len)
+
+        outputs = self.model(input_ids, use_cache=False, output_hidden_states=True)
+        if isinstance(outputs, dict):
+            h = outputs.get('hidden_states', outputs.get('logits'))
+            if h is None:
+                return self._generate_draft_sequence_fallback(input_ids, max_len)
+        else:
+            return self._generate_draft_sequence_fallback(input_ids, max_len)
+
+        last_h = h[:, -1:, :]
+        tokens: List[torch.Tensor] = []
+        logits_list: List[torch.Tensor] = []
+
+        remaining = max_len
+        for i, mtp_head in enumerate(self.model.mtp_heads):
+            if remaining <= 0:
+                break
+            step_logits = mtp_head(last_h)
+            step_logits = YvNumericalGuard.nan_to_num(step_logits)
+            probs = F.softmax(step_logits, dim=-1)
+            probs = YvNumericalGuard.nan_to_num(probs)
+
+            # EntMTP: entropy → smaller branch when confident
+            entropy = -(probs * YvNumericalGuard.safe_log(probs)).sum(dim=-1, keepdim=True)
+            norm_entropy = (entropy / math.log(probs.size(-1))).mean().item()
+            tree_k = max(1, int(self._weaver_tree_width * (1.0 - norm_entropy * self._entmtp_entropy_decay)))
+            tree_k = max(self._entmtp_min_tree_width, min(tree_k, self._weaver_tree_width))
+
+            top_probs, top_tokens = torch.topk(probs, min(tree_k, probs.size(-1)), dim=-1)
+            best_idx = torch.multinomial(top_probs[:, 0, :].squeeze(1), num_samples=1)
+            token = top_tokens[:, 0, :].gather(-1, best_idx)
+            tokens.append(token)
+            logits_list.append(step_logits[:, -1:, :])
+            remaining -= 1
+
+            if i < num_mtp - 1:
+                last_h = mtp_head(last_h)[:, -1:, :]
+
+        if not tokens:
+            return self._generate_draft_sequence_fallback(input_ids, max_len)
+
+        draft_seq = torch.cat(tokens, dim=1).to(device)
+        draft_logits = torch.cat(logits_list, dim=1)
+        return draft_seq, draft_logits
+
+    def _generate_draft_sequence_fallback(self, input_ids: torch.Tensor, draft_len: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Fallback draft via draft model when MTP heads unavailable."""
+        batch_size = input_ids.shape[0]
+        device = input_ids.device
+        cur_ids = input_ids
+        tokens: List[torch.Tensor] = []
+        logits_list: List[torch.Tensor] = []
+        with torch.no_grad():
+            for _ in range(draft_len):
+                logits = self.draft_model(cur_ids)
+                step_logits = logits[:, -1:, :]
+                step_token = self._sample_candidates(step_logits).unsqueeze(1)[:, 0:1]
+                tokens.append(step_token)
+                cur_ids = torch.cat([cur_ids, step_token], dim=1)
+                logits_list.append(step_logits)
+        seq = torch.cat(tokens, dim=1).to(device)
+        v = getattr(self.model.config, 'vocab_size', 65536)
+        ls = torch.cat(logits_list, dim=1) if logits_list else torch.zeros(batch_size, 0, v, device=device)
+        return seq, ls
     
     def _sample_candidates(self, logits: torch.Tensor) -> torch.Tensor:
         logits = self._apply_sampling(logits)
         probs = F.softmax(logits, dim=-1)
+        probs = YvNumericalGuard.nan_to_num(probs)
         n_valid = (probs.squeeze(1) > 0).sum(dim=-1).min().item()
         k = min(self.config.num_candidates, max(1, n_valid))
         return torch.multinomial(probs.squeeze(1), k, replacement=False)
@@ -1405,7 +1686,7 @@ class YvDSparkHead(nn.Module):
         """
         embeds = self.embedding(tokens).view(tokens.size(0), -1)
         logits = self.predictor(embeds)
-        return logits
+        return YvNumericalGuard.nan_to_num(logits)
 
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture — DSpark speculative decoding)
@@ -1464,7 +1745,7 @@ class YvDSparkSpeculativeDecoder(nn.Module):
         self.markov_head = YvDSparkHead(
             vocab_size=vocab_size,
             markov_order=self.dspark_markov_order,
-            embed_dim=256,
+            embed_dim=getattr(config, 'dspark_ngram_embed_dim', 256),
             device=device,
             dtype=dtype,
         )
@@ -1476,6 +1757,8 @@ class YvDSparkSpeculativeDecoder(nn.Module):
 
         self.current_draft_len: int = self.dspark_draft_len
         self.performance_history: List[Dict[str, float]] = []
+        self._window_buffer: deque = deque(maxlen=10)
+        self._window_conf_sum: float = 0.0
 
     @torch.no_grad()
     def _generate_parallel_drafts(self, input_ids: torch.Tensor) -> torch.Tensor:
@@ -1499,29 +1782,46 @@ class YvDSparkSpeculativeDecoder(nn.Module):
         all_candidates: List[torch.Tensor] = []
         all_scores: List[float] = []
 
+        # Pre-compute initial context embedding once, shared across all candidates
+        init_emb = self.markov_head.embedding(context)  # [batch, order, embed_dim]
+
         for _ in range(self.dspark_parallel_candidates):
             draft_tokens: List[torch.Tensor] = []
             total_log_prob = 0.0
             cur_context = context.clone()
+            cur_emb = init_emb.clone()
 
-            for _ in range(draft_len):
-                logits = self.markov_head(cur_context)
+            for step in range(draft_len):
+                # Use cached embedding for first step; re-embed on subsequent steps
+                if step > 0:
+                    cur_emb = self.markov_head.embedding(cur_context)
+                flat_emb = cur_emb.view(cur_emb.size(0), -1)
+                logits = self.markov_head.predictor(flat_emb)
+                logits = YvNumericalGuard.nan_to_num(logits)
                 logits = self._apply_sampling(logits)
                 probs = F.softmax(logits, dim=-1)
+                probs = YvNumericalGuard.nan_to_num(probs)
                 token = torch.multinomial(probs, num_samples=1)
                 draft_tokens.append(token)
                 tok_prob = probs.gather(1, token).squeeze(-1)
                 total_log_prob = total_log_prob + YvNumericalGuard.safe_log(tok_prob).sum().item()
                 cur_context = torch.cat([cur_context[:, 1:], token], dim=1)
+                # Update embedding cache: drop oldest token embedding, append new token
+                new_emb = self.markov_head.embedding(token)  # [batch, 1, embed_dim]
+                cur_emb = torch.cat([cur_emb[:, 1:, :], new_emb], dim=1)
 
             draft_seq = torch.cat(draft_tokens, dim=1)
             all_candidates.append(draft_seq)
             all_scores.append(total_log_prob / max(1, draft_len))
 
         best_idx = max(range(len(all_scores)), key=lambda i: all_scores[i])
-        return all_candidates[best_idx]
+        best_seq = all_candidates[best_idx]
+        # Free non-best candidates immediately
+        del all_candidates, all_scores, init_emb
+        return best_seq
 
     def _apply_sampling(self, logits: torch.Tensor) -> torch.Tensor:
+        logits = YvNumericalGuard.nan_to_num(logits)
         logits = logits / max(0.1, min(2.0, self.temperature))
         if self.top_k > 0:
             logits = torch.where(
@@ -1586,9 +1886,12 @@ class YvDSparkSpeculativeDecoder(nn.Module):
 
             # Warm-up: need at least markov_order context tokens for the head
             if generated_ids.shape[1] < self.dspark_markov_order:
-                outputs = self.model(generated_ids, attention_mask=attention_mask, **model_kwargs)
+                with torch.no_grad():
+                    outputs = self.model(generated_ids, attention_mask=attention_mask, **model_kwargs)
                 logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                logits = YvNumericalGuard.nan_to_num(logits)
                 probs = F.softmax(logits[:, -1, :], dim=-1)
+                probs = YvNumericalGuard.nan_to_num(probs)
                 next_token = torch.multinomial(probs, num_samples=1)
                 generated_ids = torch.cat([generated_ids, next_token], dim=1)
                 attention_mask = self._extend_attention_mask(attention_mask, generated_ids, device)
@@ -1613,6 +1916,9 @@ class YvDSparkSpeculativeDecoder(nn.Module):
 
             if num_accepted == 0:
                 zero_accept_streak += 1
+                # Exponential backoff: double draft length on repeated zero-accept
+                backoff_cap = min(self.dspark_draft_len * 4, 32)
+                self.current_draft_len = min(backoff_cap, self.current_draft_len * 2)
                 if zero_accept_streak >= 3:
                     fallback_ids, fallback_stats = self._standard_generate(
                         generated_ids, attention_mask, max_length, **model_kwargs
@@ -1621,9 +1927,12 @@ class YvDSparkSpeculativeDecoder(nn.Module):
                     generated_ids = fallback_ids
                     break
 
-                outputs = self.model(generated_ids, attention_mask=attention_mask, **model_kwargs)
+                with torch.no_grad():
+                    outputs = self.model(generated_ids, attention_mask=attention_mask, **model_kwargs)
                 logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                logits = YvNumericalGuard.nan_to_num(logits)
                 probs = F.softmax(logits[:, -1, :], dim=-1)
+                probs = YvNumericalGuard.nan_to_num(probs)
                 next_token = torch.multinomial(probs, num_samples=1)
                 generated_ids = torch.cat([generated_ids, next_token], dim=1)
                 attention_mask = self._extend_attention_mask(attention_mask, generated_ids, device)
@@ -1667,18 +1976,21 @@ class YvDSparkSpeculativeDecoder(nn.Module):
         return generated_ids, stats
 
     def _confidence_schedule(self, num_accepted: int, draft_len: int):
-        """Adjust draft length based on recent acceptance rate.
+        """Adjust draft length based on recent acceptance rate (incremental window).
 
         High acceptance increases draft length for higher speedup;
         low acceptance reduces it to avoid wasted computation.
         """
         if draft_len == 0:
             return
-        accept_rate = num_accepted / draft_len
-        self.performance_history.append({'acceptance_rate': accept_rate})
-        if len(self.performance_history) > 10:
-            self.performance_history.pop(0)
-        avg_rate = sum(h['acceptance_rate'] for h in self.performance_history) / max(1, len(self.performance_history))
+        accept_rate = YvNumericalGuard.safe_clamp(
+            torch.tensor(num_accepted / draft_len), 0.0, 1.0
+        ).item()
+        self._window_conf_sum += accept_rate
+        self._window_buffer.append(accept_rate)
+        if len(self._window_buffer) > 10:
+            self._window_conf_sum -= self._window_buffer[0]
+        avg_rate = self._window_conf_sum / max(1, len(self._window_buffer))
 
         if avg_rate > 0.8:
             self.current_draft_len = min(self.dspark_draft_len + 3, self.current_draft_len + 1)

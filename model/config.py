@@ -577,8 +577,14 @@ class YvConfig:
     speculative_top_k: int = 50
     speculative_top_p: float = 0.9
     enable_speculative_decoding: bool = True
+    use_speculative_decoder: bool = True
     speculative_tree_width: int = 4
     speculative_tree_depth: int = 5
+
+    # Gated Delta Networks (ICLR 2025) - Selective state-space gating for improved long-context
+    gated_delta_use: bool = True
+    gated_delta_dim: int = 64
+    gated_delta_tau: float = 0.1
 
     tool_uncertainty_threshold: float = 0.7
     tool_fact_consistency_threshold: float = 0.6

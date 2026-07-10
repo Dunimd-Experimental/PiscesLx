@@ -175,15 +175,15 @@ class YvPredictiveDeltaCoder(nn.Module):
         """
         if bottleneck is not None:
             predictor = nn.Sequential(
-                nn.Linear(self.hidden_size, bottleneck, bias=False, device=device, dtype=dtype),
+                nn.Linear(self.hidden_size, bottleneck, bias=False, dtype=dtype, device='cpu'),
                 nn.ReLU(inplace=True),
-                nn.Linear(bottleneck, self.kv_lora_rank, bias=False, device=device, dtype=dtype),
+                nn.Linear(bottleneck, self.kv_lora_rank, bias=False, dtype=dtype, device='cpu'),
             )
         else:
-            predictor = nn.Linear(self.hidden_size, self.kv_lora_rank, bias=False, device=device, dtype=dtype)
+            predictor = nn.Linear(self.hidden_size, self.kv_lora_rank, bias=False, dtype=dtype, device='cpu')
 
         self._init_predictor_weights(predictor)
-        return predictor
+        return predictor.to(device)
 
     def _init_predictor_weights(self, predictor: nn.Module):
         """Initialize predictor weights with small values for stable delta coding.

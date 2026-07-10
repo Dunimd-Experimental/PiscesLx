@@ -130,8 +130,8 @@ class YvEGMLA(nn.Module):
             base=10000.0,
         )
 
-        self.register_buffer("total_tokens", torch.tensor(0.0))
-        self.register_buffer("total_compression_ratio", torch.tensor(0.0))
+        self.register_buffer("total_tokens", torch.tensor(0.0), persistent=False)
+        self.register_buffer("total_compression_ratio", torch.tensor(0.0), persistent=False)
 
     def fuse_weights(self):
         """Migrate separate linear weights to fused projector in-place."""
