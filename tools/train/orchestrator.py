@@ -1051,12 +1051,16 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         # Set by torchrun (LOCAL_RANK env) or --distributed flag
         local_rank = os.environ.get("LOCAL_RANK")
         if local_rank is not None and not (torch.distributed.is_available() and torch.distributed.is_initialized()):
-            master_addr = os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
-            master_port = os.environ.setdefault("MASTER_PORT", "29500")
+            os.environ.setdefault("MASTER_ADDR", "127.0.0.1")
+            os.environ.setdefault("MASTER_PORT", "29500")
             world_size_env = int(os.environ.get("WORLD_SIZE", "1") or 1)
             if world_size_env <= 1:
                 os.environ.setdefault("NCCL_SOCKET_IFNAME", "lo")
                 os.environ.setdefault("GLOO_SOCKET_IFNAME", "lo")
+            os.environ.setdefault("NCCL_ALGO", "Ring")
+            os.environ.setdefault("NCCL_PROTO", "Simple")
+            os.environ.setdefault("NCCL_MIN_NCHANNELS", "1")
+            os.environ.setdefault("TORCH_NCCL_AVOID_RECORD_STREAMS", "1")
             try:
                 backend = "nccl" if torch.cuda.is_available() else "gloo"
                 torch.distributed.init_process_group(backend=backend)
@@ -1064,8 +1068,8 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                     torch.cuda.set_device(int(local_rank))
                 _LOG.info(
                     f"Distributed training initialized: backend={backend}, rank={torch.distributed.get_rank()}, "
-                    f"world_size={torch.distributed.get_world_size()}, master={master_addr}:{master_port}, "
-                    f"local_rank={local_rank}"
+                    f"world_size={torch.distributed.get_world_size()}, master_addr={os.environ.get('MASTER_ADDR')}:"
+                    f"{os.environ.get('MASTER_PORT')}, local_rank={local_rank}"
                 )
             except Exception as e:
                 _LOG.warning(f"Failed to initialize distributed training: {e}")
@@ -1074,7 +1078,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             "batch_size": int(getattr(self.train_config.data, "batch_size", 1)),
             "shuffle": True,
             "num_workers": int(getattr(self.train_config.data, "num_workers", 0)),
-            "pin_memory": bool(getattr(self.train_config.data, "pin_memory", False)),
+            "pin_memory": bool(getattr(self.train_config.data, "pin_memory", torch.cuda.is_available())),
             "drop_last": True,
             "collate_fn": collate,
         }

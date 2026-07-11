@@ -1956,13 +1956,10 @@ class YvTransformerBlock(nn.Module):
             _LOG.error(f"Fallback 4-bit quantization also failed: {e}")
 
     def _should_use_checkpoint(self):
-        """Determine whether gradient checkpointing should be used.
-
-        Returns:
-            True if checkpointing should be used.
-        """
-        if not self.use_checkpoint or not self.adaptive_checkpointing:
-            return self.use_checkpoint
+        if not self.use_checkpoint:
+            return False
+        if not self.adaptive_checkpointing:
+            return True
 
         try:
             if torch.cuda.is_available():
@@ -1974,19 +1971,17 @@ class YvTransformerBlock(nn.Module):
                     self.current_checkpoint_freq = max(1, self.checkpoint_frequency // 2)
                     return True
                 elif memory_usage < self.memory_threshold_low:
-                    self.current_checkpoint_freq = self.checkpoint_frequency * 2
+                    self.current_checkpoint_freq = min(32, self.checkpoint_frequency * 2)
+                    self._checkpoint_call_count = 0
                     return False
                 else:
-                    self.current_checkpoint_freq = self.checkpoint_frequency
-                    if self.current_checkpoint_freq <= 1:
-                        return True
-                    self._checkpoint_call_count = (self._checkpoint_call_count + 1) % self.current_checkpoint_freq
+                    freq = max(1, self.current_checkpoint_freq)
+                    self._checkpoint_call_count = (self._checkpoint_call_count + 1) % freq
                     return self._checkpoint_call_count == 0
-            else:
-                return self.use_checkpoint
+            return True
         except (RuntimeError, ValueError, AttributeError) as e:
             _LOG.error(f"Adaptive checkpointing memory check failed: {e}")
-            return self.use_checkpoint
+            return True
 
     def _apply_with_checkpoint(
         self,

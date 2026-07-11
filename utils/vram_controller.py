@@ -141,6 +141,11 @@ class VRAMOptConfig:
     # ZeRO
     zero_stage: int = 3
 
+    # Recommended training params (auto-detected)
+    recommended_batch_size: int = 1
+    recommended_grad_accum: int = 4
+    recommended_seq_len: int = 2048
+
     def apply_to(self, cfg) -> None:
         """Apply these optimizations to a YvConfig object."""
         # Tier 0
@@ -182,10 +187,28 @@ class VRAMOptConfig:
             pass  # User explicitly requested offloading
 
 
+def _estimate_activation_gb(cfg, batch_size: int = 1, seq_len: int = 2048) -> float:
+    """Estimate activation memory per training step in GB."""
+    hidden = getattr(cfg, 'hidden_size', 640)
+    n_layer = getattr(cfg, 'n_layer', 16)
+    n_head = getattr(cfg, 'n_head', 10)
+    intermediate = getattr(cfg, 'intermediate_size', hidden * 4)
+    
+    # Per-token activation per layer (self-attention + FFN)
+    attn_act = batch_size * seq_len * hidden * 4  # QKV output + O projection
+    ffn_act = batch_size * seq_len * intermediate * 3  # gate, up, down
+    per_layer = (attn_act + ffn_act) * 2  # 2 bytes (BF16)
+    
+    total = per_layer * n_layer
+    return total / (1024**3)
+
+
 def optimize_for_vram(
     cfg,
     profile: Optional[VRAMProfile] = None,
     num_params_b: Optional[float] = None,
+    batch_size: int = 1,
+    seq_len: int = 2048,
 ) -> VRAMOptConfig:
     """Automatically select optimal VRAM settings.
 
@@ -196,6 +219,8 @@ def optimize_for_vram(
         cfg: YvConfig object (or anything with model size attrs).
         profile: GPU hardware profile. Auto-detected if None.
         num_params_b: Model size in billions. Estimated from cfg if None.
+        batch_size: Training batch size per GPU.
+        seq_len: Training sequence length.
 
     Returns:
         VRAMOptConfig with optimized settings.
@@ -207,51 +232,67 @@ def optimize_for_vram(
         num_params_b = _estimate_params_b(cfg)
 
     total_gb = profile.safe_budget_gb
-    estimated = estimate_model_vram(num_params_b, dtype_bytes=2.0)
-    needed_gb = estimated["total"]
+    act_gb = _estimate_activation_gb(cfg, batch_size, seq_len)
 
-    # Check if model fits with no optimizations
-    if needed_gb <= total_gb:
-        # Model fits easily — minimal optimizations
-        opt.use_flash_attention = profile.is_ampere_or_newer
-        opt.use_mla = True
-        opt.cache_quantization = True
+    def estimate(dtype_bytes: float, opt_mult: float = 2.0, checkpoint: bool = False) -> float:
+        w = num_params_b * dtype_bytes  # weights
+        o = w * opt_mult               # optimizer states
+        g = w                          # gradients
+        a = act_gb * (0.3 if checkpoint else 1.0)  # activations
+        return w + o + g + a
+
+    bf16_total = estimate(2.0, opt_mult=2.0)
+    bf16_ckpt = estimate(2.0, opt_mult=2.0, checkpoint=True)
+    fp4_total = estimate(0.5, opt_mult=4.0)  # FP4 master + FP32 optimizer
+    ink_total = estimate(2.0, opt_mult=0.5)  # BF16 weights + 8-bit states (~1x)
+    ink_ckpt = estimate(2.0, opt_mult=0.5, checkpoint=True)
+
+    # Tier selection based on actual budget
+    if bf16_total <= total_gb:
         opt.use_gradient_checkpointing = False
         opt.use_fp4 = False
-        return opt
-
-    # Model doesn't fit — apply Tier 1 optimizations
-    opt.cache_quantization = True
-    opt.use_mixed_precision_cache = True
-
-    # Check with FP4
-    estimated_fp4 = estimate_model_vram(num_params_b, dtype_bytes=0.5)
-    with_fp4_gb = estimated_fp4["total"]
-
-    if with_fp4_gb <= total_gb:
-        # FP4 is enough
-        opt.use_fp4 = True
+    elif ink_total <= total_gb:
         opt.use_gradient_checkpointing = True
         opt.adaptive_recomputation = True
-        return opt
+    elif ink_ckpt <= total_gb:
+        opt.use_gradient_checkpointing = True
+        opt.adaptive_recomputation = True
+        opt.selective_checkpointing = True
+    elif fp4_total <= total_gb:
+        opt.use_fp4 = True
+        opt.use_gradient_checkpointing = True
+        opt.selective_checkpointing = True
+        opt.adaptive_recomputation = True
+    else:
+        opt.use_fp4 = True
+        opt.use_gradient_checkpointing = True
+        opt.selective_checkpointing = True
+        opt.adaptive_recomputation = True
+        opt.cpu_offload_optimizer = True
+        opt.activation_quantization = True
+        opt.max_experts_on_gpu = 2
+        opt.kv_cache_block_size = 256
+        opt.enable_teraio = True
 
-    # Still doesn't fit — enable selective gradient checkpointing
-    opt.use_fp4 = True
-    opt.use_gradient_checkpointing = True
-    opt.selective_checkpointing = True
-    opt.adaptive_recomputation = True
+    opt.use_flash_attention = profile.is_ampere_or_newer
+    opt.use_mla = True
+    opt.cache_quantization = True
 
-    # Check again with aggressive activation savings
-    estimated_aggressive = estimate_model_vram(num_params_b, dtype_bytes=0.5, activation_mult=0.5)
-    if estimated_aggressive["total"] <= total_gb:
-        return opt
-
-    # Extreme — Tier 3 offloading
-    opt.cpu_offload_optimizer = True
-    opt.activation_quantization = True
-    opt.max_experts_on_gpu = 2
-    opt.kv_cache_block_size = 256
-
+    est_act_per_sample = _estimate_activation_gb(cfg, batch_size=1, seq_len=seq_len)
+    act_scale = 0.3 if opt.use_gradient_checkpointing else 1.0
+    w = num_params_b * (0.5 if opt.use_fp4 else 2.0)
+    o = w * (0.5 if opt.use_gradient_checkpointing else 2.0)
+    g = w
+    other = w + o + g
+    avail_for_act = max(1.0, total_gb * 0.85 - other)
+    max_bs = max(1, int(avail_for_act / max(0.1, est_act_per_sample * act_scale)))
+    opt.recommended_batch_size = min(max_bs, 64)
+    if opt.recommended_batch_size >= 8:
+        opt.recommended_grad_accum = 1
+    elif opt.recommended_batch_size >= 4:
+        opt.recommended_grad_accum = 2
+    else:
+        opt.recommended_grad_accum = max(2, 16 // max(1, opt.recommended_batch_size))
     return opt
 
 

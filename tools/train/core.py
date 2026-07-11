@@ -861,49 +861,51 @@ class PiscesLxTrainingOperator(object):
                 except Exception as e:
                     _LOG.warning(f"3D parallelism wrapping failed: {e}")
 
-        # Apply FSDP wrapping if configured and 3D parallel not active
-        fsdp_enabled = getattr(self.config, 'fsdp', {}).get('enabled', False) if hasattr(self.config, 'fsdp') else False
-        if _use_meta_fsdp:
-            local_rank = int(_os.environ.get('LOCAL_RANK', '0'))
-            from torch.distributed.fsdp import FullyShardedDataParallel as _FSDP
-            from torch.distributed.fsdp.fully_sharded_data_parallel import (
-                CPUOffload, MixedPrecision, BackwardPrefetch, ShardingStrategy,
-            )
-            mp_dtype = torch.bfloat16 if self.config.mixed_precision in ('bf16', 'bfloat16') else torch.float16
-            self.model = _FSDP(
-                self.model,
-                sharding_strategy=ShardingStrategy.FULL_SHARD,
-                mixed_precision=MixedPrecision(param_dtype=mp_dtype, reduce_dtype=mp_dtype, buffer_dtype=mp_dtype),
-                cpu_offload=CPUOffload(offload_params=False),
-                backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
-                limit_all_gathers=True,
-                device_id=local_rank,
-            )
-            with torch.no_grad():
-                for p in self.model.parameters():
-                    if p.numel() > 0:
-                        p.uniform_(-0.02, 0.02)
-            _LOG.info("FSDP wrapping applied with meta device init")
-        elif fsdp_enabled and self._parallel_3d_operator is None:
+        # Determine optimal distributed strategy: prefer FSDP over DDP for memory savings
+        import torch.distributed as _dist
+        _dist_initialized = _dist.is_available() and _dist.is_initialized()
+        _world_size = _dist.get_world_size() if _dist_initialized else 1
+        _vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3) if self.device.type == 'cuda' else 0
+        _est_params_gb = sum(p.numel() for p in self.model.parameters()) * 4 / (1024**3) if self.device.type == 'cuda' else 0
+        _should_fsdp = (
+            _use_meta_fsdp
+            or (_dist_initialized and _world_size > 1 and _vram_gb > 0 and _est_params_gb > _vram_gb * 0.4)
+        )
+        _should_ddp = (
+            _dist_initialized and _world_size > 1 and not _should_fsdp
+        )
+
+        if _should_fsdp and self._parallel_3d_operator is None:
             try:
                 from torch.distributed.fsdp import FullyShardedDataParallel as _FSDP
                 from torch.distributed.fsdp.fully_sharded_data_parallel import (
                     CPUOffload, MixedPrecision, BackwardPrefetch, ShardingStrategy,
                 )
                 mp_dtype = torch.bfloat16 if self.config.mixed_precision in ('bf16', 'bfloat16') else torch.float16
-                _local_rank = int(_os.environ.get('LOCAL_RANK', '0'))
+                local_rank = int(_os.environ.get('LOCAL_RANK', '0'))
+                _cpu_offload = _est_params_gb > _vram_gb * 0.6 if _vram_gb > 0 else False
                 self.model = _FSDP(
                     self.model,
                     sharding_strategy=ShardingStrategy.FULL_SHARD,
-                    mixed_precision=MixedPrecision(param_dtype=mp_dtype, reduce_dtype=mp_dtype, buffer_dtype=mp_dtype),
-                    cpu_offload=CPUOffload(offload_params=False),
+                    mixed_precision=MixedPrecision(
+                        param_dtype=mp_dtype,
+                        reduce_dtype=mp_dtype,
+                        buffer_dtype=mp_dtype,
+                    ),
+                    cpu_offload=CPUOffload(offload_params=_cpu_offload),
                     backward_prefetch=BackwardPrefetch.BACKWARD_PRE,
+                    forward_prefetch=_cpu_offload,
                     limit_all_gathers=True,
-                    device_id=_local_rank,
+                    device_id=local_rank,
                 )
-                _LOG.info("FSDP wrapping applied (non-meta)")
+                _LOG.info(
+                    f"FSDP wrapping applied: shard=FULL_SHARD, cpu_offload={_cpu_offload}, "
+                    f"precision={mp_dtype}, world_size={_world_size}"
+                )
             except Exception as e:
-                _LOG.warning(f"FSDP initialization failed: {e}")
+                _LOG.warning(f"FSDP initialization failed: {e}, falling back to DDP")
+                _should_ddp = True
+                _should_fsdp = False
 
         # Apply FP8 training if configured
         fp8_enabled = getattr(self.config, 'fp8', {}).get('enabled', False) if hasattr(self.config, 'fp8') else False
@@ -977,16 +979,13 @@ class PiscesLxTrainingOperator(object):
             return self.device
 
     def _post_transfer_setup(self, lora_was_applied: bool) -> None:
-        """Shared post-GPU-transfer setup: dtype cast, param count, checkpointing, distributed."""
-        try:
-            if self.device.type == "cuda":
-                mp = str(getattr(self.config, "mixed_precision", "fp32") or "fp32").lower()
-                if mp == "bf16":
-                    self.model = self.model.to(dtype=torch.bfloat16)
-                elif mp == "fp16":
-                    self.model = self.model.to(dtype=torch.float16)
-        except Exception as e:
-            _LOG.warning(f"Failed to cast model to mixed precision dtype: {e}")
+        """Shared post-GPU-transfer setup: param count, checkpointing, distributed.
+        
+        Model dtype is NOT eagerly cast here — autocast in forward_pass handles
+        precision conversion on-the-fly, keeping master weights in FP32 for
+        optimizer fidelity. Eager cast wastes VRAM (creates a second copy) and
+        breaks FP4/GaLore weight representations.
+        """
 
         if self.device.type == 'cuda':
             torch.cuda.synchronize(self.device)
@@ -1021,7 +1020,10 @@ class PiscesLxTrainingOperator(object):
             )
         )
         if self.config.distributed and not parallel_active:
-            self._setup_distributed_training()
+            if _should_fsdp:
+                _LOG.info("FSDP already applied, skipping DDP wrapping")
+            else:
+                self._setup_distributed_training()
         elif self.config.distributed and parallel_active:
             _LOG.info("Skipping DDP wrapping because 3D parallelism is active")
 
@@ -1482,10 +1484,10 @@ class PiscesLxTrainingOperator(object):
                 self.model,
                 device_ids=([device_index] if device_index is not None else None),
                 output_device=device_index,
-                find_unused_parameters=True,
+                find_unused_parameters=False,
                 broadcast_buffers=False,
                 gradient_as_bucket_view=True,
-                static_graph=bool(getattr(self.config, "ddp_static_graph", False)),
+                static_graph=bool(getattr(self.config, "ddp_static_graph", True)),
             )
 
             _LOG.info(
@@ -1513,10 +1515,21 @@ class PiscesLxTrainingOperator(object):
         
         trainable_params = [p for p in self.model.parameters() if p.requires_grad]
         
+        est_params = sum(p.numel() for p in trainable_params) if trainable_params else 0
+        is_small_model = est_params < 1_000_000_000  # <1B params
+        is_small_hidden = (getattr(self.config, 'hidden_size', 0) or 0) < 1024
+
         try:
             from opss.optim.ink import POPSSInkOptimizer, POPSSInkConfig
             
             ink_section = getattr(self.config, 'ink_optimizer', None) or self.config
+            
+            # Auto-tune for model size: small models need less aggressive compression
+            sparse_ratio = 0.05 if is_small_model else float(getattr(ink_section, 'sparse_ratio', 0.01))
+            galore_rank = max(16, min(128, int(getattr(self.config, 'hidden_size', 640) * 0.125)))
+            gradient_sparse = 0.05 if is_small_model else float(getattr(ink_section, 'gradient_sparse_ratio', 0.01))
+            momentum_bits = max(4, int(getattr(ink_section, 'momentum_bits', 8 if is_small_model else 4)))
+            variance_bits = max(4, int(getattr(ink_section, 'variance_bits', 8 if is_small_model else 4)))
             
             ink_config = POPSSInkConfig(
                 lr=self.config.optimizer.learning_rate,
@@ -1524,19 +1537,19 @@ class PiscesLxTrainingOperator(object):
                 betas=self.config.optimizer.betas,
                 eps=self.config.optimizer.eps,
                 max_grad_norm=getattr(self.config.optimizer, 'max_grad_norm', 1.0),
-                momentum_bits=getattr(ink_section, 'momentum_bits', 8),
-                momentum_block_size=getattr(ink_section, 'momentum_block_size', 128),
-                variance_bits=getattr(ink_section, 'variance_bits', 8),
+                momentum_bits=momentum_bits,
+                momentum_block_size=getattr(ink_section, 'momentum_block_size', 256),
+                variance_bits=variance_bits,
                 variance_block_size=getattr(ink_section, 'variance_block_size', 256),
-                sparse_ratio=getattr(ink_section, 'sparse_ratio', 0.01),
-                sparse_warmup_steps=getattr(ink_section, 'sparse_warmup_steps', 1000),
+                sparse_ratio=sparse_ratio,
+                sparse_warmup_steps=getattr(ink_section, 'sparse_warmup_steps', 2000 if is_small_model else 1000),
                 sparse_adaptive=True,
                 ortho_momentum=getattr(ink_section, 'ortho_momentum', 0.9),
-                galore_rank=getattr(ink_section, 'galore_rank', 160),
+                galore_rank=galore_rank,
                 galore_update_proj_gap=getattr(ink_section, 'galore_update_proj_gap', 200),
                 galore_quantization_bits=getattr(ink_section, 'galore_quantization_bits', 8),
-                galore_min_rank=getattr(ink_section, 'galore_min_rank', 40),
-                galore_max_rank=getattr(ink_section, 'galore_max_rank', 320),
+                galore_min_rank=max(8, galore_rank // 4),
+                galore_max_rank=galore_rank * 2,
                 galore_rank_adapt_interval=getattr(ink_section, 'galore_rank_adapt_interval', 1000),
                 galore_rank_adapt_threshold=getattr(ink_section, 'galore_rank_adapt_threshold', 0.1),
                 galore_memory_efficient=getattr(ink_section, 'galore_memory_efficient', True),
@@ -1550,14 +1563,14 @@ class PiscesLxTrainingOperator(object):
                 root_min_dim_for_ortho=getattr(ink_section, 'root_min_dim_for_ortho', 16),
                 gradient_bits=getattr(ink_section, 'gradient_bits', 8),
                 gradient_block_size=getattr(ink_section, 'gradient_block_size', 128),
-                gradient_sparse_ratio=getattr(ink_section, 'gradient_sparse_ratio', 0.01),
+                gradient_sparse_ratio=gradient_sparse,
                 kv_cache_bits=getattr(ink_section, 'kv_cache_bits', 8),
                 kv_cache_block_size=getattr(ink_section, 'kv_cache_block_size', 64),
-                max_experts_on_gpu=getattr(ink_section, 'max_experts_on_gpu', 4),
+                max_experts_on_gpu=getattr(ink_section, 'max_experts_on_gpu', 2 if is_small_model else 4),
                 moe_offload_threshold=getattr(ink_section, 'moe_offload_threshold', 0.8),
                 moe_lru_cache_size=getattr(ink_section, 'moe_lru_cache_size', 8),
                 checkpoint_transformer=getattr(ink_section, 'checkpoint_transformer', True),
-                checkpoint_ratio=getattr(ink_section, 'checkpoint_ratio', 0.5),
+                checkpoint_ratio=0.7 if is_small_model else float(getattr(ink_section, 'checkpoint_ratio', 0.5)),
                 checkpoint_preserve_ratio=getattr(ink_section, 'checkpoint_preserve_ratio', 0.3),
             )
 
@@ -1740,9 +1753,9 @@ class PiscesLxTrainingOperator(object):
                 _LOG.warning(f"FP8 execution error: {e}")
                 # Fall back to standard forward pass
         
-        # Standard forward pass (fallback)
         batch = {
-            k: (v.to(self.device, non_blocking=self._non_blocking_transfer) if isinstance(v, torch.Tensor) else v)
+            k: (v if isinstance(v, torch.Tensor) and v.device == self.device else
+                v.to(self.device, non_blocking=self._non_blocking_transfer) if isinstance(v, torch.Tensor) else v)
             for k, v in batch.items()
         }
 
@@ -1849,32 +1862,32 @@ class PiscesLxTrainingOperator(object):
                         slicer[1] = slice(0, trim_len)
                         model_batch[key] = tensor[tuple(slicer)].contiguous()
 
-        model_vocab_size = 0
-        try:
-            if self.model is not None:
-                base_model = self.model
-                for attr in ("base_model", "model"):
-                    if hasattr(base_model, attr):
-                        base_model = getattr(base_model, attr)
-                embed = getattr(base_model, "embed", None)
-                weight = getattr(embed, "weight", None)
-                if weight is not None:
-                    model_vocab_size = int(weight.shape[0])
-        except Exception:
-            model_vocab_size = 0
+        _cached_vocab = getattr(self, '_model_vocab_size', 0)
+        if _cached_vocab <= 0:
+            try:
+                if self.model is not None:
+                    base_model = self.model
+                    for attr in ("base_model", "model"):
+                        if hasattr(base_model, attr):
+                            base_model = getattr(base_model, attr)
+                    embed = getattr(base_model, "embed", None)
+                    weight = getattr(embed, "weight", None)
+                    if weight is not None:
+                        self._model_vocab_size = _cached_vocab = int(weight.shape[0])
+            except Exception:
+                self._model_vocab_size = _cached_vocab = 0
 
-        if model_vocab_size > 0:
+        if _cached_vocab > 0:
             input_ids = model_batch.get("input_ids")
             if isinstance(input_ids, torch.Tensor):
-                model_batch["input_ids"] = input_ids.clamp(0, model_vocab_size - 1)
+                model_batch["input_ids"] = input_ids.clamp(0, _cached_vocab - 1)
 
             labels = model_batch.get("labels")
             if isinstance(labels, torch.Tensor):
-                invalid_labels = (labels >= model_vocab_size) | (labels < -100)
-                if bool(invalid_labels.any().item()):
-                    sanitized_labels = labels.clone()
-                    sanitized_labels[invalid_labels] = -100
-                    model_batch["labels"] = sanitized_labels
+                if bool((labels >= _cached_vocab).any().item()):
+                    labels = labels.clone()
+                    labels[labels >= _cached_vocab] = -100
+                    model_batch["labels"] = labels
 
         return model_batch
 
@@ -2412,24 +2425,11 @@ class PiscesLxTrainingOperator(object):
         return self._teacher_provider is not None
     
     def backward_pass(self, loss: torch.Tensor, did_step: bool = True) -> float:
-        """
-        Execute backward pass with advanced gradient processing.
-        
-        Args:
-            loss: Loss value from forward pass
-            
-        Returns:
-            Gradient norm after processing
-        """
-        if self.scaler is not None:
-            self.scaler.scale(loss).backward()
-        else:
-            loss.backward()
+        # Collect all graph-connected auxiliary losses into a single backward.
+        total_loss = loss
 
-        # Keep auxiliary losses connected to the graph when operators return tensors.
         aux_losses: List[torch.Tensor] = []
         
-        # Collect GaLore gradients (no backward needed, just projection)
         if hasattr(self, '_galore_adapter') and self._galore_adapter is not None:
             try:
                 gradients = {name: param.grad for name, param in self.model.named_parameters() 
@@ -2438,9 +2438,8 @@ class PiscesLxTrainingOperator(object):
                     self.model, galore_stats = self._galore_adapter.step(self.model, gradients)
                     _LOG.debug(f"GaLore adapter step completed, stats: {galore_stats}")
             except Exception as e:
-                _LOG.warning(f"GaLore adapter step failed: {e}. Skipping GaLore gradient projection.")
+                _LOG.warning(f"GaLore adapter step failed: {e}")
         
-        # Collect MoE auxiliary loss
         if self._moe_gradient_optimizer is not None:
             try:
                 moe_result = self._moe_gradient_optimizer.execute({
@@ -2449,39 +2448,28 @@ class PiscesLxTrainingOperator(object):
                 })
                 if moe_result.is_success() and moe_result.output:
                     aux_val = moe_result.output.get('total_auxiliary_loss', 0.0)
-                    if isinstance(aux_val, torch.Tensor):
-                        if aux_val.requires_grad or aux_val.grad_fn is not None:
-                            aux_losses.append(aux_val)
-                        elif float(aux_val.detach().item()) != 0.0:
-                            _LOG.debug(f"MoE gradient optimizer returned detached aux loss: {float(aux_val.detach().item()):.6f}")
-                    elif aux_val not in (0, 0.0, None):
-                        _LOG.debug(f"MoE gradient optimizer step completed, aux_loss: {aux_val}")
+                    if isinstance(aux_val, torch.Tensor) and (aux_val.requires_grad or aux_val.grad_fn is not None):
+                        aux_losses.append(aux_val)
             except Exception as e:
-                _LOG.warning(f"MoE gradient optimizer execute failed: {e}. Skipping MoE auxiliary loss collection.")
-        
-        # Collect weight watermark regularization loss
+                _LOG.warning(f"MoE gradient optimizer execute failed: {e}")
+
         if self._weight_watermark_operator is not None:
             try:
                 wm_result = self._weight_watermark_operator._regularize({"model": self.model})
-                if wm_result.is_success() and wm_result.output.get("regularization_loss") is not None:
-                    wm_loss = wm_result.output["regularization_loss"]
-                    if isinstance(wm_loss, torch.Tensor):
-                        if wm_loss.requires_grad or wm_loss.grad_fn is not None:
-                            aux_losses.append(wm_loss)
-                        elif float(wm_loss.detach().item()) != 0.0:
-                            _LOG.debug(f"Weight watermark returned detached regularization loss: {float(wm_loss.detach().item()):.6f}")
-                    else:
-                        _LOG.debug(f"Weight watermark regularization completed, loss: {wm_loss}")
+                if wm_result.is_success():
+                    wm_loss = wm_result.output.get("regularization_loss")
+                    if isinstance(wm_loss, torch.Tensor) and (wm_loss.requires_grad or wm_loss.grad_fn is not None):
+                        aux_losses.append(wm_loss)
             except Exception as e:
-                _LOG.warning(f"Weight watermark regularization failed: {e}. Skipping watermark regularization loss.")
-        
-        # Single backward for all graph-connected auxiliary losses.
+                _LOG.warning(f"Weight watermark regularization failed: {e}")
+
         if aux_losses:
-            aux_loss_tensor = torch.stack([aux.to(device=self.device) for aux in aux_losses]).sum()
-            if self.scaler is not None:
-                self.scaler.scale(aux_loss_tensor).backward()
-            else:
-                aux_loss_tensor.backward()
+            total_loss = total_loss + torch.stack([a.to(device=self.device) for a in aux_losses]).sum()
+
+        if self.scaler is not None:
+            self.scaler.scale(total_loss).backward()
+        else:
+            total_loss.backward()
 
         grad_norm = 0.0
         if did_step:
@@ -2490,7 +2478,6 @@ class PiscesLxTrainingOperator(object):
                 self.scaler.unscale_(self.optimizer)
             grad_norm = self._clip_and_measure_grad_norm()
 
-        # K-FAC preconditioning (no backward needed)
         if did_step and self._kfac_operator is not None:
             try:
                 self._kfac_operator.execute({
@@ -2498,18 +2485,17 @@ class PiscesLxTrainingOperator(object):
                     "step": self.global_step,
                     "backward_pass": True
                 })
-            except Exception as e:
+            except Exception:
                 pass
 
-        # Multi-task uncertainty-weighted loss
         if did_step and self._multitask_operator is not None:
             try:
                 self._multitask_operator.execute({
                     "model": self.model,
-                    "loss": loss if 'loss' in locals() else None,
+                    "loss": total_loss,
                     "step": self.global_step,
                 })
-            except Exception as e:
+            except Exception:
                 pass
 
         return grad_norm
@@ -2637,21 +2623,24 @@ class PiscesLxTrainingOperator(object):
             return float(torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=max_grad_norm).item())
         return self._compute_gradient_norm()
     
+    def _maybe_defrag_cuda(self):
+        """Defragment CUDA memory when utilization exceeds threshold."""
+        if self.device.type != 'cuda':
+            return
+        try:
+            alloc = torch.cuda.memory_allocated() / 1e9
+            total = torch.cuda.get_device_properties(0).total_memory / 1e9
+            if alloc / total > 0.85 and self.global_step % 50 == 0:
+                import gc; gc.collect()
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
     def train_step(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
-        """
-        Execute a complete training step.
-        
-        Args:
-            batch: Input batch data.
-            
-        Returns:
-            Training metrics dictionary.
-        """
         start_time = time.time()
         profiler = self._profiler
         grad_accum_steps = self._grad_accum_steps
 
-        # Profiler: begin training step trace
         if profiler is not None:
             try:
                 profiler.execute({"action": "start_step", "step": self.global_step})
@@ -2675,6 +2664,10 @@ class PiscesLxTrainingOperator(object):
             batch_size = 0
             tokens = 0
 
+        # Recycle intermediate tensors where possible
+        if did_step:
+            self._maybe_defrag_cuda()
+
         sync_context = nullcontext()
         if (not did_step) and hasattr(self.model, "no_sync"):
             sync_context = self.model.no_sync()
@@ -2688,7 +2681,6 @@ class PiscesLxTrainingOperator(object):
 
         self._grad_accum_step = next_accum_step
 
-        # Optimizer step
         if did_step:
             self.optimizer_step()
         
@@ -2848,36 +2840,29 @@ class PiscesLxTrainingOperator(object):
         _LOG.info(f"Model exported to {filepath} in {export_format} format")
 
     def validation_step(self, val_dataloader) -> Dict[str, float]:
-        """
-        Execute validation step.
-
-        Args:
-            val_dataloader: Validation dataloader.
-
-        Returns:
-            Validation metrics dictionary.
-        """
         if self.model is None:
             raise RuntimeError("Model not initialized. Call initialize() first.")
 
         self.model.eval()
         total_loss = 0.0
         num_batches = 0
+        autocast_dtype = self._autocast_dtype
 
         with torch.no_grad():
             for batch in val_dataloader:
-                batch = {k: v.to(self.device) for k, v in batch.items()}
+                batch = {
+                    k: (v if isinstance(v, torch.Tensor) and v.device == self.device else
+                        v.to(self.device, non_blocking=self._non_blocking_transfer) if isinstance(v, torch.Tensor) else v)
+                    for k, v in batch.items()
+                }
 
-                if self.config.mixed_precision == "fp16":
-                    with torch.cuda.amp.autocast(dtype=torch.float16):
-                        outputs = self._call_training_model(self.model, **batch)
-                elif self.config.mixed_precision == "bf16":
-                    with torch.cuda.amp.autocast(dtype=torch.bfloat16):
+                if autocast_dtype is not None and self.device.type == "cuda":
+                    with torch.amp.autocast(device_type="cuda", dtype=autocast_dtype):
                         outputs = self._call_training_model(self.model, **batch)
                 else:
                     outputs = self._call_training_model(self.model, **batch)
 
-                loss = outputs.get('loss', outputs.get('loss'))
+                loss = outputs.get('loss')
                 if loss is not None:
                     total_loss += loss.item()
                     num_batches += 1
