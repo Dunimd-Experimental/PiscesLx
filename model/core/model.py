@@ -947,6 +947,15 @@ class YvModel(nn.Module):
         _LOG.debug(f"YvModel: total parameters = {total_params/1e6:.2f}M")
         _LOG.debug("YvModel: __init__ end")
 
+    def reset_parameters(self):
+        """Initialize all model parameters for FSDP meta device materialization."""
+        for module in self.modules():
+            if module is not self and hasattr(module, 'reset_parameters'):
+                try:
+                    module.reset_parameters()
+                except Exception:
+                    pass
+
     def gradient_checkpointing_enable(self):
         """Enable gradient checkpointing across all backbone layers."""
         self.gradient_checkpointing = True
@@ -2103,7 +2112,7 @@ class YvModel(nn.Module):
         mask = causal_mask
         if attention_mask is not None:
             attention_mask_bool = attention_mask.to(device=x.device, dtype=torch.bool)
-            if not bool(attention_mask_bool.all()):
+            if x.device.type != 'meta' and not bool(attention_mask_bool.all()):
                 ext_mask = attention_mask_bool[:, None, :]  # [B, 1, T]
                 mask = causal_mask.unsqueeze(0).expand(b, -1, -1)
                 mask = mask.masked_fill(~ext_mask, float('-inf'))

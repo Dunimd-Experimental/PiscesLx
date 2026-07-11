@@ -707,26 +707,63 @@ class PiscesLxTrainingOperator(object):
         else:
             raise ValueError(f"Unknown growth type: {growth_type}")
     
+    def _estimate_model_params(self, model_class: type, **model_kwargs) -> int:
+        """Create model on meta device to count total parameters (zero memory cost)."""
+        est_kwargs = dict(model_kwargs)
+        est_kwargs['device'] = 'meta'
+        _LOG.info("Estimating model parameter count on meta device...")
+        try:
+            trial = model_class(**est_kwargs)
+            count = sum(p.numel() for p in trial.parameters())
+            del trial
+            import gc; gc.collect()
+            return count
+        except Exception as e:
+            _LOG.warning(f"Parameter estimation failed ({e}), proceeding with direct init")
+            return 0
+
+    def _check_model_feasibility(self, total_params: int) -> bool:
+        """Check if model fits in available VRAM. Return True if OK, False if hopeless."""
+        import torch.distributed as _dist
+        if total_params <= 0 or not torch.cuda.is_available():
+            return True
+        _world_size = max(1, _dist.get_world_size() if _dist.is_available() and _dist.is_initialized() else 1)
+        _vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+        _total_vram = _vram_gb * _world_size
+
+        _nf4_gb = total_params * 0.5 / (1024**3)
+        _est_min_per_gpu = (_nf4_gb / _world_size) * 1.6 + 2.0
+
+        if _nf4_gb <= _total_vram * 0.7:
+            return True
+
+        _LOG.error(
+            f"\n{'='*70}\n"
+            f"  MODEL TOO LARGE FOR AVAILABLE VRAM\n"
+            f"{'='*70}\n"
+            f"  Total parameters: {total_params:,} ({total_params/1e9:.2f}B)\n"
+            f"  NF4 (4-bit) memory: {_nf4_gb:.1f}GB\n"
+            f"  Available VRAM: {_total_vram:.1f}GB ({_world_size}x {_vram_gb:.1f}GB)\n"
+            f"  Est. min per GPU @NF4+FSDP+Ink: {_est_min_per_gpu:.1f}GB\n"
+            f"\n"
+            f"  This MoE config stores ALL expert parameters ({128} experts × 28 layers\n"
+            f"  with full FFN weights). The '7B' label refers to active (per-forward)\n"
+            f"  params, NOT total stored params.\n"
+            f"\n"
+            f"  SUGGESTIONS:\n"
+            f"  - Use --config 0.5B (~0.5B total params, fits T4 comfortably)\n"
+            f"  - Reduce moe_num_experts in config (128 → 4 or 8)\n"
+            f"  - Reduce intermediate_size in config\n"
+            f"{'='*70}"
+        )
+        return False
+
     def initialize_model(self, model_class: type, **model_kwargs) -> nn.Module:
         """
         Initialize the training model.
-        
+
         Creates a model instance and applies necessary training configurations
         including gradient checkpointing and device placement.
-        
-        Args:
-            model_class: Model class to instantiate (e.g., transformers.AutoModel)
-            **model_kwargs: Keyword arguments passed to model constructor
-            
-        Returns:
-            Initialized model instance on target device
-            
-        Example:
-            >>> from transformers import AutoModelForCausalLM
-            >>> operator.initialize_model(
-            ...     AutoModelForCausalLM,
-            ...     pretrained_model_name_or_path="gpt2"
-            ... )
         """
         _LOG.info("Initializing training model...")
 
@@ -735,25 +772,69 @@ class PiscesLxTrainingOperator(object):
 
         import torch.distributed as _dist
         import os as _os
+        import gc
+
+        # --- Step 1: Estimate total parameters on meta device (zero memory) ---
+        _total_params = self._estimate_model_params(model_class, **model_kwargs)
+        if _total_params > 0:
+            _nf4_gb = _total_params * 0.5 / (1024**3)
+            _LOG.info(
+                f"Model has {_total_params:,} total parameters "
+                f"({_total_params/1e9:.2f}B, FP16={_total_params*2/1024**3:.1f}GB, "
+                f"NF4={_nf4_gb:.1f}GB)"
+            )
+            if not self._check_model_feasibility(_total_params):
+                raise RuntimeError(
+                    f"Model too large ({_total_params/1e9:.1f}B params = {_nf4_gb:.1f}GB NF4) "
+                    f"for available VRAM"
+                )
+        else:
+            _LOG.warning("Could not estimate parameter count, proceeding without feasibility check")
+
+        # --- Step 2: Decide initialization strategy ---
         _use_meta_fsdp = (
             getattr(self.config, 'fsdp', {}).get('enabled', False)
             if hasattr(self.config, 'fsdp') else False
         ) and self._parallel_3d_operator is None and _dist.is_initialized()
-        if _use_meta_fsdp:
-            _LOG.info("FSDP + distributed: using meta device init to avoid CPU OOM")
 
-        # Try cache load: state_dict based (avoids pickle issues with bitsandbytes locks)
+        # Check: model may be too large for CPU init (FP16 on CPU)
+        # If total_params*2 > 80% of available system RAM, skip CPU init
+        _cpu_ok = True
+        if _total_params > 0:
+            try:
+                import psutil
+                _avail_ram = psutil.virtual_memory().available
+                _fp16_needed = _total_params * 2
+                if _fp16_needed > _avail_ram * 0.85:
+                    _LOG.warning(
+                        f"Model FP16 ({_fp16_needed/1024**3:.1f}GB) exceeds 85% of available "
+                        f"system RAM ({_avail_ram/1024**3:.1f}GB), forcing meta device init"
+                    )
+                    _cpu_ok = False
+            except ImportError:
+                pass
+
+        # If model fits in CPU RAM and quantization is enabled, use CPU init path
+        # (more reliable: quantize before GPU transfer, works with NF4+LoRA)
+        _use_cpu_init = _cpu_ok and quant_enabled
+
+        if _use_meta_fsdp:
+            _LOG.info("FSDP distributed strategy selected")
+            if _use_cpu_init:
+                _LOG.info("Model fits in CPU RAM, using CPU→quantize→GPU→FSDP path")
+            else:
+                _LOG.info("Model too large for CPU, using meta device→FSDP materialization path")
+
+        # Step 2a: handle CPU init path cache load (non-meta, quant+lora)
         cache_path = None
-        if quant_enabled and lora_enabled and not _use_meta_fsdp:
+        if _use_cpu_init and lora_enabled and not _use_meta_fsdp:
             cache_path = self._get_qlora_cache_path()
             if cache_path.exists():
                 _LOG.info(f"Loading cached QLoRA state_dict from {cache_path}")
                 try:
-                    import gc; gc.collect()
+                    gc.collect()
                     cached_state = torch.load(cache_path, map_location="cpu", weights_only=True)
-                    # Create model skeleton, apply quantization + LoRA for structure,
-                    # then load cached weights (quantized + adapters) instantly.
-                    force_cpu_init = self._resolve_init_device(quant_enabled, model_kwargs)
+                    self._resolve_init_device(quant_enabled, model_kwargs)
                     self.model = model_class(**model_kwargs)
                     if quant_enabled:
                         self._apply_quantization_gpu_accelerated() if self.device.type == "cuda" else self._apply_quantization()
@@ -768,41 +849,39 @@ class PiscesLxTrainingOperator(object):
                     if missing:
                         sample = ", ".join(missing[:8])
                         suffix = " ..." if len(missing) > 8 else ""
-                        _LOG.debug(
-                            f"Cache state_dict missing keys: count={len(missing)} sample=[{sample}]{suffix}"
-                        )
+                        _LOG.debug(f"Cache state_dict missing keys: count={len(missing)} sample=[{sample}]{suffix}")
                     if unexpected:
                         sample = ", ".join(unexpected[:8])
                         suffix = " ..." if len(unexpected) > 8 else ""
-                        _LOG.debug(
-                            f"Cache state_dict unexpected keys: count={len(unexpected)} sample=[{sample}]{suffix}"
-                        )
+                        _LOG.debug(f"Cache state_dict unexpected keys: count={len(unexpected)} sample=[{sample}]{suffix}")
                     del cached_state; gc.collect()
                     train_device = self._resolve_training_device()
                     if train_device.type != self.device.type:
-                        _LOG.info(f"Overriding training device: {self.device} → {train_device}")
+                        _LOG.info(f"Overriding training device: {self.device} -> {train_device}")
                         self.device = train_device
                     _LOG.info("Cached state_dict loaded, transferring to device...")
                     self.model = self.model.to(self.device)
-                    self._post_transfer_setup(lora_enabled)
+                    self._post_transfer_setup(lora_enabled, _total_params)
                     _LOG.info(f"Model initialized from cache: {self.model.__class__.__name__}")
                     return self.model
                 except Exception as e:
                     _LOG.warning(f"Cache load failed ({e}), falling back to full init...")
                     cache_path.unlink(missing_ok=True)
 
-        force_cpu_init = self._resolve_init_device(quant_enabled, model_kwargs)
-
-        if _use_meta_fsdp:
+        # --- Step 3: Create model ---
+        if _use_cpu_init and not _use_meta_fsdp:
+            self._resolve_init_device(quant_enabled, model_kwargs)
+        elif _use_meta_fsdp:
             model_kwargs['device'] = 'meta'
             model_kwargs['dtype'] = torch.float16
+        else:
+            model_kwargs.pop('device', None)
+            model_kwargs.pop('dtype', None)
 
-        # Create model instance with provided arguments
         self.model = model_class(**model_kwargs)
 
+        # --- Step 4: Non-FSDP path: quantize on CPU, then move to GPU ---
         if not _use_meta_fsdp:
-            # Apply quantization (QLoRA-style) and LoRA BEFORE moving the full model to CUDA.
-            # This avoids the peak VRAM spike caused by first transferring bf16/fp16 full-precision weights.
             if quant_enabled:
                 if self.device.type == "cuda":
                     self._apply_quantization_gpu_accelerated()
@@ -812,7 +891,6 @@ class PiscesLxTrainingOperator(object):
             if lora_enabled:
                 self._apply_lora()
 
-            # Save state_dict to cache (tensors only, no pickle issues with bnb locks)
             if cache_path is not None and not cache_path.exists():
                 try:
                     cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -821,20 +899,15 @@ class PiscesLxTrainingOperator(object):
                 except Exception as e:
                     _LOG.debug(f"Model caching skipped: {e}")
 
-            # Determine actual training device: prefer GPU even if driver warning fired.
-            # setup_training_device may return CPU when CUDA driver version mismatches
-            # PyTorch's build, but CUDA often still works. Probe it directly.
             train_device = self._resolve_training_device()
             if train_device.type != self.device.type:
-                _LOG.info(f"Overriding training device: {self.device} → {train_device}")
+                _LOG.info(f"Overriding training device: {self.device} -> {train_device}")
                 self.device = train_device
 
-            # Move model to target device (GPU/CPU) after QLoRA+LoRA.
-            _LOG.info(f"Transferring model to {self.device} (this copies quantized weights, may take time)...")
+            _LOG.info(f"Transferring model to {self.device}...")
             self.model = self.model.to(self.device)
-            self._post_transfer_setup(lora_enabled)
+            self._post_transfer_setup(lora_enabled, _total_params)
 
-            # Apply 3D parallelism wrapping if configured
             if self._parallel_3d_operator is not None:
                 try:
                     parallel_cfg = getattr(self._parallel_3d_operator, "config", None)
@@ -848,21 +921,17 @@ class PiscesLxTrainingOperator(object):
                             info = result.output.get("parallel_info", {}) or {}
                             _LOG.info(
                                 "3D parallelism wrapping applied: "
-                                f"dp_rank={info.get('dp_rank', 0)}, tp_rank={info.get('tp_rank', 0)}, pp_rank={info.get('pp_rank', 0)}, "
+                                f"dp_rank={info.get('dp_rank', 0)}, tp_rank={info.get('tp_rank', 0)}, "
+                                f"pp_rank={info.get('pp_rank', 0)}, "
                                 f"effective_tp_size={info.get('effective_tp_size', getattr(parallel_cfg, 'tp_size', 1))}, "
                                 f"effective_pp_size={info.get('effective_pp_size', getattr(parallel_cfg, 'pp_size', 1))}"
                             )
                         else:
-                            _LOG.warning(
-                                f"3D parallelism initialization skipped/failed: {getattr(result, 'error', 'unknown error')}"
-                            )
-                    else:
-                        _LOG.debug("3D parallelism wrapping skipped because dp=tp=pp=1")
+                            _LOG.warning(f"3D parallelism init skipped/failed: {getattr(result, 'error', 'unknown error')}")
                 except Exception as e:
                     _LOG.warning(f"3D parallelism wrapping failed: {e}")
 
-        # Determine optimal distributed strategy: prefer FSDP over DDP for memory savings
-        import torch.distributed as _dist
+        # --- Step 5: Determine distributed strategy ---
         _dist_initialized = _dist.is_available() and _dist.is_initialized()
         _world_size = _dist.get_world_size() if _dist_initialized else 1
         _vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3) if self.device.type == 'cuda' else 0
@@ -904,6 +973,14 @@ class PiscesLxTrainingOperator(object):
                 )
             except Exception as e:
                 _LOG.warning(f"FSDP initialization failed: {e}, falling back to DDP")
+                if any(p.device.type == 'meta' for p in self.model.parameters()):
+                    _LOG.info("Materializing model from meta device for DDP fallback...")
+                    self.model.to(self.device)
+                    if hasattr(self.model, 'reset_parameters'):
+                        self.model.reset_parameters()
+                    gc.collect()
+                    if self.device.type == 'cuda':
+                        torch.cuda.empty_cache()
                 _should_ddp = True
                 _should_fsdp = False
 
@@ -978,7 +1055,7 @@ class PiscesLxTrainingOperator(object):
             _LOG.warning(f"GPU probe failed ({e}), training on {self.device}")
             return self.device
 
-    def _post_transfer_setup(self, lora_was_applied: bool) -> None:
+    def _post_transfer_setup(self, lora_was_applied: bool, total_params: int = 0) -> None:
         """Shared post-GPU-transfer setup: param count, checkpointing, distributed.
         
         Model dtype is NOT eagerly cast here — autocast in forward_pass handles
@@ -993,7 +1070,7 @@ class PiscesLxTrainingOperator(object):
 
         # Single parameter count on GPU (fast)
         trainable = 0
-        all_params = 0
+        all_params = total_params if total_params > 0 else 0
         for p in self.model.parameters():
             n = p.numel()
             all_params += n
