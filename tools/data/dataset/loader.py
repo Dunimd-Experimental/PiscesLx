@@ -427,36 +427,37 @@ class PiscesLxToolsDataOptimizedDataLoader:
             collate_fn=self.collate_fn
         )
 
+    @staticmethod
+    def create_dataloader(
+        dataset,
+        batch_size: int = 32,
+        num_workers: int = 4,
+        shuffle: bool = True,
+        pin_memory: bool = True,
+        drop_last: bool = False,
+        prefetch_factor: int = 2,
+        persistent_workers: bool = True,
+        distributed: bool = False,
+        world_size: int = 1,
+        rank: int = 0,
+        dynamic_batching: bool = False,
+        max_token_length: int = 4096,
+        collate_fn: Optional[Callable] = None
+    ) -> DataLoader:
+        config = PiscesLxToolsDataBatchConfig(
+            batch_size=batch_size,
+            num_workers=num_workers,
+            pin_memory=pin_memory,
+            drop_last=drop_last,
+            prefetch_factor=prefetch_factor,
+            persistent_workers=persistent_workers,
+            max_token_length=max_token_length,
+            dynamic_batching=dynamic_batching,
+            distributed=distributed,
+            world_size=world_size,
+            rank=rank
+        )
 
-def create_dataloader(
-    dataset,
-    batch_size: int = 32,
-    num_workers: int = 4,
-    shuffle: bool = True,
-    pin_memory: bool = True,
-    drop_last: bool = False,
-    prefetch_factor: int = 2,
-    persistent_workers: bool = True,
-    distributed: bool = False,
-    world_size: int = 1,
-    rank: int = 0,
-    dynamic_batching: bool = False,
-    max_token_length: int = 4096,
-    collate_fn: Optional[Callable] = None
-) -> DataLoader:
-    config = PiscesLxToolsDataBatchConfig(
-        batch_size=batch_size,
-        num_workers=num_workers,
-        pin_memory=pin_memory,
-        drop_last=drop_last,
-        prefetch_factor=prefetch_factor,
-        persistent_workers=persistent_workers,
-        max_token_length=max_token_length,
-        dynamic_batching=dynamic_batching,
-        distributed=distributed,
-        world_size=world_size,
-        rank=rank
-    )
+        loader = PiscesLxToolsDataOptimizedDataLoader(dataset, config, collate_fn)
+        return loader.get()
 
-    loader = PiscesLxToolsDataOptimizedDataLoader(dataset, config, collate_fn)
-    return loader.get()

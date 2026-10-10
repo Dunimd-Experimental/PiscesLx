@@ -941,15 +941,16 @@ class PiscesLxToolsAgentBenchmarkRunner:
         
         print("=" * 60 + "\n")
 
+    @staticmethod
+    def create_agent_evaluator(
+        config: PiscesLxToolsAgentConfig,
+        model: nn.Module,
+        tokenizer: Any,
+    ) -> PiscesLxToolsAgentBenchmarkRunner:
+        """Factory function to create agent benchmark runner."""
+        return PiscesLxToolsAgentBenchmarkRunner(
+            config=config,
+            model=model,
+            tokenizer=tokenizer,
+        )
 
-def create_agent_evaluator(
-    config: PiscesLxToolsAgentConfig,
-    model: nn.Module,
-    tokenizer: Any,
-) -> PiscesLxToolsAgentBenchmarkRunner:
-    """Factory function to create agent benchmark runner."""
-    return PiscesLxToolsAgentBenchmarkRunner(
-        config=config,
-        model=model,
-        tokenizer=tokenizer,
-    )

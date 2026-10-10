@@ -97,97 +97,6 @@ from opss.infer.vllm import PiscesLxVLLMInferenceOperator
 
 from utils.paths import PiscesLxPaths
 _LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
-
-
-def setup_inference_device(device_pref: str = "auto") -> torch.device:
-    """
-    Choose an inference device using unified System Monitor.
-    
-    Args:
-        device_pref: Device preference ("auto", "cuda", "cpu")
-    
-    Returns:
-        torch.device: Selected device
-    """
-    import torch
-    
-    try:
-        monitor = PiscesLxSystemMonitor()
-        if device_pref == "auto":
-            if torch.cuda.is_available():
-                memory_info = monitor.get_memory_info()
-                if memory_info.usage_percent > 90:
-                    device = torch.device("cpu")
-                    _LOG.info("Inference mode: cpu (high GPU memory usage)")
-                else:
-                    device = torch.device("cuda")
-                _LOG.info(f"Using device: {device}")
-                return device
-    except Exception as e:
-        _LOG.warning(f"System Monitor failed, falling back: {e}")
-    
-    if device_pref == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        return torch.device("cpu")
-    return torch.device(device_pref)
-
-
-def validate_infer_args(args: Any) -> Any:
-    """
-    Validate and normalize command-line arguments for inference.
-    
-    Args:
-        args: Arguments object to validate
-    
-    Returns:
-        Validated arguments object
-    
-    Raises:
-        ValueError: If required arguments are missing
-    """
-    if not hasattr(args, 'prompt') or args.prompt is None or str(args.prompt).strip() == "":
-        raise ValueError("Missing required argument: prompt")
-    
-    if not hasattr(args, 'model_size') or not args.model_size:
-        setattr(args, 'model_size', '0.5B')
-    
-    if not hasattr(args, 'max_length') or not isinstance(args.max_length, int):
-        setattr(args, 'max_length', 512)
-    
-    if not hasattr(args, 'temperature') or args.temperature is None:
-        setattr(args, 'temperature', 0.7)
-    
-    if not hasattr(args, 'top_p') or args.top_p is None:
-        setattr(args, 'top_p', 0.95)
-    
-    if not hasattr(args, 'stop'):
-        setattr(args, 'stop', None)
-    
-    if not hasattr(args, 'use_vllm'):
-        setattr(args, 'use_vllm', False)
-    
-    if not hasattr(args, 'vllm_dtype'):
-        setattr(args, 'vllm_dtype', 'auto')
-    
-    if not hasattr(args, 'vllm_gpu_mem'):
-        setattr(args, 'vllm_gpu_mem', 0.9)
-    
-    if not hasattr(args, 'vllm_tp_size'):
-        setattr(args, 'vllm_tp_size', 1)
-    
-    if not hasattr(args, 'speculative'):
-        setattr(args, 'speculative', False)
-    
-    if not hasattr(args, 'spec_gamma'):
-        setattr(args, 'spec_gamma', 4)
-    
-    if not hasattr(args, 'min_new_tokens'):
-        setattr(args, 'min_new_tokens', 16)
-    
-    return args
-
-
 class PiscesLxInferenceEngine(object):
     """
     PiscesLx Flagship Inference Engine
@@ -233,7 +142,7 @@ class PiscesLxInferenceEngine(object):
         self.model = None
         self.tokenizer = None
         self.engine = None
-        self.device = setup_inference_device(config.device)
+        self.device = PiscesLxInferenceEngine.setup_inference_device(config.device)
 
         self.inference_stats = {
             'total_requests': 0,
@@ -1725,3 +1634,94 @@ class PiscesLxInferenceEngine(object):
         except Exception as e:
             _LOG.error(f"Failed to search tools: {e}")
             return []
+
+    @staticmethod
+    def setup_inference_device(device_pref: str = "auto") -> torch.device:
+        """
+        Choose an inference device using unified System Monitor.
+
+        Args:
+            device_pref: Device preference ("auto", "cuda", "cpu")
+
+        Returns:
+            torch.device: Selected device
+        """
+        import torch
+
+        try:
+            monitor = PiscesLxSystemMonitor()
+            if device_pref == "auto":
+                if torch.cuda.is_available():
+                    memory_info = monitor.get_memory_info()
+                    if memory_info.usage_percent > 90:
+                        device = torch.device("cpu")
+                        _LOG.info("Inference mode: cpu (high GPU memory usage)")
+                    else:
+                        device = torch.device("cuda")
+                    _LOG.info(f"Using device: {device}")
+                    return device
+        except Exception as e:
+            _LOG.warning(f"System Monitor failed, falling back: {e}")
+
+        if device_pref == "auto":
+            if torch.cuda.is_available():
+                return torch.device("cuda")
+            return torch.device("cpu")
+        return torch.device(device_pref)
+
+    @staticmethod
+    def validate_infer_args(args: Any) -> Any:
+        """
+        Validate and normalize command-line arguments for inference.
+
+        Args:
+            args: Arguments object to validate
+
+        Returns:
+            Validated arguments object
+
+        Raises:
+            ValueError: If required arguments are missing
+        """
+        if not hasattr(args, 'prompt') or args.prompt is None or str(args.prompt).strip() == "":
+            raise ValueError("Missing required argument: prompt")
+
+        if not hasattr(args, 'model_size') or not args.model_size:
+            setattr(args, 'model_size', '0.5B')
+
+        if not hasattr(args, 'max_length') or not isinstance(args.max_length, int):
+            setattr(args, 'max_length', 512)
+
+        if not hasattr(args, 'temperature') or args.temperature is None:
+            setattr(args, 'temperature', 0.7)
+
+        if not hasattr(args, 'top_p') or args.top_p is None:
+            setattr(args, 'top_p', 0.95)
+
+        if not hasattr(args, 'stop'):
+            setattr(args, 'stop', None)
+
+        if not hasattr(args, 'use_vllm'):
+            setattr(args, 'use_vllm', False)
+
+        if not hasattr(args, 'vllm_dtype'):
+            setattr(args, 'vllm_dtype', 'auto')
+
+        if not hasattr(args, 'vllm_gpu_mem'):
+            setattr(args, 'vllm_gpu_mem', 0.9)
+
+        if not hasattr(args, 'vllm_tp_size'):
+            setattr(args, 'vllm_tp_size', 1)
+
+        if not hasattr(args, 'speculative'):
+            setattr(args, 'speculative', False)
+
+        if not hasattr(args, 'spec_gamma'):
+            setattr(args, 'spec_gamma', 4)
+
+        if not hasattr(args, 'min_new_tokens'):
+            setattr(args, 'min_new_tokens', 16)
+
+        return args
+
+

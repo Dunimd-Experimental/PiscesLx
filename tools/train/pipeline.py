@@ -133,32 +133,6 @@ _interrupt_state = {
     'interrupt_count': 0,
     'double_press_window': 1.0,
 }
-
-
-def _signal_handler(signum, frame):
-    """Handle Ctrl+C signal for training interruption."""
-    global _interrupt_state
-    
-    current_time = time.time()
-    time_since_last = current_time - _interrupt_state['last_interrupt_time']
-    
-    if time_since_last < _interrupt_state['double_press_window']:
-        _interrupt_state['interrupt_count'] += 1
-        _LOG.warning("Double Ctrl+C detected - will skip current dataset")
-        raise PiscesLxTrainingInterruption.skip_current_dataset("User requested skip current dataset")
-    else:
-        _interrupt_state['interrupt_count'] = 1
-        _LOG.warning("Single Ctrl+C detected - press again within 1s to skip dataset, or wait for full stop")
-    
-    _interrupt_state['last_interrupt_time'] = current_time
-    
-    if _interrupt_state['interrupt_count'] >= 1:
-        time.sleep(1.0)
-        if _interrupt_state['interrupt_count'] == 1:
-            _LOG.warning("Full stop requested - stopping all training")
-            raise PiscesLxTrainingInterruption.stop_all("User requested full stop")
-
-
 @PiscesLxOperatorRegistrar()
 class PiscesLxTrainingPipelineOperator(PiscesLxTransformOperator):
     """
@@ -527,6 +501,32 @@ class PiscesLxTrainingPipelineOperator(PiscesLxTransformOperator):
             self.execute_callbacks('training_end', training_history=training_history)
         
         return training_history
+
+    @staticmethod
+    def _signal_handler(signum, frame):
+        """Handle Ctrl+C signal for training interruption."""
+        global _interrupt_state
+
+        current_time = time.time()
+        time_since_last = current_time - _interrupt_state['last_interrupt_time']
+
+        if time_since_last < _interrupt_state['double_press_window']:
+            _interrupt_state['interrupt_count'] += 1
+            _LOG.warning("Double Ctrl+C detected - will skip current dataset")
+            raise PiscesLxTrainingInterruption.skip_current_dataset("User requested skip current dataset")
+        else:
+            _interrupt_state['interrupt_count'] = 1
+            _LOG.warning("Single Ctrl+C detected - press again within 1s to skip dataset, or wait for full stop")
+
+        _interrupt_state['last_interrupt_time'] = current_time
+
+        if _interrupt_state['interrupt_count'] >= 1:
+            time.sleep(1.0)
+            if _interrupt_state['interrupt_count'] == 1:
+                _LOG.warning("Full stop requested - stopping all training")
+                raise PiscesLxTrainingInterruption.stop_all("User requested full stop")
+
+
 
 
 @PiscesLxOperatorRegistrar()

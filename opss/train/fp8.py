@@ -381,7 +381,7 @@ class PiscesLxFP8TrainingOperator(PiscesLxOperatorInterface):
                     with torch.cuda.amp.autocast(
                         enabled=True,
                         dtype=torch.bfloat16 if config.use_bf16 else torch.float16
-                    ) if device.type == 'cuda' else nullcontext():
+                    ) if device.type == 'cuda' else PiscesLxFP8Operator.nullcontext():
                         if config.fp8_format != "BF16":
                             with te.fp8_autocast(enabled=True, fp8_recipe=fp8_recipe):
                                 outputs = model(
@@ -618,13 +618,13 @@ class _PiscesLxNullContext:
         return self
     def __exit__(self, *args):
         pass
-
-
-def nullcontext():
-    """Return null context manager."""
-    return _PiscesLxNullContext()
-
-
 class PiscesLxFP8Operator(PiscesLxFP8TrainingOperator):
     """Alias for backward compatibility."""
     pass
+
+    @staticmethod
+    def nullcontext():
+        """Return null context manager."""
+        return _PiscesLxNullContext()
+
+

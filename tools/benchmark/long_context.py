@@ -999,15 +999,16 @@ class PiscesLxToolsLongContextBenchmarkRunner:
         
         print("=" * 60 + "\n")
 
+    @staticmethod
+    def create_long_context_evaluator(
+        config: PiscesLxToolsLongContextConfig,
+        model: nn.Module,
+        tokenizer: Any,
+    ) -> PiscesLxToolsLongContextBenchmarkRunner:
+        """Factory function to create long context benchmark runner."""
+        return PiscesLxToolsLongContextBenchmarkRunner(
+            config=config,
+            model=model,
+            tokenizer=tokenizer,
+        )
 
-def create_long_context_evaluator(
-    config: PiscesLxToolsLongContextConfig,
-    model: nn.Module,
-    tokenizer: Any,
-) -> PiscesLxToolsLongContextBenchmarkRunner:
-    """Factory function to create long context benchmark runner."""
-    return PiscesLxToolsLongContextBenchmarkRunner(
-        config=config,
-        model=model,
-        tokenizer=tokenizer,
-    )

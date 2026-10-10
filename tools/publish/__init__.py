@@ -120,13 +120,3 @@ __all__ = [
     "PiscesLxPublishDockerBuilder",
     "PiscesLxPublishRegistry",
 ]
-
-
-def get_version() -> str:
-    """Get the version of the publishing tools.
-
-    Returns:
-        Version string from configs.version.
-    """
-    from configs.version import VERSION
-    return VERSION

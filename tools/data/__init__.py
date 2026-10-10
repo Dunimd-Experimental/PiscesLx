@@ -177,13 +177,12 @@ from .dataset.core import (
     PiscesLxDataIterableDataset
 )
 from .dataset.loader import (
-    PiscesLxToolsDataBatchConfig,
     PiscesLxToolsDataOptimizedDataLoader,
+    PiscesLxToolsDataBatchConfig,
     PiscesLxToolsDataDynamicBatchSampler,
     PiscesLxToolsDataDistributedSampler,
     PiscesLxToolsDataCurriculumSampler,
     PiscesLxToolsDataPrefetchDataLoader,
-    create_dataloader
 )
 
 from .download.runner import (
@@ -229,7 +228,6 @@ __all__ = [
     "PiscesLxToolsDataDistributedSampler",
     "PiscesLxToolsDataCurriculumSampler",
     "PiscesLxToolsDataPrefetchDataLoader",
-    "create_dataloader",
     "PiscesLxToolsDataDatasetDownload",
     "PiscesLxDataDownloadState",
     "PiscesLxDataRetryStrategy",

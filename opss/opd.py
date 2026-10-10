@@ -59,47 +59,6 @@ class PiscesLxOPDConfig:
         self.vocab_size = vocab_size
 
         assert len(self.domains) == len(self.temperatures) == len(self.domain_weights)
-
-
-@torch.no_grad()
-def compute_teacher_logits(
-    teacher_model: nn.Module,
-    input_ids: torch.Tensor,
-    attention_mask: Optional[torch.Tensor] = None,
-    max_batch_tokens: int = 65536,
-) -> torch.Tensor:
-    """Compute teacher logits in a memory-efficient manner.
-
-    Supports teacher weight offloading and cached hidden states.
-
-    Args:
-        teacher_model: Teacher model (in eval mode).
-        input_ids: Input token IDs (B, T).
-        attention_mask: Attention mask.
-        max_batch_tokens: Max tokens per forward pass.
-
-    Returns:
-        Teacher logits (B, T, V).
-    """
-    teacher_model.eval()
-    B, T = input_ids.shape
-
-    with torch.no_grad():
-        if B * T <= max_batch_tokens:
-            outputs = teacher_model(input_ids=input_ids, attention_mask=attention_mask)
-            logits = outputs['logits'] if isinstance(outputs, dict) else outputs
-            return logits
-
-        logits_list = []
-        for start in range(0, T, max_batch_tokens // B):
-            end = min(start + max_batch_tokens // B, T)
-            chunk = input_ids[:, start:end]
-            mask_chunk = attention_mask[:, start:end] if attention_mask is not None else None
-            outputs = teacher_model(input_ids=chunk, attention_mask=mask_chunk)
-            logits_chunk = outputs['logits'] if isinstance(outputs, dict) else outputs
-            logits_list.append(logits_chunk)
-
-        return torch.cat(logits_list, dim=1)
 class PiscesLxOPDTrainer:
     """On-Policy Distillation trainer.
 
@@ -165,7 +124,7 @@ class PiscesLxOPDTrainer:
         teacher_logits_list = []
         for domain in self.config.domains:
             if domain in self.teachers:
-                t_logits = compute_teacher_logits(self.teachers[domain], input_ids, attention_mask)
+                t_logits = PiscesLxOPDTrainer.compute_teacher_logits(self.teachers[domain], input_ids, attention_mask)
                 teacher_logits_list.append(t_logits)
             else:
                 teacher_logits_list.append(None)
@@ -180,6 +139,49 @@ class PiscesLxOPDTrainer:
 
         self.step += 1
         return loss_dict
+
+    @staticmethod
+    @torch.no_grad()
+    def compute_teacher_logits(
+        teacher_model: nn.Module,
+        input_ids: torch.Tensor,
+        attention_mask: Optional[torch.Tensor] = None,
+        max_batch_tokens: int = 65536,
+    ) -> torch.Tensor:
+        """Compute teacher logits in a memory-efficient manner.
+
+        Supports teacher weight offloading and cached hidden states.
+
+        Args:
+            teacher_model: Teacher model (in eval mode).
+            input_ids: Input token IDs (B, T).
+            attention_mask: Attention mask.
+            max_batch_tokens: Max tokens per forward pass.
+
+        Returns:
+            Teacher logits (B, T, V).
+        """
+        teacher_model.eval()
+        B, T = input_ids.shape
+
+        with torch.no_grad():
+            if B * T <= max_batch_tokens:
+                outputs = teacher_model(input_ids=input_ids, attention_mask=attention_mask)
+                logits = outputs['logits'] if isinstance(outputs, dict) else outputs
+                return logits
+
+            logits_list = []
+            for start in range(0, T, max_batch_tokens // B):
+                end = min(start + max_batch_tokens // B, T)
+                chunk = input_ids[:, start:end]
+                mask_chunk = attention_mask[:, start:end] if attention_mask is not None else None
+                outputs = teacher_model(input_ids=chunk, attention_mask=mask_chunk)
+                logits_chunk = outputs['logits'] if isinstance(outputs, dict) else outputs
+                logits_list.append(logits_chunk)
+
+            return torch.cat(logits_list, dim=1)
+
+
 
 class PiscesLxOpd:
     """Module-level operations of opd, exposed through a class (§6.2)."""

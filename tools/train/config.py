@@ -150,64 +150,6 @@ class PiscesLxTrainingStage(str, Enum):
     RL_DAPO = "rl_dapo"
     RL_SELF_PLAY = "rl_self_play"
     RL_MEMSEP = "rl_memsep"
-
-
-def get_stage_config_path(stage: PiscesLxTrainingStage) -> Path:
-    """
-    Get the configuration file path for a training stage.
-    
-    Args:
-        stage: PiscesLxTrainingStage enum value
-        
-    Returns:
-        Path to the stage configuration file
-    """
-    return TRAIN_CONFIG_DIR / f"{stage.value}.yaml"
-
-
-def load_stage_config(stage: PiscesLxTrainingStage) -> Dict[str, Any]:
-    """
-    Load configuration for a training stage from file.
-    
-    Args:
-        stage: PiscesLxTrainingStage enum value
-        
-    Returns:
-        Configuration dictionary
-        
-    Raises:
-        FileNotFoundError: If the stage config file does not exist
-    """
-    config_path = get_stage_config_path(stage)
-    if not config_path.exists():
-        raise FileNotFoundError(f"Stage config file not found: {config_path}")
-    
-    with open(config_path, 'r', encoding='utf-8') as f:
-        config = yaml.safe_load(f) or {}
-    
-    # Replace {{VERSION}} placeholder with actual version
-    if "version" in config and config["version"] == "{{VERSION}}":
-        config["version"] = VERSION
-    
-    return config
-
-
-def list_available_stages() -> List[str]:
-    """
-    List all available training stage configurations.
-    
-    Returns:
-        List of available stage names
-    """
-    if not TRAIN_CONFIG_DIR.exists():
-        return []
-    
-    return [
-        p.stem for p in TRAIN_CONFIG_DIR.glob("*.yaml")
-        if p.stem != "default"
-    ]
-
-
 GLOBAL_DEFAULTS: Dict[str, Any] = {
     "mixed_precision": "bf16",
     "gradient_checkpointing": True,
@@ -793,7 +735,7 @@ class PiscesLxTrainingConfig:
         """
         self.stage = stage
         try:
-            stage_config = load_stage_config(self.stage)
+            stage_config = PiscesLxTrainingConfig.load_stage_config(self.stage)
             self._apply_stage_file_config(stage_config)
         except FileNotFoundError:
             pass
@@ -1254,3 +1196,61 @@ class PiscesLxTrainingConfig:
 
         if args.get("force_lora"):
             self.lora.enabled = True
+
+    @staticmethod
+    def get_stage_config_path(stage: PiscesLxTrainingStage) -> Path:
+        """
+        Get the configuration file path for a training stage.
+
+        Args:
+            stage: PiscesLxTrainingStage enum value
+
+        Returns:
+            Path to the stage configuration file
+        """
+        return TRAIN_CONFIG_DIR / f"{stage.value}.yaml"
+
+    @staticmethod
+    def load_stage_config(stage: PiscesLxTrainingStage) -> Dict[str, Any]:
+        """
+        Load configuration for a training stage from file.
+
+        Args:
+            stage: PiscesLxTrainingStage enum value
+
+        Returns:
+            Configuration dictionary
+
+        Raises:
+            FileNotFoundError: If the stage config file does not exist
+        """
+        config_path = PiscesLxTrainingConfig.get_stage_config_path(stage)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Stage config file not found: {config_path}")
+
+        with open(config_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f) or {}
+
+        # Replace {{VERSION}} placeholder with actual version
+        if "version" in config and config["version"] == "{{VERSION}}":
+            config["version"] = VERSION
+
+        return config
+
+    @staticmethod
+    def list_available_stages() -> List[str]:
+        """
+        List all available training stage configurations.
+
+        Returns:
+            List of available stage names
+        """
+        if not TRAIN_CONFIG_DIR.exists():
+            return []
+
+        return [
+            p.stem for p in TRAIN_CONFIG_DIR.glob("*.yaml")
+            if p.stem != "default"
+        ]
+
+

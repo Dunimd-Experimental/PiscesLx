@@ -618,19 +618,20 @@ class PiscesLxToolsFlagshipComparator:
         for rec in report.get("recommendations", [])[:3]:
             print(f"  - {rec}")
 
+    @staticmethod
+    def compare_with_flagships(
+        piscesl1_results: Dict[str, float],
+        config: Optional[PiscesLxToolsComparisonConfig] = None,
+    ) -> Dict[str, Any]:
+        """Convenience function to compare with flagship models."""
+        if config is None:
+            config = PiscesLxToolsComparisonConfig()
 
-def compare_with_flagships(
-    piscesl1_results: Dict[str, float],
-    config: Optional[PiscesLxToolsComparisonConfig] = None,
-) -> Dict[str, Any]:
-    """Convenience function to compare with flagship models."""
-    if config is None:
-        config = PiscesLxToolsComparisonConfig()
-    
-    comparator = PiscesLxToolsFlagshipComparator(config)
-    return comparator.compare_with_flagship(piscesl1_results)
+        comparator = PiscesLxToolsFlagshipComparator(config)
+        return comparator.compare_with_flagship(piscesl1_results)
 
+    @staticmethod
+    def get_flagship_benchmark_data() -> Dict[str, Dict]:
+        """Get flagship model benchmark data."""
+        return FLAGSHIP_MODELS
 
-def get_flagship_benchmark_data() -> Dict[str, Dict]:
-    """Get flagship model benchmark data."""
-    return FLAGSHIP_MODELS

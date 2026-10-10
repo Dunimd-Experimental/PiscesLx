@@ -614,15 +614,16 @@ class PiscesLxToolsPerformanceBenchmarkRunner:
         evaluator.results = self.results
         evaluator.print_summary()
 
+    @staticmethod
+    def create_performance_evaluator(
+        config: PiscesLxToolsPerformanceConfig,
+        model: nn.Module,
+        tokenizer: Any,
+    ) -> PiscesLxToolsPerformanceBenchmarkRunner:
+        """Factory function to create performance benchmark runner."""
+        return PiscesLxToolsPerformanceBenchmarkRunner(
+            config=config,
+            model=model,
+            tokenizer=tokenizer,
+        )
 
-def create_performance_evaluator(
-    config: PiscesLxToolsPerformanceConfig,
-    model: nn.Module,
-    tokenizer: Any,
-) -> PiscesLxToolsPerformanceBenchmarkRunner:
-    """Factory function to create performance benchmark runner."""
-    return PiscesLxToolsPerformanceBenchmarkRunner(
-        config=config,
-        model=model,
-        tokenizer=tokenizer,
-    )

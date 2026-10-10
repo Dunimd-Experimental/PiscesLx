@@ -57,7 +57,14 @@ class PiscesLxClassExposureTool:
     """Per-module function-to-method migration with import-scoped rewriting."""
 
     SKIP_PARTS = ("__pycache__", ".git", "third_party", ".mypy_cache", ".ruff_cache")
-    ALLOWED_DECORATORS = frozenset({"staticmethod", "classmethod"})
+    # A function may carry behaviour decorators (``@torch.no_grad()``,
+    # ``@contextlib.contextmanager`` …).  Those keep working as methods, and
+    # :meth:`method_block` keeps them *below* the injected ``@staticmethod``, which is
+    # the order Python requires.  Descriptors are the exception: they only make sense
+    # inside a class body that already owns the attribute.
+    DENIED_DECORATORS = frozenset({"property", "setter", "getter", "abstractproperty",
+                                   "abstractmethod", "overload"})
+    STATICMARKS = frozenset({"staticmethod", "classmethod"})
     GUARD = r"(?<!def )(?<![\w.])"
 
     def __init__(self, module: pathlib.Path, owner: str = "", apply: bool = False,
@@ -86,15 +93,19 @@ class PiscesLxClassExposureTool:
                  if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]
         movable, skipped = [], []
         for fn in funcs:
-            deco = {ast.unparse(d).split("(")[0] for d in fn.decorator_list}
+            deco = {ast.unparse(d).split("(")[0].split(".")[-1] for d in fn.decorator_list}
             if fn.name.startswith("__") and fn.name.endswith("__"):
                 skipped.append((fn.name, "dunder"))
-            elif deco - self.ALLOWED_DECORATORS:
-                skipped.append((fn.name, f"decorator {sorted(deco - self.ALLOWED_DECORATORS)}"))
+            elif deco & self.DENIED_DECORATORS:
+                skipped.append((fn.name, f"descriptor {sorted(deco & self.DENIED_DECORATORS)}"))
             elif isinstance(fn, ast.AsyncFunctionDef):
                 skipped.append((fn.name, "async"))
             else:
                 movable.append(fn)
+                if deco - self.STATICMARKS:
+                    self.notes.append(
+                        f"{self.module}: {fn.name} keeps decorator(s) {sorted(deco - self.STATICMARKS)}"
+                    )
         classes = [n for n in tree.body if isinstance(n, ast.ClassDef)]
         return movable, classes, skipped
 
@@ -112,7 +123,12 @@ class PiscesLxClassExposureTool:
         lines = self.source().split("\n")
         chunks = []
         for fn in sorted(funcs, key=lambda f: f.lineno):
-            seg = lines[fn.lineno - 1:fn.end_lineno]
+            start = fn.lineno - 1
+            if fn.decorator_list:
+                # The decorators belong to the function: leave them behind would strand
+                # them above whatever statement follows in the module body.
+                start = min(start, min(d.lineno for d in fn.decorator_list) - 1)
+            seg = lines[start:fn.end_lineno]
             indented = [("    " + l) if l.strip() else ""
                         for l in seg
                         if not l.strip().startswith(("@staticmethod", "@classmethod"))]
@@ -161,7 +177,14 @@ class PiscesLxClassExposureTool:
             return body + "\n\n" + "\n".join(tail)
         end = len(head)
         for j in range(existing + 1, len(head)):
-            if head[j].startswith(("class ", "def ", "@", "if ", "for ", "while ", "try:")):
+            line = head[j]
+            if not line.strip():
+                continue
+            # A class body is indented: the first top-level statement that follows it
+            # ends the body. Testing only ``class``/``def``/``@``/``if``… missed plain
+            # assignments such as ``__all__ = [`` and appended the methods outside the
+            # class, which the syntax guard below then rejected.
+            if not line[0].isspace():
                 end = j
                 break
         while end > existing + 1 and not head[end - 1].strip():

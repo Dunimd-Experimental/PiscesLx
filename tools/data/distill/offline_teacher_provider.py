@@ -78,26 +78,6 @@ from utils.dc import PiscesLxLogger
 from utils.device import PiscesLxDeviceResolver
 from utils.paths import PiscesLxPaths
 from configs.version import VERSION
-
-
-def _normalize_base_url(base_url: str) -> str:
-    """Normalize base URL by stripping common endpoint suffixes.
-    
-    Users may accidentally pass the chat completions endpoint
-    (e.g. https://api.deepseek.com/chat/completions) instead of the
-    API base URL. The OpenAI client auto-appends /chat/completions,
-    /models etc., so endpoint URLs as base would produce malformed requests.
-    """
-    import re
-    base_url = base_url.rstrip().rstrip('/').rstrip(',')
-    base_url = re.sub(r'(/v\d+)?/chat/completions$', '', base_url)
-    base_url = re.sub(r'(/v\d+)?/completions$', '', base_url)
-    base_url = re.sub(r'(/v\d+)?/models$', '', base_url)
-    if not base_url.endswith('/v1'):
-        base_url = base_url.rstrip('/')
-    return base_url
-
-
 class PiscesLxTeacherProviderType(Enum):
     """Teacher provider type enumeration."""
     LOCAL = "local"
@@ -552,7 +532,7 @@ class PiscesLxRemoteTeacherProvider(PiscesLxTeacherProvider):
                 base_url = None
                 if hasattr(self.config, 'base_url') and self.config.base_url:
                     base_url = self.config.base_url
-                    base_url = _normalize_base_url(base_url)
+                    base_url = PiscesLxTeacherProviderFactory._normalize_base_url(base_url)
                 if isinstance(base_url, str) and "deepseek.com" in base_url and not base_url.endswith("/beta"):
                     base_url = base_url.rstrip("/") + "/beta"
                 self.client = OpenAI(
@@ -823,6 +803,26 @@ class PiscesLxTeacherProviderFactory:
         finally:
             if provider is not None:
                 provider.close()
+
+    @staticmethod
+    def _normalize_base_url(base_url: str) -> str:
+        """Normalize base URL by stripping common endpoint suffixes.
+
+        Users may accidentally pass the chat completions endpoint
+        (e.g. https://api.deepseek.com/chat/completions) instead of the
+        API base URL. The OpenAI client auto-appends /chat/completions,
+        /models etc., so endpoint URLs as base would produce malformed requests.
+        """
+        import re
+        base_url = base_url.rstrip().rstrip('/').rstrip(',')
+        base_url = re.sub(r'(/v\d+)?/chat/completions$', '', base_url)
+        base_url = re.sub(r'(/v\d+)?/completions$', '', base_url)
+        base_url = re.sub(r'(/v\d+)?/models$', '', base_url)
+        if not base_url.endswith('/v1'):
+            base_url = base_url.rstrip('/')
+        return base_url
+
+
 
 
 __all__ = [

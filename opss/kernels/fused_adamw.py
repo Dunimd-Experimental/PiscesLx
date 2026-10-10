@@ -262,7 +262,7 @@ if _HAS_TRITON:
                             maximize=group["maximize"],
                         )
                     else:
-                        _pytorch_adamw(
+                        PiscesLxFusedAdamw._pytorch_adamw(
                             p.data, grad.data, m, v, max_v,
                             lr=group["lr"],
                             beta1=beta1,
@@ -305,37 +305,40 @@ else:
         def step(self, closure=None):
             return self._impl.step(closure)
 
+class PiscesLxFusedAdamw:
+    """Module-level operations of fused_adamw, exposed through a class (§6.2)."""
 
-def _pytorch_adamw(
-    p: torch.Tensor,
-    g: torch.Tensor,
-    m: torch.Tensor,
-    v: torch.Tensor,
-    max_v: Optional[torch.Tensor],
-    lr: float,
-    beta1: float,
-    beta2: float,
-    eps: float,
-    weight_decay: float,
-    step: int,
-    maximize: bool,
-):
-    if maximize:
-        g = -g
+    @staticmethod
+    def _pytorch_adamw(
+        p: torch.Tensor,
+        g: torch.Tensor,
+        m: torch.Tensor,
+        v: torch.Tensor,
+        max_v: Optional[torch.Tensor],
+        lr: float,
+        beta1: float,
+        beta2: float,
+        eps: float,
+        weight_decay: float,
+        step: int,
+        maximize: bool,
+    ):
+        if maximize:
+            g = -g
 
-    m.mul_(beta1).add_(g, alpha=1.0 - beta1)
-    v.mul_(beta2).addcmul_(g, g, value=1.0 - beta2)
+        m.mul_(beta1).add_(g, alpha=1.0 - beta1)
+        v.mul_(beta2).addcmul_(g, g, value=1.0 - beta2)
 
-    if max_v is not None:
-        torch.maximum(max_v, v, out=max_v)
-        v_hat = max_v
-    else:
-        v_hat = v
+        if max_v is not None:
+            torch.maximum(max_v, v, out=max_v)
+            v_hat = max_v
+        else:
+            v_hat = v
 
-    bias_correction1 = 1.0 - beta1 ** step
-    bias_correction2 = 1.0 - beta2 ** step
-    step_size = lr / bias_correction1
+        bias_correction1 = 1.0 - beta1 ** step
+        bias_correction2 = 1.0 - beta2 ** step
+        step_size = lr / bias_correction1
 
-    denom = v_hat.sqrt().add_(eps)
-    p.addcdiv_(m, denom, value=-step_size)
-    p.add_(p, alpha=-lr * weight_decay)
+        denom = v_hat.sqrt().add_(eps)
+        p.addcdiv_(m, denom, value=-step_size)
+        p.add_(p, alpha=-lr * weight_decay)

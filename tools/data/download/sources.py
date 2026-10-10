@@ -40,49 +40,6 @@ _LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=PiscesLxPaths.get_log_fil
 _VERBOSE = (os.getenv("PISCESLX_DOWNLOAD_VERBOSE", "0") == "1")
 
 HF_MIRROR_URL = "https://hf-mirror.com"
-
-
-def _classify_modelscope_import_error(exc: BaseException, traceback_text: str) -> str:
-    """
-    Classify the most common reasons `modelscope.msdatasets` fails to import.
-
-    Args:
-        exc: The exception instance caught at the import boundary.
-        traceback_text: The string form of the traceback, used for keyword
-            matching against known broken-call chains.
-
-    Returns:
-        A short human-readable description of the most likely root cause.
-    """
-    msg = f"{type(exc).__name__}: {exc}".lower()
-    tb = traceback_text.lower()
-
-    # transformers ≥ 4.46 stopped re-exporting PreTrainedModel from
-    # `transformers` directly. ModelScope ≥ 1.18 imports it the old way, so
-    # the error string is "could not import module 'PreTrainedModel'".
-    if "pretrainedmodel" in msg or "pretrainedmodel" in tb:
-        return (
-            "transformers ≥ 4.46 removed the top-level `PreTrainedModel` "
-            "symbol that older `modelscope` releases still import. Either "
-            "upgrade `modelscope` to a version that supports current "
-            "transformers, or pin `transformers<4.46`."
-        )
-
-    # Pinned transformers but the actual broken import is somewhere else
-    # in modelscope's transitive imports (datasets, einops, timm, ...).
-    if "importerror" in msg or "modulenotfounderror" in msg:
-        # Pull the offending module name out of the exception if we can.
-        missing = getattr(exc, "name", None) or ""
-        if missing:
-            return f"a transitive dependency `{missing}` is missing or version-incompatible"
-        return "a transitive dependency is missing or version-incompatible"
-
-    if "syntaxerror" in msg:
-        return "a Python syntax error was raised while importing modelscope (likely a version mismatch)"
-
-    return "an unknown import-time error in the modelscope stack"
-
-
 class PiscesLxToolsDataSourceRouter:
     """
     A router class responsible for loading datasets from different sources.
@@ -230,7 +187,7 @@ class PiscesLxToolsDataSourceRouter:
             from modelscope.msdatasets import MsDataset  # type: ignore
         except Exception as e:
             tb = traceback.format_exc(limit=4)
-            root_cause = _classify_modelscope_import_error(e, tb)
+            root_cause = PiscesLxToolsDataSourceRouter._classify_modelscope_import_error(e, tb)
             _LOG.error(
                 "Failed to import `modelscope.msdatasets.MsDataset`: "
                 f"{type(e).__name__}: {e}. "
@@ -370,3 +327,46 @@ class PiscesLxToolsDataSourceRouter:
             if _VERBOSE:
                 _LOG.debug(f"to_hf_if_needed conversion failed: {e}")
         return ds
+
+    @staticmethod
+    def _classify_modelscope_import_error(exc: BaseException, traceback_text: str) -> str:
+        """
+        Classify the most common reasons `modelscope.msdatasets` fails to import.
+
+        Args:
+            exc: The exception instance caught at the import boundary.
+            traceback_text: The string form of the traceback, used for keyword
+                matching against known broken-call chains.
+
+        Returns:
+            A short human-readable description of the most likely root cause.
+        """
+        msg = f"{type(exc).__name__}: {exc}".lower()
+        tb = traceback_text.lower()
+
+        # transformers ≥ 4.46 stopped re-exporting PreTrainedModel from
+        # `transformers` directly. ModelScope ≥ 1.18 imports it the old way, so
+        # the error string is "could not import module 'PreTrainedModel'".
+        if "pretrainedmodel" in msg or "pretrainedmodel" in tb:
+            return (
+                "transformers ≥ 4.46 removed the top-level `PreTrainedModel` "
+                "symbol that older `modelscope` releases still import. Either "
+                "upgrade `modelscope` to a version that supports current "
+                "transformers, or pin `transformers<4.46`."
+            )
+
+        # Pinned transformers but the actual broken import is somewhere else
+        # in modelscope's transitive imports (datasets, einops, timm, ...).
+        if "importerror" in msg or "modulenotfounderror" in msg:
+            # Pull the offending module name out of the exception if we can.
+            missing = getattr(exc, "name", None) or ""
+            if missing:
+                return f"a transitive dependency `{missing}` is missing or version-incompatible"
+            return "a transitive dependency is missing or version-incompatible"
+
+        if "syntaxerror" in msg:
+            return "a Python syntax error was raised while importing modelscope (likely a version mismatch)"
+
+        return "an unknown import-time error in the modelscope stack"
+
+

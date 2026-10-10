@@ -118,7 +118,7 @@ from .config import (
     PiscesLxServiceConfig,
     MODEL_SPECS,
 )
-from .server import PiscesLxInferService, PiscesLxBackendServer, create_service
+from .server import PiscesLxInferService, PiscesLxBackendServer
 from .protocol import (
     PiscesLxChatCompletionRequest,
     PiscesLxChatCompletionResponse,
@@ -153,7 +153,6 @@ __all__ = [
     "PiscesLxInferenceEngine",
     "PiscesLxInferService",
     "PiscesLxBackendServer",
-    "create_service",
     "PiscesLxInferenceConfig",
     "PiscesLxMoEConfig",
     "PiscesLxModelSpec",

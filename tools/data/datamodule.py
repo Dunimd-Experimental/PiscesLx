@@ -752,61 +752,61 @@ class PiscesLxDataModule:
         
         logger.info("PiscesLxDataModule teardown complete")
 
+    @staticmethod
+    def create_datamodule(
+        config: PiscesLxDataConfig,
+        tokenizer: Any,
+        vision_encoder: Any = None,
+        audio_encoder: Any = None,
+    ) -> PiscesLxDataModule:
+        """Factory function to create DataModule.
 
-def create_datamodule(
-    config: PiscesLxDataConfig,
-    tokenizer: Any,
-    vision_encoder: Any = None,
-    audio_encoder: Any = None,
-) -> PiscesLxDataModule:
-    """Factory function to create DataModule.
-    
-    Args:
-        config: Data configuration.
-        tokenizer: Text tokenizer.
-        vision_encoder: Optional vision encoder.
-        audio_encoder: Optional audio encoder.
-        
-    Returns:
-        Initialized DataModule.
-    """
-    return PiscesLxDataModule(
-        config=config,
-        tokenizer=tokenizer,
-        vision_encoder=vision_encoder,
-        audio_encoder=audio_encoder,
-    )
+        Args:
+            config: Data configuration.
+            tokenizer: Text tokenizer.
+            vision_encoder: Optional vision encoder.
+            audio_encoder: Optional audio encoder.
 
+        Returns:
+            Initialized DataModule.
+        """
+        return PiscesLxDataModule(
+            config=config,
+            tokenizer=tokenizer,
+            vision_encoder=vision_encoder,
+            audio_encoder=audio_encoder,
+        )
 
-def datamodule_main(args):
-    """Main entry point for data module testing."""
-    from transformers import AutoTokenizer
-    
-    config = PiscesLxDataConfig(
-        batch_size=4,
-        max_seq_length=2048,
-    )
-    
-    config.add_text_data("./data/text_train.jsonl", split="train", weight=1.0)
-    config.add_conversation_data("./data/conversation_train.jsonl", split="train", weight=0.5)
-    
-    tokenizer = AutoTokenizer.from_pretrained(".pisceslx/ckpt")
-    
-    datamodule = create_datamodule(config, tokenizer)
-    
-    datamodule.setup("fit")
-    
-    train_loader = datamodule.train_dataloader()
-    
-    _LOG.info(f"Training batches: {len(train_loader)}")
-    
-    for batch in train_loader:
-        logger.info(f"Batch keys: {batch.keys()}")
-        break
-    
-    datamodule.teardown()
-    
-    _LOG.info("DataModule test completed")
+    @staticmethod
+    def datamodule_main(args):
+        """Main entry point for data module testing."""
+        from transformers import AutoTokenizer
+
+        config = PiscesLxDataConfig(
+            batch_size=4,
+            max_seq_length=2048,
+        )
+
+        config.add_text_data("./data/text_train.jsonl", split="train", weight=1.0)
+        config.add_conversation_data("./data/conversation_train.jsonl", split="train", weight=0.5)
+
+        tokenizer = AutoTokenizer.from_pretrained(".pisceslx/ckpt")
+
+        datamodule = PiscesLxDataModule.create_datamodule(config, tokenizer)
+
+        datamodule.setup("fit")
+
+        train_loader = datamodule.train_dataloader()
+
+        _LOG.info(f"Training batches: {len(train_loader)}")
+
+        for batch in train_loader:
+            logger.info(f"Batch keys: {batch.keys()}")
+            break
+
+        datamodule.teardown()
+
+        _LOG.info("DataModule test completed")
 
 
 if __name__ == "__main__":
@@ -818,4 +818,4 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    datamodule_main(args)
+    PiscesLxDataModule.datamodule_main(args)

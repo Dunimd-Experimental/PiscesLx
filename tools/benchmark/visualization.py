@@ -326,6 +326,17 @@ class PiscesLxToolsBenchmarkVisualizer:
             save_path
         )
 
+    @staticmethod
+    def create_visualizer(
+        config: Optional[PiscesLxToolsVisualizationConfig] = None
+    ) -> PiscesLxToolsBenchmarkVisualizer:
+        """Factory function to create visualizer."""
+        if config is None:
+            config = PiscesLxToolsVisualizationConfig()
+        return PiscesLxToolsBenchmarkVisualizer(config)
+
+
+
 
 class PiscesLxToolsReportGenerator:
     """Generator for benchmark reports."""
@@ -617,20 +628,12 @@ class PiscesLxToolsReportGenerator:
         _LOG.info(f"LaTeX table saved to {save_path}")
         return save_path
 
+    @staticmethod
+    def create_report_generator(
+        config: Optional[PiscesLxToolsVisualizationConfig] = None
+    ) -> PiscesLxToolsReportGenerator:
+        """Factory function to create report generator."""
+        if config is None:
+            config = PiscesLxToolsVisualizationConfig()
+        return PiscesLxToolsReportGenerator(config)
 
-def create_visualizer(
-    config: Optional[PiscesLxToolsVisualizationConfig] = None
-) -> PiscesLxToolsBenchmarkVisualizer:
-    """Factory function to create visualizer."""
-    if config is None:
-        config = PiscesLxToolsVisualizationConfig()
-    return PiscesLxToolsBenchmarkVisualizer(config)
-
-
-def create_report_generator(
-    config: Optional[PiscesLxToolsVisualizationConfig] = None
-) -> PiscesLxToolsReportGenerator:
-    """Factory function to create report generator."""
-    if config is None:
-        config = PiscesLxToolsVisualizationConfig()
-    return PiscesLxToolsReportGenerator(config)

@@ -1473,21 +1473,22 @@ class PiscesLxToolsMultimodalBenchmarkRunner:
         
         print("=" * 60 + "\n")
 
+    @staticmethod
+    def create_multimodal_evaluator(
+        config: PiscesLxToolsMultimodalConfig,
+        model: nn.Module,
+        tokenizer: Any,
+        image_processor: Any = None,
+        audio_processor: Any = None,
+        video_processor: Any = None,
+    ) -> PiscesLxToolsMultimodalBenchmarkRunner:
+        """Factory function to create multimodal benchmark runner."""
+        return PiscesLxToolsMultimodalBenchmarkRunner(
+            config=config,
+            model=model,
+            tokenizer=tokenizer,
+            image_processor=image_processor,
+            audio_processor=audio_processor,
+            video_processor=video_processor,
+        )
 
-def create_multimodal_evaluator(
-    config: PiscesLxToolsMultimodalConfig,
-    model: nn.Module,
-    tokenizer: Any,
-    image_processor: Any = None,
-    audio_processor: Any = None,
-    video_processor: Any = None,
-) -> PiscesLxToolsMultimodalBenchmarkRunner:
-    """Factory function to create multimodal benchmark runner."""
-    return PiscesLxToolsMultimodalBenchmarkRunner(
-        config=config,
-        model=model,
-        tokenizer=tokenizer,
-        image_processor=image_processor,
-        audio_processor=audio_processor,
-        video_processor=video_processor,
-    )

@@ -88,12 +88,12 @@ Usage Examples:
     Programmatic usage:
         from tools.setup import setup
         args = None  # or argparse.Namespace object
-        setup(args)
+        PiscesLxSetupCli.setup(args)
     
     With custom arguments:
         from tools.setup import setup, validate_setup_args
-        args = validate_setup_args(custom_args)
-        setup(args)
+        args = PiscesLxSetupCli.validate_setup_args(custom_args)
+        PiscesLxSetupCli.setup(args)
 
 Installation Flow:
     1. Validate input arguments
@@ -139,193 +139,6 @@ import platform
 import subprocess
 import datetime
 from typing import Optional
-
-
-def _log(level, message):
-    """
-    Internal logging function with timestamp and visual indicators.
-    
-    This function provides a self-contained logging mechanism that does not
-    depend on the main logging infrastructure (utils/dc.py). This is essential
-    during the setup phase when dependencies may not yet be installed.
-    
-    The function formats log messages with both local and ISO timestamps,
-    a visual emoji indicator for the log level, and a consistent prefix.
-    Messages are printed directly to stdout.
-    
-    When the script is invoked through manage.py, logging is suppressed to
-    avoid duplicate output since manage.py handles its own logging.
-    
-    Args:
-        level (str): The logging level indicator. Valid values are:
-            - 'info': Informational message (🟢)
-            - 'success': Successful operation (✅)
-            - 'error': Error condition (🔴)
-            - 'warning': Warning condition (🟡)
-            - 'debug': Debug information (🔵)
-            Any unrecognized level defaults to info (🟢).
-        message (str): The log message content to display.
-    
-    Returns:
-        None: This function prints to stdout and returns nothing.
-    
-    Side Effects:
-        - Prints formatted log message to stdout
-        - May suppress output when called from manage.py
-    
-    Example:
-        >>> _log('info', 'Starting setup process')
-        0125 14:30:00 | 2025-01-25T14:30:00.123456Z | 🟢 | [PiscesLx Core] | Starting setup process
-        
-        >>> _log('error', 'Installation failed')
-        0125 14:30:01 | 2025-01-25T14:30:01.234567Z | 🔴 | [PiscesLx Core] | Installation failed
-    """
-    if 'manage.py' in sys.argv[0]:
-        return
-
-    now = datetime.datetime.now()
-    local_ts = now.strftime("%m%d %H:%M:%S")
-    iso_ts = now.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-
-    level_emojis = {
-        'info': '🟢',
-        'success': '✅',
-        'error': '🔴',
-        'warning': '🟡',
-        'debug': '🔵'
-    }
-
-    emoji = level_emojis.get(level, '🟢')
-    print(f"{local_ts} | {iso_ts} | {emoji} | [PiscesLx Core] | {message}")
-
-
-def logger_info(message):
-    """
-    Log an informational message.
-    
-    This function logs a message at the 'info' level, indicating normal
-    operational progress. Use for routine status updates that don't
-    indicate success, failure, or warning conditions.
-    
-    Args:
-        message (str): The informational message to log.
-    
-    Returns:
-        None
-    
-    Example:
-        >>> logger_info("Checking virtual environment status")
-        0125 14:30:00 | 2025-01-25T14:30:00.123456Z | 🟢 | [PiscesLx Core] | Checking virtual environment status
-    """
-    _log('info', message)
-
-
-def logger_success(message):
-    """
-    Log a success message.
-    
-    This function logs a message at the 'success' level, indicating
-    successful completion of an operation. Use when an operation
-    completes without errors.
-    
-    Args:
-        message (str): The success message to log.
-    
-    Returns:
-        None
-    
-    Example:
-        >>> logger_success("Virtual environment created successfully")
-        0125 14:30:00 | 2025-01-25T14:30:00.123456Z | ✅ | [PiscesLx Core] | Virtual environment created successfully
-    """
-    _log('success', message)
-
-
-def logger_error(message):
-    """
-    Log an error message.
-    
-    This function logs a message at the 'error' level, indicating
-    a failure or error condition. Use when an operation fails or
-    encounters an unrecoverable error.
-    
-    Args:
-        message (str): The error message to log.
-    
-    Returns:
-        None
-    
-    Example:
-        >>> logger_error("Failed to create virtual environment")
-        0125 14:30:00 | 2025-01-25T14:30:00.123456Z | 🔴 | [PiscesLx Core] | Failed to create virtual environment
-    """
-    _log('error', message)
-
-
-def logger_warning(message):
-    """
-    Log a warning message.
-    
-    This function logs a message at the 'warning' level, indicating
-    a non-critical issue or potential problem. Use when an operation
-    completes but with caveats or potential issues.
-    
-    Args:
-        message (str): The warning message to log.
-    
-    Returns:
-        None
-    
-    Example:
-        >>> logger_warning("Some packages failed to install")
-        0125 14:30:00 | 2025-01-25T14:30:00.123456Z | 🟡 | [PiscesLx Core] | Some packages failed to install
-    """
-    _log('warning', message)
-
-
-def _detect_cuda_version() -> Optional[str]:
-    """Detect installed CUDA version via nvidia-smi or nvcc.
-
-    Returns:
-        Detected CUDA version string (e.g. '12.1'), or None if no CUDA found.
-    """
-    try:
-        result = subprocess.run(
-            ["nvidia-smi"], capture_output=True, text=True, timeout=30
-        )
-        if result.returncode == 0:
-            for line in result.stdout.splitlines():
-                m = re.search(r'CUDA Version[:\s]+(\d+\.\d+)', line)
-                if m:
-                    return m.group(1)
-    except Exception:
-        pass
-
-    try:
-        result = subprocess.run(
-            ["nvcc", "--version"], capture_output=True, text=True, timeout=30
-        )
-        if result.returncode == 0:
-            m = re.search(r'release (\d+\.\d+)', result.stdout)
-            if m:
-                return m.group(1)
-    except Exception:
-        pass
-
-    try:
-        for ver_path in ("/usr/local/cuda/version.txt", "/usr/local/cuda/version.json"):
-            if os.path.exists(ver_path):
-                with open(ver_path) as f:
-                    content = f.read()
-                m = re.search(r'(\d+\.\d+)', content)
-                if m:
-                    return m.group(1)
-    except Exception:
-        pass
-
-    return None
-
-
 _CUDA_VERSION_MAP = {
     (11, 0): "cu110", (11, 1): "cu111", (11, 2): "cu112",
     (11, 3): "cu113", (11, 4): "cu114", (11, 5): "cu115",
@@ -336,431 +149,619 @@ _CUDA_VERSION_MAP = {
     (13, 0): "cu130",
 }
 
+class PiscesLxSetupCli:
+    """Module-level operations of setup, exposed through a class (§6.2)."""
 
-def _get_pytorch_index_url(cuda_version: Optional[str]) -> Optional[str]:
-    """Map CUDA version to PyTorch wheel index URL.
+    @staticmethod
+    def _log(level, message):
+        """
+        Internal logging function with timestamp and visual indicators.
 
-    Returns:
-        Full PyTorch index URL (e.g.
-        'https://download.pytorch.org/whl/cu121'), or None if CUDA is
-        not available or unsupported.
-    """
-    if not cuda_version:
-        return None
+        This function provides a self-contained logging mechanism that does not
+        depend on the main logging infrastructure (utils/dc.py). This is essential
+        during the setup phase when dependencies may not yet be installed.
 
-    m = re.match(r'(\d+)\.(\d+)', cuda_version)
-    if not m:
-        return None
+        The function formats log messages with both local and ISO timestamps,
+        a visual emoji indicator for the log level, and a consistent prefix.
+        Messages are printed directly to stdout.
 
-    major, minor = int(m.group(1)), int(m.group(2))
-    # Find the best matching suffix: exact match or next available lower
-    available = sorted(_CUDA_VERSION_MAP.keys())
-    best = None
-    for ver in available:
-        if ver == (major, minor):
-            best = ver
-            break
-        if ver < (major, minor):
-            best = ver
-    if best is None:
-        return None
+        When the script is invoked through manage.py, logging is suppressed to
+        avoid duplicate output since manage.py handles its own logging.
 
-    suffix = _CUDA_VERSION_MAP[best]
-    return f"https://download.pytorch.org/whl/{suffix}"
+        Args:
+            level (str): The logging level indicator. Valid values are:
+                - 'info': Informational message (🟢)
+                - 'success': Successful operation (✅)
+                - 'error': Error condition (🔴)
+                - 'warning': Warning condition (🟡)
+                - 'debug': Debug information (🔵)
+                Any unrecognized level defaults to info (🟢).
+            message (str): The log message content to display.
 
+        Returns:
+            None: This function prints to stdout and returns nothing.
 
-def setup(args):
-    """
-    Set up the PiscesLx development environment automatically.
-    
-    This function orchestrates the complete environment setup process for
-    the PiscesLx framework. It handles virtual environment creation, pip
-    upgrades, and dependency installation with robust error handling and
-    fallback mechanisms.
-    
-    The setup process follows this flow:
-    
-    1. **Argument Validation**: Validates input arguments using
-       validate_setup_args(). Continues even if validation fails.
-    
-    2. **Virtual Environment Check**: Determines if the script is already
-       running within a virtual environment by comparing sys.prefix with
-       sys.base_prefix.
-    
-    3. **Virtual Environment Creation** (if not in venv):
-       - Creates directory structure at .pisceslx/env
-       - Uses Python's venv module for creation
-       - Re-executes the script within the new environment using os.execv
-    
-    4. **Pip Upgrade** (in venv):
-       - Upgrades pip to the latest version
-       - Reports success or failure
-    
-    5. **Dependency Installation**:
-       - Attempts batch installation from requirements.txt
-       - Falls back to individual package installation on batch failure
-       - Tracks and reports success/failure for each package
-    
-    Virtual Environment Location:
-        The virtual environment is created at:
-        <project_root>/.pisceslx/env/
-        
-        This location keeps the environment separate from the source code
-        while remaining within the project structure for easy management.
-    
-    Args:
-        args: Command-line arguments or configuration object. This can be:
-            - None: Default setup with no customization
-            - argparse.Namespace: Parsed command-line arguments
-            - dict: Dictionary of configuration options
-            
-            Currently, no specific arguments are used, but the parameter
-            is reserved for future extensions such as:
-            - python_version: Specify Python version for venv
-            - requirements_path: Custom requirements file path
-            - no_upgrade: Skip pip upgrade
-    
-    Returns:
-        None: This function performs side effects only. The environment
-        is configured in-place.
-    
-    Side Effects:
-        - Creates .pisceslx/env/ directory structure
-        - Creates or modifies virtual environment
-        - Installs packages via pip
-        - May replace current process via os.execv
-    
-    Raises:
-        No exceptions are raised directly. All errors are logged and
-        handled gracefully. The function returns early on critical errors.
-    
-    Example:
-        Command-line usage:
-            $ python manage.py setup
-            
-        Programmatic usage:
-            >>> from tools.setup import setup
-            >>> setup(None)
-            🟢 Pisces auto environment setup...
-            🟢 Not in virtual environment. Creating venv...
-            ✅ Virtual environment created at /path/to/.pisceslx/env
-            🟢 Re-running setup in venv...
-            [Process restarts in venv]
-            🟢 Already in virtual environment.
-            🟢 Upgrading pip...
-            ✅ Pip upgraded successfully
-            🟢 Installing requirements.txt...
-            ✅ Requirements installed successfully
-    
-    Note:
-        When the function calls os.execv(), the current process is
-        replaced. Any code after that call will not execute in the
-        original process. The new process starts from the beginning
-        of the script.
-    """
-    try:
-        args = validate_setup_args(args)
-    except Exception as e:
-        logger_error(f"Invalid setup arguments: {e}")
-        return
+        Side Effects:
+            - Prints formatted log message to stdout
+            - May suppress output when called from manage.py
 
-    logger_info("Pisces auto environment setup...")
+        Example:
+            >>> PiscesLxSetupCli._log('info', 'Starting setup process')
+            0125 14:30:00 | 2025-01-25T14:30:00.123456Z | 🟢 | [PiscesLx Core] | Starting setup process
 
-    project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    venv_dir = os.path.join(project_root, ".pisceslx", "env")
-    os.makedirs(venv_dir, exist_ok=True)
+            >>> PiscesLxSetupCli._log('error', 'Installation failed')
+            0125 14:30:01 | 2025-01-25T14:30:01.234567Z | 🔴 | [PiscesLx Core] | Installation failed
+        """
+        if 'manage.py' in sys.argv[0]:
+            return
 
-    is_windows = platform.system().lower().startswith("win")
+        now = datetime.datetime.now()
+        local_ts = now.strftime("%m%d %H:%M:%S")
+        iso_ts = now.strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
-    if sys.prefix == sys.base_prefix:
-        logger_info("Not in virtual environment. Creating venv...")
-        python_executable = sys.executable
+        level_emojis = {
+            'info': '🟢',
+            'success': '✅',
+            'error': '🔴',
+            'warning': '🟡',
+            'debug': '🔵'
+        }
 
-        # Fix Kaggle system sitecustomize missing wrapt (must be installed before venv creation)
+        emoji = level_emojis.get(level, '🟢')
+        print(f"{local_ts} | {iso_ts} | {emoji} | [PiscesLx Core] | {message}")
+
+    @staticmethod
+    def logger_info(message):
+        """
+        Log an informational message.
+
+        This function logs a message at the 'info' level, indicating normal
+        operational progress. Use for routine status updates that don't
+        indicate success, failure, or warning conditions.
+
+        Args:
+            message (str): The informational message to log.
+
+        Returns:
+            None
+
+        Example:
+            >>> PiscesLxSetupCli.logger_info("Checking virtual environment status")
+            0125 14:30:00 | 2025-01-25T14:30:00.123456Z | 🟢 | [PiscesLx Core] | Checking virtual environment status
+        """
+        PiscesLxSetupCli._log('info', message)
+
+    @staticmethod
+    def logger_success(message):
+        """
+        Log a success message.
+
+        This function logs a message at the 'success' level, indicating
+        successful completion of an operation. Use when an operation
+        completes without errors.
+
+        Args:
+            message (str): The success message to log.
+
+        Returns:
+            None
+
+        Example:
+            >>> PiscesLxSetupCli.logger_success("Virtual environment created successfully")
+            0125 14:30:00 | 2025-01-25T14:30:00.123456Z | ✅ | [PiscesLx Core] | Virtual environment created successfully
+        """
+        PiscesLxSetupCli._log('success', message)
+
+    @staticmethod
+    def logger_error(message):
+        """
+        Log an error message.
+
+        This function logs a message at the 'error' level, indicating
+        a failure or error condition. Use when an operation fails or
+        encounters an unrecoverable error.
+
+        Args:
+            message (str): The error message to log.
+
+        Returns:
+            None
+
+        Example:
+            >>> PiscesLxSetupCli.logger_error("Failed to create virtual environment")
+            0125 14:30:00 | 2025-01-25T14:30:00.123456Z | 🔴 | [PiscesLx Core] | Failed to create virtual environment
+        """
+        PiscesLxSetupCli._log('error', message)
+
+    @staticmethod
+    def logger_warning(message):
+        """
+        Log a warning message.
+
+        This function logs a message at the 'warning' level, indicating
+        a non-critical issue or potential problem. Use when an operation
+        completes but with caveats or potential issues.
+
+        Args:
+            message (str): The warning message to log.
+
+        Returns:
+            None
+
+        Example:
+            >>> PiscesLxSetupCli.logger_warning("Some packages failed to install")
+            0125 14:30:00 | 2025-01-25T14:30:00.123456Z | 🟡 | [PiscesLx Core] | Some packages failed to install
+        """
+        PiscesLxSetupCli._log('warning', message)
+
+    @staticmethod
+    def _detect_cuda_version() -> Optional[str]:
+        """Detect installed CUDA version via nvidia-smi or nvcc.
+
+        Returns:
+            Detected CUDA version string (e.g. '12.1'), or None if no CUDA found.
+        """
         try:
-            subprocess.check_call(
-                [python_executable, "-m", "pip", "install", "--quiet", "wrapt"],
-                env={**os.environ, "PIP_REQUIRE_VIRTUALENV": "false"},
+            result = subprocess.run(
+                ["nvidia-smi"], capture_output=True, text=True, timeout=30
             )
+            if result.returncode == 0:
+                for line in result.stdout.splitlines():
+                    m = re.search(r'CUDA Version[:\s]+(\d+\.\d+)', line)
+                    if m:
+                        return m.group(1)
         except Exception:
             pass
 
         try:
-            subprocess.check_call([python_executable, "-m", "venv", venv_dir])
-        except subprocess.CalledProcessError:
-            logger_info("Standard venv failed (python3-venv may be missing). Trying --without-pip...")
-            try:
-                subprocess.check_call([python_executable, "-m", "venv", "--without-pip", venv_dir])
-                venv_python = os.path.join(
-                    venv_dir, "Scripts" if is_windows else "bin",
-                    "python.exe" if is_windows else "python"
-                )
-                try:
-                    subprocess.check_call([venv_python, "-m", "ensurepip", "--upgrade", "--default-pip"])
-                except Exception:
-                    logger_info("ensurepip not available. Bootstrapping pip via get-pip.py...")
-                    try:
-                        import urllib.request
-                        get_pip_path = os.path.join(venv_dir, "get-pip.py")
-                        urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", get_pip_path)
-                        subprocess.check_call([venv_python, get_pip_path, "--no-setuptools", "--no-wheel"])
-                        os.unlink(get_pip_path)
-                        logger_success("Pip bootstrapped via get-pip.py")
-                    except Exception as e2:
-                        logger_info(f"get-pip.py failed: {e2}. Trying system pip install into venv...")
-                        try:
-                            subprocess.check_call(
-                                [python_executable, "-m", "pip", "install", "--quiet", "pip"],
-                                env={**os.environ, "PIP_REQUIRE_VIRTUALENV": "false"},
-                            )
-                        except Exception:
-                            logger_info("pip bootstrap skipped. Will use system packages.")
-            except Exception:
-                logger_info("Installing virtualenv as fallback...")
-                try:
-                    subprocess.check_call([python_executable, "-m", "pip", "install", "--user", "virtualenv"])
-                    subprocess.check_call([python_executable, "-m", "virtualenv", venv_dir])
-                except Exception as e:
-                    logger_error(f"All venv creation methods failed: {e}")
-                    return
-
-        logger_success(f"Virtual environment created at {venv_dir}")
-
-        python_bin = os.path.join(venv_dir, "Scripts" if is_windows else "bin", "python" + (".exe" if is_windows else ""))
-        logger_info("Re-running setup in venv...")
-        os.execv(python_bin, [python_bin] + sys.argv)
-        return
-    else:
-        logger_info("Already in virtual environment.")
-        logger_info(f"  Python: {sys.executable}")
-        logger_info(f"  Venv: {sys.prefix}")
-
-    logger_info("Upgrading pip...")
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
-        logger_success("Pip upgraded successfully")
-    except subprocess.CalledProcessError as e:
-        logger_error(f"Failed to upgrade pip: {e}")
-        return
-
-    # -------------------------------------------------------------------------
-    # CUDA-aware PyTorch pre-installation
-    # -------------------------------------------------------------------------
-    cuda_version = _detect_cuda_version()
-    pytorch_index_url = _get_pytorch_index_url(cuda_version)
-    _torch_installed = False
-    if pytorch_index_url:
-        logger_info(f"Detected CUDA {cuda_version}. Installing PyTorch from {pytorch_index_url} ...")
-        try:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", "torch", "torchvision", "torchaudio",
-                 "--index-url", pytorch_index_url],
-                timeout=600
+            result = subprocess.run(
+                ["nvcc", "--version"], capture_output=True, text=True, timeout=30
             )
-            _torch_installed = True
-            logger_success("PyTorch (CUDA) installed successfully")
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            logger_warning(f"CUDA PyTorch installation failed: {e}. Falling back to CPU-only torch from requirements.txt.")
-    else:
-        logger_info("CUDA not detected. PyTorch will be installed from requirements.txt (CPU-only).")
+            if result.returncode == 0:
+                m = re.search(r'release (\d+\.\d+)', result.stdout)
+                if m:
+                    return m.group(1)
+        except Exception:
+            pass
 
-    compiled_packages = {
-        'flash-attn': {
-            'description': 'Flash Attention 2 - optimized attention kernel',
-            'platform_note': 'Requires CUDA 11.6+ and compatible GPU',
-        },
-        'triton': {
-            'description': 'Triton GPU programming language',
-            'platform_note': 'Linux recommended, Windows may require WSL2',
-        },
-        'mamba-ssm': {
-            'description': 'Mamba State Space Model implementation',
-            'platform_note': 'Requires CUDA for GPU acceleration',
-        },
-        'causal-conv1d': {
-            'description': 'Causal 1D convolution for Mamba',
-            'platform_note': 'Required by mamba-ssm for optimal performance',
-        },
-    }
-    
-    requirements_path = os.path.join(project_root, "requirements.txt")
-    installed_packages = []
-    failed_packages = []
-    compiled_to_install = []
-    
-    try:
-        with open(requirements_path, 'r', encoding='utf-8') as f:
-            requirements = f.readlines()
-    except FileNotFoundError:
-        logger_error("requirements.txt not found")
-        return
-    except Exception as e:
-        logger_error(f"Error reading requirements.txt: {e}")
-        return
-    
-    logger_info("Phase 1: Installing base packages (excluding compiled packages)...")
-    logger_info(f"  Using Python: {sys.executable}")
-    
-    # Skip torch/torchvision/torchaudio if already pre-installed with CUDA support
-    _skip_torch = _torch_installed
+        try:
+            for ver_path in ("/usr/local/cuda/version.txt", "/usr/local/cuda/version.json"):
+                if os.path.exists(ver_path):
+                    with open(ver_path) as f:
+                        content = f.read()
+                    m = re.search(r'(\d+\.\d+)', content)
+                    if m:
+                        return m.group(1)
+        except Exception:
+            pass
 
-    for line in requirements:
-        line = line.strip()
-        if not line or line.startswith('#') or line.startswith('--'):
-            continue
-        
-        pkg_name = line.split('>=')[0].split('==')[0].split('[')[0].lower()
-        
-        # Skip torch/torchvision/torchaudio if already installed via CUDA index
-        if _skip_torch and pkg_name in ('torch', 'torchvision', 'torchaudio'):
-            logger_info(f"  Skipping {pkg_name} (installed with CUDA support)")
-            continue
-        
-        is_compiled = False
-        for compiled_pkg in compiled_packages.keys():
-            if pkg_name == compiled_pkg or pkg_name.startswith(compiled_pkg.replace('-', '_')):
-                is_compiled = True
-                compiled_to_install.append((compiled_pkg, line))
+        return None
+
+    @staticmethod
+    def _get_pytorch_index_url(cuda_version: Optional[str]) -> Optional[str]:
+        """Map CUDA version to PyTorch wheel index URL.
+
+        Returns:
+            Full PyTorch index URL (e.g.
+            'https://download.pytorch.org/whl/cu121'), or None if CUDA is
+            not available or unsupported.
+        """
+        if not cuda_version:
+            return None
+
+        m = re.match(r'(\d+)\.(\d+)', cuda_version)
+        if not m:
+            return None
+
+        major, minor = int(m.group(1)), int(m.group(2))
+        # Find the best matching suffix: exact match or next available lower
+        available = sorted(_CUDA_VERSION_MAP.keys())
+        best = None
+        for ver in available:
+            if ver == (major, minor):
+                best = ver
                 break
-        
-        if is_compiled:
-            logger_info(f"  Skipping compiled package for later: {pkg_name}")
-            continue
-        
+            if ver < (major, minor):
+                best = ver
+        if best is None:
+            return None
+
+        suffix = _CUDA_VERSION_MAP[best]
+        return f"https://download.pytorch.org/whl/{suffix}"
+
+    @staticmethod
+    def setup(args):
+        """
+        Set up the PiscesLx development environment automatically.
+
+        This function orchestrates the complete environment setup process for
+        the PiscesLx framework. It handles virtual environment creation, pip
+        upgrades, and dependency installation with robust error handling and
+        fallback mechanisms.
+
+        The setup process follows this flow:
+
+        1. **Argument Validation**: Validates input arguments using
+           PiscesLxSetupCli.validate_setup_args(). Continues even if validation fails.
+
+        2. **Virtual Environment Check**: Determines if the script is already
+           running within a virtual environment by comparing sys.prefix with
+           sys.base_prefix.
+
+        3. **Virtual Environment Creation** (if not in venv):
+           - Creates directory structure at .pisceslx/env
+           - Uses Python's venv module for creation
+           - Re-executes the script within the new environment using os.execv
+
+        4. **Pip Upgrade** (in venv):
+           - Upgrades pip to the latest version
+           - Reports success or failure
+
+        5. **Dependency Installation**:
+           - Attempts batch installation from requirements.txt
+           - Falls back to individual package installation on batch failure
+           - Tracks and reports success/failure for each package
+
+        Virtual Environment Location:
+            The virtual environment is created at:
+            <project_root>/.pisceslx/env/
+
+            This location keeps the environment separate from the source code
+            while remaining within the project structure for easy management.
+
+        Args:
+            args: Command-line arguments or configuration object. This can be:
+                - None: Default setup with no customization
+                - argparse.Namespace: Parsed command-line arguments
+                - dict: Dictionary of configuration options
+
+                Currently, no specific arguments are used, but the parameter
+                is reserved for future extensions such as:
+                - python_version: Specify Python version for venv
+                - requirements_path: Custom requirements file path
+                - no_upgrade: Skip pip upgrade
+
+        Returns:
+            None: This function performs side effects only. The environment
+            is configured in-place.
+
+        Side Effects:
+            - Creates .pisceslx/env/ directory structure
+            - Creates or modifies virtual environment
+            - Installs packages via pip
+            - May replace current process via os.execv
+
+        Raises:
+            No exceptions are raised directly. All errors are logged and
+            handled gracefully. The function returns early on critical errors.
+
+        Example:
+            Command-line usage:
+                $ python manage.py setup
+
+            Programmatic usage:
+                >>> from tools.setup import setup
+                >>> PiscesLxSetupCli.setup(None)
+                🟢 Pisces auto environment setup...
+                🟢 Not in virtual environment. Creating venv...
+                ✅ Virtual environment created at /path/to/.pisceslx/env
+                🟢 Re-running setup in venv...
+                [Process restarts in venv]
+                🟢 Already in virtual environment.
+                🟢 Upgrading pip...
+                ✅ Pip upgraded successfully
+                🟢 Installing requirements.txt...
+                ✅ Requirements installed successfully
+
+        Note:
+            When the function calls os.execv(), the current process is
+            replaced. Any code after that call will not execute in the
+            original process. The new process starts from the beginning
+            of the script.
+        """
         try:
-            subprocess.check_call(
-                [sys.executable, "-m", "pip", "install", line],
-                timeout=600
-            )
-            installed_packages.append(line)
-            logger_success(f"Installed: {line}")
-        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-            failed_packages.append(line)
-            logger_warning(f"Failed to install: {line}")
-    
-    logger_success(f"Phase 1 complete: {len(installed_packages)} base packages installed")
-    
-    if failed_packages:
-        logger_warning(f"Failed to install {len(failed_packages)} packages: {failed_packages}")
-    
-    if compiled_to_install:
-        logger_info("Phase 2: Installing compiled packages in virtual environment...")
-        logger_info(f"  Using Python: {sys.executable}")
-        
-        for compiled_pkg, line in compiled_to_install:
-            pkg_info = compiled_packages[compiled_pkg]
-            logger_info(f"Installing compiled package: {compiled_pkg}")
-            logger_info(f"  Description: {pkg_info['description']}")
-            logger_info(f"  Platform note: {pkg_info['platform_note']}")
-            
+            args = PiscesLxSetupCli.validate_setup_args(args)
+        except Exception as e:
+            PiscesLxSetupCli.logger_error(f"Invalid setup arguments: {e}")
+            return
+
+        PiscesLxSetupCli.logger_info("Pisces auto environment setup...")
+
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        venv_dir = os.path.join(project_root, ".pisceslx", "env")
+        os.makedirs(venv_dir, exist_ok=True)
+
+        is_windows = platform.system().lower().startswith("win")
+
+        if sys.prefix == sys.base_prefix:
+            PiscesLxSetupCli.logger_info("Not in virtual environment. Creating venv...")
+            python_executable = sys.executable
+
+            # Fix Kaggle system sitecustomize missing wrapt (must be installed before venv creation)
             try:
                 subprocess.check_call(
-                    [sys.executable, "-m", "pip", "install", line, "--no-build-isolation"],
-                    timeout=1800
+                    [python_executable, "-m", "pip", "install", "--quiet", "wrapt"],
+                    env={**os.environ, "PIP_REQUIRE_VIRTUALENV": "false"},
+                )
+            except Exception:
+                pass
+
+            try:
+                subprocess.check_call([python_executable, "-m", "venv", venv_dir])
+            except subprocess.CalledProcessError:
+                PiscesLxSetupCli.logger_info("Standard venv failed (python3-venv may be missing). Trying --without-pip...")
+                try:
+                    subprocess.check_call([python_executable, "-m", "venv", "--without-pip", venv_dir])
+                    venv_python = os.path.join(
+                        venv_dir, "Scripts" if is_windows else "bin",
+                        "python.exe" if is_windows else "python"
+                    )
+                    try:
+                        subprocess.check_call([venv_python, "-m", "ensurepip", "--upgrade", "--default-pip"])
+                    except Exception:
+                        PiscesLxSetupCli.logger_info("ensurepip not available. Bootstrapping pip via get-pip.py...")
+                        try:
+                            import urllib.request
+                            get_pip_path = os.path.join(venv_dir, "get-pip.py")
+                            urllib.request.urlretrieve("https://bootstrap.pypa.io/get-pip.py", get_pip_path)
+                            subprocess.check_call([venv_python, get_pip_path, "--no-setuptools", "--no-wheel"])
+                            os.unlink(get_pip_path)
+                            PiscesLxSetupCli.logger_success("Pip bootstrapped via get-pip.py")
+                        except Exception as e2:
+                            PiscesLxSetupCli.logger_info(f"get-pip.py failed: {e2}. Trying system pip install into venv...")
+                            try:
+                                subprocess.check_call(
+                                    [python_executable, "-m", "pip", "install", "--quiet", "pip"],
+                                    env={**os.environ, "PIP_REQUIRE_VIRTUALENV": "false"},
+                                )
+                            except Exception:
+                                PiscesLxSetupCli.logger_info("pip bootstrap skipped. Will use system packages.")
+                except Exception:
+                    PiscesLxSetupCli.logger_info("Installing virtualenv as fallback...")
+                    try:
+                        subprocess.check_call([python_executable, "-m", "pip", "install", "--user", "virtualenv"])
+                        subprocess.check_call([python_executable, "-m", "virtualenv", venv_dir])
+                    except Exception as e:
+                        PiscesLxSetupCli.logger_error(f"All venv creation methods failed: {e}")
+                        return
+
+            PiscesLxSetupCli.logger_success(f"Virtual environment created at {venv_dir}")
+
+            python_bin = os.path.join(venv_dir, "Scripts" if is_windows else "bin", "python" + (".exe" if is_windows else ""))
+            PiscesLxSetupCli.logger_info("Re-running setup in venv...")
+            os.execv(python_bin, [python_bin] + sys.argv)
+            return
+        else:
+            PiscesLxSetupCli.logger_info("Already in virtual environment.")
+            PiscesLxSetupCli.logger_info(f"  Python: {sys.executable}")
+            PiscesLxSetupCli.logger_info(f"  Venv: {sys.prefix}")
+
+        PiscesLxSetupCli.logger_info("Upgrading pip...")
+        try:
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "--upgrade", "pip"])
+            PiscesLxSetupCli.logger_success("Pip upgraded successfully")
+        except subprocess.CalledProcessError as e:
+            PiscesLxSetupCli.logger_error(f"Failed to upgrade pip: {e}")
+            return
+
+        # -------------------------------------------------------------------------
+        # CUDA-aware PyTorch pre-installation
+        # -------------------------------------------------------------------------
+        cuda_version = PiscesLxSetupCli._detect_cuda_version()
+        pytorch_index_url = PiscesLxSetupCli._get_pytorch_index_url(cuda_version)
+        _torch_installed = False
+        if pytorch_index_url:
+            PiscesLxSetupCli.logger_info(f"Detected CUDA {cuda_version}. Installing PyTorch from {pytorch_index_url} ...")
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", "torch", "torchvision", "torchaudio",
+                     "--index-url", pytorch_index_url],
+                    timeout=600
+                )
+                _torch_installed = True
+                PiscesLxSetupCli.logger_success("PyTorch (CUDA) installed successfully")
+            except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                PiscesLxSetupCli.logger_warning(f"CUDA PyTorch installation failed: {e}. Falling back to CPU-only torch from requirements.txt.")
+        else:
+            PiscesLxSetupCli.logger_info("CUDA not detected. PyTorch will be installed from requirements.txt (CPU-only).")
+
+        compiled_packages = {
+            'flash-attn': {
+                'description': 'Flash Attention 2 - optimized attention kernel',
+                'platform_note': 'Requires CUDA 11.6+ and compatible GPU',
+            },
+            'triton': {
+                'description': 'Triton GPU programming language',
+                'platform_note': 'Linux recommended, Windows may require WSL2',
+            },
+            'mamba-ssm': {
+                'description': 'Mamba State Space Model implementation',
+                'platform_note': 'Requires CUDA for GPU acceleration',
+            },
+            'causal-conv1d': {
+                'description': 'Causal 1D convolution for Mamba',
+                'platform_note': 'Required by mamba-ssm for optimal performance',
+            },
+        }
+
+        requirements_path = os.path.join(project_root, "requirements.txt")
+        installed_packages = []
+        failed_packages = []
+        compiled_to_install = []
+
+        try:
+            with open(requirements_path, 'r', encoding='utf-8') as f:
+                requirements = f.readlines()
+        except FileNotFoundError:
+            PiscesLxSetupCli.logger_error("requirements.txt not found")
+            return
+        except Exception as e:
+            PiscesLxSetupCli.logger_error(f"Error reading requirements.txt: {e}")
+            return
+
+        PiscesLxSetupCli.logger_info("Phase 1: Installing base packages (excluding compiled packages)...")
+        PiscesLxSetupCli.logger_info(f"  Using Python: {sys.executable}")
+
+        # Skip torch/torchvision/torchaudio if already pre-installed with CUDA support
+        _skip_torch = _torch_installed
+
+        for line in requirements:
+            line = line.strip()
+            if not line or line.startswith('#') or line.startswith('--'):
+                continue
+
+            pkg_name = line.split('>=')[0].split('==')[0].split('[')[0].lower()
+
+            # Skip torch/torchvision/torchaudio if already installed via CUDA index
+            if _skip_torch and pkg_name in ('torch', 'torchvision', 'torchaudio'):
+                PiscesLxSetupCli.logger_info(f"  Skipping {pkg_name} (installed with CUDA support)")
+                continue
+
+            is_compiled = False
+            for compiled_pkg in compiled_packages.keys():
+                if pkg_name == compiled_pkg or pkg_name.startswith(compiled_pkg.replace('-', '_')):
+                    is_compiled = True
+                    compiled_to_install.append((compiled_pkg, line))
+                    break
+
+            if is_compiled:
+                PiscesLxSetupCli.logger_info(f"  Skipping compiled package for later: {pkg_name}")
+                continue
+
+            try:
+                subprocess.check_call(
+                    [sys.executable, "-m", "pip", "install", line],
+                    timeout=600
                 )
                 installed_packages.append(line)
-                logger_success(f"Installed compiled package: {compiled_pkg}")
+                PiscesLxSetupCli.logger_success(f"Installed: {line}")
             except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
-                logger_warning(f"Failed to install compiled package: {compiled_pkg}")
-                logger_warning(f"  This package is optional for basic functionality")
-                logger_warning(f"  For full multimodal capabilities, consider:")
-                logger_warning(f"    - Using Linux with CUDA support")
-                logger_warning(f"    - Using WSL2 on Windows")
-                logger_warning(f"    - Installing pre-built wheels if available")
                 failed_packages.append(line)
-        
-        logger_info("Phase 2 complete")
-    
-    logger_success(f"Setup complete: {len(installed_packages)} packages installed")
-    if failed_packages:
-        logger_warning(f"Failed packages ({len(failed_packages)}): {failed_packages}")
+                PiscesLxSetupCli.logger_warning(f"Failed to install: {line}")
 
-    _init_settings()
+        PiscesLxSetupCli.logger_success(f"Phase 1 complete: {len(installed_packages)} base packages installed")
 
+        if failed_packages:
+            PiscesLxSetupCli.logger_warning(f"Failed to install {len(failed_packages)} packages: {failed_packages}")
 
-def _init_settings():
-    """
-    Initialize the settings.yaml configuration file.
-    
-    This function creates the global settings file at .pisceslx/settings/settings.yaml
-    if it does not already exist. The settings file contains framework-wide configuration
-    options such as the developer mode toggle.
-    
-    The default settings file contains:
-        dev:
-          enabled: false
-    
-    This function is called automatically during setup to ensure the settings
-    file exists before any framework operations that might depend on it.
-    
-    Args:
-        None
-    
-    Returns:
-        None
-    
-    Side Effects:
-        - Creates .pisceslx/settings/ directory if it doesn't exist
-        - Creates .pisceslx/settings/settings.yaml with default content
-    
-    Example:
-        >>> _init_settings()  # Creates settings.yaml if not exists
-    """
-    try:
-        from utils.paths import PiscesLxPaths
-        settings_path = PiscesLxPaths.get_settings_file()
-        
-        if not os.path.exists(settings_path):
-            os.makedirs(os.path.dirname(settings_path), exist_ok=True)
-            with open(settings_path, 'w', encoding='utf-8') as f:
-                f.write("dev:\n  enabled: false\n")
-            logger_success(f"Settings file initialized at {settings_path}")
-        else:
-            logger_info(f"Settings file already exists at {settings_path}")
-    except Exception as e:
-        logger_warning(f"Failed to initialize settings file: {e}")
+        if compiled_to_install:
+            PiscesLxSetupCli.logger_info("Phase 2: Installing compiled packages in virtual environment...")
+            PiscesLxSetupCli.logger_info(f"  Using Python: {sys.executable}")
 
+            for compiled_pkg, line in compiled_to_install:
+                pkg_info = compiled_packages[compiled_pkg]
+                PiscesLxSetupCli.logger_info(f"Installing compiled package: {compiled_pkg}")
+                PiscesLxSetupCli.logger_info(f"  Description: {pkg_info['description']}")
+                PiscesLxSetupCli.logger_info(f"  Platform note: {pkg_info['platform_note']}")
 
-def validate_setup_args(args):
-    """
-    Validate and normalize setup arguments.
-    
-    This function ensures that the arguments passed to setup() are valid
-    and in the expected format. Currently, it performs minimal validation
-    as the setup function doesn't use specific arguments, but it provides
-    a hook for future argument processing.
-    
-    The function is designed to be extensible for future argument options:
-    - Custom requirements file path
-    - Python version specification
-    - Skip pip upgrade flag
-    - Verbose output flag
-    
-    Args:
-        args: Command-line arguments or configuration object. Can be:
-            - None: No arguments provided
-            - argparse.Namespace: Parsed command-line arguments
-            - dict: Dictionary of configuration options
-            - Any object: Passed through unchanged
-    
-    Returns:
-        The validated arguments, currently returned unchanged. Future
-        implementations may normalize or transform the arguments.
-    
-    Raises:
-        Currently no exceptions are raised. Future implementations may
-        raise ValueError for invalid argument combinations.
-    
-    Example:
-        >>> validate_setup_args(None)
-        None
-        
-        >>> args = argparse.Namespace(verbose=True)
-        >>> validate_setup_args(args)
-        Namespace(verbose=True)
-    
-    Note:
-        This function is called automatically by setup() and typically
-        does not need to be called directly by users.
-    """
-    return args
+                try:
+                    subprocess.check_call(
+                        [sys.executable, "-m", "pip", "install", line, "--no-build-isolation"],
+                        timeout=1800
+                    )
+                    installed_packages.append(line)
+                    PiscesLxSetupCli.logger_success(f"Installed compiled package: {compiled_pkg}")
+                except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+                    PiscesLxSetupCli.logger_warning(f"Failed to install compiled package: {compiled_pkg}")
+                    PiscesLxSetupCli.logger_warning(f"  This package is optional for basic functionality")
+                    PiscesLxSetupCli.logger_warning(f"  For full multimodal capabilities, consider:")
+                    PiscesLxSetupCli.logger_warning(f"    - Using Linux with CUDA support")
+                    PiscesLxSetupCli.logger_warning(f"    - Using WSL2 on Windows")
+                    PiscesLxSetupCli.logger_warning(f"    - Installing pre-built wheels if available")
+                    failed_packages.append(line)
+
+            PiscesLxSetupCli.logger_info("Phase 2 complete")
+
+        PiscesLxSetupCli.logger_success(f"Setup complete: {len(installed_packages)} packages installed")
+        if failed_packages:
+            PiscesLxSetupCli.logger_warning(f"Failed packages ({len(failed_packages)}): {failed_packages}")
+
+        PiscesLxSetupCli._init_settings()
+
+    @staticmethod
+    def _init_settings():
+        """
+        Initialize the settings.yaml configuration file.
+
+        This function creates the global settings file at .pisceslx/settings/settings.yaml
+        if it does not already exist. The settings file contains framework-wide configuration
+        options such as the developer mode toggle.
+
+        The default settings file contains:
+            dev:
+              enabled: false
+
+        This function is called automatically during setup to ensure the settings
+        file exists before any framework operations that might depend on it.
+
+        Args:
+            None
+
+        Returns:
+            None
+
+        Side Effects:
+            - Creates .pisceslx/settings/ directory if it doesn't exist
+            - Creates .pisceslx/settings/settings.yaml with default content
+
+        Example:
+            >>> PiscesLxSetupCli._init_settings()  # Creates settings.yaml if not exists
+        """
+        try:
+            from utils.paths import PiscesLxPaths
+            settings_path = PiscesLxPaths.get_settings_file()
+
+            if not os.path.exists(settings_path):
+                os.makedirs(os.path.dirname(settings_path), exist_ok=True)
+                with open(settings_path, 'w', encoding='utf-8') as f:
+                    f.write("dev:\n  enabled: false\n")
+                PiscesLxSetupCli.logger_success(f"Settings file initialized at {settings_path}")
+            else:
+                PiscesLxSetupCli.logger_info(f"Settings file already exists at {settings_path}")
+        except Exception as e:
+            PiscesLxSetupCli.logger_warning(f"Failed to initialize settings file: {e}")
+
+    @staticmethod
+    def validate_setup_args(args):
+        """
+        Validate and normalize setup arguments.
+
+        This function ensures that the arguments passed to PiscesLxSetupCli.setup() are valid
+        and in the expected format. Currently, it performs minimal validation
+        as the setup function doesn't use specific arguments, but it provides
+        a hook for future argument processing.
+
+        The function is designed to be extensible for future argument options:
+        - Custom requirements file path
+        - Python version specification
+        - Skip pip upgrade flag
+        - Verbose output flag
+
+        Args:
+            args: Command-line arguments or configuration object. Can be:
+                - None: No arguments provided
+                - argparse.Namespace: Parsed command-line arguments
+                - dict: Dictionary of configuration options
+                - Any object: Passed through unchanged
+
+        Returns:
+            The validated arguments, currently returned unchanged. Future
+            implementations may normalize or transform the arguments.
+
+        Raises:
+            Currently no exceptions are raised. Future implementations may
+            raise ValueError for invalid argument combinations.
+
+        Example:
+            >>> PiscesLxSetupCli.validate_setup_args(None)
+            None
+
+            >>> args = argparse.Namespace(verbose=True)
+            >>> PiscesLxSetupCli.validate_setup_args(args)
+            Namespace(verbose=True)
+
+        Note:
+            This function is called automatically by PiscesLxSetupCli.setup() and typically
+            does not need to be called directly by users.
+        """
+        return args

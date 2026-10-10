@@ -41,7 +41,7 @@ Key Components:
 
 Example:
     >>> from opss.train.impl import advanced_train_setup
-    >>> setup = advanced_train_setup(
+    >>> setup = PiscesLxAdvancedTrainingCoordinator.advanced_train_setup(
     ...     model, optimizer, total_steps=10000,
     ...     mixed_precision=True,
     ...     gradient_clipping=1.0
@@ -889,38 +889,39 @@ class PiscesLxAdvancedTrainingCoordinator:
             "distributed_enabled": config.distributed_training
         }
 
+    @staticmethod
+    def advanced_train_setup(model: nn.Module,
+                            optimizer,
+                            total_steps: int,
+                            **kwargs) -> Dict[str, Any]:
+        """
+        Convenience function for advanced training setup.
 
-def advanced_train_setup(model: nn.Module,
-                        optimizer,
-                        total_steps: int,
-                        **kwargs) -> Dict[str, Any]:
-    """
-    Convenience function for advanced training setup.
-    
-    Provides a simple interface for setting up advanced training techniques
-    without explicitly creating coordinator instances.
-    
-    Args:
-        model: The model to train
-        optimizer: The optimizer
-        total_steps: Total training steps
-        **kwargs: Additional configuration options (passed to PiscesLxAdvancedTrainingConfig)
-    
-    Returns:
-        Dictionary containing training setup components
-    
-    Example:
-        >>> setup = advanced_train_setup(
-        ...     model, optimizer, total_steps=10000,
-        ...     mixed_precision=True,
-        ...     gradient_clipping=1.0,
-        ...     decay_strategy="cosine"
-        ... )
-        >>> model = setup["model"]
-        >>> scheduler = setup["scheduler"]
-    """
-    
-    config = PiscesLxAdvancedTrainingConfig(**kwargs)
-    coordinator = PiscesLxAdvancedTrainingCoordinator()
-    
-    return coordinator.setup_training_environment(model, optimizer, config, total_steps)
+        Provides a simple interface for setting up advanced training techniques
+        without explicitly creating coordinator instances.
+
+        Args:
+            model: The model to train
+            optimizer: The optimizer
+            total_steps: Total training steps
+            **kwargs: Additional configuration options (passed to PiscesLxAdvancedTrainingConfig)
+
+        Returns:
+            Dictionary containing training setup components
+
+        Example:
+            >>> setup = PiscesLxAdvancedTrainingCoordinator.advanced_train_setup(
+            ...     model, optimizer, total_steps=10000,
+            ...     mixed_precision=True,
+            ...     gradient_clipping=1.0,
+            ...     decay_strategy="cosine"
+            ... )
+            >>> model = setup["model"]
+            >>> scheduler = setup["scheduler"]
+        """
+
+        config = PiscesLxAdvancedTrainingConfig(**kwargs)
+        coordinator = PiscesLxAdvancedTrainingCoordinator()
+
+        return coordinator.setup_training_environment(model, optimizer, config, total_steps)
+

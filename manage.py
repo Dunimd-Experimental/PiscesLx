@@ -35,7 +35,7 @@ Architecture Overview:
     The management tool follows a command-dispatch pattern where:
     
     1. Command Parsing: argparse processes CLI arguments into a namespace object
-    2. Command Dispatch: The main() function routes to appropriate handlers
+    2. Command Dispatch: The PiscesLxManageCli.main() function routes to appropriate handlers
     3. Orchestrator Execution: Each command delegates to a dedicated orchestrator
     4. Result Reporting: Results are formatted and returned to the user
 
@@ -172,47 +172,6 @@ warnings.filterwarnings(
 # =============================================================================
 # YAML LAZY IMPORT HELPER
 # =============================================================================
-def _import_yaml():
-    """
-    Lazily import the YAML library to defer import errors.
-    
-    This function provides a lazy import mechanism for the PyYAML library.
-    Lazy importing is used here because YAML parsing is only needed for
-    configuration file loading, which may not be required for all commands.
-    By deferring the import, we avoid unnecessary dependency errors when
-    running commands that don't require YAML support.
-    
-    The function modifies the global namespace by injecting the 'yaml' module,
-    allowing subsequent code to use 'yaml' directly after this function is called.
-    
-    Args:
-        None
-    
-    Returns:
-        module: The PyYAML module instance for YAML parsing operations.
-    
-    Raises:
-        ImportError: If PyYAML is not installed in the environment.
-            Users should install it via: pip install pyyaml
-    
-    Side Effects:
-        - Imports the yaml module into the global namespace
-        - May raise ImportError if PyYAML is not available
-    
-    Example:
-        >>> yaml = _import_yaml()
-        >>> config = yaml.safe_load(open('config.yaml'))
-    
-    Note:
-        This pattern is useful for optional dependencies that are only
-        needed for specific code paths. It allows the main module to
-        load faster and reduces the initial import footprint.
-    """
-    global yaml
-    import yaml
-    return yaml
-
-
 # =============================================================================
 # PROJECT ROOT PATH CONSTANT
 # =============================================================================
@@ -227,65 +186,12 @@ ROOT = os.path.abspath(os.path.dirname(__file__))
 # =============================================================================
 # LOGGER INITIALIZATION HELPER
 # =============================================================================
-def _get_logger():
-    """
-    Get or create the logger instance for the management tool.
-    
-    This function lazily initializes the logger to avoid import issues
-    during early startup. The logger is used for structured logging
-    throughout the management tool.
-    
-    The lazy initialization pattern is critical here because:
-    1. The utils module may not be available during early import stages
-    2. Logger initialization requires filesystem access for log file creation
-    3. Some commands (like 'help') don't need logging at all
-    
-    Args:
-        None
-    
-    Returns:
-        PiscesLxLogger: A configured logger instance for the 'pisceslx.manage'
-            namespace. This logger supports:
-            - Structured logging with event types
-            - File output with rotation
-            - Console output with color coding
-            - JSON-formatted logs for machine parsing
-    
-    Side Effects:
-        - Creates log file in the logs directory
-        - Initializes file handlers for persistent logging
-    
-    Example:
-        >>> logger = _get_logger()
-        >>> logger.info("Operation started", event="manage.start")
-    
-    Note:
-        The logger is created on first call and cached for subsequent calls.
-        This lazy initialization prevents import errors when the utils module
-        is not yet available. Each call returns the same logger instance.
-    """
-    # Import the custom logger class from the utils datacenter module
-    from utils.dc import PiscesLxLogger
-    
-    # Import the log file path resolver from the utils paths module
-    from utils.paths import PiscesLxPaths
-    
-    # Create and return a configured logger instance
-    # The logger name 'PiscesLx.Manage' identifies this module in logs
-    # File logging is enabled for persistent record-keeping
-    return PiscesLxLogger(
-        "PiscesLx.Manage", 
-        file_path=PiscesLxPaths.get_log_file("PiscesLx.Manage"), 
-        enable_file=True
-    )
-
-
 # =============================================================================
 # AVAILABLE COMMANDS REGISTRY
 # =============================================================================
 # COMMANDS: List of all valid CLI commands that this management tool supports
 # This list is used by argparse for command validation and tab-completion
-# Each command maps to a specific handler in the main() function
+# Each command maps to a specific handler in the PiscesLxManageCli.main() function
 COMMANDS = [
     'setup',      # Initialize environment and install dependencies
     'train',      # Train models with various configurations
@@ -301,1472 +207,1564 @@ COMMANDS = [
     'plxs',       # Start Xi Studio (graphical workstation)
     'publish',    # Package and publish models as Docker images
 ]
-
-
-def _build_train_argv_from_args(args) -> list:
-    """Build argv list for train command from args namespace.
-
-    Converts argparse namespace to CLI argument list for action submit train.
-    """
-    argv = []
-    mapping = [
-        ("model_size", "--model_size"),
-        ("dataset", "--dataset"),
-        ("resume_ckpt", "--resume_ckpt"),
-        ("train_mode", "--train_mode"),
-        ("train_config", "--train_config"),
-        ("dry_run", "--dry_run"),
-        ("seq_len", "--seq_len"),
-        ("quant", "--quant"),
-        ("no_quant", "--no_quant"),
-        ("rlhf", "--rlhf"),
-        ("rlhf_dataset", "--rlhf_dataset"),
-        ("rlhf_lr", "--rlhf_lr"),
-        ("rlhf_batch_size", "--rlhf_batch_size"),
-        ("rlhf_mini_batch_size", "--rlhf_mini_batch_size"),
-        ("rlhf_accum_steps", "--rlhf_accum_steps"),
-        ("rlhf_epochs", "--rlhf_epochs"),
-        ("rlhf_max_samples", "--rlhf_max_samples"),
-        ("rlhf_max_length", "--rlhf_max_length"),
-        ("model_path", "--model_path"),
-        ("run_id", "--run_id"),
-        ("run_dir", "--run_dir"),
-        ("run_name", "--run_name"),
-        ("distill", "--distill"),
-        ("teacher_model", "--teacher_model"),
-        ("teacher_name", "--teacher_name"),
-        ("teacher_api_key", "--teacher_api_key"),
-        ("teacher_type", "--teacher_type"),
-        ("distill_alpha", "--distill_alpha"),
-        ("distill_temperature", "--distill_temperature"),
-    ]
-    for attr, flag in mapping:
-        if not hasattr(args, attr):
-            continue
-        val = getattr(args, attr)
-        if val is None:
-            continue
-        if isinstance(val, bool):
-            if val:
-                argv.append(flag)
-            continue
-        s = str(val).strip()
-        if not s:
-            continue
-        argv.extend([flag, s])
-    return argv
-
-
 # =============================================================================
 # =============================================================================
-def _resolve_model_cfg_path(model_size: str) -> "Path | None":
-    """Return the absolute path to the model config for the given size, or
-    ``None`` when no such file exists."""
-    if not model_size:
-        return None
-    candidates = [
-        Path(ROOT) / "configs" / "model" / f"{model_size}.yaml",
-        Path("configs") / "model" / f"{model_size}.yaml",
-        Path("configs") / f"{model_size}.yaml",
-    ]
-    for p in candidates:
-        if p.exists():
-            return p.resolve()
-    return None
-
-
-def _load_yaml(path: "Path") -> dict:
-    """Best-effort YAML loader; returns ``{}`` on any failure."""
-    try:
-        import yaml as _yaml  # local import: ``pyyaml`` is optional
-        with open(path, "r", encoding="utf-8") as fh:
-            data = _yaml.safe_load(fh)
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        return {}
-
-
-
-
-
 # =============================================================================
 # MAIN ENTRY POINT
 # =============================================================================
-def main():
-    """
-    Main entry point for the PiscesLx management tool.
-    
-    This function serves as the primary dispatcher for all CLI commands. It
-    parses command-line arguments, validates the requested command, and
-    delegates execution to the appropriate handler module.
-    
-    The function follows this execution flow:
-    
-    1. **Argument Parsing**: Uses argparse to parse all CLI arguments into
-       a namespace object. Unknown arguments are captured for pass-through
-       to sub-commands (e.g., action command).
-    
-    2. **Command Dispatch**: Routes to the appropriate handler based on
-       the command name:
-       
-       - help/setup/check: Direct function calls
-       - train/serve/monitor/benchmark: Orchestrator pattern
-       - action: CLI sub-command pattern
-       - download: Tool class pattern
-    
-    3. **Error Handling**: Catches and logs errors, returning appropriate
-       exit codes for scripting integration.
-    
-    Command Handlers:
-        Each command is handled by a dedicated module:
-        
-        - setup: tools/setup.py - Environment initialization
-        - train: tools/train/orchestrator.py - Training pipeline
-        - serve: tools/infer/server.py - OpenAI-compatible backend service
-        - check: tools/check.py - System validation
-        - monitor: tools/monitor/orchestrator.py - System monitoring
-        - download: tools/data/download/ - PiscesLxDataset management
-        - benchmark: tools/benchmark/orchestrator.py - Evaluation
-        - mcp: opss/mcp/mcps/ - MCP tool management
-        - cache: tools/cache/ - Cache management
-        - action: opss/run/ - Background process management
-    
-    Args:
-        None (reads from sys.argv)
-    
-    Returns:
-        None: This function exits the process with an appropriate exit code.
-            Exit code 0 indicates success, non-zero indicates failure.
-    
-    Side Effects:
-        - Parses sys.argv for command and options
-        - May create/modify files (training checkpoints, logs)
-        - May start background processes (backend service)
-        - May modify system state (setup, cache operations)
-    
-    Raises:
-        SystemExit: On invalid command or execution failure.
-            Exit code 1 indicates an error condition.
-    
-    Example:
-        Command-line usage:
-            $ python manage.py train --model_size 7B --dataset Chinese2
-            $ python manage.py serve --model_size 7B --port 8000
-            $ python manage.py benchmark --benchmark mmlu
-        
-        Programmatic usage (not recommended):
-            >>> import sys
-            >>> sys.argv = ['manage.py', 'check']
-            >>> main()
-    
-    Note:
-        This function is designed to be called once at program startup.
-        Multiple calls may have unexpected behavior due to global state.
-    """
-    # =========================================================================
-    # ARGUMENT PARSER CONFIGURATION
-    # =========================================================================
-    # Create the main argument parser with a descriptive help message
-    # The parser handles all CLI argument parsing and validation
-    parser = argparse.ArgumentParser(
-        description="PiscesLx Management Tool (manage.py)"
-    )
-    
-    # -------------------------------------------------------------------------
-    # POSITIONAL ARGUMENT: Command
-    # -------------------------------------------------------------------------
-    # The primary command to execute (train, serve, benchmark, etc.)
-    # nargs='?' makes it optional (for 'help' default behavior)
-    # choices=COMMANDS restricts to valid command names only
-    parser.add_argument(
-        'command', 
-        nargs='?',  # Optional positional argument
-        choices=COMMANDS,  # Must be one of the registered commands
-        help="Command to execute"
-    )
-    
-    # -------------------------------------------------------------------------
-    # CHECKPOINT ARGUMENTS (for benchmarking and resumption)
-    # -------------------------------------------------------------------------
-    # --ckpt: Path to a model checkpoint file for benchmarking
-    # Used when evaluating a trained model on benchmark datasets
-    parser.add_argument(
-        '--ckpt', 
-        default='',  # Empty string means no checkpoint specified
-        help='Checkpoint file (for benchmarking)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # DATASET ARGUMENTS (for download command)
-    # -------------------------------------------------------------------------
-    # --max_samples: Maximum number of samples to download per dataset
-    # This limits dataset size for faster downloads and testing
-    parser.add_argument(
-        '--max_samples', 
-        type=int,  # Must be an integer value
-        default=50000,  # Default to 50K samples per dataset
-        help='Maximum number of samples per dataset (for download)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # MODEL CONFIGURATION ARGUMENTS (for benchmarking)
-    # -------------------------------------------------------------------------
-    # --config: Path to the model configuration YAML file
-    # This defines model architecture, hyperparameters, and settings
-    parser.add_argument(
-        '--config', 
-        default='configs/0.5B.yaml',  # Default to smallest model config
-        help='Model configuration path (for benchmarking)'
-    )
-    
-    # --seq_len: Maximum sequence length for benchmarking
-    # Determines the context window size during evaluation
-    parser.add_argument(
-        '--seq_len', 
-        type=int,  # Must be an integer value
-        default=512,  # Default to 512 tokens (standard for benchmarks)
-        help='Sequence length for benchmarking (for benchmarking)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # BENCHMARK LISTING ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --list: Flag to list all available benchmark names
-    # When set, prints all supported benchmarks and exits
-    parser.add_argument(
-        '--list', 
-        action='store_true',  # Boolean flag (True if present)
-        help='List all available benchmarks (for benchmarking)'
-    )
-    
-    # --info: Show detailed information about a specific benchmark
-    # Provides description, metrics, and requirements for the benchmark
-    parser.add_argument(
-        '--info', 
-        type=str,  # Benchmark name as string
-        help='Show detailed information about a benchmark (for benchmarking)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # BENCHMARK EXECUTION ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --benchmark: Name of the benchmark to run
-    # Must match one of the registered benchmark names
-    parser.add_argument(
-        '--benchmark', 
-        type=str,  # Benchmark name as string
-        help='Run a specific benchmark evaluation (for benchmarking)'
-    )
-    
-    # --model: Path to the model checkpoint for evaluation
-    # Alternative to --ckpt, specifically for benchmark command
-    parser.add_argument(
-        '--model', 
-        type=str,  # Model path as string
-        help='Model checkpoint path (for benchmarking)'
-    )
-    
-    # --perf: Flag to run performance benchmarking
-    # Measures inference speed, memory usage, and throughput
-    parser.add_argument(
-        '--perf', 
-        action='store_true',  # Boolean flag
-        help='Run a performance benchmark (for benchmarking)'
-    )
-    
-    # --selftest: Flag to run built-in benchmark tests
-    # Validates benchmark implementation correctness
-    parser.add_argument(
-        '--selftest', 
-        action='store_true',  # Boolean flag
-        help='Run built-in benchmark tests (for benchmarking)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # MODEL SIZE ARGUMENT (universal across commands)
-    # -------------------------------------------------------------------------
-    # --model_size: Specifies the model parameter count
-    # This determines which model configuration and weights to use
-    # Supported sizes: 0.5B, 1B, 7B, 14B, 72B, 671B, 1T
-    parser.add_argument(
-        '--model_size', 
-        default='0.5B',  # Default to smallest model for faster testing
-        type=str,  # String to preserve exact size notation
-        help='Model size: 0.5B, 1B, 7B, 14B, 72B, 671B, 1T'
-    )
-    
-    # -------------------------------------------------------------------------
-    # TRAINING DATASET ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --dataset: Name of the training dataset to use
-    # Must match a dataset name in the data registry
-    parser.add_argument(
-        '--dataset', 
-        default='',  # Empty means use default from config
-        type=str,  # PiscesLxDataset name as string
-        help='PiscesLxDataset name for training'
-    )
-    
-    # -------------------------------------------------------------------------
-    # DISTRIBUTED TRAINING ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --distributed: Flag to enable multi-GPU distributed training
-    # Automatically launches with torchrun when set
-    parser.add_argument(
-        '--distributed', 
-        action='store_true',
-        help='Enable distributed training across multiple GPUs'
-    )
-    
-    # --world_size: Number of GPUs for distributed training
-    # Defaults to detected GPU count when --distributed is set
-    parser.add_argument(
-        '--world_size', 
-        type=int,
-        default=0,
-        help='Number of GPUs for distributed training'
-    )
-    
-    # -------------------------------------------------------------------------
-    # CHECKPOINT RESUMPTION ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --resume_ckpt: Path to checkpoint for resuming interrupted training
-    # Loads model weights, optimizer state, and training progress
-    parser.add_argument(
-        '--resume_ckpt', 
-        default=None,  # None means start fresh training
-        type=str,  # Checkpoint path as string
-        help='Path to the checkpoint to resume training'
-    )
-    
-    # --reset_lr: Flag to reset learning rate after resuming
-    # Useful when resuming from a checkpoint with different LR schedule
-    parser.add_argument(
-        '--reset_lr', 
-        action='store_true',  # Boolean flag
-        help='Reset the learning rate after resuming from a checkpoint'
-    )
-    
-    # -------------------------------------------------------------------------
-    # QUANTIZATION ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --quant: Flag to force enable 4-bit quantization
-    # Overrides config settings to use quantization
-    parser.add_argument(
-        '--quant', 
-        action='store_true',  # Boolean flag
-        help='Force enable 4-bit quantization'
-    )
-    
-    # --no_quant: Flag to force disable quantization
-    # Overrides config settings to disable quantization
-    parser.add_argument(
-        '--no_quant', 
-        action='store_true',  # Boolean flag
-        help='Force disable quantization'
-    )
-    
-    # --force_quant: Flag to override config and force quantization
-    # Stronger override than --quant, ignores all config settings
-    parser.add_argument(
-        '--force_quant', 
-        action='store_true',  # Boolean flag
-        help='Override the configuration to force enable quantization'
-    )
-    
-    # --force_lora: Flag to override config and force LoRA
-    # Enables Low-Rank Adaptation for efficient fine-tuning
-    parser.add_argument(
-        '--force_lora', 
-        action='store_true',  # Boolean flag
-        help='Override the configuration to force enable LoRA'
-    )
-    
-    # --quant_bits: Number of bits for quantization (2, 4, or 8)
-    # Lower bits = smaller model but potentially lower accuracy
-    parser.add_argument(
-        '--quant_bits', 
-        type=int,  # Must be an integer
-        choices=[2, 4, 8],  # Only these values are valid
-        default=None,  # None means use config default
-        help='Quantization bits: 2, 4, or 8'
-    )
-    
-    # -------------------------------------------------------------------------
-    # RLHF (Reinforcement Learning from Human Feedback) ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --rlhf: Flag to enable RLHF training mode
-    # Trains a reward model and uses PPO for policy optimization
-    parser.add_argument(
-        '--rlhf', 
-        action='store_true',  # Boolean flag
-        help='Enable RLHF (Reinforcement Learning from Human Feedback)'
-    )
-    
-    # --rlhf_dataset: Path to the human feedback dataset for RLHF
-    # Contains preference pairs for reward model training
-    parser.add_argument(
-        '--rlhf_dataset', 
-        type=str,  # PiscesLxDataset path as string
-        default=None,  # None means use default dataset
-        help='RLHF human feedback dataset'
-    )
-    
-    # --rlhf_lr: Learning rate for RLHF training
-    # Typically lower than pretraining LR for stable fine-tuning
-    parser.add_argument(
-        '--rlhf_lr', 
-        type=float,  # Must be a float
-        default=None,  # None means use default
-        help='RLHF learning rate'
-    )
-    
-    # --rlhf_batch_size: Batch size for RLHF training
-    # Affects memory usage and training stability
-    parser.add_argument(
-        '--rlhf_batch_size', 
-        type=int,  # Must be an integer
-        default=None,  # None means use default
-        help='RLHF batch size'
-    )
-    
-    # --rlhf_mini_batch_size: Mini-batch size for PPO updates
-    # Used within each batch for gradient computation
-    parser.add_argument(
-        '--rlhf_mini_batch_size', 
-        type=int,  # Must be an integer
-        default=None,  # None means use default
-        help='RLHF mini-batch size'
-    )
-    
-    # --rlhf_accum_steps: Gradient accumulation steps for RLHF
-    # Simulates larger batch sizes with limited memory
-    parser.add_argument(
-        '--rlhf_accum_steps', 
-        type=int,  # Must be an integer
-        default=None,  # None means use default
-        help='RLHF gradient accumulation steps'
-    )
-    
-    # --rlhf_epochs: Number of training epochs for RLHF
-    # More epochs = better convergence but longer training
-    parser.add_argument(
-        '--rlhf_epochs', 
-        type=int,  # Must be an integer
-        default=None,  # None means use default
-        help='RLHF training epochs'
-    )
-    
-    # --rlhf_max_samples: Maximum samples for RLHF training
-    # Limits dataset size for faster iteration during development
-    parser.add_argument(
-        '--rlhf_max_samples', 
-        type=int,  # Must be an integer
-        default=None,  # None means use all available
-        help='RLHF maximum number of samples'
-    )
-    
-    # --rlhf_max_length: Maximum sequence length for RLHF
-    # Truncates sequences longer than this value
-    parser.add_argument(
-        '--rlhf_max_length', 
-        type=int,  # Must be an integer
-        default=None,  # None means use config default
-        help='RLHF maximum sequence length'
-    )
-    
-    # -------------------------------------------------------------------------
-    # MCP (Model Context Protocol) ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --mcp_host: Host address for MCP server
-    # Used for MCP tool registration and discovery
-    parser.add_argument(
-        '--mcp_host', 
-        type=str,  # Host as string
-        default='localhost',  # Default to local server
-        help='MCP server host (for MCP operations)'
-    )
-    
-    # --mcp_port: Port number for MCP server
-    # Must match the port where MCP server is listening
-    parser.add_argument(
-        '--mcp_port', 
-        type=int,  # Must be an integer
-        default=8080,  # Default MCP port
-        help='MCP server port (for MCP operations)'
-    )
-    
-    # --mcp_action: YvReActAction to perform on MCP server
-    # status: Check current tool registration status
-    # warmup: Start background tool discovery
-    # refresh-cache: Reload all tool definitions
-    parser.add_argument(
-        '--mcp_action', 
-        type=str,  # YvReActAction name as string
-        choices=['status', 'warmup', 'refresh-cache'],  # Valid actions
-        default='status',  # Default to status check
-        help='MCP action to perform (for MCP operations)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # MONITOR ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --monitor_mode: Operating mode for the monitoring system
-    # 'standard' provides balanced metrics and update frequency
-    parser.add_argument(
-        '--monitor_mode', 
-        type=str,  # Mode name as string
-        choices=['standard'],  # Currently only standard mode supported
-        help='Monitor mode (for system/tools observability)'
-    )
-    
-    # --update_interval: Screen refresh interval in seconds
-    # Lower values = more responsive but higher CPU usage
-    parser.add_argument(
-        '--update_interval', 
-        type=float,  # Must be a float
-        help='Monitor screen update interval seconds'
-    )
-    
-    # --log_interval: Log aggregation interval in seconds
-    # Determines how often logs are collected and summarized
-    parser.add_argument(
-        '--log_interval', 
-        type=float,  # Must be a float
-        help='Monitor log aggregation interval seconds'
-    )
-    
-    # -------------------------------------------------------------------------
-    # TRAINING MODE ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --train_mode: Training mode selection
-    # standard: Normal training workflow
-    # quant_export: Export quantized model after training
-    # preference: Preference-based training (DPO/RLHF)
-    parser.add_argument(
-        '--train_mode', 
-        type=str,  # Mode name as string
-        choices=['standard', 'quant_export', 'preference'],  # Valid modes
-        default='standard',  # Default to normal training
-        help='Training mode'
-    )
-    
-    # -------------------------------------------------------------------------
-    # DISTILLATION ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --distill: Flag to enable knowledge distillation training
-    # When set, training will use a teacher model for knowledge transfer
-    parser.add_argument(
-        '--distill', 
-        action='store_true',  # Boolean flag
-        help='Enable knowledge distillation training with a teacher model'
-    )
-    
-    # --teacher_model: Path or URL for the teacher model
-    # local: Path to checkpoint file (e.g., /path/to/teacher.pt)
-    # server: Server URL (e.g., http://localhost:8000)
-    # remote: Base URL for API endpoint (e.g., http://localhost:11434/v1 or https://api.openai.com/v1)
-    parser.add_argument(
-        '--teacher_model', 
-        type=str,  # Teacher model path or URL as string
-        default=None,  # None means no distillation
-        help='Teacher model: local path, server URL, or API base URL (for remote)'
-    )
-    
-    # --teacher_name: Model name for API calls (required for remote type)
-    # Examples: "gpt-4", "llama3.1", "claude-3-opus"
-    parser.add_argument(
-        '--teacher_name', 
-        type=str,  # Model name as string
-        default=None,  # None means use default
-        help='Model name for API (required for remote type): gpt-4, llama3.1, etc.'
-    )
-    
-    # --teacher_api_key: API key for remote API authentication
-    # For OpenAI: sk-xxxxx, For Anthropic: sk-ant-xxxxx
-    parser.add_argument(
-        '--teacher_api_key', 
-        type=str,  # API key as string
-        default=None,  # None means no auth
-        help='API key for remote API authentication'
-    )
-    
-    # --teacher_type: Type of teacher model source
-    # local: Load from local checkpoint file
-    # server: Connect to a local/remote server
-    # remote: Use remote API (OpenAI-compatible endpoint)
-    parser.add_argument(
-        '--teacher_type', 
-        type=str,  # Type name as string
-        choices=['local', 'server', 'remote'],  # Valid types
-        default='local',  # Default to local model
-        help='Teacher model source type: local (checkpoint), server (URL), or remote (API)'
-    )
-    
-    # --distill_alpha: Weight for distillation loss (0.0-1.0)
-    # Higher values = more influence from teacher model
-    # 0.5 means equal weight for student and teacher losses
-    parser.add_argument(
-        '--distill_alpha', 
-        type=float,  # Must be a float
-        default=0.5,  # Default to equal weighting
-        help='Distillation loss weight (0.0-1.0, default: 0.5)'
-    )
-    
-    # --distill_temperature: Temperature for soft label distillation
-    # Higher values = softer probability distributions
-    # Typical values: 1.0-10.0
-    parser.add_argument(
-        '--distill_temperature', 
-        type=float,  # Must be a float
-        default=2.0,  # Default temperature
-        help='Temperature for soft label distillation (default: 2.0)'
-    )
-    
-    # --train_config: Path to training configuration file
-    # Can be JSON or YAML format, overrides default config
-    parser.add_argument(
-        '--train_config', 
-        type=str,  # Config path as string
-        default=None,  # None means use default config
-        help='Training config file path (JSON/YAML)'
-    )
-    
-    # --dry_run: Flag to resolve configs without executing
-    # Useful for validating configuration before training
-    parser.add_argument(
-        '--dry_run', 
-        action='store_true',  # Boolean flag
-        help='Resolve configs and exit without running'
-    )
-    
-    # --model_path: Path to pretrained model for preference training
-    # Used as the base model for DPO or RLHF fine-tuning
-    parser.add_argument(
-        '--model_path', 
-        type=str,  # Model path as string
-        default=None,  # None means train from scratch
-        help='Model path for preference training'
-    )
-    
-    # -------------------------------------------------------------------------
-    # RUN MANAGEMENT ARGUMENTS (for action command)
-    # -------------------------------------------------------------------------
-    # --run_id: Unique identifier for cross-terminal tracking
-    # Allows controlling runs from different terminal sessions
-    parser.add_argument(
-        '--run_id', 
-        type=str,  # Run ID as string
-        default=None,  # None means auto-generate ID
-        help='Run ID for cross-terminal tracking/control (optional)'
-    )
-    
-    # --run_name: Human-readable name for the run
-    # Used for display purposes and logging
-    parser.add_argument(
-        '--run_name', 
-        type=str,  # Run name as string
-        default=None,  # None means auto-generate name
-        help='Run name (optional)'
-    )
-    
-    # --run_dir: Override default run directory
-    # Custom location for checkpoints and logs
-    parser.add_argument(
-        '--run_dir', 
-        type=str,  # Directory path as string
-        default=None,  # None means use default directory
-        help='Run directory override (optional)'
-    )
-    
-    # --control_interval: Polling interval for run control
-    # How often to check for control signals (pause/resume/cancel)
-    parser.add_argument(
-        '--control_interval', 
-        type=float,  # Must be a float
-        default=0.5,  # Check every 0.5 seconds
-        help='Control polling interval seconds (run mode)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # BACKEND SERVICE ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --host: Host address for the backend service
-    # Use 0.0.0.0 for external access, 127.0.0.1 for local only
-    parser.add_argument(
-        '--host', 
-        type=str,  # Host as string
-        default='127.0.0.1',  # Default to localhost only
-        help='Backend service host'
-    )
-    
-    # --port: Port number for the backend service
-    # Must be available and not used by other services
-    parser.add_argument(
-        '--port', 
-        type=int,  # Must be an integer
-        default=8000,  # Default to common API port
-        help='Backend service port'
-    )
-    
-    # --workers: Number of worker processes
-    # More workers = higher throughput but more memory
-    parser.add_argument(
-        '--workers', 
-        type=int,  # Must be an integer
-        default=1,  # Single worker for simplicity
-        help='Number of worker processes for backend service'
-    )
-    
-    # --max_concurrency: Maximum concurrent requests
-    # Limits simultaneous inferences to prevent OOM
-    parser.add_argument(
-        '--max_concurrency', 
-        type=int,  # Must be an integer
-        default=2,  # Conservative default for stability
-        help='Max concurrent requests for backend service'
-    )
-    
-    # --request_timeout: Timeout for each request in seconds
-    # Long-running requests (streaming) may need higher values
-    parser.add_argument(
-        '--request_timeout', 
-        type=float,  # Must be a float
-        default=120.0,  # 2 minutes default timeout
-        help='Request timeout seconds for backend service'
-    )
-    
-    # --serve_config: Path to backend service configuration file
-    # Contains model paths, API settings, and other options
-    parser.add_argument(
-        '--serve_config', 
-        type=str,  # Config path as string
-        default=None,  # None means use default config
-        help='Backend service config file path (JSON/YAML)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # OPSS INTEGRATION ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --disable_opss: Flag to disable OPSS integration
-    # By default, OPSS (MCP Plaza, Swarm, Orchestrator) is enabled
-    parser.add_argument(
-        '--disable_opss', 
-        action='store_true',  # Boolean flag
-        help='Disable OPSS integration (MCP Plaza, Swarm, Orchestrator) - enabled by default'
-    )
-    
-    # --disable_agent_intercept: Flag to disable agent XML interception
-    # By default, agent XML pattern interception is enabled
-    parser.add_argument(
-        '--disable_agent_intercept', 
-        action='store_true',  # Boolean flag
-        help='Disable agent XML pattern interception - enabled by default'
-    )
-    
-    # -------------------------------------------------------------------------
-    # BACKEND SERVICE AUTHENTICATION ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --api_key: API key for service authentication
-    # Required for protected endpoints if authentication is enabled
-    parser.add_argument(
-        '--api_key', 
-        type=str,  # API key as string
-        default=None,  # None means no authentication
-        help='API key for backend service authentication'
-    )
-    
-    # --cors_origins: CORS allowed origins
-    # Comma-separated list of domains for cross-origin requests
-    parser.add_argument(
-        '--cors_origins', 
-        type=str,  # Origins as string
-        default='*',  # Allow all origins by default
-        help='CORS allowed origins (comma-separated)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # TEST COMMAND ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --quick: Flag to run quick check (stages 1-5 only)
-    # Skips forward pass, generation, and optimization checks
-    parser.add_argument(
-        '--quick', 
-        action='store_true',  # Boolean flag
-        help='Run quick check (stages 1-5 only) (for test command)'
-    )
-    
-    # --stage: Comma-separated list of stages to run
-    # Allows running specific stages instead of all
-    parser.add_argument(
-        '--stage', 
-        type=str,  # Stage numbers as string
-        default=None,  # None means run all stages
-        help='Comma-separated stages to run (e.g., "1,2,3") (for test command)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # LOGGING ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --log_level: Logging verbosity level
-    # DEBUG: Most verbose, INFO: Normal, WARNING: Issues only, ERROR: Errors only
-    parser.add_argument(
-        '--log_level', 
-        type=str,  # Level name as string
-        default='INFO',  # Default to normal logging
-        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],  # Valid levels
-        help='Logging level'
-    )
-    
-    # -------------------------------------------------------------------------
-    # PLXS (Xi Studio) ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --plxs_port: Port for PLxS backend API server
-    # Default is 3140
-    parser.add_argument(
-        '--plxs_port',
-        type=int,
-        default=3140,
-        help='Port for PLxS backend API server (for plxs command)'
-    )
-    
-    # --frontend_port: Port for PLxS frontend (Next.js)
-    # Default is 3000
-    parser.add_argument(
-        '--frontend_port',
-        type=int,
-        default=3000,
-        help='Port for PLxS frontend (for plxs command)'
-    )
-    
-    # --no_frontend: Flag to start only the backend server
-    # Useful for development or when frontend is run separately
-    parser.add_argument(
-        '--no_frontend',
-        action='store_true',
-        help='Start only the backend server without frontend (for plxs command)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # PUBLISH COMMAND ARGUMENTS
-    # -------------------------------------------------------------------------
-    # --publish_action: YvReActAction to perform for publishing
-    # full: Run full pipeline (export, build, push)
-    # export: Export model weights and configs only
-    # build: Build Docker image only
-    # push: Push image to registry only
-    # validate: Validate publish configuration
-    # info: Show publish configuration info
-    # list: List available publish templates
-    parser.add_argument(
-        '--publish_action',
-        type=str,
-        choices=['full', 'export', 'build', 'push', 'validate', 'info', 'list'],
-        default='full',
-        help='Publish action: full, export, build, push, validate, info, list (default: full)'
-    )
-    
-    # --model_size: Model size for publishing
-    # Must match available model sizes: 0.5B, 1B, 7B, 14B, 72B, 671B, 1T
-    parser.add_argument(
-        '--publish_model_size',
-        type=str,
-        default=None,
-        help='Model size for publishing: 0.5B, 1B, 7B, 14B, 72B, 671B, 1T'
-    )
-    
-    # --model_path: Path to model checkpoint for publishing
-    # Can be safetensors, pytorch, or checkpoint directory
-    parser.add_argument(
-        '--publish_model_path',
-        type=str,
-        default=None,
-        help='Path to model checkpoint for publishing'
-    )
-    
-    # --output_dir: Output directory for exported/published artifacts
-    parser.add_argument(
-        '--publish_output_dir',
-        type=str,
-        default=None,
-        help='Output directory for publish artifacts'
-    )
-    
-    # --registry: Container registry URL for pushing images
-    # Supported: docker.io, ghcr.io, nvcr.io, azurecr.io, gcr.io
-    parser.add_argument(
-        '--publish_registry',
-        type=str,
-        default='docker.io',
-        help='Container registry URL (default: docker.io)'
-    )
-    
-    # --registry_namespace: Namespace (user/org) on the registry
-    parser.add_argument(
-        '--publish_registry_namespace',
-        type=str,
-        default=None,
-        help='Registry namespace (user or organization name)'
-    )
-    
-    # --registry_repo: Repository name for the image
-    parser.add_argument(
-        '--publish_registry_repo',
-        type=str,
-        default=None,
-        help='Repository name for the image'
-    )
-    
-    # --registry_tag: Tag for the image (default: latest)
-    parser.add_argument(
-        '--publish_registry_tag',
-        type=str,
-        default='latest',
-        help='Image tag (default: latest)'
-    )
-    
-    # --username: Username for registry authentication
-    parser.add_argument(
-        '--publish_username',
-        type=str,
-        default=None,
-        help='Username for registry authentication'
-    )
-    
-    # --password: Password/token for registry authentication
-    parser.add_argument(
-        '--publish_password',
-        type=str,
-        default=None,
-        help='Password or token for registry authentication'
-    )
-    
-    # --template: Docker image template to use
-    # default: Standard image with all dependencies
-    # minimal: Minimal image with just inference engine
-    # gpu: GPU-optimized image with CUDA support
-    parser.add_argument(
-        '--publish_template',
-        type=str,
-        choices=['default', 'minimal', 'gpu'],
-        default='default',
-        help='Docker image template: default, minimal, gpu (default: default)'
-    )
-    
-    # --export_format: Format for exporting model weights
-    # safetensors: SafeTensor format (recommended, secure)
-    # pytorch: PyTorch format
-    parser.add_argument(
-        '--publish_export_format',
-        type=str,
-        choices=['safetensors', 'pytorch'],
-        default='safetensors',
-        help='Model export format: safetensors, pytorch (default: safetensors)'
-    )
-    
-    # --export_quantize: Enable quantization on export
-    parser.add_argument(
-        '--publish_export_quantize',
-        action='store_true',
-        help='Export model with quantization'
-    )
-    
-    # --quant_bits: Quantization bits when --publish_export_quantize is set
-    parser.add_argument(
-        '--publish_quant_bits',
-        type=int,
-        choices=[2, 4, 8],
-        default=4,
-        help='Quantization bits: 2, 4, 8 (default: 4)'
-    )
-    
-    # --base_image: Base Docker image to use
-    parser.add_argument(
-        '--publish_base_image',
-        type=str,
-        default=None,
-        help='Base Docker image for building (default: auto-selected based on template)'
-    )
-    
-    # --env_vars: Environment variables for the Docker image
-    # Format: KEY1=VALUE1,KEY2=VALUE2
-    parser.add_argument(
-        '--publish_env_vars',
-        type=str,
-        default=None,
-        help='Environment variables for Docker image (format: KEY1=VALUE1,KEY2=VALUE2)'
-    )
-    
-    # --port: Port for the inference server inside Docker
-    parser.add_argument(
-        '--publish_port',
-        type=int,
-        default=8000,
-        help='Inference server port inside Docker (default: 8000)'
-    )
-    
-    # --health_check: Enable health check in Docker
-    parser.add_argument(
-        '--publish_health_check',
-        action='store_true',
-        default=True,
-        help='Enable health check in Docker image (default: True)'
-    )
-    
-    # --no_health_check: Disable health check in Docker
-    parser.add_argument(
-        '--publish_no_health_check',
-        action='store_true',
-        help='Disable health check in Docker image'
-    )
-    
-    # --retry_count: Number of retries for pushing to registry
-    parser.add_argument(
-        '--publish_retry_count',
-        type=int,
-        default=3,
-        help='Number of retries for registry push (default: 3)'
-    )
-    
-    # --retry_delay: Delay between retries in seconds
-    parser.add_argument(
-        '--publish_retry_delay',
-        type=int,
-        default=5,
-        help='Delay between retries in seconds (default: 5)'
-    )
-    
-    # --metadata_name: Model name for metadata
-    parser.add_argument(
-        '--publish_metadata_name',
-        type=str,
-        default=None,
-        help='Model name for metadata'
-    )
-    
-    # --metadata_version: Model version for metadata
-    parser.add_argument(
-        '--publish_metadata_version',
-        type=str,
-        default='1.0.0',
-        help='Model version for metadata (default: 1.0.0)'
-    )
-    
-    # --metadata_description: Model description for metadata
-    parser.add_argument(
-        '--publish_metadata_description',
-        type=str,
-        default=None,
-        help='Model description for metadata'
-    )
-    
-    # --metadata_author: Model author for metadata
-    parser.add_argument(
-        '--publish_metadata_author',
-        type=str,
-        default=None,
-        help='Model author for metadata'
-    )
-    
-    # --metadata_license: Model license for metadata
-    parser.add_argument(
-        '--publish_metadata_license',
-        type=str,
-        default='Apache-2.0',
-        help='Model license for metadata (default: Apache-2.0)'
-    )
-    
-    # --generate_checksum: Generate checksum files for published artifacts
-    parser.add_argument(
-        '--publish_generate_checksum',
-        action='store_true',
-        default=True,
-        help='Generate checksum files (default: True)'
-    )
-    
-    # --no_checksum: Skip checksum generation
-    parser.add_argument(
-        '--publish_no_checksum',
-        action='store_true',
-        help='Skip checksum generation'
-    )
-    
-    # --checksum_algorithms: Comma-separated list of checksum algorithms
-    parser.add_argument(
-        '--publish_checksum_algorithms',
-        type=str,
-        default='sha256,md5',
-        help='Checksum algorithms (default: sha256,md5)'
-    )
-    
-    # --config: Path to publish config file (JSON/YAML)
-    parser.add_argument(
-        '--publish_config',
-        type=str,
-        default=None,
-        help='Publish configuration file path (JSON/YAML)'
-    )
-    
-    # =========================================================================
-    # PARSE ARGUMENTS
-    # =========================================================================
-    # parse_known_args() returns two values:
-    # - args: Namespace with all known arguments
-    # - unknown: List of unknown arguments (for pass-through to sub-commands)
-    # This allows the action command to receive additional arguments
-    args, unknown = parser.parse_known_args()
-    
-    # =========================================================================
-    # COMMAND DISPATCH
-    # =========================================================================
-    
-    # -------------------------------------------------------------------------
-    # HELP COMMAND (default when no command specified)
-    # -------------------------------------------------------------------------
-    # Display comprehensive usage documentation
-    # This is the default behavior when no command is provided
-    if args.command is None or args.command == 'help':
-        # Import the help module and display usage information
-        from tools.help import help
-        help()
-    
-    # -------------------------------------------------------------------------
-    # TRAIN COMMAND
-    # -------------------------------------------------------------------------
-    # Start model training with the specified configuration
-    # Supports standard training, quantization, RLHF, and LoRA
-    # Binds to action management system in foreground mode
-    elif args.command == 'train':
-        run_id = getattr(args, 'run_id', None) or None
-        run_dir = getattr(args, 'run_dir', None) or None
-
-        # Auto-launch with torchrun for distributed training across multiple GPUs
-        detected_gpu_count = 0
-        if "LOCAL_RANK" not in os.environ:
-            try:
-                import torch
-                detected_gpu_count = int(torch.cuda.device_count())
-            except Exception:
-                detected_gpu_count = 0
-        if "LOCAL_RANK" not in os.environ and (args.distributed or args.world_size > 1 or detected_gpu_count > 1):
-            n_gpu = args.world_size if args.world_size > 0 else detected_gpu_count
-            if n_gpu > 1:
-                import subprocess
-                env = os.environ.copy()
-                master_addr = env.get("MASTER_ADDR", "127.0.0.1")
-                master_port = env.get("MASTER_PORT", "29500")
-                nnodes = int(env.get("NNODES", "1") or 1)
-                node_rank = int(env.get("NODE_RANK", env.get("GROUP_RANK", "0")) or 0)
-                env["MASTER_ADDR"] = master_addr
-                env["MASTER_PORT"] = master_port
-                if nnodes <= 1:
-                    env.setdefault("NCCL_SOCKET_IFNAME", "lo")
-                    env.setdefault("GLOO_SOCKET_IFNAME", "lo")
-                sub_argv = list(sys.argv)
-                if "--distributed" not in sub_argv:
-                    sub_argv.insert(sub_argv.index("train") + 1, "--distributed")
-                cmd = [sys.executable, "-m", "torch.distributed.run",
-                       f"--nproc_per_node={n_gpu}",
-                       f"--nnodes={nnodes}",
-                       f"--master_addr={master_addr}",
-                       f"--master_port={master_port}",
-                       f"--node_rank={node_rank}"] + sub_argv
-                _get_logger().info(
-                    f"Launching distributed training on {n_gpu} GPUs via torchrun "
-                    f"(nnodes={nnodes}, node_rank={node_rank}, master={master_addr}:{master_port})"
-                )
-                proc = subprocess.run(cmd, env=env)
-                sys.exit(proc.returncode)
-            elif args.distributed or detected_gpu_count > 1:
-                _get_logger().warning(
-                    f"Distributed training requested but only detected {detected_gpu_count} CUDA GPU(s); "
-                    "falling back to single-process execution."
-                )
-
-        if not run_id:
-            from opss.run.id_factory import PiscesLxRunIdFactory
-            run_id = PiscesLxRunIdFactory(prefix="train").new_id()
-
-        from opss.run.store import PiscesLxRunStore
-        from opss.run.controller import PiscesLxRunController
-
-        store = PiscesLxRunStore(run_id, run_dir=run_dir)
-        controller = PiscesLxRunController(store)
-
-        spec = {
-            "run_id": run_id,
-            "run_name": getattr(args, 'run_name', None) or "",
-            "type": "train",
-            "entry": "manage.py train",
-            "args": {"base": vars(args) if hasattr(args, "__dict__") else {}},
-        }
-        controller.init_run(spec, state={"status": "running", "phase": "foreground", "pid": os.getpid()})
-
-        try:
-            from tools.train.orchestrator import PiscesLxTrainOrchestrator
-            orchestrator = PiscesLxTrainOrchestrator(args)
-            orchestrator.run(args)
-            controller.update_state({"status": "completed", "phase": "finished"})
-            controller.append_event("process_exit", payload={"exit_code": 0})
-        except KeyboardInterrupt:
-            controller.update_state({"status": "interrupted", "phase": "finished"})
-            controller.append_event("process_interrupted", level="warning", payload={})
-            raise
-        except Exception as e:
-            controller.update_state({"status": "failed", "phase": "finished"})
-            controller.append_event("process_error", level="error", payload={"error": str(e)})
-            raise
-
-    # -------------------------------------------------------------------------
-    # SERVE COMMAND
-    # -------------------------------------------------------------------------
-    # Start the OpenAI-compatible backend inference service
-    # Provides REST API endpoints for model inference
-    elif args.command == 'serve':
-        # Import the backend server class
-        from tools.infer.server import PiscesLxBackendServer
-        
-        # Create server instance with parsed arguments
-        server = PiscesLxBackendServer(args)
-        
-        # Start the server (blocking call)
-        server.run()
-    
-    # -------------------------------------------------------------------------
-    # ACTION COMMAND
-    # -------------------------------------------------------------------------
-    # Manage background training/inference processes
-    # Supports submit, status, control, and log operations
-    elif args.command == 'action':
-        # Import the run CLI class for action sub-commands
-        from opss.run import PiscesLxRunCLI
-        
-        # Create CLI instance
-        cli = PiscesLxRunCLI()
-        
-        # Build argv for the sub-command
-        # Try to get arguments from sys.argv first, fall back to unknown
-        argv = []
-        try:
-            # Get all arguments after 'action' command
-            argv = list(sys.argv[2:])
-        except Exception:
-            # Fall back to unknown arguments from parser
-            argv = list(unknown or [])
-        
-        # Execute the CLI and exit with its return code
-        # The int() conversion ensures proper exit code type
-        sys.exit(int(cli.run(args, argv)))
-    
-    # -------------------------------------------------------------------------
-    # TEST COMMAND
-    # -------------------------------------------------------------------------
-    # Validate project health with 8-stage comprehensive check
-    # Checks environment, structure, imports, config, model, forward, generation, optimization
-    elif args.command == 'test':
-        # Import the test function
-        from tools.test import test
-        
-        # Run project health check
-        test(args)
-    
-    # -------------------------------------------------------------------------
-    # MONITOR COMMAND
-    # -------------------------------------------------------------------------
-    # Start real-time system monitoring dashboard
-    # Displays GPU usage, memory, training progress, etc.
-    elif args.command == 'monitor':
-        # Import the monitor orchestrator class
-        from tools.monitor.orchestrator import PiscesLxToolsMonitorOrchestrator
-        
-        # Create orchestrator instance with parsed arguments
-        orchestrator = PiscesLxToolsMonitorOrchestrator(args)
-        
-        # Start the monitoring dashboard
-        orchestrator.run(args)
-    
-    # -------------------------------------------------------------------------
-    # DOWNLOAD COMMAND
-    # -------------------------------------------------------------------------
-    # Download and prepare training datasets
-    # Downloads from configured sources and optimizes storage
-    elif args.command == 'download':
-        # Import the dataset download tool class
-        from tools.data.download import PiscesLxToolsDataDatasetDownload
-        
-        # Create tool instance
-        tool = PiscesLxToolsDataDatasetDownload()
-        
-        # Download datasets with specified sample limit
-        tool.download(args.max_samples)
-        
-        # Optimize storage by removing redundant data
-        # max_keep limits the number of cached samples
-        tool.optimize(max_keep=5000)
-    
-    # -------------------------------------------------------------------------
-    # SETUP COMMAND
-    # -------------------------------------------------------------------------
-    # Initialize environment and install dependencies
-    # Sets up Python packages, CUDA, and other requirements
-    elif args.command == 'setup':
-        # Import the setup function
-        from tools.setup import setup
-        
-        # Run environment setup
-        setup(args)
-    
-    # -------------------------------------------------------------------------
-    # BENCHMARK COMMAND
-    # -------------------------------------------------------------------------
-    # Evaluate model performance on standard benchmarks
-    # Supports MMLU and other evaluation datasets
-    elif args.command == 'benchmark':
-        # Import the benchmark orchestrator class
-        from tools.benchmark.orchestrator import PiscesLxToolsBenchmarkOrchestrator
-        
-        # Create orchestrator instance with parsed arguments
-        orchestrator = PiscesLxToolsBenchmarkOrchestrator(args)
-        
-        # Check if running self-test mode
-        if args.selftest:
-            # Run internal benchmark tests for validation
-            orchestrator.run_tests(args)
-        else:
-            # Run standard benchmark evaluation
-            orchestrator.run(args)
-    
-    # -------------------------------------------------------------------------
-    # DEV COMMAND
-    # -------------------------------------------------------------------------
-    # Manage developer mode for training
-    # Supports enable, disable, and status operations
-    elif args.command == 'dev':
-        dev_action = unknown[0] if unknown else 'status'
-        
-        from tools.dev.manager import PiscesLxDevModeManager
-        
-        manager = PiscesLxDevModeManager.get_instance()
-        
-        if dev_action == 'enable':
-            manager.enable()
-        elif dev_action == 'disable':
-            manager.disable()
-        elif dev_action == 'status':
-            status = manager.get_status()
-            print(json.dumps({
-                "enabled": status['enabled'],
-                "paused": status['paused'],
-                "attached": status['attached'],
-                "ui_active": status['ui_active'],
-                "settings_path": status['settings_path']
-            }, indent=2))
-        
-        else:
-            print(json.dumps({
-                "error": f"Unknown dev action: {dev_action}",
-                "usage": "python manage.py dev [enable|disable|status]"
-            }, indent=2))
-            sys.exit(1)
-    
-    # -------------------------------------------------------------------------
-    # CACHE COMMAND
-    # -------------------------------------------------------------------------
-    elif args.command == 'cache':
-        action = unknown[0] if unknown else 'status'
-        
-        from tools.cache.manager import PiscesLxCacheManager
-        
-        manager = PiscesLxCacheManager()
-        
-        if action == 'status' or action == '':
-            manager.status()
-        elif action == 'clean':
-            manager.clean()
-        else:
-            print(f"Unknown cache action: {action}")
-            print("Usage: python manage.py cache [status|clean]")
-            sys.exit(1)
-    
-    # -------------------------------------------------------------------------
-    # PLXS COMMAND
-    # -------------------------------------------------------------------------
-    # Start Xi Studio (graphical workstation for PiscesLx)
-    # Launches both the backend API server (port 3140) and the frontend
-    elif args.command == 'plxs':
-        from xi.xsc import XiServer
-        from xi.xsc import XiLauncher
-
-        plxs_port = getattr(args, 'plxs_port', 3140)
-        frontend_port = getattr(args, 'frontend_port', 3000)
-        no_frontend = getattr(args, 'no_frontend', False)
-
-        launcher = XiLauncher(
-            xi_port=plxs_port,
-            frontend_port=frontend_port,
-            root_dir=Path(ROOT)
-        )
-
-        if no_frontend:
-            server = XiServer(port=plxs_port, root_dir=Path(ROOT))
-            server.run(host=args.host if hasattr(args, 'host') else "127.0.0.1")
-        else:
-            launcher.run()
-    
-    # -------------------------------------------------------------------------
-    # PUBLISH COMMAND
-    # -------------------------------------------------------------------------
-    # Package and publish models as Docker images with inference engine
-    elif args.command == 'publish':
-        from tools.publish.runner import PiscesLxToolsPublish
-
-        runner = PiscesLxToolsPublish(args)
-
-        action = getattr(args, 'publish_action', 'full')
-
-        if action == 'export':
-            result = runner.run_export()
-        elif action == 'build':
-            result = runner.run_build()
-        elif action == 'push':
-            result = runner.run_publish()
-        elif action == 'validate':
-            result = runner.run_validate()
-            if result.get('errors'):
-                print("Validation errors:")
-                for err in result['errors']:
-                    print(f"  - {err}")
-            else:
-                print("Validation passed!")
-        elif action == 'info':
-            import json
-            result = runner.run_info()
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-        elif action == 'list':
-            import json
-            result = runner.run_list()
-            print(json.dumps(result, indent=2, ensure_ascii=False))
-        else:
-            result = runner.run()
-            runner.print_summary()
-    
-    # -------------------------------------------------------------------------
-    # UNKNOWN COMMAND (fallback)
-    # -------------------------------------------------------------------------
-    # Handle any command that wasn't recognized
-    # This should not happen due to argparse choices validation
-    else:
-        # Log the error with the unrecognized command
-        _get_logger().error(f"Unknown command: {args.command}")
-        
-        # Exit with error code
-        sys.exit(1)
-
-
 # =============================================================================
 # SCRIPT ENTRY POINT
 # =============================================================================
 # This block executes when the script is run directly (not imported)
-# It calls the main() function to start the CLI
+# It calls the PiscesLxManageCli.main() function to start the CLI
 if __name__ == "__main__":
-    main()
+    PiscesLxManageCli.main()
+
+class PiscesLxManageCli:
+    """Module-level operations of manage, exposed through a class (§6.2)."""
+
+    @staticmethod
+    def _import_yaml():
+        """
+        Lazily import the YAML library to defer import errors.
+
+        This function provides a lazy import mechanism for the PyYAML library.
+        Lazy importing is used here because YAML parsing is only needed for
+        configuration file loading, which may not be required for all commands.
+        By deferring the import, we avoid unnecessary dependency errors when
+        running commands that don't require YAML support.
+
+        The function modifies the global namespace by injecting the 'yaml' module,
+        allowing subsequent code to use 'yaml' directly after this function is called.
+
+        Args:
+            None
+
+        Returns:
+            module: The PyYAML module instance for YAML parsing operations.
+
+        Raises:
+            ImportError: If PyYAML is not installed in the environment.
+                Users should install it via: pip install pyyaml
+
+        Side Effects:
+            - Imports the yaml module into the global namespace
+            - May raise ImportError if PyYAML is not available
+
+        Example:
+            >>> yaml = PiscesLxManageCli._import_yaml()
+            >>> config = yaml.safe_load(open('config.yaml'))
+
+        Note:
+            This pattern is useful for optional dependencies that are only
+            needed for specific code paths. It allows the main module to
+            load faster and reduces the initial import footprint.
+        """
+        global yaml
+        import yaml
+        return yaml
+
+    @staticmethod
+    def _get_logger():
+        """
+        Get or create the logger instance for the management tool.
+
+        This function lazily initializes the logger to avoid import issues
+        during early startup. The logger is used for structured logging
+        throughout the management tool.
+
+        The lazy initialization pattern is critical here because:
+        1. The utils module may not be available during early import stages
+        2. Logger initialization requires filesystem access for log file creation
+        3. Some commands (like 'help') don't need logging at all
+
+        Args:
+            None
+
+        Returns:
+            PiscesLxLogger: A configured logger instance for the 'pisceslx.manage'
+                namespace. This logger supports:
+                - Structured logging with event types
+                - File output with rotation
+                - Console output with color coding
+                - JSON-formatted logs for machine parsing
+
+        Side Effects:
+            - Creates log file in the logs directory
+            - Initializes file handlers for persistent logging
+
+        Example:
+            >>> logger = PiscesLxManageCli._get_logger()
+            >>> logger.info("Operation started", event="manage.start")
+
+        Note:
+            The logger is created on first call and cached for subsequent calls.
+            This lazy initialization prevents import errors when the utils module
+            is not yet available. Each call returns the same logger instance.
+        """
+        # Import the custom logger class from the utils datacenter module
+        from utils.dc import PiscesLxLogger
+
+        # Import the log file path resolver from the utils paths module
+        from utils.paths import PiscesLxPaths
+
+        # Create and return a configured logger instance
+        # The logger name 'PiscesLx.Manage' identifies this module in logs
+        # File logging is enabled for persistent record-keeping
+        return PiscesLxLogger(
+            "PiscesLx.Manage", 
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Manage"), 
+            enable_file=True
+        )
+
+    @staticmethod
+    def _build_train_argv_from_args(args) -> list:
+        """Build argv list for train command from args namespace.
+
+        Converts argparse namespace to CLI argument list for action submit train.
+        """
+        argv = []
+        mapping = [
+            ("model_size", "--model_size"),
+            ("dataset", "--dataset"),
+            ("resume_ckpt", "--resume_ckpt"),
+            ("train_mode", "--train_mode"),
+            ("train_config", "--train_config"),
+            ("dry_run", "--dry_run"),
+            ("seq_len", "--seq_len"),
+            ("quant", "--quant"),
+            ("no_quant", "--no_quant"),
+            ("rlhf", "--rlhf"),
+            ("rlhf_dataset", "--rlhf_dataset"),
+            ("rlhf_lr", "--rlhf_lr"),
+            ("rlhf_batch_size", "--rlhf_batch_size"),
+            ("rlhf_mini_batch_size", "--rlhf_mini_batch_size"),
+            ("rlhf_accum_steps", "--rlhf_accum_steps"),
+            ("rlhf_epochs", "--rlhf_epochs"),
+            ("rlhf_max_samples", "--rlhf_max_samples"),
+            ("rlhf_max_length", "--rlhf_max_length"),
+            ("model_path", "--model_path"),
+            ("run_id", "--run_id"),
+            ("run_dir", "--run_dir"),
+            ("run_name", "--run_name"),
+            ("distill", "--distill"),
+            ("teacher_model", "--teacher_model"),
+            ("teacher_name", "--teacher_name"),
+            ("teacher_api_key", "--teacher_api_key"),
+            ("teacher_type", "--teacher_type"),
+            ("distill_alpha", "--distill_alpha"),
+            ("distill_temperature", "--distill_temperature"),
+        ]
+        for attr, flag in mapping:
+            if not hasattr(args, attr):
+                continue
+            val = getattr(args, attr)
+            if val is None:
+                continue
+            if isinstance(val, bool):
+                if val:
+                    argv.append(flag)
+                continue
+            s = str(val).strip()
+            if not s:
+                continue
+            argv.extend([flag, s])
+        return argv
+
+    @staticmethod
+    def _resolve_model_cfg_path(model_size: str) -> "Path | None":
+        """Return the absolute path to the model config for the given size, or
+        ``None`` when no such file exists."""
+        if not model_size:
+            return None
+        candidates = [
+            Path(ROOT) / "configs" / "model" / f"{model_size}.yaml",
+            Path("configs") / "model" / f"{model_size}.yaml",
+            Path("configs") / f"{model_size}.yaml",
+        ]
+        for p in candidates:
+            if p.exists():
+                return p.resolve()
+        return None
+
+    @staticmethod
+    def _load_yaml(path: "Path") -> dict:
+        """Best-effort YAML loader; returns ``{}`` on any failure."""
+        try:
+            import yaml as _yaml  # local import: ``pyyaml`` is optional
+            with open(path, "r", encoding="utf-8") as fh:
+                data = _yaml.safe_load(fh)
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            return {}
+
+    @staticmethod
+    def main():
+        """
+        Main entry point for the PiscesLx management tool.
+
+        This function serves as the primary dispatcher for all CLI commands. It
+        parses command-line arguments, validates the requested command, and
+        delegates execution to the appropriate handler module.
+
+        The function follows this execution flow:
+
+        1. **Argument Parsing**: Uses argparse to parse all CLI arguments into
+           a namespace object. Unknown arguments are captured for pass-through
+           to sub-commands (e.g., action command).
+
+        2. **Command Dispatch**: Routes to the appropriate handler based on
+           the command name:
+
+           - help/setup/check: Direct function calls
+           - train/serve/monitor/benchmark: Orchestrator pattern
+           - action: CLI sub-command pattern
+           - download: Tool class pattern
+
+        3. **Error Handling**: Catches and logs errors, returning appropriate
+           exit codes for scripting integration.
+
+        Command Handlers:
+            Each command is handled by a dedicated module:
+
+            - setup: tools/setup.py - Environment initialization
+            - train: tools/train/orchestrator.py - Training pipeline
+            - serve: tools/infer/server.py - OpenAI-compatible backend service
+            - check: tools/check.py - System validation
+            - monitor: tools/monitor/orchestrator.py - System monitoring
+            - download: tools/data/download/ - PiscesLxDataset management
+            - benchmark: tools/benchmark/orchestrator.py - Evaluation
+            - mcp: opss/mcp/mcps/ - MCP tool management
+            - cache: tools/cache/ - Cache management
+            - action: opss/run/ - Background process management
+
+        Args:
+            None (reads from sys.argv)
+
+        Returns:
+            None: This function exits the process with an appropriate exit code.
+                Exit code 0 indicates success, non-zero indicates failure.
+
+        Side Effects:
+            - Parses sys.argv for command and options
+            - May create/modify files (training checkpoints, logs)
+            - May start background processes (backend service)
+            - May modify system state (setup, cache operations)
+
+        Raises:
+            SystemExit: On invalid command or execution failure.
+                Exit code 1 indicates an error condition.
+
+        Example:
+            Command-line usage:
+                $ python manage.py train --model_size 7B --dataset Chinese2
+                $ python manage.py serve --model_size 7B --port 8000
+                $ python manage.py benchmark --benchmark mmlu
+
+            Programmatic usage (not recommended):
+                >>> import sys
+                >>> sys.argv = ['manage.py', 'check']
+                >>> PiscesLxManageCli.main()
+
+        Note:
+            This function is designed to be called once at program startup.
+            Multiple calls may have unexpected behavior due to global state.
+        """
+        # =========================================================================
+        # ARGUMENT PARSER CONFIGURATION
+        # =========================================================================
+        # Create the main argument parser with a descriptive help message
+        # The parser handles all CLI argument parsing and validation
+        parser = argparse.ArgumentParser(
+            description="PiscesLx Management Tool (manage.py)"
+        )
+
+        # -------------------------------------------------------------------------
+        # POSITIONAL ARGUMENT: Command
+        # -------------------------------------------------------------------------
+        # The primary command to execute (train, serve, benchmark, etc.)
+        # nargs='?' makes it optional (for 'help' default behavior)
+        # choices=COMMANDS restricts to valid command names only
+        parser.add_argument(
+            'command', 
+            nargs='?',  # Optional positional argument
+            choices=COMMANDS,  # Must be one of the registered commands
+            help="Command to execute"
+        )
+
+        # -------------------------------------------------------------------------
+        # CHECKPOINT ARGUMENTS (for benchmarking and resumption)
+        # -------------------------------------------------------------------------
+        # --ckpt: Path to a model checkpoint file for benchmarking
+        # Used when evaluating a trained model on benchmark datasets
+        parser.add_argument(
+            '--ckpt', 
+            default='',  # Empty string means no checkpoint specified
+            help='Checkpoint file (for benchmarking)'
+        )
+
+        # -------------------------------------------------------------------------
+        # DATASET ARGUMENTS (for download command)
+        # -------------------------------------------------------------------------
+        # --max_samples: Maximum number of samples to download per dataset
+        # This limits dataset size for faster downloads and testing
+        parser.add_argument(
+            '--max_samples', 
+            type=int,  # Must be an integer value
+            default=50000,  # Default to 50K samples per dataset
+            help='Maximum number of samples per dataset (for download)'
+        )
+
+        # -------------------------------------------------------------------------
+        # MODEL CONFIGURATION ARGUMENTS (for benchmarking)
+        # -------------------------------------------------------------------------
+        # --config: Path to the model configuration YAML file
+        # This defines model architecture, hyperparameters, and settings
+        parser.add_argument(
+            '--config', 
+            default='configs/0.5B.yaml',  # Default to smallest model config
+            help='Model configuration path (for benchmarking)'
+        )
+
+        # --seq_len: Maximum sequence length for benchmarking
+        # Determines the context window size during evaluation
+        parser.add_argument(
+            '--seq_len', 
+            type=int,  # Must be an integer value
+            default=512,  # Default to 512 tokens (standard for benchmarks)
+            help='Sequence length for benchmarking (for benchmarking)'
+        )
+
+        # -------------------------------------------------------------------------
+        # BENCHMARK LISTING ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --list: Flag to list all available benchmark names
+        # When set, prints all supported benchmarks and exits
+        parser.add_argument(
+            '--list', 
+            action='store_true',  # Boolean flag (True if present)
+            help='List all available benchmarks (for benchmarking)'
+        )
+
+        # --info: Show detailed information about a specific benchmark
+        # Provides description, metrics, and requirements for the benchmark
+        parser.add_argument(
+            '--info', 
+            type=str,  # Benchmark name as string
+            help='Show detailed information about a benchmark (for benchmarking)'
+        )
+
+        # -------------------------------------------------------------------------
+        # BENCHMARK EXECUTION ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --benchmark: Name of the benchmark to run
+        # Must match one of the registered benchmark names
+        parser.add_argument(
+            '--benchmark', 
+            type=str,  # Benchmark name as string
+            help='Run a specific benchmark evaluation (for benchmarking)'
+        )
+
+        # --model: Path to the model checkpoint for evaluation
+        # Alternative to --ckpt, specifically for benchmark command
+        parser.add_argument(
+            '--model', 
+            type=str,  # Model path as string
+            help='Model checkpoint path (for benchmarking)'
+        )
+
+        # --perf: Flag to run performance benchmarking
+        # Measures inference speed, memory usage, and throughput
+        parser.add_argument(
+            '--perf', 
+            action='store_true',  # Boolean flag
+            help='Run a performance benchmark (for benchmarking)'
+        )
+
+        # --selftest: Flag to run built-in benchmark tests
+        # Validates benchmark implementation correctness
+        parser.add_argument(
+            '--selftest', 
+            action='store_true',  # Boolean flag
+            help='Run built-in benchmark tests (for benchmarking)'
+        )
+
+        # -------------------------------------------------------------------------
+        # MODEL SIZE ARGUMENT (universal across commands)
+        # -------------------------------------------------------------------------
+        # --model_size: Specifies the model parameter count
+        # This determines which model configuration and weights to use
+        # Supported sizes: 0.5B, 1B, 7B, 14B, 72B, 671B, 1T
+        parser.add_argument(
+            '--model_size', 
+            default='0.5B',  # Default to smallest model for faster testing
+            type=str,  # String to preserve exact size notation
+            help='Model size: 0.5B, 1B, 7B, 14B, 72B, 671B, 1T'
+        )
+
+        # -------------------------------------------------------------------------
+        # TRAINING DATASET ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --dataset: Name of the training dataset to use
+        # Must match a dataset name in the data registry
+        parser.add_argument(
+            '--dataset', 
+            default='',  # Empty means use default from config
+            type=str,  # PiscesLxDataset name as string
+            help='PiscesLxDataset name for training'
+        )
+
+        # -------------------------------------------------------------------------
+        # DISTRIBUTED TRAINING ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --distributed: Flag to enable multi-GPU distributed training
+        # Automatically launches with torchrun when set
+        parser.add_argument(
+            '--distributed', 
+            action='store_true',
+            help='Enable distributed training across multiple GPUs'
+        )
+
+        # --world_size: Number of GPUs for distributed training
+        # Defaults to detected GPU count when --distributed is set
+        parser.add_argument(
+            '--world_size', 
+            type=int,
+            default=0,
+            help='Number of GPUs for distributed training'
+        )
+
+        # -------------------------------------------------------------------------
+        # CHECKPOINT RESUMPTION ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --resume_ckpt: Path to checkpoint for resuming interrupted training
+        # Loads model weights, optimizer state, and training progress
+        parser.add_argument(
+            '--resume_ckpt', 
+            default=None,  # None means start fresh training
+            type=str,  # Checkpoint path as string
+            help='Path to the checkpoint to resume training'
+        )
+
+        # --reset_lr: Flag to reset learning rate after resuming
+        # Useful when resuming from a checkpoint with different LR schedule
+        parser.add_argument(
+            '--reset_lr', 
+            action='store_true',  # Boolean flag
+            help='Reset the learning rate after resuming from a checkpoint'
+        )
+
+        # -------------------------------------------------------------------------
+        # QUANTIZATION ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --quant: Flag to force enable 4-bit quantization
+        # Overrides config settings to use quantization
+        parser.add_argument(
+            '--quant', 
+            action='store_true',  # Boolean flag
+            help='Force enable 4-bit quantization'
+        )
+
+        # --no_quant: Flag to force disable quantization
+        # Overrides config settings to disable quantization
+        parser.add_argument(
+            '--no_quant', 
+            action='store_true',  # Boolean flag
+            help='Force disable quantization'
+        )
+
+        # --force_quant: Flag to override config and force quantization
+        # Stronger override than --quant, ignores all config settings
+        parser.add_argument(
+            '--force_quant', 
+            action='store_true',  # Boolean flag
+            help='Override the configuration to force enable quantization'
+        )
+
+        # --force_lora: Flag to override config and force LoRA
+        # Enables Low-Rank Adaptation for efficient fine-tuning
+        parser.add_argument(
+            '--force_lora', 
+            action='store_true',  # Boolean flag
+            help='Override the configuration to force enable LoRA'
+        )
+
+        # --quant_bits: Number of bits for quantization (2, 4, or 8)
+        # Lower bits = smaller model but potentially lower accuracy
+        parser.add_argument(
+            '--quant_bits', 
+            type=int,  # Must be an integer
+            choices=[2, 4, 8],  # Only these values are valid
+            default=None,  # None means use config default
+            help='Quantization bits: 2, 4, or 8'
+        )
+
+        # -------------------------------------------------------------------------
+        # RLHF (Reinforcement Learning from Human Feedback) ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --rlhf: Flag to enable RLHF training mode
+        # Trains a reward model and uses PPO for policy optimization
+        parser.add_argument(
+            '--rlhf', 
+            action='store_true',  # Boolean flag
+            help='Enable RLHF (Reinforcement Learning from Human Feedback)'
+        )
+
+        # --rlhf_dataset: Path to the human feedback dataset for RLHF
+        # Contains preference pairs for reward model training
+        parser.add_argument(
+            '--rlhf_dataset', 
+            type=str,  # PiscesLxDataset path as string
+            default=None,  # None means use default dataset
+            help='RLHF human feedback dataset'
+        )
+
+        # --rlhf_lr: Learning rate for RLHF training
+        # Typically lower than pretraining LR for stable fine-tuning
+        parser.add_argument(
+            '--rlhf_lr', 
+            type=float,  # Must be a float
+            default=None,  # None means use default
+            help='RLHF learning rate'
+        )
+
+        # --rlhf_batch_size: Batch size for RLHF training
+        # Affects memory usage and training stability
+        parser.add_argument(
+            '--rlhf_batch_size', 
+            type=int,  # Must be an integer
+            default=None,  # None means use default
+            help='RLHF batch size'
+        )
+
+        # --rlhf_mini_batch_size: Mini-batch size for PPO updates
+        # Used within each batch for gradient computation
+        parser.add_argument(
+            '--rlhf_mini_batch_size', 
+            type=int,  # Must be an integer
+            default=None,  # None means use default
+            help='RLHF mini-batch size'
+        )
+
+        # --rlhf_accum_steps: Gradient accumulation steps for RLHF
+        # Simulates larger batch sizes with limited memory
+        parser.add_argument(
+            '--rlhf_accum_steps', 
+            type=int,  # Must be an integer
+            default=None,  # None means use default
+            help='RLHF gradient accumulation steps'
+        )
+
+        # --rlhf_epochs: Number of training epochs for RLHF
+        # More epochs = better convergence but longer training
+        parser.add_argument(
+            '--rlhf_epochs', 
+            type=int,  # Must be an integer
+            default=None,  # None means use default
+            help='RLHF training epochs'
+        )
+
+        # --rlhf_max_samples: Maximum samples for RLHF training
+        # Limits dataset size for faster iteration during development
+        parser.add_argument(
+            '--rlhf_max_samples', 
+            type=int,  # Must be an integer
+            default=None,  # None means use all available
+            help='RLHF maximum number of samples'
+        )
+
+        # --rlhf_max_length: Maximum sequence length for RLHF
+        # Truncates sequences longer than this value
+        parser.add_argument(
+            '--rlhf_max_length', 
+            type=int,  # Must be an integer
+            default=None,  # None means use config default
+            help='RLHF maximum sequence length'
+        )
+
+        # -------------------------------------------------------------------------
+        # MCP (Model Context Protocol) ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --mcp_host: Host address for MCP server
+        # Used for MCP tool registration and discovery
+        parser.add_argument(
+            '--mcp_host', 
+            type=str,  # Host as string
+            default='localhost',  # Default to local server
+            help='MCP server host (for MCP operations)'
+        )
+
+        # --mcp_port: Port number for MCP server
+        # Must match the port where MCP server is listening
+        parser.add_argument(
+            '--mcp_port', 
+            type=int,  # Must be an integer
+            default=8080,  # Default MCP port
+            help='MCP server port (for MCP operations)'
+        )
+
+        # --mcp_action: YvReActAction to perform on MCP server
+        # status: Check current tool registration status
+        # warmup: Start background tool discovery
+        # refresh-cache: Reload all tool definitions
+        parser.add_argument(
+            '--mcp_action', 
+            type=str,  # YvReActAction name as string
+            choices=['status', 'warmup', 'refresh-cache'],  # Valid actions
+            default='status',  # Default to status check
+            help='MCP action to perform (for MCP operations)'
+        )
+
+        # -------------------------------------------------------------------------
+        # MONITOR ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --monitor_mode: Operating mode for the monitoring system
+        # 'standard' provides balanced metrics and update frequency
+        parser.add_argument(
+            '--monitor_mode', 
+            type=str,  # Mode name as string
+            choices=['standard'],  # Currently only standard mode supported
+            help='Monitor mode (for system/tools observability)'
+        )
+
+        # --update_interval: Screen refresh interval in seconds
+        # Lower values = more responsive but higher CPU usage
+        parser.add_argument(
+            '--update_interval', 
+            type=float,  # Must be a float
+            help='Monitor screen update interval seconds'
+        )
+
+        # --log_interval: Log aggregation interval in seconds
+        # Determines how often logs are collected and summarized
+        parser.add_argument(
+            '--log_interval', 
+            type=float,  # Must be a float
+            help='Monitor log aggregation interval seconds'
+        )
+
+        # -------------------------------------------------------------------------
+        # TRAINING MODE ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --train_mode: Training mode selection
+        # standard: Normal training workflow
+        # quant_export: Export quantized model after training
+        # preference: Preference-based training (DPO/RLHF)
+        parser.add_argument(
+            '--train_mode', 
+            type=str,  # Mode name as string
+            choices=['standard', 'quant_export', 'preference'],  # Valid modes
+            default='standard',  # Default to normal training
+            help='Training mode'
+        )
+
+        # -------------------------------------------------------------------------
+        # DISTILLATION ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --distill: Flag to enable knowledge distillation training
+        # When set, training will use a teacher model for knowledge transfer
+        parser.add_argument(
+            '--distill', 
+            action='store_true',  # Boolean flag
+            help='Enable knowledge distillation training with a teacher model'
+        )
+
+        # --teacher_model: Path or URL for the teacher model
+        # local: Path to checkpoint file (e.g., /path/to/teacher.pt)
+        # server: Server URL (e.g., http://localhost:8000)
+        # remote: Base URL for API endpoint (e.g., http://localhost:11434/v1 or https://api.openai.com/v1)
+        parser.add_argument(
+            '--teacher_model', 
+            type=str,  # Teacher model path or URL as string
+            default=None,  # None means no distillation
+            help='Teacher model: local path, server URL, or API base URL (for remote)'
+        )
+
+        # --teacher_name: Model name for API calls (required for remote type)
+        # Examples: "gpt-4", "llama3.1", "claude-3-opus"
+        parser.add_argument(
+            '--teacher_name', 
+            type=str,  # Model name as string
+            default=None,  # None means use default
+            help='Model name for API (required for remote type): gpt-4, llama3.1, etc.'
+        )
+
+        # --teacher_api_key: API key for remote API authentication
+        # For OpenAI: sk-xxxxx, For Anthropic: sk-ant-xxxxx
+        parser.add_argument(
+            '--teacher_api_key', 
+            type=str,  # API key as string
+            default=None,  # None means no auth
+            help='API key for remote API authentication'
+        )
+
+        # --teacher_type: Type of teacher model source
+        # local: Load from local checkpoint file
+        # server: Connect to a local/remote server
+        # remote: Use remote API (OpenAI-compatible endpoint)
+        parser.add_argument(
+            '--teacher_type', 
+            type=str,  # Type name as string
+            choices=['local', 'server', 'remote'],  # Valid types
+            default='local',  # Default to local model
+            help='Teacher model source type: local (checkpoint), server (URL), or remote (API)'
+        )
+
+        # --distill_alpha: Weight for distillation loss (0.0-1.0)
+        # Higher values = more influence from teacher model
+        # 0.5 means equal weight for student and teacher losses
+        parser.add_argument(
+            '--distill_alpha', 
+            type=float,  # Must be a float
+            default=0.5,  # Default to equal weighting
+            help='Distillation loss weight (0.0-1.0, default: 0.5)'
+        )
+
+        # --distill_temperature: Temperature for soft label distillation
+        # Higher values = softer probability distributions
+        # Typical values: 1.0-10.0
+        parser.add_argument(
+            '--distill_temperature', 
+            type=float,  # Must be a float
+            default=2.0,  # Default temperature
+            help='Temperature for soft label distillation (default: 2.0)'
+        )
+
+        # --train_config: Path to training configuration file
+        # Can be JSON or YAML format, overrides default config
+        parser.add_argument(
+            '--train_config', 
+            type=str,  # Config path as string
+            default=None,  # None means use default config
+            help='Training config file path (JSON/YAML)'
+        )
+
+        # --dry_run: Flag to resolve configs without executing
+        # Useful for validating configuration before training
+        parser.add_argument(
+            '--dry_run', 
+            action='store_true',  # Boolean flag
+            help='Resolve configs and exit without running'
+        )
+
+        # --model_path: Path to pretrained model for preference training
+        # Used as the base model for DPO or RLHF fine-tuning
+        parser.add_argument(
+            '--model_path', 
+            type=str,  # Model path as string
+            default=None,  # None means train from scratch
+            help='Model path for preference training'
+        )
+
+        # -------------------------------------------------------------------------
+        # RUN MANAGEMENT ARGUMENTS (for action command)
+        # -------------------------------------------------------------------------
+        # --run_id: Unique identifier for cross-terminal tracking
+        # Allows controlling runs from different terminal sessions
+        parser.add_argument(
+            '--run_id', 
+            type=str,  # Run ID as string
+            default=None,  # None means auto-generate ID
+            help='Run ID for cross-terminal tracking/control (optional)'
+        )
+
+        # --run_name: Human-readable name for the run
+        # Used for display purposes and logging
+        parser.add_argument(
+            '--run_name', 
+            type=str,  # Run name as string
+            default=None,  # None means auto-generate name
+            help='Run name (optional)'
+        )
+
+        # --run_dir: Override default run directory
+        # Custom location for checkpoints and logs
+        parser.add_argument(
+            '--run_dir', 
+            type=str,  # Directory path as string
+            default=None,  # None means use default directory
+            help='Run directory override (optional)'
+        )
+
+        # --control_interval: Polling interval for run control
+        # How often to check for control signals (pause/resume/cancel)
+        parser.add_argument(
+            '--control_interval', 
+            type=float,  # Must be a float
+            default=0.5,  # Check every 0.5 seconds
+            help='Control polling interval seconds (run mode)'
+        )
+
+        # -------------------------------------------------------------------------
+        # BACKEND SERVICE ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --host: Host address for the backend service
+        # Use 0.0.0.0 for external access, 127.0.0.1 for local only
+        parser.add_argument(
+            '--host', 
+            type=str,  # Host as string
+            default='127.0.0.1',  # Default to localhost only
+            help='Backend service host'
+        )
+
+        # --port: Port number for the backend service
+        # Must be available and not used by other services
+        parser.add_argument(
+            '--port', 
+            type=int,  # Must be an integer
+            default=8000,  # Default to common API port
+            help='Backend service port'
+        )
+
+        # --workers: Number of worker processes
+        # More workers = higher throughput but more memory
+        parser.add_argument(
+            '--workers', 
+            type=int,  # Must be an integer
+            default=1,  # Single worker for simplicity
+            help='Number of worker processes for backend service'
+        )
+
+        # --max_concurrency: Maximum concurrent requests
+        # Limits simultaneous inferences to prevent OOM
+        parser.add_argument(
+            '--max_concurrency', 
+            type=int,  # Must be an integer
+            default=2,  # Conservative default for stability
+            help='Max concurrent requests for backend service'
+        )
+
+        # --request_timeout: Timeout for each request in seconds
+        # Long-running requests (streaming) may need higher values
+        parser.add_argument(
+            '--request_timeout', 
+            type=float,  # Must be a float
+            default=120.0,  # 2 minutes default timeout
+            help='Request timeout seconds for backend service'
+        )
+
+        # --serve_config: Path to backend service configuration file
+        # Contains model paths, API settings, and other options
+        parser.add_argument(
+            '--serve_config', 
+            type=str,  # Config path as string
+            default=None,  # None means use default config
+            help='Backend service config file path (JSON/YAML)'
+        )
+
+        # -------------------------------------------------------------------------
+        # OPSS INTEGRATION ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --disable_opss: Flag to disable OPSS integration
+        # By default, OPSS (MCP Plaza, Swarm, Orchestrator) is enabled
+        parser.add_argument(
+            '--disable_opss', 
+            action='store_true',  # Boolean flag
+            help='Disable OPSS integration (MCP Plaza, Swarm, Orchestrator) - enabled by default'
+        )
+
+        # --disable_agent_intercept: Flag to disable agent XML interception
+        # By default, agent XML pattern interception is enabled
+        parser.add_argument(
+            '--disable_agent_intercept', 
+            action='store_true',  # Boolean flag
+            help='Disable agent XML pattern interception - enabled by default'
+        )
+
+        # -------------------------------------------------------------------------
+        # BACKEND SERVICE AUTHENTICATION ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --api_key: API key for service authentication
+        # Required for protected endpoints if authentication is enabled
+        parser.add_argument(
+            '--api_key', 
+            type=str,  # API key as string
+            default=None,  # None means no authentication
+            help='API key for backend service authentication'
+        )
+
+        # --cors_origins: CORS allowed origins
+        # Comma-separated list of domains for cross-origin requests
+        parser.add_argument(
+            '--cors_origins', 
+            type=str,  # Origins as string
+            default='*',  # Allow all origins by default
+            help='CORS allowed origins (comma-separated)'
+        )
+
+        # -------------------------------------------------------------------------
+        # TEST COMMAND ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --quick: Flag to run quick check (stages 1-5 only)
+        # Skips forward pass, generation, and optimization checks
+        parser.add_argument(
+            '--quick', 
+            action='store_true',  # Boolean flag
+            help='Run quick check (stages 1-5 only) (for test command)'
+        )
+
+        # --stage: Comma-separated list of stages to run
+        # Allows running specific stages instead of all
+        parser.add_argument(
+            '--stage', 
+            type=str,  # Stage numbers as string
+            default=None,  # None means run all stages
+            help='Comma-separated stages to run (e.g., "1,2,3") (for test command)'
+        )
+
+        # -------------------------------------------------------------------------
+        # LOGGING ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --log_level: Logging verbosity level
+        # DEBUG: Most verbose, INFO: Normal, WARNING: Issues only, ERROR: Errors only
+        parser.add_argument(
+            '--log_level', 
+            type=str,  # Level name as string
+            default='INFO',  # Default to normal logging
+            choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'],  # Valid levels
+            help='Logging level'
+        )
+
+        # -------------------------------------------------------------------------
+        # PLXS (Xi Studio) ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --plxs_port: Port for PLxS backend API server
+        # Default is 3140
+        parser.add_argument(
+            '--plxs_port',
+            type=int,
+            default=3140,
+            help='Port for PLxS backend API server (for plxs command)'
+        )
+
+        # --frontend_port: Port for PLxS frontend (Next.js)
+        # Default is 3000
+        parser.add_argument(
+            '--frontend_port',
+            type=int,
+            default=3000,
+            help='Port for PLxS frontend (for plxs command)'
+        )
+
+        # --no_frontend: Flag to start only the backend server
+        # Useful for development or when frontend is run separately
+        parser.add_argument(
+            '--no_frontend',
+            action='store_true',
+            help='Start only the backend server without frontend (for plxs command)'
+        )
+
+        # -------------------------------------------------------------------------
+        # PUBLISH COMMAND ARGUMENTS
+        # -------------------------------------------------------------------------
+        # --publish_action: YvReActAction to perform for publishing
+        # full: Run full pipeline (export, build, push)
+        # export: Export model weights and configs only
+        # build: Build Docker image only
+        # push: Push image to registry only
+        # validate: Validate publish configuration
+        # info: Show publish configuration info
+        # list: List available publish templates
+        parser.add_argument(
+            '--publish_action',
+            type=str,
+            choices=['full', 'export', 'build', 'push', 'validate', 'info', 'list'],
+            default='full',
+            help='Publish action: full, export, build, push, validate, info, list (default: full)'
+        )
+
+        # --model_size: Model size for publishing
+        # Must match available model sizes: 0.5B, 1B, 7B, 14B, 72B, 671B, 1T
+        parser.add_argument(
+            '--publish_model_size',
+            type=str,
+            default=None,
+            help='Model size for publishing: 0.5B, 1B, 7B, 14B, 72B, 671B, 1T'
+        )
+
+        # --model_path: Path to model checkpoint for publishing
+        # Can be safetensors, pytorch, or checkpoint directory
+        parser.add_argument(
+            '--publish_model_path',
+            type=str,
+            default=None,
+            help='Path to model checkpoint for publishing'
+        )
+
+        # --output_dir: Output directory for exported/published artifacts
+        parser.add_argument(
+            '--publish_output_dir',
+            type=str,
+            default=None,
+            help='Output directory for publish artifacts'
+        )
+
+        # --registry: Container registry URL for pushing images
+        # Supported: docker.io, ghcr.io, nvcr.io, azurecr.io, gcr.io
+        parser.add_argument(
+            '--publish_registry',
+            type=str,
+            default='docker.io',
+            help='Container registry URL (default: docker.io)'
+        )
+
+        # --registry_namespace: Namespace (user/org) on the registry
+        parser.add_argument(
+            '--publish_registry_namespace',
+            type=str,
+            default=None,
+            help='Registry namespace (user or organization name)'
+        )
+
+        # --registry_repo: Repository name for the image
+        parser.add_argument(
+            '--publish_registry_repo',
+            type=str,
+            default=None,
+            help='Repository name for the image'
+        )
+
+        # --registry_tag: Tag for the image (default: latest)
+        parser.add_argument(
+            '--publish_registry_tag',
+            type=str,
+            default='latest',
+            help='Image tag (default: latest)'
+        )
+
+        # --username: Username for registry authentication
+        parser.add_argument(
+            '--publish_username',
+            type=str,
+            default=None,
+            help='Username for registry authentication'
+        )
+
+        # --password: Password/token for registry authentication
+        parser.add_argument(
+            '--publish_password',
+            type=str,
+            default=None,
+            help='Password or token for registry authentication'
+        )
+
+        # --template: Docker image template to use
+        # default: Standard image with all dependencies
+        # minimal: Minimal image with just inference engine
+        # gpu: GPU-optimized image with CUDA support
+        parser.add_argument(
+            '--publish_template',
+            type=str,
+            choices=['default', 'minimal', 'gpu'],
+            default='default',
+            help='Docker image template: default, minimal, gpu (default: default)'
+        )
+
+        # --export_format: Format for exporting model weights
+        # safetensors: SafeTensor format (recommended, secure)
+        # pytorch: PyTorch format
+        parser.add_argument(
+            '--publish_export_format',
+            type=str,
+            choices=['safetensors', 'pytorch'],
+            default='safetensors',
+            help='Model export format: safetensors, pytorch (default: safetensors)'
+        )
+
+        # --export_quantize: Enable quantization on export
+        parser.add_argument(
+            '--publish_export_quantize',
+            action='store_true',
+            help='Export model with quantization'
+        )
+
+        # --quant_bits: Quantization bits when --publish_export_quantize is set
+        parser.add_argument(
+            '--publish_quant_bits',
+            type=int,
+            choices=[2, 4, 8],
+            default=4,
+            help='Quantization bits: 2, 4, 8 (default: 4)'
+        )
+
+        # --base_image: Base Docker image to use
+        parser.add_argument(
+            '--publish_base_image',
+            type=str,
+            default=None,
+            help='Base Docker image for building (default: auto-selected based on template)'
+        )
+
+        # --env_vars: Environment variables for the Docker image
+        # Format: KEY1=VALUE1,KEY2=VALUE2
+        parser.add_argument(
+            '--publish_env_vars',
+            type=str,
+            default=None,
+            help='Environment variables for Docker image (format: KEY1=VALUE1,KEY2=VALUE2)'
+        )
+
+        # --port: Port for the inference server inside Docker
+        parser.add_argument(
+            '--publish_port',
+            type=int,
+            default=8000,
+            help='Inference server port inside Docker (default: 8000)'
+        )
+
+        # --health_check: Enable health check in Docker
+        parser.add_argument(
+            '--publish_health_check',
+            action='store_true',
+            default=True,
+            help='Enable health check in Docker image (default: True)'
+        )
+
+        # --no_health_check: Disable health check in Docker
+        parser.add_argument(
+            '--publish_no_health_check',
+            action='store_true',
+            help='Disable health check in Docker image'
+        )
+
+        # --retry_count: Number of retries for pushing to registry
+        parser.add_argument(
+            '--publish_retry_count',
+            type=int,
+            default=3,
+            help='Number of retries for registry push (default: 3)'
+        )
+
+        # --retry_delay: Delay between retries in seconds
+        parser.add_argument(
+            '--publish_retry_delay',
+            type=int,
+            default=5,
+            help='Delay between retries in seconds (default: 5)'
+        )
+
+        # --metadata_name: Model name for metadata
+        parser.add_argument(
+            '--publish_metadata_name',
+            type=str,
+            default=None,
+            help='Model name for metadata'
+        )
+
+        # --metadata_version: Model version for metadata
+        parser.add_argument(
+            '--publish_metadata_version',
+            type=str,
+            default='1.0.0',
+            help='Model version for metadata (default: 1.0.0)'
+        )
+
+        # --metadata_description: Model description for metadata
+        parser.add_argument(
+            '--publish_metadata_description',
+            type=str,
+            default=None,
+            help='Model description for metadata'
+        )
+
+        # --metadata_author: Model author for metadata
+        parser.add_argument(
+            '--publish_metadata_author',
+            type=str,
+            default=None,
+            help='Model author for metadata'
+        )
+
+        # --metadata_license: Model license for metadata
+        parser.add_argument(
+            '--publish_metadata_license',
+            type=str,
+            default='Apache-2.0',
+            help='Model license for metadata (default: Apache-2.0)'
+        )
+
+        # --generate_checksum: Generate checksum files for published artifacts
+        parser.add_argument(
+            '--publish_generate_checksum',
+            action='store_true',
+            default=True,
+            help='Generate checksum files (default: True)'
+        )
+
+        # --no_checksum: Skip checksum generation
+        parser.add_argument(
+            '--publish_no_checksum',
+            action='store_true',
+            help='Skip checksum generation'
+        )
+
+        # --checksum_algorithms: Comma-separated list of checksum algorithms
+        parser.add_argument(
+            '--publish_checksum_algorithms',
+            type=str,
+            default='sha256,md5',
+            help='Checksum algorithms (default: sha256,md5)'
+        )
+
+        # --config: Path to publish config file (JSON/YAML)
+        parser.add_argument(
+            '--publish_config',
+            type=str,
+            default=None,
+            help='Publish configuration file path (JSON/YAML)'
+        )
+
+        # =========================================================================
+        # PARSE ARGUMENTS
+        # =========================================================================
+        # parse_known_args() returns two values:
+        # - args: Namespace with all known arguments
+        # - unknown: List of unknown arguments (for pass-through to sub-commands)
+        # This allows the action command to receive additional arguments
+        args, unknown = parser.parse_known_args()
+
+        # =========================================================================
+        # COMMAND DISPATCH
+        # =========================================================================
+
+        # -------------------------------------------------------------------------
+        # HELP COMMAND (default when no command specified)
+        # -------------------------------------------------------------------------
+        # Display comprehensive usage documentation
+        # This is the default behavior when no command is provided
+        if args.command is None or args.command == 'help':
+            # Import the help module and display usage information
+            from tools.help import PiscesLxHelpCli
+            PiscesLxHelpCli.help()
+
+        # -------------------------------------------------------------------------
+        # TRAIN COMMAND
+        # -------------------------------------------------------------------------
+        # Start model training with the specified configuration
+        # Supports standard training, quantization, RLHF, and LoRA
+        # Binds to action management system in foreground mode
+        elif args.command == 'train':
+            run_id = getattr(args, 'run_id', None) or None
+            run_dir = getattr(args, 'run_dir', None) or None
+
+            # Auto-launch with torchrun for distributed training across multiple GPUs
+            detected_gpu_count = 0
+            if "LOCAL_RANK" not in os.environ:
+                try:
+                    import torch
+                    detected_gpu_count = int(torch.cuda.device_count())
+                except Exception:
+                    detected_gpu_count = 0
+            if "LOCAL_RANK" not in os.environ and (args.distributed or args.world_size > 1 or detected_gpu_count > 1):
+                n_gpu = args.world_size if args.world_size > 0 else detected_gpu_count
+                if n_gpu > 1:
+                    import subprocess
+                    env = os.environ.copy()
+                    master_addr = env.get("MASTER_ADDR", "127.0.0.1")
+                    master_port = env.get("MASTER_PORT", "29500")
+                    nnodes = int(env.get("NNODES", "1") or 1)
+                    node_rank = int(env.get("NODE_RANK", env.get("GROUP_RANK", "0")) or 0)
+                    env["MASTER_ADDR"] = master_addr
+                    env["MASTER_PORT"] = master_port
+                    if nnodes <= 1:
+                        env.setdefault("NCCL_SOCKET_IFNAME", "lo")
+                        env.setdefault("GLOO_SOCKET_IFNAME", "lo")
+                    sub_argv = list(sys.argv)
+                    if "--distributed" not in sub_argv:
+                        sub_argv.insert(sub_argv.index("train") + 1, "--distributed")
+                    cmd = [sys.executable, "-m", "torch.distributed.run",
+                           f"--nproc_per_node={n_gpu}",
+                           f"--nnodes={nnodes}",
+                           f"--master_addr={master_addr}",
+                           f"--master_port={master_port}",
+                           f"--node_rank={node_rank}"] + sub_argv
+                    PiscesLxManageCli._get_logger().info(
+                        f"Launching distributed training on {n_gpu} GPUs via torchrun "
+                        f"(nnodes={nnodes}, node_rank={node_rank}, master={master_addr}:{master_port})"
+                    )
+                    proc = subprocess.run(cmd, env=env)
+                    sys.exit(proc.returncode)
+                elif args.distributed or detected_gpu_count > 1:
+                    PiscesLxManageCli._get_logger().warning(
+                        f"Distributed training requested but only detected {detected_gpu_count} CUDA GPU(s); "
+                        "falling back to single-process execution."
+                    )
+
+            if not run_id:
+                from opss.run.id_factory import PiscesLxRunIdFactory
+                run_id = PiscesLxRunIdFactory(prefix="train").new_id()
+
+            from opss.run.store import PiscesLxRunStore
+            from opss.run.controller import PiscesLxRunController
+
+            store = PiscesLxRunStore(run_id, run_dir=run_dir)
+            controller = PiscesLxRunController(store)
+
+            spec = {
+                "run_id": run_id,
+                "run_name": getattr(args, 'run_name', None) or "",
+                "type": "train",
+                "entry": "manage.py train",
+                "args": {"base": vars(args) if hasattr(args, "__dict__") else {}},
+            }
+            controller.init_run(spec, state={"status": "running", "phase": "foreground", "pid": os.getpid()})
+
+            try:
+                from tools.train.orchestrator import PiscesLxTrainOrchestrator
+                orchestrator = PiscesLxTrainOrchestrator(args)
+                orchestrator.run(args)
+                controller.update_state({"status": "completed", "phase": "finished"})
+                controller.append_event("process_exit", payload={"exit_code": 0})
+            except KeyboardInterrupt:
+                controller.update_state({"status": "interrupted", "phase": "finished"})
+                controller.append_event("process_interrupted", level="warning", payload={})
+                raise
+            except Exception as e:
+                controller.update_state({"status": "failed", "phase": "finished"})
+                controller.append_event("process_error", level="error", payload={"error": str(e)})
+                raise
+
+        # -------------------------------------------------------------------------
+        # SERVE COMMAND
+        # -------------------------------------------------------------------------
+        # Start the OpenAI-compatible backend inference service
+        # Provides REST API endpoints for model inference
+        elif args.command == 'serve':
+            # Import the backend server class
+            from tools.infer.server import PiscesLxBackendServer
+
+            # Create server instance with parsed arguments
+            server = PiscesLxBackendServer(args)
+
+            # Start the server (blocking call)
+            server.run()
+
+        # -------------------------------------------------------------------------
+        # ACTION COMMAND
+        # -------------------------------------------------------------------------
+        # Manage background training/inference processes
+        # Supports submit, status, control, and log operations
+        elif args.command == 'action':
+            # Import the run CLI class for action sub-commands
+            from opss.run import PiscesLxRunCLI
+
+            # Create CLI instance
+            cli = PiscesLxRunCLI()
+
+            # Build argv for the sub-command
+            # Try to get arguments from sys.argv first, fall back to unknown
+            argv = []
+            try:
+                # Get all arguments after 'action' command
+                argv = list(sys.argv[2:])
+            except Exception:
+                # Fall back to unknown arguments from parser
+                argv = list(unknown or [])
+
+            # Execute the CLI and exit with its return code
+            # The int() conversion ensures proper exit code type
+            sys.exit(int(cli.run(args, argv)))
+
+        # -------------------------------------------------------------------------
+        # TEST COMMAND
+        # -------------------------------------------------------------------------
+        # Validate project health with 8-stage comprehensive check
+        # Checks environment, structure, imports, config, model, forward, generation, optimization
+        elif args.command == 'test':
+            # Import the test function
+            from tools.test import PiscesLxTestCli
+
+            # Run project health check
+            PiscesLxTestCli.test(args)
+
+        # -------------------------------------------------------------------------
+        # MONITOR COMMAND
+        # -------------------------------------------------------------------------
+        # Start real-time system monitoring dashboard
+        # Displays GPU usage, memory, training progress, etc.
+        elif args.command == 'monitor':
+            # Import the monitor orchestrator class
+            from tools.monitor.orchestrator import PiscesLxToolsMonitorOrchestrator
+
+            # Create orchestrator instance with parsed arguments
+            orchestrator = PiscesLxToolsMonitorOrchestrator(args)
+
+            # Start the monitoring dashboard
+            orchestrator.run(args)
+
+        # -------------------------------------------------------------------------
+        # DOWNLOAD COMMAND
+        # -------------------------------------------------------------------------
+        # Download and prepare training datasets
+        # Downloads from configured sources and optimizes storage
+        elif args.command == 'download':
+            # Import the dataset download tool class
+            from tools.data.download import PiscesLxToolsDataDatasetDownload
+
+            # Create tool instance
+            tool = PiscesLxToolsDataDatasetDownload()
+
+            # Download datasets with specified sample limit
+            tool.download(args.max_samples)
+
+            # Optimize storage by removing redundant data
+            # max_keep limits the number of cached samples
+            tool.optimize(max_keep=5000)
+
+        # -------------------------------------------------------------------------
+        # SETUP COMMAND
+        # -------------------------------------------------------------------------
+        # Initialize environment and install dependencies
+        # Sets up Python packages, CUDA, and other requirements
+        elif args.command == 'setup':
+            # Import the setup function
+            from tools.setup import PiscesLxSetupCli
+
+            # Run environment setup
+            PiscesLxSetupCli.setup(args)
+
+        # -------------------------------------------------------------------------
+        # BENCHMARK COMMAND
+        # -------------------------------------------------------------------------
+        # Evaluate model performance on standard benchmarks
+        # Supports MMLU and other evaluation datasets
+        elif args.command == 'benchmark':
+            # Import the benchmark orchestrator class
+            from tools.benchmark.orchestrator import PiscesLxToolsBenchmarkOrchestrator
+
+            # Create orchestrator instance with parsed arguments
+            orchestrator = PiscesLxToolsBenchmarkOrchestrator(args)
+
+            # Check if running self-test mode
+            if args.selftest:
+                # Run internal benchmark tests for validation
+                orchestrator.run_tests(args)
+            else:
+                # Run standard benchmark evaluation
+                orchestrator.run(args)
+
+        # -------------------------------------------------------------------------
+        # DEV COMMAND
+        # -------------------------------------------------------------------------
+        # Manage developer mode for training
+        # Supports enable, disable, and status operations
+        elif args.command == 'dev':
+            dev_action = unknown[0] if unknown else 'status'
+
+            from tools.dev.manager import PiscesLxDevModeManager
+
+            manager = PiscesLxDevModeManager.get_instance()
+
+            if dev_action == 'enable':
+                manager.enable()
+            elif dev_action == 'disable':
+                manager.disable()
+            elif dev_action == 'status':
+                status = manager.get_status()
+                print(json.dumps({
+                    "enabled": status['enabled'],
+                    "paused": status['paused'],
+                    "attached": status['attached'],
+                    "ui_active": status['ui_active'],
+                    "settings_path": status['settings_path']
+                }, indent=2))
+
+            else:
+                print(json.dumps({
+                    "error": f"Unknown dev action: {dev_action}",
+                    "usage": "python manage.py dev [enable|disable|status]"
+                }, indent=2))
+                sys.exit(1)
+
+        # -------------------------------------------------------------------------
+        # CACHE COMMAND
+        # -------------------------------------------------------------------------
+        elif args.command == 'cache':
+            action = unknown[0] if unknown else 'status'
+
+            from tools.cache.manager import PiscesLxCacheManager
+
+            manager = PiscesLxCacheManager()
+
+            if action == 'status' or action == '':
+                manager.status()
+            elif action == 'clean':
+                manager.clean()
+            else:
+                print(f"Unknown cache action: {action}")
+                print("Usage: python manage.py cache [status|clean]")
+                sys.exit(1)
+
+        # -------------------------------------------------------------------------
+        # PLXS COMMAND
+        # -------------------------------------------------------------------------
+        # Start Xi Studio (graphical workstation for PiscesLx)
+        # Launches both the backend API server (port 3140) and the frontend
+        elif args.command == 'plxs':
+            from xi.xsc import XiServer
+            from xi.xsc import XiLauncher
+
+            plxs_port = getattr(args, 'plxs_port', 3140)
+            frontend_port = getattr(args, 'frontend_port', 3000)
+            no_frontend = getattr(args, 'no_frontend', False)
+
+            launcher = XiLauncher(
+                xi_port=plxs_port,
+                frontend_port=frontend_port,
+                root_dir=Path(ROOT)
+            )
+
+            if no_frontend:
+                server = XiServer(port=plxs_port, root_dir=Path(ROOT))
+                server.run(host=args.host if hasattr(args, 'host') else "127.0.0.1")
+            else:
+                launcher.run()
+
+        # -------------------------------------------------------------------------
+        # PUBLISH COMMAND
+        # -------------------------------------------------------------------------
+        # Package and publish models as Docker images with inference engine
+        elif args.command == 'publish':
+            from tools.publish.runner import PiscesLxToolsPublish
+
+            runner = PiscesLxToolsPublish(args)
+
+            action = getattr(args, 'publish_action', 'full')
+
+            if action == 'export':
+                result = runner.run_export()
+            elif action == 'build':
+                result = runner.run_build()
+            elif action == 'push':
+                result = runner.run_publish()
+            elif action == 'validate':
+                result = runner.run_validate()
+                if result.get('errors'):
+                    print("Validation errors:")
+                    for err in result['errors']:
+                        print(f"  - {err}")
+                else:
+                    print("Validation passed!")
+            elif action == 'info':
+                import json
+                result = runner.run_info()
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            elif action == 'list':
+                import json
+                result = runner.run_list()
+                print(json.dumps(result, indent=2, ensure_ascii=False))
+            else:
+                result = runner.run()
+                runner.print_summary()
+
+        # -------------------------------------------------------------------------
+        # UNKNOWN COMMAND (fallback)
+        # -------------------------------------------------------------------------
+        # Handle any command that wasn't recognized
+        # This should not happen due to argparse choices validation
+        else:
+            # Log the error with the unrecognized command
+            PiscesLxManageCli._get_logger().error(f"Unknown command: {args.command}")
+
+            # Exit with error code
+            sys.exit(1)

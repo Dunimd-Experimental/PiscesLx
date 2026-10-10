@@ -143,49 +143,6 @@ from .config import PiscesLxTrainingConfig
 from utils.device import PiscesLxDeviceResolver
 from utils.paths import PiscesLxPaths
 _LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Train"), enable_file=True)
-
-
-def setup_training_device(local_rank: int = -1, device_pref: str = "auto") -> torch.device:
-    """
-    Setup training device using unified System Monitor.
-    
-    Args:
-        local_rank: Local rank for distributed training
-        device_pref: Device preference ("auto", "cuda", "cpu")
-    
-    Returns:
-        torch.device: Selected device
-    """
-    import torch
-    
-    try:
-        monitor = PiscesLxSystemMonitor()
-        if device_pref == "auto":
-            if torch.cuda.is_available():
-                memory_info = monitor.get_memory_info()
-                if memory_info.usage_percent > 90:
-                    device = torch.device("cpu")
-                    _LOG.info("Training mode: cpu (high memory usage)")
-                else:
-                    if local_rank >= 0:
-                        device = PiscesLxDeviceResolver.resolve(None, local_rank=local_rank)
-                        torch.cuda.set_device(device)
-                    else:
-                        device = PiscesLxDeviceResolver.default()
-                _LOG.info(f"Training device: {device}")
-                return device
-    except Exception as e:
-        _LOG.warning(f"System Monitor failed, falling back: {e}")
-    
-    if torch.cuda.is_available():
-        device = PiscesLxDeviceResolver.resolve(None, local_rank=local_rank)
-        torch.cuda.set_device(device)
-    else:
-        device = torch.device(PiscesLxDeviceResolver.FALLBACK)
-    
-    return device
-
-
 class PiscesLxTrainingOperator(object):
     """
     PiscesLx Flagship Training Engine
@@ -259,7 +216,7 @@ class PiscesLxTrainingOperator(object):
         self._distill_loss_fn = None
         self._distill_model_vocab_size = 0
 
-        self.device = setup_training_device(
+        self.device = PiscesLxTrainingOperator.setup_training_device(
             local_rank=getattr(config, 'local_rank', -1),
             device_pref=config.device
         )
@@ -2987,3 +2944,45 @@ class PiscesLxTrainingOperator(object):
             _LOG.warning(f"Failed to parse patience in should_stop_early: {e}. Returning False.")
             return False
         return self.early_stop_counter >= patience
+
+    @staticmethod
+    def setup_training_device(local_rank: int = -1, device_pref: str = "auto") -> torch.device:
+        """
+        Setup training device using unified System Monitor.
+
+        Args:
+            local_rank: Local rank for distributed training
+            device_pref: Device preference ("auto", "cuda", "cpu")
+
+        Returns:
+            torch.device: Selected device
+        """
+        import torch
+
+        try:
+            monitor = PiscesLxSystemMonitor()
+            if device_pref == "auto":
+                if torch.cuda.is_available():
+                    memory_info = monitor.get_memory_info()
+                    if memory_info.usage_percent > 90:
+                        device = torch.device("cpu")
+                        _LOG.info("Training mode: cpu (high memory usage)")
+                    else:
+                        if local_rank >= 0:
+                            device = PiscesLxDeviceResolver.resolve(None, local_rank=local_rank)
+                            torch.cuda.set_device(device)
+                        else:
+                            device = PiscesLxDeviceResolver.default()
+                    _LOG.info(f"Training device: {device}")
+                    return device
+        except Exception as e:
+            _LOG.warning(f"System Monitor failed, falling back: {e}")
+
+        if torch.cuda.is_available():
+            device = PiscesLxDeviceResolver.resolve(None, local_rank=local_rank)
+            torch.cuda.set_device(device)
+        else:
+            device = torch.device(PiscesLxDeviceResolver.FALLBACK)
+
+        return device
+

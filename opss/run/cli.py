@@ -36,70 +36,6 @@ from .attacher import PiscesLxRunAttacher
 from .controller import PiscesLxRunController
 from .id_factory import PiscesLxRunIdFactory
 from .store import PiscesLxRunStore
-
-
-def _format_time(ts: str) -> str:
-    if not ts:
-        return "-"
-    try:
-        if "T" in ts:
-            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            return dt.strftime("%m-%d %H:%M")
-        return ts[:16] if len(ts) >= 16 else ts
-    except Exception:
-        return ts[:16] if len(ts) >= 16 else ts
-
-
-def _status_icon(status: str) -> str:
-    icons = {
-        "running": "*",
-        "pending": "o",
-        "paused": "~",
-        "completed": "+",
-        "failed": "x",
-        "cancelled": "-",
-        "dead": "!",
-    }
-    return icons.get(status, ".")
-
-
-def _status_color(status: str) -> str:
-    colors = {
-        "running": "\033[92m",
-        "pending": "\033[93m",
-        "paused": "\033[94m",
-        "completed": "\033[90m",
-        "failed": "\033[91m",
-        "cancelled": "\033[90m",
-        "dead": "\033[91m",
-    }
-    return colors.get(status, "")
-
-
-def _reset_color() -> str:
-    return "\033[0m"
-
-
-def _print_success(msg: str):
-    print(f"\033[92m+\033[0m {msg}")
-
-
-def _print_error(msg: str):
-    print(f"\033[91mx\033[0m {msg}")
-
-
-def _print_warning(msg: str):
-    print(f"\033[93m!\033[0m {msg}")
-
-
-def _print_info(msg: str):
-    print(f"  {msg}")
-
-
-def _print_hint(msg: str):
-    print(f"\033[90mHint: {msg}\033[0m")
-
-
 class PiscesLxRunCLI:
     def __init__(self):
         self._logger = None
@@ -430,7 +366,7 @@ class PiscesLxRunCLI:
             )
         except Exception as e:
             print()
-            _print_error(f"Failed to allocate GPUs: {e}")
+            PiscesLxRunCLI._print_error(f"Failed to allocate GPUs: {e}")
             print()
             return 2
         
@@ -449,19 +385,19 @@ class PiscesLxRunCLI:
         if daemon:
             pid = controller.spawn(cmd, daemon=True, env=env)
             print()
-            _print_success("Task submitted (background)")
+            PiscesLxRunCLI._print_success("Task submitted (background)")
             print()
-            _print_info(f"Run ID: {store.run_id}")
-            _print_info(f"PID:    {pid}")
+            PiscesLxRunCLI._print_info(f"Run ID: {store.run_id}")
+            PiscesLxRunCLI._print_info(f"PID:    {pid}")
             if allocated_gpus:
-                _print_info(f"GPUs:   {cuda_visible_devices}")
+                PiscesLxRunCLI._print_info(f"GPUs:   {cuda_visible_devices}")
             if host and port:
-                _print_info(f"URL:    http://{host}:{port}")
-            _print_info(f"Log:    {stdout_path}")
+                PiscesLxRunCLI._print_info(f"URL:    http://{host}:{port}")
+            PiscesLxRunCLI._print_info(f"Log:    {stdout_path}")
             print()
-            _print_hint(f"python manage.py action status {store.run_id}")
-            _print_hint(f"python manage.py action logs {store.run_id}")
-            _print_hint(f"python manage.py action control {store.run_id} stop")
+            PiscesLxRunCLI._print_hint(f"python manage.py action status {store.run_id}")
+            PiscesLxRunCLI._print_hint(f"python manage.py action logs {store.run_id}")
+            PiscesLxRunCLI._print_hint(f"python manage.py action control {store.run_id} stop")
             print()
             return 0
 
@@ -481,14 +417,14 @@ class PiscesLxRunCLI:
         controller.append_event("process_spawned", payload={"pid": int(p.pid), "daemon": False, "gpus": allocated_gpus})
 
         print()
-        _print_success("Task started (foreground)")
+        PiscesLxRunCLI._print_success("Task started (foreground)")
         print()
-        _print_info(f"Run ID: {store.run_id}")
-        _print_info(f"PID:    {p.pid}")
+        PiscesLxRunCLI._print_info(f"Run ID: {store.run_id}")
+        PiscesLxRunCLI._print_info(f"PID:    {p.pid}")
         if allocated_gpus:
-            _print_info(f"GPUs:   {cuda_visible_devices}")
+            PiscesLxRunCLI._print_info(f"GPUs:   {cuda_visible_devices}")
         print()
-        _print_warning("Press Ctrl+C to stop")
+        PiscesLxRunCLI._print_warning("Press Ctrl+C to stop")
         print()
 
         with open(stdout_path, "a", encoding="utf-8") as log:
@@ -510,11 +446,11 @@ class PiscesLxRunCLI:
         controller.release_gpus()
         print()
         if rc == 0:
-            _print_success("Task completed")
+            PiscesLxRunCLI._print_success("Task completed")
             controller.update_state({"status": "completed", "phase": "finished", "exit_code": rc})
             controller.append_event("process_exit", payload={"exit_code": rc})
         else:
-            _print_error(f"Task failed (exit code: {rc})")
+            PiscesLxRunCLI._print_error(f"Task failed (exit code: {rc})")
             controller.update_state({"status": "failed", "phase": "finished", "exit_code": rc})
             controller.append_event("process_exit", level="error", payload={"exit_code": rc})
         print()
@@ -525,7 +461,7 @@ class PiscesLxRunCLI:
         state = store.read_state()
         if not state:
             print()
-            _print_error(f"Task not found: {ns.run_id}")
+            PiscesLxRunCLI._print_error(f"Task not found: {ns.run_id}")
             print()
             return 2
         
@@ -542,17 +478,17 @@ class PiscesLxRunCLI:
                 controller.append_event("process_lost", level="warning", payload={"pid": pid})
         
         status_val = state.get("status", "-")
-        icon = _status_icon(status_val)
-        color = _status_color(status_val)
-        reset = _reset_color()
+        icon = PiscesLxRunCLI._status_icon(status_val)
+        color = PiscesLxRunCLI._status_color(status_val)
+        reset = PiscesLxRunCLI._reset_color()
         
         print()
         print(f"Task: {ns.run_id}")
         print("+- " + f"Status: {color}{icon} {status_val}{reset}")
         print("+- " + f"Phase:  {state.get('phase', '-')}")
         print("+- " + f"PID:    {state.get('pid', '-')}")
-        print("+- " + f"Created: {_format_time(state.get('created_at', ''))}")
-        print("`- " + f"Updated: {_format_time(state.get('updated_at', ''))}")
+        print("+- " + f"Created: {PiscesLxRunCLI._format_time(state.get('created_at', ''))}")
+        print("`- " + f"Updated: {PiscesLxRunCLI._format_time(state.get('updated_at', ''))}")
         print()
         return 0
 
@@ -560,7 +496,7 @@ class PiscesLxRunCLI:
         run_dir = ns.run_dir or ".pisceslx/runs"
         if not os.path.exists(run_dir):
             print()
-            _print_info("No tasks found")
+            PiscesLxRunCLI._print_info("No tasks found")
             print()
             return 0
         
@@ -593,11 +529,11 @@ class PiscesLxRunCLI:
         if not tasks:
             print()
             if ns.running:
-                _print_info("No running tasks")
+                PiscesLxRunCLI._print_info("No running tasks")
             elif ns.all:
-                _print_info("No tasks found")
+                PiscesLxRunCLI._print_info("No tasks found")
             else:
-                _print_info("No active tasks (use --all to see all)")
+                PiscesLxRunCLI._print_info("No active tasks (use --all to see all)")
             print()
             return 0
         
@@ -614,11 +550,11 @@ class PiscesLxRunCLI:
             status_val = task["status"]
             phase = task["phase"] or "-"
             pid = str(task["pid"]) if task["pid"] else "-"
-            created = _format_time(task["created_at"])
+            created = PiscesLxRunCLI._format_time(task["created_at"])
             
-            icon = _status_icon(status_val)
-            color = _status_color(status_val)
-            reset = _reset_color()
+            icon = PiscesLxRunCLI._status_icon(status_val)
+            color = PiscesLxRunCLI._status_color(status_val)
+            reset = PiscesLxRunCLI._reset_color()
             
             status_display = f"{color}{icon} {status_val}{reset}"
             
@@ -642,7 +578,7 @@ class PiscesLxRunCLI:
         p = store.path("stdout")
         if not os.path.exists(p):
             print()
-            _print_info("No logs available")
+            PiscesLxRunCLI._print_info("No logs available")
             print()
             return 0
         with open(p, "r", encoding="utf-8", errors="replace") as f:
@@ -667,53 +603,53 @@ class PiscesLxRunCLI:
         
         if action == "kill":
             print()
-            _print_warning(f"Force killing process {pid} (task: {ns.run_id})")
+            PiscesLxRunCLI._print_warning(f"Force killing process {pid} (task: {ns.run_id})")
             ok = controller.kill_pid(pid, force=True)
             controller.append_event("control_kill", payload={"pid": pid, "ok": bool(ok)})
             if ok:
                 controller.update_state({"status": "cancelled", "phase": "killed"})
-                _print_success("Process terminated")
-                _print_warning("Unsaved progress will be lost")
+                PiscesLxRunCLI._print_success("Process terminated")
+                PiscesLxRunCLI._print_warning("Unsaved progress will be lost")
             else:
-                _print_error("Failed to terminate process")
+                PiscesLxRunCLI._print_error("Failed to terminate process")
             print()
             return 0 if ok else 2
 
         if action == "stop":
             controller.enqueue_control(action, payload={})
             print()
-            _print_success(f"Sent stop signal to task {ns.run_id}")
+            PiscesLxRunCLI._print_success(f"Sent stop signal to task {ns.run_id}")
             if pid:
-                _print_info(f"PID: {pid}")
-            _print_info("Task will save checkpoint and exit gracefully")
+                PiscesLxRunCLI._print_info(f"PID: {pid}")
+            PiscesLxRunCLI._print_info("Task will save checkpoint and exit gracefully")
             print()
             return 0
 
         if action == "pause":
             controller.enqueue_control(action, payload={})
             print()
-            _print_success(f"Sent pause signal to task {ns.run_id}")
-            _print_hint("Use resume to continue the task")
+            PiscesLxRunCLI._print_success(f"Sent pause signal to task {ns.run_id}")
+            PiscesLxRunCLI._print_hint("Use resume to continue the task")
             print()
             return 0
 
         if action == "resume":
             controller.enqueue_control(action, payload={})
             print()
-            _print_success(f"Sent resume signal to task {ns.run_id}")
+            PiscesLxRunCLI._print_success(f"Sent resume signal to task {ns.run_id}")
             print()
             return 0
 
         if action == "save_ckpt_now":
             controller.enqueue_control(action, payload={})
             print()
-            _print_success(f"Sent save_ckpt_now signal to task {ns.run_id}")
+            PiscesLxRunCLI._print_success(f"Sent save_ckpt_now signal to task {ns.run_id}")
             print()
             return 0
 
         controller.enqueue_control(action, payload={})
         print()
-        _print_success(f"Sent {action} signal to task {ns.run_id}")
+        PiscesLxRunCLI._print_success(f"Sent {action} signal to task {ns.run_id}")
         print()
         return 0
 
@@ -732,7 +668,7 @@ class PiscesLxRunCLI:
             print()
             
             if not gpu_info:
-                _print_info("No GPUs detected")
+                PiscesLxRunCLI._print_info("No GPUs detected")
                 print()
                 return 0
             
@@ -755,7 +691,7 @@ class PiscesLxRunCLI:
                 gpu_info = scheduler.get_gpu_info(gpu_id)
                 if not gpu_info:
                     print()
-                    _print_error(f"GPU {gpu_id} not found")
+                    PiscesLxRunCLI._print_error(f"GPU {gpu_id} not found")
                     print()
                     return 2
                 
@@ -785,19 +721,19 @@ class PiscesLxRunCLI:
             task_id = ns.task_id
             if not task_id:
                 print()
-                _print_error("Task ID required for release")
+                PiscesLxRunCLI._print_error("Task ID required for release")
                 print()
                 return 2
             
             released = scheduler.release(task_id)
             if released:
                 print()
-                _print_success(f"Released GPUs {released} from task {task_id}")
+                PiscesLxRunCLI._print_success(f"Released GPUs {released} from task {task_id}")
                 print()
                 return 0
             else:
                 print()
-                _print_error(f"No GPUs allocated to task {task_id}")
+                PiscesLxRunCLI._print_error(f"No GPUs allocated to task {task_id}")
                 print()
                 return 2
         
@@ -818,7 +754,7 @@ class PiscesLxRunCLI:
             print()
             
             if not tasks:
-                _print_info("Queue is empty")
+                PiscesLxRunCLI._print_info("Queue is empty")
                 print()
                 return 0
             
@@ -826,7 +762,7 @@ class PiscesLxRunCLI:
             print("-" * 75)
             
             for task in tasks:
-                created = _format_time(task.created_at)
+                created = PiscesLxRunCLI._format_time(task.created_at)
                 print(f"{task.task_id:<36} {task.task_type:<10} {task.priority:<10} {created}")
             
             print()
@@ -836,7 +772,7 @@ class PiscesLxRunCLI:
             priority = ns.priority
             count = queue.clear(priority)
             print()
-            _print_success(f"Cleared {count} tasks from queue")
+            PiscesLxRunCLI._print_success(f"Cleared {count} tasks from queue")
             print()
             return 0
         
@@ -913,7 +849,7 @@ class PiscesLxRunCLI:
         
         if not recovery.check_crashed(ns.run_id, store):
             print()
-            _print_info(f"Task {ns.run_id} is not crashed")
+            PiscesLxRunCLI._print_info(f"Task {ns.run_id} is not crashed")
             print()
             return 0
         
@@ -933,7 +869,7 @@ class PiscesLxRunCLI:
         
         if checkpoint is None:
             print()
-            _print_error(f"No checkpoint found for task {ns.run_id}")
+            PiscesLxRunCLI._print_error(f"No checkpoint found for task {ns.run_id}")
             print()
             return 2
         
@@ -941,11 +877,11 @@ class PiscesLxRunCLI:
         
         print()
         if success:
-            _print_success(message)
-            _print_info(f"Checkpoint: {checkpoint.checkpoint_path}")
-            _print_info(f"Step: {checkpoint.step}")
+            PiscesLxRunCLI._print_success(message)
+            PiscesLxRunCLI._print_info(f"Checkpoint: {checkpoint.checkpoint_path}")
+            PiscesLxRunCLI._print_info(f"Step: {checkpoint.step}")
         else:
-            _print_error(message)
+            PiscesLxRunCLI._print_error(message)
         print()
         
         return 0 if success else 2
@@ -1093,3 +1029,67 @@ class PiscesLxRunCLI:
                     out_fh.close()
             except Exception:
                 pass
+
+    @staticmethod
+    def _format_time(ts: str) -> str:
+        if not ts:
+            return "-"
+        try:
+            if "T" in ts:
+                dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                return dt.strftime("%m-%d %H:%M")
+            return ts[:16] if len(ts) >= 16 else ts
+        except Exception:
+            return ts[:16] if len(ts) >= 16 else ts
+
+    @staticmethod
+    def _status_icon(status: str) -> str:
+        icons = {
+            "running": "*",
+            "pending": "o",
+            "paused": "~",
+            "completed": "+",
+            "failed": "x",
+            "cancelled": "-",
+            "dead": "!",
+        }
+        return icons.get(status, ".")
+
+    @staticmethod
+    def _status_color(status: str) -> str:
+        colors = {
+            "running": "\033[92m",
+            "pending": "\033[93m",
+            "paused": "\033[94m",
+            "completed": "\033[90m",
+            "failed": "\033[91m",
+            "cancelled": "\033[90m",
+            "dead": "\033[91m",
+        }
+        return colors.get(status, "")
+
+    @staticmethod
+    def _reset_color() -> str:
+        return "\033[0m"
+
+    @staticmethod
+    def _print_success(msg: str):
+        print(f"\033[92m+\033[0m {msg}")
+
+    @staticmethod
+    def _print_error(msg: str):
+        print(f"\033[91mx\033[0m {msg}")
+
+    @staticmethod
+    def _print_warning(msg: str):
+        print(f"\033[93m!\033[0m {msg}")
+
+    @staticmethod
+    def _print_info(msg: str):
+        print(f"  {msg}")
+
+    @staticmethod
+    def _print_hint(msg: str):
+        print(f"\033[90mHint: {msg}\033[0m")
+
+

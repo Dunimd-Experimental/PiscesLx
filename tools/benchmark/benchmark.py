@@ -1606,30 +1606,6 @@ Options:
         print("-" * 60)
         print(f"{'Overall Score':20s}: {summary.get('overall_score', 0):.4f}")
         print("=" * 60 + "\n")
-
-
-def create_benchmark_evaluator(
-    config: PiscesLxBenchmarkConfig,
-    model: nn.Module,
-    tokenizer: Any,
-) -> PiscesLxBenchmarkEvaluator:
-    """Factory function to create benchmark evaluator.
-    
-    Args:
-        config: Benchmark configuration.
-        model: PiscesLx model.
-        tokenizer: Model tokenizer.
-        
-    Returns:
-        Initialized benchmark evaluator.
-    """
-    return PiscesLxBenchmarkEvaluator(
-        config=config,
-        model=model,
-        tokenizer=tokenizer,
-    )
-
-
 class PiscesLxBenchmarkResult:
     """Standardized benchmark result container."""
 
@@ -2168,6 +2144,65 @@ class PiscesLxBenchmarkSuiteConfig:
     save_results: bool = True
     verbose: bool = True
 
+    @staticmethod
+    def create_benchmark_evaluator(
+        config: PiscesLxBenchmarkConfig,
+        model: nn.Module,
+        tokenizer: Any,
+    ) -> PiscesLxBenchmarkEvaluator:
+        """Factory function to create benchmark evaluator.
+
+        Args:
+            config: Benchmark configuration.
+            model: PiscesLx model.
+            tokenizer: Model tokenizer.
+
+        Returns:
+            Initialized benchmark evaluator.
+        """
+        return PiscesLxBenchmarkEvaluator(
+            config=config,
+            model=model,
+            tokenizer=tokenizer,
+        )
+
+    @staticmethod
+    def benchmark_main(args):
+        """Main entry point for benchmark evaluation."""
+        from transformers import AutoTokenizer
+        from model.core.model import YvModel
+        from model.config import YvConfig
+
+        config = PiscesLxBenchmarkConfig(
+            model_path=args.model_path,
+            output_dir=args.output_dir,
+            batch_size=args.batch_size,
+            benchmarks=args.benchmarks.split(","),
+        )
+
+        _LOG.info(f"Loading tokenizer from {config.model_path}")
+        tokenizer = AutoTokenizer.from_pretrained(config.model_path)
+
+        _LOG.info(f"Loading model from {config.model_path}")
+        model_config = YvConfig.from_json(os.path.join(config.model_path, "config.json"))
+        model = YvModel(model_config)
+        model = model.from_pretrained(config.model_path)
+
+        if config.device == "cuda":
+            model = model.cuda()
+
+        model.eval()
+
+        evaluator = PiscesLxBenchmarkSuite.create_benchmark_evaluator(config, model, tokenizer)
+
+        evaluator.run_all_benchmarks()
+
+        evaluator.print_summary()
+
+        _LOG.info("Benchmark evaluation completed")
+
+
+
 
 class PiscesLxBenchmarkSuite:
     """Aggregated benchmark suite running all standard benchmarks with a unified report."""
@@ -2309,43 +2344,6 @@ class PiscesLxBenchmarkSuite:
 
     def get_result(self, name: str) -> Optional[PiscesLxBenchmarkResult]:
         return self.results.get(name)
-
-
-def benchmark_main(args):
-    """Main entry point for benchmark evaluation."""
-    from transformers import AutoTokenizer
-    from model.core.model import YvModel
-    from model.config import YvConfig
-
-    config = PiscesLxBenchmarkConfig(
-        model_path=args.model_path,
-        output_dir=args.output_dir,
-        batch_size=args.batch_size,
-        benchmarks=args.benchmarks.split(","),
-    )
-
-    _LOG.info(f"Loading tokenizer from {config.model_path}")
-    tokenizer = AutoTokenizer.from_pretrained(config.model_path)
-
-    _LOG.info(f"Loading model from {config.model_path}")
-    model_config = YvConfig.from_json(os.path.join(config.model_path, "config.json"))
-    model = YvModel(model_config)
-    model = model.from_pretrained(config.model_path)
-
-    if config.device == "cuda":
-        model = model.cuda()
-
-    model.eval()
-
-    evaluator = create_benchmark_evaluator(config, model, tokenizer)
-
-    evaluator.run_all_benchmarks()
-
-    evaluator.print_summary()
-
-    _LOG.info("Benchmark evaluation completed")
-
-
 if __name__ == "__main__":
     import argparse
     
@@ -2359,4 +2357,4 @@ if __name__ == "__main__":
     
     args = parser.parse_args()
     
-    benchmark_main(args)
+    PiscesLxBenchmarkSuite.benchmark_main(args)

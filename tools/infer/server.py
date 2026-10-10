@@ -1126,6 +1126,36 @@ class PiscesLxInferService:
         
         return server.serve()
 
+    @staticmethod
+    def create_service(
+        host: str = "127.0.0.1",
+        port: int = 8000,
+        model_size: str = "7B",
+        model_path: Optional[str] = None,
+        **kwargs
+    ) -> PiscesLxInferService:
+        """
+        Factory function to create an inference service.
+
+        Args:
+            host: Service host address
+            port: Service port
+            model_size: Model size
+            model_path: Path to model checkpoint
+            **kwargs: Additional configuration
+
+        Returns:
+            Configured PiscesLxInferService instance
+        """
+        return PiscesLxInferService(
+            host=host,
+            port=port,
+            model_size=model_size,
+            model_path=model_path,
+        )
+
+
+
 
 class PiscesLxBackendServer:
     """
@@ -1221,36 +1251,6 @@ class PiscesLxBackendServer:
             )
         else:
             self._service.serve()
-
-
-def create_service(
-    host: str = "127.0.0.1",
-    port: int = 8000,
-    model_size: str = "7B",
-    model_path: Optional[str] = None,
-    **kwargs
-) -> PiscesLxInferService:
-    """
-    Factory function to create an inference service.
-    
-    Args:
-        host: Service host address
-        port: Service port
-        model_size: Model size
-        model_path: Path to model checkpoint
-        **kwargs: Additional configuration
-    
-    Returns:
-        Configured PiscesLxInferService instance
-    """
-    return PiscesLxInferService(
-        host=host,
-        port=port,
-        model_size=model_size,
-        model_path=model_path,
-    )
-
-
 if __name__ == "__main__":
     import argparse
     

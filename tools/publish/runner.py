@@ -67,20 +67,6 @@ from .config import PiscesLxPublishConfig, PiscesLxExportAction
 from .orchestrator import PiscesLxPublishOrchestrator
 
 _LOG = None
-
-
-def _get_logger():
-    """Get or create logger for runner."""
-    global _LOG
-    if _LOG is None:
-        _LOG = PiscesLxLogger(
-            "PiscesLx.Publish",
-            file_path=PiscesLxPaths.get_log_file("PiscesLx.Publish"),
-            enable_file=True
-        )
-    return _LOG
-
-
 class PiscesLxToolsPublish:
     """Main runner for PiscesLx publishing tool.
 
@@ -131,7 +117,7 @@ class PiscesLxToolsPublish:
         Raises:
             ValueError: If configuration is invalid.
         """
-        self.log = _get_logger()
+        self.log = PiscesLxPublishRunner._get_logger()
         self.config = self._load_config(config)
         self.orchestrator = PiscesLxPublishOrchestrator(self.config)
         self._args = None
@@ -467,144 +453,156 @@ class PiscesLxPublishRunner:
         """
         return PiscesLxToolsPublish(config)
 
+    @staticmethod
+    def _get_logger():
+        """Get or create logger for runner."""
+        global _LOG
+        if _LOG is None:
+            _LOG = PiscesLxLogger(
+                "PiscesLx.Publish",
+                file_path=PiscesLxPaths.get_log_file("PiscesLx.Publish"),
+                enable_file=True
+            )
+        return _LOG
 
-def main():
-    """Main entry point for the publish tool.
+    @staticmethod
+    def main():
+        """Main entry point for the publish tool.
 
-    Can be run directly with:
-        python -m tools.publish.runner [options]
+        Can be run directly with:
+            python -m tools.publish.runner [options]
 
-    Or via CLI:
-        python -m tools.publish.cli [options]
-    """
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        description="PiscesLx Model Publishing Tool",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-            Examples:
-                # Full pipeline (export + build + publish)
-                python -m tools.publish.runner --model-size 7B --model-path ./checkpoints/7B
-
-                # Export only
-                python -m tools.publish.runner --action export_only --model-size 7B --model-path ./checkpoints/7B
-
-                # Build only
-                python -m tools.publish.runner --action build_only --model-size 7B
-
-                # From config file
-                python -m tools.publish.runner --config ./publish_config.json
-
-                # Custom output
-                python -m tools.publish.runner --model-size 7B --output-dir ./my_publish
+        Or via CLI:
+            python -m tools.publish.cli [options]
         """
-    )
+        import argparse
 
-    parser.add_argument(
-        "--model-size", "-s",
-        default="7B",
-        help="Model size (e.g., 7B, 70B, 671B). Default: 7B"
-    )
-    parser.add_argument(
-        "--model-path", "-p",
-        default="",
-        help="Path to model checkpoint or directory"
-    )
-    parser.add_argument(
-        "--model-name", "-n",
-        default="PiscesLx",
-        help="Model name. Default: PiscesLx"
-    )
-    parser.add_argument(
-        "--action", "-a",
-        choices=["all", "export_only", "build_only", "publish_only"],
-        default="all",
-        help="Publishing action. Default: all"
-    )
-    parser.add_argument(
-        "--output-dir", "-o",
-        default="./publish",
-        help="Output directory. Default: ./publish"
-    )
-    parser.add_argument(
-        "--config", "-c",
-        help="Path to configuration JSON file"
-    )
-    parser.add_argument(
-        "--image-name",
-        help="Docker image name"
-    )
-    parser.add_argument(
-        "--image-tag",
-        default="latest",
-        help="Docker image tag. Default: latest"
-    )
-    parser.add_argument(
-        "--registry",
-        default="docker.io",
-        help="Container registry. Default: docker.io"
-    )
-    parser.add_argument(
-        "--repository",
-        help="Repository name (e.g., username/piscesl1-7b)"
-    )
-    parser.add_argument(
-        "--verbose", "-v",
-        action="store_true",
-        help="Enable verbose output"
-    )
-    parser.add_argument(
-        "--save-results",
-        help="Path to save results JSON"
-    )
+        parser = argparse.ArgumentParser(
+            description="PiscesLx Model Publishing Tool",
+            formatter_class=argparse.RawDescriptionHelpFormatter,
+            epilog="""
+                Examples:
+                    # Full pipeline (export + build + publish)
+                    python -m tools.publish.runner --model-size 7B --model-path ./checkpoints/7B
 
-    args = parser.parse_args()
+                    # Export only
+                    python -m tools.publish.runner --action export_only --model-size 7B --model-path ./checkpoints/7B
 
-    if args.config:
-        publish_tool = PiscesLxToolsPublish(args.config)
-    else:
-        config_dict = {
-            "model_size": args.model_size,
-            "model_name": args.model_name,
-            "model_path": args.model_path,
-            "action": args.action,
-            "output_dir": args.output_dir,
-        }
+                    # Build only
+                    python -m tools.publish.runner --action build_only --model-size 7B
 
-        if args.image_name:
-            config_dict["docker"] = {
-                "image_name": args.image_name,
-                "image_tag": args.image_tag,
+                    # From config file
+                    python -m tools.publish.runner --config ./publish_config.json
+
+                    # Custom output
+                    python -m tools.publish.runner --model-size 7B --output-dir ./my_publish
+            """
+        )
+
+        parser.add_argument(
+            "--model-size", "-s",
+            default="7B",
+            help="Model size (e.g., 7B, 70B, 671B). Default: 7B"
+        )
+        parser.add_argument(
+            "--model-path", "-p",
+            default="",
+            help="Path to model checkpoint or directory"
+        )
+        parser.add_argument(
+            "--model-name", "-n",
+            default="PiscesLx",
+            help="Model name. Default: PiscesLx"
+        )
+        parser.add_argument(
+            "--action", "-a",
+            choices=["all", "export_only", "build_only", "publish_only"],
+            default="all",
+            help="Publishing action. Default: all"
+        )
+        parser.add_argument(
+            "--output-dir", "-o",
+            default="./publish",
+            help="Output directory. Default: ./publish"
+        )
+        parser.add_argument(
+            "--config", "-c",
+            help="Path to configuration JSON file"
+        )
+        parser.add_argument(
+            "--image-name",
+            help="Docker image name"
+        )
+        parser.add_argument(
+            "--image-tag",
+            default="latest",
+            help="Docker image tag. Default: latest"
+        )
+        parser.add_argument(
+            "--registry",
+            default="docker.io",
+            help="Container registry. Default: docker.io"
+        )
+        parser.add_argument(
+            "--repository",
+            help="Repository name (e.g., username/piscesl1-7b)"
+        )
+        parser.add_argument(
+            "--verbose", "-v",
+            action="store_true",
+            help="Enable verbose output"
+        )
+        parser.add_argument(
+            "--save-results",
+            help="Path to save results JSON"
+        )
+
+        args = parser.parse_args()
+
+        if args.config:
+            publish_tool = PiscesLxToolsPublish(args.config)
+        else:
+            config_dict = {
+                "model_size": args.model_size,
+                "model_name": args.model_name,
+                "model_path": args.model_path,
+                "action": args.action,
+                "output_dir": args.output_dir,
             }
 
-        if args.registry:
-            config_dict["registry"] = {
-                "registry_url": args.registry,
-                "repository": args.repository or args.image_name or f"piscesl1/piscesl1-{args.model_size.lower()}",
-                "image_tag": args.image_tag,
-            }
+            if args.image_name:
+                config_dict["docker"] = {
+                    "image_name": args.image_name,
+                    "image_tag": args.image_tag,
+                }
 
-        publish_tool = PiscesLxToolsPublish(config_dict)
+            if args.registry:
+                config_dict["registry"] = {
+                    "registry_url": args.registry,
+                    "repository": args.repository or args.image_name or f"piscesl1/piscesl1-{args.model_size.lower()}",
+                    "image_tag": args.image_tag,
+                }
 
-    try:
-        results = publish_tool.run()
+            publish_tool = PiscesLxToolsPublish(config_dict)
 
-        publish_tool.print_summary()
+        try:
+            results = publish_tool.run()
 
-        if args.save_results:
-            output_path = publish_tool.save_results(args.save_results)
-            print(f"\nResults saved to: {output_path}")
+            publish_tool.print_summary()
 
-        sys.exit(0)
+            if args.save_results:
+                output_path = publish_tool.save_results(args.save_results)
+                print(f"\nResults saved to: {output_path}")
 
-    except Exception as e:
-        print(f"\nError: {e}", file=sys.stderr)
-        if args.verbose:
-            import traceback
-            traceback.print_exc()
-        sys.exit(1)
+            sys.exit(0)
+
+        except Exception as e:
+            print(f"\nError: {e}", file=sys.stderr)
+            if args.verbose:
+                import traceback
+                traceback.print_exc()
+            sys.exit(1)
 
 
 if __name__ == "__main__":
-    main()
+    PiscesLxPublishRunner.main()

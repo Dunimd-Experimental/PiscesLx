@@ -395,97 +395,6 @@ class PiscesLxDPODataset(Dataset):
             "rejected_attention_mask": rejected_attention_mask,
             "rejected_labels": rejected_labels,
         }
-
-
-def pad_to_length(tensor: torch.Tensor, length: int, pad_value: int, dim: int = -1) -> torch.Tensor:
-    """
-    Pad tensor to specified length.
-    
-    Args:
-        tensor: Input tensor to pad
-        length: Target length
-        pad_value: Value to use for padding
-        dim: Dimension to pad along
-        
-    Returns:
-        Padded tensor
-    """
-    if tensor.size(dim) >= length:
-        return tensor
-    else:
-        pad_size = list(tensor.shape)
-        pad_size[dim] = length - tensor.size(dim)
-        return torch.cat([tensor, pad_value * torch.ones(*pad_size, dtype=tensor.dtype)], dim=dim)
-
-
-def opd_loss(
-    teacher_logits: torch.Tensor,
-    student_logits: torch.Tensor,
-    teacher_log_probs: torch.Tensor,
-    student_log_probs: torch.Tensor,
-    config: PiscesLxOPDConfig,
-    advantages: Optional[torch.Tensor] = None,
-) -> Tuple[torch.Tensor, Dict[str, float]]:
-    """
-    Compute On-Policy Distillation (OPD) loss combining KL divergence and cross-entropy.
-
-    The OPD loss enables knowledge transfer from a teacher model to a student model
-    by minimizing the divergence between their output distributions, optionally weighted
-    by advantage estimates from a reward model.
-
-    Args:
-        teacher_logits: Logits from the teacher model [batch, seq_len, vocab]
-        student_logits: Logits from the student model [batch, seq_len, vocab]
-        teacher_log_probs: Log probabilities from teacher [batch]
-        student_log_probs: Log probabilities from student [batch]
-        config: OPD configuration
-        advantages: Optional advantage weights for each sample [batch]
-
-    Returns:
-        Tuple of (total_loss, metrics_dict)
-    """
-    temp = config.opd_temperature
-
-    teacher_soft = F.log_softmax(teacher_logits / temp, dim=-1)
-    student_soft = F.softmax(student_logits / temp, dim=-1)
-
-    kl_div = F.kl_div(
-        teacher_soft,
-        student_soft,
-        log_target=False,
-        reduction="batchmean",
-    ) * (temp ** 2)
-
-    ce_loss = -(teacher_log_probs * student_log_probs).mean()
-
-    loss = config.opd_kl_weight * kl_div + config.opd_ce_weight * ce_loss
-
-    if advantages is not None:
-        advantages = advantages.detach()
-        advantage_weight = advantages - advantages.mean()
-        advantage_weight = advantage_weight / (advantage_weight.std() + 1e-8)
-        advantage_weight = torch.sigmoid(advantage_weight / temp)
-        weighted_kl = (
-            F.kl_div(
-                teacher_soft,
-                student_soft,
-                log_target=False,
-                reduction="none",
-            ).sum(dim=-1).mean(dim=-1)
-            * advantage_weight
-        ).mean() * (temp ** 2)
-        weighted_ce = -(teacher_log_probs * student_log_probs * advantage_weight).mean()
-        loss = config.opd_kl_weight * weighted_kl + config.opd_ce_weight * weighted_ce
-
-    metrics = {
-        "opd_loss": loss.item(),
-        "kl_div": kl_div.item(),
-        "ce_loss": ce_loss.item(),
-    }
-
-    return loss, metrics
-
-
 class PiscesLxDPOLoggingCallback:
     """
     Logging callback for DPO training.
@@ -1242,7 +1151,7 @@ class PiscesLxOPDTrainer:
 
                 adv_tensor = advantages.to(stacked_student_logits.device) if advantages is not None else None
 
-                loss, metrics = opd_loss(
+                loss, metrics = PiscesLxDPOOperators.opd_loss(
                     teacher_logits=stacked_teacher_logits,
                     student_logits=stacked_student_logits,
                     teacher_log_probs=stacked_teacher_lp,
@@ -1492,3 +1401,95 @@ __all__ = [
     "PiscesLxGenerativeRewardModel",
     "opd_loss",
 ]
+
+class PiscesLxDPOOperators:
+    """Module-level operations of dpo, exposed through a class (§6.2)."""
+
+    @staticmethod
+    def pad_to_length(tensor: torch.Tensor, length: int, pad_value: int, dim: int = -1) -> torch.Tensor:
+        """
+        Pad tensor to specified length.
+
+        Args:
+            tensor: Input tensor to pad
+            length: Target length
+            pad_value: Value to use for padding
+            dim: Dimension to pad along
+
+        Returns:
+            Padded tensor
+        """
+        if tensor.size(dim) >= length:
+            return tensor
+        else:
+            pad_size = list(tensor.shape)
+            pad_size[dim] = length - tensor.size(dim)
+            return torch.cat([tensor, pad_value * torch.ones(*pad_size, dtype=tensor.dtype)], dim=dim)
+
+    @staticmethod
+    def opd_loss(
+        teacher_logits: torch.Tensor,
+        student_logits: torch.Tensor,
+        teacher_log_probs: torch.Tensor,
+        student_log_probs: torch.Tensor,
+        config: PiscesLxOPDConfig,
+        advantages: Optional[torch.Tensor] = None,
+    ) -> Tuple[torch.Tensor, Dict[str, float]]:
+        """
+        Compute On-Policy Distillation (OPD) loss combining KL divergence and cross-entropy.
+
+        The OPD loss enables knowledge transfer from a teacher model to a student model
+        by minimizing the divergence between their output distributions, optionally weighted
+        by advantage estimates from a reward model.
+
+        Args:
+            teacher_logits: Logits from the teacher model [batch, seq_len, vocab]
+            student_logits: Logits from the student model [batch, seq_len, vocab]
+            teacher_log_probs: Log probabilities from teacher [batch]
+            student_log_probs: Log probabilities from student [batch]
+            config: OPD configuration
+            advantages: Optional advantage weights for each sample [batch]
+
+        Returns:
+            Tuple of (total_loss, metrics_dict)
+        """
+        temp = config.opd_temperature
+
+        teacher_soft = F.log_softmax(teacher_logits / temp, dim=-1)
+        student_soft = F.softmax(student_logits / temp, dim=-1)
+
+        kl_div = F.kl_div(
+            teacher_soft,
+            student_soft,
+            log_target=False,
+            reduction="batchmean",
+        ) * (temp ** 2)
+
+        ce_loss = -(teacher_log_probs * student_log_probs).mean()
+
+        loss = config.opd_kl_weight * kl_div + config.opd_ce_weight * ce_loss
+
+        if advantages is not None:
+            advantages = advantages.detach()
+            advantage_weight = advantages - advantages.mean()
+            advantage_weight = advantage_weight / (advantage_weight.std() + 1e-8)
+            advantage_weight = torch.sigmoid(advantage_weight / temp)
+            weighted_kl = (
+                F.kl_div(
+                    teacher_soft,
+                    student_soft,
+                    log_target=False,
+                    reduction="none",
+                ).sum(dim=-1).mean(dim=-1)
+                * advantage_weight
+            ).mean() * (temp ** 2)
+            weighted_ce = -(teacher_log_probs * student_log_probs * advantage_weight).mean()
+            loss = config.opd_kl_weight * weighted_kl + config.opd_ce_weight * weighted_ce
+
+        metrics = {
+            "opd_loss": loss.item(),
+            "kl_div": kl_div.item(),
+            "ce_loss": ce_loss.item(),
+        }
+
+        return loss, metrics
