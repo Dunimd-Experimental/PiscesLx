@@ -95,6 +95,11 @@ from utils.dc import PiscesLxLogger
 
 from .config import PiscesLxTrainingConfig
 from .core import PiscesLxTrainingOperator
+from tools.data.dataset.raw_text import (
+    PiscesLxToolsDataJsonSampleReader,
+    PiscesLxToolsDataTextCollator,
+    PiscesLxToolsDataRawTextDataset,
+)
 from .pipeline import PiscesLxTrainingPipelineOperator, PiscesLxCurriculumLearningOperator, PiscesLxMultiTaskTrainingOperator
 
 from utils.paths import PiscesLxPaths
@@ -994,47 +999,6 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         pad_id = int(getattr(tokenizer, "pad_token_id", 0))
         use_packing = bool(getattr(self.train_config, "packing", False))
 
-        def collate(batch):
-            if not batch:
-                return {"input_ids": torch.empty((0, 0), dtype=torch.long), "labels": torch.empty((0, 0), dtype=torch.long)}
-            ids_list = []
-            for item in batch:
-                ids = item.get("input_ids")
-                if ids is None:
-                    ids = torch.tensor([pad_id], dtype=torch.long)
-                ids_list.append(ids.long().view(-1))
-
-            if use_packing:
-                # Pack short samples together into seq_len-length sequences
-                flat_ids = torch.cat(ids_list)
-                if flat_ids.numel() == 0:
-                    flat_ids = torch.tensor([pad_id], dtype=torch.long)
-                packed_ids = []
-                offset = 0
-                while offset < flat_ids.numel():
-                    chunk = flat_ids[offset:offset + seq_len]
-                    if len(chunk) < seq_len:
-                        chunk = torch.cat([chunk, torch.full((seq_len - len(chunk),), pad_id, dtype=torch.long)])
-                    packed_ids.append(chunk)
-                    offset += seq_len
-                bs = len(packed_ids)
-                input_ids = torch.stack(packed_ids)
-                attention_mask = (input_ids != pad_id).long()
-                labels = input_ids.clone()
-                labels[labels == pad_id] = -100
-            else:
-                # Pad all samples to seq_len for consistent batch shapes
-                input_ids = torch.full((len(ids_list), seq_len), pad_id, dtype=torch.long)
-                labels = torch.full((len(ids_list), seq_len), -100, dtype=torch.long)
-                attention_mask = torch.zeros((len(ids_list), seq_len), dtype=torch.long)
-                for i, ids in enumerate(ids_list):
-                    ids = ids[:seq_len]
-                    n = int(ids.numel())
-                    input_ids[i, :n] = ids
-                    labels[i, :n] = ids
-                    attention_mask[i, :n] = 1
-
-            return {"input_ids": input_ids, "labels": labels, "attention_mask": attention_mask}
 
         dm = PiscesLxToolsDataDatasetManager()
 
@@ -1071,7 +1035,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             "num_workers": int(getattr(self.train_config.data, "num_workers", 0)),
             "pin_memory": bool(getattr(self.train_config.data, "pin_memory", torch.cuda.is_available())),
             "drop_last": True,
-            "collate_fn": collate,
+            "collate_fn": PiscesLxToolsDataTextCollator(seq_len, pad_id, use_packing),
         }
         if dl_kwargs["num_workers"] > 0:
             dl_kwargs["prefetch_factor"] = int(getattr(self.train_config.data, "prefetch_factor", 2))
@@ -1119,126 +1083,16 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             except Exception:
                 reporter = None
 
-        KAGGLE_PREFIX = "kaggle://"
-
-        class PiscesLxRawTextDataset(torch.utils.data.Dataset):
-            def __init__(self, texts, tokenizer, max_len):
-                self.texts = texts
-                self.tokenizer = tokenizer
-                self.max_len = max_len
-            def __len__(self):
-                return len(self.texts)
-            def __getitem__(self, idx):
-                text = self.texts[idx]
-                ids = self.tokenizer.encode(text, return_tensors="pt", truncation=True, max_length=self.max_len)[0]
-                return {"input_ids": ids}
-
-        def _extract_text(item):
-            return (item.get("text") or item.get("content") or
-                    item.get("instruction", "") + "\n" + item.get("output", "") or
-                    json.dumps(item, ensure_ascii=False))
-
-        def _load_json_samples(file_path):
-            samples = []
-            try:
-                with open(file_path, 'rb') as raw:
-                    magic = raw.read(8)
-                    raw.seek(0)
-                    head_text = magic.lower()
-                    if head_text.startswith(b'<!doctype html') or head_text.startswith(b'<html'):
-                        _LOG.error(f"File is HTML, not JSON: {file_path} — the dataset may be inaccessible (private/deleted/bad slug)")
-                        return []
-                    is_gzip = magic[:2] == b'\x1f\x8b'
-                    if is_gzip:
-                        import gzip
-                        raw_file = gzip.open(raw, mode='rt', encoding='utf-8-sig')
-                    else:
-                        import io
-                        raw_file = io.TextIOWrapper(raw, encoding='utf-8-sig')
-                    with raw_file as f:
-                        if file_path.endswith('.jsonl'):
-                            for line in f:
-                                line = line.strip()
-                                if line:
-                                    samples.append(json.loads(line))
-                        else:
-                            data = json.load(f)
-                            if isinstance(data, list):
-                                samples = data
-                            elif isinstance(data, dict):
-                                samples = [data]
-            except Exception as e:
-                try:
-                    with open(file_path, 'rb') as f_raw:
-                        head = f_raw.read(200)
-                    _LOG.error(f"Failed to load {file_path}: {e} | raw_bytes={head.hex()} | raw_text={head[:120]!r}")
-                except Exception:
-                    _LOG.error(f"Failed to load {file_path}: {e}")
-            return samples
-
-        def _scan_data_directory(directory):
-            samples = []
-            for root, _dirs, files in os.walk(directory):
-                for fname in sorted(files):
-                    if fname.endswith(('.jsonl', '.json')):
-                        samples.extend(_load_json_samples(os.path.join(root, fname)))
-            return samples
-
-        def _patch_kagglesdk_compat():
-            """Patch missing get_web_endpoint in newer kagglesdk versions."""
-            try:
-                import kagglesdk.kaggle_env as kenv
-                if not hasattr(kenv, "get_web_endpoint"):
-                    def get_web_endpoint(config=None):
-                        if config and hasattr(config, "get"):
-                            endpoint = config.get("web_endpoint")
-                            if endpoint:
-                                return endpoint
-                        return "https://www.kaggle.com/api/v1"
-                    kenv.get_web_endpoint = get_web_endpoint
-            except ImportError:
-                pass
-
-        def _resolve_data_path(data_spec):
-            if data_spec.startswith(KAGGLE_PREFIX):
-                subpath = data_spec[len(KAGGLE_PREFIX):]
-                try:
-                    _patch_kagglesdk_compat()
-                    import kagglehub
-                    parts = subpath.replace("\\", "/").split("/")
-                    if len(parts) < 2:
-                        _LOG.error(f"Invalid kaggle path: {data_spec}")
-                        return []
-                    owner_ds = parts[0] + "/" + parts[1]
-                    sub_path = "/".join(parts[2:]) if len(parts) > 2 else ""
-                    local = kagglehub.dataset_download(owner_ds)
-                    target = os.path.join(str(local), sub_path) if sub_path else str(local)
-                    if os.path.isfile(target):
-                        return _load_json_samples(target)
-                    if os.path.isdir(target):
-                        return _scan_data_directory(target)
-                    _LOG.warning(f"Kaggle download path not found: {target}")
-                    return []
-                except Exception as e:
-                    _LOG.error(f"Failed to load Kaggle dataset {data_spec}: {e}")
-                    return []
-            resolved = os.path.abspath(data_spec)
-            if os.path.isdir(resolved):
-                return _scan_data_directory(resolved)
-            if os.path.isfile(resolved):
-                return _load_json_samples(resolved)
-            return None
-
         results: List[Dict[str, Any]] = []
         for idx, ds_name in enumerate(dataset_list):
-            raw_samples = _resolve_data_path(ds_name)
+            raw_samples = PiscesLxToolsDataJsonSampleReader.resolve(ds_name)
             if raw_samples is not None:
-                texts = [_extract_text(s) for s in raw_samples]
+                texts = [PiscesLxToolsDataJsonSampleReader.extract_text(s) for s in raw_samples]
                 _LOG.info(f"Loaded {len(texts)} samples from path: {ds_name}")
                 if not texts:
                     _LOG.warning(f"No samples found in {ds_name}, skipping")
                     continue
-                train_ds = PiscesLxRawTextDataset(texts, tokenizer, seq_len)
+                train_ds = PiscesLxToolsDataRawTextDataset(texts, tokenizer, seq_len)
             else:
                 train_ds = dm.load(name=str(ds_name), subset=str(ds_name), split="train", max_samples=None, config=model_cfg)
             if torch.distributed.is_available() and torch.distributed.is_initialized():
@@ -1615,8 +1469,6 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if getattr(self.train_config, 'enable_distillation', False):
             self._setup_distillation()
         
-        self._encre_trainer = self._setup_encre_trainer()
-        
         self._setup_optimizers()
         
         if self.train_config.quantization.enable_quantization:
@@ -1680,7 +1532,10 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if hasattr(self.train_config.data, "prefetch_factor"):
             self.train_config.data.prefetch_factor = min(int(getattr(self.train_config.data, "prefetch_factor", 2) or 2), 2)
         if hasattr(self.train_config.data, "num_workers"):
-            self.train_config.data.num_workers = min(int(getattr(self.train_config.data, "num_workers", 2) or 2), 2)
+            # ``or 2`` turned an explicit ``num_workers: 0`` into 2 workers, which is
+            # exactly the setting a low-memory host needs; only ``None`` defaults.
+            requested = getattr(self.train_config.data, "num_workers", 2)
+            self.train_config.data.num_workers = min(int(2 if requested is None else requested), 2)
 
         _LOG.info(
             "Applied low-VRAM runtime policy",
@@ -2152,33 +2007,6 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             packing=use_packing
         )
 
-        def _collate_fn(batch_items: List[Dict[str, Any]]):
-            if not batch_items:
-                return {}
-            if "input_ids" in batch_items[0]:
-                input_ids = torch.stack([b["input_ids"] for b in batch_items], dim=0)
-                attention_mask = torch.stack([b["attention_mask"] for b in batch_items], dim=0)
-                labels = torch.stack([b["labels"] for b in batch_items], dim=0)
-                return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
-
-            if tokenizer is not None and "text" in batch_items[0]:
-                texts = [b.get("text", "") for b in batch_items]
-                enc = tokenizer(
-                    texts,
-                    max_length=seq_len if seq_len > 0 else None,
-                    padding=True,
-                    truncation=True,
-                    return_tensors="pt",
-                    pad_to_multiple_of=pad_to_multiple_of,
-                )
-                input_ids = enc["input_ids"]
-                attention_mask = enc["attention_mask"]
-                pad_id = int(getattr(tokenizer, "pad_token_id", 0) or 0)
-                labels = input_ids.clone()
-                labels[labels == pad_id] = -100
-                return {"input_ids": input_ids, "attention_mask": attention_mask, "labels": labels}
-
-            return {}
 
         dl_kwargs = {
             "batch_size": batch_size,
@@ -2186,7 +2014,13 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             "num_workers": num_workers,
             "pin_memory": pin_memory,
             "drop_last": (split == "train"),
-            "collate_fn": _collate_fn,
+            "collate_fn": PiscesLxToolsDataTextCollator(
+                seq_len,
+                int(getattr(tokenizer, "pad_token_id", 0) or 0),
+                use_packing,
+                tokenizer=tokenizer,
+                pad_to_multiple_of=pad_to_multiple_of,
+            ),
         }
         if num_workers > 0:
             dl_kwargs["prefetch_factor"] = prefetch_factor

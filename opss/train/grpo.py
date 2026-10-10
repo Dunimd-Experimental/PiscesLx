@@ -2074,10 +2074,9 @@ class PiscesLxAgenticRLTrainer:
         receiving observations, and accumulating rewards. The trajectory is treated
         as a "response group" for GRPO-style advantage computation.
 
-        When ``self.encre_trainer`` is set, the trajectory is produced by
-        the full EnTA rollout loop (multi-step tool use, Rust sandbox,
-        reward shaping).  Otherwise the lightweight in-process sampler
-        is used.
+        The trajectory is sampled in-process by this trainer: the model generates
+        the action, the environment returns the observation, and per-step rewards
+        are accumulated.
 
         Args:
             prompt: Initial prompt for the agent

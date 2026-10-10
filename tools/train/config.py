@@ -1093,20 +1093,22 @@ class PiscesLxTrainingConfig:
         
         # Stage configuration
         if "stage" in config_dict:
-            stage_dict = config_dict["stage"]
-            stage_value = stage_dict.get("current", "pretrain")
-            config.stage = PiscesLxTrainingStage(stage_value)
-            config.loss_type = stage_dict.get("loss_type", config.loss_type)
-            config.response_only_loss = stage_dict.get("response_only_loss", config.response_only_loss)
-            config.beta = stage_dict.get("beta", config.beta)
-            config.reference_free = stage_dict.get("reference_free", config.reference_free)
-            config.ppo_epochs = stage_dict.get("ppo_epochs", config.ppo_epochs)
-            config.clip_range = stage_dict.get("clip_range", config.clip_range)
-            config.kl_coef = stage_dict.get("kl_coef", config.kl_coef)
-            config.lambda_orpo = stage_dict.get("lambda_orpo", config.lambda_orpo)
-            config.packing = stage_dict.get("packing", config.packing)
-        elif "stage" in config_dict and isinstance(config_dict["stage"], str):
-            config.stage = PiscesLxTrainingStage(config_dict["stage"])
+            stage_value = config_dict["stage"]
+            if isinstance(stage_value, str):
+                # Every shipped configs/train/*.yaml carries the stage as a plain name;
+                # the previous branch assumed a mapping and crashed on all of them.
+                config.stage = PiscesLxTrainingStage(stage_value)
+            else:
+                config.stage = PiscesLxTrainingStage(stage_value.get("current", "pretrain"))
+                config.loss_type = stage_value.get("loss_type", config.loss_type)
+                config.response_only_loss = stage_value.get("response_only_loss", config.response_only_loss)
+                config.beta = stage_value.get("beta", config.beta)
+                config.reference_free = stage_value.get("reference_free", config.reference_free)
+                config.ppo_epochs = stage_value.get("ppo_epochs", config.ppo_epochs)
+                config.clip_range = stage_value.get("clip_range", config.clip_range)
+                config.kl_coef = stage_value.get("kl_coef", config.kl_coef)
+                config.lambda_orpo = stage_value.get("lambda_orpo", config.lambda_orpo)
+                config.packing = stage_value.get("packing", config.packing)
         
         # Advanced operators configuration
         if "advanced_operators" in config_dict:
