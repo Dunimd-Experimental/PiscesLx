@@ -676,9 +676,9 @@ class YvModel(nn.Module):
         self._causal_mask_views: Dict[Tuple[str, torch.dtype], torch.Tensor] = {}
 
         # Automatic VRAM optimization: selects optimal settings without conflicts
-        from utils.vram_controller import auto_optimize, get_vram_monitor
-        auto_optimize(cfg)
-        self._vram_monitor = get_vram_monitor(cfg)
+        from utils.vram_controller import PiscesLxVramController
+        PiscesLxVramController.auto_optimize(cfg)
+        self._vram_monitor = PiscesLxVramController.get_vram_monitor(cfg)
 
         if getattr(cfg, 'use_quartet', False):
             cfg.use_fp4 = True
@@ -902,8 +902,8 @@ class YvModel(nn.Module):
             )
 
         if getattr(cfg, 'depth_aware_init', True):
-            from ..core.norms import _depth_aware_init_weights
-            self.apply(lambda m: _depth_aware_init_weights(m, cfg.n_layer, cfg.hidden_size))
+            from ..core.norms import YvNorms
+            self.apply(lambda m: YvNorms._depth_aware_init_weights(m, cfg.n_layer, cfg.hidden_size))
 
         initializer_range = getattr(cfg, 'initializer_range', 0.02)
         use_scaled_init = getattr(cfg, 'use_scaled_init', True)

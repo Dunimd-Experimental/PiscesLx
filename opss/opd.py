@@ -27,32 +27,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Dict, List, Optional, Tuple
-
-
-def reverse_kl_divergence(
-    student_logits: torch.Tensor,
-    teacher_logits: torch.Tensor,
-    temperature: float = 1.0,
-) -> torch.Tensor:
-    """Reverse KL divergence: KL(student || teacher).
-
-    Used in OPD for multi-teacher distillation. Reverse KL focuses on
-    modes where the teacher has high probability, avoiding mode-averaging.
-
-    Args:
-        student_logits: Logits from student model (B, V).
-        teacher_logits: Logits from teacher model (B, V).
-        temperature: Softmax temperature. Default: 1.0.
-
-    Returns:
-        Per-example reverse KL divergence.
-    """
-    p = F.log_softmax(student_logits / temperature, dim=-1)
-    q = F.softmax(teacher_logits / temperature, dim=-1)
-    kl = (q * (torch.log(q + 1e-10) - p)).sum(dim=-1)
-    return kl * (temperature ** 2)
-
-
 class PiscesLxOPDConfig:
     """Configuration for On-Policy Distillation.
 
@@ -126,81 +100,6 @@ def compute_teacher_logits(
             logits_list.append(logits_chunk)
 
         return torch.cat(logits_list, dim=1)
-
-
-def compute_opd_loss(
-    student_logits: torch.Tensor,
-    teacher_logits_list: List[torch.Tensor],
-    labels: torch.Tensor,
-    config: PiscesLxOPDConfig,
-    domain_idx: int = 0,
-) -> Dict[str, torch.Tensor]:
-    """Compute OPD loss for a single domain.
-
-    Args:
-        student_logits: Student model logits (B, T, V).
-        teacher_logits_list: List of teacher logits, one per domain.
-        labels: Target labels (B, T).
-        config: OPD configuration.
-        domain_idx: Current domain index.
-
-    Returns:
-        Dict with 'loss', 'ce_loss', 'kl_loss', 'kl_breakdown'.
-    """
-    B, T, V = student_logits.shape
-
-    # Cross-entropy loss
-    ce_loss = F.cross_entropy(
-        student_logits.view(-1, V),
-        labels.view(-1),
-        ignore_index=-100,
-        reduction='mean',
-    )
-
-    # Multi-teacher reverse KL
-    kl_loss = 0.0
-    kl_breakdown = {}
-
-    for i, teacher_logits in enumerate(teacher_logits_list):
-        if teacher_logits is None:
-            continue
-
-        temp = config.temperatures[i]
-        weight = config.domain_weights[i]
-
-        if config.use_reverse_kl:
-            kld = reverse_kl_divergence(
-                student_logits.view(-1, V),
-                teacher_logits.view(-1, V),
-                temperature=temp,
-            )
-        else:
-            # Forward KL: KL(teacher || student)
-            p = F.log_softmax(teacher_logits.view(-1, V) / temp, dim=-1)
-            q = F.softmax(student_logits.view(-1, V) / temp, dim=-1)
-            kld = (F.softmax(teacher_logits.view(-1, V) / temp, dim=-1) *
-                   (F.log_softmax(teacher_logits.view(-1, V) / temp, dim=-1) -
-                    F.log_softmax(student_logits.view(-1, V) / temp, dim=-1))).sum(dim=-1)
-            kld = kld * (temp ** 2)
-
-        # Mask padding tokens
-        valid_mask = (labels.view(-1) != -100).float()
-        kld = (kld * valid_mask).sum() / valid_mask.sum().clamp(min=1)
-
-        domain_kl = kld * weight
-        kl_loss = kl_loss + domain_kl
-        kl_breakdown[config.domains[i]] = domain_kl.item()
-
-    loss = config.alpha_ce * ce_loss + config.alpha_kl * kl_loss
-
-    return {
-        'loss': loss,
-        'ce_loss': ce_loss.detach(),
-        'kl_loss': kl_loss.detach() if isinstance(kl_loss, torch.Tensor) else torch.tensor(kl_loss),
-        'kl_breakdown': kl_breakdown,
-    }
-
-
 class PiscesLxOPDTrainer:
     """On-Policy Distillation trainer.
 
@@ -282,27 +181,130 @@ class PiscesLxOPDTrainer:
         self.step += 1
         return loss_dict
 
+class PiscesLxOpd:
+    """Operations formerly exposed as module-level functions of opd.
 
-def create_opd_training_config(
-    domains: List[str] = None,
-    base_temperature: float = 2.0,
-) -> PiscesLxOPDConfig:
-    """Create OPD config with sensible defaults.
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
 
-    Args:
-        domains: Domain names.
-        base_temperature: Base distillation temperature.
+    @staticmethod
+    def reverse_kl_divergence(
+        student_logits: torch.Tensor,
+        teacher_logits: torch.Tensor,
+        temperature: float = 1.0,
+    ) -> torch.Tensor:
+        """Reverse KL divergence: KL(student || teacher).
 
-    Returns:
-        PiscesLxOPDConfig instance.
-    """
-    domains = domains or ['math', 'code', 'agent', 'instruction']
-    n = len(domains)
-    return PiscesLxOPDConfig(
-        domains=domains,
-        temperatures=[base_temperature] * n,
-        domain_weights=[1.0 / n] * n,
-        alpha_ce=1.0,
-        alpha_kl=1.0,
-        use_reverse_kl=True,
-    )
+        Used in OPD for multi-teacher distillation. Reverse KL focuses on
+        modes where the teacher has high probability, avoiding mode-averaging.
+
+        Args:
+            student_logits: Logits from student model (B, V).
+            teacher_logits: Logits from teacher model (B, V).
+            temperature: Softmax temperature. Default: 1.0.
+
+        Returns:
+            Per-example reverse KL divergence.
+        """
+        p = F.log_softmax(student_logits / temperature, dim=-1)
+        q = F.softmax(teacher_logits / temperature, dim=-1)
+        kl = (q * (torch.log(q + 1e-10) - p)).sum(dim=-1)
+        return kl * (temperature ** 2)
+
+    @staticmethod
+    def compute_opd_loss(
+        student_logits: torch.Tensor,
+        teacher_logits_list: List[torch.Tensor],
+        labels: torch.Tensor,
+        config: PiscesLxOPDConfig,
+        domain_idx: int = 0,
+    ) -> Dict[str, torch.Tensor]:
+        """Compute OPD loss for a single domain.
+
+        Args:
+            student_logits: Student model logits (B, T, V).
+            teacher_logits_list: List of teacher logits, one per domain.
+            labels: Target labels (B, T).
+            config: OPD configuration.
+            domain_idx: Current domain index.
+
+        Returns:
+            Dict with 'loss', 'ce_loss', 'kl_loss', 'kl_breakdown'.
+        """
+        B, T, V = student_logits.shape
+
+        # Cross-entropy loss
+        ce_loss = F.cross_entropy(
+            student_logits.view(-1, V),
+            labels.view(-1),
+            ignore_index=-100,
+            reduction='mean',
+        )
+
+        # Multi-teacher reverse KL
+        kl_loss = 0.0
+        kl_breakdown = {}
+
+        for i, teacher_logits in enumerate(teacher_logits_list):
+            if teacher_logits is None:
+                continue
+
+            temp = config.temperatures[i]
+            weight = config.domain_weights[i]
+
+            if config.use_reverse_kl:
+                kld = PiscesLxOpd.reverse_kl_divergence(
+                    student_logits.view(-1, V),
+                    teacher_logits.view(-1, V),
+                    temperature=temp,
+                )
+            else:
+                # Forward KL: KL(teacher || student)
+                p = F.log_softmax(teacher_logits.view(-1, V) / temp, dim=-1)
+                q = F.softmax(student_logits.view(-1, V) / temp, dim=-1)
+                kld = (F.softmax(teacher_logits.view(-1, V) / temp, dim=-1) *
+                       (F.log_softmax(teacher_logits.view(-1, V) / temp, dim=-1) -
+                        F.log_softmax(student_logits.view(-1, V) / temp, dim=-1))).sum(dim=-1)
+                kld = kld * (temp ** 2)
+
+            # Mask padding tokens
+            valid_mask = (labels.view(-1) != -100).float()
+            kld = (kld * valid_mask).sum() / valid_mask.sum().clamp(min=1)
+
+            domain_kl = kld * weight
+            kl_loss = kl_loss + domain_kl
+            kl_breakdown[config.domains[i]] = domain_kl.item()
+
+        loss = config.alpha_ce * ce_loss + config.alpha_kl * kl_loss
+
+        return {
+            'loss': loss,
+            'ce_loss': ce_loss.detach(),
+            'kl_loss': kl_loss.detach() if isinstance(kl_loss, torch.Tensor) else torch.tensor(kl_loss),
+            'kl_breakdown': kl_breakdown,
+        }
+
+    @staticmethod
+    def create_opd_training_config(
+        domains: List[str] = None,
+        base_temperature: float = 2.0,
+    ) -> PiscesLxOPDConfig:
+        """Create OPD config with sensible defaults.
+
+        Args:
+            domains: Domain names.
+            base_temperature: Base distillation temperature.
+
+        Returns:
+            PiscesLxOPDConfig instance.
+        """
+        domains = domains or ['math', 'code', 'agent', 'instruction']
+        n = len(domains)
+        return PiscesLxOPDConfig(
+            domains=domains,
+            temperatures=[base_temperature] * n,
+            domain_weights=[1.0 / n] * n,
+            alpha_ce=1.0,
+            alpha_kl=1.0,
+            use_reverse_kl=True,
+        )

@@ -29,131 +29,6 @@ import torch.nn.functional as F
 from typing import Optional, Tuple, List
 
 from model.utils import YvShapeGuard
-
-
-def _wave_schedule(expert_counts: torch.Tensor, max_wave_size: int) -> List[List[int]]:
-    """Schedule experts into waves to maximize GPU utilization.
-
-    Groups experts so that each wave has roughly equal total token count,
-    minimizing idle time.
-
-    Args:
-        expert_counts: Number of tokens assigned to each expert.
-        max_wave_size: Max tokens per wave.
-
-    Returns:
-        List of waves, each wave is a list of expert indices.
-    """
-    num_experts = len(expert_counts)
-    sorted_indices = torch.argsort(expert_counts, descending=True)
-    waves = []
-    assigned = [False] * num_experts
-
-    for idx in sorted_indices.tolist():
-        if assigned[idx]:
-            continue
-
-        wave = [idx]
-        assigned[idx] = True
-        wave_tokens = expert_counts[idx].item()
-
-        # Greedily fill wave
-        for j in range(num_experts):
-            if assigned[j]:
-                continue
-            candidate_tokens = expert_counts[j].item()
-            if wave_tokens + candidate_tokens <= max_wave_size:
-                wave.append(j)
-                assigned[j] = True
-                wave_tokens += candidate_tokens
-
-        if wave_tokens > 0:
-            waves.append(wave)
-
-    return waves
-
-
-def _mega_moe_forward(
-    x: torch.Tensor,
-    expert_weights: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
-    gate_scores: torch.Tensor,
-    gate_indices: torch.Tensor,
-    top_k: int,
-) -> torch.Tensor:
-    """Wave-scheduled MoE forward pass.
-
-    Args:
-        x: Input tokens (B*T, hidden_size).
-        expert_weights: List of (gate_proj, up_proj, down_proj) per expert.
-        gate_scores: Routing scores (B*T, top_k).
-        gate_indices: Selected expert indices (B*T, top_k).
-        top_k: Number of active experts per token.
-
-    Returns:
-        Output tokens (B*T, hidden_size).
-    """
-    hidden_size = x.shape[-1]
-    device = x.device
-    num_experts = len(expert_weights)
-    num_tokens = x.shape[0]
-
-    # Count tokens per expert
-    expert_counts = torch.zeros(num_experts, device=device, dtype=torch.long)
-    for k in range(top_k):
-        expert_indices = gate_indices[:, k].clamp(0, num_experts - 1)
-        expert_counts.scatter_add_(0, expert_indices, torch.ones(num_tokens, device=device, dtype=torch.long))
-
-    max_wave_size = max(1024, num_tokens // max(1, num_experts))
-    waves = _wave_schedule(expert_counts, max_wave_size)
-
-    output = torch.zeros(num_tokens, hidden_size, device=device, dtype=x.dtype)
-
-    for wave in waves:
-        if not wave:
-            continue
-
-        # Gather all tokens for this wave's experts
-        expert_tokens = []
-        expert_masks = []
-        expert_scores = []
-        expert_ids = []
-
-        for expert_idx in wave:
-            for k in range(top_k):
-                token_mask = (gate_indices[:, k] == expert_idx)
-                token_ids = token_mask.nonzero(as_tuple=True)[0]
-                if len(token_ids) == 0:
-                    continue
-
-                expert_tokens.append(x[token_ids])
-                expert_masks.append(token_ids)
-                expert_scores.append(gate_scores[token_ids, k].unsqueeze(-1))
-                expert_ids.extend([expert_idx] * len(token_ids))
-
-        if not expert_tokens:
-            continue
-
-        # Fuse: compute all tokens in batch
-        cat_tokens = torch.cat(expert_tokens, dim=0)
-        gate_w, up_w, down_w = expert_weights[wave[0]]  # Use first expert's dims
-
-        # Fused gate+up projection for all tokens in wave
-        gate_out = F.silu(F.linear(cat_tokens, gate_w))
-        up_out = F.linear(cat_tokens, up_w)
-        hidden = gate_out * up_out
-        expert_out = F.linear(hidden, down_w)
-
-        # Scatter back
-        offset = 0
-        for i, mask in enumerate(expert_masks):
-            n = len(mask)
-            weight = expert_scores[i]
-            output[mask] += expert_out[offset:offset + n] * weight
-            offset += n
-
-    return output
-
-
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvMegaMoE(nn.Module):
     """MegaMoE layer with wave-based expert scheduling.
@@ -281,5 +156,134 @@ class YvMegaMoE(nn.Module):
 
             # Weight and scatter
             output.index_add_(0, all_indices, expert_out * all_scores)
+
+        return output
+
+class YvMegaKernel:
+    """Operations formerly exposed as module-level functions of mega_kernel.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def _wave_schedule(expert_counts: torch.Tensor, max_wave_size: int) -> List[List[int]]:
+        """Schedule experts into waves to maximize GPU utilization.
+
+        Groups experts so that each wave has roughly equal total token count,
+        minimizing idle time.
+
+        Args:
+            expert_counts: Number of tokens assigned to each expert.
+            max_wave_size: Max tokens per wave.
+
+        Returns:
+            List of waves, each wave is a list of expert indices.
+        """
+        num_experts = len(expert_counts)
+        sorted_indices = torch.argsort(expert_counts, descending=True)
+        waves = []
+        assigned = [False] * num_experts
+
+        for idx in sorted_indices.tolist():
+            if assigned[idx]:
+                continue
+
+            wave = [idx]
+            assigned[idx] = True
+            wave_tokens = expert_counts[idx].item()
+
+            # Greedily fill wave
+            for j in range(num_experts):
+                if assigned[j]:
+                    continue
+                candidate_tokens = expert_counts[j].item()
+                if wave_tokens + candidate_tokens <= max_wave_size:
+                    wave.append(j)
+                    assigned[j] = True
+                    wave_tokens += candidate_tokens
+
+            if wave_tokens > 0:
+                waves.append(wave)
+
+        return waves
+
+    @staticmethod
+    def _mega_moe_forward(
+        x: torch.Tensor,
+        expert_weights: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor]],
+        gate_scores: torch.Tensor,
+        gate_indices: torch.Tensor,
+        top_k: int,
+    ) -> torch.Tensor:
+        """Wave-scheduled MoE forward pass.
+
+        Args:
+            x: Input tokens (B*T, hidden_size).
+            expert_weights: List of (gate_proj, up_proj, down_proj) per expert.
+            gate_scores: Routing scores (B*T, top_k).
+            gate_indices: Selected expert indices (B*T, top_k).
+            top_k: Number of active experts per token.
+
+        Returns:
+            Output tokens (B*T, hidden_size).
+        """
+        hidden_size = x.shape[-1]
+        device = x.device
+        num_experts = len(expert_weights)
+        num_tokens = x.shape[0]
+
+        # Count tokens per expert
+        expert_counts = torch.zeros(num_experts, device=device, dtype=torch.long)
+        for k in range(top_k):
+            expert_indices = gate_indices[:, k].clamp(0, num_experts - 1)
+            expert_counts.scatter_add_(0, expert_indices, torch.ones(num_tokens, device=device, dtype=torch.long))
+
+        max_wave_size = max(1024, num_tokens // max(1, num_experts))
+        waves = YvMegaKernel._wave_schedule(expert_counts, max_wave_size)
+
+        output = torch.zeros(num_tokens, hidden_size, device=device, dtype=x.dtype)
+
+        for wave in waves:
+            if not wave:
+                continue
+
+            # Gather all tokens for this wave's experts
+            expert_tokens = []
+            expert_masks = []
+            expert_scores = []
+            expert_ids = []
+
+            for expert_idx in wave:
+                for k in range(top_k):
+                    token_mask = (gate_indices[:, k] == expert_idx)
+                    token_ids = token_mask.nonzero(as_tuple=True)[0]
+                    if len(token_ids) == 0:
+                        continue
+
+                    expert_tokens.append(x[token_ids])
+                    expert_masks.append(token_ids)
+                    expert_scores.append(gate_scores[token_ids, k].unsqueeze(-1))
+                    expert_ids.extend([expert_idx] * len(token_ids))
+
+            if not expert_tokens:
+                continue
+
+            # Fuse: compute all tokens in batch
+            cat_tokens = torch.cat(expert_tokens, dim=0)
+            gate_w, up_w, down_w = expert_weights[wave[0]]  # Use first expert's dims
+
+            # Fused gate+up projection for all tokens in wave
+            gate_out = F.silu(F.linear(cat_tokens, gate_w))
+            up_out = F.linear(cat_tokens, up_w)
+            hidden = gate_out * up_out
+            expert_out = F.linear(hidden, down_w)
+
+            # Scatter back
+            offset = 0
+            for i, mask in enumerate(expert_masks):
+                n = len(mask)
+                weight = expert_scores[i]
+                output[mask] += expert_out[offset:offset + n] * weight
+                offset += n
 
         return output

@@ -131,140 +131,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional, Tuple, Union
 from dataclasses import dataclass
-
-
-def _arctic_init_weights(m: nn.Module):
-    """Initialize weights for linear and embedding layers.
-    
-    Uses Kaiming uniform initialization for linear layers and
-    normal initialization for embedding layers.
-    
-    Args:
-        m: Module to initialize.
-    """
-    if isinstance(m, nn.Linear):
-        nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
-    elif isinstance(m, nn.Embedding):
-        nn.init.normal_(m.weight, mean=0, std=0.02)
-
-
-def _depth_aware_init_weights(m: nn.Module, n_layer: int, hidden_size: int):
-    """Depth-aware weight initialization for stable deep network training.
-    
-    Adjusts initialization standard deviation based on network depth to
-    prevent gradient explosion/vanishing in very deep transformers.
-    
-    Mathematical Formulation:
-        std = 1 / sqrt(2 * n_layer * hidden_size)
-        
-    This formula ensures that the variance of activations remains stable
-    across all layers, enabling training of networks with 100+ layers.
-    
-    Args:
-        m: Module to initialize.
-        n_layer: Total number of transformer layers.
-        hidden_size: Model hidden dimension.
-    
-    Reference:
-        - DeepNorm for very deep transformers (arXiv:2203.00555)
-        - LayerScale: Going Deeper With Image Transformers (ICCV 2021, arXiv:2103.17239)
-    """
-    depth_std = 1.0 / math.sqrt(2 * n_layer * hidden_size)
-    
-    if isinstance(m, nn.Linear):
-        nn.init.normal_(m.weight, mean=0, std=depth_std)
-        if m.bias is not None:
-            nn.init.zeros_(m.bias)
-    elif isinstance(m, nn.Embedding):
-        nn.init.normal_(m.weight, mean=0, std=depth_std * math.sqrt(hidden_size))
-    elif hasattr(m, 'weight') and m.weight is not None:
-        if m.weight.dim() >= 2:
-            nn.init.normal_(m.weight, mean=0, std=depth_std)
-
-
-def _norm_forward(
-    x: torch.Tensor,
-    weight: torch.Tensor,
-    bias: Optional[torch.Tensor],
-    eps: float,
-    mode: str = 'rms',
-    num_groups: Optional[int] = None,
-    cond: Optional[torch.Tensor] = None,
-    scale_proj: Optional[nn.Module] = None,
-    shift_proj: Optional[nn.Module] = None,
-    use_fused: bool = True,
-) -> torch.Tensor:
-    """Unified normalization core used by all Yv norm classes.
-    
-    Args:
-        x: Input tensor.
-        weight: Learnable scale parameter.
-        bias: Optional learnable bias.
-        eps: Epsilon for numerical stability.
-        mode: One of 'rms', 'layer', 'group', 'adaptive'.
-        num_groups: Number of groups for group norm.
-        cond: Conditioning tensor for adaptive norm.
-        scale_proj: Scale projection module for adaptive norm.
-        shift_proj: Shift projection module for adaptive norm.
-        use_fused: Use Triton-fused RMSNorm kernel when available (mode='rms' only).
-    
-    Returns:
-        Normalized tensor.
-    """
-    if mode == 'rms':
-        if use_fused and x.is_cuda and hasattr(weight, 'is_cuda') and weight.is_cuda:
-            try:
-                from opss.kernels.fused_rms_norm import fused_rms_norm
-                out = fused_rms_norm(x, weight, eps)
-                if bias is not None:
-                    out = out + bias
-                return out
-            except (ImportError, RuntimeError):
-                pass
-        rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
-        out = weight * x * rms
-        if bias is not None:
-            out = out + bias
-        return out
-
-    if mode == 'layer':
-        return F.layer_norm(x, (x.shape[-1],), weight, bias, eps)
-
-    if mode == 'group':
-        return F.group_norm(x, num_groups, weight, bias, eps)
-
-    if mode == 'adaptive':
-        x_norm = F.layer_norm(x, (x.shape[-1],), weight, bias, eps)
-        scale = scale_proj(cond).unsqueeze(1)
-        shift = shift_proj(cond).unsqueeze(1)
-        return x_norm * (1 + scale) + shift
-
-    raise ValueError(f"Unknown norm mode: {mode}")
-
-
-def _residual_alpha_for_depth(n_layer: int) -> float:
-    """Compute optimal residual alpha for DeepNorm-style stability.
-    
-    Formula: alpha = (2 * n_layer) ** 0.25
-    
-    This scaling factor ensures stable gradient flow in deep residual
-    networks by balancing the contribution of residual and skip connections.
-    
-    Args:
-        n_layer: Number of transformer layers.
-    
-    Returns:
-        Optimal residual alpha scaling factor.
-    
-    Example:
-        >>> alpha = _residual_alpha_for_depth(28)  # 7B model
-        >>> alpha = _residual_alpha_for_depth(80)  # 70B model
-    """
-    return (2 * n_layer) ** 0.25
-
-
 # Paper: Zhang & Sennrich, "Root Mean Square Layer Normalization", NeurIPS 2019, arXiv:1910.07467
 class YvRMSNorm(nn.Module):
     """Root Mean Square Layer Normalization for efficient normalization.
@@ -989,3 +855,141 @@ class YvParallelResidualNorm(nn.Module):
         gate = self.gate(concat)
         
         return sum(normalized) * gate + residual * (1 - gate)
+
+class YvNorms:
+    """Operations formerly exposed as module-level functions of norms.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def _arctic_init_weights(m: nn.Module):
+        """Initialize weights for linear and embedding layers.
+
+        Uses Kaiming uniform initialization for linear layers and
+        normal initialization for embedding layers.
+
+        Args:
+            m: Module to initialize.
+        """
+        if isinstance(m, nn.Linear):
+            nn.init.kaiming_uniform_(m.weight, a=math.sqrt(5))
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Embedding):
+            nn.init.normal_(m.weight, mean=0, std=0.02)
+
+    @staticmethod
+    def _depth_aware_init_weights(m: nn.Module, n_layer: int, hidden_size: int):
+        """Depth-aware weight initialization for stable deep network training.
+
+        Adjusts initialization standard deviation based on network depth to
+        prevent gradient explosion/vanishing in very deep transformers.
+
+        Mathematical Formulation:
+            std = 1 / sqrt(2 * n_layer * hidden_size)
+
+        This formula ensures that the variance of activations remains stable
+        across all layers, enabling training of networks with 100+ layers.
+
+        Args:
+            m: Module to initialize.
+            n_layer: Total number of transformer layers.
+            hidden_size: Model hidden dimension.
+
+        Reference:
+            - DeepNorm for very deep transformers (arXiv:2203.00555)
+            - LayerScale: Going Deeper With Image Transformers (ICCV 2021, arXiv:2103.17239)
+        """
+        depth_std = 1.0 / math.sqrt(2 * n_layer * hidden_size)
+
+        if isinstance(m, nn.Linear):
+            nn.init.normal_(m.weight, mean=0, std=depth_std)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+        elif isinstance(m, nn.Embedding):
+            nn.init.normal_(m.weight, mean=0, std=depth_std * math.sqrt(hidden_size))
+        elif hasattr(m, 'weight') and m.weight is not None:
+            if m.weight.dim() >= 2:
+                nn.init.normal_(m.weight, mean=0, std=depth_std)
+
+    @staticmethod
+    def _norm_forward(
+        x: torch.Tensor,
+        weight: torch.Tensor,
+        bias: Optional[torch.Tensor],
+        eps: float,
+        mode: str = 'rms',
+        num_groups: Optional[int] = None,
+        cond: Optional[torch.Tensor] = None,
+        scale_proj: Optional[nn.Module] = None,
+        shift_proj: Optional[nn.Module] = None,
+        use_fused: bool = True,
+    ) -> torch.Tensor:
+        """Unified normalization core used by all Yv norm classes.
+
+        Args:
+            x: Input tensor.
+            weight: Learnable scale parameter.
+            bias: Optional learnable bias.
+            eps: Epsilon for numerical stability.
+            mode: One of 'rms', 'layer', 'group', 'adaptive'.
+            num_groups: Number of groups for group norm.
+            cond: Conditioning tensor for adaptive norm.
+            scale_proj: Scale projection module for adaptive norm.
+            shift_proj: Shift projection module for adaptive norm.
+            use_fused: Use Triton-fused RMSNorm kernel when available (mode='rms' only).
+
+        Returns:
+            Normalized tensor.
+        """
+        if mode == 'rms':
+            if use_fused and x.is_cuda and hasattr(weight, 'is_cuda') and weight.is_cuda:
+                try:
+                    from opss.kernels.fused_rms_norm import fused_rms_norm
+                    out = fused_rms_norm(x, weight, eps)
+                    if bias is not None:
+                        out = out + bias
+                    return out
+                except (ImportError, RuntimeError):
+                    pass
+            rms = torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + eps)
+            out = weight * x * rms
+            if bias is not None:
+                out = out + bias
+            return out
+
+        if mode == 'layer':
+            return F.layer_norm(x, (x.shape[-1],), weight, bias, eps)
+
+        if mode == 'group':
+            return F.group_norm(x, num_groups, weight, bias, eps)
+
+        if mode == 'adaptive':
+            x_norm = F.layer_norm(x, (x.shape[-1],), weight, bias, eps)
+            scale = scale_proj(cond).unsqueeze(1)
+            shift = shift_proj(cond).unsqueeze(1)
+            return x_norm * (1 + scale) + shift
+
+        raise ValueError(f"Unknown norm mode: {mode}")
+
+    @staticmethod
+    def _residual_alpha_for_depth(n_layer: int) -> float:
+        """Compute optimal residual alpha for DeepNorm-style stability.
+
+        Formula: alpha = (2 * n_layer) ** 0.25
+
+        This scaling factor ensures stable gradient flow in deep residual
+        networks by balancing the contribution of residual and skip connections.
+
+        Args:
+            n_layer: Number of transformer layers.
+
+        Returns:
+            Optimal residual alpha scaling factor.
+
+        Example:
+            >>> alpha = YvNorms._residual_alpha_for_depth(28)  # 7B model
+            >>> alpha = YvNorms._residual_alpha_for_depth(80)  # 70B model
+        """
+        return (2 * n_layer) ** 0.25

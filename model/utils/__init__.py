@@ -99,11 +99,10 @@ from .safety import (
     YvDeviceGuard,
 )
 from .rope import (
+    YvRope,
     YvYaRNRotaryEmbedding,
     YvDynamicYaRNRotaryEmbedding,
     YvLinearScalingRoPE,
-    precompute_freqs_cis,
-    apply_rotary_emb,
 )
 from .quantization import (
     YvQuantizer,

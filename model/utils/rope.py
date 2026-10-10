@@ -259,111 +259,6 @@ class YvLinearScalingRoPE(nn.Module):
         x2 = x[..., x.shape[-1] // 2:]
         
         return torch.cat([-x2 * sin + x1 * cos, x1 * sin + x2 * cos], dim=-1)
-
-
-def precompute_freqs_cis(
-    dim: int,
-    max_seq_len: int,
-    base: int = 10000,
-    scale: float = 1.0,
-    device: Optional[torch.device] = None
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Precompute cosine and sine values for rotary position embeddings.
-    
-    Efficiently precomputes the rotation angles for all positions up to
-    max_seq_len. This avoids repeated computation during forward passes
-    and improves performance.
-    
-    Mathematical Formulation:
-        For each position p and dimension pair d:
-            θ(p, d) = p/scale × base^(-2d/D)
-            cos(p, d) = cos(θ(p, d))
-            sin(p, d) = sin(θ(p, d))
-    
-    Args:
-        dim (int): Embedding dimension (head_dim). Must be even.
-        max_seq_len (int): Maximum sequence length to precompute.
-        base (int): Base frequency for RoPE. Default: 10000.
-        scale (float): Scaling factor for positions. Default: 1.0.
-        device (Optional[torch.device]): Target device. Default: None.
-    
-    Returns:
-        Tuple[torch.Tensor, torch.Tensor]:
-            - cos: Cosine values of shape [max_seq_len, dim//2]
-            - sin: Sine values of shape [max_seq_len, dim//2]
-    
-    Example:
-        >>> cos, sin = precompute_freqs_cis(128, 4096)
-        >>> # Use in attention
-        >>> q_rot = apply_rotary_emb(queries, cos, sin)
-    
-    Note:
-        Precomputed tensors can be cached and reused across forward passes
-        for the same sequence length, significantly improving efficiency.
-    """
-    inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float().to(device) / dim))
-    t = torch.arange(max_seq_len, device=device, dtype=torch.float32) / scale
-    freqs = torch.outer(t, inv_freq)
-    
-    cos = freqs.cos()
-    sin = freqs.sin()
-    
-    return cos, sin
-
-
-def apply_rotary_emb(
-    x: torch.Tensor,
-    cos: torch.Tensor,
-    sin: torch.Tensor
-) -> torch.Tensor:
-    """Apply rotary position embedding to input tensor.
-    
-    Applies the rotation operation to the input tensor using precomputed
-    cosine and sine values. This is the core operation for RoPE.
-    
-    Rotation Formula:
-        For each pair of dimensions (x₁, x₂) at position p:
-            x₁' = x₁ × cos(θ_p) - x₂ × sin(θ_p)
-            x₂' = x₁ × sin(θ_p) + x₂ × cos(θ_p)
-    
-    Args:
-        x (torch.Tensor): Input tensor of shape:
-            - [batch, n_head, seq_len, head_dim] (4D attention)
-            - [batch, seq_len, dim] (3D general)
-        cos (torch.Tensor): Cosine values of shape [seq_len, dim//2].
-        sin (torch.Tensor): Sine values of shape [seq_len, dim//2].
-    
-    Returns:
-        torch.Tensor: Rotated tensor with same shape as input.
-    
-    Example:
-        >>> # Precompute frequencies
-        >>> cos, sin = precompute_freqs_cis(128, 4096)
-        >>> 
-        >>> # Apply to queries and keys
-        >>> q_rotated = apply_rotary_emb(queries, cos, sin)
-        >>> k_rotated = apply_rotary_emb(keys, cos, sin)
-        >>> 
-        >>> # Compute attention with position-aware scores
-        >>> attn_scores = torch.matmul(q_rotated, k_rotated.transpose(-2, -1))
-    
-    Note:
-        The input dimension must be even, as rotation operates on pairs
-        of dimensions. The cos/sin tensors should have half the dimension.
-    """
-    if x.dim() == 4:
-        cos = cos.unsqueeze(0).unsqueeze(0)
-        sin = sin.unsqueeze(0).unsqueeze(0)
-    elif x.dim() == 3:
-        cos = cos.unsqueeze(0)
-        sin = sin.unsqueeze(0)
-    
-    x1 = x[..., :x.shape[-1] // 2]
-    x2 = x[..., x.shape[-1] // 2:]
-    
-    return torch.cat([-x2 * sin + x1 * cos, x1 * sin + x2 * cos], dim=-1)
-
-
 __all__ = [
     "YvYaRNRotaryEmbedding",
     "YvDynamicYaRNRotaryEmbedding",
@@ -371,3 +266,112 @@ __all__ = [
     "precompute_freqs_cis",
     "apply_rotary_emb",
 ]
+
+class YvRope:
+    """Operations formerly exposed as module-level functions of rope.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def precompute_freqs_cis(
+        dim: int,
+        max_seq_len: int,
+        base: int = 10000,
+        scale: float = 1.0,
+        device: Optional[torch.device] = None
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Precompute cosine and sine values for rotary position embeddings.
+
+        Efficiently precomputes the rotation angles for all positions up to
+        max_seq_len. This avoids repeated computation during forward passes
+        and improves performance.
+
+        Mathematical Formulation:
+            For each position p and dimension pair d:
+                θ(p, d) = p/scale × base^(-2d/D)
+                cos(p, d) = cos(θ(p, d))
+                sin(p, d) = sin(θ(p, d))
+
+        Args:
+            dim (int): Embedding dimension (head_dim). Must be even.
+            max_seq_len (int): Maximum sequence length to precompute.
+            base (int): Base frequency for RoPE. Default: 10000.
+            scale (float): Scaling factor for positions. Default: 1.0.
+            device (Optional[torch.device]): Target device. Default: None.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]:
+                - cos: Cosine values of shape [max_seq_len, dim//2]
+                - sin: Sine values of shape [max_seq_len, dim//2]
+
+        Example:
+            >>> cos, sin = YvRope.precompute_freqs_cis(128, 4096)
+            >>> # Use in attention
+            >>> q_rot = YvRope.apply_rotary_emb(queries, cos, sin)
+
+        Note:
+            Precomputed tensors can be cached and reused across forward passes
+            for the same sequence length, significantly improving efficiency.
+        """
+        inv_freq = 1.0 / (base ** (torch.arange(0, dim, 2).float().to(device) / dim))
+        t = torch.arange(max_seq_len, device=device, dtype=torch.float32) / scale
+        freqs = torch.outer(t, inv_freq)
+
+        cos = freqs.cos()
+        sin = freqs.sin()
+
+        return cos, sin
+
+    @staticmethod
+    def apply_rotary_emb(
+        x: torch.Tensor,
+        cos: torch.Tensor,
+        sin: torch.Tensor
+    ) -> torch.Tensor:
+        """Apply rotary position embedding to input tensor.
+
+        Applies the rotation operation to the input tensor using precomputed
+        cosine and sine values. This is the core operation for RoPE.
+
+        Rotation Formula:
+            For each pair of dimensions (x₁, x₂) at position p:
+                x₁' = x₁ × cos(θ_p) - x₂ × sin(θ_p)
+                x₂' = x₁ × sin(θ_p) + x₂ × cos(θ_p)
+
+        Args:
+            x (torch.Tensor): Input tensor of shape:
+                - [batch, n_head, seq_len, head_dim] (4D attention)
+                - [batch, seq_len, dim] (3D general)
+            cos (torch.Tensor): Cosine values of shape [seq_len, dim//2].
+            sin (torch.Tensor): Sine values of shape [seq_len, dim//2].
+
+        Returns:
+            torch.Tensor: Rotated tensor with same shape as input.
+
+        Example:
+            >>> # Precompute frequencies
+            >>> cos, sin = YvRope.precompute_freqs_cis(128, 4096)
+            >>> 
+            >>> # Apply to queries and keys
+            >>> q_rotated = YvRope.apply_rotary_emb(queries, cos, sin)
+            >>> k_rotated = YvRope.apply_rotary_emb(keys, cos, sin)
+            >>> 
+            >>> # Compute attention with position-aware scores
+            >>> attn_scores = torch.matmul(q_rotated, k_rotated.transpose(-2, -1))
+
+        Note:
+            The input dimension must be even, as rotation operates on pairs
+            of dimensions. The cos/sin tensors should have half the dimension.
+        """
+        if x.dim() == 4:
+            cos = cos.unsqueeze(0).unsqueeze(0)
+            sin = sin.unsqueeze(0).unsqueeze(0)
+        elif x.dim() == 3:
+            cos = cos.unsqueeze(0)
+            sin = sin.unsqueeze(0)
+
+        x1 = x[..., :x.shape[-1] // 2]
+        x2 = x[..., x.shape[-1] // 2:]
+
+        return torch.cat([-x2 * sin + x1 * cos, x1 * sin + x2 * cos], dim=-1)

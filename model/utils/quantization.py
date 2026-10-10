@@ -133,6 +133,106 @@ class YvQuantizationType(Enum):
     STATIC_INT8 = "static_int8"
     QAT = "qat"
 
+    @staticmethod
+    def quantize_kv_cache(
+        keys: torch.Tensor,
+        values: torch.Tensor,
+        bits: int = 8
+    ) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
+        """Quantize KV cache for memory efficiency during inference.
+
+        Compresses key and value cache tensors to INT8 or INT4, reducing
+        memory usage by 4x or 8x respectively. Essential for long-context
+        generation where KV cache grows linearly with sequence length.
+
+        Args:
+            keys (torch.Tensor): Key cache tensor of shape [batch, heads, seq, dim].
+            values (torch.Tensor): Value cache tensor of shape [batch, heads, seq, dim].
+            bits (int): Target bit width. Supported: 4, 8. Default: 8.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
+                - q_keys: Quantized key cache (INT8)
+                - q_values: Quantized value cache (INT8)
+                - metadata: Dictionary with scales and zero points for dequantization
+
+        Example:
+            >>> q_keys, q_values, meta = YvQuantization.quantize_kv_cache(keys, values, bits=8)
+            >>> # Later, during attention computation:
+            >>> keys, values = YvQuantization.dequantize_kv_cache(q_keys, q_values, meta)
+
+        Note:
+            Quantization introduces some accuracy loss. For sensitive tasks,
+            consider using FP16 or keeping FP32 cache.
+        """
+        quantizer = YvQuantizer(YvQuantizationConfig(
+            quantization_type=YvQuantizationType.INT8 if bits == 8 else YvQuantizationType.INT4
+        ))
+
+        q_keys, k_scale, k_zp = quantizer.quantize_tensor(keys, bits=bits)
+        q_values, v_scale, v_zp = quantizer.quantize_tensor(values, bits=bits)
+
+        metadata = {
+            "k_scale": k_scale,
+            "k_zero_point": k_zp,
+            "v_scale": v_scale,
+            "v_zero_point": v_zp,
+        }
+
+        return q_keys, q_values, metadata
+
+    @staticmethod
+    def dequantize_kv_cache(
+        q_keys: torch.Tensor,
+        q_values: torch.Tensor,
+        metadata: Dict[str, torch.Tensor]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Dequantize KV cache for attention computation.
+
+        Restores quantized key and value cache tensors to floating-point
+        format for use in attention operations. This is the inverse operation
+        of quantize_kv_cache.
+
+        Args:
+            q_keys (torch.Tensor): Quantized key cache (INT8).
+            q_values (torch.Tensor): Quantized value cache (INT8).
+            metadata (Dict[str, torch.Tensor]): Quantization metadata containing:
+                - k_scale: Key cache scale factor
+                - k_zero_point: Key cache zero point
+                - v_scale: Value cache scale factor
+                - v_zero_point: Value cache zero point
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]:
+                - keys: Dequantized key cache (FP32)
+                - values: Dequantized value cache (FP32)
+
+        Example:
+            >>> # After loading quantized cache
+            >>> keys, values = YvQuantization.dequantize_kv_cache(q_keys, q_values, metadata)
+            >>> # Use in attention
+            >>> attn_output = attention(query, keys, values)
+
+        Note:
+            Dequantization adds computational overhead. For best performance,
+            consider fused attention kernels that operate directly on quantized
+            cache with hardware support.
+        """
+        quantizer = YvQuantizer()
+
+        keys = quantizer.dequantize_tensor(
+            q_keys,
+            metadata["k_scale"],
+            metadata["k_zero_point"]
+        )
+        values = quantizer.dequantize_tensor(
+            q_values,
+            metadata["v_scale"],
+            metadata["v_zero_point"]
+        )
+
+        return keys, values
+
 
 @dataclass
 class YvQuantizationConfig:
@@ -393,103 +493,3 @@ class _YvQuantizedLinear(nn.Module):
     def forward(self, x):
         weight = (self.q_weight.float() - self.zero_point) * self.scale
         return F.linear(x, weight, self.bias)
-
-
-def quantize_kv_cache(
-    keys: torch.Tensor,
-    values: torch.Tensor,
-    bits: int = 8
-) -> Tuple[torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
-    """Quantize KV cache for memory efficiency during inference.
-    
-    Compresses key and value cache tensors to INT8 or INT4, reducing
-    memory usage by 4x or 8x respectively. Essential for long-context
-    generation where KV cache grows linearly with sequence length.
-    
-    Args:
-        keys (torch.Tensor): Key cache tensor of shape [batch, heads, seq, dim].
-        values (torch.Tensor): Value cache tensor of shape [batch, heads, seq, dim].
-        bits (int): Target bit width. Supported: 4, 8. Default: 8.
-    
-    Returns:
-        Tuple[torch.Tensor, torch.Tensor, Dict[str, torch.Tensor]]:
-            - q_keys: Quantized key cache (INT8)
-            - q_values: Quantized value cache (INT8)
-            - metadata: Dictionary with scales and zero points for dequantization
-    
-    Example:
-        >>> q_keys, q_values, meta = quantize_kv_cache(keys, values, bits=8)
-        >>> # Later, during attention computation:
-        >>> keys, values = dequantize_kv_cache(q_keys, q_values, meta)
-    
-    Note:
-        Quantization introduces some accuracy loss. For sensitive tasks,
-        consider using FP16 or keeping FP32 cache.
-    """
-    quantizer = YvQuantizer(YvQuantizationConfig(
-        quantization_type=YvQuantizationType.INT8 if bits == 8 else YvQuantizationType.INT4
-    ))
-
-    q_keys, k_scale, k_zp = quantizer.quantize_tensor(keys, bits=bits)
-    q_values, v_scale, v_zp = quantizer.quantize_tensor(values, bits=bits)
-
-    metadata = {
-        "k_scale": k_scale,
-        "k_zero_point": k_zp,
-        "v_scale": v_scale,
-        "v_zero_point": v_zp,
-    }
-
-    return q_keys, q_values, metadata
-
-
-def dequantize_kv_cache(
-    q_keys: torch.Tensor,
-    q_values: torch.Tensor,
-    metadata: Dict[str, torch.Tensor]
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """Dequantize KV cache for attention computation.
-    
-    Restores quantized key and value cache tensors to floating-point
-    format for use in attention operations. This is the inverse operation
-    of quantize_kv_cache.
-    
-    Args:
-        q_keys (torch.Tensor): Quantized key cache (INT8).
-        q_values (torch.Tensor): Quantized value cache (INT8).
-        metadata (Dict[str, torch.Tensor]): Quantization metadata containing:
-            - k_scale: Key cache scale factor
-            - k_zero_point: Key cache zero point
-            - v_scale: Value cache scale factor
-            - v_zero_point: Value cache zero point
-    
-    Returns:
-        Tuple[torch.Tensor, torch.Tensor]:
-            - keys: Dequantized key cache (FP32)
-            - values: Dequantized value cache (FP32)
-    
-    Example:
-        >>> # After loading quantized cache
-        >>> keys, values = dequantize_kv_cache(q_keys, q_values, metadata)
-        >>> # Use in attention
-        >>> attn_output = attention(query, keys, values)
-    
-    Note:
-        Dequantization adds computational overhead. For best performance,
-        consider fused attention kernels that operate directly on quantized
-        cache with hardware support.
-    """
-    quantizer = YvQuantizer()
-
-    keys = quantizer.dequantize_tensor(
-        q_keys,
-        metadata["k_scale"],
-        metadata["k_zero_point"]
-    )
-    values = quantizer.dequantize_tensor(
-        q_values,
-        metadata["v_scale"],
-        metadata["v_zero_point"]
-    )
-
-    return keys, values

@@ -1253,8 +1253,8 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             self._current_train_loader = train_loader
 
             # Scan dataset for modalities before model init
-            from utils.modality_scanner import scan_dataset
-            detected_modalities = scan_dataset(train_ds)
+            from utils.modality_scanner import PiscesLxModalityScanner
+            detected_modalities = PiscesLxModalityScanner.scan_dataset(train_ds)
             if detected_modalities == {'text'}:
                 _LOG.info(f"PiscesLxDataset {ds_name} is text-only, skipping multimodal encoders")
             else:
