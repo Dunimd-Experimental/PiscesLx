@@ -207,21 +207,21 @@ h_t' = h_t + Δh_t
 
 ## 8. 实现顺序（交给阶段 6/7）
 
-1. `model/core/block_field.py`：`YvSubconsciousBlockField`（后备场 + 痕迹场 + 落格/恢复）
-2. `model/core/block_addresser.py`：`YvResonantTraceAddresser`（RTA + 滞回 + 覆盖均衡）
-3. `model/core/block_pools.py`：`YvResidentBlockPool`（K 槽 LRU-λ + 异步搬运阶梯）
+1. ✅ `model/core/block_field.py`：`YvSubconsciousBlockField` + `YvResidentBlockPool` + `YvKnowledgeBlockModule`（关联记忆读出，全部 0.5B 参数在激活时真正参与计算）
+2. ✅ `model/core/block_addresser.py`：`YvResonantTraceAddresser`（RTA + 滞回 + 陈旧度 + **驻留下界**）
+3. ⏳ 异步搬运阶梯（CUDA stream 上的 host→device 流水）尚未接；当前为同步 install/commit
 4. 注入改造：`dual_injector.py` 增加 §5 乘性调制头
 5. 训练侧：ABGB 三项接入 `opss/train/`（块级串行落格需在引擎里做，但**只碰自有权重**，符合红线）
 6. 配置：`n_blocks=628`、`block_params=0.5e9`、`pool_k`、`lambda_hysteresis`、`tau_staleness`
    全部进 `YvConfig` + `configs/model/*.yaml`（禁硬编码）
-7. 测试：定理 2 的 `p ≤ 0.06` 与定理 5 的 `‖Δh‖/‖h‖ ≤ α·γ` 写成**可回归的数值断言**
+7. 测试：`tools/test/test_sbf_mechanism.py`（17 项，全部通过）—— 定理 5 相对界与梯度有限性、定理 2 的 D_min 算式与驻留构造保证、定理 1 寻址占比、定理 6 仅驻留块有梯度、容量实算 0.500B
 
 ## 9. 待验证假设（诚实登记，不含糊）
 
 | 假设 | 为何关键 | 验证方式 |
 |------|----------|----------|
-| 知识在文本流中具有**时间局部性**（平均驻留 ≥ 16.7 token） | 定理 2 的前提；不成立则 5 ms/token 不可达 | 真实语料上跑 RTA 命中率/驻留分布统计（阶段 9） |
+| ~~时间局部性假设~~ → 已改为**构造保证**（推论 2.1：游程平滑，短游程并入长邻域） | 5 ms/token 不再依赖语料性质 | 已完成：`test_sbf_mechanism.check_dwell_floor_is_constructive`（6 形状全过）|
 | 块内知识**写得出**（有限 step 的梯度写入能支撑下游评测） | 对应 Fermi §3.3 的「容量绕过 token 量」路径 | 知识注入前后 MMLU 差 ≥8 分（表 9.2 原指标） |
-| 误取块不摧毁主干（乘性注入的相对界实测成立） | §5 的工程含义 | 强制随机换块，测输出质量退化曲线是否温和 |
+| **强制驻留的精度代价**：话题快切时被迫选次优块，对下游分数影响多大 | 推论 2.1 把延迟可行性换成精度风险 | 阶段 9 对照实验：同一模型 D=1 vs D=17 的评测差 |
 
 若第 1 条实测不成立，**必须如实报告并给出证明**（铁律 4），而不是悄悄改用别的机制冒充达标。

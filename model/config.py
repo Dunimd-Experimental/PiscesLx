@@ -998,6 +998,27 @@ class YvConfig:
 
 
     # ========================================
+    # Subconscious Block Field ("查" side of compute-search separation)
+    #
+    # Design/proofs: docs/design/00-subconscious-block-field.md,
+    # docs/proofs/00-sbf-theorems.md. Every value is configuration, never a literal
+    # in engine code (coding standard 4.7).
+    # ========================================
+    use_subconscious_blocks: bool = True
+    block_count: int = 628                      # 314B / 0.5B blocks
+    block_memory_rows: int = 116_900            # associative rows; rows*hidden ~ 0.5B
+    block_rank: int = 512                       # scoring bottleneck width
+    block_trace_dim: int = 256                  # k, addressing trace width
+    block_pool_slots: int = 2                   # device-resident blocks (see Fermi 3.1)
+    block_gamma_max: float = 0.5                # A1(i) bound on the multiplicative gate
+    block_beta_bound: float = 0.25              # A1(ii) bound constant c on the beta branch
+    block_inject_alpha: float = 0.1             # injection strength; kappa = alpha*(gmax+c)
+    block_hysteresis: float = 1.0               # lambda, the Theorem 2 dwell enforcer
+    block_staleness_gain: float = 0.002         # mu, keeps cold blocks reachable
+    block_staleness_cap_tokens: int = 4096      # saturation of the staleness bonus
+    block_min_dwell_tokens: int = 17            # ceil(transfer_ms / budget_ms) = 83.3/5
+
+        # ========================================
     # MoVE (Mixture of Vision Encoders)
     # ========================================
     use_move_encoder: bool = True
