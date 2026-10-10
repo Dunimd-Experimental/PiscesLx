@@ -44,7 +44,7 @@ scheduler:
 
 data:
   batch_size: 1
-  sequence_length: 128
+  sequence_length: 32
   num_workers: 0
   pin_memory: false
   prefetch_factor: 2

@@ -1006,7 +1006,12 @@ class YvConfig:
     # ========================================
     use_subconscious_blocks: bool = True
     block_count: int = 628                      # 314B / 0.5B blocks
-    block_memory_rows: int = 116_900            # associative rows; rows*hidden ~ 0.5B
+    # 0 means "derive": the row count is whatever makes a block equal to
+    # block_size_params, so the geometry can never contradict the declared block size.
+    block_memory_rows: int = 0
+    # The single declared block quantity the proofs reason about (0.5B-class block).
+    block_size_params: int = 499_793_920
+    KNOWLEDGE_POOL_BILLIONS = 314.0   # 628 x 0.5B store
     block_rank: int = 512                       # scoring bottleneck width
     block_trace_dim: int = 256                  # k, addressing trace width
     block_pool_slots: int = 2                   # device-resident blocks (see Fermi 3.1)
@@ -1080,6 +1085,16 @@ class YvConfig:
                 knowledge_b = 314.0 * 7.0 / core_b
             knowledge_b = min(max(knowledge_b, 7.0), 628.0)
             self.knowledge_num_experts = int(round(knowledge_b / 0.5))
+
+        if self.block_memory_rows <= 0 and self.hidden_size > 0:
+            # rows are what remains of a block once the scoring projections and the
+            # output square are paid for, so block_size_params stays the one declared
+            # quantity (the 0.5B-class block of Theorem 2) and the row count can never
+            # contradict it. At hidden 4096 this evaluates to 116,900 rows, which is the
+            # value the flagship tiers have always carried.
+            overhead = 2 * self.hidden_size * self.block_rank + self.hidden_size ** 2
+            rows = (self.block_size_params - overhead) // self.hidden_size
+            self.block_memory_rows = max(8, int(rows))
 
     @classmethod
     def from_json(cls, path: str) -> 'YvConfig':

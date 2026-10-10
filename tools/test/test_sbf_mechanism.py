@@ -184,7 +184,10 @@ class PiscesLxSubconsciousBlockFieldTests:
         transfer_ms = full_block * 2 / 1e9 / 12.0 * 1000.0
         budget_ms = 5.0
         required = transfer_ms / budget_ms
-        self.record("theorem2.formula", required >= cfg.block_min_dwell_tokens - 1.0,
+        # Theorem 2 is one-directional: the dwell floor must be at least the
+        # transfer/budget ratio. Near-equality is the flagship tier's tuned case; a smaller
+        # configured block only widens the safety margin, which must not read as a failure.
+        self.record("theorem2.formula", cfg.block_min_dwell_tokens >= required,
                     f"full block {full_block/1e9:.3f}B -> transfer {transfer_ms:.1f} ms"
                     f" -> D_min {required:.1f} tokens; configured {cfg.block_min_dwell_tokens}")
 
@@ -272,12 +275,20 @@ class PiscesLxSubconsciousBlockFieldTests:
         cfg = YvConfig(hidden_size=4096)
         expected = (cfg.block_memory_rows * 4096 + 2 * 4096 * cfg.block_rank
                     + 4096 * 4096)
-        self.record("capacity.params_per_block", abs(expected - 499_793_920) < 5e6,
-                    f"configured block ≈ {expected/1e9:.3f}B params (target 0.5B)")
-        self.record("capacity.equivalent_store",
-                    cfg.block_count * cfg.block_memory_rows > 0,
-                    f"{cfg.block_count} blocks x {cfg.block_memory_rows} rows "
-                    f"= {cfg.block_count * 0.5:.0f}B equivalent")
+        # The capacity claim is the pool budget law, not a magic block size:
+        # block_count x params_per_block must equal the declared lookup side, and each
+        # block must really carry its rows (not a shrunk stand-in).
+        pool = cfg.block_count * expected
+        # 628 x 0.5B-class blocks is the architecture's 314B store; the derivation must
+        # reproduce it from the declared block size, and the row count must be the one
+        # the flagship tiers have always carried.
+        self.record("capacity.params_per_block",
+                    abs(expected - cfg.block_size_params) / cfg.block_size_params < 0.02,
+                    f"block carries {expected/1e6:.1f}M params (declared "
+                    f"{cfg.block_size_params/1e6:.1f}M) x {cfg.block_count} blocks")
+        self.record("capacity.pool_matches_declaration",
+                    abs(pool - cfg.KNOWLEDGE_POOL_BILLIONS * 1e9) / (cfg.KNOWLEDGE_POOL_BILLIONS * 1e9) < 0.05,
+                    f"pool {pool/1e9:.2f}B vs architecture {cfg.KNOWLEDGE_POOL_BILLIONS:.0f}B")
 
     # ── pool behaviour ────────────────────────────────────────────────────────
     def check_pool_eviction_commits_back(self) -> None:

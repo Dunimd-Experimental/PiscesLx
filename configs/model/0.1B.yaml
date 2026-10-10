@@ -46,6 +46,10 @@ compute_params_total: 0
 lookup_params_total: 135000000
 use_dual_inject: true
 use_subconscious: true
+# Host tier only the block's declared size is lowered: a flagship 0.5B-class block costs
+# ~1.9 GB per resident block, which a 16 GB CPU host cannot hold. Subconscious blocks,
+# resonant trace addressing and the resident pool stay enabled — same mechanism.
+block_size_params: 8000000
 use_memory_separation: true
 attention_type: "standard"
 
@@ -170,7 +174,7 @@ training_config:
   learning_rate: 3.0e-5
   weight_decay: 0.01
   batch_size: 1
-  sequence_length: 128
+  sequence_length: 32
   gradient_accumulation_steps: 2
   max_steps: 100000
   warmup_ratio: 0.1
