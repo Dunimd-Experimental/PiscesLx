@@ -70,9 +70,18 @@ class PiscesLxFusedMoEDispatch(nn.Module):
         flat_weights = routing_weights.reshape(-1)
         num_assignments = flat_indices.numel()
 
-        # 2. Token index map: each token appears k times
+        # 2. Token index map: each token appears once per selected expert. The gate's
+        #    own width is authoritative — expert-choice and shared-expert routing return
+        #    a different number of slots per token than moe_top_k, and trusting the
+        #    configured k here made the gather index past the end of the token table.
+        assignments_per_token = expert_indices.shape[-1] if expert_indices.dim() > 1 else 1
+        if num_assignments != num_tokens * assignments_per_token:
+            raise ValueError(
+                f"fused dispatch: {num_assignments} assignments cannot come from "
+                f"{num_tokens} tokens with {assignments_per_token} experts each"
+            )
         token_ids = torch.arange(num_tokens, device=device)
-        token_ids = token_ids.unsqueeze(1).expand(-1, k).reshape(-1)
+        token_ids = token_ids.unsqueeze(1).expand(-1, assignments_per_token).reshape(-1)
 
         # 3. Sort all assignments by expert ID
         sorted_perm = torch.argsort(flat_indices, stable=True)
