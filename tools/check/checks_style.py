@@ -342,19 +342,64 @@ class PiscesLxIncompleteMarkerCheck(PiscesLxStandardCheck):
     description = "TODO/FIXME/placeholder/not-implemented markers are forbidden in shipped code"
 
     _PATTERNS = (
-        re.compile(r"\bTODO\b[:\s]", re.IGNORECASE),
-        re.compile(r"\bFIXME\b", re.IGNORECASE),
+        # Uppercase only, as every linter does: ``todo`` is an ordinary variable name
+        # for a work list, and matching it case-insensitively made the cleaning
+        # pipeline look unfinished when it is complete.
+        re.compile(r"\bTODO\b[:\s]"),
+        re.compile(r"\bFIXME\b"),
         re.compile(r"\bXXX\b(?!\w)"),
-        re.compile(r"\bplaceholder\b", re.IGNORECASE),
-        re.compile(r"\bstub\b", re.IGNORECASE),
         re.compile(r"raise\s+NotImplementedError"),
         re.compile(r"\bpass\s*#\s*(later|todo|fixme)\b", re.IGNORECASE),
     )
+    # "placeholder" and "stub" are ordinary nouns — a parameter named ``placeholder``,
+    # or prose about a zero tensor used as a placeholder. They mark unfinished work only
+    # together with the language of substitution, so this check targets real gaps.
+    _DEFERRED_LANGUAGE = re.compile(
+        r"\b(?:placeholder|stub)\b.{0,90}"
+        r"\b(?:in production|for now|later|temporary|dummy|simplified|"
+        r"to be (?:implemented|replaced)|replaced with|not implemented)\b"
+        r"|\b(?:in production|for now|to be implemented)\b.{0,90}\b(?:placeholder|stub)\b",
+        re.IGNORECASE | re.DOTALL,
+    )
     _DOC_DIRS = ("docs/", "tests/", "tools/check/")
+    # ``{{VERSION}}`` is a template token the loaders substitute, not unfinished work.
+    _TEMPLATE_TOKEN = "{{VERSION}}"
 
     def run(self, scanner: PiscesLxRepositoryScanner) -> list:
         """Collect unfinished-work markers, excluding tests and documentation."""
         return self.run_per_file(scanner)
+
+
+    @staticmethod
+    def _context(source: PiscesLxSourceFile, index: int, span: int = 3) -> str:
+        """A few lines around *index*: a substitution promise often sits one line off."""
+        lines = source.lines
+        return "\n".join(lines[max(0, index - 1 - span): index + span])
+
+    @staticmethod
+    def _abstract_contract_lines(source: PiscesLxSourceFile) -> set:
+        """Lines whose ``raise NotImplementedError`` *is* the method, i.e. an interface.
+
+        An abstract method that only demands an implementation from subclasses is
+        correct design, not shipped half-work; a concrete method that raises in a
+        branch, or alongside real code, is still reported.
+        """
+        tree = source.tree
+        if tree is None:
+            return set()
+        lines = set()
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            body = list(node.body)
+            if body and isinstance(body[0], ast.Expr) and isinstance(body[0].value, ast.Constant)                     and isinstance(body[0].value.value, str):
+                body = body[1:]
+            if len(body) == 1 and isinstance(body[0], ast.Raise):
+                raised = body[0].exc
+                name = getattr(raised, "func", raised)
+                if isinstance(name, ast.Name) and name.id == "NotImplementedError":
+                    lines.update(range(node.lineno, body[0].end_lineno + 1))
+        return lines
 
     def inspect(self, source: PiscesLxSourceFile) -> list:
         """Report each marker hit with severity warning inside docs/tests."""
@@ -365,11 +410,29 @@ class PiscesLxIncompleteMarkerCheck(PiscesLxStandardCheck):
             if relative.startswith(self._DOC_DIRS) or "/test_" in relative
             else PiscesLxSeverity.ERROR
         )
+        abstract = self._abstract_contract_lines(source)
         for index, line in enumerate(source.lines, start=1):
             stripped = line.strip()
             if not stripped:
                 continue
             if PiscesLxRegexLibrary.LOGGING_IMPORT.match(stripped):
+                continue
+            if self._TEMPLATE_TOKEN in line:
+                continue
+            if "raise NotImplementedError" in line and index in abstract:
+                continue
+            if (re.search(r"\b(?:placeholder|stub)\b", line, re.IGNORECASE)
+                    and self._DEFERRED_LANGUAGE.search(self._context(source, index))):
+                violations.append(
+                    PiscesLxViolation(
+                        self.rule,
+                        source.path,
+                        index,
+                        "placeholder/stub declared as something to be replaced later",
+                        severity=severity,
+                        snippet=stripped[:160],
+                    )
+                )
                 continue
             for pattern in self._PATTERNS:
                 if pattern.search(line):

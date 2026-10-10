@@ -47,6 +47,12 @@ from utils.dc import PiscesLxLogger
 from utils.paths import PiscesLxPaths
 from configs.version import VERSION
 
+from tools.data.dataset.raw_text import (
+    PiscesLxToolsDataClassificationDataset,
+    PiscesLxToolsDataJsonSampleReader,
+    PiscesLxToolsDataPreferenceDataset,
+    PiscesLxToolsDataSupervisedDataset,
+)
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
 
@@ -61,6 +67,7 @@ class PiscesLxMultitaskTrainingConfig:
     # Data settings
     data_paths: Dict[str, str] = field(default_factory=dict)
     batch_size_per_task: int = 4
+    max_seq_length: int = 512
     max_samples_per_task: Optional[int] = None
     
     # Training settings
@@ -321,61 +328,41 @@ class PiscesLxMultitaskTrainingOperator(PiscesLxOperatorInterface):
         
         return task_datasets
     
-    def _create_sft_dataset(self, data_path: str, tokenizer: Any, config: PiscesLxMultitaskTrainingConfig):
-        """Create SFT dataset."""
-        # Implementation would load and process SFT data
-        # This is a simplified placeholder
-        class PiscesLxSFTPlaceholderDataset(Dataset):
-            def __init__(self, size=100):
-                self.size = size
-            def __len__(self): return self.size
-            def __getitem__(self, idx): 
-                return {"input_ids": torch.randint(0, 1000, (512,)), "labels": torch.randint(0, 1000, (512,))}
-        
-        return PiscesLxSFTPlaceholderDataset(min(config.max_samples_per_task or 100, 100))
-    
-    def _create_dpo_dataset(self, data_path: str, tokenizer: Any, config: PiscesLxMultitaskTrainingConfig):
-        """Create DPO dataset."""
-        class PiscesLxDPOPlaceholderDataset(Dataset):
-            def __init__(self, size=50):
-                self.size = size
-            def __len__(self): return self.size
-            def __getitem__(self, idx):
-                return {
-                    "chosen_input_ids": torch.randint(0, 1000, (256,)),
-                    "rejected_input_ids": torch.randint(0, 1000, (256,)),
-                    "chosen_labels": torch.randint(0, 1000, (256,)),
-                    "rejected_labels": torch.randint(0, 1000, (256,))
-                }
-        
-        return PiscesLxDPOPlaceholderDataset(min(config.max_samples_per_task or 50, 50))
-    
-    def _create_classification_dataset(self, data_path: str, tokenizer: Any, config: PiscesLxMultitaskTrainingConfig):
-        """Create classification dataset."""
-        class PiscesLxClassificationPlaceholderDataset(Dataset):
-            def __init__(self, size=75):
-                self.size = size
-            def __len__(self): return self.size
-            def __getitem__(self, idx):
-                return {
-                    "input_ids": torch.randint(0, 1000, (128,)),
-                    "labels": torch.randint(0, 10, (1,)),
-                    "attention_mask": torch.ones(128)
-                }
-        
-        return PiscesLxClassificationPlaceholderDataset(min(config.max_samples_per_task or 75, 75))
-    
-    def _create_generic_dataset(self, data_path: str, tokenizer: Any, config: PiscesLxMultitaskTrainingConfig):
-        """Create generic dataset."""
-        class PiscesLxGenericPlaceholderDataset(Dataset):
-            def __init__(self, size=50):
-                self.size = size
-            def __len__(self): return self.size
-            def __getitem__(self, idx):
-                return {"input_ids": torch.randint(0, 1000, (256,)), "labels": torch.randint(0, 1000, (256,))}
-        
-        return PiscesLxGenericPlaceholderDataset(min(config.max_samples_per_task or 50, 50))
-    
+    _TASK_DATASETS = {
+        "sft": PiscesLxToolsDataSupervisedDataset,
+        "dpo": PiscesLxToolsDataPreferenceDataset,
+        "classification": PiscesLxToolsDataClassificationDataset,
+    }
+
+    def _create_sft_dataset(self, data_path, tokenizer, config):
+        """Tokenized prompt/answer records read from *data_path*."""
+        return self._create_task_dataset("sft", data_path, tokenizer, config)
+
+    def _create_dpo_dataset(self, data_path, tokenizer, config):
+        """Chosen/rejected preference pairs read from *data_path*."""
+        return self._create_task_dataset("dpo", data_path, tokenizer, config)
+
+    def _create_classification_dataset(self, data_path, tokenizer, config):
+        """Labelled text records read from *data_path*."""
+        return self._create_task_dataset("classification", data_path, tokenizer, config)
+
+    def _create_generic_dataset(self, data_path, tokenizer, config):
+        """Unlabelled text continues as supervised self-training records."""
+        return self._create_task_dataset("sft", data_path, tokenizer, config)
+
+    def _create_task_dataset(self, kind, data_path, tokenizer, config):
+        """Load real samples for one task; multitask training never synthesizes data."""
+        samples = PiscesLxToolsDataJsonSampleReader.resolve(data_path)
+        if not samples:
+            raise ValueError(
+                f"{kind} task at {data_path}: no samples were read. Random placeholder "
+                "tensors are forbidden — fix the path or drop the task from the config."
+            )
+        if config.max_samples_per_task:
+            samples = samples[: int(config.max_samples_per_task)]
+        dataset_cls = self._TASK_DATASETS[kind]
+        return dataset_cls(samples, tokenizer, config.max_seq_length)
+
     def _run_multitask_training(self, model: nn.Module, dataset: Dataset, 
                                config: PiscesLxMultitaskTrainingConfig, optimizer: torch.optim.Optimizer,
                                uncertainty_weighting: Optional[PiscesLxUncertaintyWeighting], 

@@ -201,14 +201,14 @@ python manage.py help                                                     → �
 ## 8. 阶段 3 / 4 / 7 实测进度（2026-10-10 本轮，同一套检查的当前输出）
 
 §3 是清理当轮的快照，本轮数字以脚本实测为准：`python -m tools.check` →
-`files=330 checks=12 errors=3923 warnings=5`。
+`files=330 checks=12 errors=3857 warnings=6`（规则命中：NO-MAGIC-NUMBER 3856 / NO-STUB-NOR-TODO 6 / NO-HARDCODED-PATH 1）。
 
 | 规则 | §3 快照 | 本轮 | 状态 |
 |------|-------:|-----:|------|
 | `EXPOSE-CLASSES-ONLY` | 137 | **0** | §6.2 全仓清零：34 个文件 55 个顶层函数收容；`get_tokenizer`/`create_expert_module`/`create_mhc_transformer`/`create_*_evaluator` 等无调用方的构造器别名按"单名零别名"直接除根 |
 | `NO-DANGLING-EXPORT` | 检查不存在 | **0** | 新增第 12 项检查（`tools/check/checks_exports.py`）：静态校验 `__all__` 与 PEP 562 惰性表的每个名字确有绑定；用注入缺陷自测两类缺陷均命中，随后清掉真实存在的 52−11 处陈旧广告与 9 条指向已删模块的别名表项 |
 | `NO-HARDCODED-PATH` | 1 | **1** | 仅剩 `tools/setup.py` 一处，随该类收容一起处理 |
-| `NO-STUB-NOR-TODO` | 41 | **42** | 阶段 5 待办（收容后新增 1 处显式 NotImplementedError） |
+| `NO-STUB-NOR-TODO` | 41 | **6** | 42→6：`opss/train/multitask.py` 四个用 `torch.randint` 伪造样本的占位数据集被换成真实加载器；检查本身也修了两处误报（抽象方法的 `raise NotImplementedError` 契约、名为 `todo` 的普通变量、`{{VERSION}}` 模板记号、作名词用的 placeholder），残留 6 条为工具自身定义禁用词的行 |
 | `NO-MAGIC-NUMBER` | 3895 | **3888** | 尚未开始分层收敛，是剩余最大项 |
 | 其余规则 | — | 0 | 命名/日志/头部/模态/引擎红线/EnTA/水印均已清零 |
 
@@ -250,7 +250,7 @@ python manage.py help                                                     → �
 
 1. `NO-MAGIC-NUMBER` 3888 分三层收敛：模型结构/超参 → `YvConfig` + `configs/model/*.yaml`；
    训练/推理数值 → 阶段配置；协议与展示常量 → 类常量。
-2. `NO-STUB-NOR-TODO` 42 与 `tools/setup.py` 的最后 1 处硬编码路径。
+2. `tools/setup.py` 的最后 1 处硬编码路径。
 3. SBF：CUDA 流异步阶梯搬运（设计 §4）、`subconscious.py` 产品量化码本并入 SBF 组内行索引、
    `knowledge_expert_path` 的"盘外权重"语义改为模型自有权重。
 4. 阶段 5 算法合并（4 套融合实现归一）、阶段 8 家族配置、阶段 9 真实训练与权重交付

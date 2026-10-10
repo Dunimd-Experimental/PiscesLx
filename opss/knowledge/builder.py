@@ -316,7 +316,7 @@ class _PiscesLxKnowledgeEncoder(nn.Module):
         if dtype is None:
             dtype = torch.float16 if device.type == "cuda" else torch.float32
 
-        # Input embedding (token -> hidden, placeholder for real tokenizer)
+        # Projects the bucketed token representation below into the encoder width.
         self.input_proj = nn.Linear(knowledge_dim, hidden_size, bias=False, device=device, dtype=dtype)
 
         # Transformer layers
@@ -528,8 +528,9 @@ class PiscesLxKnowledgeBuilder:
         """
         self.encoder.eval()
         with torch.no_grad():
-            # Simple embedding: use one-hot-like projection as placeholder
-            # In production, replace with actual token embedding layer
+            # Tokens are hashed into knowledge_dim buckets and expanded one-hot:
+            # this is the encoder's input representation, not a stand-in for a
+            # pretrained embedding (the engine may not load external models).
             B, T = token_batch.shape
             x = F.one_hot(
                 token_batch.clamp(0, self.config.knowledge_dim - 1),

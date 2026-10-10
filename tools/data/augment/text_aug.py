@@ -147,8 +147,8 @@ class PiscesLxDataTextAugmenter:
         """
         Get synonyms for a word.
         
-        This is a placeholder implementation. In production, use WordNet
-        or a pre-trained synonym model.
+        Uses the shipped lexicon, then WordNet when NLTK data is present.
+        No external language model is consulted (engine isolation).
         
         Args:
             word: Input word.

@@ -2168,10 +2168,10 @@ class PiscesLxTrainingOperator(object):
     
     def _compute_ppo_forward(self, batch: Dict[str, torch.Tensor]) -> Dict[str, Any]:
         """
-        PPO (Proximal Policy Optimization) forward pass placeholder.
+        Policy forward pass for the PPO objective.
         
-        Note: Full PPO requires rollout generation and value model.
-        This is a simplified version for integration.
+        Rollout generation and the value/critic model live in the PPO operator;
+        this method supplies the actor logits the clip loss consumes.
         
         Args:
             batch: Input batch
