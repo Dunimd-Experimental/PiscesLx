@@ -27,7 +27,7 @@ import os
 import json
 from .config import MODALITY_DATASETS
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from typing import List, Dict, Any, Optional
 from .runner import PiscesLxToolsBenchmarkRunner, PiscesLxToolsBenchmark
 
@@ -39,7 +39,7 @@ class PiscesLxToolsBenchmarkOrchestrator:
 
     def __init__(self, args):
         self.args = args
-        self.logger = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
+        self.logger = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
 
     def _parse_generation_config(self) -> Optional[Dict[str, Any]]:
         # Allow JSON via env var PISCES_BENCHMARK_GENERATION_CONFIG

@@ -93,8 +93,8 @@ if TYPE_CHECKING:
     from ..core.model import YvModel
     from ..config import YvConfig
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("Yv.Multimodal", file_path=get_log_file("Yv.Multimodal"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("Yv.Multimodal", file_path=PiscesLxPaths.get_log_file("Yv.Multimodal"), enable_file=True)
 
 
 @dataclass

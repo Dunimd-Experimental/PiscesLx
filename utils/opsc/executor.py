@@ -90,7 +90,7 @@ from ..dc import (
     PiscesLxSystemMonitor
 )
 
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 
 @dataclass
@@ -166,8 +166,8 @@ class PiscesLxOperatorExecutor:
         self.max_workers = max_workers
         self.thread_pool = ThreadPoolExecutor(max_workers=max_workers)
         self.active_executions: Dict[str, PiscesLxExecutionContext] = {}
-        from utils.paths import get_log_file
-        self.logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.{self.__class__.__name__}", file_path=get_log_file(f"PiscesLx.Core.OPSC.{self.__class__.__name__}"), enable_file=True)
+        from utils.paths import PiscesLxPaths
+        self.logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.{self.__class__.__name__}", file_path=PiscesLxPaths.get_log_file(f"PiscesLx.Core.OPSC.{self.__class__.__name__}"), enable_file=True)
         self.metrics = PiscesLxMetrics()
         self.tracing = PiscesLxTracing()
         self.system_monitor = PiscesLxSystemMonitor()

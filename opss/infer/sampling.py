@@ -43,7 +43,7 @@ import torch.nn.functional as F
 from torch.cuda.amp import autocast
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
@@ -87,7 +87,7 @@ class PiscesLxSamplingOperator(PiscesLxOperatorInterface):
         self.name = "sampling.inference"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         
         # Prefix Cache: vLLM-style KV cache reuse for repeated prefixes
         # Automatically detects and reuses cached KV for matching prefixes

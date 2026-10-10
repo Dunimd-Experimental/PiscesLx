@@ -97,9 +97,9 @@ from .config import PiscesLxTrainingConfig
 from .core import PiscesLxTrainingOperator
 from .pipeline import PiscesLxTrainingPipelineOperator, PiscesLxCurriculumLearningOperator, PiscesLxMultiTaskTrainingOperator
 
-from utils.paths import get_cache_dir
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=get_log_file("PiscesLx.Tools.Train"), enable_file=True)
+from utils.paths import PiscesLxPaths
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Train"), enable_file=True)
 
 
 @PiscesLxOperatorRegistrar()
@@ -319,7 +319,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             candidates.append(model_cfg_path.with_name("model.txt"))
             candidates.append(model_cfg_path.parent / "model.txt")
 
-        candidates.append(Path(get_cache_dir("data_cache")) / "model.txt")
+        candidates.append(Path(PiscesLxPaths.get_cache_dir("data_cache")) / "model.txt")
 
         for candidate in candidates:
             try:

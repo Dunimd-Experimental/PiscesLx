@@ -106,8 +106,8 @@ from .types import (
 )
 from .memory import YvMemory
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("Yv.Multimodal", file_path=get_log_file("Yv.Multimodal"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("Yv.Multimodal", file_path=PiscesLxPaths.get_log_file("Yv.Multimodal"), enable_file=True)
 
 class YvAgentic(nn.Module):
     """Multimodal control surface that orchestrates the Yv agent runtime.

@@ -75,9 +75,9 @@ from dataclasses import dataclass, field
 from .tokenizer import YvTokenizer
 from .special_tokens import YvSpecialTokens
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("Yv.Tokenizer.Builder", file_path=get_log_file("Yv.Tokenizer.Builder"), enable_file=True)
+_LOG = PiscesLxLogger("Yv.Tokenizer.Builder", file_path=PiscesLxPaths.get_log_file("Yv.Tokenizer.Builder"), enable_file=True)
 
 
 @dataclass

@@ -76,7 +76,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
 from configs.version import VERSION
@@ -315,7 +315,7 @@ class PiscesLxExpertCacheManager:
             'total_accesses': 0,
         }
         
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
     
     def _compute_input_hash(self, hidden_states: torch.Tensor) -> str:
         """

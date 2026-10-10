@@ -36,9 +36,9 @@ from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 
 from model.tokenizer import YvTokenizer
-from utils.paths import get_cache_dir
+from utils.paths import PiscesLxPaths
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from model.multimodal import (
     YvVisionEncoder as VisionEncoder,
     YvAudioEncoder as AudioEncoder,
@@ -66,7 +66,7 @@ VIDEO_KEYS = [
     "video_data", "frames_path", "video_frames_path"
 ]
 
-_LOG = PiscesLxLogger("PiscesLx.Data", file_path=get_log_file("PiscesLx.Data"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Data", file_path=PiscesLxPaths.get_log_file("PiscesLx.Data"), enable_file=True)
 
 
 @dataclass
@@ -249,7 +249,7 @@ class PiscesLxDataset(TorchDataset):
         self._force_audio = getattr(self.config, 'force_enable_audio', False)
         self._force_video = getattr(self.config, 'force_enable_video', False)
 
-        data_cache = cache_dir or get_cache_dir("data_cache")
+        data_cache = cache_dir or PiscesLxPaths.get_cache_dir("data_cache")
         cache_path = os.path.join(str(data_cache), self.subset)
 
         if not os.path.exists(cache_path):

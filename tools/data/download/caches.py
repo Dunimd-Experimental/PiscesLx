@@ -26,12 +26,12 @@ from __future__ import annotations
 import os
 import warnings
 from pathlib import Path
-from utils.paths import get_cache_dir
+from utils.paths import PiscesLxPaths
 from utils.dc import PiscesLxLogger
 from utils.log_bridge import PiscesLxThirdPartyLogBridge
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.Tools.Data"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Data"), enable_file=True)
 
 class PiscesLxToolsDataDownloadCache:
     """
@@ -50,8 +50,8 @@ class PiscesLxToolsDataDownloadCache:
         Retrieves a cache manager instance and initializes paths for cache directories.
         Sets the initialization flag to False.
         """
-        self._datatemp_dir = Path(get_cache_dir("datatmp"))
-        self._data_dir = Path(get_cache_dir("data_cache"))
+        self._datatemp_dir = Path(PiscesLxPaths.get_cache_dir("datatmp"))
+        self._data_dir = Path(PiscesLxPaths.get_cache_dir("data_cache"))
         
         self._initialized = False
 

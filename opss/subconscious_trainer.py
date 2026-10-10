@@ -45,9 +45,9 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("Yv.SubconsciousTrainer", file_path=get_log_file("Yv.SubconsciousTrainer"), enable_file=True)
+_LOG = PiscesLxLogger("Yv.SubconsciousTrainer", file_path=PiscesLxPaths.get_log_file("Yv.SubconsciousTrainer"), enable_file=True)
 
 
 class PiscesLxTrainingPhase(Enum):

@@ -79,26 +79,26 @@ Environment Variables:
 
 Usage Examples:
     Basic usage:
-        from utils.paths import get_pisceslx_home_dir, get_cache_dir
+        from utils.paths import PiscesLxPaths
         
         home = get_pisceslx_home_dir()  # Creates .pisceslx/ if needed
-        cache = get_cache_dir("datasets")  # Creates .pisceslx/datasets/
+        cache = PiscesLxPaths.get_cache_dir("datasets")  # Creates .pisceslx/datasets/
     
     Runtime configuration:
-        from utils.paths import load_runtime_configuration
+        from utils.paths import PiscesLxPaths
         
         config = load_runtime_configuration()
         log_level = config.get("log_level", "INFO")
     
     Working directory for training:
-        from utils.paths import get_work_dir
+        from utils.paths import PiscesLxPaths
         
-        work_dir = get_work_dir("runs/experiment_001")
+        work_dir = PiscesLxPaths.get_work_dir("runs/experiment_001")
 
 Integration Points:
-    - tools/data/download/: Uses get_cache_dir("datasets") for dataset storage
-    - opss/train/checkpoint.py: Uses get_work_dir("checkpoints") for saves
-    - tools/monitor/: Uses get_cache_dir("logs") for log storage
+    - tools/data/download/: Uses PiscesLxPaths.get_cache_dir("datasets") for dataset storage
+    - opss/train/checkpoint.py: Uses PiscesLxPaths.get_work_dir("checkpoints") for saves
+    - tools/monitor/: Uses PiscesLxPaths.get_cache_dir("logs") for log storage
     - manage.py: Initializes paths at startup
 """
 
@@ -110,266 +110,272 @@ from utils.dc import PiscesLxConfiguration, PiscesLxFilesystem, PiscesLxLogger
 
 _LOG = PiscesLxLogger("PiscesLx.Core.Paths")
 
+class PiscesLxPaths:
+    """Path and runtime-configuration accessors for PiscesL1.
 
-def load_runtime_configuration() -> PiscesLxConfiguration:
+    Methods rather than free functions: standard 6.2 forbids exposing module-level
+    functions, so this class is the single entry point for the former path helpers.
     """
-    Load runtime configuration from environment variables.
-    
-    This function creates a configuration object and populates it with
-    values from environment variables prefixed with "PISCESLX_". This
-    allows for runtime customization without modifying code files.
-    
-    The function gracefully handles configuration loading errors by
-    logging a warning and returning an empty configuration object,
-    ensuring the application can continue with default settings.
-    
-    Environment Variable Mapping:
-        PISCESLX_LOG_LEVEL -> log_level
-        PISCESLX_CACHE_DIR -> cache_dir
-        PISCESLX_HOME -> home_dir
-        PISCESLX_MAX_WORKERS -> max_workers
-    
-    Args:
-        None
-    
-    Returns:
-        PiscesLxConfiguration: A configuration object populated with
-            environment variable values. If loading fails, returns an
-            empty configuration object with default values.
-    
-    Raises:
-        No exceptions are raised; errors are logged and handled gracefully.
-    
-    Example:
-        >>> config = load_runtime_configuration()
-        >>> log_level = config.get("log_level", "INFO")
-        >>> print(f"Log level: {log_level}")
-        Log level: INFO
-    """
-    cfg = PiscesLxConfiguration()
-    try:
-        cfg.load_from_env(prefix="PISCESLX_")
-    except Exception as e:
-        _LOG.warning("runtime_env_load_failed", error=str(e))
-    return cfg
 
+    @staticmethod
+    def load_runtime_configuration() -> PiscesLxConfiguration:
+        """
+        Load runtime configuration from environment variables.
 
-def resolve_pisceslx_home() -> str:
-    """
-    Resolve the PiscesLx home directory path.
-    
-    This function returns the path to the PiscesLx home directory where
-    all framework artifacts are stored. The default location is ".pisceslx"
-    in the current working directory, but this can be overridden via
-    environment variables or configuration.
-    
-    The home directory serves as the root for:
-    - Cache directories (models, datasets, tokens)
-    - Checkpoint storage
-    - Log files
-    - Temporary files
-    - Run artifacts
-    
-    Args:
-        None
-    
-    Returns:
-        str: The path to the PiscesLx home directory. This is a relative
-            path by default (".pisceslx"), but can be absolute if
-            configured via environment variables.
-    
-    Note:
-        This function only returns the path; it does not create the
-        directory. Use get_pisceslx_home_dir() to ensure the directory
-        exists.
-    
-    Example:
-        >>> home = resolve_pisceslx_home()
-        >>> print(home)
-        .pisceslx
-    """
-    return ".pisceslx"
+        This function creates a configuration object and populates it with
+        values from environment variables prefixed with "PISCESLX_". This
+        allows for runtime customization without modifying code files.
 
+        The function gracefully handles configuration loading errors by
+        logging a warning and returning an empty configuration object,
+        ensuring the application can continue with default settings.
 
-def get_pisceslx_home_dir() -> str:
-    """
-    Get the PiscesLx home directory, creating it if necessary.
-    
-    This function ensures the PiscesLx home directory exists and returns
-    its path. It combines resolve_pisceslx_home() with directory creation
-    to provide a guaranteed-valid directory path.
-    
-    The function uses PiscesLxFilesystem for directory operations, which
-    handles cross-platform path normalization and permission checks.
-    
-    Args:
-        None
-    
-    Returns:
-        str: The absolute or relative path to the PiscesLx home directory.
-            The directory is guaranteed to exist when this function returns.
-    
-    Raises:
-        OSError: If directory creation fails due to permissions or
-            filesystem errors.
-    
-    Example:
-        >>> home = get_pisceslx_home_dir()
-        >>> print(f"Home directory: {home}")
-        Home directory: .pisceslx
-        
-        >>> import os
-        >>> os.path.exists(home)
-        True
-    """
-    home = resolve_pisceslx_home()
-    fs = PiscesLxFilesystem()
-    fs.mkdir(home)
-    return home
+        Environment Variable Mapping:
+            PISCESLX_LOG_LEVEL -> log_level
+            PISCESLX_CACHE_DIR -> cache_dir
+            PISCESLX_HOME -> home_dir
+            PISCESLX_MAX_WORKERS -> max_workers
 
+        Args:
+            None
 
-def get_cache_dir(name: str) -> str:
-    """
-    Get or create a named cache directory under the PiscesLx home.
-    
-    This function creates and returns a subdirectory within the PiscesLx
-    home directory, suitable for storing cached data such as downloaded
-    datasets, pre-trained models, or tokenizer files.
-    
-    Common cache directory names:
-        - "datasets": Downloaded and preprocessed datasets
-        - "models": Pre-trained model weights
-        - "tokens": Tokenizer files and vocabulary
-        - "logs": Log files and monitoring data
-        - "tmp": Temporary files (may be cleaned periodically)
-    
-    The function ensures both the home directory and the named cache
-    directory exist before returning the path.
-    
-    Args:
-        name (str): The name of the cache subdirectory. This will be
-            created as a subdirectory under the PiscesLx home directory.
-            Examples: "datasets", "models", "checkpoints"
-    
-    Returns:
-        str: The path to the named cache directory. The directory is
-            guaranteed to exist when this function returns.
-    
-    Raises:
-        OSError: If directory creation fails due to permissions or
-            filesystem errors.
-        ValueError: If name is empty or contains invalid path characters.
-    
-    Example:
-        >>> cache_dir = get_cache_dir("datasets")
-        >>> print(f"PiscesLxDataset cache: {cache_dir}")
-        PiscesLxDataset cache: .pisceslx/datasets
-        
-        >>> model_cache = get_cache_dir("models")
-        >>> print(f"Model cache: {model_cache}")
-        Model cache: .pisceslx/models
-    """
-    root = get_pisceslx_home_dir()
-    fs = PiscesLxFilesystem()
-    p = str(Path(root) / str(name))
-    fs.mkdir(p)
-    return p
+        Returns:
+            PiscesLxConfiguration: A configuration object populated with
+                environment variable values. If loading fails, returns an
+                empty configuration object with default values.
 
+        Raises:
+            No exceptions are raised; errors are logged and handled gracefully.
 
-def get_work_dir(name: str) -> str:
-    """
-    Get or create a working directory for a specific operation.
-    
-    This function is an alias for get_cache_dir(), providing semantic
-    clarity when the directory is used for active work rather than
-    caching. Working directories are typically used for:
-    
-    - Training run artifacts (checkpoints, logs, configs)
-    - Inference session outputs
-    - Benchmark results
-    - Experiment tracking data
-    
-    The function ensures the directory exists and returns its path,
-    making it ready for immediate use.
-    
-    Args:
-        name (str): The name of the working directory. This can include
-            subdirectories using path separators.
-            Examples: "runs/exp001", "inference/session_1"
-    
-    Returns:
-        str: The path to the working directory. The directory is
-            guaranteed to exist when this function returns.
-    
-    Raises:
-        OSError: If directory creation fails due to permissions or
-            filesystem errors.
-    
-    Example:
-        >>> work_dir = get_work_dir("runs/experiment_001")
-        >>> print(f"Working directory: {work_dir}")
-        Working directory: .pisceslx/runs/experiment_001
-        
-        >>> checkpoint_dir = get_work_dir("checkpoints/epoch_10")
-        >>> print(f"Checkpoint directory: {checkpoint_dir}")
-        Checkpoint directory: .pisceslx/checkpoints/epoch_10
-    """
-    return get_cache_dir(name)
+        Example:
+            >>> config = PiscesLxPaths.load_runtime_configuration()
+            >>> log_level = config.get("log_level", "INFO")
+            >>> print(f"Log level: {log_level}")
+            Log level: INFO
+        """
+        cfg = PiscesLxConfiguration()
+        try:
+            cfg.load_from_env(prefix="PISCESLX_")
+        except Exception as e:
+            _LOG.warning("runtime_env_load_failed", error=str(e))
+        return cfg
 
+    @staticmethod
+    def resolve_pisceslx_home() -> str:
+        """
+        Resolve the PiscesLx home directory path.
 
-def get_checkpoint_dir(name: str) -> str:
-    """Get or create a checkpoint directory.
+        This function returns the path to the PiscesLx home directory where
+        all framework artifacts are stored. The default location is ".pisceslx"
+        in the current working directory, but this can be overridden via
+        environment variables or configuration.
 
-    Args:
-        name: The checkpoint group name (e.g., "evolution", "training").
+        The home directory serves as the root for:
+        - Cache directories (models, datasets, tokens)
+        - Checkpoint storage
+        - Log files
+        - Temporary files
+        - Run artifacts
 
-    Returns:
-        str: The checkpoint directory path.
-    """
-    return get_cache_dir(f"checkpoints/{name}")
+        Args:
+            None
 
+        Returns:
+            str: The path to the PiscesLx home directory. This is a relative
+                path by default (".pisceslx"), but can be absolute if
+                configured via environment variables.
 
-def get_log_file(module_name: str) -> str:
-    """
-    Get the log file path for a module.
-    
-    Args:
-        module_name: The module name (e.g., "model.core.attention")
-    
-    Returns:
-        str: The log file path (e.g., ".pisceslx/logs/model/core.log")
-    """
-    parts = module_name.split(".")
-    if len(parts) >= 2:
-        log_dir = get_cache_dir(f"logs/{parts[0]}/{parts[1]}")
-    elif len(parts) == 1:
-        log_dir = get_cache_dir(f"logs/{parts[0]}")
-    else:
-        log_dir = get_cache_dir("logs")
-    
-    return str(Path(log_dir) / "output.log")
+        Note:
+            This function only returns the path; it does not create the
+            directory. Use PiscesLxPaths.get_pisceslx_home_dir() to ensure the directory
+            exists.
 
+        Example:
+            >>> home = PiscesLxPaths.resolve_pisceslx_home()
+            >>> print(home)
+            .pisceslx
+        """
+        return ".pisceslx"
 
-def get_settings_file() -> str:
-    """
-    Get the settings.yaml file path.
-    
-    This function returns the path to the global settings configuration file
-    used for storing framework-wide settings like developer mode toggle.
-    
-    The settings file is located at:
-        .pisceslx/settings/settings.yaml
-    
-    Returns:
-        str: The absolute path to the settings.yaml file.
-            The parent directory is guaranteed to exist.
-    
-    Example:
-        >>> settings_path = get_settings_file()
-        >>> print(settings_path)
-        .pisceslx/settings/settings.yaml
-    """
-    settings_dir = get_cache_dir("settings")
-    return str(Path(settings_dir) / "settings.yaml")
+    @staticmethod
+    def get_pisceslx_home_dir() -> str:
+        """
+        Get the PiscesLx home directory, creating it if necessary.
 
+        This function ensures the PiscesLx home directory exists and returns
+        its path. It combines PiscesLxPaths.resolve_pisceslx_home() with directory creation
+        to provide a guaranteed-valid directory path.
+
+        The function uses PiscesLxFilesystem for directory operations, which
+        handles cross-platform path normalization and permission checks.
+
+        Args:
+            None
+
+        Returns:
+            str: The absolute or relative path to the PiscesLx home directory.
+                The directory is guaranteed to exist when this function returns.
+
+        Raises:
+            OSError: If directory creation fails due to permissions or
+                filesystem errors.
+
+        Example:
+            >>> home = PiscesLxPaths.get_pisceslx_home_dir()
+            >>> print(f"Home directory: {home}")
+            Home directory: .pisceslx
+
+            >>> import os
+            >>> os.path.exists(home)
+            True
+        """
+        home = PiscesLxPaths.resolve_pisceslx_home()
+        fs = PiscesLxFilesystem()
+        fs.mkdir(home)
+        return home
+
+    @staticmethod
+    def get_cache_dir(name: str) -> str:
+        """
+        Get or create a named cache directory under the PiscesLx home.
+
+        This function creates and returns a subdirectory within the PiscesLx
+        home directory, suitable for storing cached data such as downloaded
+        datasets, pre-trained models, or tokenizer files.
+
+        Common cache directory names:
+            - "datasets": Downloaded and preprocessed datasets
+            - "models": Pre-trained model weights
+            - "tokens": Tokenizer files and vocabulary
+            - "logs": Log files and monitoring data
+            - "tmp": Temporary files (may be cleaned periodically)
+
+        The function ensures both the home directory and the named cache
+        directory exist before returning the path.
+
+        Args:
+            name (str): The name of the cache subdirectory. This will be
+                created as a subdirectory under the PiscesLx home directory.
+                Examples: "datasets", "models", "checkpoints"
+
+        Returns:
+            str: The path to the named cache directory. The directory is
+                guaranteed to exist when this function returns.
+
+        Raises:
+            OSError: If directory creation fails due to permissions or
+                filesystem errors.
+            ValueError: If name is empty or contains invalid path characters.
+
+        Example:
+            >>> cache_dir = PiscesLxPaths.get_cache_dir("datasets")
+            >>> print(f"PiscesLxDataset cache: {cache_dir}")
+            PiscesLxDataset cache: .pisceslx/datasets
+
+            >>> model_cache = PiscesLxPaths.get_cache_dir("models")
+            >>> print(f"Model cache: {model_cache}")
+            Model cache: .pisceslx/models
+        """
+        root = PiscesLxPaths.get_pisceslx_home_dir()
+        fs = PiscesLxFilesystem()
+        p = str(Path(root) / str(name))
+        fs.mkdir(p)
+        return p
+
+    @staticmethod
+    def get_work_dir(name: str) -> str:
+        """
+        Get or create a working directory for a specific operation.
+
+        This function is an alias for PiscesLxPaths.get_cache_dir(), providing semantic
+        clarity when the directory is used for active work rather than
+        caching. Working directories are typically used for:
+
+        - Training run artifacts (checkpoints, logs, configs)
+        - Inference session outputs
+        - Benchmark results
+        - Experiment tracking data
+
+        The function ensures the directory exists and returns its path,
+        making it ready for immediate use.
+
+        Args:
+            name (str): The name of the working directory. This can include
+                subdirectories using path separators.
+                Examples: "runs/exp001", "inference/session_1"
+
+        Returns:
+            str: The path to the working directory. The directory is
+                guaranteed to exist when this function returns.
+
+        Raises:
+            OSError: If directory creation fails due to permissions or
+                filesystem errors.
+
+        Example:
+            >>> work_dir = PiscesLxPaths.get_work_dir("runs/experiment_001")
+            >>> print(f"Working directory: {work_dir}")
+            Working directory: .pisceslx/runs/experiment_001
+
+            >>> checkpoint_dir = PiscesLxPaths.get_work_dir("checkpoints/epoch_10")
+            >>> print(f"Checkpoint directory: {checkpoint_dir}")
+            Checkpoint directory: .pisceslx/checkpoints/epoch_10
+        """
+        return PiscesLxPaths.get_cache_dir(name)
+
+    @staticmethod
+    def get_checkpoint_dir(name: str) -> str:
+        """Get or create a checkpoint directory.
+
+        Args:
+            name: The checkpoint group name (e.g., "evolution", "training").
+
+        Returns:
+            str: The checkpoint directory path.
+        """
+        return PiscesLxPaths.get_cache_dir(f"checkpoints/{name}")
+
+    @staticmethod
+    def get_log_file(module_name: str) -> str:
+        """
+        Get the log file path for a module.
+
+        Args:
+            module_name: The module name (e.g., "model.core.attention")
+
+        Returns:
+            str: The log file path (e.g., ".pisceslx/logs/model/core.log")
+        """
+        parts = module_name.split(".")
+        if len(parts) >= 2:
+            log_dir = PiscesLxPaths.get_cache_dir(f"logs/{parts[0]}/{parts[1]}")
+        elif len(parts) == 1:
+            log_dir = PiscesLxPaths.get_cache_dir(f"logs/{parts[0]}")
+        else:
+            log_dir = PiscesLxPaths.get_cache_dir("logs")
+
+        return str(Path(log_dir) / "output.log")
+
+    @staticmethod
+    def get_settings_file() -> str:
+        """
+        Get the settings.yaml file path.
+
+        This function returns the path to the global settings configuration file
+        used for storing framework-wide settings like developer mode toggle.
+
+        The settings file is located at:
+            .pisceslx/settings/settings.yaml
+
+        Returns:
+            str: The absolute path to the settings.yaml file.
+                The parent directory is guaranteed to exist.
+
+        Example:
+            >>> settings_path = PiscesLxPaths.get_settings_file()
+            >>> print(settings_path)
+            .pisceslx/settings/settings.yaml
+        """
+        settings_dir = PiscesLxPaths.get_cache_dir("settings")
+        return str(Path(settings_dir) / "settings.yaml")
 

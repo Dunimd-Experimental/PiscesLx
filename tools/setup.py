@@ -707,8 +707,8 @@ def _init_settings():
         >>> _init_settings()  # Creates settings.yaml if not exists
     """
     try:
-        from utils.paths import get_settings_file
-        settings_path = get_settings_file()
+        from utils.paths import PiscesLxPaths
+        settings_path = PiscesLxPaths.get_settings_file()
         
         if not os.path.exists(settings_path):
             os.makedirs(os.path.dirname(settings_path), exist_ok=True)

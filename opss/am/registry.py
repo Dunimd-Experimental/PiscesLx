@@ -90,7 +90,7 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, Union
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 
 class PiscesLxToolType(Enum):
@@ -280,7 +280,7 @@ class PiscesLxToolRegistry:
         if self._initialized:
             return
         
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.AM",file_path=get_log_file("PiscesLx.Opss.AM"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.AM",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.AM"), enable_file=True)
         
         self._tools: Dict[str, PiscesLxToolInfo] = {}
         self._tools_by_name: Dict[str, str] = {}

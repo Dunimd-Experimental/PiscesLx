@@ -65,7 +65,7 @@ else:
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from configs.version import VERSION
 # The shared enum lives in utils/opsc/distributed.py; this module used to carry its own
 # copy of the same concept.
@@ -162,7 +162,7 @@ class PiscesLxParallel3DOperator(PiscesLxOperatorInterface):
         self.name = "train.parallel_3d"
         self.version = VERSION
         self.type = "training"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         self.config = config or PiscesLxParallel3DConfig()
         
         self._initialized = False

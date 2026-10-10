@@ -39,10 +39,10 @@ from pathlib import Path
 
 from .rules import PiscesLxToolsDataStreamCleaner as StreamCleaner, AUTO_FIELDS
 from utils.dc import PiscesLxLogger
-from utils.paths import get_cache_dir, get_log_file
+from utils.paths import PiscesLxPaths
 from .quality import PiscesLxToolsDataQualityController
 
-_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.Tools.Data"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Data"), enable_file=True)
 
 
 class PiscesLxCleaningMode(Enum):
@@ -559,7 +559,7 @@ class PiscesLxDatasetCleaner:
         rules=None,
         config: Optional[PiscesLxDataCleaningConfig] = None
     ):
-        input_dir = input_dir or get_cache_dir("data_cache")
+        input_dir = input_dir or PiscesLxPaths.get_cache_dir("data_cache")
         if not os.path.exists(input_dir):
             raise FileNotFoundError(f"Input directory does not exist: {input_dir}")
 

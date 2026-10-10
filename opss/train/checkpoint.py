@@ -101,7 +101,7 @@ from torch.optim.lr_scheduler import _LRScheduler
 from torch.cuda.amp import GradScaler
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_work_dir
+from utils.paths import PiscesLxPaths
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
 from configs.version import VERSION
@@ -213,7 +213,7 @@ class PiscesLxCheckpointOperator(PiscesLxOperatorInterface):
         self.version = VERSION
         self.config = config or PiscesLxCheckpointConfig()
         self.metadata: Dict[str, PiscesLxCheckpointMetadata] = {}
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         self._save_lock = threading.Lock()
         self._async_queue: List[Dict] = []
         self._async_thread: Optional[threading.Thread] = None

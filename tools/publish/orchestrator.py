@@ -80,14 +80,14 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from .config import PiscesLxPublishConfig, PiscesLxExportAction
 from .exporter import PiscesLxPublishExporter
 from .docker_builder import PiscesLxPublishDockerBuilder
 from .registry import PiscesLxPublishRegistry
 
-_LOG = PiscesLxLogger("PiscesLx.Publish.Orchestrator", file_path=get_log_file("PiscesLx.Publish.Orchestrator"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Publish.Orchestrator", file_path=PiscesLxPaths.get_log_file("PiscesLx.Publish.Orchestrator"), enable_file=True)
 
 
 class PiscesLxPublishOrchestrator:

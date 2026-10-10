@@ -28,19 +28,19 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 from utils.dc import PiscesLxFilesystem, PiscesLxLogger
-from utils.paths import get_cache_dir
+from utils.paths import PiscesLxPaths
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Tools.Monitor", file_path=get_log_file("PiscesLx.Tools.Monitor"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("PiscesLx.Tools.Monitor", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Monitor"), enable_file=True)
 
 
 class PiscesLxMonitorCache:
     def __init__(self):
         self._kv: Dict[str, Any] = {}
-        self._root = get_cache_dir("monitor")
+        self._root = PiscesLxPaths.get_cache_dir("monitor")
 
     def get_cache_dir(self, name: str) -> str:
-        return get_cache_dir(os.path.join("monitor", str(name)))
+        return PiscesLxPaths.get_cache_dir(os.path.join("monitor", str(name)))
 
     def get(self, key: str, default: Any = None) -> Any:
         return self._kv.get(key, default)
@@ -99,7 +99,7 @@ class PiscesLxMonitorUtils:
         self.fs_manager = PiscesLxFilesystem()
         self.cache_manager = PiscesLxMonitorCache()
         self.device_manager = _PiscesLxSimpleDeviceManager()
-        self.logger = PiscesLxLogger("PiscesLx.Tools.Monitor", file_path=get_log_file("PiscesLx.Tools.Monitor"), enable_file=True)
+        self.logger = PiscesLxLogger("PiscesLx.Tools.Monitor", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Monitor"), enable_file=True)
 
     def get_cache_manager(self):
         """Get cache manager."""

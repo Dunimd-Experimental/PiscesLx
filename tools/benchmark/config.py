@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from dataclasses import asdict  # re-export convenience
 from pathlib import Path
 from typing import Dict, List, Optional, Any
-from utils.paths import get_work_dir
+from utils.paths import PiscesLxPaths
 
 # Comprehensive benchmark presets aligned with flagship models (DeepSeek-V3.2, Llama 4, Qwen3.5, etc.)
 MODALITY_DATASETS: Dict[str, List[str]] = {

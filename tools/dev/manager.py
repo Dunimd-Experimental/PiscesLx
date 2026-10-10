@@ -68,12 +68,12 @@ from typing import Any, Dict, Optional
 
 import yaml
 
-from utils.paths import get_settings_file, get_log_file
+from utils.paths import PiscesLxPaths
 from utils.dc import PiscesLxLogger
 from utils.log_bridge import PiscesLxThirdPartyLogBridge
 
 
-_LOG = PiscesLxLogger("PiscesLx.Tools.Dev", file_path=get_log_file("PiscesLx.Tools.Dev"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Dev", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Dev"), enable_file=True)
 
 
 class PiscesLxDevModeLogCapture(logging.Handler):
@@ -170,7 +170,7 @@ class PiscesLxDevModeManager:
         if getattr(self, '_initialized', False):
             return
             
-        self._settings_path = get_settings_file()
+        self._settings_path = PiscesLxPaths.get_settings_file()
         self._enabled = False
         self._trainer: Optional[Any] = None
         self._ui: Optional[Any] = None

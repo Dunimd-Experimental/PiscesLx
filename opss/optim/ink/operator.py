@@ -75,7 +75,7 @@ from utils.opsc.interface import (
     PiscesLxOperatorConfig,
 )
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from .config import PiscesLxInkConfig
 from .quantizer import PiscesLxInkBlockQuantizer

@@ -164,8 +164,8 @@ import threading
 import time
 from utils.dc import PiscesLxLogger
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("Yv.Core", file_path=get_log_file("Yv.Core"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("Yv.Core", file_path=PiscesLxPaths.get_log_file("Yv.Core"), enable_file=True)
 
 from .plt_trie import YvPLTTrieIndex
 from .predictive_delta import YvPredictiveDeltaCoder, YvDeltaCacheEntry

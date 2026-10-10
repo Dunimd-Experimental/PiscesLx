@@ -77,7 +77,7 @@ from torch.optim import AdamW
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_checkpoint_dir
+from utils.paths import PiscesLxPaths
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from configs.version import VERSION
 
@@ -174,7 +174,7 @@ class PiscesLxEvolutionConfig:
     
     def __post_init__(self):
         if not self.checkpoint_dir:
-            self.checkpoint_dir = str(get_checkpoint_dir("evolution"))
+            self.checkpoint_dir = str(PiscesLxPaths.get_checkpoint_dir("evolution"))
         
         # Convert dict stages to PiscesLxGrowthStage
         self._parsed_stages = []
@@ -205,7 +205,7 @@ class PiscesLxEvolutionTracker:
         self.start_time = time.time()
         self._LOG = PiscesLxLogger(
             "PiscesLx.Evolution.Tracker",
-            file_path=get_log_file("PiscesLx.Evolution.Tracker"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Evolution.Tracker"),
             enable_file=True,
         )
     
@@ -251,7 +251,7 @@ class _PiscesLxEvolutionPipelineImpl(PiscesLxOperatorInterface):
         
         self._LOG = PiscesLxLogger(
             "PiscesLx.Evolution.Pipeline",
-            file_path=get_log_file("PiscesLx.Evolution.Pipeline"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Evolution.Pipeline"),
             enable_file=True,
         )
         
@@ -772,7 +772,7 @@ class PiscesLxEvolutionPipeline:
         self._impl = _PiscesLxEvolutionPipelineImpl(self.config)
         self._LOG = PiscesLxLogger(
             "PiscesLx.Evolution.Facade",
-            file_path=get_log_file("PiscesLx.Evolution.Facade"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Evolution.Facade"),
             enable_file=True,
         )
     

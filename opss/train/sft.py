@@ -55,7 +55,7 @@ except ImportError:
 _LOG_TE_WARNED = False
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_work_dir
+from utils.paths import PiscesLxPaths
 from configs.version import VERSION
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
@@ -148,7 +148,7 @@ class PiscesLxSFTDataset(PiscesLxDataset):
         self.ignore_index = ignore_index
         
         self.samples = self._load_data(data_path)
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         self._LOG.info(f"Loaded {len(self.samples)} samples from {data_path}")
     
     KAGGLE_PREFIX = "kaggle://"
@@ -293,7 +293,7 @@ class _PiscesLxSFTTrainingOperatorImpl(PiscesLxOperatorInterface):
         self._name = "sft.training"
         self._version = VERSION
         self.type = "training"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         
     @property
     def name(self) -> str:
@@ -364,7 +364,7 @@ class _PiscesLxSFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 config = PiscesLxSFTTrainingConfig(
                     train_data=inputs.get('train_data_path', ''),
                     val_data=inputs.get('val_data_path') or "",
-                    output_dir=get_work_dir("ckpt")
+                    output_dir=PiscesLxPaths.get_work_dir("ckpt")
                 )
 
             if not self.validate_inputs(inputs):
@@ -506,7 +506,7 @@ class _PiscesLxSFTTrainingOperatorImpl(PiscesLxOperatorInterface):
                 self.total_loss = 0.0
                 self.training_history = []
                 self.memsep_trainer = memsep_trainer
-                self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
+                self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
                 
                 if config.use_fp16 or config.use_bf16:
                     self.scaler = GradScaler()

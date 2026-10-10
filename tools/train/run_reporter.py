@@ -58,7 +58,7 @@ class PiscesLxTrainingRunReporter:
         enable_heartbeat: bool = True,
         enable_gpu_monitor: bool = True,
     ):
-        self._logger = PiscesLxLogger("PiscesLx.Tools.Train.RunReporter", file_path=get_log_file("PiscesLx.Tools.Train.RunReporter"), enable_file=True)
+        self._logger = PiscesLxLogger("PiscesLx.Tools.Train.RunReporter", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Train.RunReporter"), enable_file=True)
         self._store = PiscesLxRunStore(run_id, run_dir=run_dir)
         self._ctl = PiscesLxRunController(self._store)
         self._control_interval_s = float(control_interval_s or 0.5)

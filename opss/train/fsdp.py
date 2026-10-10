@@ -48,7 +48,7 @@ from torch.distributed.fsdp import (
 )
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from configs.version import VERSION
 
@@ -129,7 +129,7 @@ class PiscesLxFSDPDataset(torch.utils.data.Dataset):
         self.tokenizer = tokenizer
         self.max_length = max_length
         self.samples = self._load_data(data_path)
-        self._LOG = PiscesLxLogger("pisceslx.ops.train.fsdp.dataset", file_path=get_log_file("pisceslx.ops.train.fsdp"), enable_file=True)
+        self._LOG = PiscesLxLogger("pisceslx.ops.train.fsdp.dataset", file_path=PiscesLxPaths.get_log_file("pisceslx.ops.train.fsdp"), enable_file=True)
         
     def _load_data(self, data_path: str) -> List[Dict[str, Any]]:
         """Load training data."""
@@ -175,7 +175,7 @@ class PiscesLxFSDPTrainingOperator(PiscesLxOperatorInterface):
         self.name = "fsdp.training"
         self.version = VERSION
         self.type = "training"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         
     @property
     def description(self) -> str:

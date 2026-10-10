@@ -29,10 +29,10 @@ from .pipeline import PiscesLxDatasetCleaner
 from .quality import PiscesLxToolsDataQualityController as DataQualityController
 from typing import Optional, Dict, Any, Tuple, List
 from utils.dc import PiscesLxLogger
-from utils.paths import get_cache_dir
+from utils.paths import PiscesLxPaths
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.Tools.Data"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Data"), enable_file=True)
 
 class PiscesLxDatasetClean:
     """
@@ -47,7 +47,7 @@ class PiscesLxDatasetClean:
         Get the cache manager instance and set the data cache directory.
         """
         self.cache = cache_manager
-        self.data_cache_dir = data_cache_dir or get_cache_dir("data_cache")
+        self.data_cache_dir = data_cache_dir or PiscesLxPaths.get_cache_dir("data_cache")
 
     def run(
         self,

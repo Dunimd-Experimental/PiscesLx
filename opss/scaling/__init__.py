@@ -41,12 +41,12 @@ from dataclasses import dataclass
 from typing import Tuple, Optional, Dict, Any, List
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
-_LOG = PiscesLxLogger("PiscesLx.Opss.Scaling", file_path=get_log_file("PiscesLx.Opss.Scaling"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Opss.Scaling", file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Scaling"), enable_file=True)
 
 
 @dataclass

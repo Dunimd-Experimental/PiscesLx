@@ -42,7 +42,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_work_dir
+from utils.paths import PiscesLxPaths
 
 from configs.version import VERSION
 
@@ -83,7 +83,7 @@ class PiscesLxSpeculativeDecodingOperator(PiscesLxOperatorInterface):
         self.name = "speculative.decoding"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         
     @property
     def description(self) -> str:

@@ -87,7 +87,7 @@ import transformer_engine.pytorch as te
 from transformer_engine.common.recipe import Format, DelayedScaling
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from configs.version import VERSION
 
@@ -283,7 +283,7 @@ class PiscesLxDPODataset(PiscesLxDataset):
         self.max_response_length = max_response_length
         
         self.samples = self._load_data(data_path)
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         self._LOG.info(f"Loaded {len(self.samples)} preference samples from {data_path}")
     
     def _load_data(self, data_path: str) -> List[Dict[str, Any]]:
@@ -587,7 +587,7 @@ class PiscesLxDPOTrainingOperator(PiscesLxOperatorInterface):
         """
         super().__init__()
         self.config = config or PiscesLxDPOTrainingConfig()
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         
         # Determine device
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

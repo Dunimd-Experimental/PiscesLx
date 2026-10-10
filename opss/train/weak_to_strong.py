@@ -72,7 +72,7 @@ from torch import Tensor
 from torch.utils.data import PiscesLxDataset, DataLoader
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from configs.version import VERSION
 
@@ -132,7 +132,7 @@ class PiscesLxWeakLabelGenerator:
         self.config = config
         self._LOG = PiscesLxLogger(
             "PiscesLx.W2S.LabelGen",
-            file_path=get_log_file("PiscesLx.W2S.LabelGen"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.W2S.LabelGen"),
             enable_file=True,
         )
         
@@ -228,7 +228,7 @@ class PiscesLxCurriculumScheduler:
         self.final_threshold = 0.5  # Lower threshold = harder samples
         self._LOG = PiscesLxLogger(
             "PiscesLx.W2S.Curriculum",
-            file_path=get_log_file("PiscesLx.W2S.Curriculum"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.W2S.Curriculum"),
             enable_file=True,
         )
     
@@ -270,7 +270,7 @@ class PiscesLxSelfCorrection:
         self.config = config
         self._LOG = PiscesLxLogger(
             "PiscesLx.W2S.SelfCorrect",
-            file_path=get_log_file("PiscesLx.W2S.SelfCorrect"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.W2S.SelfCorrect"),
             enable_file=True,
         )
     
@@ -345,7 +345,7 @@ class _PiscesLxWeakToStrongOperatorImpl(PiscesLxOperatorInterface):
         
         self._LOG = PiscesLxLogger(
             "PiscesLx.W2S.Operator",
-            file_path=get_log_file("PiscesLx.W2S.Operator"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.W2S.Operator"),
             enable_file=True,
         )
         
@@ -529,7 +529,7 @@ class PiscesLxWeakToStrongOperator:
         self._impl = _PiscesLxWeakToStrongOperatorImpl(weak_model, strong_model, self.config)
         self._LOG = PiscesLxLogger(
             "PiscesLx.W2S.Facade",
-            file_path=get_log_file("PiscesLx.W2S.Facade"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.W2S.Facade"),
             enable_file=True,
         )
     
@@ -577,7 +577,7 @@ class PiscesLxIterativeAmplification:
         self.num_iterations = num_iterations
         self._LOG = PiscesLxLogger(
             "PiscesLx.W2S.Iterative",
-            file_path=get_log_file("PiscesLx.W2S.Iterative"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.W2S.Iterative"),
             enable_file=True,
         )
         

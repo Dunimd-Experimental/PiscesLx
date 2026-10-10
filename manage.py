@@ -268,14 +268,14 @@ def _get_logger():
     from utils.dc import PiscesLxLogger
     
     # Import the log file path resolver from the utils paths module
-    from utils.paths import get_log_file
+    from utils.paths import PiscesLxPaths
     
     # Create and return a configured logger instance
     # The logger name 'PiscesLx.Manage' identifies this module in logs
     # File logging is enabled for persistent record-keeping
     return PiscesLxLogger(
         "PiscesLx.Manage", 
-        file_path=get_log_file("PiscesLx.Manage"), 
+        file_path=PiscesLxPaths.get_log_file("PiscesLx.Manage"), 
         enable_file=True
     )
 

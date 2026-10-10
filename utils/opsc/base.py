@@ -85,7 +85,7 @@ from .interface import (
     PiscesLxOperatorConfig
 )
 from ..dc import PiscesLxLogger, PiscesLxMetrics, PiscesLxTracing
-from ..paths import get_log_file
+from ..paths import PiscesLxPaths
 from configs.version import VERSION
 
 

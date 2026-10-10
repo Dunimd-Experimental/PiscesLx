@@ -46,11 +46,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 import torch
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from .types import YvAgenticAction, YvAgenticObservation
 
-_LOG = PiscesLxLogger("Yv.Multimodal", file_path=get_log_file("Yv.Multimodal"), enable_file=True)
+_LOG = PiscesLxLogger("Yv.Multimodal", file_path=PiscesLxPaths.get_log_file("Yv.Multimodal"), enable_file=True)
 
 
 @dataclass

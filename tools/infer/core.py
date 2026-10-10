@@ -95,8 +95,8 @@ from opss.infer.moe_runtime import PiscesLxMoERuntimeOperator, PiscesLxMoERuntim
 from opss.infer.speculative import PiscesLxSpeculativeDecodingOperator
 from opss.infer.vllm import PiscesLxVLLMInferenceOperator
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
 
 
 def setup_inference_device(device_pref: str = "auto") -> torch.device:

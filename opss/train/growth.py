@@ -67,7 +67,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from configs.version import VERSION
 
@@ -120,7 +120,7 @@ class PiscesLxOptimalTransportAligner:
     def __init__(self):
         self._LOG = PiscesLxLogger(
             "PiscesLx.Growth.OT",
-            file_path=get_log_file("PiscesLx.Growth.OT"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Growth.OT"),
             enable_file=True,
         )
     
@@ -215,7 +215,7 @@ class PiscesLxDepthGrower:
         self.ot_aligner = PiscesLxOptimalTransportAligner() if config.use_optimal_transport else None
         self._LOG = PiscesLxLogger(
             "PiscesLx.Growth.Depth",
-            file_path=get_log_file("PiscesLx.Growth.Depth"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Growth.Depth"),
             enable_file=True,
         )
     
@@ -316,7 +316,7 @@ class PiscesLxWidthGrower:
         self.config = config
         self._LOG = PiscesLxLogger(
             "PiscesLx.Growth.Width",
-            file_path=get_log_file("PiscesLx.Growth.Width"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Growth.Width"),
             enable_file=True,
         )
     
@@ -467,7 +467,7 @@ class PiscesLxExpertGrower:
         self.config = config
         self._LOG = PiscesLxLogger(
             "PiscesLx.Growth.Expert",
-            file_path=get_log_file("PiscesLx.Growth.Expert"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Growth.Expert"),
             enable_file=True,
         )
     
@@ -578,7 +578,7 @@ class _PiscesLxModelGrowthOperatorImpl(PiscesLxOperatorInterface):
         self.type = "training"
         self._LOG = PiscesLxLogger(
             "PiscesLx.Growth.Operator",
-            file_path=get_log_file("PiscesLx.Growth.Operator"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Growth.Operator"),
             enable_file=True,
         )
     

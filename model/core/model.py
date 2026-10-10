@@ -241,8 +241,8 @@ from dataclasses import dataclass
 from enum import Enum
 import math
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("Yv.Core", file_path=get_log_file("Yv.Core"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("Yv.Core", file_path=PiscesLxPaths.get_log_file("Yv.Core"), enable_file=True)
 
 class YvModelType(Enum):
     """Enumeration of model architecture types for different task configurations.

@@ -199,10 +199,10 @@ from utils.dc import PiscesLxLogger
 from ..moe import YvDeepSeekMoELayer
 from .mamba3 import YvMamba3Block, YvMamba3Config
 
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from utils.dtype_safe import qr_safe, svd_safe
 from model.utils import YvShapeGuard
-_LOG = PiscesLxLogger("Yv.Core", file_path=get_log_file("Yv.Core"), enable_file=True)
+_LOG = PiscesLxLogger("Yv.Core", file_path=PiscesLxPaths.get_log_file("Yv.Core"), enable_file=True)
 
 
 class YvBlockType(Enum):

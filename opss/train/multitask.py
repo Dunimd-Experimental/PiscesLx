@@ -44,7 +44,7 @@ import torch.nn.functional as F
 from torch.utils.data import PiscesLxDataset, DataLoader, ConcatDataset
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_work_dir
+from utils.paths import PiscesLxPaths
 from configs.version import VERSION
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
@@ -96,7 +96,7 @@ class PiscesLxMultitaskDataset(PiscesLxDataset):
     def __init__(self, task_datasets: Dict[str, PiscesLxDataset], task_names: List[str]):
         self.task_datasets = task_datasets
         self.task_names = task_names
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         
         # Calculate dataset sizes
         self.dataset_sizes = {task: len(dataset) for task, dataset in task_datasets.items()}
@@ -151,7 +151,7 @@ class PiscesLxMultitaskTrainingOperator(PiscesLxOperatorInterface):
         self.name = "multitask.training"
         self.version = VERSION
         self.type = "training"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         
     @property
     def description(self) -> str:

@@ -69,7 +69,7 @@ import struct
 
 from configs.version import VERSION
 from utils.dc import PiscesLxLogger
-from utils.paths import get_work_dir
+from utils.paths import PiscesLxPaths
 from utils.opsc.interface import (
     PiscesLxOperatorInterface,
     PiscesLxOperatorResult,

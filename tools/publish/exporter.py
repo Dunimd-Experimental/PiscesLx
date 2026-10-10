@@ -95,9 +95,9 @@ except ImportError:
     SAFETENSORS_AVAILABLE = False
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("PiscesLx.Publish.Exporter", file_path=get_log_file("PiscesLx.Publish.Exporter"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Publish.Exporter", file_path=PiscesLxPaths.get_log_file("PiscesLx.Publish.Exporter"), enable_file=True)
 
 
 class PiscesLxPublishExporter:

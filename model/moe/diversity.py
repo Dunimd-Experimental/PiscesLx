@@ -103,9 +103,9 @@ from typing import Optional, Tuple, List, Dict, Any
 from dataclasses import dataclass
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("Yv.Moe.Diversity", file_path=get_log_file("Yv.Moe.Diversity"), enable_file=True)
+_LOG = PiscesLxLogger("Yv.Moe.Diversity", file_path=PiscesLxPaths.get_log_file("Yv.Moe.Diversity"), enable_file=True)
 
 
 @dataclass

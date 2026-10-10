@@ -95,8 +95,8 @@ class PiscesLxOperatorRegistry:
         self._categories: Dict[str, Set[str]] = defaultdict(set)
         self._lock = threading.RLock()
         from ..dc import PiscesLxLogger, PiscesLxMetrics
-        from utils.paths import get_log_file
-        self.logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.{self.__class__.__name__}", file_path=get_log_file(f"PiscesLx.Core.OPSC.{self.__class__.__name__}"), enable_file=True)
+        from utils.paths import PiscesLxPaths
+        self.logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.{self.__class__.__name__}", file_path=PiscesLxPaths.get_log_file(f"PiscesLx.Core.OPSC.{self.__class__.__name__}"), enable_file=True)
         self._metrics = PiscesLxMetrics()
 
     @staticmethod

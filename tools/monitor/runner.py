@@ -26,8 +26,8 @@ from __future__ import annotations
 from typing import Any
 from utils.dc import PiscesLxLogger, PiscesLxConfiguration
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Tools.Monitor", file_path=get_log_file("PiscesLx.Tools.Monitor"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("PiscesLx.Tools.Monitor", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Monitor"), enable_file=True)
 from . import impl as _impl
 from .impl import PiscesLxToolsMonitorImpl
 

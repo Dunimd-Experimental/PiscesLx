@@ -49,9 +49,9 @@ from rich.text import Text
 from rich.live import Live
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("PiscesLx.Tools.Dev", file_path=get_log_file("PiscesLx.Tools.Dev"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Dev", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Dev"), enable_file=True)
 
 
 @dataclass

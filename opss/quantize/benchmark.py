@@ -48,7 +48,7 @@ import torch.cuda.memory as cuda_memory
 import numpy as np
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from utils.opsc.interface import PiscesLxOperatorConfig
 
@@ -112,7 +112,7 @@ class PiscesLxQuantizationBenchmark:
             config: Benchmark configuration.
         """
         self.config = config or PiscesLxBenchmarkConfig()
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         
         self.baseline_results: Optional[PiscesLxBenchmarkResult] = None
         self.current_results: Optional[PiscesLxBenchmarkResult] = None
@@ -653,7 +653,7 @@ class PiscesLxMemoryProfiler:
     """Memory profiling utility."""
     
     def __init__(self):
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         self.snapshots = []
     
     def snapshot(self, label: str = ""):
@@ -696,7 +696,7 @@ class PiscesLxQuantizationBenchmarkOperator(PiscesLxOperatorInterface):
         self.name = "quantize.benchmark"
         self.version = VERSION
         self.type = "quantize"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         self.benchmark_suite: Optional[PiscesLxQuantizationBenchmark] = None
     
     @property

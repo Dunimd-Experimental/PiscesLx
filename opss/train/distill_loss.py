@@ -67,7 +67,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 
 @dataclass
@@ -451,7 +451,7 @@ class PiscesLxDistillationLoss(nn.Module):
         self.config = config
         self._LOG = PiscesLxLogger(
             "PiscesLx.Distill.Loss",
-            file_path=get_log_file("PiscesLx.Distill.Loss"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Distill.Loss"),
             enable_file=True,
         )
         

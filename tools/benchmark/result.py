@@ -30,9 +30,9 @@ from typing import Dict, Any
 from dataclasses import asdict
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
 
 from .config import PiscesLxToolsBenchmarkConfig
 

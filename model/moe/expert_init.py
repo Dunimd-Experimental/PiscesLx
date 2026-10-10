@@ -106,9 +106,9 @@ from dataclasses import dataclass
 from collections import defaultdict
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("Yv.Moe", file_path=get_log_file("Yv.Moe"), enable_file=True)
+_LOG = PiscesLxLogger("Yv.Moe", file_path=PiscesLxPaths.get_log_file("Yv.Moe"), enable_file=True)
 
 
 @dataclass

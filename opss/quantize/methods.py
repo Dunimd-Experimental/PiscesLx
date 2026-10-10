@@ -37,7 +37,7 @@ from dataclasses import dataclass
 from typing import Any, Dict, Optional, List, Tuple
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorConfig, PiscesLxOperatorStatus
 
 from configs.version import VERSION
@@ -69,7 +69,7 @@ class PiscesLxGPTQHessianComputer:
     ):
         self.device = device
         self.dtype = dtype
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
     
     def compute_hessian(
         self,
@@ -143,7 +143,7 @@ class PiscesLxGPTQQuantizer:
         self.desc_act = desc_act
         self.symmetric = symmetric
         self.device = device
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         
         self.quant_ranges = {}
     
@@ -341,7 +341,7 @@ class PiscesLxAWQQuantizer:
         self.group_size = group_size
         self.symmetric = symmetric
         self.device = device
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         
         self.saliency_scores = {}
         self.quant_scales = {}
@@ -577,7 +577,7 @@ class PiscesLxSmoothQuantizer:
         self.group_size = group_size
         self.bits = bits
         self.device = device
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         
         self.smoothing_scales = {}
         self.quantization_scales = {}
@@ -866,7 +866,7 @@ class PiscesLxBlockWiseINT4Quantizer:
             raise ValueError(f"block_size must be one of {self.VALID_BLOCK_SIZES}, got {block_size}")
         self.block_size = block_size
         self.device = device
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer", file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer", file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         self.quantized_state: Dict[str, Any] = {}
 
     def quantize(self, tensor: torch.Tensor) -> Dict[str, torch.Tensor]:
@@ -991,7 +991,7 @@ class PiscesLxKVCacheQuantizer:
         self.value_quant_type = value_quant_type
         self.block_size = block_size
         self.device = device
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer", file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer", file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         self.int4_quantizer = PiscesLxBlockWiseINT4Quantizer(block_size, device)
         self.cache_state: Dict[str, Dict[str, torch.Tensor]] = {}
 
@@ -1180,7 +1180,7 @@ class PiscesLxGPTQOperator(PiscesLxOperatorInterface):
         self.name = "quantize.gptq"
         self.version = VERSION
         self.type = "quantize"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
     
     @property
     def description(self) -> str:
@@ -1237,7 +1237,7 @@ class PiscesLxAWQOperator(PiscesLxOperatorInterface):
         self.name = "quantize.awq"
         self.version = VERSION
         self.type = "quantize"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
     
     @property
     def description(self) -> str:
@@ -1294,7 +1294,7 @@ class PiscesLxSmoothQuantOperator(PiscesLxOperatorInterface):
         self.name = "quantize.smoothquant"
         self.version = VERSION
         self.type = "quantize"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
     
     @property
     def description(self) -> str:

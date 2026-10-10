@@ -56,8 +56,8 @@ import numpy as np
 
 from utils.dc import PiscesLxLogger
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.Tools.Data"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Data"), enable_file=True)
 
 
 @dataclass

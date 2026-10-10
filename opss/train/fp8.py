@@ -56,7 +56,7 @@ import transformer_engine.pytorch as te
 from transformer_engine.common.recipe import Format, DelayedScaling, _Format
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_work_dir
+from utils.paths import PiscesLxPaths
 
 from configs.version import VERSION
 
@@ -239,7 +239,7 @@ class PiscesLxFP8TrainingOperator(PiscesLxOperatorInterface):
         self.name = "fp8.training"
         self.version = VERSION
         self.type = "training"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=get_log_file("PiscesLx.Opss.Train"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Train",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Train"), enable_file=True)
         
         self._check_hardware()
     

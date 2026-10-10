@@ -79,7 +79,7 @@ from ..dc import (
     PiscesLxDevice, PiscesLxDeviceType, PiscesLxDeviceStatus,
     PiscesLxSystemMonitor
 )
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 
 class PiscesLxDeviceTypePreference(Enum):
@@ -267,7 +267,7 @@ class PiscesLxOffloadManager:
         self.access_history: Dict[str, float] = {}
         self._lock = threading.RLock()
         self._metrics = PiscesLxMetrics()
-        self._logger = PiscesLxLogger("PiscesLx.Core.OPSC.OffloadManager", file_path=get_log_file("PiscesLx.Core.OPSC.OffloadManager"), enable_file=True)
+        self._logger = PiscesLxLogger("PiscesLx.Core.OPSC.OffloadManager", file_path=PiscesLxPaths.get_log_file("PiscesLx.Core.OPSC.OffloadManager"), enable_file=True)
 
     def put(
         self,
@@ -489,7 +489,7 @@ class PiscesLxLoadBalancer:
         self._round_robin_index = 0
         self._device_loads: Dict[str, PiscesLxDeviceLoad] = {}
         self._lock = threading.RLock()
-        self._logger = PiscesLxLogger("PiscesLx.Core.OPSC.LoadBalancer", file_path=get_log_file("PiscesLx.Core.OPSC.LoadBalancer"), enable_file=True)
+        self._logger = PiscesLxLogger("PiscesLx.Core.OPSC.LoadBalancer", file_path=PiscesLxPaths.get_log_file("PiscesLx.Core.OPSC.LoadBalancer"), enable_file=True)
 
     def update_device_load(
         self,
@@ -659,7 +659,7 @@ class PiscesLxHeterogeneousExecutor:
         self._lock = threading.RLock()
         self._metrics = PiscesLxMetrics()
         self._tracing = PiscesLxTracing()
-        self._logger = PiscesLxLogger("PiscesLx.Core.OPSC.HeterogeneousExecutor", file_path=get_log_file("PiscesLx.Core.OPSC.HeterogeneousExecutor"), enable_file=True)
+        self._logger = PiscesLxLogger("PiscesLx.Core.OPSC.HeterogeneousExecutor", file_path=PiscesLxPaths.get_log_file("PiscesLx.Core.OPSC.HeterogeneousExecutor"), enable_file=True)
 
         self._operator_device_preference: Dict[str, PiscesLxExecutionTarget] = {}
         self._system_monitor = PiscesLxSystemMonitor()

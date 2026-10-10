@@ -79,7 +79,7 @@ from .protocol import PiscesLxRunInfo
 import threading
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from .config import PiscesLxRunConfig
 
@@ -138,7 +138,7 @@ class PiscesLxRunIntegration:
             config: Run configuration
         """
         self.config = config
-        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
         
         self._run_store = None
         self._controller = None

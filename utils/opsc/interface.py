@@ -299,8 +299,8 @@ class PiscesLxOperatorInterface(ABC):
         self.config = config or PiscesLxOperatorConfig(name=self.__class__.__name__, version=VERSION)
         self.operator_id = str(uuid.uuid4())
         from ..dc import PiscesLxLogger, PiscesLxMetrics, PiscesLxTracing
-        from utils.paths import get_log_file
-        self.logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.{self.__class__.__name__}", file_path=get_log_file(f"PiscesLx.Core.OPSC.{self.__class__.__name__}"), enable_file=True)
+        from utils.paths import PiscesLxPaths
+        self.logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.{self.__class__.__name__}", file_path=PiscesLxPaths.get_log_file(f"PiscesLx.Core.OPSC.{self.__class__.__name__}"), enable_file=True)
         self._metrics = PiscesLxMetrics()
         self._tracing = PiscesLxTracing()
         self._is_setup = False

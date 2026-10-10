@@ -95,8 +95,8 @@ from collections import OrderedDict
 from typing import Any, Optional, Tuple
 from utils.dc import PiscesLxLogger
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("Yv.Moe", file_path=get_log_file("Yv.Moe"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("Yv.Moe", file_path=PiscesLxPaths.get_log_file("Yv.Moe"), enable_file=True)
 
 def moe_init_weights(m):
     """Initialize weights for linear layers in MoE modules.

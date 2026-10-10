@@ -96,8 +96,8 @@ from .config import PiscesLxTrainingConfig
 from configs.version import VERSION
 
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=get_log_file("PiscesLx.Tools.Train"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Train"), enable_file=True)
 
 
 class PiscesLxTrainingInterruption(Exception):

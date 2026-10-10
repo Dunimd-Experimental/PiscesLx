@@ -94,7 +94,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.cuda.amp import GradScaler, autocast
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_work_dir
+from utils.paths import PiscesLxPaths
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
@@ -224,7 +224,7 @@ class PiscesLxDistillationDataset(PiscesLxDataset):
         self.samples = self._load_data(data_path)
         self._LOG = PiscesLxLogger(
             "PiscesLx.Distill.Dataset",
-            file_path=get_log_file("PiscesLx.Distill.Dataset"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Distill.Dataset"),
             enable_file=True,
         )
         self._LOG.info(f"Loaded {len(self.samples)} samples from {data_path}")
@@ -320,7 +320,7 @@ class _PiscesLxDistillationOperatorImpl(PiscesLxOperatorInterface):
         self.type = "training"
         self._LOG = PiscesLxLogger(
             "PiscesLx.Distill.Operator",
-            file_path=get_log_file("PiscesLx.Distill.Operator"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Distill.Operator"),
             enable_file=True,
         )
 

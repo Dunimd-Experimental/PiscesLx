@@ -74,9 +74,9 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Generic, Hashable, Optional, TypeVar, Union
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("PiscesLx.Tools.Data.Cache.LRU", file_path=get_log_file("PiscesLx.Tools.Data.Cache"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Data.Cache.LRU", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Data.Cache"), enable_file=True)
 
 K = TypeVar('K', bound=Hashable)
 V = TypeVar('V')

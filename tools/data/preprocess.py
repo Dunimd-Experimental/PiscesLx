@@ -24,7 +24,7 @@
 from __future__ import annotations
 
 import os
-from utils.paths import get_cache_dir
+from utils.paths import PiscesLxPaths
 from datasets import load_from_disk, DatasetDict
 
 class PiscesLxToolsDataPreprocessor:
@@ -42,7 +42,7 @@ class PiscesLxToolsDataPreprocessor:
         Returns:
             list: A list of dataset subset names. Returns an empty list if the file does not exist.
         """
-        data_cache_dir = get_cache_dir("data_cache")
+        data_cache_dir = PiscesLxPaths.get_cache_dir("data_cache")
         model_txt_path = os.path.join(data_cache_dir, "model.txt")
         
         if not os.path.exists(model_txt_path):
@@ -67,7 +67,7 @@ class PiscesLxToolsDataPreprocessor:
         Returns:
             None: Returns None if the dataset subset does not exist.
         """
-        subset_path = os.path.join(get_cache_dir("data_cache"), subset)
+        subset_path = os.path.join(PiscesLxPaths.get_cache_dir("data_cache"), subset)
         
         if not os.path.exists(subset_path):
             return

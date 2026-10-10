@@ -44,7 +44,7 @@ import torch
 import torch.nn as nn
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from configs.version import VERSION
 
@@ -120,7 +120,7 @@ class PiscesLxQuantizationEngine:
             config: Quantization configuration. Uses defaults if None.
         """
         self.config = config or PiscesLxQuantizationEngineConfig()
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         self.device = self._setup_device()
         
         self.quantization_methods: Dict[str, Any] = {}
@@ -624,7 +624,7 @@ class PiscesLxQuantizationEngineOperator(PiscesLxOperatorInterface):
         self.name = "quantize.engine"
         self.version = VERSION
         self.type = "quantize"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         self.engine: Optional[PiscesLxQuantizationEngine] = None
     
     @property
@@ -824,7 +824,7 @@ class PiscesLxFP8QuantizationEngine:
 
     def __init__(self, device: Optional[torch.device] = None):
         self.device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer", file_path=get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Quantizer", file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Quantizer"), enable_file=True)
         self.amax_history: Dict[str, List[torch.Tensor]] = {}
         self.scales: Dict[str, torch.Tensor] = {}
         self.stats: Dict[str, Any] = {

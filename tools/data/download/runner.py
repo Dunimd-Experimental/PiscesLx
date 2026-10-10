@@ -43,8 +43,8 @@ from tools.data.clean import PiscesLxDatasetCleaner
 from .config import PiscesLxToolsDataConfigLoader, PiscesLxToolsDataDownloadConfig, PiscesLxToolsDatasetItem
 from .sources import PiscesLxToolsDataSourceRouter
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.Tools.Data"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Data"), enable_file=True)
 
 
 @dataclass
@@ -245,7 +245,7 @@ class PiscesLxToolsDataDatasetDownload:
 
         PiscesLxToolsDataSourceRouter.setup_hf_mirror()
 
-        logger = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
+        logger = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
         logger.info(f"Starting download: {dataset_name} -> {save_name}")
 
         temp_dir = cache.get_temp_dir()
@@ -478,7 +478,7 @@ class PiscesLxToolsDataDatasetDownload:
         return out or ["modelscope", "huggingface"]
 
     def _run_download(self, cfg: PiscesLxToolsDataDownloadConfig):
-        logger = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
+        logger = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
         logger.info(f"Starting download with config: {cfg}")
         logger.info(f"Using data directory: {self._DATA}")
         logger.info(f"Using cache directory: {self._DATATEMP}")
@@ -642,7 +642,7 @@ class PiscesLxToolsDataDatasetDownload:
             return min(base_workers, 6)
 
     def _cleanup_caches(self) -> None:
-        logger = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
+        logger = PiscesLxLogger("PiscesLx.Tools.Data.Download", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Data.Download"), enable_file=True)
         try:
             self._cache.cleanup_cache()
             logger.debug("Temporary caches cleaned")

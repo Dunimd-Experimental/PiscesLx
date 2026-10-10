@@ -71,9 +71,9 @@ import argparse
 from typing import Optional, List
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("PiscesLx.Publish.CLI", file_path=get_log_file("PiscesLx.Publish.CLI"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Publish.CLI", file_path=PiscesLxPaths.get_log_file("PiscesLx.Publish.CLI"), enable_file=True)
 
 
 def create_parser() -> argparse.ArgumentParser:

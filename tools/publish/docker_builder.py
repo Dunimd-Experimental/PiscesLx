@@ -86,9 +86,9 @@ from typing import Dict, Any, Optional, List
 from datetime import datetime
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("PiscesLx.Publish.Docker", file_path=get_log_file("PiscesLx.Publish.Docker"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Publish.Docker", file_path=PiscesLxPaths.get_log_file("PiscesLx.Publish.Docker"), enable_file=True)
 
 
 class PiscesLxPublishDockerBuilder:

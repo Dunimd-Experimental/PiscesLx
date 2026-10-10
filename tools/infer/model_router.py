@@ -54,7 +54,7 @@ from enum import Enum
 import re
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from .config import PiscesLxModelSpec, MODEL_SPECS, get_model_spec
 
@@ -153,7 +153,7 @@ class PiscesLxModelRouter:
         self.available_sizes = available_sizes or set(MODEL_SPECS.keys())
         self.enable_fallback = enable_fallback
         
-        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
         self._model_load: Dict[str, int] = {size: 0 for size in MODEL_SPECS}
         self._route_history: List[Dict[str, Any]] = []
     

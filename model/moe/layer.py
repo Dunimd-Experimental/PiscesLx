@@ -114,10 +114,10 @@ from .gate import YvMoEGate as _YvMoEGate
 from .gate import YvPhiBalancing as _YvPhiBalancing
 from .expert import YvExpert, YvSharedExpert, YvExpertConfig, YvExpertType, YvExpertMode
 
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from utils.dtype_safe import qr_safe as _qr_safe, svd_safe as _svd_safe
 
-_LOG = PiscesLxLogger("Yv.Moe", file_path=get_log_file("Yv.Moe"), enable_file=True)
+_LOG = PiscesLxLogger("Yv.Moe", file_path=PiscesLxPaths.get_log_file("Yv.Moe"), enable_file=True)
 
 
 # Paper: Zhou et al., "Mixture-of-Experts with Expert Choice Routing", NeurIPS 2022, arXiv:2202.09368

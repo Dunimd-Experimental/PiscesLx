@@ -61,7 +61,7 @@ from typing import Dict, Any, Union, Optional
 from datetime import datetime
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from .config import PiscesLxPublishConfig, PiscesLxExportAction
 from .orchestrator import PiscesLxPublishOrchestrator
@@ -75,7 +75,7 @@ def _get_logger():
     if _LOG is None:
         _LOG = PiscesLxLogger(
             "PiscesLx.Publish",
-            file_path=get_log_file("PiscesLx.Publish"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Publish"),
             enable_file=True
         )
     return _LOG

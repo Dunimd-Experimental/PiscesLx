@@ -51,9 +51,9 @@ from tqdm import tqdm
 import numpy as np
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_work_dir
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark.LongContext", file_path=get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark.LongContext", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
 
 
 @dataclass

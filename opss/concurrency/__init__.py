@@ -51,12 +51,12 @@ from concurrent.futures import ThreadPoolExecutor, ProcessPoolExecutor, as_compl
 from concurrent.futures import TimeoutError as FutureTimeoutError
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
 from configs.version import VERSION
 
-_LOG = PiscesLxLogger("PiscesLx.Opss.Concurrency", file_path=get_log_file("PiscesLx.Opss.Concurrency"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Opss.Concurrency", file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Concurrency"), enable_file=True)
 
 
 class PiscesLxCoreTimeoutError(TimeoutError):

@@ -76,7 +76,7 @@ from torch import Tensor
 
 from utils.dc import PiscesLxLogger
 from utils.device import PiscesLxDeviceResolver
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from configs.version import VERSION
 
 
@@ -179,7 +179,7 @@ class PiscesLxTeacherProvider(ABC):
         self.config = config
         self._LOG = PiscesLxLogger(
             "PiscesLx.Distill.Provider",
-            file_path=get_log_file("PiscesLx.Distill.Provider"),
+            file_path=PiscesLxPaths.get_log_file("PiscesLx.Distill.Provider"),
             enable_file=True
         )
     

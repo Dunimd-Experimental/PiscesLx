@@ -45,8 +45,8 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 from utils import PiscesLxCoreValidationError
 
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("PiscesLx.Opss.Validation", file_path=get_log_file("PiscesLx.Opss.Validation"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("PiscesLx.Opss.Validation", file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Validation"), enable_file=True)
 
 
 @dataclass

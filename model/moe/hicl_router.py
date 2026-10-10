@@ -36,8 +36,8 @@ import torch.nn.functional as F
 from typing import Optional, Tuple
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("Yv.HiCl", file_path=get_log_file("Yv.HiCl"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("Yv.HiCl", file_path=PiscesLxPaths.get_log_file("Yv.HiCl"), enable_file=True)
 
 
 # Paper: Kapoor et al., "HiCL: Hippocampal-Inspired Continual Learning", AAAI 2026, arXiv:2508.16651

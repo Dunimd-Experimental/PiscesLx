@@ -37,9 +37,9 @@ from .config import PiscesLxToolsBenchmarkConfig
 from .builders import PiscesLxToolsTaskConfigBuilder
 from .result import PiscesLxToolsResultManager, PiscesLxToolsComparisonManager
 
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
 
 
 class PiscesLxToolsBenchmark:
@@ -47,7 +47,7 @@ class PiscesLxToolsBenchmark:
 
     def __init__(self, config: Union[str, Dict, PiscesLxToolsBenchmarkConfig]):
         self.config = self._load_config(config)
-        self.logger = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
+        self.logger = PiscesLxLogger("PiscesLx.Tools.Benchmark", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
 
         # Setup device
         self._system_monitor = PiscesLxSystemMonitor()

@@ -31,7 +31,7 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from .config import PiscesLxToolsMonitorConfig
 from .context_utils import PiscesLxMonitorCache, PiscesLxMonitorContextManager
 from .stats_collector import PiscesLxMonitorStatsCollector
@@ -39,7 +39,7 @@ from .data_manager import PiscesLxMonitorDataManager
 from .alert_manager import PiscesLxMonitorAlertManager
 from .display_utils import PiscesLxToolsMonitorDisplay
 
-_LOG = PiscesLxLogger("PiscesLx.Tools.Monitor", file_path=get_log_file("PiscesLx.Tools.Monitor"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Monitor", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Monitor"), enable_file=True)
 
 
 class PiscesLxToolsMonitorOrchestrator:

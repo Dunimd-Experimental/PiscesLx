@@ -61,11 +61,11 @@ from typing import Any, Dict, Iterator, List, Optional, Tuple, Union
 from pathlib import Path
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 _LOG = PiscesLxLogger(
     "POPSS.KnowledgeBuilder",
-    file_path=get_log_file("POPSS.KnowledgeBuilder"),
+    file_path=PiscesLxPaths.get_log_file("POPSS.KnowledgeBuilder"),
     enable_file=True,
 )
 

@@ -168,7 +168,7 @@ from .norms import _arctic_init_weights, YvRMSNorm, YvYaRNRotaryEmbedding, YvDyn
 from utils.dc import PiscesLxLogger
 from opss.infer.fused_mla import PiscesLxFusedMLAProjector
 
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 _CACHED_CAUSAL_MASKS: dict = {}
 
@@ -193,7 +193,7 @@ def _get_causal_sdpa_mask(
     sdpa_mask.masked_fill_(bool_mask, float('-inf'))
     return sdpa_mask
 
-_LOG = PiscesLxLogger("Yv.Core", file_path=get_log_file("Yv.Core"), enable_file=True)
+_LOG = PiscesLxLogger("Yv.Core", file_path=PiscesLxPaths.get_log_file("Yv.Core"), enable_file=True)
 
 
 class YvAttentionBackend(Enum):

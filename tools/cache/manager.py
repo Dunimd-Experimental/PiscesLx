@@ -58,11 +58,11 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-from utils.paths import get_cache_dir, get_log_file
+from utils.paths import PiscesLxPaths
 from utils.dc import PiscesLxLogger
 
 
-_LOG = PiscesLxLogger("PiscesLx.Tools.Cache", file_path=get_log_file("PiscesLx.Tools.Cache"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Cache", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Cache"), enable_file=True)
 
 
 class PiscesLxCacheManager:

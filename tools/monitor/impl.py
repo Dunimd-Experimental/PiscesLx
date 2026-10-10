@@ -32,7 +32,7 @@ from datetime import datetime
 from typing import Any, Optional, Dict, Tuple, List
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_cache_dir
+from utils.paths import PiscesLxPaths
 
 # Import new modular components
 from .context_utils import PiscesLxMonitorContextManager
@@ -65,7 +65,7 @@ class PiscesLxToolsMonitorImpl:
         self.device_manager = self.context_manager.get_device_manager()
         self.logger = self.context_manager.get_logger()
         try:
-            self.console_logger = PiscesLxLogger("PiscesLx.Tools.Monitor.Console", file_path=get_log_file("PiscesLx.Tools.Monitor.Console"), enable_file=True)
+            self.console_logger = PiscesLxLogger("PiscesLx.Tools.Monitor.Console", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Monitor.Console"), enable_file=True)
         except Exception:
             self.console_logger = PiscesLxLogger("PiscesLx.Tools.Monitor.Console")
         
@@ -187,12 +187,12 @@ class PiscesLxToolsMonitorImpl:
     def _init_logging(self):
         """Initialize logging configuration."""
         import os
-        self.MONITOR_LOG_DIR = get_cache_dir("logs/monitor")
+        self.MONITOR_LOG_DIR = PiscesLxPaths.get_cache_dir("logs/monitor")
         os.makedirs(self.MONITOR_LOG_DIR, exist_ok=True)
         self.MONITOR_LOG_FILE = os.path.join(self.MONITOR_LOG_DIR, 'monitor.log')
         
-        self.monitor_logger = PiscesLxLogger("PiscesLx.Tools.Monitor.File", file_path=get_log_file("PiscesLx.Tools.Monitor.File"), enable_file=True)
-        self.obs_logger = PiscesLxLogger("PiscesLx.Tools.Monitor.Observability", file_path=get_log_file("PiscesLx.Tools.Monitor.Observability"), enable_file=True)
+        self.monitor_logger = PiscesLxLogger("PiscesLx.Tools.Monitor.File", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Monitor.File"), enable_file=True)
+        self.obs_logger = PiscesLxLogger("PiscesLx.Tools.Monitor.Observability", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Monitor.Observability"), enable_file=True)
     
     def get_observability_metrics(self):
         """Get metrics using simple psutil monitoring."""

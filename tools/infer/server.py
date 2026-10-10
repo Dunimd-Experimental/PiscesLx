@@ -111,7 +111,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from utils.dc import PiscesLxLogger
 from utils.log_bridge import PiscesLxThirdPartyLogBridge
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from .config import (
     PiscesLxInferenceConfig,
@@ -170,7 +170,7 @@ from .agent_interceptor import PiscesLxAgentInterceptor, PiscesLxAgentMode
 from .run_integration import PiscesLxRunIntegration
 
 
-_LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
 
 
 class PiscesLxInferService:
@@ -249,7 +249,7 @@ class PiscesLxInferService:
         self._error_count = 0
         self._latencies: List[float] = []
         
-        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
     
     @asynccontextmanager
     async def lifespan(self, app: FastAPI):
@@ -1163,7 +1163,7 @@ class PiscesLxBackendServer:
         self.serve_config = getattr(args, 'serve_config', None)
         self.model_path = getattr(args, 'model_path', None)
         
-        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
     
     def _build_config(self) -> PiscesLxServiceConfig:
         """Build service configuration from CLI arguments."""

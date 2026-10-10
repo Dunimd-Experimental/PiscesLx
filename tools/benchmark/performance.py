@@ -48,9 +48,9 @@ import torch
 import torch.nn as nn
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file, get_work_dir
+from utils.paths import PiscesLxPaths
 
-_LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark.Performance", file_path=get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
+_LOG = PiscesLxLogger("PiscesLx.Tools.Benchmark.Performance", file_path=PiscesLxPaths.get_log_file("PiscesLx.Tools.Benchmark"), enable_file=True)
 
 
 @dataclass

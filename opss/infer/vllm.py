@@ -56,7 +56,7 @@ except ImportError:
     _VLLM_AVAILABLE = False
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
 from configs.version import VERSION
@@ -169,7 +169,7 @@ class PiscesLxPrefixCacheManager:
             "memory_freed_bytes": 0,
             "total_accesses": 0,
         }
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
     
     def _compute_prompt_hash(self, token_ids: Tuple[int, ...]) -> str:
         """Compute hash for token sequence."""
@@ -317,7 +317,7 @@ class PiscesLxChunkedPrefillScheduler:
         self.overlap_chunks = overlap_chunks
         self.overlap_size = overlap_size
         self.memory_budget_bytes = memory_budget_bytes
-        self._LOG = PiscesLxLogger("poopss.ops.infer.chunked_prefill", file_path=get_log_file("poopss.ops.infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("poopss.ops.infer.chunked_prefill", file_path=PiscesLxPaths.get_log_file("poopss.ops.infer"), enable_file=True)
         
         self.stats = {
             "total_requests": 0,
@@ -412,7 +412,7 @@ class PiscesLxMultiLoRAOperator(PiscesLxOperatorInterface):
         self.name = "vllm.multi_lora"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         
         self.loaded_adapters: Dict[str, Dict[str, Any]] = {}
         self.adapter_lock = Lock()
@@ -633,7 +633,7 @@ class PiscesLxPrefixCachingOperator(PiscesLxOperatorInterface):
         self.name = "vllm.prefix_caching"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         
         max_bytes = int(max_memory_mb * 1024 * 1024) if max_memory_mb else None
         
@@ -796,7 +796,7 @@ class PiscesLxChunkedPrefillOperator(PiscesLxOperatorInterface):
         self.name = "vllm.chunked_prefill"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         
         memory_bytes = int(memory_budget_mb * 1024 * 1024) if memory_budget_mb else None
         
@@ -907,7 +907,7 @@ class PiscesLxVLLMInferenceOperator(PiscesLxOperatorInterface):
         self.name = "vllm.inference"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         self.vllm_engine = None
         
         self.multi_lora_operator = PiscesLxMultiLoRAOperator()

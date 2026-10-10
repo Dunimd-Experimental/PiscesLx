@@ -76,8 +76,8 @@ import torch.nn.functional as F
 from typing import Dict, Any, Optional, List, Tuple
 from utils.dc import PiscesLxLogger
 
-from utils.paths import get_log_file
-_LOG = PiscesLxLogger("Yv.Multimodal", file_path=get_log_file("Yv.Multimodal"), enable_file=True)
+from utils.paths import PiscesLxPaths
+_LOG = PiscesLxLogger("Yv.Multimodal", file_path=PiscesLxPaths.get_log_file("Yv.Multimodal"), enable_file=True)
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
 class YvAudioEncoder(nn.Module):

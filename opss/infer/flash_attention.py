@@ -60,7 +60,7 @@ import math
 
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 from configs.version import VERSION
 
@@ -150,7 +150,7 @@ class PiscesLxFlashAttention3Operator(PiscesLxOperatorInterface):
         self.name = "infer.flash_attention_3"
         self.version = VERSION
         self.type = "inference"
-        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
+        self._LOG = PiscesLxLogger("PiscesLx.Opss.Infer",file_path=PiscesLxPaths.get_log_file("PiscesLx.Opss.Infer"), enable_file=True)
         self.config = config or PiscesLxFlashAttention3Config()
         
         self._backend = self._detect_backend()

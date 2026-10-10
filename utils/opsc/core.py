@@ -77,7 +77,7 @@ from typing import (
 )
 
 from utils.dc import PiscesLxLogger
-from utils.paths import get_log_file
+from utils.paths import PiscesLxPaths
 
 if TYPE_CHECKING:
     from .interface import (
@@ -193,7 +193,7 @@ class PiscesLxOperatorCore:
             self.registry,
             max_workers=self.config.max_concurrent_executors
         )
-        self.logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.{self.__class__.__name__}", file_path=get_log_file(f"PiscesLx.Core.OPSC.{self.__class__.__name__}"), enable_file=True)
+        self.logger = PiscesLxLogger(f"PiscesLx.Core.OPSC.{self.__class__.__name__}", file_path=PiscesLxPaths.get_log_file(f"PiscesLx.Core.OPSC.{self.__class__.__name__}"), enable_file=True)
         self._initialized = False
 
         if self.config.enable_heterogeneous:
