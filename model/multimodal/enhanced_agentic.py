@@ -1045,8 +1045,7 @@ class YvToolOrchestrator(nn.Module):
                 
             except Exception as e:
                 last_error = str(e)
-                import logging
-                logging.getLogger(__name__).warning("Tool execution failed", exc_info=True)
+                _LOG.warning("Tool execution failed", exc_info=True)
             
             error_type = self._classify_error(last_error)
             
@@ -1074,8 +1073,7 @@ class YvToolOrchestrator(nn.Module):
                     return fallback_result
                     
             except Exception:
-                import logging
-                logging.getLogger(__name__).warning(f"Fallback {fallback_tool} failed", exc_info=True)
+                _LOG.warning(f"Fallback {fallback_tool} failed", exc_info=True)
                 continue
         
         return {

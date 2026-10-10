@@ -1734,8 +1734,7 @@ class YvAgentic(nn.Module):
                 
             except (RuntimeError, ValueError, OSError, asyncio.TimeoutError) as e:
                 last_error = str(e)
-                import logging
-                logging.getLogger(__name__).warning("Agent execution failed", exc_info=True)
+                _LOG.warning("Agent execution failed", exc_info=True)
             
             current_time = time_module.time()
             if current_time - last_checkpoint_time >= checkpoint_interval:

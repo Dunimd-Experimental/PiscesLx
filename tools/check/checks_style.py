@@ -157,6 +157,15 @@ class PiscesLxStdlibLoggingCheck(PiscesLxStandardCheck):
     rule = "LOGGING-DMSC-ONLY"
     description = "replace stdlib logging with dmsc==0.1.8"
 
+    #: The single sanctioned exception: bridging code that must touch foreign stdlib
+    #: loggers (third-party noise suppression, UI capture, ASGI server config).
+    #: Everything else must log through utils.dc.PiscesLxLogger (dmsc 0.1.8).
+    BRIDGE_ALLOWLIST = (
+        "utils/log_bridge.py",
+        "tools/dev/manager.py",
+        "tools/infer/server.py",
+    )
+
     def run(self, scanner: PiscesLxRepositoryScanner) -> list:
         """Scan import and call sites for stdlib logging usage."""
         return self.run_per_file(scanner)
@@ -164,6 +173,9 @@ class PiscesLxStdlibLoggingCheck(PiscesLxStandardCheck):
     def inspect(self, source: PiscesLxSourceFile) -> list:
         """Flag stdlib logging imports (AST) and logger factory calls (text)."""
         violations = []
+        relative = source.path.relative_to(source.root).as_posix()
+        if relative in self.BRIDGE_ALLOWLIST:
+            return []
         tree = source.tree
         if tree is None:
             return violations

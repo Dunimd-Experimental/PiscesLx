@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 PiscesLx Backend Inference Service - Flagship OpenAI-Compatible API Server
 
@@ -109,6 +111,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from utils.dc import PiscesLxLogger
+from utils.log_bridge import PiscesLxThirdPartyLogBridge
 from utils.paths import get_log_file
 
 from .config import (
@@ -1195,9 +1198,9 @@ class PiscesLxBackendServer:
     
     def run(self):
         """Start the backend server."""
-        logging.basicConfig(
-            level=getattr(logging, self.log_level, logging.INFO),
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        PiscesLxThirdPartyLogBridge.configure_server_logging(
+            self.log_level,
+            '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
         )
         
         self._LOG.info(f"Starting PiscesLx Backend Server...")

@@ -108,8 +108,7 @@ from typing import Optional
 
 from utils.dc import PiscesLxConfiguration, PiscesLxFilesystem, PiscesLxLogger
 
-import logging
-_LOG = logging.getLogger("PiscesLx.Core.Paths")
+_LOG = PiscesLxLogger("PiscesLx.Core.Paths")
 
 
 def load_runtime_configuration() -> PiscesLxConfiguration:

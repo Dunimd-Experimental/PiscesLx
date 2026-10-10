@@ -35,7 +35,6 @@ This module provides comprehensive multimodal benchmark evaluation including:
 import os
 import json
 import time
-import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
 from pathlib import Path

@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 import os
 import gc
 import time
@@ -34,6 +36,7 @@ from typing import Any, Tuple, Optional, Set, List, Dict, Callable
 from dataclasses import dataclass, field
 from functools import wraps
 from utils.dc import PiscesLxLogger
+from utils.log_bridge import PiscesLxThirdPartyLogBridge
 from .caches import PiscesLxToolsDataDownloadCache
 from datasets import load_from_disk, Dataset
 from tools.data.clean import DatasetCleaner
@@ -370,8 +373,7 @@ class PiscesLxToolsDataDatasetDownload:
 
     def __init__(self) -> None:
         try:
-            import logging
-            logging.getLogger("modelscope").setLevel(logging.ERROR)
+            PiscesLxThirdPartyLogBridge.quiet({"modelscope": "ERROR"})
         except Exception:
             pass
 

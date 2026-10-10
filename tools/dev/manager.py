@@ -21,6 +21,8 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 """
 PiscesLx Developer Mode Manager - Refactored with Log Handler Integration.
 
@@ -68,6 +70,7 @@ import yaml
 
 from utils.paths import get_settings_file, get_log_file
 from utils.dc import PiscesLxLogger
+from utils.log_bridge import PiscesLxThirdPartyLogBridge
 
 
 _LOG = PiscesLxLogger("PiscesLx.Tools.Dev", file_path=get_log_file("PiscesLx.Tools.Dev"), enable_file=True)
@@ -368,10 +371,13 @@ class PiscesLxDevModeManager:
         try:
             self._log_capture = PiscesLxDevModeLogCapture(self._ui)
             self._log_capture.setLevel(logging.DEBUG)
-            
-            root_logger = logging.getLogger()
-            root_logger.addHandler(self._log_capture)
-            
+
+            # The root logger only carries third-party records: PiscesL1's own logs go
+            # through utils.dc.PiscesLxLogger (dmsc), which has no external sink hook.
+            # Capturing the UI's training feed therefore needs both this bridge and the
+            # project logger; the bridge half is what is available today.
+            PiscesLxThirdPartyLogBridge.capture(None, self._log_capture)
+
             _LOG.debug("Log capture handler attached to root logger")
         except Exception as e:
             _LOG.warning("Failed to setup log capture", error=str(e))
@@ -382,8 +388,7 @@ class PiscesLxDevModeManager:
         """
         if self._log_capture is not None:
             try:
-                root_logger = logging.getLogger()
-                root_logger.removeHandler(self._log_capture)
+                PiscesLxThirdPartyLogBridge.release(None, self._log_capture)
                 self._log_capture = None
                 _LOG.debug("Log capture handler removed from root logger")
             except Exception as e:

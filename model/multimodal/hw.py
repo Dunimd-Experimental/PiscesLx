@@ -183,8 +183,7 @@ class YvHardwareAdaptiveConfig:
                 "recommended_config": tier,
             }
         except Exception:
-            import logging
-            logging.getLogger(__name__).warning("Hardware detection failed", exc_info=True)
+            _LOG.warning("Hardware detection failed", exc_info=True)
             return {"device_count": 0, "total_memory_gb": 0, "recommended_config": "minimal"}
 
     def _profile(self, tier: str) -> Dict:

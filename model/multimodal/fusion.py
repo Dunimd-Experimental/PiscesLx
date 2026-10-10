@@ -84,6 +84,7 @@ Note:
     projected into the same autoregressive token embedding space.
 """
 
+from utils.dc import PiscesLxLogger
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -92,9 +93,9 @@ from .hw import YvHardwareAdaptiveConfig
 from .attention import YvCrossModalAttention
 from .memory import YvMemory
 from model.utils import YvShapeGuard
-import logging
 
-logger = logging.getLogger(__name__)
+_LOG = PiscesLxLogger("Yv.Multimodal.Fusion")
+logger = _LOG
 
 
 class YvUnifiedMultimodalTokenizer(nn.Module):

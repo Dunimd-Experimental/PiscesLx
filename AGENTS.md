@@ -81,6 +81,11 @@ tools/check/       禁止项的可运行检查脚本
 
 **统一 `dmsc==0.1.8`，禁止标准库 `logging`**（禁 `import logging` / `logging.getLogger` / `logging.basicConfig`）。重复日志配置抽为单一实现（现集成点 `utils/dc.py`）。
 
+**唯一受控例外**（`tools/check` 内以显式白名单实现，非静默放过）：压制**第三方库自己的** stdlib logger
+（`transformers`/`datasets`/`modelscope`/ASGI）无法用 dmsc 句柄完成，必须触碰 stdlib。该职责收在
+`utils/log_bridge.py::PiscesLxThirdPartyLogBridge` 一处，仅 `tools/dev/manager.py`（UI 捕获）、
+`tools/infer/server.py`（服务日志配置）经它间接使用；项目自身日志一律走 dmsc。
+
 ### 4.4 版权头（逐字精确，顺序不可变）
 
 每个 `.py` 文件头部必须逐字为：

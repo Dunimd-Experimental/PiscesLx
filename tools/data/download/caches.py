@@ -21,11 +21,14 @@
 # DISCLAIMER: Users must comply with applicable AI regulations.
 # Non-compliance may result in service termination or legal liability.
 
+from __future__ import annotations
+
 import os
 import warnings
 from pathlib import Path
 from utils.paths import get_cache_dir
 from utils.dc import PiscesLxLogger
+from utils.log_bridge import PiscesLxThirdPartyLogBridge
 
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Tools.Data", file_path=get_log_file("PiscesLx.Tools.Data"), enable_file=True)
@@ -79,11 +82,9 @@ class PiscesLxToolsDataDownloadCache:
         # Disable tokenizer parallelism
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
         
-        # Reduce the log level of third-party libraries
-        import logging
-        logging.getLogger("modelscope").setLevel(logging.ERROR)
-        logging.getLogger("datasets").setLevel(logging.WARNING)
-        logging.getLogger("transformers").setLevel(logging.WARNING)
+        # Third-party libraries emit their own stdlib loggers; quieted via the bridge,
+        # which is the one place PiscesL1 is permitted to touch `logging`.
+        PiscesLxThirdPartyLogBridge.quiet_default()
         
         # Ignore user warnings from third-party libraries
         warnings.filterwarnings("ignore", category=UserWarning, module="modelscope")

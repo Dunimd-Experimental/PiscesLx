@@ -910,8 +910,7 @@ class YvSpeculativeDecoder(nn.Module):
             try:
                 self.on_stats(stats)
             except Exception:
-                import logging
-                logging.getLogger(__name__).warning("on_stats callback failed", exc_info=True)
+                    _LOG.warning("on_stats callback failed", exc_info=True)
 
         self.performance_history.append({
             'acceptance_rate': stats.get('draft_acceptance_rate', 0),
@@ -1625,8 +1624,7 @@ class YvMedusaDecoder(nn.Module):
             try:
                 self.on_stats(stats)
             except Exception:
-                import logging
-                logging.getLogger(__name__).warning("on_stats callback failed", exc_info=True)
+                    _LOG.warning("on_stats callback failed", exc_info=True)
         
         return generated_ids, stats
 
@@ -1970,8 +1968,7 @@ class YvDSparkSpeculativeDecoder(nn.Module):
             try:
                 self.on_stats(stats)
             except Exception:
-                import logging
-                logging.getLogger(__name__).warning("on_stats callback failed", exc_info=True)
+                    _LOG.warning("on_stats callback failed", exc_info=True)
 
         return generated_ids, stats
 
