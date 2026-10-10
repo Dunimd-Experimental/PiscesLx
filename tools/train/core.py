@@ -342,10 +342,8 @@ class PiscesLxTrainingOperator(object):
         self._multitask_operator = None
         self._parallel_3d_operator = None
         
-        self._weight_watermark_operator = None
         self._compliance_operator = None
         self._audit_operator = None
-        self._watermark_config = None
         
         self._evolution_operator = None
         self._growth_operator = None
@@ -2477,15 +2475,6 @@ class PiscesLxTrainingOperator(object):
             except Exception as e:
                 _LOG.warning(f"MoE gradient optimizer execute failed: {e}")
 
-        if self._weight_watermark_operator is not None:
-            try:
-                wm_result = self._weight_watermark_operator._regularize({"model": self.model})
-                if wm_result.is_success():
-                    wm_loss = wm_result.output.get("regularization_loss")
-                    if isinstance(wm_loss, torch.Tensor) and (wm_loss.requires_grad or wm_loss.grad_fn is not None):
-                        aux_losses.append(wm_loss)
-            except Exception as e:
-                _LOG.warning(f"Weight watermark regularization failed: {e}")
 
         if aux_losses:
             total_loss = total_loss + torch.stack([a.to(device=self.device) for a in aux_losses]).sum()
@@ -3000,60 +2989,3 @@ class PiscesLxTrainingOperator(object):
             _LOG.warning(f"Failed to parse patience in should_stop_early: {e}. Returning False.")
             return False
         return self.early_stop_counter >= patience
-    
-    def verify_weights(self) -> Tuple[float, bool]:
-        """
-        Verify model ownership through weight watermark detection.
-        
-        This method checks if the model weights contain the embedded watermark
-        by computing correlation scores against the owner codebook.
-        
-        Returns:
-            Tuple of (verification_score, passed)
-            
-        Raises:
-            RuntimeError: If watermark operator not initialized
-        """
-        if self._weight_watermark_operator is None:
-            raise RuntimeError("Weight watermark operator not initialized. Enable watermark in config.")
-        
-        if self.model is None:
-            raise RuntimeError("Model not initialized")
-        
-        try:
-            result = self._weight_watermark_operator._verify({"model": self.model})
-            
-            if result.is_success():
-                score = result.output.get("verification_score", 0.0)
-                passed = result.output.get("passed", False)
-                
-                _LOG.info(f"Weight verification: score={score:.4f}, threshold={self._watermark_config.verify_threshold:.4f}, passed={passed}")
-                
-                if self._audit_operator is not None:
-                    self._audit_operator.log_operation(
-                        operation="verify",
-                        content_type="weight",
-                        result="success" if passed else "failed",
-                        metadata={
-                            "verification_score": score,
-                            "threshold": self._watermark_config.verify_threshold,
-                            "model_id": self._watermark_config.model_id
-                        }
-                    )
-                
-                return score, passed
-            else:
-                _LOG.warning(f"Weight verification failed: {result.error}")
-                return 0.0, False
-                
-        except Exception as e:
-            _LOG.error(f"Weight verification error: {e}")
-            if self._audit_operator is not None:
-                self._audit_operator.log_operation(
-                    operation="verify",
-                    content_type="weight",
-                    result="failed",
-                    metadata={"error": str(e)}
-                )
-            return 0.0, False
-    

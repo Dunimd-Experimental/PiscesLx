@@ -162,8 +162,6 @@ _LAZY_SYMBOLS = {
     "TrainingConfig": (".config", "TrainingConfig"),
     "EvolutionConfig": (".config", "EvolutionConfig"),
     "PiscesLxTrainOrchestrator": (".orchestrator", "PiscesLxTrainOrchestrator"),
-    "TrainingWatermarkIntegrationOperator": (".watermark", "TrainingWatermarkIntegrationOperator"),
-    "TrainingPipelineWatermarkOperator": (".watermark", "TrainingPipelineWatermarkOperator"),
 }
 
 
@@ -184,6 +182,5 @@ __all__ = [
     "TrainingConfig", 
     "EvolutionConfig",
     "PiscesLxTrainOrchestrator",
-    "TrainingWatermarkIntegrationOperator",
     "TrainingPipelineWatermarkOperator"
 ]

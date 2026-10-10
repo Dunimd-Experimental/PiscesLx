@@ -29,7 +29,6 @@ Configuration Package for PiscesLx Large Language Model Framework.
 This module serves as the central configuration management hub for the entire
 PiscesLx ecosystem. It provides a unified interface for accessing and managing
 all configuration parameters across model architectures, training pipelines,
-dataset specifications, watermarking systems, and system-level settings.
 
 ARCHITECTURAL OVERVIEW:
     The PiscesLx configuration system is designed with a hierarchical and
@@ -40,7 +39,6 @@ ARCHITECTURAL OVERVIEW:
        - Model configurations define architecture-specific parameters
        - Training configurations control optimization and workflow
        - Dataset configurations manage data sources and preprocessing
-       - Watermark configurations handle AI-generated content tracking
        - System settings control runtime behavior and development tools
 
     2. Hierarchical Configuration Loading:
@@ -60,7 +58,6 @@ CONFIGURATION FILE STRUCTURE:
     ├── version.py               # Version identifiers and release metadata
     ├── settings.yaml            # System-level and developer mode settings
     ├── dataset.yaml             # Dataset registry with sources and preprocessing
-    ├── watermark.yaml           # Comprehensive watermarking configuration
     │
     ├── model/                   # Model architecture configurations
     │   ├── 0.5B.yaml           # 0.5 billion parameters (compact model)
@@ -161,7 +158,6 @@ CONFIGURATION PARAMETER CATEGORIES:
        - moe_gradient: Enable MoE-specific gradient handling
        - kfac: Enable Kronecker Factorization for preconditioning
        - multitask: Enable multi-task learning support
-       - watermark: Enable watermarking during generation
        - modality_scheduler: Enable dynamic modality scheduling
 
     G. Distributed Training Parameters:
@@ -256,8 +252,6 @@ INTEGRATION POINTS:
         - Extracts preprocessing configurations
         - Manages dataset caching and downloading
 
-    Watermark Module:
-        - Loads watermark.yaml for watermarking configuration
         - Extracts jurisdiction-specific parameters
         - Configures detection and audit systems
 

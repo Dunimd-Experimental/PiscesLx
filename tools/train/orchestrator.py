@@ -96,7 +96,6 @@ from utils.dc import PiscesLxLogger
 from .config import TrainingConfig
 from .core import PiscesLxTrainingOperator
 from .pipeline import TrainingPipelineOperator, CurriculumLearningOperator, PiscesLxMultiTaskTrainingOperator
-from .watermark import TrainingWatermarkIntegrationOperator, TrainingPipelineWatermarkOperator
 
 from utils.paths import get_cache_dir
 from utils.paths import get_log_file
@@ -538,8 +537,6 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                 self.train_config.kfac = adv["kfac"]
             if "multitask" in adv:
                 self.train_config.multitask = adv["multitask"]
-            if "watermark" in adv:
-                self.train_config.watermark = adv["watermark"]
             if "modality_scheduler" in adv:
                 self.train_config.modality_scheduler = adv["modality_scheduler"]
 
@@ -549,8 +546,6 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             self.train_config.kfac = model_train_cfg["kfac"]
         if "multitask" in model_train_cfg:
             self.train_config.multitask = model_train_cfg["multitask"]
-        if "watermark" in model_train_cfg:
-            self.train_config.watermark = model_train_cfg["watermark"]
         if "modality_scheduler" in model_train_cfg:
             self.train_config.modality_scheduler = model_train_cfg["modality_scheduler"]
 
@@ -1630,16 +1625,12 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if self.train_config.enable_multitask:
             self._setup_multitask()
         
-        if getattr(self.train_config, 'enable_watermark', False):
-            self._setup_watermark()
         
         self.pipeline = TrainingPipelineOperator(self.train_config, trainer=self.trainer)
         
         if hasattr(self.train_config, 'curriculum') and self.train_config.curriculum:
             self._setup_curriculum_learning()
         
-        if getattr(self.train_config, 'enable_watermark', False):
-            self._setup_watermark_pipeline()
         
         self._attach_dev_mode_trainer()
         
@@ -1717,7 +1708,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         
         try:
             try:
-                from opss.train.distill_provider import (
+                from tools.data.distill.offline_teacher_provider import (
                     POPSSTeacherProviderFactory,
                     POPSSTeacherConfig,
                     POPSSLocalTeacherProvider,
@@ -1884,23 +1875,6 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             weights = {}
         self.multitask_ops["multitask"] = PiscesLxMultiTaskTrainingOperator(task_weights=weights)
         _LOG.info("Multitask components setup", multitask_ops=list(self.multitask_ops.keys()))
-    def _setup_watermark(self):
-        """Setup watermark components."""
-        self.watermark_ops = {}
-        
-        # Training watermark integration
-        enabled = bool(getattr(self.train_config, 'enable_content_watermark', True) or getattr(self.train_config, 'enable_weight_watermark', False))
-        jurisdiction = str(getattr(self.train_config, "jurisdiction", "GLOBAL"))
-        self.watermark_ops['integration'] = TrainingWatermarkIntegrationOperator(enabled=enabled, jurisdiction=jurisdiction)
-        
-        _LOG.info(f"Watermark components setup: {list(self.watermark_ops.keys())}")
-    
-    def _setup_watermark_pipeline(self):
-        """Setup watermark pipeline."""
-        if 'integration' in self.watermark_ops:
-            self.watermark_pipeline = TrainingPipelineWatermarkOperator(enabled=True)
-            _LOG.info("Watermark pipeline setup completed")
-    
     def _setup_curriculum_learning(self):
         """Setup curriculum learning."""
         if hasattr(self.train_config, 'curriculum') and self.train_config.curriculum:

@@ -92,7 +92,7 @@ from .vision import YvSpatioTemporalRoPE3D
 from .audio import YvAudioEncoder  
 
 if TYPE_CHECKING:
-    from ..modeling import YvModel
+    from ..core.model import YvModel
     from ..config import YvConfig
 
 from utils.paths import get_log_file
@@ -213,7 +213,6 @@ class YvGenerationResult:
         content: Generated content (tensor, dict, or bytes).
         metadata: Generation metadata.
         generation_time: Time taken to generate.
-        watermark: Optional watermark info.
         error: Error message if failed.
     """
     success: bool
@@ -221,7 +220,6 @@ class YvGenerationResult:
     content: Optional[Union[torch.Tensor, Dict[str, torch.Tensor], bytes]] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
     generation_time: float = 0.0
-    watermark: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
 
@@ -312,7 +310,7 @@ class YvSelfDevelopedGenerator(nn.Module):
         self.config = config
         
         # Use our existing Yv model as backbone (lazy import to avoid circular imports)
-        from ..modeling import YvModel
+        from ..core.model import YvModel
         from ..config import YvConfig
 
         model_config = YvConfig(
@@ -1118,7 +1116,6 @@ class YvGenerator:
         """
         self.config = config
         self._backends: Dict[YvGenerationModality, YvGenerationBackend] = {}
-        self._watermark_enabled = True
         
         # Register default backends
         self._register_default_backends()
@@ -1193,33 +1190,7 @@ class YvGenerator:
         
         result = await backend.generate(condition, **kwargs)
         
-        # Apply watermark if enabled
-        if self._watermark_enabled and result.success:
-            result.watermark = self._apply_watermark(result)
-        
         return result
-    
-    def _apply_watermark(self, result: YvGenerationResult) -> Dict[str, Any]:
-        """Apply watermark to generated content.
-        
-        Args:
-            result: Generation result.
-            
-        Returns:
-            Watermark metadata.
-        """
-        content_hash = hashlib.sha256(
-            str(result.metadata).encode()
-        ).hexdigest()[:16]
-        
-        return {
-            "applied": True,
-            "method": "metadata_hash",
-            "content_type": result.modality.name.lower(),
-            "hash": content_hash,
-            "timestamp": datetime.now().isoformat(),
-        }
-    
     def generate_from_text(
         self,
         text: str,
@@ -1265,7 +1236,6 @@ class YvGenerator:
                 for modality, backend in self._backends.items()
             },
             "available_modalities": self.get_available_modalities(),
-            "watermark_enabled": self._watermark_enabled,
         }
 
 

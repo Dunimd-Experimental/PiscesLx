@@ -45,7 +45,6 @@ Key Responsibilities:
     3. Integration Documentation:
        - OpenAI-compatible API usage
        - Agent XML pattern syntax
-       - Watermark detection usage
        - Background run management
 
 Command Categories:
@@ -81,8 +80,6 @@ Command Categories:
     **MCP Commands:**
         - mcp: Model Context Protocol tool management
     
-    **Watermark Commands:**
-        - watermark: Detect and verify watermarks in various media
 
 Output Format:
     The help text is formatted for terminal display with:
@@ -149,7 +146,6 @@ def help():
     6. **Benchmark**: benchmark for evaluation
     7. **Monitor**: check and monitor for system status
     8. **MCP**: mcp for tool management
-    9. **Watermark**: watermark for detection and verification
     10. **Examples**: Practical usage demonstrations
     
     Args:
@@ -232,7 +228,6 @@ def help():
     print("    --max_concurrency <int>       Max concurrent requests (default: 2)")
     print("    --request_timeout <float>     Request timeout seconds (default: 120.0)")
     print("    --serve_config <path>         Service config file (JSON/YAML)")
-    print("    --disable_opss                Disable OPSS integration (enabled by default)")
     print("    --disable_agent_intercept     Disable agent XML pattern interception (enabled by default)")
     print("    --api_key <str>               API key for authentication")
     print("    --cors_origins <str>          CORS allowed origins (default: *)")
@@ -314,16 +309,12 @@ def help():
     print("    --mcp_host <str>             MCP server host (default: localhost)")
     print("    --mcp_port <int>             MCP server port (default: 8080)")
     print("")
-    print("Watermark:")
-    print("  watermark   Watermark detection for text, files, or model weights")
-    print("    --text <str>                 Text to check for watermark")
     print("    --file <path>                File or directory to check")
     print("    --image-file <path>          Image file to check")
     print("    --audio-file <path>          Audio file to check")
     print("    --batch                      Enable directory batch mode")
     print("    --verbose, -v                Verbose output")
     print("    --json                       Output JSON format")
-    print("    --weights-verify             Verify weight-level watermark (requires --ckpt)")
     print("    --ckpt <path>                Model checkpoint for weight verification")
     print("    --model_size <str>           Model size for weight verification (default: 0.5B)")
     print("")
@@ -466,11 +457,6 @@ def help():
     print("  python manage.py mcp --mcp_action warmup")
     print("  python manage.py mcp --mcp_action refresh-cache")
     print("")
-    print("  # Watermark")
-    print("  python manage.py watermark --text 'Check if this text contains a watermark'")
-    print("  python manage.py watermark --file ./outputs/ --batch --verbose")
-    print("  python manage.py watermark --text 'Test text' --json")
-    print("  python manage.py watermark --weights-verify --ckpt ckpt/model.pt --model_size 0.5B")
     print("")
     print("  # Publish (Package models as Docker images with inference engine)")
     print("  python manage.py publish --publish_action full --publish_model_size 7B --publish_registry docker.io")

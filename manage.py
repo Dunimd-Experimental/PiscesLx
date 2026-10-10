@@ -413,7 +413,6 @@ def main():
        - train/serve/monitor/benchmark: Orchestrator pattern
        - action: CLI sub-command pattern
        - download: Tool class pattern
-       - mcp/watermark/cache: Specialized handlers
     
     3. **Error Handling**: Catches and logs errors, returning appropriate
        exit codes for scripting integration.

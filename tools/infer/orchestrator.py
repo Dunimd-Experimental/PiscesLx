@@ -300,9 +300,6 @@ class PiscesLxInferOrchestrator(PiscesLxBaseOperator):
         if self.infer_config.quantization.enable_quantization:
             self._setup_quantization()
         
-        # 5. Initialize watermark components (if enabled)
-        if getattr(self.infer_config, 'enable_watermark', False):
-            self._setup_watermark()
         
         # 6. Initialize inference pipeline
         self.pipeline = InferencePipelineOperator(self.infer_config)
@@ -310,9 +307,6 @@ class PiscesLxInferOrchestrator(PiscesLxBaseOperator):
         # 7. Initialize prompt engineering
         self.prompt_engineer = PromptEngineeringOperator()
         
-        # 8. Setup watermark pipeline (if watermark enabled)
-        if getattr(self.infer_config, 'enable_watermark', False):
-            self._setup_watermark_pipeline()
         
         self.is_initialized = True
         _LOG.info("Inference environment initialization completed")
@@ -357,28 +351,6 @@ class PiscesLxInferOrchestrator(PiscesLxBaseOperator):
         )
         
         _LOG.info(f"Quantization components setup: {list(self.quantizers.keys())}")
-    
-    def _setup_watermark(self):
-        """Setup watermark components."""
-        self.watermark_ops = {}
-        
-        # Inference watermark integration
-        self.watermark_ops['integration'] = InferenceWatermarkIntegrationOperator(
-            enable_content_verification=getattr(self.infer_config, 'enable_content_verification', True),
-            enable_model_verification=getattr(self.infer_config, 'enable_model_verification', True),
-            strict_mode=getattr(self.infer_config, 'watermark_strict_mode', False)
-        )
-        
-        _LOG.info(f"Watermark components setup: {list(self.watermark_ops.keys())}")
-    
-    def _setup_watermark_pipeline(self):
-        """Setup watermark pipeline."""
-        if 'integration' in self.watermark_ops:
-            self.watermark_pipeline = InferencePipelineWatermarkOperator(
-                self.watermark_ops['integration']
-            )
-            _LOG.info("Watermark pipeline setup completed")
-    
     def add_inference_callback(self, callback: Callable[[str, Dict[str, Any]], None]):
         """
         Add inference callback function.

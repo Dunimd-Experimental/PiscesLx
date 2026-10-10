@@ -218,7 +218,6 @@ GLOBAL_DEFAULTS: Dict[str, Any] = {
     "moe_gradient": {"enabled": True},
     "kfac": {"enabled": False},
     "multitask": {"enabled": False},
-    "watermark": {"enabled": False},
     "modality_scheduler": {"enabled": False},
 }
 
@@ -735,7 +734,6 @@ class TrainingConfig:
     })
     kfac: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
     multitask: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
-    watermark: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
     modality_scheduler: Dict[str, Any] = field(default_factory=lambda: {"enabled": True})
     
     enable_dpo: bool = True
@@ -896,8 +894,6 @@ class TrainingConfig:
                 self.kfac = adv["kfac"]
             if "multitask" in adv:
                 self.multitask = adv["multitask"]
-            if "watermark" in adv:
-                self.watermark = adv["watermark"]
             if "modality_scheduler" in adv:
                 self.modality_scheduler = adv["modality_scheduler"]
         
@@ -1046,7 +1042,6 @@ class TrainingConfig:
                 "moe": self.moe,
                 "kfac": self.kfac,
                 "multitask": self.multitask,
-                "watermark": self.watermark,
                 "modality_scheduler": self.modality_scheduler,
             },
             "parallel_3d": self.parallel_3d
@@ -1178,7 +1173,6 @@ class TrainingConfig:
             config.moe = adv_dict.get("moe", config.moe)
             config.kfac = adv_dict.get("kfac", config.kfac)
             config.multitask = adv_dict.get("multitask", config.multitask)
-            config.watermark = adv_dict.get("watermark", config.watermark)
             config.modality_scheduler = adv_dict.get("modality_scheduler", config.modality_scheduler)
         
         return config

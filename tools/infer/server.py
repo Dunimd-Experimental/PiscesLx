@@ -72,7 +72,6 @@ Architecture:
     │   ├── Text generation
     │   ├── Streaming support
     │   └── Multimodal operations
-    ├── PiscesLxOPSSIntegration
     │   ├── MCP Plaza
     │   ├── Swarm Coordinator
     │   ├── Orchestrator
@@ -168,7 +167,6 @@ from .protocol import (
 )
 from .model_router import PiscesLxModelRouter, PiscesLxRoutingStrategy
 from .agent_interceptor import PiscesLxAgentInterceptor, PiscesLxAgentMode
-from .opss_integration import PiscesLxOPSSIntegration
 from .run_integration import PiscesLxRunIntegration
 
 
@@ -242,7 +240,6 @@ class PiscesLxInferService:
         self._engine: Optional[PiscesLxInferenceEngine] = None
         self._model_router: Optional[PiscesLxModelRouter] = None
         self._agent_interceptor: Optional[PiscesLxAgentInterceptor] = None
-        self._opss: Optional[PiscesLxOPSSIntegration] = None
         self._run: Optional[PiscesLxRunIntegration] = None
         self._app: Optional[FastAPI] = None
         
@@ -269,7 +266,6 @@ class PiscesLxInferService:
         self._agent_interceptor = PiscesLxAgentInterceptor()
         
         if self.config.opss:
-            self._opss = PiscesLxOPSSIntegration(self.config.opss)
             self._opss.initialize()
         
         if self.config.run:
@@ -1163,7 +1159,6 @@ class PiscesLxBackendServer:
         self.api_key = getattr(args, 'api_key', None)
         self.cors_origins = getattr(args, 'cors_origins', '*')
         self.log_level = getattr(args, 'log_level', 'INFO')
-        self.enable_opss = not getattr(args, 'disable_opss', False)
         self.enable_agent_intercept = not getattr(args, 'disable_agent_intercept', False)
         self.serve_config = getattr(args, 'serve_config', None)
         self.model_path = getattr(args, 'model_path', None)
@@ -1188,12 +1183,6 @@ class PiscesLxBackendServer:
             origins = [o.strip() for o in self.cors_origins.split(',')]
             config.cors_origins = origins
         
-        if self.enable_opss:
-            config.opss.enable_mcp_plaza = True
-            config.opss.enable_swarm_coordinator = True
-            config.opss.enable_orchestrator = True
-            config.opss.enable_mcp_bridge = True
-        
         return config
     
     def run(self):
@@ -1208,7 +1197,6 @@ class PiscesLxBackendServer:
         self._LOG.info(f"Host: {self.host}")
         self._LOG.info(f"Port: {self.port}")
         self._LOG.info(f"Workers: {self.workers}")
-        self._LOG.info(f"OPSS Enabled: {self.enable_opss}")
         self._LOG.info(f"Agent Intercept: {self.enable_agent_intercept}")
         
         config = self._build_config()

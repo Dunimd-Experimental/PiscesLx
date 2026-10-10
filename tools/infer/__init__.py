@@ -141,11 +141,9 @@ from .protocol import (
 )
 from .model_router import PiscesLxModelRouter, PiscesLxRoutingStrategy
 from .agent_interceptor import PiscesLxAgentInterceptor, PiscesLxAgentMode
-from .opss_integration import PiscesLxOPSSIntegration
 from .run_integration import PiscesLxRunIntegration
 
 from .orchestrator import PiscesLxInferOrchestrator
-from .watermark import InferenceWatermarkIntegrationOperator, InferencePipelineWatermarkOperator
 
 from configs.version import VERSION, AUTHOR
 
@@ -167,13 +165,10 @@ __all__ = [
     "get_model_spec",
     "list_available_models",
     "PiscesLxInferOrchestrator",
-    "InferenceWatermarkIntegrationOperator",
-    "InferencePipelineWatermarkOperator",
     "PiscesLxModelRouter",
     "PiscesLxRoutingStrategy",
     "PiscesLxAgentInterceptor",
     "PiscesLxAgentMode",
-    "PiscesLxOPSSIntegration",
     "PiscesLxRunIntegration",
     "ChatCompletionRequest",
     "ChatCompletionResponse",

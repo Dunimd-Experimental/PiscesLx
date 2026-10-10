@@ -150,7 +150,6 @@ VERSION HISTORY AND CHANGELOG:
         - Flagship model architecture with MoE and knowledge density optimization
         - Complete training pipeline with pre-training, SFT, and alignment stages
         - Support for model sizes: 0.5B, 1.5B, 7B, 32B, 64B, 70B, 128B, 314B, 671B, 1T
-        - Integrated watermarking system for AI content traceability
         - Multimodal support for text, image, audio, and video processing
 
     Version 0.3.2 (Current CVERSION):

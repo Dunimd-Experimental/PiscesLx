@@ -433,7 +433,9 @@ class PiscesLxDanglingImportCheck(PiscesLxStandardCheck):
         if tree is None:
             return []
         violations = []
-        package_parts = source.path.relative_to(source.root).parent.parts[:-1]
+        # parts[:-1] already drops the file name; taking .parent as well would strip the
+        # enclosing package too, mis-resolving `from .x` imports one level too high.
+        package_parts = source.path.relative_to(source.root).parts[:-1]
         for node in ast.walk(tree):
             target = None
             if isinstance(node, ast.Import):
@@ -460,17 +462,27 @@ class PiscesLxDanglingImportCheck(PiscesLxStandardCheck):
 
     @staticmethod
     def _resolves(root: Path, dotted: str) -> bool:
+        """Walk every component: a name resolves only if the *full* path exists.
+
+        An earlier version short-circuited with ``... or True`` on the first component,
+        which made the whole check vacuous — it reported zero dangling imports while real
+        broken relative imports (``from .watermark import …`` after the watermark module
+        was relocated) were still in the tree.
+        """
         parts = dotted.split(".")
         if parts[0] not in ("model", "opss", "tools", "utils", "configs", "enta"):
             return True
         cursor = root
-        for part in parts:
+        for index, part in enumerate(parts):
             cursor = cursor / part
-            if cursor.with_suffix(".py").exists():
-                return True
+            if cursor.with_suffix(".py").is_file():
+                # A module file: anything imported *out of* it is a symbol question,
+                # not a path question, so the path itself resolves here.
+                return index == len(parts) - 1 or (cursor.is_dir())
             if cursor.is_dir():
-                return (cursor / "__init__.py").exists() or True
-        return cursor.is_dir() and (cursor / "__init__.py").exists()
+                continue
+            return False
+        return (cursor / "__init__.py").is_file() or cursor.is_file()
 
     @staticmethod
     def _violation(source: PiscesLxSourceFile, node: ast.AST, target: str) -> PiscesLxViolation:
