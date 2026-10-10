@@ -138,4 +138,4 @@ doc/
 2.txt
 # Training corpora and downloaded shards are data, not source: they never go
 # into a repository (weights travel to the Hub, sources travel without them).
-data/
+/data/

@@ -152,6 +152,9 @@ _CUDA_VERSION_MAP = {
 class PiscesLxSetupCli:
     """Module-level operations of setup, exposed through a class (§6.2)."""
 
+    CUDA_ROOT_ENV_VARS = ("CUDA_HOME", "CUDA_PATH")
+    CUDA_VERSION_FILES = ("version.txt", "version.json")
+
     @staticmethod
     def _log(level, message):
         """
@@ -325,8 +328,15 @@ class PiscesLxSetupCli:
             pass
 
         try:
-            for ver_path in ("/usr/local/cuda/version.txt", "/usr/local/cuda/version.json"):
-                if os.path.exists(ver_path):
+            # The CUDA root is whatever the host installed it under; the toolkit exposes
+            # it through these two variables on Linux and Windows alike.
+            cuda_roots = [os.environ[name] for name in PiscesLxSetupCli.CUDA_ROOT_ENV_VARS
+                          if os.environ.get(name)]
+            for root in cuda_roots:
+                for version_file in PiscesLxSetupCli.CUDA_VERSION_FILES:
+                    ver_path = os.path.join(root, version_file)
+                    if not os.path.exists(ver_path):
+                        continue
                     with open(ver_path) as f:
                         content = f.read()
                     m = re.search(r'(\d+\.\d+)', content)
