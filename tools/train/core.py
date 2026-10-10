@@ -2466,18 +2466,21 @@ class PiscesLxTrainingOperator(object):
                     "step": self.global_step,
                     "backward_pass": True
                 })
-            except Exception:
-                pass
+            except Exception as e:
+                _LOG.warning(f"K-FAC step update failed: {e}")
 
         if did_step and self._multitask_operator is not None:
             try:
+                # The operator declares task_losses as its required input; handing it
+                # "loss" instead failed validation on every step, and the bare except
+                # hid it. One step optimises one objective, so the list holds one loss.
                 self._multitask_operator.execute({
+                    "task_losses": [total_loss],
                     "model": self.model,
-                    "loss": total_loss,
                     "step": self.global_step,
                 })
-            except Exception:
-                pass
+            except Exception as e:
+                _LOG.warning(f"Multi-task uncertainty update failed: {e}")
 
         return grad_norm
     
@@ -2717,6 +2720,26 @@ class PiscesLxTrainingOperator(object):
             return self.optimizer.param_groups[0]['lr']
         return self.config.optimizer.learning_rate
     
+    def _export_state_dict(self) -> tuple:
+        """Return (plain-model state dict, adapter state dict or None).
+
+        A PEFT-wrapped model saves ``base_model.model.*`` keys that no bare ``YvModel``
+        can load, so the delivered artifact would not be a usable weight at all. The
+        adapters are therefore merged into a copy of the model for the deliverable, while
+        the raw wrapped payload is kept alongside so a resumed run continues to train the
+        adapters rather than a frozen merged model.
+        """
+        raw = self.model.state_dict()
+        if not hasattr(self.model, "merge_and_unload"):
+            return raw, None
+        import copy
+
+        merged = copy.deepcopy(self.model).merge_and_unload()
+        try:
+            return merged.state_dict(), raw
+        finally:
+            del merged
+
     def save_checkpoint(self, filepath: str, metadata: Optional[Dict[str, Any]] = None):
         """
         Save training checkpoint.
@@ -2728,8 +2751,11 @@ class PiscesLxTrainingOperator(object):
         import os
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         
+        model_state, adapter_state = self._export_state_dict()
+
         checkpoint = {
-            'model_state_dict': self.model.state_dict(),
+            'model_state_dict': model_state,
+            'adapter_state_dict': adapter_state,
             'optimizer_state_dict': self.optimizer.state_dict() if self.optimizer else None,
             'scheduler_state_dict': self.scheduler.state_dict() if self.scheduler else None,
             'global_step': self.global_step,
@@ -2756,10 +2782,15 @@ class PiscesLxTrainingOperator(object):
         Returns:
             Checkpoint information.
         """
-        checkpoint = torch.load(filepath, map_location=self.device, weights_only=True)
-        
-        # Load model weights
-        self.model.load_state_dict(checkpoint['model_state_dict'])
+        checkpoint = torch.load(filepath, map_location=self.device, weights_only=False)
+
+        # A wrapped model resumes into its adapter keys; a plain one into the merged
+        # weights. Either way the load is strict: a partial match is a failure.
+        state = checkpoint.get('model_state_dict')
+        adapter = checkpoint.get('adapter_state_dict')
+        if adapter is not None and hasattr(self.model, "merge_and_unload"):
+            state = adapter
+        self.model.load_state_dict(state, strict=True)
         
         # Load optimizer state
         if self.optimizer and checkpoint['optimizer_state_dict']:

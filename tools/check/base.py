@@ -71,6 +71,7 @@ class PiscesLxRuleId:
     DANGLING_IMPORT = "NO-DANGLING-IMPORT"
     DANGLING_EXPORT = "NO-DANGLING-EXPORT"
     INCOMPLETE_MARKER = "NO-STUB-NOR-TODO"
+    SILENT_EXCEPT = "NO-SILENT-EXCEPT"
 
     @classmethod
     def all_rules(cls) -> tuple:

@@ -459,14 +459,15 @@ class PiscesLxMultitaskTrainingOperator(PiscesLxOperatorInterface):
         """Calculate losses for each task in the batch."""
         task_losses = {}
         task = batch.get('task', 'generic')
-        
-        # Simplified loss calculation
-        if hasattr(outputs, 'loss'):
-            task_losses[task] = outputs.loss
-        else:
-            # Placeholder loss calculation
-            task_losses[task] = torch.tensor(1.0, device=next(iter(batch.values())).device)
-        
+
+        loss = outputs.loss if hasattr(outputs, 'loss') else (
+            outputs.get('loss') if isinstance(outputs, dict) else None)
+        if loss is None:
+            raise ValueError(
+                f"{task} task produced no loss; the model must return an objective, "
+                "not a stand-in constant"
+            )
+        task_losses[task] = loss
         return task_losses
     
     def _generate_training_curves(self, metrics: Dict[str, Any]) -> Dict[str, Any]:

@@ -63,6 +63,11 @@ class PiscesLxCheckpointVerifier:
     MAX_EVAL_TOKENS = 4096
     SAMPLE_LIMIT = 64
     BYTES_PER_GB = 1024 ** 3
+    SIZE_DIGITS = 3
+    LOSS_DIGITS = 4
+    SCORE_DIGITS = 2
+    REPORT_LIST_ITEMS = 5
+    PERPLEXITY_EXPONENT_CAP = 50.0
 
     def __init__(self, checkpoint: str, model_config: str, corpus: str) -> None:
         self.checkpoint_path = pathlib.Path(checkpoint)
@@ -92,7 +97,13 @@ class PiscesLxCheckpointVerifier:
         report["loadable"] = self._check_loadable(reference_state, state)
         report["trained"] = self._check_trained(reference_state, state)
         reference.eval()
-        report["perplexity"] = self._check_usable(reference, state)
+        # The scoring stage runs the full model, so a defect inside it is itself the
+        # finding; report it as a failed stage instead of losing the two answers above.
+        try:
+            report["perplexity"] = self._check_usable(reference, state)
+        except Exception as exc:
+            report["perplexity"] = {"ok": False,
+                                    "error": f"{type(exc).__name__}: {exc}"}
         report["verdict"] = (
             report["loadable"]["ok"] and report["trained"]["ok"] and report["perplexity"]["ok"]
         )
@@ -111,8 +122,7 @@ class PiscesLxCheckpointVerifier:
                 return stats[key]
         return {key: value for key, value in stats.items() if "loss" in key.lower()} or None
 
-    @staticmethod
-    def _check_loadable(reference_state: dict, state: dict) -> dict:
+    def _check_loadable(self, reference_state: dict, state: dict) -> dict:
         missing = sorted(set(reference_state) - set(state))
         unexpected = sorted(set(state) - set(reference_state))
         shape_mismatch = sorted(
@@ -127,8 +137,7 @@ class PiscesLxCheckpointVerifier:
             "tensors": len(state),
         }
 
-    @staticmethod
-    def _check_trained(reference_state: dict, state: dict) -> dict:
+    def _check_trained(self, reference_state: dict, state: dict) -> dict:
         changed = 0
         identical = []
         for key, fresh in reference_state.items():
