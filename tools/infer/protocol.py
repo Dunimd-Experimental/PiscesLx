@@ -412,7 +412,7 @@ class PiscesLxToolSearchRequest(BaseModel):
     limit: Optional[int] = Field(10, description="Maximum results")
 
 
-class RunInfo(BaseModel):
+class PiscesLxRunInfo(BaseModel):
     """Run information."""
     run_id: str = Field(..., description="Run ID")
     run_dir: Optional[str] = Field(None, description="Run directory")
@@ -425,7 +425,7 @@ class RunInfo(BaseModel):
 
 class PiscesLxRunListResponse(BaseModel):
     """Run list response."""
-    runs: List[RunInfo] = Field(default_factory=list)
+    runs: List[PiscesLxRunInfo] = Field(default_factory=list)
     total: int = Field(0)
 
 

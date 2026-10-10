@@ -53,7 +53,7 @@ Architecture:
     │  └─────────────┘  └──────────────┘  └──────────────────┘   │
     ├─────────────────────────────────────────────────────────────┤
     │  ┌─────────────┐  ┌──────────────┐  ┌──────────────────┐   │
-    │  │ LoadBalancer│  │  StatsCollector│ │  BatchScheduler │   │
+    │  │ PiscesLxExpertLoadBalancer│  │  StatsCollector│ │  BatchScheduler │   │
     │  │ (Aux Loss)  │  │  (Monitoring) │ │  (Optimization) │   │
     │  └─────────────┘  └──────────────┘  └──────────────────┘   │
     └─────────────────────────────────────────────────────────────┘
@@ -606,7 +606,7 @@ class PiscesLxBatchExpertSharing:
             }
 
 
-class LoadBalancer:
+class PiscesLxExpertLoadBalancer:
     """
     MoE load balancer for expert utilization optimization.
     
@@ -794,7 +794,7 @@ class PiscesLxMoERuntimeOperator(PiscesLxOperatorInterface):
     Attributes:
         config: MoERuntimeConfig for runtime behavior
         expert_cache: PiscesLxExpertCacheManager for computation caching
-        load_balancer: LoadBalancer for utilization tracking
+        load_balancer: PiscesLxExpertLoadBalancer for utilization tracking
         batch_sharing: PiscesLxBatchExpertSharing for cross-request optimization
         
     Example:
@@ -864,7 +864,7 @@ class PiscesLxMoERuntimeOperator(PiscesLxOperatorInterface):
     def _initialize_load_balancer(self, num_experts: int):
         """Initialize load balancer with expert count."""
         if self.load_balancer is None:
-            self.load_balancer = LoadBalancer(
+            self.load_balancer = PiscesLxExpertLoadBalancer(
                 num_experts=num_experts,
                 loss_weight=self.config.load_balance_alpha,
                 utilization_threshold=0.15,

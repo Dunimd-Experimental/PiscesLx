@@ -38,9 +38,9 @@ Key Features:
     - Memory utilization tracking
 
 Usage:
-    from opss.run.gpu_scheduler import POPSSGPUScheduler
+    from opss.run.gpu_scheduler import PiscesLxGPUAllocationScheduler
     
-    scheduler = POPSSGPUScheduler()
+    scheduler = PiscesLxGPUAllocationScheduler()
     
     # Get available GPUs
     available = scheduler.get_available_gpus()
@@ -90,7 +90,7 @@ class PiscesLxGPUAllocation:
     priority: str = "normal"
 
 
-class POPSSGPUScheduler:
+class PiscesLxGPUAllocationScheduler:
     """
     GPU Resource Scheduler for LLM Training and Inference.
     
@@ -106,7 +106,7 @@ class POPSSGPUScheduler:
         _state_file: Path to persistent state file.
     
     Example:
-        >>> scheduler = POPSSGPUScheduler()
+        >>> scheduler = PiscesLxGPUAllocationScheduler()
         >>> gpus = scheduler.get_available_gpus(min_memory_mb=24000)
         >>> scheduler.allocate("train_001", gpus[:2])
         [0, 1]

@@ -115,6 +115,7 @@ class PiscesLxParallelismType(Enum):
     EXPERT = "expert_parallel"
     DATA = "data_parallel"
     HYBRID = "hybrid"
+    SEQUENCE = "sequence"
 
 
 class PiscesLxCommunicationType(Enum):

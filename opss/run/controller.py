@@ -128,8 +128,8 @@ class PiscesLxRunController:
     def _get_gpu_scheduler(self):
         """Get or create GPU scheduler instance."""
         if self._gpu_scheduler is None:
-            from .gpu_scheduler import POPSSGPUScheduler
-            self._gpu_scheduler = POPSSGPUScheduler()
+            from .gpu_scheduler import PiscesLxGPUAllocationScheduler
+            self._gpu_scheduler = PiscesLxGPUAllocationScheduler()
         return self._gpu_scheduler
 
     def _get_resource_limits(self):

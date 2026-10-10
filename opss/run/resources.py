@@ -102,7 +102,7 @@ class PiscesLxResourceRequirements:
 
 
 @dataclass
-class POPSSResourceAllocation:
+class PiscesLxTaskResourceGrant:
     """Resource allocation record."""
     task_id: str
     requirements: PiscesLxResourceRequirements
@@ -140,7 +140,7 @@ class PiscesLxResourceLimits:
         Args:
             state_dir: Directory for persistent state storage.
         """
-        self._allocations: Dict[str, POPSSResourceAllocation] = {}
+        self._allocations: Dict[str, PiscesLxTaskResourceGrant] = {}
         self._lock = threading.RLock()
         
         if state_dir is None:
@@ -160,7 +160,7 @@ class PiscesLxResourceLimits:
                 data = json.load(f)
             
             for task_id, alloc_data in data.get("allocations", {}).items():
-                self._allocations[task_id] = POPSSResourceAllocation(
+                self._allocations[task_id] = PiscesLxTaskResourceGrant(
                     task_id=alloc_data["task_id"],
                     requirements=PiscesLxResourceRequirements.from_dict(alloc_data["requirements"]),
                     allocated_at=alloc_data["allocated_at"],
@@ -286,7 +286,7 @@ class PiscesLxResourceLimits:
         task_id: str,
         requirements: PiscesLxResourceRequirements,
         gpu_ids: Optional[List[int]] = None,
-    ) -> POPSSResourceAllocation:
+    ) -> PiscesLxTaskResourceGrant:
         """
         Allocate resources to a task.
         
@@ -307,7 +307,7 @@ class PiscesLxResourceLimits:
                 raise ValueError("; ".join(details["reasons"]))
             
             now = datetime.now(timezone.utc).isoformat()
-            allocation = POPSSResourceAllocation(
+            allocation = PiscesLxTaskResourceGrant(
                 task_id=task_id,
                 requirements=requirements,
                 allocated_at=now,
@@ -320,7 +320,7 @@ class PiscesLxResourceLimits:
             
             return allocation
     
-    def release(self, task_id: str) -> Optional[POPSSResourceAllocation]:
+    def release(self, task_id: str) -> Optional[PiscesLxTaskResourceGrant]:
         """
         Release resources allocated to a task.
         
@@ -338,7 +338,7 @@ class PiscesLxResourceLimits:
             self._save_state()
             return allocation
     
-    def get_allocation(self, task_id: str) -> Optional[POPSSResourceAllocation]:
+    def get_allocation(self, task_id: str) -> Optional[PiscesLxTaskResourceGrant]:
         """
         Get allocation information for a task.
         
@@ -351,7 +351,7 @@ class PiscesLxResourceLimits:
         with self._lock:
             return self._allocations.get(task_id)
     
-    def get_all_allocations(self) -> Dict[str, POPSSResourceAllocation]:
+    def get_all_allocations(self) -> Dict[str, PiscesLxTaskResourceGrant]:
         """
         Get all current allocations.
         

@@ -154,7 +154,7 @@ from .protocol import (
     PiscesLxToolInfo,
     PiscesLxToolListResponse,
     PiscesLxToolSearchRequest,
-    RunInfo,
+    PiscesLxRunInfo,
     PiscesLxRunListResponse,
     PiscesLxRunControlRequest,
     PiscesLxRunControlResponse,
@@ -884,7 +884,7 @@ class PiscesLxInferService:
         
         return PiscesLxRunListResponse(
             runs=[
-                RunInfo(
+                PiscesLxRunInfo(
                     run_id=r.run_id,
                     run_dir=r.run_dir,
                     status=r.status,

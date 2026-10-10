@@ -74,24 +74,14 @@ Usage:
 from typing import Any, Dict, List, Optional
 from dataclasses import dataclass
 import time
+
+from .protocol import PiscesLxRunInfo
 import threading
 
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 
 from .config import PiscesLxRunConfig
-
-
-@dataclass
-class PiscesLxRunInfo:
-    """Run information structure."""
-    run_id: str
-    run_dir: Optional[str] = None
-    status: Optional[str] = None
-    phase: Optional[str] = None
-    created_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    pid: Optional[int] = None
 
 
 @dataclass

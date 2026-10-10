@@ -718,9 +718,9 @@ class PiscesLxRunCLI:
         return 0
 
     def _handle_gpu(self, ns: Any) -> int:
-        from .gpu_scheduler import POPSSGPUScheduler
+        from .gpu_scheduler import PiscesLxGPUAllocationScheduler
         
-        scheduler = POPSSGPUScheduler()
+        scheduler = PiscesLxGPUAllocationScheduler()
         action = ns.gpu_action
         
         if action == "list":

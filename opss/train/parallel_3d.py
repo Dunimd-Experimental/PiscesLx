@@ -67,15 +67,9 @@ from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResu
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 from configs.version import VERSION
-
-
-class POPSSParallelismType(Enum):
-    """Types of parallelism."""
-    DATA = "data"
-    TENSOR = "tensor"
-    PIPELINE = "pipeline"
-    SEQUENCE = "sequence"
-    EXPERT = "expert"
+# The shared enum lives in utils/opsc/distributed.py; this module used to carry its own
+# copy of the same concept.
+from utils.opsc.distributed import PiscesLxParallelismType
 
 
 class PiscesLxPipelineSchedule(Enum):
@@ -969,7 +963,7 @@ class PiscesLxCommComputeOverlapOptimizer:
 
 
 __all__ = [
-    "POPSSParallelismType",
+    "PiscesLxParallelismType",
     "PiscesLxPipelineSchedule",
     "PiscesLxParallel3DConfig",
     "PiscesLxParallel3DOperator",
