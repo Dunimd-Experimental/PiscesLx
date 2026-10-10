@@ -112,6 +112,9 @@ from typing import Any, Dict, List, Optional, Union
 
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
+_NORM_EPSILON: float = 1e-12  # Guards the cosine normaliser against zero-norm rows.
+
+
 class YvMultiPathInferenceEngine:
     """Perform inference-time multi-path reasoning and confidence evaluation.
     
@@ -454,15 +457,23 @@ class YvMultiPathInferenceEngine:
         Returns:
             float: Logical consistency score between ``0.0`` and ``1.0``.
         """
-        from transformers import AutoTokenizer, AutoModel
-        tokenizer = AutoTokenizer.from_pretrained('microsoft/deberta-base')
-        model = AutoModel.from_pretrained('microsoft/deberta-base')
-        inputs = tokenizer(text, return_tensors='pt', truncation=True, max_length=512)
+        clauses = [c.strip() for c in re.split(r'(?<=[.!?;:])\s+', text) if c.strip()]
+        if len(clauses) < 2:
+            return 1.0 if clauses else 0.0
+        vectors = []
         with torch.no_grad():
-            outputs = model(**inputs)
-            embeddings = outputs.last_hidden_state.mean(dim=1)
-        consistency_score = torch.sigmoid(torch.nn.Linear(embeddings.size(-1), 1)(embeddings)).item()
-        return max(0.0, min(1.0, consistency_score))
+            for clause in clauses:
+                encoded = self.tokenizer.encode(clause, return_tensors='pt')
+                encoded = encoded.to(self.model.device)
+                hidden = self.model(encoded, output_hidden_states=True).hidden_states[-1]
+                vectors.append(hidden.mean(dim=1).squeeze(0))
+        matrix = torch.stack(vectors)
+        matrix = matrix / matrix.norm(dim=-1, keepdim=True).clamp_min(_NORM_EPSILON)
+        similarities = matrix @ matrix.T
+        upper = similarities.triu(diagonal=1)
+        pair_count = upper.numel() - (upper.shape[0] + 1) * upper.shape[0] // 2
+        mean_cosine = upper.sum() / max(pair_count, 1)
+        return float(mean_cosine.clamp(-1.0, 1.0).mul(0.5).add(0.5).item())
 
     def _measure_uncertainty_reduction(self, path: Dict[str, Any]) -> float:
         """Quantify uncertainty reduction achieved by a reasoning path.

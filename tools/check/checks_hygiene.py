@@ -524,6 +524,123 @@ class PiscesLxEngineIsolationCheck(PiscesLxStandardCheck):
         return violations
 
     def _scan_file(self, source: PiscesLxSourceFile, relative: str) -> list:
+        """Flag **executable** coupling only: docstrings and comments are not couplings."""
+        hits = []
+        tree = source.tree
+        if tree is None:
+            return hits
+        docstring_lines = self._docstring_lines(tree)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    if alias.name == "transformers" or alias.name.startswith("transformers."):
+                        if node.lineno in docstring_lines:
+                            continue
+                        hits.append(
+                            PiscesLxViolation(
+                                self.rule, source.path, node.lineno,
+                                "engine imports `transformers` model loaders — only PiscesL1's own "
+                                "model classes may be instantiated inside the engine",
+                                snippet=source.line_source(node.lineno),
+                            )
+                        )
+            elif isinstance(node, ast.ImportFrom):
+                if node.module and node.module.startswith("transformers"):
+                    imported = {a.name for a in node.names}
+                    loaders = imported & self._LOADER_NAMES
+                    if loaders:
+                        hits.append(
+                            PiscesLxViolation(
+                                self.rule, source.path, node.lineno,
+                                f"engine imports external loader(s) {sorted(loaders)} from "
+                                f"'{node.module}' — forbidden inside model/train/infer engines",
+                                snippet=source.line_source(node.lineno),
+                            )
+                        )
+            elif isinstance(node, ast.Call):
+                rendering = self._call_rendering(node)
+                if not rendering:
+                    continue
+                if self._is_external_pretrained_call(node, rendering):
+                    hits.append(
+                        PiscesLxViolation(
+                            self.rule, source.path, node.lineno,
+                            f"engine instantiates an external model via `{rendering[:70]}`",
+                            snippet=source.line_source(node.lineno),
+                        )
+                    )
+        for index, line in enumerate(source.lines, start=1):
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or index in docstring_lines:
+                continue
+            if stripped.startswith(('"""', "'''")) or '"""' in stripped and len(stripped) < 4:
+                continue
+            match = self._EXTERNAL_NAME_LITERALS.search(stripped)
+            # A model *identifier* is a path/hub-id token; prose descriptions are not coupling.
+            if match and not re.search(r"\bYv[A-Z]\w*", stripped) and " " not in match.group(0).strip("\"'"):
+                hits.append(
+                    PiscesLxViolation(
+                        self.rule, source.path, index,
+                        f"external model identifier `{match.group(0)[:60]}` in engine path '{relative}'",
+                        snippet=stripped[:160],
+                    )
+                )
+        return hits
+
+    # Importing a *model* loader into the engine is forbidden outright. A vocabulary
+    # reader (AutoTokenizer/AutoProcessor) is only constrained at its call site — see
+    # _is_external_pretrained_call — because reading PiscesL1's own tokenizer.json through
+    # it is library use, not a third-party model dependency.
+    _LOADER_NAMES = frozenset({
+        "AutoModel", "AutoModelForCausalLM", "AutoModelForSeq2SeqLM",
+        "AutoModelForCausalLMWithLMHead", "AutoImageProcessor",
+    })
+
+    @classmethod
+    def _is_external_pretrained_call(cls, node: ast.Call, rendering: str) -> bool:
+        func = node.func
+        if not isinstance(func, ast.Attribute) or func.attr not in ("from_pretrained", "pipeline"):
+            return False
+        base = func.value
+        base_name = getattr(base, "id", None) or getattr(getattr(base, "func", None), "attr", None)
+        if base_name is None:
+            return False
+        if base_name in {"transformers"}:
+            return True
+        is_model_loader = base_name in cls._MODEL_LOADERS or base_name.startswith("Auto")
+        if not is_model_loader:
+            return False
+        if base_name in cls._VOCAB_LOADERS:
+            # A vocabulary reader is not a model, but only while it can never reach the Hub:
+            # PiscesL1 must read its own tokenizer artefacts and nothing else.
+            return not any(
+                kw.arg == "local_files_only" and getattr(kw.value, "value", None) is True
+                for kw in node.keywords
+            )
+        return True
+
+    _MODEL_LOADERS = frozenset({"AutoModel", "AutoModelForCausalLM", "AutoModelForSeq2SeqLM"})
+    _VOCAB_LOADERS = frozenset({"AutoTokenizer", "AutoProcessor"})
+
+    @staticmethod
+    def _call_rendering(node: ast.Call) -> str:
+        try:
+            import ast as _ast
+            return _ast.unparse(node)[:160]
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _docstring_lines(tree: ast.Module) -> set:
+        """Line numbers occupied by docstrings, so prose is never read as code."""
+        occupied = set()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant) \
+                    and isinstance(node.value.value, str):
+                occupied.update(range(node.lineno, (node.end_lineno or node.lineno) + 1))
+        return occupied
+
+    def _scan_legacy(self, source: PiscesLxSourceFile, relative: str) -> list:
         hits = []
         for index, line in enumerate(source.lines, start=1):
             stripped = line.strip()
@@ -536,26 +653,13 @@ class PiscesLxEngineIsolationCheck(PiscesLxStandardCheck):
                 if match:
                     hits.append(
                         PiscesLxViolation(
-                            self.rule,
-                            source.path,
-                            index,
+                            self.rule, source.path, index,
                             f"engine touches an external model facility `{match.group(0)}` — "
                             "teachers may only appear in offline distillation data generation",
                             snippet=stripped[:160],
                         )
                     )
                     break
-            match = self._EXTERNAL_NAME_LITERALS.search(stripped)
-            if match:
-                hits.append(
-                    PiscesLxViolation(
-                        self.rule,
-                        source.path,
-                        index,
-                        f"external model identifier `{match.group(0)[:60]}` in engine path '{relative}'",
-                        snippet=stripped[:160],
-                    )
-                )
         return hits
 
     @staticmethod

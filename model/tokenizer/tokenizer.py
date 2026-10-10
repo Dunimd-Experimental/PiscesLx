@@ -248,19 +248,22 @@ class YvTokenizer:
             return
 
         if self._model_name:
-            _LOG.info(f"Attempting to load from HuggingFace: {self._model_name}")
+            _LOG.info(f"Loading tokenizer from configured local path: {self._model_name}")
             self._tokenizer = AutoTokenizer.from_pretrained(
                 self._model_name,
                 cache_dir=self._cache_dir,
                 trust_remote_code=self._trust_remote_code,
+                local_files_only=True,
             )
-            _LOG.info(f"Successfully loaded tokenizer from HuggingFace: {self._model_name}")
+            _LOG.info(f"Successfully loaded tokenizer from: {self._model_name}")
             return
 
         raise RuntimeError(
-            "Failed to load tokenizer. "
-            "Please ensure tokenizer.json exists in 'tokenizer/' directory "
-            "or provide a valid model_name for HuggingFace download."
+            "Failed to load tokenizer. PiscesL1 reads only its own vocabulary artefacts; "
+            "'tokenizer.json' must exist in the configured tokenizer/ directory "
+            "(see configs settings) or at a local model_name path. "
+            "Downloading a third-party tokenizer from the Hub is not permitted here: "
+            "the engine must not depend on any external model asset."
         )
 
     def _prepare_special_tokens(self) -> None:

@@ -49,7 +49,7 @@ Usage:
         POPSSDistillationConfig,
         POPSSDistillationOperator,
     )
-    from opss.train.distill_provider import (
+    from tools.data.distill.offline_teacher_provider import (
         POPSSTeacherProviderFactory,
         POPSSTeacherConfig,
     )
@@ -98,7 +98,7 @@ from utils.paths import get_log_file, get_work_dir
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
 
-from .distill_provider import POPSSTeacherProvider
+from tools.data.distill.offline_teacher_provider import POPSSTeacherProvider
 from .distill_loss import (
     POPSSDistillationLossConfig,
     POPSSDistillationLoss,
@@ -475,45 +475,14 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
             self.student_model.train()
 
         except Exception as e:
-            self._LOG.warning(f"Failed to load YvModel directly: {e}. Falling back to AutoModelForCausalLM.")
-            try:
-                from transformers import AutoModelForCausalLM
-
-                # Check if checkpoint directory has a valid HuggingFace config
-                hf_config_path = os.path.join(self.config.student_model_path, "config.json")
-                if not os.path.isfile(hf_config_path):
-                    raise FileNotFoundError(
-                        f"No config.json found in {self.config.student_model_path}. "
-                        f"Cannot load with AutoModelForCausalLM. "
-                        f"Ensure the checkpoint directory has a valid HuggingFace config, "
-                        f"or pass a pre-initialized student_model directly."
-                    )
-
-                dtype = torch.bfloat16 if self.config.use_bf16 else torch.float16
-
-                self.student_model = AutoModelForCausalLM.from_pretrained(
-                    self.config.student_model_path,
-                    torch_dtype=dtype,
-                    trust_remote_code=True,
-                )
-
-                device = torch.device(f"cuda:{self.config.local_rank}" if torch.cuda.is_available() else "cpu")
-                self.student_model = self.student_model.to(device)
-
-                if self.config.use_gradient_checkpointing:
-                    self._enable_gradient_checkpointing(self.student_model)
-
-                self.student_model.train()
-
-            except ImportError:
-                raise ImportError("transformers library required for student model loading")
-            except Exception as fallback_err:
-                raise RuntimeError(
-                    f"Failed to load student model via both YvModelForCausalLM "
-                    f"and AutoModelForCausalLM. Original error: {e}. "
-                    f"Fallback error: {fallback_err}. "
-                    f"Check that the student model path is correct and contains valid model files."
-                ) from fallback_err
+            raise RuntimeError(
+                f"Student model load failed: {e}. "
+                f"The distillation student must be PiscesL1's own YvModelForCausalLM loaded from "
+                f"'{self.config.student_model_path}', or be passed in pre-initialized by the "
+                f"training engine. There is deliberately no third-party fallback: loading any "
+                f"external model as the student would breach the engine red line "
+                f"(docs/prompts/UPGRADE_04_ALGO.md 4.5)."
+            ) from e
 
         self._LOG.info("Student model loaded successfully")
 
@@ -551,13 +520,12 @@ class _DistillationOperatorImpl(PiscesLxOperatorInterface):
 
             self.tokenizer = YvTokenizer()
             self._LOG.info("Loaded YvTokenizer for distillation")
-        except Exception:
-            from transformers import AutoTokenizer
-
-            self.tokenizer = AutoTokenizer.from_pretrained(
-                self.config.student_model_path,
-                trust_remote_code=True,
-            )
+        except Exception as e:
+            raise RuntimeError(
+                f"PiscesL1's own YvTokenizer failed to initialise: {e}. "
+                f"No third-party tokenizer fallback is allowed inside the training engine "
+                f"(docs/prompts/UPGRADE_04_ALGO.md 4.5)."
+            ) from e
 
         if not hasattr(self.tokenizer, 'pad_token') or self.tokenizer.pad_token is None:
             if hasattr(self.tokenizer, 'eos_token'):
@@ -804,15 +772,18 @@ class POPSSDistillationOperator:
     
     Example:
         # User creates teacher provider
-        from opss.train.distill_provider import POPSSTeacherProviderFactory, POPSSTeacherConfig
+        from tools.data.distill.offline_teacher_provider import POPSSTeacherProviderFactory, POPSSTeacherConfig
         
+        # Teachers live OUTSIDE the training engine: they are used in the offline
+        # distillation-data generation step (tools/data/distill/), and what reaches the
+        # engine is training data only (docs/prompts/UPGRADE_04_ALGO.md 4.5).
         teacher_config = POPSSTeacherConfig(
-            provider_type="local",
-            model_path="./models/deepseek-r1-7b"
+            provider_type="responses",
+            responses_path=DistillationCorpusPaths.for_model_size(self.config.model_size),
         )
-        teacher = POPSSTeacherProviderFactory.create(teacher_config)
+        dataset = DistillationDataset(teacher_config.responses_path)
         
-        # Training engine injects teacher to operator
+        # Training engine consumes distilled data, never a loaded teacher model
         config = POPSSDistillationConfig(student_model_path="./models/student")
         operator = POPSSDistillationOperator()
         result = operator.execute({
