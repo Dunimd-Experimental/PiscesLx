@@ -92,14 +92,6 @@ from opss.am import POPSSToolRegistry, POPSSToolType
 from opss.infer.moe_runtime import POPSSMoERuntimeOperator, POPSSMoERuntimeConfig
 from opss.infer.speculative import POPSSSpeculativeDecodingOperator
 from opss.infer.vllm import POPSSVLLMInferenceOperator
-from opss.watermark import (
-    POPSSWatermarkConfig,
-    POPSSContentWatermarkOperator,
-    POPSSWatermarkOrchestrator,
-    POPSSComplianceOperator,
-    POPSSAuditOperator,
-    POPSSWatermarkDefaultConfigFactory
-)
 
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Tools.Infer", file_path=get_log_file("PiscesLx.Tools.Infer"), enable_file=True)
@@ -253,13 +245,7 @@ class PiscesLxInferenceEngine(object):
         self._moe_operator = None
         self._speculative_operator = None
         
-        self._content_watermark_operator = None
-        self._compliance_operator = None
-        self._audit_operator = None
-        self._watermark_config = None
-        
         self._setup_inference_engine()
-        self._setup_watermark_operator()
 
         _LOG.info(f"PiscesLxInferenceEngine initialized on {self.device}")
     
@@ -341,17 +327,12 @@ class PiscesLxInferenceEngine(object):
                 _LOG.info("torch.compile enabled for inference (mode=reduce-overhead)")
             except Exception as e:
                 _LOG.warning(f"torch.compile failed: {e}")
+        
         self._apply_ink_quantization()
         
         self._agentic = YvAgentic(cfg, tokenizer=self.tokenizer, model=self.model) if YvAgentic is not None else None
         if self._agentic is not None:
             self._tool_registry = POPSSToolRegistry.get_instance()
-            try:
-                from opss.mcp.mcps import register_all_tools
-                registered = register_all_tools(self._tool_registry)
-                _LOG.info(f"Registered {len(registered)} MCP tools to unified registry")
-            except ImportError as e:
-                _LOG.warning(f"Could not import MCP tools: {e}")
         
         self._setup_moe_operator()
         
@@ -482,33 +463,6 @@ class PiscesLxInferenceEngine(object):
         
         raise FileNotFoundError(f"Yv config not found for model_size={model_size}, tried: {candidates}")
     
-    def _setup_watermark_operator(self):
-        """Setup content watermark operator for generated content provenance."""
-        try:
-            if hasattr(self.config, 'watermark') and self.config.watermark.get('enabled', False):
-                self._watermark_config = POPSSWatermarkConfig(
-                    standard=self.config.watermark.get('standard', 'GB/T 45225-2024'),
-                    jurisdiction=self.config.watermark.get('jurisdiction', 'CN'),
-                    risk_level=self.config.watermark.get('risk_level', 'medium'),
-                    watermark_strength=self.config.watermark.get('strength', 1e-5),
-                    redundancy_level=self.config.watermark.get('redundancy_level', 3),
-                    encryption_enabled=self.config.watermark.get('encryption_enabled', True),
-                    verify_threshold=self.config.watermark.get('verify_threshold', 0.02),
-                    audit_enabled=self.config.watermark.get('audit_enabled', True),
-                    owner_id=self.config.watermark.get('owner_id', 'default_owner'),
-                    model_id=self.config.watermark.get('model_id', self.config.model.model_path)
-                )
-                
-                self._content_watermark_operator = POPSSContentWatermarkOperator(self._watermark_config)
-                self._compliance_operator = POPSSComplianceOperator(self._watermark_config)
-                self._audit_operator = POPSSAuditOperator(self._watermark_config)
-                
-                _LOG.info(f"Content watermark operator initialized: jurisdiction={self._watermark_config.jurisdiction.code}")
-        except Exception as e:
-            _LOG.warning(f"Failed to initialize watermark operators: {e}")
-            self._content_watermark_operator = None
-            self._compliance_operator = None
-            self._audit_operator = None
     
     def _setup_moe_operator(self):
         try:
@@ -746,22 +700,6 @@ class PiscesLxInferenceEngine(object):
         if is_single:
             prompts = [prompts]
         
-        # Compliance validation before generation
-        if self._compliance_operator is not None:
-            try:
-                compliance_result = self._compliance_operator._validate({
-                    "content_type": "prompt",
-                    "content": prompts[0] if prompts else "",
-                    "jurisdiction": self._watermark_config.jurisdiction.code if self._watermark_config else "CN",
-                    "config": self._watermark_config
-                })
-                if compliance_result.is_success():
-                    validation = compliance_result.output
-                    if not validation.get('valid', True):
-                        _LOG.warning(f"Compliance validation failed: {validation.get('message', 'Unknown')}")
-            except Exception as e:
-                _LOG.warning(f"Compliance validation error: {e}")
-        
         try:
             if self.engine:  # VLLM backend
                 results = self._generate_with_vllm(prompts, **kwargs)
@@ -771,22 +709,6 @@ class PiscesLxInferenceEngine(object):
             # Update statistics
             self._update_inference_stats(start_time, len(prompts), results)
             
-            # Audit logging after generation
-            if self._audit_operator is not None:
-                try:
-                    self._audit_operator.log_operation(
-                        operation="generate",
-                        content_type="text",
-                        result="success",
-                        metadata={
-                            "num_prompts": len(prompts),
-                            "generation_time": time.time() - start_time,
-                            "model_id": self._watermark_config.model_id if self._watermark_config else "unknown"
-                        }
-                    )
-                except Exception as e:
-                    _LOG.warning(f"Audit logging failed: {e}")
-            
             # Return result
             if is_single:
                 return results[0] if results else ""
@@ -795,21 +717,6 @@ class PiscesLxInferenceEngine(object):
         except Exception as e:
             self.inference_stats['failed_requests'] += len(prompts)
             _LOG.error(f"Generation failed: {e}")
-            
-            # Audit logging for failure
-            if self._audit_operator is not None:
-                try:
-                    self._audit_operator.log_operation(
-                        operation="generate",
-                        content_type="text",
-                        result="failed",
-                        metadata={
-                            "error": str(e),
-                            "num_prompts": len(prompts)
-                        }
-                    )
-                except Exception:
-                    pass
             
             raise
     
@@ -915,22 +822,6 @@ class PiscesLxInferenceEngine(object):
         
         if use_tools and tool_registry is not None:
             generated_text = self._process_tool_calls(generated_text, tool_registry)
-        
-        if self._content_watermark_operator is not None:
-            try:
-                wm_result = self._content_watermark_operator._embed_text({
-                    "content": generated_text,
-                    "payload": {
-                        "model_id": self._watermark_config.model_id if self._watermark_config else "ruchbah",
-                        "model": "YvModel"
-                    },
-                    "metadata": {"stats": stats}
-                })
-                if wm_result.is_success():
-                    generated_text = wm_result.output.get("content", generated_text)
-            except Exception as e:
-                _LOG.warning(f"Watermark embedding failed: {e}")
-        
         return generated_text
     
     def _generate_with_transformers(self, prompt: str, **kwargs) -> str:
@@ -1151,68 +1042,6 @@ class PiscesLxInferenceEngine(object):
         
         _LOG.info(f"Model exported to {export_path}")
     
-    def verify_watermark(self, text: str) -> Dict[str, Any]:
-        """
-        Verify watermark in generated text.
-        
-        Args:
-            text: Text to verify for watermark
-            
-        Returns:
-            Dictionary containing verification results
-        """
-        if self._content_watermark_operator is None:
-            return {"watermark_found": False, "message": "Watermark operator not initialized"}
-        
-        try:
-            result = self._content_watermark_operator._extract_from_text(text)
-            
-            if result.is_success():
-                return {
-                    "watermark_found": result.output.get("watermark_found", False),
-                    "payload": result.output.get("payload", {})
-                }
-            return {"watermark_found": False, "error": result.error}
-            
-        except Exception as e:
-            _LOG.error(f"Watermark verification failed: {e}")
-            return {"watermark_found": False, "error": str(e)}
-    
-    def validate_watermark_compliance(self, jurisdiction: str = None) -> Dict[str, Any]:
-        """
-        Validate watermark configuration against compliance requirements.
-        
-        Args:
-            jurisdiction: Target jurisdiction for validation
-            
-        Returns:
-            Compliance validation report
-        """
-        if self._compliance_operator is None:
-            return {"valid": False, "message": "Compliance operator not initialized"}
-        
-        try:
-            result = self._compliance_operator._validate({
-                "content_type": "text",
-                "jurisdiction": jurisdiction or self._watermark_config.jurisdiction.code,
-                "config": self._watermark_config
-            })
-            
-            if result.is_success():
-                return result.output
-            return {"valid": False, "error": result.error}
-            
-        except Exception as e:
-            _LOG.error(f"Compliance validation error: {e}")
-            return {"valid": False, "error": str(e)}
-    
-    def get_watermark_stats(self) -> Dict[str, Any]:
-        """Get watermark operator statistics."""
-        return {
-            "watermark_enabled": self._content_watermark_operator is not None,
-            "jurisdiction": self._watermark_config.jurisdiction.code if self._watermark_config else None,
-            "standard": self._watermark_config.standard.value if self._watermark_config else None
-        }
     
     def register_agent_expert(self, agent: Any, name: Optional[str] = None, 
                                description: Optional[str] = None, priority: int = 5) -> Optional[str]:
@@ -1783,7 +1612,6 @@ class PiscesLxInferenceEngine(object):
             "tool_registry_available": hasattr(self, '_tool_registry') and self._tool_registry is not None,
             "moe_operator": self._moe_operator is not None,
             "speculative_operator": self._speculative_operator is not None,
-            "watermark_operator": self._content_watermark_operator is not None,
         }
     
     async def execute_agent(self, agent_request: Dict[str, Any]) -> Dict[str, Any]:

@@ -43,7 +43,7 @@ Module Components:
 
 Key Features:
     - MCP (Model Context Protocol) contract compliance
-    - Dual registration with POPSSMCPUnifiedToolExecutor
+    - Dual registration with YvMCPUnifiedToolExecutor
     - Native and external tool execution tracking
     - Multipath reasoning engine integration
     - Backward compatibility with utils.mcp implementations
@@ -70,7 +70,7 @@ Usage Example:
     >>> result = await registry.execute_tool("search", query="hello")
 
 Note:
-    Extends opss.mcp.POPSSMCPToolRegistry with Yv-specific features.
+    Extends YvMCPToolRegistry with Yv-specific features.
     Integrates with YvMultiPathReasoningEngine for intelligent routing.
 """
 
@@ -79,20 +79,18 @@ import asyncio
 import time
 from datetime import datetime
 from typing import Dict, Any, Callable, List, Optional, Union
-from opss.mcp import (
-    POPSSMCPMessageType, POPSSMCPMessage, POPSSAgenticAction, POPSSAgenticObservation,
-    POPSSMCPToolRegistry, POPSSMCPUnifiedToolExecutor,
-    get_unified_tool_executor, POPSSMCPTreeSearchReasoner,
-    POPSSMCPToolMetadata, POPSSMCPToolType
+from .mcp_protocol import (
+    YvMCPMessageType, YvMCPMessage, YvAgenticAction, YvAgenticObservation,
+    YvCoreMCPToolRegistry, YvMCPUnifiedToolExecutor, YvMCPService,
+    YvMCPToolMetadata, YvMCPToolType, YvMCPProtocol,
+    YvMCPExecutionResult, YvMCPExecutionManager,
 )
-import opss.mcp
-from opss.mcp.execution import POPSSMCPExecutionResult, POPSSMCPExecutionManager
 from ..reasoning import YvMultiPathReasoningEngine
 
 class YvMCPToolRegistry:
     """Registry bridging Yv tools with the shared Pisces MCP ecosystem.
     
-    A comprehensive tool registry that extends POPSSMCPToolRegistry with Yv-specific
+    A comprehensive tool registry that extends YvMCPToolRegistry with Yv-specific
     features including native/external execution tracking, dual registration with the
     unified executor, and optional integration with the multipath reasoning engine.
     
@@ -114,7 +112,7 @@ class YvMCPToolRegistry:
     
     Key Features:
         - MCP (Model Context Protocol) contract compliance
-        - Dual registration with POPSSMCPUnifiedToolExecutor
+        - Dual registration with YvMCPUnifiedToolExecutor
         - Native and external tool execution tracking
         - Multipath reasoning engine integration
         - Backward compatibility with utils.mcp implementations
@@ -127,8 +125,8 @@ class YvMCPToolRegistry:
         reasoning_engine (Optional[YvMultiPathReasoningEngine]): Optional reasoning backend.
         execution_stats (Dict[str, Union[int, float]]): Local execution counters.
         _native_tools (Dict[str, Callable]): Mapping of native tool names to handlers.
-        unified_executor (POPSSMCPUnifiedToolExecutor): Shared executor for dual registration.
-        core_registry (opss.mcp.POPSSMCPToolRegistry): Underlying registry from opss.mcp.
+        unified_executor (YvMCPUnifiedToolExecutor): Shared executor for dual registration.
+        core_registry (YvMCPToolRegistry): Underlying registry from model.multiplexed tool-calling layer.
     
     Example:
         >>> registry = YvMCPToolRegistry(
@@ -138,7 +136,7 @@ class YvMCPToolRegistry:
         >>> await registry.register_tool("search", "Search tool", {}, search_handler)
     
     Note:
-        Extends opss.mcp.POPSSMCPToolRegistry with Yv-specific features.
+        Extends YvMCPToolRegistry with Yv-specific features.
         Execution stats include native_executions, external_calls, total_executions.
     """
 
@@ -152,8 +150,8 @@ class YvMCPToolRegistry:
                 helper used to recommend execution modes based on context.
         
         Note:
-            Initializes unified_executor via get_unified_tool_executor().
-            Creates core_registry as POPSSMCPToolRegistry instance.
+            Initializes unified_executor via YvMCPService.executor().
+            Creates core_registry as YvMCPToolRegistry instance.
         """
         self.agentic_id = agentic_id
         self.message_handler = message_handler
@@ -169,10 +167,10 @@ class YvMCPToolRegistry:
         self._native_tools: Dict[str, Callable] = {}
         
         # Initialize unified tool executor for better integration
-        self.unified_executor = get_unified_tool_executor()
+        self.unified_executor = YvMCPService.executor()
         
         # Initialize core registry for base functionality
-        self.core_registry = POPSSMCPToolRegistry()
+        self.core_registry = YvCoreMCPToolRegistry()
     
     async def register_tool(self, name: str, description: str, parameters: Dict[str, Any], native_handler: Optional[Callable] = None):
         """Register a tool with both the unified executor and core registry.
@@ -204,10 +202,10 @@ class YvMCPToolRegistry:
         if native_handler:
             self._native_tools[name] = native_handler
             # Register with unified executor as native tool
-            tool_metadata = POPSSMCPToolMetadata(
+            tool_metadata = YvMCPToolMetadata(
                 name=name,
                 description=description,
-                tool_type=POPSSMCPToolType.NATIVE,
+                tool_type=YvMCPToolType.NATIVE,
                 parameters=parameters,
                 function=native_handler,
                 priority=10  # High priority for native tools
@@ -216,10 +214,10 @@ class YvMCPToolRegistry:
             print(f"[YvMCPToolRegistry] Registered native tool: {name}")
         else:
             # Register with unified executor as external tool
-            tool_metadata = POPSSMCPToolMetadata(
+            tool_metadata = YvMCPToolMetadata(
                 name=name,
                 description=description,
-                tool_type=POPSSMCPToolType.EXTERNAL,
+                tool_type=YvMCPToolType.EXTERNAL,
                 parameters=parameters,
                 priority=5  # Medium priority for external tools
             )
@@ -271,7 +269,7 @@ class YvMCPToolRegistry:
 class YvCoreMCPProtocol:
     """Protocol adapter enabling dual-track MCP execution for Yv agents.
 
-    The adapter wraps :class:`opss.mcp.POPSSMCPProtocol` to add metadata
+    The adapter wraps :class:`YvMCPProtocol` to add metadata
     for dual-track routing and to integrate with the Yv tool registry when
     available.
     """
@@ -284,7 +282,7 @@ class YvCoreMCPProtocol:
             tool_registry (Optional[YvMCPToolRegistry]): Registry providing
                 tool metadata and reasoning hooks.
         """
-        self.base_protocol = opss.mcp.POPSSMCPProtocol(agent_id)
+        self.base_protocol = YvMCPProtocol(agent_id)
         self.agent_id = agent_id
         self.tool_registry = tool_registry
         self.execution_modes = {
@@ -295,27 +293,27 @@ class YvCoreMCPProtocol:
     
     @staticmethod
     def create_message(
-        message_type: POPSSMCPMessageType,
+        message_type: YvMCPMessageType,
         agent_id: str,
         payload: Dict[str, Any],
         correlation_id: str = ""
-    ) -> POPSSMCPMessage:
+    ) -> YvMCPMessage:
         """Create an MCP message via the base protocol helper.
 
         Args:
-            message_type (POPSSMCPMessageType): Message type identifier.
+            message_type (YvMCPMessageType): Message type identifier.
             agent_id (str): Sender agent identifier.
             payload (Dict[str, Any]): Message payload.
             correlation_id (str): Optional correlation identifier.
 
         Returns:
-            POPSSMCPMessage: Constructed message instance.
+            YvMCPMessage: Constructed message instance.
         """
         # Delegate to base protocol via fully qualified name
-        return opss.mcp.POPSSMCPProtocol.create_message(message_type, agent_id, payload, correlation_id)
+        return YvMCPProtocol.create_message(message_type, agent_id, payload, correlation_id)
 
     async def create_tool_call_message(self, tool_name: str, arguments: Dict[str, Any], 
-                                       receiver_id: str, execution_mode: str = "auto") -> POPSSMCPMessage:
+                                       receiver_id: str, execution_mode: str = "auto") -> YvMCPMessage:
         """Construct a tool call message, optionally leveraging dual-track routing.
 
         Args:
@@ -325,7 +323,7 @@ class YvCoreMCPProtocol:
             execution_mode (str): Preferred execution mode (``"native"``, ``"external"``, ``"auto"``).
 
         Returns:
-            POPSSMCPMessage: Tool call message populated with routing metadata.
+            YvMCPMessage: Tool call message populated with routing metadata.
         """
         # Evaluate routing strategy when automatic mode is requested.
         if execution_mode == "auto" and self.tool_registry:

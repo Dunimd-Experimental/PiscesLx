@@ -85,10 +85,6 @@ Available Commands:
     **MCP Commands:**
         - mcp: Model Context Protocol tool management
     
-    **Watermark Commands:**
-        - watermark: Detect and verify watermarks
-          * Text watermark detection
-          * Image/audio/video watermark detection
           * Model weight verification
     
     **Cache Commands:**
@@ -298,9 +294,7 @@ COMMANDS = [
     'monitor',    # Real-time system monitoring dashboard
     'download',   # Download and prepare training datasets
     'benchmark',  # Evaluate model performance on benchmarks
-    'mcp',        # Model Context Protocol tool management
     'help',       # Display comprehensive usage documentation
-    'watermark',  # Detect and verify watermarks in content/models
     'action',     # Manage background training/inference processes
     'dev',        # Developer mode management (enable/disable/status)
     'cache',      # Cache management for .pisceslx directory
@@ -321,8 +315,6 @@ def _build_train_argv_from_args(args) -> list:
         ("resume_ckpt", "--resume_ckpt"),
         ("train_mode", "--train_mode"),
         ("train_config", "--train_config"),
-        ("enta", "--enta"),
-        ("enta_config", "--enta_config"),
         ("dry_run", "--dry_run"),
         ("seq_len", "--seq_len"),
         ("quant", "--quant"),
@@ -366,7 +358,6 @@ def _build_train_argv_from_args(args) -> list:
 
 
 # =============================================================================
-# ENTA SHORTCUT HELPERS
 # =============================================================================
 def _resolve_model_cfg_path(model_size: str) -> "Path | None":
     """Return the absolute path to the model config for the given size, or
@@ -438,7 +429,6 @@ def main():
         - download: tools/data/download/ - Dataset management
         - benchmark: tools/benchmark/orchestrator.py - Evaluation
         - mcp: opss/mcp/mcps/ - MCP tool management
-        - watermark: tools/wmc/ - Watermark detection
         - cache: tools/cache/ - Cache management
         - action: opss/run/ - Background process management
     
@@ -820,138 +810,6 @@ def main():
     )
     
     # -------------------------------------------------------------------------
-    # WATERMARK DETECTION ARGUMENTS - INPUT SOURCES
-    # -------------------------------------------------------------------------
-    # --text: Direct text content to check for watermark
-    # Used for quick watermark checks without file I/O
-    parser.add_argument(
-        '--text', 
-        type=str,  # Text content as string
-        help='Text content to check for watermark (for watermark detection)'
-    )
-    
-    # --file: Path to text file for watermark detection
-    # Reads file content and checks for embedded watermarks
-    parser.add_argument(
-        '--file', 
-        type=str,  # File path as string
-        help='File path to check for watermark (for watermark detection)'
-    )
-    
-    # --image-file: Path to image file for watermark detection
-    # Detects visible and invisible watermarks in images
-    parser.add_argument(
-        '--image-file', 
-        type=str,  # Image file path as string
-        help='Image file to check for watermark (for watermark detection)'
-    )
-    
-    # --audio-file: Path to audio file for watermark detection
-    # Detects audio watermarks (steganography, frequency patterns)
-    parser.add_argument(
-        '--audio-file', 
-        type=str,  # Audio file path as string
-        help='Audio file to check for watermark (for watermark detection)'
-    )
-    
-    # --video-file: Path to video file for watermark detection
-    # Analyzes video frames for embedded watermarks
-    parser.add_argument(
-        '--video-file', 
-        type=str,  # Video file path as string
-        help='Video file to check for watermark (for watermark detection)'
-    )
-    
-    # --model-file: Path to model file for watermark verification
-    # Verifies ownership watermarks in model weights
-    parser.add_argument(
-        '--model-file', 
-        type=str,  # Model file path as string
-        help='Model checkpoint file to verify watermark (for watermark detection)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # WATERMARK DETECTION ARGUMENTS - PROCESSING OPTIONS
-    # -------------------------------------------------------------------------
-    # --batch: Flag to enable batch mode for directory processing
-    # Processes all files in a directory instead of single file
-    parser.add_argument(
-        '--batch', 
-        action='store_true',  # Boolean flag
-        help='Enable batch mode for directory processing (for watermark detection)'
-    )
-    
-    # --verbose: Flag to enable detailed output
-    # Shows step-by-step detection process and intermediate results
-    parser.add_argument(
-        '--verbose', '-v',  # -v is a short alias
-        action='store_true',  # Boolean flag
-        help='Enable verbose output (for watermark detection)'
-    )
-    
-    # --json: Flag to output results in JSON format
-    # Useful for programmatic processing of detection results
-    parser.add_argument(
-        '--json', 
-        action='store_true',  # Boolean flag
-        help='Output results in JSON format (for watermark detection)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # WATERMARK DETECTION ARGUMENTS - COMPLIANCE
-    # -------------------------------------------------------------------------
-    # --jurisdiction: Legal jurisdiction for compliance checking
-    # Different regions have different watermark requirements
-    parser.add_argument(
-        '--jurisdiction', 
-        type=str,  # Jurisdiction code as string
-        default='GLOBAL',  # Default to global standards
-        choices=['CN', 'EU', 'US', 'UK', 'JP', 'KR', 'GLOBAL'],  # Supported regions
-        help='Jurisdiction for compliance checking (for watermark detection)'
-    )
-    
-    # --expected-owner: Expected owner ID for model weight verification
-    # Verifies that the model belongs to the specified owner
-    parser.add_argument(
-        '--expected-owner', 
-        type=str,  # Owner ID as string
-        default=None,  # None means no owner verification
-        help='Expected owner ID for model weight verification (for watermark detection)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # WATERMARK DETECTION ARGUMENTS - VIDEO PROCESSING
-    # -------------------------------------------------------------------------
-    # --frame-sample-rate: Frames to skip between analysis
-    # Higher values = faster processing but may miss watermarks
-    parser.add_argument(
-        '--frame-sample-rate', 
-        type=int,  # Must be an integer
-        default=30,  # Analyze every 30th frame
-        help='Frame sample rate for video watermark detection (for watermark detection)'
-    )
-    
-    # --max-frames: Maximum frames to process per video
-    # Prevents excessive processing time for long videos
-    parser.add_argument(
-        '--max-frames', 
-        type=int,  # Must be an integer
-        default=300,  # Process at most 300 frames
-        help='Maximum frames to process for video watermark detection (for watermark detection)'
-    )
-    
-    # -------------------------------------------------------------------------
-    # WATERMARK DETECTION ARGUMENTS - WEIGHT VERIFICATION
-    # -------------------------------------------------------------------------
-    # --weights-verify: Flag to verify weight-level watermark
-    # Checks for embedded ownership markers in model weights
-    parser.add_argument(
-        '--weights-verify', 
-        action='store_true',  # Boolean flag
-        help='Verify weight-level watermark (for watermark)'
-    )
-    
-    # -------------------------------------------------------------------------
     # MONITOR ARGUMENTS
     # -------------------------------------------------------------------------
     # --monitor_mode: Operating mode for the monitoring system
@@ -1073,22 +931,6 @@ def main():
         type=str,  # Config path as string
         default=None,  # None means use default config
         help='Training config file path (JSON/YAML)'
-    )
-    
-    # --enta: Enable EnTA outer training loop
-    parser.add_argument(
-        '--enta', 
-        action='store_true',  # Boolean flag
-        help='Enable EnTA outer training loop'
-    )
-    
-    # --enta_config: Path to EnTA config file
-    # Empty string means auto-discover configs/teachers.yaml
-    parser.add_argument(
-        '--enta_config', 
-        type=str,  # Config path as string
-        default='',  # Empty means auto-discover
-        help='Path to EnTA config file (default: auto-discover configs/teachers.yaml)'
     )
     
     # --dry_run: Flag to resolve configs without executing
@@ -1794,159 +1636,6 @@ def main():
         else:
             # Run standard benchmark evaluation
             orchestrator.run(args)
-    
-    # -------------------------------------------------------------------------
-    # MCP COMMAND
-    # -------------------------------------------------------------------------
-    # Model Context Protocol tool management
-    # Handles tool registration, discovery, and caching
-    elif args.command == 'mcp':
-        # Import the tool registry singleton
-        from opss.mcp.mcps import POPSSToolRegistry
-        
-        # Handle different MCP actions
-        if args.mcp_action == 'status':
-            # Log the status check request
-            _get_logger().info("MCP config status", event="manage.right")
-            
-            # Get the singleton registry instance
-            registry = POPSSToolRegistry.get_instance()
-            
-            # List all registered tools
-            tools = registry.list_tools()
-            
-            # Output status as formatted JSON
-            # Shows tool count and first 10 tools as preview
-            print(json.dumps({
-                "tool_count": len(tools),
-                "tools": tools[:10]  # Limit output for readability
-            }, indent=2, ensure_ascii=False))
-        
-        elif args.mcp_action == 'warmup':
-            # Log the warmup start
-            _get_logger().info("Starting MCP background discovery...", event="manage.right")
-            
-            # Log completion (actual warmup happens in background)
-            _get_logger().info("MCP tools registered")
-        
-        elif args.mcp_action == 'refresh-cache':
-            # Log the cache refresh request
-            _get_logger().info("Refreshing MCP tools cache...")
-            
-            # Get registry and reload tools
-            registry = POPSSToolRegistry.get_instance()
-            tools = registry.list_tools()
-            
-            # Log the refresh result
-            _get_logger().info(f"MCP tools refreshed: {len(tools)} tools registered")
-    
-    # -------------------------------------------------------------------------
-    # WATERMARK COMMAND
-    # -------------------------------------------------------------------------
-    # Detect and verify watermarks in content and models
-    # Supports text, image, audio, video, and model weight verification
-    elif args.command == 'watermark':
-        # Import all watermark detection functions
-        from tools.wmc import (
-            detect_watermark,  # Text watermark detection
-            batch_detect,  # Batch processing for multiple files
-            detect_image_watermark,  # Image watermark detection
-            detect_audio_watermark,  # Audio watermark detection
-            detect_video_watermark,  # Video watermark detection
-            detect_model_watermark  # Model weight verification
-        )
-        
-        # Check if verifying model weights
-        if args.weights_verify:
-            try:
-                # Model weight verification will be handled below
-                # This block is a placeholder for weight verification logic
-                pass
-            except Exception:
-                # Error handling for weight verification
-                pass
-        
-        # Initialize result variable
-        result = None
-        
-        # Extract verbose and jurisdiction settings
-        verbose = args.verbose
-        jurisdiction = args.jurisdiction
-        
-        # Determine detection mode based on provided arguments
-        if args.image_file:
-            # Image watermark detection
-            result = detect_image_watermark(
-                args.image_file, 
-                verbose=verbose, 
-                jurisdiction=jurisdiction
-            )
-        
-        elif args.audio_file:
-            # Audio watermark detection
-            result = detect_audio_watermark(
-                args.audio_file, 
-                verbose=verbose, 
-                jurisdiction=jurisdiction
-            )
-        
-        elif args.video_file:
-            # Video watermark detection with frame sampling
-            result = detect_video_watermark(
-                args.video_file, 
-                verbose=verbose, 
-                jurisdiction=jurisdiction,
-                frame_sample_rate=args.frame_sample_rate,
-                max_frames=args.max_frames
-            )
-        
-        elif args.model_file:
-            # Model weight watermark verification
-            result = detect_model_watermark(
-                args.model_file, 
-                verbose=verbose, 
-                expected_owner=args.expected_owner
-            )
-        
-        elif args.batch:
-            # Batch processing mode for multiple files
-            if args.file:
-                result = batch_detect(
-                    args.file, 
-                    verbose=verbose, 
-                    jurisdiction=jurisdiction
-                )
-        
-        elif args.file:
-            # Single file watermark detection
-            with open(args.file, 'r', encoding='utf-8') as f:
-                content = f.read().strip()
-            result = detect_watermark(
-                content, 
-                verbose=verbose, 
-                jurisdiction=jurisdiction
-            )
-        
-        elif args.text:
-            # Direct text watermark detection
-            result = detect_watermark(
-                args.text, 
-                verbose=verbose, 
-                jurisdiction=jurisdiction
-            )
-        
-        else:
-            # No valid input provided, log error and exit
-            _get_logger().error(
-                "Watermark command requires one of: --text, --file, "
-                "--image-file, --audio-file, --video-file, --model-file, "
-                "or --weights-verify with --ckpt"
-            )
-            sys.exit(1)
-        
-        # Output result in JSON format if requested
-        if result is not None and args.json:
-            print(json.dumps(result, ensure_ascii=False, indent=2))
     
     # -------------------------------------------------------------------------
     # DEV COMMAND

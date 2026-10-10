@@ -2314,7 +2314,7 @@ class POPSSBenchmarkSuite:
 def benchmark_main(args):
     """Main entry point for benchmark evaluation."""
     from transformers import AutoTokenizer
-    from model.modeling import YvModel
+    from model.core.model import YvModel
     from model.config import YvConfig
 
     config = PiscesL1BenchmarkConfig(

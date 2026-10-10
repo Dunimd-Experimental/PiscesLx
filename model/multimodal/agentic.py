@@ -92,7 +92,6 @@ from typing import Dict, Any, Union, List, Callable, Optional
 from .mcp import (
     YvCoreMCPProtocol,
     YvMCPToolRegistry,
-    POPSSMCPTreeSearchReasoner,
 )
 from opss.am import (
     POPSSToolRegistry,
@@ -132,7 +131,6 @@ class YvAgentic(nn.Module):
         3. Reasoning:
            - YvUnifiedReasoner for structured reasoning
            - YvMultiPathReasoningEngine for multipath reasoning
-           - POPSSMCPTreeSearchReasoner for tree search
         
         4. Tool Execution:
            - YvToolExecutor for native tools
@@ -221,7 +219,6 @@ class YvAgentic(nn.Module):
             self._vision_encoder = None
             self._audio_encoder = None
         
-        self.tree_reasoner = POPSSMCPTreeSearchReasoner(None, tokenizer) if tokenizer else None
 
         # MCP agent infrastructure
         self.memory = YvMemory()

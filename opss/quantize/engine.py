@@ -198,7 +198,7 @@ class YvQuantizationEngine:
                 if os.path.exists(os.path.join(model_path, "config.json")):
                     try:
                         from model.config import YvConfig
-                        from model.modeling import YvModel
+                        from model.core.model import YvModel
                         YvConfig.from_pretrained(model_path)
                         model = YvModel.from_pretrained(model_path)
                         self._LOG.info(f"Model loaded in {time.time() - start_time:.2f}s")

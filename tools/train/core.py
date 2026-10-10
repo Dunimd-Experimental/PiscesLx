@@ -357,7 +357,6 @@ class PiscesLxTrainingOperator(object):
 
         self._setup_advanced_operators()
         self._setup_parallel_3d_operator()
-        self._setup_watermark_operator()
         self._setup_evolution_operator()
         self._setup_profiler()
         
@@ -515,68 +514,6 @@ class PiscesLxTrainingOperator(object):
         except Exception as e:
             _LOG.warning(f"Failed to initialize 3D parallelism operator: {e}")
     
-    def _setup_watermark_operator(self):
-        """Setup weight watermark operator for model provenance and ownership verification."""
-        from opss.watermark import (
-            POPSSWatermarkConfig,
-            POPSSWeightWatermarkOperator,
-            POPSSComplianceOperator,
-            POPSSAuditOperator,
-        )
-        try:
-            if hasattr(self.config, 'watermark') and self.config.watermark.get('enabled', False):
-                self._watermark_config = POPSSWatermarkConfig(
-                    standard=self.config.watermark.get('standard', 'GB/T 45225-2024'),
-                    jurisdiction=self.config.watermark.get('jurisdiction', 'CN'),
-                    risk_level=self.config.watermark.get('risk_level', 'medium'),
-                    watermark_strength=self.config.watermark.get('strength', 1e-5),
-                    redundancy_level=self.config.watermark.get('redundancy_level', 3),
-                    encryption_enabled=self.config.watermark.get('encryption_enabled', True),
-                    verify_threshold=self.config.watermark.get('verify_threshold', 0.02),
-                    audit_enabled=self.config.watermark.get('audit_enabled', True),
-                    owner_id=self.config.watermark.get('owner_id', 'default_owner'),
-                    model_id=self.config.watermark.get('model_id', self.config.model_name)
-                )
-
-                class _TrainingWeightWatermark(POPSSWeightWatermarkOperator):
-                    @property
-                    def name(self):
-                        return getattr(self, "_name", "pisceslx_weight_watermark_operator")
-
-                    @name.setter
-                    def name(self, value):
-                        self._name = value
-
-                    @property
-                    def version(self):
-                        return getattr(self, "_version", "1.0.0")
-
-                    @version.setter
-                    def version(self, value):
-                        self._version = value
-
-                    @property
-                    def description(self):
-                        return getattr(
-                            self,
-                            "_description",
-                            "Weight watermarking for model provenance and ownership verification",
-                        )
-
-                    @description.setter
-                    def description(self, value):
-                        self._description = value
-
-                self._weight_watermark_operator = _TrainingWeightWatermark(self._watermark_config)
-                self._compliance_operator = POPSSComplianceOperator(self._watermark_config)
-                self._audit_operator = POPSSAuditOperator(self._watermark_config)
-                
-                _LOG.info(f"Weight watermark operator initialized: owner_id={self._watermark_config.owner_id}")
-        except Exception as e:
-            _LOG.warning(f"Failed to initialize watermark operators: {e}")
-            self._weight_watermark_operator = None
-            self._compliance_operator = None
-            self._audit_operator = None
     
     def _setup_evolution_operator(self):
         """Setup evolution operators for self-evolution training pipeline.
@@ -3120,38 +3057,3 @@ class PiscesLxTrainingOperator(object):
                 )
             return 0.0, False
     
-    def get_watermark_stats(self) -> Dict[str, Any]:
-        """Get watermark operator statistics."""
-        if self._weight_watermark_operator is not None:
-            stats = self._weight_watermark_operator._get_stats({})
-            if stats.is_success():
-                return stats.output
-        return {"watermark_enabled": self._weight_watermark_operator is not None}
-    
-    def validate_watermark_compliance(self, jurisdiction: str = None) -> Dict[str, Any]:
-        """
-        Validate watermark configuration against compliance requirements.
-        
-        Args:
-            jurisdiction: Target jurisdiction for validation
-            
-        Returns:
-            Compliance validation report
-        """
-        if self._compliance_operator is None:
-            return {"valid": False, "message": "Compliance operator not initialized"}
-        
-        try:
-            result = self._compliance_operator._validate({
-                "content_type": "weight",
-                "jurisdiction": jurisdiction or self._watermark_config.jurisdiction.code,
-                "config": self._watermark_config
-            })
-            
-            if result.is_success():
-                return result.output
-            return {"valid": False, "error": result.error}
-            
-        except Exception as e:
-            _LOG.error(f"Compliance validation error: {e}")
-            return {"valid": False, "error": str(e)}

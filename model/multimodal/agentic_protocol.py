@@ -47,7 +47,6 @@ Key Components:
 
 See Also:
     - model.multimodal.xml_utils: XML parsing utilities
-    - opss.agents: External expert agents
 """
 
 import json

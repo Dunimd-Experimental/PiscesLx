@@ -202,106 +202,6 @@ class YvActivationType(Enum):
     SOFTMAX = "softmax"
 
 
-@dataclass
-class YvEntaConfig:
-    """Configuration for the EnTA outer training loop.
-
-    This config is loaded from ``configs/teachers.yaml`` and contains
-    only EnTA-runtime settings: teacher panel, roundtable rules,
-    sandbox, data generation strategy, evaluation strategy, and loop
-    termination conditions.
-
-    Model architecture parameters (dynamic head, knowledge field) are
-    stored in ``enta_model_layout`` and populated by the startup
-    questionnaire.
-    """
-    # ── EnTA runtime settings ──
-    teachers: List[Dict[str, Any]] = field(default_factory=list)
-    judge: Optional[Dict[str, Any]] = None
-    max_steps: int = 32
-    temperature: float = 0.7
-    max_tokens: int = 2048
-    max_violations: int = 8
-
-    # ── Reward weights ──
-    completion_weight: float = 0.6
-    tool_weight: float = 0.2
-    safety_weight: float = 0.1
-    execution_weight: float = 0.1
-
-    # ── Backend settings ──
-    backend: str = "local"
-    model_name: str = ""
-    device: str = "cpu"
-    base_url: str = "http://127.0.0.1:8000/v1"
-    api_key: str = "EMPTY"
-    server_model: str = ""
-
-    # ── Model layout (populated by EntaIntake questionnaire) ──
-    dynamic_head_param_scale: str = ""
-    dynamic_head_hidden_dim: str = ""
-    dynamic_head_num_codebooks: str = ""
-    knowledge_field_param_scale: str = ""
-    knowledge_field_codebook_size: str = ""
-    knowledge_field_entry_dim: str = ""
-
-    @classmethod
-    def from_yaml(cls, path: str) -> "YvEntaConfig":
-        """Load EnTA configuration from a YAML file.
-
-        Args:
-            path: Path to the YAML file (typically ``configs/teachers.yaml``).
-
-        Returns:
-            A fully populated ``YvEntaConfig`` instance.
-        """
-        import yaml
-        import os
-
-        if not os.path.exists(path):
-            return cls()
-
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-        except FileNotFoundError:
-            raise FileNotFoundError(f"Enta config YAML file not found: {path}")
-        except yaml.YAMLError as e:
-            raise RuntimeError(f"Invalid YAML in enta config file {path}: {e}")
-        except OSError as e:
-            raise OSError(f"Failed to read enta config file {path}: {e}")
-
-        # Extract enta_model_layout fields
-        layout = data.get("enta_model_layout", {}) or {}
-        layout_kwargs = {
-            "dynamic_head_param_scale": str(layout.get("dynamic_head_param_scale", "") or ""),
-            "dynamic_head_hidden_dim": str(layout.get("dynamic_head_hidden_dim", "") or ""),
-            "dynamic_head_num_codebooks": str(layout.get("dynamic_head_num_codebooks", "") or ""),
-            "knowledge_field_param_scale": str(layout.get("knowledge_field_param_scale", "") or ""),
-            "knowledge_field_codebook_size": str(layout.get("knowledge_field_codebook_size", "") or ""),
-            "knowledge_field_entry_dim": str(layout.get("knowledge_field_entry_dim", "") or ""),
-        }
-
-        return cls(
-            teachers=data.get("teachers", []) or [],
-            judge=data.get("judge"),
-            max_steps=int(data.get("max_steps", 32) or 32),
-            temperature=float(data.get("temperature", 0.7) or 0.7),
-            max_tokens=int(data.get("max_tokens", 2048) or 2048),
-            max_violations=int(data.get("max_violations", 8) or 8),
-            completion_weight=float(data.get("completion_weight", 0.6) or 0.6),
-            tool_weight=float(data.get("tool_weight", 0.2) or 0.2),
-            safety_weight=float(data.get("safety_weight", 0.1) or 0.1),
-            execution_weight=float(data.get("execution_weight", 0.1) or 0.1),
-            backend=str(data.get("backend", "local") or "local"),
-            model_name=str(data.get("model_name", "") or ""),
-            device=str(data.get("device", "cpu") or "cpu"),
-            base_url=str(data.get("base_url", "http://127.0.0.1:8000/v1") or ""),
-            api_key=str(data.get("api_key", "EMPTY") or ""),
-            server_model=str(data.get("server_model", "") or ""),
-            **layout_kwargs,
-        )
-
 
 @dataclass
 class YvConfig:
@@ -1097,32 +997,6 @@ class YvConfig:
     knowledge_expert_path: str = "./knowledge_experts"
     knowledge_expert_cache_size: int = 8
 
-    # ========================================
-    # EnTA (Encre Train Agent) Configuration
-    #
-    # Populated from ``configs/teachers.yaml`` by ``load_encre_yaml()``.
-    # At ``from_yvconfig()`` the YAML is loaded automatically when
-    # ``encre_teachers`` is empty.
-    # ========================================
-    encre_teachers: List[Dict[str, Any]] = field(default_factory=list)
-    encre_judge: Optional[Dict[str, Any]] = None
-    encre_max_steps: int = 32
-    encre_temperature: float = 0.7
-    encre_max_tokens: int = 2048
-    encre_backend: str = "local"
-    encre_model_name: str = "Qwen/Qwen2.5-1.5B-Instruct"
-    encre_device: str = "auto"
-    encre_completion_weight: float = 0.6
-    encre_tool_weight: float = 0.2
-    encre_safety_weight: float = 0.1
-    encre_execution_weight: float = 0.1
-    encre_stream: bool = False
-    encre_judge_temperature: float = 0.0
-    encre_judge_max_tokens: int = 1024
-    encre_max_violations: int = 8
-
-    # EnTA configuration (loaded from configs/teachers.yaml)
-    enta: Optional[YvEntaConfig] = None
 
     # ========================================
     # MoVE (Mixture of Vision Encoders)
@@ -1260,57 +1134,6 @@ class YvConfig:
         filtered_config = {k: v for k, v in config_data.items() if k in model_fields}
 
         return cls(**filtered_config)
-
-    @classmethod
-    def load_encre_yaml(cls, yaml_path: str = "configs/teachers.yaml") -> Dict[str, Any]:
-        """Load EnTA teacher/rollout config from ``configs/teachers.yaml``.
-
-        Returns a dict of ``encre_*`` fields suitable for ``cls(**fields)`` or
-        ``config = YvConfig(**YvConfig.load_encre_yaml())``.
-
-        Keys in the YAML are automatically mapped:
-          ``teachers`` → ``encre_teachers``, ``judge`` → ``encre_judge``,
-          ``max_steps`` → ``encre_max_steps``, etc.
-        """
-        from pathlib import Path
-        import yaml
-
-        path = Path(yaml_path)
-        if not path.exists():
-            return {}
-
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-        except FileNotFoundError:
-            raise FileNotFoundError(f"EnCre YAML file not found: {path}")
-        except yaml.YAMLError as e:
-            raise RuntimeError(f"Invalid YAML in encre file {path}: {e}")
-        except OSError as e:
-            raise OSError(f"Failed to read encre file {path}: {e}")
-
-        mapping = {
-            "teachers": "encre_teachers",
-            "judge": "encre_judge",
-            "max_steps": "encre_max_steps",
-            "temperature": "encre_temperature",
-            "max_tokens": "encre_max_tokens",
-            "max_violations": "encre_max_violations",
-            "completion_weight": "encre_completion_weight",
-            "tool_weight": "encre_tool_weight",
-            "safety_weight": "encre_safety_weight",
-            "execution_weight": "encre_execution_weight",
-            "backend": "encre_backend",
-            "model_name": "encre_model_name",
-            "device": "encre_device",
-        }
-
-        result: Dict[str, Any] = {}
-        for k, v in data.items():
-            prefixed = mapping.get(k)
-            if prefixed is not None:
-                result[prefixed] = v
-        return result
 
     @classmethod
     def from_dict(cls, config_dict: Dict[str, Any]) -> 'YvConfig':

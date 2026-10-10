@@ -61,7 +61,6 @@ Module Components:
        - YvMemoryConfig: Lightweight runtime memory configuration
     
     6. MCP Integration:
-       - YvMCPGenerationServer: MCP generation server
        - YvMCPToolRegistry: MCP tool registry
        - YvMCPMessage: MCP message envelope
        - YvMCPMessageType: MCP message types
@@ -132,7 +131,6 @@ from .generator import YvGenerator, YvGenerationResult, YvGenerationBackend
 from .hw import YvHardwareAdaptiveConfig
 from .memory import YvMemory, YvMemoryConfig
 from ..reasoning import YvUnifiedReasoner
-from .server import YvMCPGenerationServer
 from .mcp import YvMCPToolRegistry
 from .types import (
     YvMCPMessageType,
@@ -166,7 +164,6 @@ __all__ = [
     "YvMemory",
     "YvMemoryConfig",
     "YvUnifiedReasoner",
-    "YvMCPGenerationServer",
     "YvMCPToolRegistry",
     "YvAgenticState",
     "YvMCPMessageType",

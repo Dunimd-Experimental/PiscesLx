@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from utils.dc import PiscesLxLogger
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus
-from utils.error import PiscesLxCoreValidationError
+from utils import PiscesLxCoreValidationError
 
 
 from utils.paths import get_log_file

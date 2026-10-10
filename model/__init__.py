@@ -258,10 +258,6 @@ from .multimodal import (
     YvDynamicModalFusion,
 )
 
-from .agentic import (
-    YvEntaTrainer,
-)
-
 from .reasoning import (
     YvCoTMemoryReasoner,
     YvMultiPathReasoningEngine,
