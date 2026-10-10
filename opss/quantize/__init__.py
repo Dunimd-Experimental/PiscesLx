@@ -58,28 +58,28 @@ Usage:
     quantized_model = result.output["model"]
 """
 
-from .methods import POPSSQuantizationConfig, POPSSQuantizationOperatorFactory, POPSSBlockWiseINT4Quantizer, POPSSKVCacheQuantizer
+from .methods import (QuantizationConfig, QuantizationOperatorFactory, POPSSBlockWiseINT4Quantizer, POPSSKVCacheQuantizer,)
 from .calibration import (
-    POPSSCalibrationConfig,
+    CalibrationConfig,
     POPSSCalibrationDataLoaderOperator,
     POPSSActivationCollectorOperator,
 )
-from .advanced import POPSSAdvancedQuantizationConfig, POPSSSensitivityAnalysisOperator, POPSSAdaptiveBitAllocationOperator
-from .pipeline import POPSSQuantizationPipelineConfig, POPSSQuantizationPipelineOperator
-from .engine import POPSSQuantizationEngineConfig, POPSSQuantizationEngineOperator, FP8Format, ScaleMethod, POPSSFP8QuantizationEngine
+from .advanced import AdvancedQuantizationConfig, POPSSSensitivityAnalysisOperator, POPSSAdaptiveBitAllocationOperator
+from .pipeline import QuantizationPipelineConfig, POPSSQuantizationPipelineOperator
+from .engine import QuantizationEngineConfig, POPSSQuantizationEngineOperator, FP8Format, ScaleMethod, POPSSFP8QuantizationEngine
 
 __all__ = [
-    "POPSSQuantizationConfig",
+    "QuantizationConfig",
     "POPSSQuantizationOperatorFactory",
-    "POPSSCalibrationConfig",
+    "CalibrationConfig",
     "POPSSCalibrationDataLoaderOperator",
     "POPSSActivationCollectorOperator",
-    "POPSSAdvancedQuantizationConfig",
+    "AdvancedQuantizationConfig",
     "POPSSSensitivityAnalysisOperator",
     "POPSSAdaptiveBitAllocationOperator",
-    "POPSSQuantizationPipelineConfig",
+    "QuantizationPipelineConfig",
     "POPSSQuantizationPipelineOperator",
-    "POPSSQuantizationEngineConfig",
+    "QuantizationEngineConfig",
     "POPSSQuantizationEngineOperator",
     "FP8Format",
     "ScaleMethod",

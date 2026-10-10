@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+from .types import YvModality
+
 """
 RCA: Recursive Cross-Modal Attention (Yv Architecture, Dunimd Team).
 
@@ -86,7 +88,7 @@ class YvRecursiveCrossModalFusion(nn.Module):
         super().__init__()
         self.cfg = config
         self.hidden_size = config.hidden_size
-        self.modalities = ["text", "image", "audio", "video", "document", "agentic"]
+        self.modalities = list(YvModality.core())
         self.max_rca_rounds = getattr(config, 'max_rca_rounds', 3)
         self.convergence_threshold = getattr(config, 'rca_convergence_threshold', 0.995)
 

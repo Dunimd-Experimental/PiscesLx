@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+from .types import YvModality
+
 """Dynamic multimodal fusion utilities for PiscesLx Yv agents.
 
 This module provides comprehensive multimodal fusion components for the Yv
@@ -159,7 +161,7 @@ class YvUnifiedMultimodalTokenizer(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.hidden_size = cfg.hidden_size
-        self.modalities = ["text", "image", "audio", "video", "document", "agentic"]
+        self.modalities = list(YvModality.core())
 
         # Per-modality token counts; -1 means no explicit truncation.
         self.token_counts = {
@@ -430,7 +432,7 @@ class YvDynamicModalFusion(nn.Module):
         super().__init__()
         self.cfg = cfg
         self.hidden_size = cfg.hidden_size
-        self.modalities = ["text", "image", "audio", "video", "document", "agentic"]
+        self.modalities = list(YvModality.core())
         self.weight_cache: Dict[str, torch.Tensor] = {}
         self.feature_cache: Dict[str, Dict[str, torch.Tensor]] = {}
         self.cache_size_limit = 1000

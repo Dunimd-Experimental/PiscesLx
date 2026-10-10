@@ -30,7 +30,7 @@ from .memory import PiscesLxToolsMemoryMonitor
 from torch.utils.data import IterableDataset
 from typing import Iterator, Dict, List, Optional
 from model.tokenizer import YvTokenizer
-from model.multimodal import YvVisionEncoder, YvAudioEncoder, YvDocEncoder, YvVideoEncoder
+from model.multimodal import YvVisionEncoder, YvAudioEncoder, YvVideoEncoder
 
 IMAGE_KEYS = [
     "image", "img_path", "image_path", "picture", "pic",
@@ -68,11 +68,9 @@ class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
             config (Optional[dict]): Configuration dictionary. Supports:
                 - custom_image_keys: List of custom keys for image data
                 - custom_audio_keys: List of custom keys for audio data
-                - custom_doc_keys: List of custom keys for document data
                 - custom_video_keys: List of custom keys for video data
                 - force_enable_vision: Force enable vision encoder
                 - force_enable_audio: Force enable audio encoder
-                - force_enable_doc: Force enable doc encoder
                 - force_enable_video: Force enable video encoder
         """
         super().__init__()
@@ -86,19 +84,16 @@ class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
         # This prevents OOM during model initialization on low-VRAM systems.
         self._vision_encoder = None
         self._audio_encoder = None
-        self._doc_encoder = None
         self._video_encoder = None
         
         # Allow custom key names from config
         self._image_keys = self.config.get('custom_image_keys', None) or IMAGE_KEYS
         self._audio_keys = self.config.get('custom_audio_keys', None) or AUDIO_KEYS
-        self._doc_keys = self.config.get('custom_doc_keys', None) or DOC_KEYS
         self._video_keys = self.config.get('custom_video_keys', None) or VIDEO_KEYS
         
         # Force enable flags for modalities (useful when keys don't match)
         self._force_vision = self.config.get('force_enable_vision', False)
         self._force_audio = self.config.get('force_enable_audio', False)
-        self._force_doc = self.config.get('force_enable_doc', False)
         self._force_video = self.config.get('force_enable_video', False)
         
         self._index: List[Dict] = self._build_index()
@@ -116,14 +111,6 @@ class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
         if self._audio_encoder is None and self.config:
             self._audio_encoder = YvAudioEncoder(self.config)
         return self._audio_encoder
-
-    @property
-    def doc_encoder(self):
-        """Lazy-loaded doc encoder."""
-        if self._doc_encoder is None and self.config:
-            self._doc_encoder = YvDocEncoder(self.config)
-        return self._doc_encoder
-
     @property
     def video_encoder(self):
         """Lazy-loaded video encoder."""
@@ -261,12 +248,6 @@ class PiscesLxToolsDataLargeScaleStreamingDataset(IterableDataset):
                 encoder = self.audio_encoder
                 if encoder and encoder.enabled and ap:
                     out["audio_input"] = encoder.process_audio(ap)
-            
-            dp = self._first_valid(sample, self._doc_keys)
-            if dp or self._force_doc:
-                encoder = self.doc_encoder
-                if encoder and encoder.enabled and dp:
-                    out["doc_input"] = encoder.process_doc(dp)
             
             vp = self._first_valid(sample, self._video_keys)
             if (vp or self._force_video) and self.memory.check_memory()["system_available_gb"] > 4.0:

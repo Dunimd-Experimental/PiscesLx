@@ -1278,10 +1278,6 @@ class YvModel(nn.Module):
             self._lazy_initialized['video'] = True
         return self.video
 
-        if self.doc is None:
-            self.doc = YvDocEncoder(self.cfg, device=self._device, dtype=self._dtype)
-            self._lazy_initialized['doc'] = True
-        return self.doc
     
     def is_lazy_initialized(self, component: str) -> bool:
         """Check if a component has been lazy initialized.

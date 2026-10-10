@@ -1366,7 +1366,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
 
         from model import YvConfig, YvModel
         from model.tokenizer import YvTokenizer
-        from opss.train.pref_align import PPOConfig, POPSSPreferenceAlignmentOperator
+        from opss.train.pref_align import POPSSPPOConfig, POPSSPreferenceAlignmentOperator
 
         cfg = YvConfig.from_yaml(str(model_cfg_path))
         self._apply_top_level_config(cfg)
@@ -1437,7 +1437,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         if not prompts:
             return {"status": "error", "reason": "no_prompts_in_dataset"}
 
-        op_cfg = PPOConfig(
+        op_cfg = POPSSPPOConfig(
             learning_rate=float(params.get("rlhf_lr") or 1e-5),
             ppo_epochs=int(rlhf_epochs),
             mini_batch_size=int(params.get("rlhf_mini_batch_size") or 1),
@@ -1715,14 +1715,12 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
                     POPSSServerTeacherProvider,
                     POPSSRemoteTeacherProvider,
                 )
-            except ImportError:
-                from opss.train import (
-                    POPSSTeacherProviderFactory,
-                    POPSSTeacherConfig,
-                    POPSSLocalTeacherProvider,
-                    POPSSServerTeacherProvider,
-                    POPSSRemoteTeacherProvider,
-                )
+            except ImportError as _imp_err:
+                raise ImportError(
+                    f"Offline distillation teacher providers unavailable from "
+                    f"tools.data.distill.offline_teacher_provider: {_imp_err}. Teachers must be "
+                    f"reached through offline-generated data, never inside the engine."
+                ) from _imp_err
             
             provider_config = POPSSTeacherConfig(
                 provider_type=teacher_type,
@@ -1765,29 +1763,6 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
             _LOG.warning(f"Distillation provider modules not available: {e}")
         except Exception as e:
             _LOG.error(f"Failed to setup distillation: {e}")
-    
-    def _setup_encre_trainer(self):
-        """Create YvEncreTrainer from the model's YvConfig if encre config is present."""
-        if self.trainer is None or self.trainer.model is None:
-            return None
-        model_cfg = getattr(self.trainer.model, "config", None)
-        if model_cfg is None:
-            return None
-        teachers = getattr(model_cfg, "encre_teachers", None) or []
-        if not teachers:
-            return None
-        try:
-            from model import YvEncreTrainer
-            tokenizer = getattr(self, "_tokenizer", None)
-            return YvEncreTrainer.from_yvconfig(
-                model_cfg,
-                tokenizer=tokenizer,
-                model=self.trainer.model,
-            )
-        except Exception as e:
-            _LOG.warning(f"Failed to setup EnTA trainer: {e}")
-            return None
-
     def _run_pre_training_phases(self, train_loader=None):
         """Run pre-training phases: knowledge store build, subconscious warmup, expert evolution."""
         self._maybe_build_knowledge_store()
@@ -1983,7 +1958,7 @@ class PiscesLxTrainOrchestrator(PiscesLxBaseOperator):
         except ImportError as _e:
             _e_direct = _e
             try:
-                from opss.train import POPSSDistillationConfig
+                from opss.train.distill import POPSSDistillationConfig
             except ImportError as _e2:
                 _e_lazy = _e2
                 raise ImportError(

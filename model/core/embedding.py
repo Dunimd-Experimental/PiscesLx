@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+from model.multimodal.types import YvModality
+
 """
 Advanced Embedding Module for Yv Model.
 
@@ -650,7 +652,7 @@ class YvModalityEmbedding(nn.Module):
         Args:
             hidden_states: Input tensor of shape [batch, seq_len, hidden_size].
             modality: Modality type string. Must be one of: "text", "image",
-                "audio", "video", "document", "agentic". Default: "text".
+                "audio", "video". Default: "text".
         
         Returns:
             Tensor with modality information added, same shape as input.
@@ -993,7 +995,7 @@ class YvUnifiedEmbedding(nn.Module):
             position_ids: Optional position indices of shape [batch, seq_len].
                 If None, positions 0 to seq_len-1 are used.
             modality: Modality type for the input. Must be one of: "text",
-                "image", "audio", "video", "document", "agentic".
+                "image", "audio", "video".
                 Default: "text".
             attention_mask: Optional attention mask. Currently not used
                 directly in embedding computation but included for API
@@ -1199,8 +1201,7 @@ class YvMultimodalEmbeddingProjector(nn.Module):
             video_dim: Video encoder output dimension. Default: 1024
                 (e.g., VideoMAE or similar encoder dimension).
             doc_dim: Document encoder output dimension. Default: 768
-                (e.g., LayoutLM output dimension).
-            agentic_dim: Agentic encoder output dimension. Default: 512
+                           agentic_dim: Agentic encoder output dimension. Default: 512
                 (e.g., action embedding dimension).
             device: Device for all projection parameters.
             dtype: Data type for all projection parameters.
@@ -1211,8 +1212,7 @@ class YvMultimodalEmbeddingProjector(nn.Module):
             ...     vision_dim=768,  # CLIP ViT-B/16
             ...     audio_dim=512,   # Whisper base
             ...     video_dim=1024,  # VideoMAE
-            ...     doc_dim=768      # LayoutLM
-            ... )
+                       ... )
         """
         super().__init__()
         

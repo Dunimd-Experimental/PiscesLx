@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+from .types import YvModality
+
 """Enhanced multimodal fusion components for Yv architecture.
 
 This module provides advanced multimodal fusion components for the Yv
@@ -52,7 +54,7 @@ Key Features:
     - Cross-modal attention for feature interaction
     - Modality-specific projection layers
     - Residual connections for gradient flow
-    - Support for 6 modalities (text, image, audio, video, document, agentic)
+    - Support for the 4 modalities (text, image, audio, video)
 
 Performance Characteristics:
     - Intra-modal encoding: O(L^2 * hidden_size) per modality
@@ -70,7 +72,7 @@ Usage Example:
     >>> )
 
 Note:
-    Default modalities: text, image, audio, video, document, agentic.
+    Default modalities: text, image, audio, video (see YvModality.core()).
     Uses GELU activation and LayerNorm for stability.
     Supports both quality-aware and standard fusion modes.
 """
@@ -96,7 +98,7 @@ class YvModalFusionConfig:
         hidden_size (int): Hidden dimension for all projections. Default: 2048.
         num_modalities (int): Number of modalities to fuse. Default: 6.
         modalities (List[str]): List of modality names. Default:
-            ["text", "image", "audio", "video", "document", "agentic"].
+            list(YvModality.core()).
         num_heads (int): Number of attention heads. Default: 16.
         num_layers (int): Number of fusion layers. Default: 4.
         dropout (float): Dropout probability. Default: 0.1.
@@ -107,7 +109,7 @@ class YvModalFusionConfig:
     Example:
         >>> config = YvModalFusionConfig(hidden_size=4096, num_modalities=4)
         >>> print(config.modalities)
-        ['text', 'image', 'audio', 'video', 'document', 'agentic']
+        list(YvModality.core())
     
     Note:
         Modality list is truncated to num_modalities during processing.
@@ -116,7 +118,7 @@ class YvModalFusionConfig:
     hidden_size: int = 2048
     num_modalities: int = 6
     modalities: List[str] = field(default_factory=lambda: [
-        "text", "image", "audio", "video", "document", "agentic"
+        "text", "image", "audio", "video"
     ])
     num_heads: int = 16
     num_layers: int = 4
@@ -230,7 +232,7 @@ class _CrossModalAligner(nn.Module):
         self.hidden_size = hidden_size
         self.num_modalities = num_modalities
         
-        for i, modality in enumerate(["text", "image", "audio", "video", "document", "agentic"][:num_modalities]):
+        for i, modality in enumerate(list(YvModality.core())[:num_modalities]):
             setattr(self, f"{modality}_proj", nn.Linear(hidden_size, hidden_size))
         
         self.modal_fusion = nn.Sequential(
@@ -314,7 +316,7 @@ class _InterModalAttention(nn.Module):
         self.modal_k_proj = nn.ModuleDict()
         self.modal_v_proj = nn.ModuleDict()
         
-        for modality in ["text", "image", "audio", "video", "document", "agentic"][:num_modalities]:
+        for modality in list(YvModality.core())[:num_modalities]:
             self.modal_k_proj[modality] = nn.Linear(hidden_size, hidden_size)
             self.modal_v_proj[modality] = nn.Linear(hidden_size, hidden_size)
     
@@ -378,7 +380,7 @@ class _ModalityImportanceLearner(nn.Module):
         )
         
         self.gate_net = nn.ModuleDict()
-        for modality in ["text", "image", "audio", "video", "document", "agentic"][:num_modalities]:
+        for modality in list(YvModality.core())[:num_modalities]:
             self.gate_net[modality] = nn.Sequential(
                 nn.Linear(hidden_size, hidden_size // 4),
                 nn.GELU(),
@@ -411,7 +413,7 @@ class _MultiScaleQualityAssessor(nn.Module):
         self.num_modalities = num_modalities
         
         self.scale_encoders = nn.ModuleDict()
-        for modality in ["text", "image", "audio", "video", "document", "agentic"][:num_modalities]:
+        for modality in list(YvModality.core())[:num_modalities]:
             self.scale_encoders[modality] = nn.ModuleDict({
                 'global': nn.Sequential(
                     nn.Linear(hidden_size, hidden_size // 2),
@@ -1154,7 +1156,7 @@ class YvModalityBenchmark:
         modalities: List[str] = None,
         device: str = 'cuda'
     ):
-        self.modalities = modalities or ["text", "image", "audio", "video", "document", "agentic"]
+        self.modalities = modalities or list(YvModality.core())
         self.device = device
         self.metrics = {}
         self.reset()

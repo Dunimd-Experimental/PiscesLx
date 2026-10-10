@@ -42,7 +42,6 @@ from utils.paths import get_log_file
 from model.multimodal import (
     YvVisionEncoder as VisionEncoder,
     YvAudioEncoder as AudioEncoder,
-    YvDocEncoder as DocEncoder,
     YvVideoEncoder as VideoEncoder
 )
 
@@ -244,12 +243,10 @@ class Dataset(TorchDataset):
 
         self._image_keys = getattr(self.config, 'custom_image_keys', None) or IMAGE_KEYS
         self._audio_keys = getattr(self.config, 'custom_audio_keys', None) or AUDIO_KEYS
-        self._doc_keys = getattr(self.config, 'custom_doc_keys', None) or DOC_KEYS
         self._video_keys = getattr(self.config, 'custom_video_keys', None) or VIDEO_KEYS
 
         self._force_vision = getattr(self.config, 'force_enable_vision', False)
         self._force_audio = getattr(self.config, 'force_enable_audio', False)
-        self._force_doc = getattr(self.config, 'force_enable_doc', False)
         self._force_video = getattr(self.config, 'force_enable_video', False)
 
         data_cache = cache_dir or get_cache_dir("data_cache")
@@ -277,7 +274,6 @@ class Dataset(TorchDataset):
         self.tokenizer = YvTokenizer()
         self._vision_encoder = None
         self._audio_encoder = None
-        self._doc_encoder = None
         self._video_encoder = None
 
         self._augmentation_pipeline: Optional[PiscesLxDataAugmentationPipeline] = None
@@ -302,13 +298,6 @@ class Dataset(TorchDataset):
         if self._audio_encoder is None and self.config:
             self._audio_encoder = AudioEncoder(self.config)
         return self._audio_encoder
-
-    @property
-    def doc_encoder(self):
-        if self._doc_encoder is None and self.config:
-            self._doc_encoder = DocEncoder(self.config)
-        return self._doc_encoder
-
     @property
     def video_encoder(self):
         if self._video_encoder is None and self.config:
@@ -349,7 +338,6 @@ class Dataset(TorchDataset):
 
         pixel_values = self._process_mm_lazy(item, self._image_keys, "vision_encoder", "image", self._force_vision)
         audio_input = self._process_mm_lazy(item, self._audio_keys, "audio_encoder", "audio", self._force_audio)
-        doc_input = self._process_mm_lazy(item, self._doc_keys, "doc_encoder", "document", self._force_doc)
         video_frames = self._process_mm_lazy(item, self._video_keys, "video_encoder", "video", self._force_video)
 
         result = {

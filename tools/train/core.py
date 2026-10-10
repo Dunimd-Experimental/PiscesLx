@@ -1939,7 +1939,7 @@ class PiscesLxTrainingOperator(object):
     
     def _try_sft_operator(self, batch: Dict[str, torch.Tensor]) -> Optional[Dict[str, Any]]:
         try:
-            from opss.train.sft import POPSSSFTTrainingOperator, POPSSSFTConfig as _SFTConfig
+            from opss.train.sft import POPSSSFTTrainingOperator, POPSSSFTTrainingConfig as _SFTConfig
             sft_op = POPSSSFTTrainingOperator()
             result = sft_op.execute({"model": self.model, "batch": batch})
             if result.is_success() and result.output:

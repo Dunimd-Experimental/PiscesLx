@@ -23,6 +23,8 @@
 
 from __future__ import annotations
 
+from model.multimodal.types import YvModality
+
 """
 Publish Configuration Management System
 
@@ -315,7 +317,7 @@ class PiscesLxPublishMetadataConfig:
     architecture: str = "Yv"
     parameters: str = "7B"
     context_length: int = 10485760
-    modalities: List[str] = field(default_factory=lambda: ["text", "image", "audio", "video", "document", "agentic"])
+    modalities: List[str] = field(default_factory=lambda: list(YvModality.core()))
     training_tokens: str = ""
     training_hardware: str = ""
     license: str = "Apache-2.0"

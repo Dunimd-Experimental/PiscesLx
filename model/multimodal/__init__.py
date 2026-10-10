@@ -35,8 +35,7 @@ Module Components:
        - YvVisionEncoder: Image encoding with 3D RoPE support
        - YvVideoEncoder: Video encoding with temporal modeling
        - YvAudioEncoder: Multi-task audio feature extraction
-       - YvDocEncoder: Document understanding with layout analysis
-       - YvSemanticEncoder: Semantic text representation
+              - YvSemanticEncoder: Semantic text representation
     
     2. Fusion Components:
        - YvDynamicModalFusion: Dynamic cross-modal fusion
@@ -135,6 +134,7 @@ from .types import (
     YvMCPMessage,
     YvAgenticAction,
     YvAgenticObservation,
+    YvModality,
 )
 # YvAgenticState is in state_machine.py
 from .state_machine import YvAgenticState

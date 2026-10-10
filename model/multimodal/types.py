@@ -80,6 +80,39 @@ from typing import Any, Dict, List, Optional
 
 from .state_machine import YvAgenticState
 
+class YvModality:
+    """The four modalities PiscesL1 supports — the single source of truth.
+
+    ``document`` and ``agent`` are deliberately absent: documents reach the model through
+    the agent+text path, and tool calling is text-level structured output
+    (docs/prompts/UPGRADE_03_ARCH.md 3.3.1). The index space used by MoE modality routing
+    is ``CORE`` plus one trailing **cross-modal sentinel** slot, so
+    ``n_modalities == len(CORE) + 1`` (5), matching ``YvConfig.n_modalities``.
+    """
+
+    TEXT = "text"
+    IMAGE = "image"
+    AUDIO = "audio"
+    VIDEO = "video"
+
+    CORE: tuple = (TEXT, IMAGE, AUDIO, VIDEO)
+
+    @classmethod
+    def core(cls) -> tuple:
+        """The supported modality names, in index order."""
+        return cls.CORE
+
+    @classmethod
+    def with_sentinel(cls) -> int:
+        """Modality index-space size: four modalities plus the fused-token slot."""
+        return len(cls.CORE) + 1
+
+    @classmethod
+    def is_supported(cls, name: str) -> bool:
+        """Whether ``name`` denotes a first-class modality."""
+        return name in cls.CORE
+
+
 class YvMCPMessageType(Enum):
     """Enumerate MCP message categories exchanged with orchestrators.
     

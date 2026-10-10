@@ -51,8 +51,8 @@ from typing import Any, Dict, Optional, List, Tuple, Union
 from configs.version import VERSION
 from utils.opsc.interface import PiscesLxOperatorInterface, PiscesLxOperatorResult, PiscesLxOperatorStatus, PiscesLxOperatorConfig
 from .methods import QuantizationConfig, QuantizationOperatorFactory
-from .advanced import AdvancedQuantizationConfig, POPSSSensitivityAnalysisOperator, AdaptiveBitAllocationOperator
-from .calibration import CalibrationConfig, CalibrationDataLoaderOperator, ActivationCollectorOperator
+from .advanced import AdvancedQuantizationConfig, POPSSSensitivityAnalysisOperator, POPSSAdaptiveBitAllocationOperator
+from .calibration import CalibrationConfig, POPSSCalibrationDataLoaderOperator, POPSSActivationCollectorOperator
 
 
 class QuantizationPipelineConfig(PiscesLxOperatorConfig):
@@ -247,7 +247,7 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
         Returns:
             Result containing calibration batches
         """
-        cal_loader = CalibrationDataLoaderOperator()
+        cal_loader = POPSSCalibrationDataLoaderOperator()
         cal_cfg = CalibrationConfig(
             dataset_name=config.calibration_dataset,
             num_calibration_samples=int(config.calibration_samples),
@@ -309,7 +309,7 @@ class POPSSQuantizationPipelineOperator(PiscesLxOperatorInterface):
         Returns:
             Result containing bit allocation for each layer
         """
-        allocation_op = AdaptiveBitAllocationOperator()
+        allocation_op = POPSSAdaptiveBitAllocationOperator()
         
         sensitivity_analysis = pipeline_results.get("sensitivity", {})
         

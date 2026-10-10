@@ -433,32 +433,154 @@ class PiscesLxDanglingImportCheck(PiscesLxStandardCheck):
         if tree is None:
             return []
         violations = []
-        # parts[:-1] already drops the file name; taking .parent as well would strip the
-        # enclosing package too, mis-resolving `from .x` imports one level too high.
         package_parts = source.path.relative_to(source.root).parts[:-1]
         for node in ast.walk(tree):
-            target = None
             if isinstance(node, ast.Import):
                 for alias in node.names:
-                    if alias.name.split(".")[0] in self._FIRST_PARTY:
-                        target = alias.name
-                        if not self._resolves(source.root, target):
-                            violations.append(self._violation(source, node, target))
+                    if alias.name.split(".")[0] in self._FIRST_PARTY and not self._resolves(
+                        source.root, alias.name
+                    ):
+                        violations.append(self._violation(source, node, alias.name))
             elif isinstance(node, ast.ImportFrom):
                 if node.level:
                     base = package_parts[: len(package_parts) - node.level + 1]
                     if node.module:
                         base = base + tuple(node.module.split("."))
                     target = ".".join(part for part in base if part)
-                    if target.split(".")[0] in self._FIRST_PARTY and not self._resolves(
-                        source.root, target
-                    ):
+                    first = target.split(".")[0] if target else ""
+                    if first in self._FIRST_PARTY and not self._resolves(source.root, target):
                         violations.append(self._violation(source, node, target))
+                    elif first in self._FIRST_PARTY:
+                        violations.extend(self._check_symbols(source, node, target))
                 elif node.module and node.module.split(".")[0] in self._FIRST_PARTY:
-                    target = node.module
-                    if not self._resolves(source.root, target):
-                        violations.append(self._violation(source, node, target))
+                    if not self._resolves(source.root, node.module):
+                        violations.append(self._violation(source, node, node.module))
+                    else:
+                        violations.extend(self._check_symbols(source, node, node.module))
         return violations
+
+    def _check_symbols(self, source: PiscesLxSourceFile, node: ast.ImportFrom,
+                       target: str) -> list:
+        """Verify each imported name actually exists in the target module.
+
+        Module-path resolution alone is not enough: ``from model.multimodal import
+        YvDocEncoder`` resolves to a real package while the *symbol* is gone, and that
+        is exactly how an import of a deleted encoder survived a "zero dangling imports"
+        report.
+        """
+        violations = []
+        module_path = self._locate(source.root, target)
+        if module_path is None:
+            return violations
+        exported = self._top_level_names(module_path)
+        if exported is None:
+            return violations
+        for alias in node.names:
+            if alias.name == "*":
+                continue
+            if alias.name in exported:
+                continue
+            # ``from tools.monitor import impl`` imports the submodule tools/monitor/impl.py
+            parent_of_target = module_path.parent
+            if (parent_of_target / (alias.name + ".py")).is_file() or (
+                parent_of_target / alias.name
+            ).is_dir():
+                continue
+            if self._reexported_via_init(module_path, alias.name):
+                continue
+            violations.append(
+                PiscesLxViolation(
+                    "NO-DANGLING-IMPORT",
+                    source.path,
+                    getattr(node, "lineno", 1),
+                    f"'{alias.name}' is imported from '{target}' but that module no longer "
+                    f"defines or re-exports it — the referenced class was deleted",
+                    column=getattr(node, "col_offset", 0),
+                    snippet=source.line_source(getattr(node, "lineno", 1)),
+                )
+            )
+        return violations
+
+    @staticmethod
+    def _locate(root: Path, dotted: str):
+        parts = dotted.split(".")
+        cursor = root
+        for part in parts:
+            if (cursor / part).is_dir():
+                cursor = cursor / part
+                continue
+            if (cursor / (part + ".py")).is_file():
+                return cursor / (part + ".py")
+            return None
+        init = cursor / "__init__.py"
+        return init if init.is_file() else None
+
+    @staticmethod
+    def _top_level_names(module_path: Path):
+        try:
+            tree = ast.parse(module_path.read_text(encoding="utf-8", errors="replace"))
+        except (OSError, SyntaxError):
+            return None
+        names = set()
+        # Top-level ``if TRITON:`` / ``try:`` blocks bind module attributes at runtime,
+        # so names defined only inside them must count as exported. Restricting the walk
+        # to ``tree.body`` reported FusedAdamW and fused_rms_norm as missing.
+        scope_nodes = []
+        for node in tree.body:
+            scope_nodes.append(node)
+            if isinstance(node, (ast.If, ast.Try)):
+                for child in ast.iter_child_nodes(node):
+                    if isinstance(child, ast.Try):
+                        scope_nodes.extend(
+                            sub for sub in ast.walk(child)
+                            if isinstance(sub, (ast.ClassDef, ast.FunctionDef))
+                        )
+                    else:
+                        scope_nodes.append(child)
+        names = set()
+        for node in scope_nodes:
+            if isinstance(node, (ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)):
+                names.add(node.name)
+            elif isinstance(node, ast.Assign):
+                for tgt in node.targets:
+                    if isinstance(tgt, ast.Name):
+                        names.add(tgt.id)
+            elif isinstance(node, ast.AnnAssign):
+                # EXTENDED_VOCAB_SIZE: int = 160000 is an AnnAssign; ignoring it made the
+                # checker report a perfectly valid module constant as missing.
+                if isinstance(node.target, ast.Name):
+                    names.add(node.target.id)
+            elif isinstance(node, ast.AugAssign) and isinstance(node.target, ast.Name):
+                names.add(node.target.id)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    names.add(alias.asname or alias.name.split(".")[0])
+        return names
+
+    @staticmethod
+    def _reexported_via_init(module_path: Path, name: str) -> bool:
+        """Recognise a package ``__init__`` re-export, and only there.
+
+        A plain substring test gave false negatives: searching for
+        ``AdaptiveBitAllocationOperator`` inside a module defining
+        ``POPSSAdaptiveBitAllocationOperator`` matches, so a genuinely missing symbol was
+        reported as present. Only ``__init__.py`` re-exports, and matching must be on
+        word boundaries within import statements or ``__all__`` entries.
+        """
+        if module_path.name != "__init__.py":
+            return False
+        try:
+            text = module_path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return False
+        pattern = re.compile(r"(?<![\w.])" + re.escape(name) + r"(?![\w])")
+        for line in text.split("\n"):
+            stripped = line.strip()
+            if not (stripped.startswith(("import ", "from ", '"')) or stripped.startswith("__all__")):
+                continue
+            if pattern.search(line):
+                return True
+        return False
 
     @staticmethod
     def _resolves(root: Path, dotted: str) -> bool:

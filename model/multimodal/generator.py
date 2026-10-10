@@ -39,7 +39,6 @@ Module Components:
        - Fully self-developed multimodal generator
        - Text-to-Image generation via diffusion
        - Text-to-Audio waveform synthesis
-       - Document generation
        - Video generation with temporal extension
 
 Key Features:
@@ -54,7 +53,6 @@ Key Features:
 Performance Characteristics:
     - Image generation: O(steps * H * W * hidden_size)
     - Audio synthesis: O(duration * sample_rate * hidden_size)
-    - Document generation: O(pages * tokens * hidden_size)
     - Video generation: O(frames * H * W * hidden_size)
 
 Usage Example:
@@ -261,7 +259,6 @@ class YvSelfDevelopedGenerator(nn.Module):
            - YvAudioEncoder for audio processing
            - Waveform synthesis head
         
-        4. Document Components:
            - Structured content generation
     
     Key Features:
@@ -278,7 +275,6 @@ class YvSelfDevelopedGenerator(nn.Module):
         backbone (YvModel): Yv transformer backbone.
         vision_components (Dict[str, nn.Module]): Vision generation modules.
         audio_components (Dict[str, nn.Module]): Audio generation modules.
-        doc_components (Dict[str, nn.Module]): Document generation modules.
     
     Example:
         >>> generator = YvSelfDevelopedGenerator(config)
@@ -400,34 +396,6 @@ class YvSelfDevelopedGenerator(nn.Module):
         )
         
         return components
-    
-        """Initialize document components using existing encoder.
-        
-        Creates document generation modules including the existing document
-        encoder and generation heads for text and layout.
-        
-        Returns:
-            Dict[str, nn.Module]: Document components containing:
-                - encoder: YvDocEncoder for document processing
-                - text_head: Linear head for vocabulary prediction
-                - layout_head: Linear head for bounding box coordinates
-        
-        Note:
-            Uses YvDocEncoder from doc.py.
-            Text head vocabulary size: 30,000 tokens.
-            Layout head outputs 4 bounding box coordinates.
-        """
-        components = {}
-        
-        components['encoder'] = YvDocEncoder(
-            hidden_size=self.config.hidden_size
-        )
-        
-        components['text_head'] = nn.Linear(self.config.hidden_size, 30000)
-        components['layout_head'] = nn.Linear(self.config.hidden_size, 4)
-        
-        return components
-    
     async def generate_image(self, prompt: str, **kwargs) -> YvGenerationResult:
         """Generate image from text prompt using native NTP paradigm.
         
@@ -1013,94 +981,6 @@ class YvTextToAudioBackend(YvGenerationBackend):
 
 
 # Paper: Original contribution by Dunimd Team (Yv Architecture)
-class YvDocumentGenerationBackend(YvGenerationBackend):
-    """Document generation backend.
-    
-    Generates structured documents from text descriptions.
-    """
-    
-    def __init__(self, template_dir: Optional[str] = None):
-        """Initialize document generation backend.
-        
-        Args:
-            template_dir: Directory containing document templates.
-        """
-        self.template_dir = template_dir
-    
-    @property
-    def modality(self) -> YvGenerationModality:
-        return YvGenerationModality.DOCUMENT
-    
-    @property
-    def name(self) -> str:
-        return "DocumentGenerator"
-    
-    def is_available(self) -> bool:
-        return True
-    
-    async def generate(
-        self,
-        condition: YvGenerationCondition,
-        document_type: str = "report",
-        max_length: int = 1000,
-        **kwargs
-    ) -> YvGenerationResult:
-        """Generate document from text prompt.
-        
-        Args:
-            condition: Generation conditioning.
-            document_type: Type of document (report, article, etc.).
-            max_length: Maximum content length.
-            **kwargs: Additional parameters.
-            
-        Returns:
-            Generation result with document structure.
-        """
-        start_time = asyncio.get_event_loop().time()
-        
-        try:
-            # Generate document structure based on prompt
-            document = {
-                "title": f"Generated {document_type.title()}",
-                "content": condition.text_prompt,
-                "sections": [],
-                "metadata": {
-                    "type": document_type,
-                    "generated_at": datetime.now().isoformat(),
-                    "prompt": condition.text_prompt,
-                },
-            }
-            
-            # Parse prompt for structure hints
-            lines = condition.text_prompt.split('\n')
-            for line in lines:
-                line = line.strip()
-                if line.startswith('#'):
-                    # Markdown-style heading
-                    level = len(line) - len(line.lstrip('#'))
-                    document["sections"].append({
-                        "level": level,
-                        "title": line.lstrip('#').strip(),
-                        "content": "",
-                    })
-                elif document["sections"]:
-                    # Add to current section
-                    document["sections"][-1]["content"] += line + "\n"
-            
-            generation_time = asyncio.get_event_loop().time() - start_time
-            
-            return YvGenerationResult(
-                success=True,
-                modality=self.modality,
-                content=document,
-                metadata=document["metadata"],
-                generation_time=generation_time,
-            )
-            
-        except (RuntimeError, ValueError, KeyError, AttributeError, TypeError) as e:
-            raise RuntimeError(f"Document generation failed: {e}") from e
-
-
 class YvGenerator:
     """Unified multimodal generation interface.
     
@@ -1125,7 +1005,6 @@ class YvGenerator:
     def _register_default_backends(self) -> None:
         """Register default generation backends."""
         # Only register backends that don't require external models
-        self.register_backend(YvDocumentGenerationBackend())
     
     def register_backend(self, backend: YvGenerationBackend) -> None:
         """Register a generation backend.
