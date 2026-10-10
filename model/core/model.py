@@ -851,6 +851,8 @@ class YvModel(nn.Module):
             self.modal_fusion = None
 
         # === 2026 flagship feature init (all lazy / conditional) ===
+        self.block_field = None             # lazy: _lazy_get_block_field
+        self._block_field_stats: Dict[str, Any] = {}
         self.deep_cross_layer_injector = None  # lazy: _lazy_get_rca
         self.seer_executor = None              # lazy: _lazy_get_seer
         self.vericot_verifier = None           # lazy: _lazy_get_vericot
@@ -1327,6 +1329,21 @@ class YvModel(nn.Module):
                 )
                 self.speculative_decoder = YvAdaptiveSpeculativeDecoder(self.speculative_config, self, None)
                 self._lazy_initialized['speculative'] = True
+
+    def _lazy_get_block_field(self):
+        """Materialise the Subconscious Block Field on first use.
+
+        The field is lazy because its host backing store is the bulk of the model's
+        memory footprint: 628 blocks x 0.5B parameters. Only ``block_pool_slots`` of
+        them are ever device-resident (docs/design/00-subconscious-block-field.md §3).
+        """
+        if self.block_field is None and getattr(self.cfg, 'use_subconscious_blocks', False):
+            from .block_field import YvSubconsciousBlockField
+            _LOG.debug("YvModel: lazy-init subconscious block field...")
+            self.block_field = YvSubconsciousBlockField(
+                self.cfg, device=self._device, dtype=self._dtype,
+            )
+        return self.block_field
 
     def _lazy_get_rca(self) -> None:
         if self.deep_cross_layer_injector is None and getattr(self.cfg, 'use_rca_fusion', True):
@@ -2090,6 +2107,20 @@ class YvModel(nn.Module):
             cache_quant_bits = 16
 
         use_mixed_precision_cache = getattr(self.cfg, 'use_mixed_precision_cache', True)
+
+        # === Subconscious Block Field: the "查" side of compute-search separation ===
+        # Applied once per forward, not once per layer: a full-scale block read costs
+        # ~1.1e9 FLOPs/token, i.e. 8.6% of the 1500 tok/s budget, so repeating it per
+        # layer would forfeit the throughput target. See docs/proofs/00-sbf-theorems.md T1.
+        if getattr(self.cfg, 'use_subconscious_blocks', False) and x.dim() == 3:
+            _field = self._lazy_get_block_field()
+            if _field is not None:
+                x, _blk_stats = _field.read_and_modulate(x)
+                self._block_field_stats = {
+                    "distinct_blocks": _blk_stats["distinct_blocks"],
+                    "resident_blocks": list(_blk_stats["resident_blocks"]),
+                    "switch_rate": float(_blk_stats["switch_rate"]),
+                }
 
         next_cache = [] if use_cache else None
         rca_fused = None

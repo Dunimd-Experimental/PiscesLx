@@ -89,7 +89,10 @@ class YvKnowledgeBlockModule(nn.Module):
         self.beta_bound = float(beta_bound)
 
         # Associative memory: each row is a stored knowledge slot, read by attention.
+        # torch.empty would leave the row contents undefined; an all-zero read silently
+        # produces zero modulation, i.e. a block that looks loaded but knows nothing.
         self.memory = nn.Parameter(torch.empty(memory_rows, hidden_dim, dtype=dtype))
+        nn.init.normal_(self.memory, mean=0.0, std=hidden_dim ** -0.5)
         self.memory_norm = nn.LayerNorm(hidden_dim, dtype=dtype)
 
         # Rank-bottleneck scoring: <W_q h, W_k m> over all M rows.
@@ -211,13 +214,15 @@ class YvResidentBlockPool(nn.Module):
                 break
         evicted: Optional[int] = None
         if victim_slot is None:
-            # λ-biased LRU: oldest by recency loses.
-            victim_slot, victim_block = self._order.popitem(last=False)
-            evicted = self._slots[victim_slot].block_id  # type: ignore[attr-defined]
-            self._by_block.pop(victim_block, None)
+            # Ordered by recency, so popitem(last=False) yields the least-sticky resident
+            # block. The dict maps block_id -> recency, while _by_block maps block_id -> slot;
+            # conflating them was the cause of a KeyError on eviction.
+            victim_block, _recency = self._order.popitem(last=False)
+            victim_slot = self._by_block.pop(victim_block)
+            evicted = victim_block
             self.stats["evictions"] += 1
-            if evict_callback is not None and evicted is not None:
-                evict_callback(evicted, self._slots[victim_slot])
+            if evict_callback is not None:
+                evict_callback(victim_block, self._slots[victim_slot])
         self._slots[victim_slot] = module.to(self.device)
         module.block_id = block_id  # type: ignore[attr-defined]
         self._by_block[block_id] = victim_slot
@@ -334,7 +339,9 @@ class YvSubconsciousBlockField(nn.Module):
         payload = self._host_payloads.get(block_id)
         module = self._make_block()
         if payload is not None:
-            module.load_state_dict(payload, strict=False)
+            # strict=True on purpose: a silently partial load is how a block ends up
+            # "resident" while carrying no knowledge at all.
+            module.load_state_dict(payload, strict=True)
         return module.to(self.device)
 
     def address(self, hidden: torch.Tensor) -> int:
@@ -360,6 +367,67 @@ class YvSubconsciousBlockField(nn.Module):
     def relative_perturbation_bound(self) -> float:
         """``κ = α(γ_max + c)`` — the guaranteed worst-case relative change (Theorem 5)."""
         return self.alpha * (self.gamma_max + self.beta_bound)
+
+    def read_and_modulate(self, hidden: torch.Tensor) -> Tuple[torch.Tensor, Dict[str, Any]]:
+        """Select a block per token, make it resident, and apply the modulation.
+
+        Single application per forward, not per layer: a block read costs ~1.1e9 FLOPs per
+        token at full scale (see docs/design 00 §3.2), which is 8.6% of the 1500 tok/s
+        budget; repeating it every layer would forfeit the throughput target outright.
+
+        Args:
+            hidden: trunk states ``[B, T, d]``.
+
+        Returns:
+            The modulated states and a diagnostics dict (selection, pool statistics).
+        """
+        if hidden.dim() != 3:
+            raise ValueError(f"read_and_modulate expects [B,T,d], got {tuple(hidden.shape)}")
+        selected, _ = self.addresser.select_sequence(hidden.to(self.pool.dtype))
+        batch, seq = selected.shape
+        working = hidden.clone()
+
+        # Group positions by block so each resident block is applied in one batched pass.
+        flat_ids = selected.reshape(-1)
+        unique_ids = torch.unique(flat_ids)
+        for block_tensor in unique_ids:
+            block_id = int(block_tensor.item())
+            module = self._ensure_resident(block_id)
+            if module is None:
+                continue
+            mask = (flat_ids == block_tensor)
+            positions = mask.nonzero(as_tuple=True)[0]
+            gathered = working.reshape(-1, self.hidden_dim)[positions]
+            gamma, beta = module(gathered)
+            delta = self.alpha * (gamma * gathered + beta)
+            updated = working.reshape(-1, self.hidden_dim).index_copy(
+                0, positions, gathered + delta
+            )
+            working = updated.reshape(batch, seq, self.hidden_dim)
+
+        diagnostics = {
+            "selected": selected,
+            "distinct_blocks": int(unique_ids.numel()),
+            "resident_blocks": self.pool.resident_block_ids(),
+            "switch_rate": self.pool.switch_rate(),
+            "mean_dwell": self.pool.mean_dwell(),
+        }
+        return working, diagnostics
+
+    def _ensure_resident(self, block_id: int) -> Optional[YvKnowledgeBlockModule]:
+        """Return the device-resident module for ``block_id``, loading it if needed.
+
+        Transfer is synchronous here; the CUDA-stream pipeline of design §4 is the next
+        step, which is what turns the 83 ms whole-block move into an amortised cost.
+        """
+        module = self.pool.slot_module(block_id)
+        if module is not None:
+            return module
+        loaded = self.load_block(block_id)
+        if loaded is None:
+            return None
+        self.pool.install(block_id, loaded, evict_callback=self.commit_block)
+        return self.pool.slot_module(block_id)
 
     def measurable_capacity(self) -> Dict[str, float]:
         """Report capacity/participation so the 314B claim can be checked, not asserted."""

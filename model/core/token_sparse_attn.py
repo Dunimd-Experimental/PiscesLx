@@ -65,6 +65,53 @@ class YvTokenSparseAttention(nn.Module):
 
         self.register_buffer('cluster_centroids', torch.zeros(self.n_clusters, device=device, dtype=dtype))
 
+    def _normalize_mask(self, attention_mask: torch.Tensor, batch: int, seq_len: int) -> torch.Tensor:
+        """Broadcast a padding/causal mask onto ``[?, heads, queries, keys]`` safely.
+
+        The previous implementation grew the mask's rank with ``unsqueeze(1)`` in a loop,
+        which is wrong for the trunk's 2-D causal mask ``[T, T]``: the first unsqueeze
+        turns it into ``[T, 1, T]`` and the next into ``[T, 1, 1, T]``, so the *sequence*
+        length silently broadcasts into the **batch** dimension and the attention output
+        becomes ``[T, H, T, head_dim]``. The reshape then failed far downstream with an
+        unhelpful "shape is invalid" error, and in batch shapes that happen to divide
+        evenly it would have produced wrong scores with no error at all.
+
+        Masks are therefore re-shaped by explicit position, and a mask whose leading
+        dimension is neither 1 nor ``batch`` is rejected instead of broadcast.
+        """
+        mask = attention_mask
+        if mask.dim() == 2:
+            # The trunk's causal lane: [T, T] or [1, T] padding.
+            if mask.shape == (seq_len, seq_len):
+                return mask.view(1, 1, seq_len, seq_len)
+            if mask.shape[1] == seq_len:
+                return mask.reshape(-1, 1, 1, seq_len)
+            raise ValueError(
+                f"2-D mask {tuple(mask.shape)} cannot align to seq_len={seq_len}"
+            )
+        if mask.dim() == 3:
+            # [B, T, T] (per-sample causal) or [B, 1, T] padding.
+            if mask.shape[-2:] == (seq_len, seq_len):
+                head = 1 if mask.shape[0] == 1 else batch
+                return mask.reshape(head, 1, seq_len, seq_len)
+            if mask.shape[-1] == seq_len:
+                return mask.unsqueeze(1)
+            raise ValueError(
+                f"3-D mask {tuple(mask.shape)} matches neither [B,T,T] nor [B,1,T]"
+            )
+        if mask.dim() == 4:
+            if mask.shape[-2:] != (seq_len, seq_len):
+                raise ValueError(
+                    f"4-D mask trailing dims {tuple(mask.shape[-2:])} != ({seq_len},{seq_len})"
+                )
+            if mask.shape[0] not in (1, batch):
+                raise ValueError(
+                    f"4-D mask batch {mask.shape[0]} is neither 1 nor {batch}; "
+                    f"refusing to broadcast a sequence axis into batch"
+                )
+            return mask
+        raise ValueError(f"unsupported attention mask rank {mask.dim()}")
+
     def _estimate_threshold_via_histogram(
         self, scores: torch.Tensor
     ) -> torch.Tensor:
@@ -111,9 +158,7 @@ class YvTokenSparseAttention(nn.Module):
         prelim_scores = torch.matmul(Q_lr, K_lr.transpose(-2, -1)) / (score_dim ** 0.5)
 
         if attention_mask is not None:
-            while attention_mask.dim() < prelim_scores.dim():
-                attention_mask = attention_mask.unsqueeze(1)
-            prelim_scores = prelim_scores + attention_mask
+            prelim_scores = prelim_scores + self._normalize_mask(attention_mask, B, T)
 
         threshold = self._estimate_threshold_via_histogram(prelim_scores)
         sparse_mask = prelim_scores >= threshold
