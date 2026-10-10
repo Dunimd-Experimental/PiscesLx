@@ -246,7 +246,29 @@ python manage.py help                                                     → �
 "页面文件太小"），属主机资源而非代码路径。主机腾出内存或换到 T4/带卡主机后即可续跑到
 产出真实权重。
 
-## 10. 待办（按提示词顺序）
+## 11. 阶段 7 内存实测（构造峰值 vs 驻留，T4 预算的直接输入）
+
+在同一台纯 CPU 主机上用 `GlobalMemoryStatusEx` 实测提交内存（commit）变化：
+
+| 时刻 | commit 可用 | 说明 |
+|------|-----------:|------|
+| 构建前 | 11.58 GB | 进程已导入 torch/transformers |
+| `YvModel(0.1B)` 后 | 4.26 GB | 消耗 **7.32 GB**，而参数总量仅 224.7M / **0.90 GB** |
+| 再建 `YvUnifiedReasoner` 后 | 2.51 GB | 再吃 1.75 GB（reasoner 416.7M 参数） |
+| `del model; gc.collect()` | 5.00 GB | 只归还 0.74 GB |
+| `gc.get_objects()` 全量清点 | — | **存活张量 0.00 GB**，说明剩余为原生分配器保留的已触页内存 |
+
+结论与影响（不是环境问题，而是引擎必须处理的构造期特性）：
+- 建模过程的瞬时分配约为最终权重体积的 **8 倍**；`sequence_length 512` 的首个
+  训练步在 `mamba3._flash_scan` 处以 `DefaultCPUAllocator: not enough memory`
+  明确失败（申请 524,288 字节即失败，说明提交池已被构造期峰值吃满）。
+- 因此主机档改为 `sequence_length: 128`、12 步、每 6 步落一次检查点；
+  T4（16 GB、FP16）预算必须按 **权重的 ~8 倍**预留构造峰值，或走
+  meta-device 分模块物化（`initialize_model` 已支持 `_use_meta_fsdp` 分支）。
+- 这条比值同时解释了为什么 0.5B 档（913.2M 参数）在任何单机 CPU 上都不可训：
+  权重 3.66 GB，构造峰值按同比例约 29 GB。
+
+## 12. 待办（按提示词顺序）
 
 1. `NO-MAGIC-NUMBER` 3888 分三层收敛：模型结构/超参 → `YvConfig` + `configs/model/*.yaml`；
    训练/推理数值 → 阶段配置；协议与展示常量 → 类常量。
