@@ -287,7 +287,7 @@ class PiscesLxResidualSystemCheck(PiscesLxStandardCheck):
         re.compile(r"\bmcp_server\b"),
     )
 
-    _EXEMPT_ROOTS = ("third_party/", "docs/", ".git/")
+    _EXEMPT_ROOTS = ("third_party/", "docs/", ".git/", "tools/check/")
 
     def run(self, scanner: PiscesLxRepositoryScanner) -> list:
         """Report residual identifiers, skipping relocated third-party and doc trees."""
@@ -378,7 +378,7 @@ class PiscesLxModalityCheck(PiscesLxStandardCheck):
             )
         return violations
 
-    _EXEMPT = ("third_party/", "docs/")
+    _EXEMPT = ("third_party/", "docs/", "tools/check/")
 
     @staticmethod
     def _scan(source: PiscesLxSourceFile, patterns: tuple, rule: str, message: str) -> list:

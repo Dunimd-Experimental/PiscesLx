@@ -1,0 +1,36 @@
+=== A. 7B full-precision training memory on T4 (16 GB) ===
+  AdamW FP16 w/g + FP32 moments+master               =  16 B/param ->  112.0 GB  ratio vs 16GB = 7.00x
+  AdamW all-FP16 states                              =   8 B/param ->   56.0 GB  ratio vs 16GB = 3.50x
+  8-bit Adam + FP16 w/g                              =   6 B/param ->   42.0 GB  ratio vs 16GB = 2.62x
+  GaLore r=128: optimizer state = 0.47 GB (vs 56.0 GB for Adam FP32 states)
+  GaLore total (w2+g2+state) = 28.5 GB  -> fits 16GB? False
+  NOTE: weights+grads alone are 28 GB > 16 GB. Even with zero optimizer state, 7B cannot be
+        resident in FP16 w/ grads on one T4. Requires sharding/offload or a smaller activated set.
+
+=== B. Throughput: 1500 tok/s target on T4 ===
+  MFU=20% ->  13.0 TFLOPs eff -> max activated params for 1500 tok/s =  1.44 B
+  MFU=30% ->  19.5 TFLOPs eff -> max activated params for 1500 tok/s =  2.17 B
+  MFU=35% ->  22.8 TFLOPs eff -> max activated params for 1500 tok/s =  2.53 B
+  Memory-bandwidth bound (decode-ish): bytes/token ~ 2*N_act; at 320 GB/s -> 94 tok/s for N_act=1.7B
+
+=== C. Tokens needed for the stated loss target (Chinchilla fit, Hoffmann et al. 2022) ===
+  N=7B, D=1.0e+09 tokens -> predicted loss = 3.113
+  N=7B, D=1.0e+10 tokens -> predicted loss = 2.524
+  N=7B, D=4.4e+10 tokens -> predicted loss = 2.303
+  N=7B, D=1.0e+11 tokens -> predicted loss = 2.214
+  N=7B, D=1.0e+12 tokens -> predicted loss = 2.052
+  D required for loss<=2.3 (N=7B) = 4.49e+10 tokens
+  At 1500 tok/s: 185.2 T4-hours per 1B tokens -> 8,322 T4-hours total
+  Kaggle 3 accounts x 10 h/week = 30 h/week -> 277 weeks = 5.3 years
+
+=== D. MMLU>=85 feasibility for a 7B ===
+  D=1e+12: loss=2.052; ~1T tokens (7B-class SOTA open models); wall-clock = 185,185 T4-h = 119 years on 3 Kaggle accounts
+  D=1e+13: loss=1.967; ~10T tokens; wall-clock = 1,851,852 T4-h = 1187 years on 3 Kaggle accounts
+  Published 7B models trained on ~1T tokens report MMLU ~72-75, not 85. 85 is frontier-scale.
+
+=== E. 1M-token context KV cache on T4 ===
+  n_kv=4, hd=128, L=32: FP16 KV @1M tokens = 34.4 GB | 8-bit = 17.2 GB | 4-bit = 8.6 GB
+  n_kv=8, hd=128, L=32: FP16 KV @1M tokens = 68.7 GB | 8-bit = 34.4 GB | 4-bit = 17.2 GB
+  n_kv=2, hd=128, L=32: FP16 KV @1M tokens = 17.2 GB | 8-bit = 8.6 GB | 4-bit = 4.3 GB
+  plus 7B weights FP16 = 14 GB -> 1M ctx inference with the full 7B resident is impossible on 16 GB;
+  needs 4-bit weights (3.5 GB) + quantised/paged/sliding-window KV.

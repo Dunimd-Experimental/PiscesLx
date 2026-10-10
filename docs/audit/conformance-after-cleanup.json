@@ -2,54 +2,10 @@
   "repository": "D:/piscesl1",
   "files_scanned": 320,
   "checks_run": 11,
-  "duration_s": 8.895,
-  "errors": 4804,
+  "duration_s": 8.877,
+  "errors": 4788,
   "warnings": 12,
   "by_rule": {
-    "CLEAN-ENTA-ENCRE": [
-      {
-        "path": "tools/check/base.py",
-        "line": 65,
-        "message": "EnTA/Encre reference survives — the training agent system is deleted (matched `ENTA`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 262,
-        "message": "EnTA/Encre reference survives — the training agent system is deleted (matched `Encre`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 264,
-        "message": "EnTA/Encre reference survives — the training agent system is deleted (matched `ENTA`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 265,
-        "message": "EnTA/Encre reference survives — the training agent system is deleted (matched `Encre`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 273,
-        "message": "EnTA/Encre reference survives — the training agent system is deleted (matched `agentevolver`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 301,
-        "message": "EnTA/Encre reference survives — the training agent system is deleted (matched `ENTA`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 302,
-        "message": "EnTA/Encre reference survives — the training agent system is deleted (matched `Encre`)",
-        "severity": "error"
-      }
-    ],
     "CLEAN-MCP-SERVICE-LAYER": [
       {
         "path": "tools/infer/opss_integration.py",
@@ -153,54 +109,6 @@
         "path": "model/multimodal/generator.py",
         "line": 1271,
         "message": "watermark reference survives in model code — it belongs to the third-party tier (matched `watermark_enabled`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/base.py",
-        "line": 66,
-        "message": "watermark reference survives in model code — it belongs to the third-party tier (matched `WATERMARK`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 262,
-        "message": "watermark reference survives in model code — it belongs to the third-party tier (matched `watermark`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 265,
-        "message": "watermark reference survives in model code — it belongs to the third-party tier (matched `watermark`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 280,
-        "message": "watermark reference survives in model code — it belongs to the third-party tier (matched `watermark`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 299,
-        "message": "watermark reference survives in model code — it belongs to the third-party tier (matched `watermark`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 303,
-        "message": "watermark reference survives in model code — it belongs to the third-party tier (matched `WATERMARK`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 304,
-        "message": "watermark reference survives in model code — it belongs to the third-party tier (matched `watermark`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/runner.py",
-        "line": 100,
-        "message": "watermark reference survives in model code — it belongs to the third-party tier (matched `WATERMARK`)",
         "severity": "error"
       },
       {
@@ -2379,12 +2287,6 @@
         "path": "model/multimodal/rca_fusion.py",
         "line": 89,
         "message": "document survives as an independent modality — route it through agent+text (matched `\"document\", \"agent`)",
-        "severity": "error"
-      },
-      {
-        "path": "tools/check/checks_hygiene.py",
-        "line": 352,
-        "message": "document survives as an independent modality — route it through agent+text (matched `LayoutLM`)",
         "severity": "error"
       },
       {
