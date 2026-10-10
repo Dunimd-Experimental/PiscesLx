@@ -117,6 +117,11 @@ class TeacherSpec:
         role: Optional role tag (``"general"``, ``"reasoner"``,
             ``"multimodal"``, ``"tool"``).  EnTA does not interpret this
             field -- it is metadata for the training operator.
+        system_prompt: Optional system message prepended to every request
+            sent to this teacher (the teacher's persona / operating
+            instructions).  Empty by default, in which case the teacher
+            receives only the user prompt.  This is the primary lever for
+            shaping the reference trajectories produced during distillation.
         timeout: HTTP timeout override in seconds.  Defaults to ``None``
             which falls back to the backend's default.
         extra: Vendor-specific extra kwargs passed straight through to
@@ -129,6 +134,7 @@ class TeacherSpec:
     model: str = ""
     weight: float = 1.0
     role: str = "general"
+    system_prompt: str = ""
     timeout: float | None = None
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -259,6 +265,22 @@ class RoundtableResult:
         }
 
 
+def _prepend_system(
+    messages: list[dict[str, Any]],
+    system_prompt: str,
+) -> list[dict[str, Any]]:
+    """Return ``messages`` with ``system_prompt`` prepended as a system role.
+
+    No-op when ``system_prompt`` is empty or the conversation already opens
+    with a system message (so an explicit judge prompt is never overridden).
+    """
+    if not system_prompt:
+        return messages
+    if messages and messages[0].get("role") == "system":
+        return messages
+    return [{"role": "system", "content": system_prompt}, *messages]
+
+
 # ── Single-teacher client ──────────────────────────────────────────
 
 
@@ -326,7 +348,10 @@ class RemoteTeacherClient:
         Yields:
             :class:`BackendEvent` items.
         """
-        agen = self.backend.chat(messages=messages, **kwargs)
+        agen = self.backend.chat(
+            messages=_prepend_system(messages, self._spec.system_prompt),
+            **kwargs,
+        )
         async for event in agen:
             yield event
 
@@ -355,6 +380,7 @@ class RemoteTeacherClient:
             whatever text was produced up to the failure.
         """
         started = time.time()
+        messages = _prepend_system(messages, self._spec.system_prompt)
         text_chunks: list[str] = []
         reasoning_chunks: list[str] = []
         tool_calls: list[dict[str, Any]] = []
@@ -465,14 +491,33 @@ def _build_judge_prompt(prompt: str, candidates: Sequence[TeacherAnswer]) -> lis
         )
 
     system = (
-        "You are an impartial judge.  You will be given a user prompt and "
-        "several candidate answers from different teachers.  For each "
-        "candidate, output a single line in the exact format "
-        "`CANDIDATE <index>: <score>` where <score> is a float in [0, 1] "
-        "(higher is better).  After the scores, output a single line "
-        "`WINNER: <index>` naming the best candidate.  Then output a "
-        "single line `RATIONALE: <one-sentence explanation>`.  Do not "
-        "output anything else."
+        "You are an impartial senior evaluator for a multi-teacher "
+        "distillation round.  You will receive one user prompt and several "
+        "candidate answers from different teacher models.  Score EVERY "
+        "candidate independently on a 0.0-1.0 scale (higher = better) using "
+        "this rubric:\n"
+        "  - Correctness (40%): factually accurate, no hallucination, the "
+        "answer actually satisfies the prompt.\n"
+        "  - Reasoning quality (25%): clear, valid step-by-step logic; "
+        "sound for math / logic tasks and self-checked.\n"
+        "  - Tool-use & agency (20%): appropriate tool / action selection, "
+        "valid execution plan, respects safety boundaries (no destructive "
+        "or unauthorized actions), verifies results.\n"
+        "  - Knowledge fidelity (10%): relies on accurate retrieved / known "
+        "knowledge rather than fabrication or guessing; facts that can be "
+        "checked are verified (e.g. via web search) before being asserted.\n"
+        "  - Instruction following & clarity (5%): honours constraints, "
+        "well-structured, concise.\n"
+        "Candidates are student-model answers that may be augmented by an "
+        "external frozen knowledge body (lookup-computation separation): "
+        "reward answers that reason over knowledge faithfully and verify "
+        "facts instead of parroting or inventing them. Penalise unverified "
+        "or fabricated claims.\n"
+        "Output format (exactly, one line each, nothing else):\n"
+        "  CANDIDATE <index>: <score>\n"
+        "  ... (one line per candidate, in the given order)\n"
+        "  WINNER: <index>\n"
+        "  RATIONALE: <one concise sentence explaining the choice>"
     )
     user = (
         f"## User Prompt\n```\n{prompt}\n```\n\n"

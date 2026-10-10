@@ -79,6 +79,12 @@ from enta.tools.builtin.test_runner import EncreTestRunTool
 from enta.tools.builtin.todo import EncreTodoTool
 from enta.tools.builtin.web_fetch import EncreWebFetchTool
 from enta.tools.builtin.web_search import EncreWebSearchTool
+from enta.tools.builtin.train_checkpoints import EncreTrainCheckpointsTool
+from enta.tools.builtin.train_eval import EncreTrainEvalTool
+from enta.tools.builtin.train_launch import EncreTrainLaunchTool
+from enta.tools.builtin.train_orchestrate import EncreTrainOrchestrateTool
+from enta.tools.builtin.train_plan import EncreTrainPlanTool
+from enta.tools.builtin.train_status import EncreTrainStatusTool
 from enta.tools.builtin.workflow import EncreWorkflowTool
 
 
@@ -128,6 +134,12 @@ def build_default_tool_registry():
         EncreTaskUpdateTool(),
         EncreTestRunTool(),
         EncreTodoTool(),
+        EncreTrainCheckpointsTool(),
+        EncreTrainEvalTool(),
+        EncreTrainLaunchTool(),
+        EncreTrainOrchestrateTool(),
+        EncreTrainPlanTool(),
+        EncreTrainStatusTool(),
         EncreWebFetchTool(),
         EncreWebSearchTool(),
         EncreWorkflowTool(),
@@ -177,6 +189,12 @@ __all__ = [
     "EncreTaskUpdateTool",
     "EncreTestRunTool",
     "EncreTodoTool",
+    "EncreTrainCheckpointsTool",
+    "EncreTrainEvalTool",
+    "EncreTrainLaunchTool",
+    "EncreTrainOrchestrateTool",
+    "EncreTrainPlanTool",
+    "EncreTrainStatusTool",
     "EncreWebFetchTool",
     "EncreWebSearchTool",
     "EncreWorkflowTool",

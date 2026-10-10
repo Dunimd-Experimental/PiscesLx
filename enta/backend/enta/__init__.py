@@ -183,6 +183,12 @@ _LAZY_MAP: dict = {
     "EncreWebFetchTool": ("enta.tools.builtin.web_fetch", "EncreWebFetchTool"),
     "EncreWebSearchTool": ("enta.tools.builtin.web_search", "EncreWebSearchTool"),
     "EncreWorkflowTool": ("enta.tools.builtin.workflow", "EncreWorkflowTool"),
+    "EncreTrainPlanTool": ("enta.tools.builtin.train_plan", "EncreTrainPlanTool"),
+    "EncreTrainLaunchTool": ("enta.tools.builtin.train_launch", "EncreTrainLaunchTool"),
+    "EncreTrainStatusTool": ("enta.tools.builtin.train_status", "EncreTrainStatusTool"),
+    "EncreTrainCheckpointsTool": ("enta.tools.builtin.train_checkpoints", "EncreTrainCheckpointsTool"),
+    "EncreTrainEvalTool": ("enta.tools.builtin.train_eval", "EncreTrainEvalTool"),
+    "EncreTrainOrchestrateTool": ("enta.tools.builtin.train_orchestrate", "EncreTrainOrchestrateTool"),
     # Sandbox
     "EncreContainerSandbox": ("enta.sandbox.container", "EncreContainerSandbox"),
     "SandboxConfig": ("enta.sandbox.types", "SandboxConfig"),

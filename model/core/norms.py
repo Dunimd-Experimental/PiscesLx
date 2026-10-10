@@ -289,6 +289,11 @@ class YvRMSNorm(nn.Module):
         else:
             self.register_parameter('bias', None)
             
+    def reset_parameters(self):
+        nn.init.ones_(self.weight)
+        if self.use_bias and self.bias is not None:
+            nn.init.zeros_(self.bias)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Apply RMS normalization via unified core."""
         return _norm_forward(x, self.weight, self.bias, self.eps, mode='rms')
@@ -314,6 +319,10 @@ class YvLayerNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(dim, device=device, dtype=dtype))
         self.bias = nn.Parameter(torch.zeros(dim, device=device, dtype=dtype))
         
+    def reset_parameters(self):
+        nn.init.ones_(self.weight)
+        nn.init.zeros_(self.bias)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         mode = 'rms' if self.use_rms else 'layer'
         return _norm_forward(x, self.weight, self.bias, self.eps, mode=mode)
@@ -341,6 +350,12 @@ class YvAdaptiveLayerNorm(nn.Module):
         self.scale_proj = nn.Linear(cond_dim, dim, device=device, dtype=dtype)
         self.shift_proj = nn.Linear(cond_dim, dim, device=device, dtype=dtype)
         
+    def reset_parameters(self):
+        nn.init.ones_(self.weight)
+        nn.init.zeros_(self.bias)
+        self.scale_proj.reset_parameters()
+        self.shift_proj.reset_parameters()
+
     def forward(self, x: torch.Tensor, cond: torch.Tensor) -> torch.Tensor:
         return _norm_forward(
             x, self.weight, self.bias, self.eps, mode='adaptive',
@@ -374,6 +389,10 @@ class YvGroupNorm(nn.Module):
         self.weight = nn.Parameter(torch.ones(num_channels, device=device, dtype=dtype))
         self.bias = nn.Parameter(torch.zeros(num_channels, device=device, dtype=dtype))
         
+    def reset_parameters(self):
+        nn.init.ones_(self.weight)
+        nn.init.zeros_(self.bias)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         if self.use_rms:
             x = x.view(x.shape[0], self.num_groups, -1)

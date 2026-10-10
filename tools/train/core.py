@@ -953,6 +953,13 @@ class PiscesLxTrainingOperator(object):
                 mp_dtype = torch.bfloat16 if self.config.mixed_precision in ('bf16', 'bfloat16') else torch.float16
                 local_rank = int(_os.environ.get('LOCAL_RANK', '0'))
                 _cpu_offload = _est_params_gb > _vram_gb * 0.6 if _vram_gb > 0 else False
+                def _safe_param_init_fn(module):
+                    fn = getattr(module, 'reset_parameters', None)
+                    if fn is not None:
+                        try:
+                            fn()
+                        except Exception:
+                            pass
                 self.model = _FSDP(
                     self.model,
                     sharding_strategy=ShardingStrategy.FULL_SHARD,
@@ -966,6 +973,7 @@ class PiscesLxTrainingOperator(object):
                     forward_prefetch=_cpu_offload,
                     limit_all_gathers=True,
                     device_id=local_rank,
+                    param_init_fn=_safe_param_init_fn,
                 )
                 _LOG.info(
                     f"FSDP wrapping applied: shard=FULL_SHARD, cpu_offload={_cpu_offload}, "
@@ -975,7 +983,9 @@ class PiscesLxTrainingOperator(object):
                 _LOG.warning(f"FSDP initialization failed: {e}, falling back to DDP")
                 if any(p.device.type == 'meta' for p in self.model.parameters()):
                     _LOG.info("Materializing model from meta device for DDP fallback...")
-                    self.model.to(self.device)
+                    local_rank = int(_os.environ.get('LOCAL_RANK', '0'))
+                    real_device = torch.device(f'cuda:{local_rank}') if torch.cuda.is_available() else torch.device('cpu')
+                    self.model.to_empty(device=real_device)
                     if hasattr(self.model, 'reset_parameters'):
                         self.model.reset_parameters()
                     gc.collect()

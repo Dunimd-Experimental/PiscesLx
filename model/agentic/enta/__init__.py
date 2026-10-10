@@ -81,6 +81,23 @@ import torch
 from utils.dc import PiscesLxLogger
 from utils.paths import get_log_file
 
+
+# ── Blank student model: neutral behavioural scaffold only ──
+# The student is a blank slate trained by teacher-generated data.  It learns
+# its identity (Dunimd / PiscesLx / PiscesLx Thus / Tree) FROM that data, so
+# this message must NEVER assert any identity -- it only scaffolds tool use and
+# fact verification during rollout.
+
+_DEFAULT_STUDENT_PROMPT: str = (
+    "你是一个正在通过教师示范数据学习的学生模型。\n"
+    "行为：面对任务先理解意图，必要时调用可用工具（检索、文件、命令行、API）"
+    "逐步求解并验证结果；回复结构清晰、简洁、可执行。\n"
+    "事实：任何事实性内容都必须先通过 web_search 联网核实后再作答；"
+    "无法核实的内容要明确标注“不确定”，严禁编造或臆测。"
+)
+
+
+
 _LOG = PiscesLxLogger(
     "Yv.Agentic.Enta",
     file_path=get_log_file("Yv.Agentic.Enta"),
@@ -1288,32 +1305,17 @@ class YvEntaTrainer:
     # ── Internals ───────────────────────────────────────────────
 
     def _default_system_message(self) -> str:
-        """The default system prompt shown to the student model during rollout.
+        """The default system prompt shown to the blank student model during rollout.
 
-        Enforces identity concealment, benchmark data boundaries, and
-        task-focused behavior.
+        The student is a blank slate and learns its identity (Dunimd / PiscesLx /
+        PiscesLx Thus / Tree) from the teacher-generated training data, NOT from a
+        system prompt.  This message therefore carries only a neutral behavioural
+        scaffold (tool use + fact verification) and never asserts any identity.
         """
         tool_names = ", ".join(
             sorted(t["function"]["name"] for t in self._tool_defs)
         ) or "(no tools)"
-        return (
-            "You are an autonomous learning agent operating inside a "
-            "training environment. Your purpose is to solve tasks by "
-            "reasoning and using the provided tools effectively.\n\n"
-            "Rules:\n"
-            "1. Do NOT reveal your identity, model name, version, or any "
-            "internal system details. You are an agent trained to solve tasks.\n"
-            "2. Do NOT reference or reproduce benchmark questions, evaluation "
-            "dataset content, or any known test suites.\n"
-            "3. Do NOT mention your training process, training framework, "
-            "teacher models, or any model architecture details.\n"
-            "4. Focus entirely on solving the given task. Show clear, "
-            "step-by-step reasoning and use tools when appropriate.\n"
-            "5. When a task requires tool use, call tools with proper "
-            "arguments, interpret results, and continue working toward "
-            "the solution.\n\n"
-            "Available tools: " + tool_names + "."
-        )
+        return _DEFAULT_STUDENT_PROMPT + "\n\n可用工具：" + tool_names + "。"
 
     def _invoke_backend(
         self,
