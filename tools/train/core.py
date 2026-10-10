@@ -764,7 +764,7 @@ class PiscesLxTrainingOperator(object):
             self._resolve_init_device(quant_enabled, model_kwargs)
         elif _use_meta_fsdp:
             model_kwargs['device'] = 'meta'
-            model_kwargs['dtype'] = torch.float16
+            model_kwargs['dtype'] = self._init_dtype()
         else:
             model_kwargs.pop('device', None)
             model_kwargs.pop('dtype', None)
@@ -907,6 +907,19 @@ class PiscesLxTrainingOperator(object):
 
         return self.model
 
+    def _init_dtype(self) -> torch.dtype:
+        """Parameter dtype used to build the model, chosen by device and precision mode.
+
+        Forcing float16 broke CPU training: the fused-MLA and MoE linear layers then
+        hold half parameters while CPU activations stay float32, and the first forward
+        dies on ``expected m1 and m2 to have the same dtype``. CPU therefore builds in
+        float32; accelerator tiers honour the configured mixed precision.
+        """
+        if self.device.type != "cuda":
+            return torch.float32
+        precision = str(getattr(self.config, "mixed_precision", "") or "").lower()
+        return torch.bfloat16 if precision in ("bf16", "bfloat16") else torch.float16
+
     def _resolve_init_device(self, quant_enabled: bool, model_kwargs: dict) -> bool:
         """Determine whether to force CPU init and inject device/dtype into kwargs.
         Returns True when CPU init was forced."""
@@ -926,15 +939,15 @@ class PiscesLxTrainingOperator(object):
             if vram_gb >= 18 and not low_vram_heavy_arch:
                 _LOG.info(f"GPU VRAM {vram_gb:.1f}GB - using GPU initialization for quantization")
                 model_kwargs['device'] = self.device
-                model_kwargs['dtype'] = torch.float16
+                model_kwargs['dtype'] = self._init_dtype()
                 return False
             else:
                 _LOG.info(f"GPU VRAM {vram_gb:.1f}GB - using CPU initialization for quantization (low VRAM)")
         else:
             _LOG.info("CPU device - using CPU initialization for quantization")
         model_kwargs['device'] = 'cpu'
-        model_kwargs['dtype'] = torch.float16
-        _LOG.info("Low-VRAM mode: CPU+FP16 initialization for quantization")
+        model_kwargs['dtype'] = self._init_dtype()
+        _LOG.info(f"CPU init at {model_kwargs['dtype']} for quantization")
         return True
 
     def _resolve_training_device(self) -> torch.device:
