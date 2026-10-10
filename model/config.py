@@ -1006,9 +1006,7 @@ class YvConfig:
     # ========================================
     use_subconscious_blocks: bool = True
     block_count: int = 628                      # 314B / 0.5B blocks
-    # 0 means "derive": rows are fixed by the pool budget below, so the field can
-    # never contradict this tier's declared lookup side.
-    block_memory_rows: int = 0
+    block_memory_rows: int = 116_900            # associative rows; rows*hidden ~ 0.5B
     block_rank: int = 512                       # scoring bottleneck width
     block_trace_dim: int = 256                  # k, addressing trace width
     block_pool_slots: int = 2                   # device-resident blocks (see Fermi 3.1)
@@ -1082,15 +1080,6 @@ class YvConfig:
                 knowledge_b = 314.0 * 7.0 / core_b
             knowledge_b = min(max(knowledge_b, 7.0), 628.0)
             self.knowledge_num_experts = int(round(knowledge_b / 0.5))
-
-        if self.block_memory_rows <= 0 and self.block_count > 0:
-            # Pool-budget law: block_count x rows x hidden ~= lookup_params_total. The
-            # previous literal (116,900 rows) contradicted it by two orders of magnitude
-            # — 628 blocks x 116,900 x hidden would materialise ~47B parameters on a tier
-            # whose declared lookup side is 270M — and that is what exhausted host memory
-            # on the first subconscious step.
-            per_block = max(1.0, self.lookup_params_total / self.block_count)
-            self.block_memory_rows = max(8, int(per_block // max(1, self.hidden_size)))
 
     @classmethod
     def from_json(cls, path: str) -> 'YvConfig':
