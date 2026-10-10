@@ -185,6 +185,22 @@ class PiscesLxMoeRoutingContractTest:
                     f"{cls.TOKENS} tokens")
 
     @classmethod
+    def check_layer_survives_a_different_batch_shape(cls) -> None:
+        """UltraMem's skip residual is module state; it may not leak across batches."""
+        cfg = YvConfig()
+        cfg.hidden_size = HIDDEN
+        cfg.intermediate_size = 64
+        cfg.moe_num_experts = 4
+        cfg.moe_top_k = 2
+        cfg.diversity_weight = 0.0
+        layer = YvDynamicMoELayer(cfg, device=torch.device("cpu"), dtype=torch.float32)
+        layer.train()
+        first, _ = layer(torch.randn(1, 6, HIDDEN))
+        second, _ = layer(torch.randn(1, 11, HIDDEN))
+        cls._expect(tuple(second.shape) == (1, 11, HIDDEN),
+                    "a longer batch after a shorter one still returns its own shape")
+
+    @classmethod
     def _expect(cls, condition: bool, message: str) -> None:
         if not condition:
             raise AssertionError(message)
@@ -199,6 +215,7 @@ class PiscesLxMoeRoutingContractTest:
             cls.check_layers_run_fused_and_plain,
             cls.check_path_gate_recomputes_when_shape_changes,
             cls.check_gate_path_moe_cache_follows_the_batch,
+            cls.check_layer_survives_a_different_batch_shape,
         )
         failures = 0
         for check in checks:

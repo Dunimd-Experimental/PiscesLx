@@ -736,6 +736,21 @@ class YvDynamicMoELayer(nn.Module):
                     f"top-{self.top_k} routing{shared_info}{compute_info}"
                 )
 
+    SKIP_RESIDUAL_WEIGHT = 0.1
+
+    def _apply_skip_residual(self, final_output: torch.Tensor,
+                             shared_output: torch.Tensor) -> torch.Tensor:
+        """Add the previous shared-expert pass, but only while the shapes still agree.
+
+        UltraMem reuses the last shared-expert output as a skip residual. The buffer
+        lives on the module, so a shorter batch before a longer one used to be added to
+        mismatched activations; a shape change now starts a fresh residual instead.
+        """
+        buffer = getattr(self, "_skip_buffer", None)
+        if buffer is not None and buffer.shape == final_output.shape:
+            final_output = final_output + self.SKIP_RESIDUAL_WEIGHT * buffer
+        self._skip_buffer = shared_output.detach()
+        return final_output
     def _build_router(
         self,
         cfg: Any,
@@ -933,9 +948,7 @@ class YvDynamicMoELayer(nn.Module):
         # Auto-enabled when shared_experts exist
         # Based on: ByteDance ICLR 2025
         if self.shared_experts is not None:
-            if hasattr(self, '_skip_buffer') and self._skip_buffer is not None:
-                final_output = final_output + 0.1 * self._skip_buffer
-            self._skip_buffer = shared_output.detach()
+            final_output = self._apply_skip_residual(final_output, shared_output)
         
         # Expert Evolution: Update usage statistics and apply Hebbian learning
         if self.use_expert_evolution and hasattr(self, 'expert_evolution'):
@@ -1361,9 +1374,7 @@ class YvDeepSeekMoELayer(YvDynamicMoELayer):
             final_output = routed_output
         
         if self.shared_experts is not None:
-            if hasattr(self, '_skip_buffer') and self._skip_buffer is not None:
-                final_output = final_output + 0.1 * self._skip_buffer
-            self._skip_buffer = shared_output.detach()
+            final_output = self._apply_skip_residual(final_output, shared_output)
         
         diversity_loss = torch.tensor(0.0, device=x.device, dtype=x.dtype)
         

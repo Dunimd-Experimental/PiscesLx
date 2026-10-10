@@ -47,6 +47,9 @@ class PiscesLxRegressionSuiteChecker:
 
     SUITE_GLOB = "test_*.py"
     TIMEOUT_S = 900
+    MESSAGE_CHARS = 120
+    SUMMARY_CHARS = 200
+    FALLBACK_LINES = 1
     SUMMARY_MARKERS = ("checks passed", "checks failed", "FAIL")
 
     def __init__(self, root_path: str = ".", verbose: bool = False) -> None:
@@ -86,12 +89,12 @@ class PiscesLxRegressionSuiteChecker:
             return
         failure = next((line for line in lines if line.startswith("[FAIL]")), summary)
         if not failure:
-            failure = (completed.stderr or "").strip().splitlines()[-1:] or [""]
+            failure = (completed.stderr or "").strip().splitlines()[-self.FALLBACK_LINES:] or [""]
             failure = failure[0]
         self._add(suite.stem, "FAIL",
                   f"{failure} | {summary}" if summary else failure, time.time() - start)
 
     def _add(self, name: str, status: str, message: str, duration: float) -> None:
         if self.verbose or status != "PASS":
-            print(f"  [{status}] {name}: {message[:120]}")
-        self.results.append((name, status, message[:200], duration))
+            print(f"  [{status}] {name}: {message[: self.MESSAGE_CHARS]}")
+        self.results.append((name, status, message[: self.SUMMARY_CHARS], duration))

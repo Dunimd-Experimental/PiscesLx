@@ -79,7 +79,7 @@ class PiscesLxCheckpointVerifier:
         payload = torch.load(self.checkpoint_path, map_location="cpu", weights_only=False)
         report = {
             "checkpoint": self.checkpoint_path.as_posix(),
-            "size_gb": round(self.checkpoint_path.stat().st_size / self.BYTES_PER_GB, 3),
+            "size_gb": round(self.checkpoint_path.stat().st_size / self.BYTES_PER_GB, self.SIZE_DIGITS),
             "keys": sorted(payload) if isinstance(payload, dict) else type(payload).__name__,
             "global_step": payload.get("global_step") if isinstance(payload, dict) else None,
             "recorded_loss": self._recorded_loss(payload),
@@ -97,6 +97,9 @@ class PiscesLxCheckpointVerifier:
             report["loadable"]["ok"] and report["trained"]["ok"] and report["perplexity"]["ok"]
         )
         return report
+
+    def _round(self, value: float) -> float:
+        return round(value, self.SCORE_DIGITS)
 
     @staticmethod
     def _recorded_loss(payload) -> object:
@@ -118,9 +121,9 @@ class PiscesLxCheckpointVerifier:
         )
         return {
             "ok": not (missing or unexpected or shape_mismatch),
-            "missing": missing[:5],
-            "unexpected": unexpected[:5],
-            "shape_mismatch": shape_mismatch[:5],
+            "missing": missing[: self.REPORT_LIST_ITEMS],
+            "unexpected": unexpected[: self.REPORT_LIST_ITEMS],
+            "shape_mismatch": shape_mismatch[: self.REPORT_LIST_ITEMS],
             "tensors": len(state),
         }
 
@@ -142,7 +145,7 @@ class PiscesLxCheckpointVerifier:
             "changed": changed,
             "unchanged": len(identical),
             "compared": compared,
-            "first_unchanged": identical[:5],
+            "first_unchanged": identical[: self.REPORT_LIST_ITEMS],
         }
 
     def _check_usable(self, model: YvModel, state: dict) -> dict:
@@ -174,8 +177,8 @@ class PiscesLxCheckpointVerifier:
         mean_loss = total_loss / tokens
         return {
             "ok": math.isfinite(mean_loss) and mean_loss > 0,
-            "mean_loss": round(mean_loss, 4),
-            "perplexity": round(math.exp(min(mean_loss, 50.0)), 2),
+            "mean_loss": round(mean_loss, self.LOSS_DIGITS),
+            "perplexity": self._round(math.exp(min(mean_loss, self.PERPLEXITY_EXPONENT_CAP))),
             "tokens_scored": tokens,
             "documents": len(samples),
             "pad_id": pad_id,
