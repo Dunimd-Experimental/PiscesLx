@@ -262,6 +262,7 @@ class YvMoEGate(nn.Module):
         self._path_moe_stage_size = getattr(cfg, 'path_moe_stage_size', 4) if cfg is not None else 4
         self._path_moe_layer_idx = 0
         self._path_moe_cache = None
+        self._path_moe_signature = None
 
         # GSA-style learnable sparse gates for routing mechanism cost optimization
         self.sparse_gate_hicl = nn.Parameter(torch.tensor(5.0, device=device, dtype=dtype))
@@ -404,7 +405,17 @@ class YvMoEGate(nn.Module):
 
         # === Step 11: PathMoE cache ===
         if self._path_moe_stage_size > 1:
-            if self._path_moe_layer_idx == 0:
+            # Sharing one assignment across a stage is the point of PathMoE, but the
+            # cached rows are only meaningful for the input they were routed from: a new
+            # batch (or a phase change) with a different token count must re-route,
+            # otherwise the following layers dispatch a stale row count against their
+            # own tokens.
+            signature = (x_flat.size(0), self.training)
+            if signature != self._path_moe_signature:
+                self._path_moe_layer_idx = 0
+                self._path_moe_cache = None
+                self._path_moe_signature = signature
+            if self._path_moe_layer_idx == 0 or self._path_moe_cache is None:
                 self._path_moe_cache = (top_scores, top_idx)
             else:
                 top_scores, top_idx = self._path_moe_cache

@@ -98,8 +98,13 @@ class PiscesLxMoeRoutingContractTest:
         cls._expect(served <= capacity,
                     f"expert 0 served {served} tokens but capacity is {capacity}")
         collapsed = (indices == 0).any(dim=-1).sum().item()
-        cls._expect(collapsed > served,
-                    "over-capacity slots were zeroed rather than dropped from the table")
+        if collapsed > capacity:
+            cls._expect(served == capacity,
+                        f"over-capacity demand ({collapsed}) is trimmed exactly to "
+                        f"capacity ({capacity}), not left in the table")
+        else:
+            cls._expect(served == collapsed,
+                        f"within capacity ({capacity}) nothing is dropped")
         totals = weights.sum(dim=-1)
         kept = totals > 0
         cls._expect(bool(torch.allclose(totals[kept], torch.ones_like(totals[kept]),
@@ -162,6 +167,24 @@ class PiscesLxMoeRoutingContractTest:
                     "layers inside a stage keep sharing one routing decision")
 
     @classmethod
+    def check_gate_path_moe_cache_follows_the_batch(cls) -> None:
+        """YvMoEGate's own stage sharing must re-route when the batch changes."""
+        from model.moe.gate import YvMoEGate
+
+        cfg = YvConfig()
+        cfg.hidden_size = HIDDEN
+        cfg.moe_num_experts = 4
+        cfg.moe_top_k = 2
+        cfg.path_moe_stage_size = 4
+        gate = YvMoEGate(hidden_size=HIDDEN, num_experts=4, top_k=2, cfg=cfg)
+        gate.train()
+        _, idx_small, _ = gate(torch.randn(1, 6, HIDDEN))
+        _, idx_big, _ = gate(torch.randn(1, cls.TOKENS, HIDDEN))
+        cls._expect(int(idx_big.shape[0]) == cls.TOKENS,
+                    "the shared stage does not replay a 6-token routing onto "
+                    f"{cls.TOKENS} tokens")
+
+    @classmethod
     def _expect(cls, condition: bool, message: str) -> None:
         if not condition:
             raise AssertionError(message)
@@ -175,6 +198,7 @@ class PiscesLxMoeRoutingContractTest:
             cls.check_dispatch_accepts_the_gate,
             cls.check_layers_run_fused_and_plain,
             cls.check_path_gate_recomputes_when_shape_changes,
+            cls.check_gate_path_moe_cache_follows_the_batch,
         )
         failures = 0
         for check in checks:
