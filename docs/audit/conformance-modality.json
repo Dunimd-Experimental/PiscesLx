@@ -1,9 +1,9 @@
 {
   "repository": "D:/piscesl1",
-  "files_scanned": 319,
+  "files_scanned": 320,
   "checks_run": 11,
-  "duration_s": 9.328,
-  "errors": 4661,
+  "duration_s": 9.31,
+  "errors": 4677,
   "warnings": 12,
   "by_rule": {
     "CLEAN-MCP-SERVICE-LAYER": [
@@ -25625,6 +25625,102 @@
         "path": "tools/test/stages/optimization.py",
         "line": 176,
         "message": "unexplained numeric literal `8` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 64,
+        "message": "unexplained numeric literal `1000000000.0` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 69,
+        "message": "unexplained numeric literal `1000.0` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 108,
+        "message": "unexplained numeric literal `8000000000.0` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 108,
+        "message": "unexplained numeric literal `1000.0` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 114,
+        "message": "unexplained numeric literal `83.3` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 115,
+        "message": "unexplained numeric literal `16.7` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 115,
+        "message": "unexplained numeric literal `5.0` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 116,
+        "message": "unexplained numeric literal `0.06` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 117,
+        "message": "unexplained numeric literal `16.7` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 118,
+        "message": "unexplained numeric literal `160768.0` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 119,
+        "message": "unexplained numeric literal `0.00032` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 120,
+        "message": "unexplained numeric literal `9.295` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 121,
+        "message": "unexplained numeric literal `540000000000.0` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 122,
+        "message": "unexplained numeric literal `270000000000.0` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 122,
+        "message": "unexplained numeric literal `8` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
+        "severity": "error"
+      },
+      {
+        "path": "tools/test/test_sbf_constants.py",
+        "line": 123,
+        "message": "unexplained numeric literal `0.96` — bind it to a named constant sourced from configuration, or comment the reason it is fixed",
         "severity": "error"
       },
       {
