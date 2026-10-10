@@ -123,6 +123,12 @@ class PiscesLxTopLevelFunctionCheck(PiscesLxStandardCheck):
     rule = "EXPOSE-CLASSES-ONLY"
     description = "module-level def must move into the owning class"
 
+    #: PEP 562 package hooks. ``__getattr__``/``__dir__`` in an ``__init__.py`` *are* the
+    #: import mechanism (lazy attribute resolution on a package) and cannot live in a
+    #: class: Python looks them up as module attributes. Exempted for the same reason the
+    #: standard already exempts imports and module constants in ``__init__.py``.
+    PACKAGE_HOOKS = frozenset({"__getattr__", "__dir__"})
+
     def run(self, scanner: PiscesLxRepositoryScanner) -> list:
         """Collect module-level function definitions."""
         return self.run_per_file(scanner)
@@ -136,6 +142,8 @@ class PiscesLxTopLevelFunctionCheck(PiscesLxStandardCheck):
         parents = PiscesLxAstWalker.enclosing_classes(tree)
         for node in self.module_level_defs(tree):
             if PiscesLxAstWalker.is_inside_main_guard(node, parents):
+                continue
+            if source.is_init and node.name in self.PACKAGE_HOOKS:
                 continue
             violations.append(
                 PiscesLxViolation(
