@@ -768,8 +768,12 @@ class YvSelectiveScan(nn.Module):
         d_state = self.d_state
         A_4d = A.unsqueeze(0).unsqueeze(0)
 
+        # One preallocated [batch, seq, d_model] buffer instead of a Python list of
+        # per-step results: the list kept every intermediate alive for the backward pass
+        # and then torch.stack() copied them again, which is what pushed a long scan past
+        # the host's commit limit mid-training. The recurrence itself is untouched.
         h = torch.zeros(batch, d_state, d_model, device=u.device, dtype=u.dtype)
-        outputs = []
+        output = torch.empty(batch, seq_len, d_model, device=u.device, dtype=u.dtype)
 
         for t in range(seq_len):
             dt = delta[:, t:t+1]
@@ -781,10 +785,9 @@ class YvSelectiveScan(nn.Module):
             deltaB_u_t = dt.unsqueeze(-2) * Bt.unsqueeze(-1) * ut.unsqueeze(-2)
 
             h = deltaA_t[:, 0] * h + deltaB_u_t[:, 0]
-            y = torch.einsum('bs,bsd->bd', Ct[:, 0], h)
-            outputs.append(y)
+            output[:, t] = torch.einsum('bs,bsd->bd', Ct[:, 0], h)
 
-        return torch.stack(outputs, dim=1)
+        return output
 
     def _associative_scan(self, delta: torch.Tensor, A: torch.Tensor, B: torch.Tensor, C: torch.Tensor, u: torch.Tensor) -> torch.Tensor:
         """Associative scan for long sequences with parallel computation.
