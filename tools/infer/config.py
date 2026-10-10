@@ -47,7 +47,7 @@ Features:
 Usage Examples:
     Creating configuration programmatically:
     >>> config = PiscesLxInferenceConfig(
-    ...     model=PiscesLxModelConfig(model_path="meta-llama/Llama-2-7b"),
+    ...     model=PiscesLxModelConfig(model_path="./checkpoints/PiscesL1-7B"),
     ...     generation=PiscesLxGenerationConfig(temperature=0.8, max_new_tokens=512),
     ...     acceleration=PiscesLxAccelerationConfig(use_vllm=True, tensor_parallel_size=2)
     ... )
@@ -85,8 +85,8 @@ class PiscesLxModelConfig:
     
     Example:
         >>> model_config = PiscesLxModelConfig(
-        ...     model_path="meta-llama/Llama-2-7b-hf",
-        ...     model_type="llama",
+        ...     model_path="./checkpoints/PiscesL1-7B",
+        ...     model_type="piscesl1",
         ...     trust_remote_code=False
         ... )
     """
@@ -320,7 +320,7 @@ class PiscesLxInferenceConfig:
     
     Example:
         >>> config = PiscesLxInferenceConfig(
-        ...     model=PiscesLxModelConfig(model_path="meta-llama/Llama-2-7b"),
+        ...     model=PiscesLxModelConfig(model_path="./checkpoints/PiscesL1-7B"),
         ...     generation=PiscesLxGenerationConfig(temperature=0.7),
         ...     acceleration=PiscesLxAccelerationConfig(use_vllm=True)
         ... )

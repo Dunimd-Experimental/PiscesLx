@@ -75,6 +75,7 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from utils.dc import PiscesLxLogger
+from utils.device import PiscesLxDeviceResolver
 from utils.paths import get_log_file
 from configs.version import VERSION
 
@@ -134,7 +135,7 @@ class PiscesLxTeacherConfig:
     provider_type: str = "local"
     
     model_path: Optional[str] = None
-    device: str = "cuda:0"
+    device: str = PiscesLxDeviceResolver.AUTO
     torch_dtype: str = "float16"
     offload_strategy: str = "auto"
     

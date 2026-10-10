@@ -219,7 +219,7 @@ class YvUnifiedMultiPathReasoningSystem:
             >>> system = YvUnifiedMultiPathReasoningSystem(
             ...     model=model,
             ...     tokenizer=tokenizer,
-            ...     device='cuda:0'
+            ...     device=None  # resolved by YvDeviceResolver
             ... )
         
         Note:

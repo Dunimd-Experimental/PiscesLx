@@ -140,6 +140,7 @@ from utils.dc import PiscesLxLogger, PiscesLxSystemMonitor
 
 from .config import PiscesLxTrainingConfig
 
+from utils.device import PiscesLxDeviceResolver
 from utils.paths import get_log_file
 _LOG = PiscesLxLogger("PiscesLx.Tools.Train", file_path=get_log_file("PiscesLx.Tools.Train"), enable_file=True)
 
@@ -167,23 +168,20 @@ def setup_training_device(local_rank: int = -1, device_pref: str = "auto") -> to
                     _LOG.info("Training mode: cpu (high memory usage)")
                 else:
                     if local_rank >= 0:
-                        device = torch.device(f"cuda:{local_rank}")
+                        device = PiscesLxDeviceResolver.resolve(None, local_rank=local_rank)
                         torch.cuda.set_device(device)
                     else:
-                        device = torch.device("cuda:0")
+                        device = PiscesLxDeviceResolver.default()
                 _LOG.info(f"Training device: {device}")
                 return device
     except Exception as e:
         _LOG.warning(f"System Monitor failed, falling back: {e}")
     
     if torch.cuda.is_available():
-        if local_rank >= 0:
-            device = torch.device(f"cuda:{local_rank}")
-            torch.cuda.set_device(device)
-        else:
-            device = torch.device("cuda:0")
+        device = PiscesLxDeviceResolver.resolve(None, local_rank=local_rank)
+        torch.cuda.set_device(device)
     else:
-        device = torch.device("cpu")
+        device = torch.device(PiscesLxDeviceResolver.FALLBACK)
     
     return device
 
@@ -992,10 +990,10 @@ class PiscesLxTrainingOperator(object):
             if torch.cuda.device_count() == 0:
                 return self.device
             # Test allocation — some driver mismatches still allow CUDA to work
-            _test = torch.zeros(1, device="cuda:0")
-            del _test
+            if not PiscesLxDeviceResolver.probe(self.device):
+                raise RuntimeError("probe allocation failed")
             _LOG.info("GPU probe succeeded (despite any driver warnings)")
-            return torch.device("cuda:0")
+            return self.device
         except Exception as e:
             _LOG.warning(f"GPU probe failed ({e}), training on {self.device}")
             return self.device

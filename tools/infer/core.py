@@ -51,7 +51,7 @@ Performance Characteristics:
 Usage Examples:
     Basic inference:
     >>> from tools.infer import PiscesLxInferenceConfig, PiscesLxInferenceEngine
-    >>> config = PiscesLxInferenceConfig(model_path="meta-llama/Llama-2-7b")
+    >>> config = PiscesLxInferenceConfig(model_path="./checkpoints/PiscesL1-7B")
     >>> engine = PiscesLxInferenceEngine(config)
     >>> result = engine.generate("Hello, world!")
 
@@ -206,11 +206,11 @@ class PiscesLxInferenceEngine(object):
 
     Supported Backends:
         - VLLM: High-throughput inference with PagedAttention
-        - PyTorch: Flexible inference with transformers integration
+        - PyTorch: native PiscesL1 execution path
 
     Example:
         >>> config = PiscesLxInferenceConfig(
-        ...     model_path="meta-llama/Llama-2-7b",
+        ...     model_path="./checkpoints/PiscesL1-7B",
         ...     acceleration=PiscesLxAccelerationConfig(use_vllm=True)
         ... )
         >>> engine = PiscesLxInferenceEngine(config)

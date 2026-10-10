@@ -103,6 +103,9 @@ class PiscesLxHardcodingCheck(PiscesLxStandardCheck):
                     )
                     break
             match = PiscesLxRegexLibrary.CUDA_DEVICE.search(line)
+            # ``nvidia/cuda:12.1-...`` is a Docker base-image tag, not a pinned GPU.
+            if match and "nvidia/cuda" in line:
+                match = None
             if match:
                 violations.append(
                     PiscesLxViolation(
