@@ -162,7 +162,6 @@ from .core import (
     YvMHCTransformer,
     YvMHCLayerReplacement,
     YvMHCLoss,
-    create_mhc_transformer,
     YvUnifiedCacheManager,
     YvCacheConfig,
     YvCacheType,
@@ -245,7 +244,6 @@ from .moe import (
     YvExpertFactory,
     YvExpertConfig,
     YvExpertType,
-    create_expert_module,
 )
 
 from .multimodal import (
@@ -346,7 +344,6 @@ __all__ = [
     "YvMHCTransformer",
     "YvMHCLayerReplacement",
     "YvMHCLoss",
-    "create_mhc_transformer",
 
     "YvUnifiedCacheManager",
     "YvCacheConfig",
@@ -430,7 +427,6 @@ __all__ = [
     "YvExpertFactory",
     "YvExpertConfig",
     "YvExpertType",
-    "create_expert_module",
 
     "YvUnifiedReasoner",
     "YvVisionEncoder",

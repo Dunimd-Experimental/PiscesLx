@@ -621,8 +621,8 @@ class YvSelfDevelopedGenerator(nn.Module):
     
     def _encode_text(self, text: str) -> torch.Tensor:
         """Encode text using the project tokenizer."""
-        from model.tokenizer import get_tokenizer
-        tokenizer = get_tokenizer()
+        from model.tokenizer import YvTokenizer
+        tokenizer = YvTokenizer()
         tokens = tokenizer.encode(text, return_tensors="pt")
         if tokens.dim() == 1:
             tokens = tokens.unsqueeze(0)

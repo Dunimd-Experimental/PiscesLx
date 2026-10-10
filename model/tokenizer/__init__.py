@@ -54,7 +54,7 @@ Special Tokens (Loaded from tokenizer_config.json):
     =======================  =====================================
 
 Example:
-    >>> from model.tokenizer import YvTokenizer, get_tokenizer
+    >>> from model.tokenizer import YvTokenizer
     >>>
     >>> tokenizer = YvTokenizer()
     >>>
@@ -73,13 +73,17 @@ Note:
     This file embeds vocabulary, merge rules, and configuration.
 """
 
-from .tokenizer import YvTokenizer, get_tokenizer, EXTENDED_VOCAB_SIZE, YvExtendedTokenizerConfig, YvTokenizer160K
+from .tokenizer import (
+    YvTokenizer,
+    EXTENDED_VOCAB_SIZE,
+    YvExtendedTokenizerConfig,
+    YvTokenizer160K,
+)
 from .builder import YvTokenizerBuilder, YvTokenizerConfig
 from .special_tokens import YvSpecialTokens, YvSpecialTokenType
 
 __all__ = [
     "YvTokenizer",
-    "get_tokenizer",
     "EXTENDED_VOCAB_SIZE",
     "YvExtendedTokenizerConfig",
     "YvTokenizer160K",

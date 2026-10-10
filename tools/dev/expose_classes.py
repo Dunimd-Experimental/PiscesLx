@@ -37,8 +37,11 @@ tool that silently rewrote ``main()`` calls in unrelated modules:
      ``(?=\\s*\\()`` lookahead, so the replacement must be the dotted name only.
   4. **Every written file must re-parse**, otherwise it is skipped and reported.
   5. **Each source module is one reviewable change** — pass one file at a time.
+  6. **Self-references are rewritten too**: the module's own ``if __name__ == "__main__"``
+     guard and its sibling classes are repointed at the new dotted name, so moving a
+     function cannot leave a dangling bare call behind.
 
-Usage: ``python tools/dev/expose_classes.py <module.py> [--owner Class] [--apply]``
+Usage: ``python tools/dev/expose_classes.py <module.py> [--owner Class] [--only f1,f2] [--apply]``
 """
 
 import argparse
@@ -57,10 +60,12 @@ class PiscesLxClassExposureTool:
     ALLOWED_DECORATORS = frozenset({"staticmethod", "classmethod"})
     GUARD = r"(?<!def )(?<![\w.])"
 
-    def __init__(self, module: pathlib.Path, owner: str = "", apply: bool = False) -> None:
+    def __init__(self, module: pathlib.Path, owner: str = "", apply: bool = False,
+                 only: str = "") -> None:
         self.module = pathlib.Path(module)
         self.owner = owner
         self.apply = apply
+        self.only = {name for name in only.split(",") if name}
         self.notes = []
         self.reported = []
 
@@ -133,6 +138,15 @@ class PiscesLxClassExposureTool:
                 end += 1
             del head[start:end]
 
+        # References left in the module itself (the ``if __name__ == "__main__"`` guard,
+        # sibling classes, decorated functions we could not move) still named the old
+        # top-level symbols; without this they raise NameError at import time.
+        names = [f.name for f in funcs]
+        surviving = "\n".join(head)
+        for name in names:
+            surviving = re.sub(self.GUARD + re.escape(name) + r"(?=\s*\()", f"{cls}.{name}", surviving)
+        head = surviving.split("\n")
+
         methods = self.method_block(funcs, cls)
         existing = next((i for i, l in enumerate(head) if l.startswith(f"class {cls}")), None)
         if existing is None:
@@ -153,7 +167,9 @@ class PiscesLxClassExposureTool:
                 break
         while end > existing + 1 and not head[end - 1].strip():
             end -= 1
-        merged = head[:end] + [""] + methods.rstrip("\n").split("\n") + head[end:]
+        # Two blank lines must separate the absorbed methods from whatever top-level
+        # statement follows, otherwise the rebuilt file is valid but violates §6.1 layout.
+        merged = head[:end] + [""] + methods.rstrip("\n").split("\n") + ["", ""] + head[end:]
         return "\n".join(merged)
 
     # ── callers ───────────────────────────────────────────────────────────────
@@ -210,7 +226,7 @@ class PiscesLxClassExposureTool:
                 matched.append(node)
         return bool(matched), matched
 
-    def rewrite_caller(self, path, text, cls, names, import_nodes=()):
+    def rewrite_caller(self, path, text, cls, names, import_nodes=(), supply_cls=True):
         for name in names:
             text = re.sub(self.GUARD + re.escape(name) + r"(?=\s*\()", f"{cls}.{name}", text)
         if not import_nodes:
@@ -219,14 +235,19 @@ class PiscesLxClassExposureTool:
         # Rewrite from the bottom up so earlier line numbers stay valid.
         for node in sorted(import_nodes, key=lambda n: -n.lineno):
             kept = [a.asname or a.name for a in node.names
-                    if a.name not in names and a.name != "*"]
-            payload = ", ".join([cls] + kept)
+                    if a.name not in names and a.name != "*" and (a.asname or a.name) != cls]
+            wanted = ([cls] if supply_cls else []) + kept
             spec = "." * node.level + (node.module or "")
             indent = re.match(r"[ \t]*", lines[node.lineno - 1]).group(0)
-            statement = f"{indent}from {spec} import {payload}"
-            if len(statement) > 96 and kept:
-                body = "".join(f"\n{indent}    {name}," for name in [cls] + kept)
-                statement = f"{indent}from {spec} import ({body}\n{indent})"
+            if not wanted:
+                # Every symbol this statement imported has moved and the owner class is
+                # already bound elsewhere in the file: the statement itself is dead.
+                statement = ""
+            else:
+                statement = f"{indent}from {spec} import {', '.join(wanted)}"
+                if len(statement) > 96 and kept:
+                    body = "".join(f"\n{indent}    {name}," for name in wanted)
+                    statement = f"{indent}from {spec} import ({body}\n{indent})"
             lines[node.lineno - 1:node.end_lineno] = statement.split("\n")
         return "\n".join(lines)
 
@@ -237,6 +258,13 @@ class PiscesLxClassExposureTool:
             print(f"{self.module}: no movable top-level functions")
             return 0
         funcs, classes, skipped = collected
+        if self.only:
+            skipped = skipped + [(f.name, "not selected by --only")
+                                 for f in funcs if f.name not in self.only]
+            funcs = [f for f in funcs if f.name in self.only]
+            if not funcs:
+                print(f"{self.module}: no function matched --only")
+                return 0
         for name, why in skipped:
             self.notes.append(f"{self.module}: kept in place: {name} ({why})")
         cls = self.class_name(classes)
@@ -259,8 +287,11 @@ class PiscesLxClassExposureTool:
             return 0
         self.module.write_text(new_source, encoding="utf-8", newline="")
         written = 0
+        supplied = set()
         for path, text, nodes in callers:
-            updated = self.rewrite_caller(path, text, cls, names, nodes)
+            updated = self.rewrite_caller(path, text, cls, names, nodes,
+                                          supply_cls=path not in supplied)
+            supplied.add(path)
             try:
                 ast.parse(updated)
             except SyntaxError as error:
@@ -280,9 +311,10 @@ class PiscesLxClassExposureTool:
         parser = argparse.ArgumentParser(prog="tools/dev/expose_classes.py")
         parser.add_argument("module")
         parser.add_argument("--owner", default="", help="existing class to absorb into")
+        parser.add_argument("--only", default="", help="comma-separated subset of functions to move")
         parser.add_argument("--apply", action="store_true")
         args = parser.parse_args(argv)
-        return cls(pathlib.Path(args.module), args.owner, args.apply).run()
+        return cls(pathlib.Path(args.module), args.owner, args.apply, args.only).run()
 
 
 if __name__ == "__main__":

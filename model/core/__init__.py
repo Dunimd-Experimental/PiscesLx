@@ -177,7 +177,6 @@ from .blocks import (
     YvMHCTransformer,
     YvMHCLayerReplacement,
     YvMHCLoss,
-    create_mhc_transformer,
 )
 
 from .cache import (
@@ -304,7 +303,6 @@ __all__ = [
     "YvMHCTransformer",
     "YvMHCLayerReplacement",
     "YvMHCLoss",
-    "create_mhc_transformer",
 
     "YvUnifiedCacheManager",
     "YvCacheConfig",

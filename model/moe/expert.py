@@ -78,8 +78,7 @@ Usage Example:
     >>> from model.moe.expert import (
     ...     YvExpertFactory,
     ...     YvExpertConfig,
-    ...     YvExpertType,
-    ...     create_expert_module
+    ...     YvExpertType
     ... )
     >>> 
     >>> # Create expert using factory
@@ -91,13 +90,6 @@ Usage Example:
     ... )
     >>> expert = YvExpertFactory.create(config)
     >>> output = expert(hidden_states)
-    >>> 
-    >>> # Create expert using convenience function
-    >>> expert = create_expert_module(
-    ...     hidden_size=4096,
-    ...     intermediate_size=11008,
-    ...     expert_type="swiglu"
-    ... )
 
 Note:
     All classes follow the YvXxx naming convention.
@@ -816,9 +808,6 @@ class YvExpertFactory:
         ...     YvExpertType.ATTENTION,
         ...     MyCustomExpert
         ... )
-    
-    Note:
-        Use create_expert_module() for simpler expert creation.
     """
 
     _registry: Dict[YvExpertType, type] = {
@@ -897,52 +886,3 @@ class YvExpertFactory:
             ... )
         """
         cls._registry[expert_type] = expert_class
-
-
-def create_expert_module(
-    hidden_size: int,
-    intermediate_size: int,
-    expert_type: str = "swiglu",
-    dropout: float = 0.0,
-    use_bias: bool = False,
-    device=None,
-    dtype=None,
-    mode: YvExpertMode = YvExpertMode.PURE_COMPUTE,
-    **kwargs
-) -> YvExpertBase:
-    """Convenience function to create an expert module.
-    
-    Creates an expert network with the specified parameters without
-    requiring explicit configuration object creation.
-    
-    Args:
-        hidden_size: Input and output hidden dimension.
-        intermediate_size: Intermediate dimension for expert.
-        expert_type: Expert type name string. Default: "swiglu".
-        dropout: Dropout probability. Default: 0.0.
-        use_bias: Whether to use bias in linear layers. Default: False.
-        device: Device to place parameters on.
-        dtype: Data type for parameters.
-        mode: Execution mode for compute/lookup split. Default: PURE_COMPUTE.
-        **kwargs: Additional arguments for specific expert types.
-    
-    Returns:
-        Configured expert instance.
-    
-    Example:
-        >>> expert = create_expert_module(
-        ...     hidden_size=4096,
-        ...     intermediate_size=11008,
-        ...     expert_type="swiglu",
-        ...     mode=YvExpertMode.PURE_COMPUTE
-        ... )
-    """
-    config = YvExpertConfig(
-        hidden_size=hidden_size,
-        intermediate_size=intermediate_size,
-        expert_type=expert_type,
-        mode=mode,
-        dropout=dropout,
-        use_bias=use_bias,
-    )
-    return YvExpertFactory.create(config, device=device, dtype=dtype, **kwargs)

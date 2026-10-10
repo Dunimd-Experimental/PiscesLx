@@ -711,25 +711,6 @@ class YvTokenizer:
         cls._initialized = False
 
 
-def get_tokenizer(
-    tokenizer_dir: Optional[Union[str, Path]] = None,
-    **kwargs,
-) -> YvTokenizer:
-    """Factory function to get tokenizer instance.
-
-    This is a convenience wrapper around YvTokenizer constructor
-    that ensures a single instance is returned.
-
-    Args:
-        tokenizer_dir (Optional[Union[str, Path]]): Path to tokenizer directory.
-        **kwargs: Additional arguments passed to YvTokenizer.
-
-    Returns:
-        YvTokenizer: The tokenizer instance.
-    """
-    return YvTokenizer(tokenizer_dir=tokenizer_dir, **kwargs)
-
-
 @dataclass
 class YvExtendedTokenizerConfig:
     """Configuration for extended 160K vocabulary tokenizer.

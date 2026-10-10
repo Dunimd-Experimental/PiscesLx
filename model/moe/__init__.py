@@ -138,7 +138,6 @@ from .expert import (
     YvExpertConfig,
     YvExpertType,
     YvExpertMode,
-    create_expert_module,
 )
 from .diversity import (
     YvDiversityConfig,
@@ -172,7 +171,6 @@ __all__ = [
     "YvExpertConfig",
     "YvExpertType",
     "YvExpertMode",
-    "create_expert_module",
     "YvDiversityConfig",
     "YvMineStatisticsNetwork",
     "YvInformationBottleneckExpert",
