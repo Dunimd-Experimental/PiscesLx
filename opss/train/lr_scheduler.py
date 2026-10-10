@@ -463,41 +463,6 @@ class PiscesLxLRSchedulerOperator(PiscesLxOperatorInterface):
             self._cycle_start = state_dict['cycle_start']
         if 'restart_count' in state_dict:
             self._restart_count = state_dict['restart_count']
-
-
-def create_scheduler(
-    optimizer: Optimizer,
-    scheduler_type: Union[PiscesLxSchedulerType, str],
-    num_warmup_steps: int,
-    num_training_steps: int,
-    **kwargs
-) -> PiscesLxLRSchedulerOperator:
-    """
-    Factory function to create scheduler operator.
-    
-    Args:
-        optimizer: PyTorch optimizer
-        scheduler_type: Type of scheduler
-        num_warmup_steps: Warmup steps
-        num_training_steps: Total training steps
-        **kwargs: Additional configuration
-        
-    Returns:
-        PiscesLxLRSchedulerOperator instance
-    """
-    if isinstance(scheduler_type, str):
-        scheduler_type = PiscesLxSchedulerType(scheduler_type)
-    
-    config = PiscesLxLRSchedulerConfig(
-        type=scheduler_type,
-        warmup_steps=num_warmup_steps,
-        total_steps=num_training_steps,
-        **kwargs
-    )
-    
-    return PiscesLxLRSchedulerOperator(config)
-
-
 class PiscesLxCosineWarmupScheduler(PiscesLxLRSchedulerOperator):
     """Convenience class for cosine scheduler with warmup."""
     
@@ -557,3 +522,42 @@ class PiscesLxInverseSquareRootScheduler(PiscesLxLRSchedulerOperator):
             warmup_steps=num_warmup_steps
         )
         super().__init__(config)
+
+class PiscesLxLrScheduler:
+    """Operations formerly exposed as module-level functions of lr_scheduler.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def create_scheduler(
+        optimizer: Optimizer,
+        scheduler_type: Union[PiscesLxSchedulerType, str],
+        num_warmup_steps: int,
+        num_training_steps: int,
+        **kwargs
+    ) -> PiscesLxLRSchedulerOperator:
+        """
+        Factory function to create scheduler operator.
+
+        Args:
+            optimizer: PyTorch optimizer
+            scheduler_type: Type of scheduler
+            num_warmup_steps: Warmup steps
+            num_training_steps: Total training steps
+            **kwargs: Additional configuration
+
+        Returns:
+            PiscesLxLRSchedulerOperator instance
+        """
+        if isinstance(scheduler_type, str):
+            scheduler_type = PiscesLxSchedulerType(scheduler_type)
+
+        config = PiscesLxLRSchedulerConfig(
+            type=scheduler_type,
+            warmup_steps=num_warmup_steps,
+            total_steps=num_training_steps,
+            **kwargs
+        )
+
+        return PiscesLxLRSchedulerOperator(config)

@@ -33,41 +33,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
-
-
-def fp4_quantize(x: torch.Tensor) -> torch.Tensor:
-    """Quantize tensor to FP4 format with stochastic rounding.
-
-    FP4 format: 1 sign bit, 2 exponent bits, 1 mantissa bit
-    Range: approximately [-6, 6]
-
-    Args:
-        x: Input tensor.
-
-    Returns:
-        Quantized tensor in FP4 format.
-    """
-    # FP4 representable values (approximate)
-    fp4_values = torch.tensor([
-        0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
-        -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0
-    ], device=x.device, dtype=x.dtype)
-
-    # Stochastic rounding
-    floor_idx = torch.searchsorted(fp4_values.sort()[0], x)
-    floor_idx = floor_idx.clamp(0, len(fp4_values) - 1)
-
-    # Add noise for stochastic rounding
-    noise = torch.rand_like(x)
-    rounded = torch.where(
-        noise > 0.5,
-        fp4_values[floor_idx],
-        fp4_values[floor_idx.clamp_max(len(fp4_values) - 2)]
-    )
-
-    return rounded
-
-
 class PiscesLxQuartetLinear(nn.Linear):
     """Linear layer with FP4 weight storage.
 
@@ -121,6 +86,39 @@ class PiscesLxQuartetLinear(nn.Linear):
         weight_compute = self._dequantize_weights()
 
         return F.linear(input, weight_compute, self.bias)
+
+    @staticmethod
+    def fp4_quantize(x: torch.Tensor) -> torch.Tensor:
+        """Quantize tensor to FP4 format with stochastic rounding.
+
+        FP4 format: 1 sign bit, 2 exponent bits, 1 mantissa bit
+        Range: approximately [-6, 6]
+
+        Args:
+            x: Input tensor.
+
+        Returns:
+            Quantized tensor in FP4 format.
+        """
+        # FP4 representable values (approximate)
+        fp4_values = torch.tensor([
+            0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0,
+            -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0
+        ], device=x.device, dtype=x.dtype)
+
+        # Stochastic rounding
+        floor_idx = torch.searchsorted(fp4_values.sort()[0], x)
+        floor_idx = floor_idx.clamp(0, len(fp4_values) - 1)
+
+        # Add noise for stochastic rounding
+        noise = torch.rand_like(x)
+        rounded = torch.where(
+            noise > 0.5,
+            fp4_values[floor_idx],
+            fp4_values[floor_idx.clamp_max(len(fp4_values) - 2)]
+        )
+
+        return rounded
 
 
 class PiscesLxQuartetTrainer:

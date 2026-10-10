@@ -538,71 +538,6 @@ class PiscesLxQuantizationPipelineOperator(PiscesLxOperatorInterface):
             final_result["validation_results"] = pipeline_results["validation"]
         
         return final_result
-
-
-def quantize_pipeline(model: nn.Module,
-                     method: str = "auto",
-                     bits: int = 8,
-                     calibration_dataset: str = "wikitext",
-                     calibration_samples: int = 128,
-                     target_compression: float = 0.5,
-                     enable_advanced: bool = True,
-                     validation_data: List[Dict] = None) -> Tuple[nn.Module, Dict[str, Any]]:
-    """
-    Convenience function for one-stop quantization.
-    
-    Provides a simple interface for complete model quantization without
-    explicitly creating pipeline instances.
-    
-    Args:
-        model: Model to quantize
-        method: Quantization method ("auto", "bitsandbytes", "gptq", "awq")
-        bits: Number of bits for quantization
-        calibration_dataset: Name of calibration dataset
-        calibration_samples: Number of calibration samples
-        target_compression: Target compression ratio
-        enable_advanced: Enable advanced quantization features
-        validation_data: Validation data for post-quantization check
-    
-    Returns:
-        Tuple of (quantized_model, detailed_info)
-    
-    Example:
-        >>> quantized_model, info = quantize_pipeline(
-        ...     model, method="gptq", bits=4
-        ... )
-    """
-    
-    # Create pipeline configuration
-    config = PiscesLxQuantizationPipelineConfig(
-        method=method,
-        bits=bits,
-        calibration_dataset=calibration_dataset,
-        calibration_samples=calibration_samples,
-        target_compression_ratio=target_compression,
-        enable_sensitivity_analysis=enable_advanced,
-        enable_adaptive_allocation=enable_advanced,
-        validate_after_quantization=validation_data is not None
-    )
-    
-    # Execute pipeline
-    pipeline = PiscesLxQuantizationPipelineOperator()
-    inputs = {
-        "model": model,
-        "config": config,
-        "validation_data": validation_data
-    }
-    
-    result = pipeline.execute(inputs)
-    
-    if not result.is_success():
-        raise RuntimeError(f"Quantization pipeline failed: {result.error}")
-    
-    out = result.output or {}
-    return out["quantized_model"], out
-
-
-
 class PiscesLxQuantizationEvaluator:
     """
     Quantization Effect Evaluation Tool.
@@ -709,3 +644,71 @@ class PiscesLxQuantizationEvaluator:
             Dictionary with speed metrics
         """
         return {"original_tokens_per_sec": 1200, "quantized_tokens_per_sec": 2100, "speedup": 1.75}
+
+class PiscesLxPipeline:
+    """Operations formerly exposed as module-level functions of pipeline.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def quantize_pipeline(model: nn.Module,
+                         method: str = "auto",
+                         bits: int = 8,
+                         calibration_dataset: str = "wikitext",
+                         calibration_samples: int = 128,
+                         target_compression: float = 0.5,
+                         enable_advanced: bool = True,
+                         validation_data: List[Dict] = None) -> Tuple[nn.Module, Dict[str, Any]]:
+        """
+        Convenience function for one-stop quantization.
+
+        Provides a simple interface for complete model quantization without
+        explicitly creating pipeline instances.
+
+        Args:
+            model: Model to quantize
+            method: Quantization method ("auto", "bitsandbytes", "gptq", "awq")
+            bits: Number of bits for quantization
+            calibration_dataset: Name of calibration dataset
+            calibration_samples: Number of calibration samples
+            target_compression: Target compression ratio
+            enable_advanced: Enable advanced quantization features
+            validation_data: Validation data for post-quantization check
+
+        Returns:
+            Tuple of (quantized_model, detailed_info)
+
+        Example:
+            >>> quantized_model, info = PiscesLxPipeline.quantize_pipeline(
+            ...     model, method="gptq", bits=4
+            ... )
+        """
+
+        # Create pipeline configuration
+        config = PiscesLxQuantizationPipelineConfig(
+            method=method,
+            bits=bits,
+            calibration_dataset=calibration_dataset,
+            calibration_samples=calibration_samples,
+            target_compression_ratio=target_compression,
+            enable_sensitivity_analysis=enable_advanced,
+            enable_adaptive_allocation=enable_advanced,
+            validate_after_quantization=validation_data is not None
+        )
+
+        # Execute pipeline
+        pipeline = PiscesLxQuantizationPipelineOperator()
+        inputs = {
+            "model": model,
+            "config": config,
+            "validation_data": validation_data
+        }
+
+        result = pipeline.execute(inputs)
+
+        if not result.is_success():
+            raise RuntimeError(f"Quantization pipeline failed: {result.error}")
+
+        out = result.output or {}
+        return out["quantized_model"], out

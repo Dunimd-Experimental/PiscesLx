@@ -109,6 +109,7 @@ See Also:
 
 from .core import PiscesLxInferenceEngine
 from .config import (
+    PiscesLxConfig,
     PiscesLxInferenceConfig,
     PiscesLxMoEConfig,
     PiscesLxModelSpec,
@@ -116,8 +117,6 @@ from .config import (
     PiscesLxRunConfig,
     PiscesLxServiceConfig,
     MODEL_SPECS,
-    get_model_spec,
-    list_available_models,
 )
 from .server import PiscesLxInferService, PiscesLxBackendServer, create_service
 from .protocol import (

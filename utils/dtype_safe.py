@@ -40,42 +40,46 @@ and never a hot-path concern.
 """
 
 import torch
-
-
-def qr_safe(matrix: torch.Tensor) -> torch.Tensor:
-    """
-    QR decomposition that is safe under low-precision dtypes (fp16/bf16).
-
-    Args:
-        matrix: Input matrix of any floating dtype.
-
-    Returns:
-        Orthogonal factor ``Q`` with the same dtype as ``matrix``.
-    """
-    original_dtype = matrix.dtype
-    if original_dtype not in (torch.float16, torch.bfloat16):
-        q, _ = torch.linalg.qr(matrix)
-        return q
-    q, _ = torch.linalg.qr(matrix.to(torch.float32))
-    return q.to(original_dtype)
-
-
-def svd_safe(matrix: torch.Tensor, full_matrices: bool = False):
-    """
-    SVD that is safe under low-precision dtypes (fp16/bf16).
-
-    Args:
-        matrix: Input matrix of any floating dtype.
-        full_matrices: Forwarded to ``torch.linalg.svd``.
-
-    Returns:
-        Tuple ``(U, S, V)`` where each tensor keeps the original dtype.
-    """
-    original_dtype = matrix.dtype
-    if original_dtype not in (torch.float16, torch.bfloat16):
-        return torch.linalg.svd(matrix, full_matrices=full_matrices)
-    u, s, v = torch.linalg.svd(matrix.to(torch.float32), full_matrices=full_matrices)
-    return u.to(original_dtype), s.to(original_dtype), v.to(original_dtype)
-
-
 __all__ = ["qr_safe", "svd_safe"]
+
+class PiscesLxDtypeSafe:
+    """Operations formerly exposed as module-level functions of dtype_safe.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def qr_safe(matrix: torch.Tensor) -> torch.Tensor:
+        """
+        QR decomposition that is safe under low-precision dtypes (fp16/bf16).
+
+        Args:
+            matrix: Input matrix of any floating dtype.
+
+        Returns:
+            Orthogonal factor ``Q`` with the same dtype as ``matrix``.
+        """
+        original_dtype = matrix.dtype
+        if original_dtype not in (torch.float16, torch.bfloat16):
+            q, _ = torch.linalg.qr(matrix)
+            return q
+        q, _ = torch.linalg.qr(matrix.to(torch.float32))
+        return q.to(original_dtype)
+
+    @staticmethod
+    def svd_safe(matrix: torch.Tensor, full_matrices: bool = False):
+        """
+        SVD that is safe under low-precision dtypes (fp16/bf16).
+
+        Args:
+            matrix: Input matrix of any floating dtype.
+            full_matrices: Forwarded to ``torch.linalg.svd``.
+
+        Returns:
+            Tuple ``(U, S, V)`` where each tensor keeps the original dtype.
+        """
+        original_dtype = matrix.dtype
+        if original_dtype not in (torch.float16, torch.bfloat16):
+            return torch.linalg.svd(matrix, full_matrices=full_matrices)
+        u, s, v = torch.linalg.svd(matrix.to(torch.float32), full_matrices=full_matrices)
+        return u.to(original_dtype), s.to(original_dtype), v.to(original_dtype)

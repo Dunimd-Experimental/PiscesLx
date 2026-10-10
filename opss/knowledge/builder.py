@@ -940,51 +940,58 @@ class PiscesLxKnowledgeBuilder:
 # Factory Function
 # ============================================================
 
-def create_knowledge_builder(
-    knowledge_slots: int = 0,
-    store_path: str = "",
-    encoder_hidden: int = 640,
-    encoder_layers: int = 16,
-    encoder_experts: int = 4,
-    encoder_heads: int = 10,
-    knowledge_dim: int = 256,
-    chunk_size: int = 256,
-    index_type: str = "ivfpq",
-    device: Optional[str] = None,
-    dtype: Optional[str] = None,
-    **kwargs,
-) -> PiscesLxKnowledgeBuilder:
-    """Factory function for creating knowledge builder instances.
+class PiscesLxBuilder:
+    """Operations formerly exposed as module-level functions of builder.
 
-    Args:
-        knowledge_slots: Total knowledge slots to allocate.
-        store_path: Output directory for knowledge store.
-        encoder_hidden: Encoder hidden size (default 640 for 0.5B).
-        encoder_layers: Encoder layers (default 16).
-        encoder_experts: MoE experts (default 4).
-        encoder_heads: Attention heads (default 10).
-        knowledge_dim: Output knowledge embedding dimension (default 256).
-        chunk_size: Text chunk size in tokens.
-        index_type: FAISS index type.
-        device: Computation device.
-        dtype: Computation dtype.
-        **kwargs: Additional config overrides.
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
 
-    Returns:
-        Configured PiscesLxKnowledgeBuilder instance.
-    """
-    config = PiscesLxKnowledgeBuilderConfig(
-        encoder_hidden=encoder_hidden,
-        encoder_layers=encoder_layers,
-        encoder_experts=encoder_experts,
-        encoder_heads=encoder_heads,
-        knowledge_dim=knowledge_dim,
-        knowledge_slots=knowledge_slots,
-        chunk_size=chunk_size,
-        store_path=store_path,
-        index_type=index_type,
-        device=device,
-        dtype=dtype,
+    @staticmethod
+    def create_knowledge_builder(
+        knowledge_slots: int = 0,
+        store_path: str = "",
+        encoder_hidden: int = 640,
+        encoder_layers: int = 16,
+        encoder_experts: int = 4,
+        encoder_heads: int = 10,
+        knowledge_dim: int = 256,
+        chunk_size: int = 256,
+        index_type: str = "ivfpq",
+        device: Optional[str] = None,
+        dtype: Optional[str] = None,
         **kwargs,
-    )
-    return PiscesLxKnowledgeBuilder(config)
+    ) -> PiscesLxKnowledgeBuilder:
+        """Factory function for creating knowledge builder instances.
+
+        Args:
+            knowledge_slots: Total knowledge slots to allocate.
+            store_path: Output directory for knowledge store.
+            encoder_hidden: Encoder hidden size (default 640 for 0.5B).
+            encoder_layers: Encoder layers (default 16).
+            encoder_experts: MoE experts (default 4).
+            encoder_heads: Attention heads (default 10).
+            knowledge_dim: Output knowledge embedding dimension (default 256).
+            chunk_size: Text chunk size in tokens.
+            index_type: FAISS index type.
+            device: Computation device.
+            dtype: Computation dtype.
+            **kwargs: Additional config overrides.
+
+        Returns:
+            Configured PiscesLxKnowledgeBuilder instance.
+        """
+        config = PiscesLxKnowledgeBuilderConfig(
+            encoder_hidden=encoder_hidden,
+            encoder_layers=encoder_layers,
+            encoder_experts=encoder_experts,
+            encoder_heads=encoder_heads,
+            knowledge_dim=knowledge_dim,
+            knowledge_slots=knowledge_slots,
+            chunk_size=chunk_size,
+            store_path=store_path,
+            index_type=index_type,
+            device=device,
+            dtype=dtype,
+            **kwargs,
+        )
+        return PiscesLxKnowledgeBuilder(config)

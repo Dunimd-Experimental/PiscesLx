@@ -115,7 +115,7 @@ from .gate import YvPhiBalancing as _YvPhiBalancing
 from .expert import YvExpert, YvSharedExpert, YvExpertConfig, YvExpertType, YvExpertMode
 
 from utils.paths import PiscesLxPaths
-from utils.dtype_safe import qr_safe as _qr_safe, svd_safe as _svd_safe
+from utils.dtype_safe import PiscesLxDtypeSafe
 
 _LOG = PiscesLxLogger("Yv.Moe", file_path=PiscesLxPaths.get_log_file("Yv.Moe"), enable_file=True)
 

@@ -953,25 +953,31 @@ class PiscesLxServiceConfig:
         
         return config
 
+class PiscesLxConfig:
+    """Operations formerly exposed as module-level functions of config.
 
-def get_model_spec(model_size: str) -> PiscesLxModelSpec:
-    """
-    Get model specification by size identifier.
-    
-    Args:
-        model_size: Model size string (e.g., "7B", "671B")
-    
-    Returns:
-        PiscesLxModelSpec for the requested size
-    
-    Raises:
-        ValueError: If model size is not found
-    """
-    if model_size not in MODEL_SPECS:
-        raise ValueError(f"Unknown model size: {model_size}. Available: {list(MODEL_SPECS.keys())}")
-    return MODEL_SPECS[model_size]
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
 
+    @staticmethod
+    def get_model_spec(model_size: str) -> PiscesLxModelSpec:
+        """
+        Get model specification by size identifier.
 
-def list_available_models() -> List[str]:
-    """List all available model sizes."""
-    return list(MODEL_SPECS.keys())
+        Args:
+            model_size: Model size string (e.g., "7B", "671B")
+
+        Returns:
+            PiscesLxModelSpec for the requested size
+
+        Raises:
+            ValueError: If model size is not found
+        """
+        if model_size not in MODEL_SPECS:
+            raise ValueError(f"Unknown model size: {model_size}. Available: {list(MODEL_SPECS.keys())}")
+        return MODEL_SPECS[model_size]
+
+    @staticmethod
+    def list_available_models() -> List[str]:
+        """List all available model sizes."""
+        return list(MODEL_SPECS.keys())

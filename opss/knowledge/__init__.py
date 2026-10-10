@@ -51,11 +51,7 @@ Usage:
     builder.build_from_texts(texts=["...", "..."])
 """
 
-from .builder import (
-    PiscesLxKnowledgeBuilder,
-    PiscesLxKnowledgeBuilderConfig,
-    create_knowledge_builder,
-)
+from .builder import PiscesLxBuilder, PiscesLxKnowledgeBuilder, PiscesLxKnowledgeBuilderConfig
 
 __all__ = [
     "PiscesLxKnowledgeBuilder",

@@ -56,7 +56,7 @@ import re
 from utils.dc import PiscesLxLogger
 from utils.paths import PiscesLxPaths
 
-from .config import PiscesLxModelSpec, MODEL_SPECS, get_model_spec
+from .config import PiscesLxConfig, PiscesLxModelSpec, MODEL_SPECS
 
 
 class PiscesLxRoutingStrategy(Enum):

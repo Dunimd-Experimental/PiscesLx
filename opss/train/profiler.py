@@ -538,51 +538,57 @@ class PiscesLxProfilingOperator(PiscesLxOperatorInterface):
                 config.profile_steps > 0 and
                 config.profile_steps > config.warmup_steps)
 
+class PiscesLxProfiler:
+    """Operations formerly exposed as module-level functions of profiler.
 
-def profile_training(model: torch.nn.Module,
-                    dataloader,
-                    profile_memory: bool = True,
-                    profile_time: bool = True,
-                    profile_steps: int = 10) -> Dict[str, Any]:
-    """
-    Convenience function for training performance profiling.
-    
-    Provides a simple interface for profiling model training without
-    explicitly creating operator instances.
-    
-    Args:
-        model: The model to profile
-        dataloader: Training data loader
-        profile_memory: Enable memory profiling
-        profile_time: Enable timing profiling
-        profile_steps: Number of steps to profile
-    
-    Returns:
-        Dictionary containing profiling results
-    
-    Raises:
-        RuntimeError: If profiling fails
-    
-    Example:
-        >>> results = profile_training(model, train_loader, profile_steps=20)
-        >>> print(f"Average forward time: {results['timing_analysis']['avg_forward_time']:.4f}s")
-    """
-    operator = PiscesLxProfilingOperator()
-    config = PiscesLxProfilingConfig(
-        profile_memory=profile_memory,
-        profile_time=profile_time,
-        profile_steps=profile_steps
-    )
-    
-    inputs = {
-        "model": model,
-        "dataloader": dataloader,
-        "config": config
-    }
-    
-    result = operator.execute(inputs)
-    
-    if result.success:
-        return result.data
-    else:
-        raise RuntimeError(f"Profiling failed: {result.error}")
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def profile_training(model: torch.nn.Module,
+                        dataloader,
+                        profile_memory: bool = True,
+                        profile_time: bool = True,
+                        profile_steps: int = 10) -> Dict[str, Any]:
+        """
+        Convenience function for training performance profiling.
+
+        Provides a simple interface for profiling model training without
+        explicitly creating operator instances.
+
+        Args:
+            model: The model to profile
+            dataloader: Training data loader
+            profile_memory: Enable memory profiling
+            profile_time: Enable timing profiling
+            profile_steps: Number of steps to profile
+
+        Returns:
+            Dictionary containing profiling results
+
+        Raises:
+            RuntimeError: If profiling fails
+
+        Example:
+            >>> results = PiscesLxProfiler.profile_training(model, train_loader, profile_steps=20)
+            >>> print(f"Average forward time: {results['timing_analysis']['avg_forward_time']:.4f}s")
+        """
+        operator = PiscesLxProfilingOperator()
+        config = PiscesLxProfilingConfig(
+            profile_memory=profile_memory,
+            profile_time=profile_time,
+            profile_steps=profile_steps
+        )
+
+        inputs = {
+            "model": model,
+            "dataloader": dataloader,
+            "config": config
+        }
+
+        result = operator.execute(inputs)
+
+        if result.success:
+            return result.data
+        else:
+            raise RuntimeError(f"Profiling failed: {result.error}")

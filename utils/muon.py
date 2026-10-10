@@ -38,62 +38,105 @@ class PiscesLxMuonParameterError(ValueError):
     """
     pass
 
+    @staticmethod
+    def _hybrid_newton_schulz(G: torch.Tensor, steps: int = 10) -> torch.Tensor:
+        """Hybrid Newton-Schulz matrix orthogonalization.
 
-def _hybrid_newton_schulz(G: torch.Tensor, steps: int = 10) -> torch.Tensor:
-    """Hybrid Newton-Schulz matrix orthogonalization.
+        Args:
+            G: Input matrix of shape (n, m)
+            steps: Total iterations (default: 10, first 8 aggressive, last 2 conservative)
 
-    Args:
-        G: Input matrix of shape (n, m)
-        steps: Total iterations (default: 10, first 8 aggressive, last 2 conservative)
+        Returns:
+            Orthogonalized matrix O ~= (G G^T)^{-1/2} G
 
-    Returns:
-        Orthogonalized matrix O ~= (G G^T)^{-1/2} G
+        Raises:
+            PiscesLxMuonParameterError: If input tensor does not have exactly 2 dimensions.
+        """
+        # Structured parameter validation
+        if G.ndim != 2:
+            raise PiscesLxMuonParameterError(
+                f"Muon requires 2D parameter tensor, but got {G.ndim}D tensor with shape {G.shape}. "
+                f"Expected shape: (n, m) where n and m are positive integers. "
+                f"This error typically occurs when the optimizer is applied to incompatible "
+                f"parameter types (e.g., 1D biases, 3D convolution weights). "
+                f"Please check your parameter filtering logic in PiscesLxMuon.create_muon_optimizer()."
+            )
+        n, m = G.shape
 
-    Raises:
-        PiscesLxMuonParameterError: If input tensor does not have exactly 2 dimensions.
-    """
-    # Structured parameter validation
-    if G.ndim != 2:
-        raise PiscesLxMuonParameterError(
-            f"Muon requires 2D parameter tensor, but got {G.ndim}D tensor with shape {G.shape}. "
-            f"Expected shape: (n, m) where n and m are positive integers. "
-            f"This error typically occurs when the optimizer is applied to incompatible "
-            f"parameter types (e.g., 1D biases, 3D convolution weights). "
-            f"Please check your parameter filtering logic in create_muon_optimizer()."
-        )
-    n, m = G.shape
+        if min(n, m) <= 1:
+            return G.sign() * math.sqrt(max(n, m))
 
-    if min(n, m) <= 1:
-        return G.sign() * math.sqrt(max(n, m))
+        # Normalize for numerical stability
+        scale = G.norm().item()
+        G = G / (scale + 1e-20)
 
-    # Normalize for numerical stability
-    scale = G.norm().item()
-    G = G / (scale + 1e-20)
+        # Hybrid coefficients
+        agg_coeffs = (3.4445, -4.7750, 2.0315)
+        cons_coeffs = (2.0, -1.5, 0.5)
 
-    # Hybrid coefficients
-    agg_coeffs = (3.4445, -4.7750, 2.0315)
-    cons_coeffs = (2.0, -1.5, 0.5)
+        if n >= m:
+            X = G.T @ G
+            is_transposed = False
+        else:
+            X = G @ G.T
+            is_transposed = True
 
-    if n >= m:
-        X = G.T @ G
-        is_transposed = False
-    else:
-        X = G @ G.T
-        is_transposed = True
+        # Newton-Schulz iterations
+        for i in range(steps):
+            a, b, c = agg_coeffs if i < 8 else cons_coeffs
+            X = a * X + b * (X @ X) + c * (X @ (X @ X))
 
-    # Newton-Schulz iterations
-    for i in range(steps):
-        a, b, c = agg_coeffs if i < 8 else cons_coeffs
-        X = a * X + b * (X @ X) + c * (X @ (X @ X))
+        if is_transposed:
+            O = (X @ G.T).T
+        else:
+            O = G @ X
 
-    if is_transposed:
-        O = (X @ G.T).T
-    else:
-        O = G @ X
+        return O * scale
 
-    return O * scale
+    @staticmethod
+    def create_muon_optimizer(
+        model,
+        lr: float = 2e-4,
+        weight_decay: float = 0.1,
+        muon_exclude_patterns: tuple = ('embed', 'norm', 'bias', 'lm_head'),
+        muon_lr: float = None,
+        adamw_lr: float = 1e-5,
+    ):
+        """Convenience function to create a Muon optimizer for a Yv model.
 
+        Automatically splits parameters into Muon-eligible (2D weights, no norms/embeds)
+        and AdamW (everything else).
 
+        Args:
+            model: The YvModel instance.
+            lr: Base learning rate for Muon params. Default: 2e-4.
+            weight_decay: Weight decay. Default: 0.1.
+            muon_exclude_patterns: Parameter name patterns to exclude from Muon.
+            muon_lr: LR for Muon groups (defaults to lr).
+            adamw_lr: LR for AdamW groups. Default: 1e-5.
+
+        Returns:
+            PiscesLxMuon optimizer instance.
+        """
+        muon_lr = muon_lr or lr
+        muon_params = []
+        adamw_params = []
+
+        for name, p in model.named_parameters():
+            if not p.requires_grad:
+                continue
+            is_excluded = any(pat in name.lower() for pat in muon_exclude_patterns)
+            if is_excluded or p.ndim < 2:
+                adamw_params.append(p)
+            else:
+                muon_params.append(p)
+
+        param_groups = [
+            {'params': muon_params, 'use_muon': True, 'lr': muon_lr},
+            {'params': adamw_params, 'use_muon': False, 'lr': adamw_lr},
+        ]
+
+        return PiscesLxMuon(param_groups, lr=lr, weight_decay=weight_decay)
 class PiscesLxMuon(torch.optim.Optimizer):
     """Muon optimizer — orthogonalized momentum for MoE training.
 
@@ -233,48 +276,3 @@ class PiscesLxMuon(torch.optim.Optimizer):
                     p.data.addcdiv_(exp_avg / bias_corr1, denom, value=-lr)
 
         return loss
-
-
-def create_muon_optimizer(
-    model,
-    lr: float = 2e-4,
-    weight_decay: float = 0.1,
-    muon_exclude_patterns: tuple = ('embed', 'norm', 'bias', 'lm_head'),
-    muon_lr: float = None,
-    adamw_lr: float = 1e-5,
-):
-    """Convenience function to create a Muon optimizer for a Yv model.
-
-    Automatically splits parameters into Muon-eligible (2D weights, no norms/embeds)
-    and AdamW (everything else).
-
-    Args:
-        model: The YvModel instance.
-        lr: Base learning rate for Muon params. Default: 2e-4.
-        weight_decay: Weight decay. Default: 0.1.
-        muon_exclude_patterns: Parameter name patterns to exclude from Muon.
-        muon_lr: LR for Muon groups (defaults to lr).
-        adamw_lr: LR for AdamW groups. Default: 1e-5.
-
-    Returns:
-        PiscesLxMuon optimizer instance.
-    """
-    muon_lr = muon_lr or lr
-    muon_params = []
-    adamw_params = []
-
-    for name, p in model.named_parameters():
-        if not p.requires_grad:
-            continue
-        is_excluded = any(pat in name.lower() for pat in muon_exclude_patterns)
-        if is_excluded or p.ndim < 2:
-            adamw_params.append(p)
-        else:
-            muon_params.append(p)
-
-    param_groups = [
-        {'params': muon_params, 'use_muon': True, 'lr': muon_lr},
-        {'params': adamw_params, 'use_muon': False, 'lr': adamw_lr},
-    ]
-
-    return PiscesLxMuon(param_groups, lr=lr, weight_decay=weight_decay)

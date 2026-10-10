@@ -1383,21 +1383,6 @@ class PiscesLxMoERuntimeOperator(PiscesLxOperatorInterface):
         self.expert_cache.clear()
         
         self._LOG.info("MoE Runtime Operator cleaned up")
-
-
-def create_moe_runtime_operator(config: Optional[PiscesLxMoERuntimeConfig] = None) -> 'PiscesLxMoERuntimeOperator':
-    """
-    Factory function to create MoE runtime operator.
-    
-    Args:
-        config: Optional PiscesLxMoERuntimeConfig instance
-    
-    Returns:
-        Configured PiscesLxMoERuntimeOperator instance
-    """
-    return PiscesLxMoERuntimeOperator(config=config)
-
-
 # ═══════════════════════════════════════════════════════════════════
 # TriRoute (2607.06601): Unified Learned Routing for Attention Mode,
 # Expert Selection, and KV Cache Bit-Width Decisions
@@ -1640,3 +1625,22 @@ __all__ = [
     'PiscesLxMoebiusParallelismMode',
     'PiscesLxMoebiusParallelismSwitch',
 ]
+
+class PiscesLxMoeRuntime:
+    """Operations formerly exposed as module-level functions of moe_runtime.
+
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
+
+    @staticmethod
+    def create_moe_runtime_operator(config: Optional[PiscesLxMoERuntimeConfig] = None) -> 'PiscesLxMoERuntimeOperator':
+        """
+        Factory function to create MoE runtime operator.
+
+        Args:
+            config: Optional PiscesLxMoERuntimeConfig instance
+
+        Returns:
+            Configured PiscesLxMoERuntimeOperator instance
+        """
+        return PiscesLxMoERuntimeOperator(config=config)

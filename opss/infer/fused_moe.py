@@ -113,19 +113,25 @@ class PiscesLxFusedMoEDispatch(nn.Module):
             return output, expert_outputs_list
         return output
 
+class PiscesLxFusedMoe:
+    """Operations formerly exposed as module-level functions of fused_moe.
 
-def fused_moe_dispatch(
-    x_flat: torch.Tensor,
-    routing_weights: torch.Tensor,
-    expert_indices: torch.Tensor,
-    experts: nn.ModuleList,
-    num_experts: int,
-    top_k: int,
-) -> torch.Tensor:
-    """Functional interface for sort-based MoE dispatch.
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
 
-    Convenience wrapper for one-off use without instantiating the module.
-    """
-    return PiscesLxFusedMoEDispatch(num_experts, top_k)(
-        x_flat, routing_weights, expert_indices, experts
-    )
+    @staticmethod
+    def fused_moe_dispatch(
+        x_flat: torch.Tensor,
+        routing_weights: torch.Tensor,
+        expert_indices: torch.Tensor,
+        experts: nn.ModuleList,
+        num_experts: int,
+        top_k: int,
+    ) -> torch.Tensor:
+        """Functional interface for sort-based MoE dispatch.
+
+        Convenience wrapper for one-off use without instantiating the module.
+        """
+        return PiscesLxFusedMoEDispatch(num_experts, top_k)(
+            x_flat, routing_weights, expert_indices, experts
+        )

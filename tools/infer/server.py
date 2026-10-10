@@ -114,14 +114,13 @@ from utils.log_bridge import PiscesLxThirdPartyLogBridge
 from utils.paths import PiscesLxPaths
 
 from .config import (
+    PiscesLxConfig,
     PiscesLxInferenceConfig,
     PiscesLxServiceConfig,
     PiscesLxModelSpec,
     MODEL_SPECS,
     PiscesLxOPSSConfig,
     PiscesLxRunConfig,
-    get_model_spec,
-    list_available_models,
 )
 from .core import PiscesLxInferenceEngine
 from .protocol import (
@@ -408,7 +407,7 @@ class PiscesLxInferService:
     def _list_models(self) -> PiscesLxModelListResponse:
         """GET /v1/models"""
         models = []
-        for size in list_available_models():
+        for size in PiscesLxConfig.list_available_models():
             models.append(PiscesLxModelInfo(
                 id=f"piscesl1-{size.lower()}",
                 object="model",

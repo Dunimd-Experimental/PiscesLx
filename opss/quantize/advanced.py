@@ -74,6 +74,87 @@ class PiscesLxAdvancedQuantizationConfig(PiscesLxOperatorConfig):
     calibration_samples: int = 128
     sensitivity_metric: str = "mse"
 
+    @staticmethod
+    def advanced_quantize(model: nn.Module,
+                         test_data: List = None,
+                         target_compression: float = 0.5,
+                         preserve_layers: List[str] = None) -> Tuple[nn.Module, Dict[str, Any]]:
+        """
+        Convenience function for advanced quantization.
+
+        Provides a simple interface for intelligent model quantization with
+        sensitivity analysis and adaptive bit allocation.
+
+        Args:
+            model: Model to quantize
+            test_data: Test data for sensitivity analysis
+            target_compression: Target compression ratio
+            preserve_layers: List of layer names to keep in high precision
+
+        Returns:
+            Tuple of (quantized_model, detailed_info)
+
+        Example:
+            >>> quantized_model, info = PiscesLxAdvanced.advanced_quantize(
+            ...     model, target_compression=0.5
+            ... )
+        """
+
+        # Execute sensitivity analysis
+        sensitivity_op = SensitivityAnalysisOperator()
+        sensitivity_inputs = {
+            "model": model,
+            "test_data": test_data or [],
+            "config": PiscesLxAdvancedQuantizationConfig(
+                sensitivity_analysis=True,
+                target_compression_ratio=target_compression,
+                preserve_layers=preserve_layers or []
+            )
+        }
+
+        sensitivity_result = sensitivity_op.execute(sensitivity_inputs)
+
+        if not sensitivity_result.is_success():
+            raise RuntimeError(f"Sensitivity analysis failed: {sensitivity_result.error}")
+
+        # Execute adaptive bit allocation
+        allocation_op = AdaptiveBitAllocationOperator()
+        allocation_inputs = {
+            "model": model,
+            "sensitivity_analysis": sensitivity_result.output or {},
+            "config": PiscesLxAdvancedQuantizationConfig(target_compression_ratio=target_compression)
+        }
+
+        allocation_result = allocation_op.execute(allocation_inputs)
+
+        if not allocation_result.is_success():
+            raise RuntimeError(f"Bit allocation failed: {allocation_result.error}")
+
+        from .methods import PiscesLxQuantizationConfig
+        from .methods import PiscesLxQuantizationOperatorFactory
+
+        quant_op = PiscesLxQuantizationOperatorFactory.create_operator("gptq")
+        quant_config = PiscesLxQuantizationConfig(bits=8)
+
+        quant_inputs = {
+            "model": model,
+            "config": quant_config,
+            "bit_allocation": (allocation_result.output or {}).get("bit_allocation", {})
+        }
+
+        quant_result = quant_op.execute(quant_inputs)
+
+        if not quant_result.is_success():
+            raise RuntimeError(f"Quantization failed: {quant_result.error}")
+
+        qout = quant_result.output or {}
+        return qout["model"], {
+            "sensitivity_scores": (sensitivity_result.output or {}).get("sensitivity_scores", {}),
+            "bit_allocation": (allocation_result.output or {}).get("bit_allocation", {}),
+            "compression_info": allocation_result.output or {},
+            "quantization_info": qout.get("quantization_info", {})
+        }
+
 
 class PiscesLxSensitivityAnalysisOperator(PiscesLxOperatorInterface):
     """
@@ -568,86 +649,3 @@ class PiscesLxAdaptiveBitAllocationOperator(PiscesLxOperatorInterface):
             "memory_savings_mb": (original_memory - quantized_memory) / 1024 / 1024,
             "savings_ratio": savings_ratio
         }
-
-
-def advanced_quantize(model: nn.Module,
-                     test_data: List = None,
-                     target_compression: float = 0.5,
-                     preserve_layers: List[str] = None) -> Tuple[nn.Module, Dict[str, Any]]:
-    """
-    Convenience function for advanced quantization.
-    
-    Provides a simple interface for intelligent model quantization with
-    sensitivity analysis and adaptive bit allocation.
-    
-    Args:
-        model: Model to quantize
-        test_data: Test data for sensitivity analysis
-        target_compression: Target compression ratio
-        preserve_layers: List of layer names to keep in high precision
-    
-    Returns:
-        Tuple of (quantized_model, detailed_info)
-    
-    Example:
-        >>> quantized_model, info = advanced_quantize(
-        ...     model, target_compression=0.5
-        ... )
-    """
-    
-    # Execute sensitivity analysis
-    sensitivity_op = SensitivityAnalysisOperator()
-    sensitivity_inputs = {
-        "model": model,
-        "test_data": test_data or [],
-        "config": PiscesLxAdvancedQuantizationConfig(
-            sensitivity_analysis=True,
-            target_compression_ratio=target_compression,
-            preserve_layers=preserve_layers or []
-        )
-    }
-    
-    sensitivity_result = sensitivity_op.execute(sensitivity_inputs)
-    
-    if not sensitivity_result.is_success():
-        raise RuntimeError(f"Sensitivity analysis failed: {sensitivity_result.error}")
-    
-    # Execute adaptive bit allocation
-    allocation_op = AdaptiveBitAllocationOperator()
-    allocation_inputs = {
-        "model": model,
-        "sensitivity_analysis": sensitivity_result.output or {},
-        "config": PiscesLxAdvancedQuantizationConfig(target_compression_ratio=target_compression)
-    }
-    
-    allocation_result = allocation_op.execute(allocation_inputs)
-    
-    if not allocation_result.is_success():
-        raise RuntimeError(f"Bit allocation failed: {allocation_result.error}")
-    
-    from .methods import PiscesLxQuantizationConfig
-    from .methods import PiscesLxQuantizationOperatorFactory
-    
-    quant_op = PiscesLxQuantizationOperatorFactory.create_operator("gptq")
-    quant_config = PiscesLxQuantizationConfig(bits=8)
-    
-    quant_inputs = {
-        "model": model,
-        "config": quant_config,
-        "bit_allocation": (allocation_result.output or {}).get("bit_allocation", {})
-    }
-    
-    quant_result = quant_op.execute(quant_inputs)
-    
-    if not quant_result.is_success():
-        raise RuntimeError(f"Quantization failed: {quant_result.error}")
-    
-    qout = quant_result.output or {}
-    return qout["model"], {
-        "sensitivity_scores": (sensitivity_result.output or {}).get("sensitivity_scores", {}),
-        "bit_allocation": (allocation_result.output or {}).get("bit_allocation", {}),
-        "compression_info": allocation_result.output or {},
-        "quantization_info": qout.get("quantization_info", {})
-    }
-
-

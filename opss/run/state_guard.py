@@ -476,59 +476,57 @@ class PiscesLxStateGuard:
         with self._lock:
             self._write_log = []
 
+    @staticmethod
+    def write_authorized(func: Callable) -> Callable:
+        """
+        Decorator to mark a function as authorized to write state files.
 
-def write_authorized(func: Callable) -> Callable:
-    """
-    Decorator to mark a function as authorized to write state files.
-    
-    Functions decorated with this decorator will be allowed to write
-    to protected state files regardless of their module.
-    
-    Example:
-        @write_authorized
-        def my_custom_writer(run_id, data):
-            guard = PiscesLxStateGuard()
-            return guard.write_state(run_id, data)
-    """
-    PiscesLxStateGuard.AUTHORIZED_FUNCTIONS.add(func.__name__)
-    
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        return func(*args, **kwargs)
-    
-    return wrapper
+        Functions decorated with this decorator will be allowed to write
+        to protected state files regardless of their module.
 
+        Example:
+            @write_authorized
+            def my_custom_writer(run_id, data):
+                guard = PiscesLxStateGuard()
+                return guard.write_state(run_id, data)
+        """
+        PiscesLxStateGuard.AUTHORIZED_FUNCTIONS.add(func.__name__)
 
-def readonly_access(func: Callable) -> Callable:
-    """
-    Decorator to enforce read-only access to state files.
-    
-    Functions decorated with this decorator will only be able to
-    read state files, even if they are in an authorized module.
-    
-    Example:
-        @readonly_access
-        def get_task_status(run_id):
-            guard = PiscesLxStateGuard()
-            return guard.read_state(run_id)
-    """
-    @functools.wraps(func)
-    def wrapper(*args, **kwargs):
-        guard = PiscesLxStateGuard()
-        caller_info = guard._get_caller_info()
-        caller_info["authorized"] = False
-        
-        original_authorized = PiscesLxStateGuard.AUTHORIZED_FUNCTIONS.copy()
-        try:
-            if func.__name__ in PiscesLxStateGuard.AUTHORIZED_FUNCTIONS:
-                PiscesLxStateGuard.AUTHORIZED_FUNCTIONS.discard(func.__name__)
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
             return func(*args, **kwargs)
-        finally:
-            PiscesLxStateGuard.AUTHORIZED_FUNCTIONS.update(original_authorized)
-    
-    return wrapper
 
+        return wrapper
 
+    @staticmethod
+    def readonly_access(func: Callable) -> Callable:
+        """
+        Decorator to enforce read-only access to state files.
+
+        Functions decorated with this decorator will only be able to
+        read state files, even if they are in an authorized module.
+
+        Example:
+            @readonly_access
+            def get_task_status(run_id):
+                guard = PiscesLxStateGuard()
+                return guard.read_state(run_id)
+        """
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            guard = PiscesLxStateGuard()
+            caller_info = guard._get_caller_info()
+            caller_info["authorized"] = False
+
+            original_authorized = PiscesLxStateGuard.AUTHORIZED_FUNCTIONS.copy()
+            try:
+                if func.__name__ in PiscesLxStateGuard.AUTHORIZED_FUNCTIONS:
+                    PiscesLxStateGuard.AUTHORIZED_FUNCTIONS.discard(func.__name__)
+                return func(*args, **kwargs)
+            finally:
+                PiscesLxStateGuard.AUTHORIZED_FUNCTIONS.update(original_authorized)
+
+        return wrapper
 class PiscesLxStateReader:
     """
     Read-only state reader for external modules.

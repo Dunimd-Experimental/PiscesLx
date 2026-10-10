@@ -695,35 +695,42 @@ class PiscesLxMemSepTrainer:
 # Factory Function
 # ============================================================
 
-def create_memsep_trainer(
-    model: nn.Module,
-    phase_1_steps: int = 5000,
-    phase_2_steps: int = 2000,
-    gate_target: float = 0.5,
-    freeze_backbone_phase2: bool = True,
-    base_lr: float = 1e-5,
-    **kwargs,
-) -> PiscesLxMemSepTrainer:
-    """Factory function for memory separation trainer.
+class PiscesLxMemsep:
+    """Operations formerly exposed as module-level functions of memsep.
 
-    Args:
-        model: YvModel instance.
-        phase_1_steps: Steps for core reasoning phase.
-        phase_2_steps: Steps for memory router phase.
-        gate_target: Target gate value.
-        freeze_backbone_phase2: Freeze backbone during Phase 2.
-        base_lr: Base learning rate.
-        **kwargs: Additional config overrides.
+    Standard §6.2 requires functionality be exposed through a class, so each became a static method here.
+"""
 
-    Returns:
-        Configured PiscesLxMemSepTrainer.
-    """
-    config = PiscesLxMemSepTrainingConfig(
-        enabled=True,
-        phase_1_steps=phase_1_steps,
-        phase_2_steps=phase_2_steps,
-        gate_target=gate_target,
-        freeze_backbone_phase2=freeze_backbone_phase2,
+    @staticmethod
+    def create_memsep_trainer(
+        model: nn.Module,
+        phase_1_steps: int = 5000,
+        phase_2_steps: int = 2000,
+        gate_target: float = 0.5,
+        freeze_backbone_phase2: bool = True,
+        base_lr: float = 1e-5,
         **kwargs,
-    )
-    return PiscesLxMemSepTrainer(model, config, base_lr=base_lr)
+    ) -> PiscesLxMemSepTrainer:
+        """Factory function for memory separation trainer.
+
+        Args:
+            model: YvModel instance.
+            phase_1_steps: Steps for core reasoning phase.
+            phase_2_steps: Steps for memory router phase.
+            gate_target: Target gate value.
+            freeze_backbone_phase2: Freeze backbone during Phase 2.
+            base_lr: Base learning rate.
+            **kwargs: Additional config overrides.
+
+        Returns:
+            Configured PiscesLxMemSepTrainer.
+        """
+        config = PiscesLxMemSepTrainingConfig(
+            enabled=True,
+            phase_1_steps=phase_1_steps,
+            phase_2_steps=phase_2_steps,
+            gate_target=gate_target,
+            freeze_backbone_phase2=freeze_backbone_phase2,
+            **kwargs,
+        )
+        return PiscesLxMemSepTrainer(model, config, base_lr=base_lr)
